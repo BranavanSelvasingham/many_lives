@@ -1,0 +1,170 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scenes/policies/PolicyPanel.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/shared/PillTag.tscn" id="2"]
+
+[node name="PolicyPanel" type="PanelContainer"]
+size_flags_vertical = 3
+script = ExtResource("1")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 14
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+
+[node name="Header" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="TitleBox" type="VBoxContainer" parent="Margin/VBox/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="Name" type="Label" parent="Margin/VBox/Header/TitleBox"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 24
+text = "Character Detail"
+
+[node name="Subtitle" type="Label" parent="Margin/VBox/Header/TitleBox"]
+layout_mode = 2
+text = "Select a character to review standing policy."
+
+[node name="RuleChip" parent="Margin/VBox/Header" instance=ExtResource("2")]
+
+[node name="Overview" type="VBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="OverviewText" type="Label" parent="Margin/VBox/Overview"]
+layout_mode = 2
+autowrap_mode = 3
+text = "No character selected."
+
+[node name="PrioritiesText" type="Label" parent="Margin/VBox/Overview"]
+layout_mode = 2
+autowrap_mode = 3
+text = ""
+
+[node name="RecentText" type="Label" parent="Margin/VBox/Overview"]
+layout_mode = 2
+autowrap_mode = 3
+text = ""
+
+[node name="Editor" type="VBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="EditorTitle" type="Label" parent="Margin/VBox/Editor"]
+layout_mode = 2
+text = "Standing Direction"
+
+[node name="Grid" type="GridContainer" parent="Margin/VBox/Editor"]
+layout_mode = 2
+columns = 2
+theme_override_constants/h_separation = 10
+theme_override_constants/v_separation = 8
+
+[node name="AutonomyLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Autonomy"
+
+[node name="AutonomyOption" type="OptionButton" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+
+[node name="SpendLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Spend without asking"
+
+[node name="SpendRow" type="HBoxContainer" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SpendOption" type="OptionButton" parent="Margin/VBox/Editor/Grid/SpendRow"]
+layout_mode = 2
+
+[node name="CustomSpend" type="SpinBox" parent="Margin/VBox/Editor/Grid/SpendRow"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="InterruptLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Interrupt me when"
+
+[node name="InterruptOption" type="OptionButton" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+
+[node name="PriorityLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Priority bias"
+
+[node name="PriorityOption" type="OptionButton" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+
+[node name="RiskLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Risk tolerance"
+
+[node name="RiskOption" type="OptionButton" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+
+[node name="ScheduleLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Schedule protection"
+
+[node name="ScheduleOption" type="OptionButton" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+
+[node name="ReportingLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Reporting frequency"
+
+[node name="ReportingOption" type="OptionButton" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+
+[node name="SensitivityLabel" type="Label" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+text = "Escalation sensitivity"
+
+[node name="SensitivityOption" type="OptionButton" parent="Margin/VBox/Editor/Grid"]
+layout_mode = 2
+
+[node name="RuleSection" type="VBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="RuleLabel" type="Label" parent="Margin/VBox/RuleSection"]
+layout_mode = 2
+text = "Rule draft"
+
+[node name="RuleText" type="TextEdit" parent="Margin/VBox/RuleSection"]
+custom_minimum_size = Vector2(0, 96)
+layout_mode = 2
+
+[node name="Footer" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="SaveButton" type="Button" parent="Margin/VBox/Footer"]
+layout_mode = 2
+text = "Save Policy"
+
+[node name="RevertButton" type="Button" parent="Margin/VBox/Footer"]
+layout_mode = 2
+text = "Revert"
+
+[node name="CloseRuleButton" type="Button" parent="Margin/VBox/Footer"]
+layout_mode = 2
+text = "Close Rule"
+
+[node name="Status" type="Label" parent="Margin/VBox/Footer"]
+layout_mode = 2
+size_flags_horizontal = 3
+horizontal_alignment = 2
+text = "No policy draft loaded."

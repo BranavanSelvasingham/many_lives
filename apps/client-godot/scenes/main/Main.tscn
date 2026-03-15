@@ -1,0 +1,65 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scenes/main/Main.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/characters/CharacterListPanel.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/inbox/InboxPanel.tscn" id="3"]
+[ext_resource type="PackedScene" path="res://scenes/inbox/MessageDetailPanel.tscn" id="4"]
+[ext_resource type="PackedScene" path="res://scenes/policies/PolicyPanel.tscn" id="5"]
+[ext_resource type="PackedScene" path="res://scenes/timeline/TimelinePanel.tscn" id="6"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+color = Color(0.0509804, 0.0705882, 0.0941176, 1)
+
+[node name="RootMargin" type="MarginContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 16.0
+offset_top = 16.0
+offset_right = -16.0
+offset_bottom = -16.0
+
+[node name="AppLayout" type="VBoxContainer" parent="RootMargin"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="MainSplit" type="HBoxContainer" parent="RootMargin/AppLayout"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="CharacterColumn" parent="RootMargin/AppLayout/MainSplit" instance=ExtResource("2")]
+custom_minimum_size = Vector2(310, 0)
+
+[node name="InboxColumn" parent="RootMargin/AppLayout/MainSplit" instance=ExtResource("3")]
+size_flags_horizontal = 3
+
+[node name="ContextColumn" type="VBoxContainer" parent="RootMargin/AppLayout/MainSplit"]
+layout_mode = 2
+custom_minimum_size = Vector2(360, 0)
+size_flags_vertical = 3
+theme_override_constants/separation = 12
+
+[node name="MessageDetailPanel" parent="RootMargin/AppLayout/MainSplit/ContextColumn" instance=ExtResource("4")]
+
+[node name="PolicyPanel" parent="RootMargin/AppLayout/MainSplit/ContextColumn" instance=ExtResource("5")]
+
+[node name="TimelinePanel" parent="RootMargin/AppLayout" instance=ExtResource("6")]
+custom_minimum_size = Vector2(0, 220)
+
+[node name="HttpRequest" type="HTTPRequest" parent="."]

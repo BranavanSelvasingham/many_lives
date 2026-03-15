@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+:root {
+  --bg-main: #0b1118;
+  --surface-panel: #121b24;
+  --surface-raised: #172330;
+  --surface-selected: #1c2f3b;
+  --surface-muted: #101821;
+  --text-main: #e7edf2;
+  --text-muted: #9ca9b3;
+  --text-dim: #70818d;
+  --accent-cyan: #7ec4c9;
+  --accent-wheat: #e4c48b;
+  --font-body: "Avenir Next", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", serif;
+  --font-mono: "SFMono-Regular", "Menlo", monospace;
+}
+
+@theme inline {
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-mono);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(126, 196, 201, 0.12), transparent 30%),
+    linear-gradient(180deg, rgba(228, 196, 139, 0.06), transparent 24%),
+    linear-gradient(135deg, #0b1118 0%, #0d141b 48%, #091017 100%);
+  color: var(--text-main);
+  font-family: var(--font-body), sans-serif;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 24px 24px;
+  mask-image: radial-gradient(circle at center, black, transparent 90%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.font-display {
+  font-family: var(--font-display), sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}

@@ -1,0 +1,60 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scenes/characters/CharacterListPanel.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/shared/StatBar.tscn" id="2"]
+
+[node name="CharacterListPanel" type="PanelContainer"]
+size_flags_vertical = 3
+script = ExtResource("1")
+
+[node name="Margin" type="MarginContainer" parent="."]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 14
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 14
+
+[node name="VBox" type="VBoxContainer" parent="Margin"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 10
+
+[node name="Header" type="HBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="Margin/VBox/Header"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 24
+text = "Characters"
+
+[node name="Summary" type="Label" parent="Margin/VBox/Header"]
+layout_mode = 2
+horizontal_alignment = 2
+text = "0 lives active"
+
+[node name="Scroll" type="ScrollContainer" parent="Margin/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="Content" type="VBoxContainer" parent="Margin/VBox/Scroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="EmptyLabel" type="Label" parent="Margin/VBox/Scroll/Content"]
+layout_mode = 2
+autowrap_mode = 3
+text = "No lives loaded yet."
+
+[node name="Footer" type="VBoxContainer" parent="Margin/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 6
+
+[node name="LoadTitle" type="Label" parent="Margin/VBox/Footer"]
+layout_mode = 2
+text = "Stress / load"
+
+[node name="StressBar" parent="Margin/VBox/Footer" instance=ExtResource("2")]
+
+[node name="LoadBar" parent="Margin/VBox/Footer" instance=ExtResource("2")]

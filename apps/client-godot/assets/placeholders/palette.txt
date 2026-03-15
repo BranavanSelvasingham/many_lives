@@ -1,0 +1,5 @@
+Many Lives placeholder palette
+
+Background: #161c24
+Panels: default Godot panel styling
+Accent intent: alerts and inbox-first readability over decorative art
