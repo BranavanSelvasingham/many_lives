@@ -1,0 +1,9 @@
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+.next/
+.DS_Store
+.env
+.godot/
+*.import
