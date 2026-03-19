@@ -43,16 +43,16 @@ jobs:
       - name: Prepare artifact for deployment
         run: |
           rm -rf deployment
-          mkdir -p deployment/.next
-          cp -RL apps/many-lives-web/.next/standalone/apps/many-lives-web/. deployment/
-          cp -R apps/many-lives-web/.next/static deployment/.next/static
-          cp -R apps/many-lives-web/public deployment/public
+          mkdir -p deployment/apps/many-lives-web/.next
+          cp -R apps/many-lives-web/.next/standalone/. deployment/
+          cp -R apps/many-lives-web/.next/static deployment/apps/many-lives-web/.next/static
+          cp -R apps/many-lives-web/public deployment/apps/many-lives-web/public
           cat > deployment/package.json <<'EOF'
           {
             "name": "many-lives-web",
             "private": true,
             "scripts": {
-              "start": "node server.js"
+              "start": "node apps/many-lives-web/server.js"
             }
           }
           EOF
@@ -61,17 +61,17 @@ jobs:
           <configuration>
             <system.webServer>
               <handlers>
-                <add name="iisnode" path="server.js" verb="*" modules="iisnode" />
+                <add name="iisnode" path="apps/many-lives-web/server.js" verb="*" modules="iisnode" />
               </handlers>
               <rewrite>
                 <rules>
                   <rule name="DynamicContent">
                     <match url=".*" />
-                    <action type="Rewrite" url="server.js" />
+                    <action type="Rewrite" url="apps/many-lives-web/server.js" />
                   </rule>
                 </rules>
               </rewrite>
-              <iisnode watchedFiles="web.config;server.js" />
+              <iisnode watchedFiles="web.config;apps/many-lives-web/server.js" />
             </system.webServer>
           </configuration>
           EOF
