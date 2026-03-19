@@ -47,6 +47,12 @@ jobs:
           cp -R apps/many-lives-web/.next/standalone/. deployment/
           cp -R apps/many-lives-web/.next/static deployment/apps/many-lives-web/.next/static
           cp -R apps/many-lives-web/public deployment/apps/many-lives-web/public
+          mkdir -p deployment/apps/many-lives-web/node_modules
+          for pkg in apps/many-lives-web/.next/standalone/node_modules/.pnpm/*/node_modules/*; do
+            name="$(basename "$pkg")"
+            rm -rf "deployment/apps/many-lives-web/node_modules/$name"
+            cp -RL "$pkg" "deployment/apps/many-lives-web/node_modules/$name"
+          done
           cat > deployment/package.json <<'EOF'
           {
             "name": "many-lives-web",
