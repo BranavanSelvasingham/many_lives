@@ -58,7 +58,7 @@ jobs:
             "name": "many-lives-web",
             "private": true,
             "scripts": {
-              "start": "node apps/many-lives-web/server.js"
+              "start": "npm --prefix apps/many-lives-web install --omit=dev --no-audit --no-fund && node apps/many-lives-web/server.js"
             }
           }
           EOF
@@ -81,6 +81,10 @@ jobs:
             </system.webServer>
           </configuration>
           EOF
+
+      - name: Validate deployment runtime modules
+        run: |
+          node -e "const {createRequire}=require('module'); const path=require('path'); const req=createRequire(path.resolve('deployment/apps/many-lives-web/server.js')); console.log(req.resolve('next/package.json')); console.log(req.resolve('styled-jsx/package.json')); req('next/dist/server/require-hook.js'); console.log('deployment_runtime_ok');"
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v6
