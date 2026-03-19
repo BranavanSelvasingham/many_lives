@@ -47,6 +47,34 @@ jobs:
           cp -R apps/many-lives-web/.next/standalone/apps/many-lives-web/. deployment/
           cp -R apps/many-lives-web/.next/static deployment/.next/static
           cp -R apps/many-lives-web/public deployment/public
+          cat > deployment/package.json <<'EOF'
+          {
+            "name": "many-lives-web",
+            "private": true,
+            "scripts": {
+              "start": "node server.js"
+            }
+          }
+          EOF
+          cat > deployment/web.config <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <system.webServer>
+              <handlers>
+                <add name="iisnode" path="server.js" verb="*" modules="iisnode" />
+              </handlers>
+              <rewrite>
+                <rules>
+                  <rule name="DynamicContent">
+                    <match url=".*" />
+                    <action type="Rewrite" url="server.js" />
+                  </rule>
+                </rules>
+              </rewrite>
+              <iisnode watchedFiles="web.config;server.js" />
+            </system.webServer>
+          </configuration>
+          EOF
 
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
@@ -75,5 +103,4 @@ jobs:
           app-name: "manylives"
           slot-name: "Production"
           package: deployment
-          startup-command: "node server.js"
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_A77D3379C9B14869BF3DD99DD46DFC99 }}
