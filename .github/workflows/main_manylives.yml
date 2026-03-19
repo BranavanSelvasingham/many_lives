@@ -44,7 +44,7 @@ jobs:
         run: |
           rm -rf deployment
           mkdir -p deployment/.next
-          cp -R apps/many-lives-web/.next/standalone/apps/many-lives-web/. deployment/
+          cp -RL apps/many-lives-web/.next/standalone/apps/many-lives-web/. deployment/
           cp -R apps/many-lives-web/.next/static deployment/.next/static
           cp -R apps/many-lives-web/public deployment/public
           cat > deployment/package.json <<'EOF'
