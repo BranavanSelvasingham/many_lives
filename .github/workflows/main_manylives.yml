@@ -58,7 +58,7 @@ jobs:
             "name": "many-lives-web",
             "private": true,
             "scripts": {
-              "start": "npm --prefix apps/many-lives-web install --omit=dev --no-audit --no-fund && node apps/many-lives-web/server.js"
+              "start": "node apps/many-lives-web/server.js"
             }
           }
           EOF
