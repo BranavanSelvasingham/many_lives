@@ -7,25 +7,27 @@ interface StatBarProps {
 }
 
 const toneClasses: Record<string, string> = {
-  urgent: "bg-[#ff8e7a]",
-  high: "bg-[#ffbf74]",
-  normal: "bg-[#7ec4c9]",
-  low: "bg-[#7dcc9b]",
+  urgent: "bg-[#e3d06f]",
+  high: "bg-[#dbdbd4]",
+  normal: "bg-[#c9c9c3]",
+  low: "bg-[#d9d9d3]",
 };
 
 export function StatBar({ label, value, tone = "normal" }: StatBarProps) {
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-sm text-[color:var(--text-muted)]">
-        <span>{label}</span>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between text-xs text-[color:var(--text-muted)]">
+        <span className="text-[color:var(--text-muted)]">
+          {label}
+        </span>
         <span className="font-medium text-[color:var(--text-main)]">
           {Math.round(value)}
         </span>
       </div>
-      <div className="h-2.5 overflow-hidden rounded-full bg-white/6">
+      <div className="h-3 overflow-hidden border border-[color:var(--border-subtle)] bg-[#f4f4f1]">
         <div
           className={cx(
-            "h-full rounded-full transition-all",
+            "h-full transition-all",
             toneClasses[tone] ?? toneClasses.normal,
           )}
           style={{ width: `${Math.max(0, Math.min(100, value))}%` }}

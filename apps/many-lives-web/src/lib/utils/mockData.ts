@@ -51,6 +51,10 @@ export function storeMockGame(game: GameState) {
   return cloneGame(game);
 }
 
+export function ensureMockGame(gameId: string, fallback?: GameState) {
+  return storeMockGame(cloneGame(ensureMockBase(gameId, fallback)));
+}
+
 export function buildPolicyPatchFromDraft(draft: PolicySettings) {
   let threshold = 4;
 

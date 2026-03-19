@@ -1,11 +1,5 @@
 export type SourceMode = "backend" | "mock";
-export type InboxTab =
-  | "All"
-  | "Urgent"
-  | "Waiting"
-  | "Reports"
-  | "Opportunities";
-export type RightPanelMode = "message" | "character" | "policy" | "rule";
+export type InboxTab = "All" | "Urgent" | "Waiting" | "Reports";
 export type PriorityLevel = "urgent" | "high" | "normal" | "low";
 export type MessageType =
   | "interruption"

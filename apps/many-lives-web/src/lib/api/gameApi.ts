@@ -11,6 +11,7 @@ import {
   createMockGame,
   delegateMockMessage,
   getStoredMockGame,
+  ensureMockGame,
   mergePolicyDraft,
   normalizeGameResponse,
   resolveMockMessage,
@@ -28,7 +29,6 @@ export async function createGame() {
     });
     return normalizeGameResponse(response, "backend");
   } catch {
-    // TODO: Surface an explicit offline/mock-mode banner once the shell has a shared notification layer.
     return createMockGame();
   }
 }
@@ -43,7 +43,7 @@ export async function fetchGameState(gameId: string) {
     const response = await requestJson<GameResponse>(`/game/${gameId}/state`);
     return normalizeGameResponse(response, "backend");
   } catch {
-    return storedMock ?? createMockGame();
+    return storedMock ?? ensureMockGame(gameId);
   }
 }
 

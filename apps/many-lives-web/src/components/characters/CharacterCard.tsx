@@ -1,8 +1,5 @@
 import Image from "next/image";
 
-import { Card } from "@/components/shared/Card";
-import { PillTag } from "@/components/shared/PillTag";
-import { StatBar } from "@/components/shared/StatBar";
 import type { CharacterView } from "@/lib/types/game";
 import { avatarByCharacterId } from "@/lib/utils/mockData";
 
@@ -18,48 +15,46 @@ export function CharacterCard({
   onSelect,
 }: CharacterCardProps) {
   return (
-    <Card
-      tone={selected ? "selected" : "raised"}
-      className="space-y-4"
+    <button
+      type="button"
       onClick={() => onSelect(character.id)}
+      className={`grid w-full grid-cols-[72px_minmax(0,1fr)] items-center gap-4 border-b border-[color:var(--border-subtle)] px-4 py-4 text-left ${
+        selected ? "bg-[color:var(--surface-selected)]" : "bg-[color:var(--surface-panel)]"
+      }`}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex h-[72px] w-[72px] items-center justify-center border border-[color:var(--border-subtle)] bg-[color:var(--surface-muted)]">
         <Image
           src={
             avatarByCharacterId[character.id] ??
             "/placeholder-avatar-jordan.png"
           }
           alt={`${character.name} avatar`}
-          width={48}
-          height={48}
-          className="h-12 w-12 rounded-2xl border border-white/10 bg-white/5 object-cover"
+          width={56}
+          height={56}
+          className="h-14 w-14 object-cover grayscale"
         />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="font-display text-lg text-[color:var(--text-main)]">
-                {character.name}
-              </div>
-              <div className="text-sm text-[color:var(--text-muted)]">
-                {character.subtitle}
-              </div>
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center justify-between gap-3">
+          <div className="truncate text-[1rem] font-semibold text-[color:var(--text-main)]">
+            {character.name}
+          </div>
+          {selected ? (
+            <div className="h-4 w-20 border border-[color:var(--border-subtle)] bg-[#f5f5f1]">
+              <div
+                className="h-full bg-[#ead769]"
+                style={{ width: `${Math.max(20, Math.min(100, character.stress))}%` }}
+              />
             </div>
-            <PillTag label={character.urgency} tone={character.urgency} />
-          </div>
-          <div className="mt-3 text-sm text-[color:var(--text-main)]">
-            <span className="text-[color:var(--text-dim)]">Now</span>{" "}
-            {character.currentTask}
-          </div>
-          <div className="mt-1 text-sm leading-5 text-[color:var(--text-muted)]">
-            {character.nextObligationSnippet}
-          </div>
+          ) : null}
+        </div>
+        <div className="mt-1 text-[0.95rem] text-[color:var(--text-muted)]">
+          {character.location}
+        </div>
+        <div className="mt-2 truncate text-[0.95rem] text-[color:var(--text-main)]">
+          {character.currentTask}
         </div>
       </div>
-      <StatBar
-        label="Stress"
-        value={character.stress}
-        tone={character.urgency}
-      />
-    </Card>
+    </button>
   );
 }

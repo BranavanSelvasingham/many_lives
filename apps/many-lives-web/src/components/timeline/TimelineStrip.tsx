@@ -1,6 +1,7 @@
-import { Card } from "@/components/shared/Card";
-import { RiskSummary } from "@/components/timeline/RiskSummary";
+import type { ReactNode } from "react";
+
 import type { GameState } from "@/lib/types/game";
+import { formatWorldTime } from "@/lib/utils/format";
 
 interface TimelineStripProps {
   game: GameState | null;
@@ -16,92 +17,70 @@ export function TimelineStrip({
   onTick,
 }: TimelineStripProps) {
   const summary = game?.worldSummary;
+  const nextObligation =
+    summary?.upcomingObligations[0] ?? "No immediate obligation";
 
   return (
-    <Card tone="panel" className="space-y-4 rounded-[26px]">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-1">
-          <div className="text-[11px] uppercase tracking-[0.24em] text-[color:var(--text-dim)]">
-            World strip
-          </div>
-          <div className="font-display text-2xl text-[color:var(--text-main)]">
-            {game?.time ?? "No world loaded"}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={onNewGame}
-            disabled={busy}
-            className="rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm font-medium text-[color:var(--text-main)] disabled:opacity-40"
-          >
+    <div className="overflow-x-auto border-t border-[color:var(--border-subtle)] pt-3">
+      <div className="flex min-w-max items-stretch border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)]">
+        <StripBlock value={formatWorldTime(game?.currentTimeIso ?? "")} />
+        <StripBlock value={`Urgent: ${summary?.urgentCount ?? 0}`} />
+        <StripBlock value={`Threads: ${summary?.activeThreads ?? 0}`} />
+        <StripBlock value={`Next: ${nextObligation}`} wide />
+        <div className="flex items-center gap-2 border-l border-[color:var(--border-subtle)] px-3 py-2">
+          {game?.source === "mock" ? (
+            <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] px-3 py-2 text-[0.95rem] text-[color:var(--text-main)]">
+              Mock Mode
+            </div>
+          ) : null}
+          <ControlButton disabled={busy} onClick={onNewGame}>
             New Game
-          </button>
-          <button
-            type="button"
-            onClick={() => onTick(30)}
-            disabled={busy || !game}
-            className="rounded-full bg-[color:var(--accent-cyan)] px-4 py-2 text-sm font-semibold text-[#122023] disabled:opacity-40"
-          >
-            Tick 30m
-          </button>
-          <button
-            type="button"
-            onClick={() => onTick(120)}
-            disabled={busy || !game}
-            className="rounded-full bg-[color:var(--accent-wheat)] px-4 py-2 text-sm font-semibold text-[#231a11] disabled:opacity-40"
-          >
-            Tick 2h
-          </button>
+          </ControlButton>
+          <ControlButton disabled={busy || !game} onClick={() => onTick(30)}>
+            ≪ Tick 30m
+          </ControlButton>
+          <ControlButton disabled={busy || !game} onClick={() => onTick(120)}>
+            ≫ Tick 2h
+          </ControlButton>
+          <ControlButton disabled>▮▮</ControlButton>
         </div>
       </div>
-      <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr_1fr]">
-        <div className="space-y-2">
-          <div className="text-sm text-[color:var(--text-muted)]">
-            {game?.summary ?? "Create a new game to start the day."}
-          </div>
-          <div className="flex flex-wrap gap-4 text-sm text-[color:var(--text-main)]">
-            <span>{summary?.urgentCount ?? 0} urgent</span>
-            <span>{summary?.activeThreads ?? 0} active threads</span>
-            <span>
-              {game?.source === "mock" ? "Mock mode" : "Backend live"}
-            </span>
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.2em] text-[color:var(--text-dim)]">
-            Upcoming
-          </div>
-          <div className="mt-2 space-y-2 text-sm text-[color:var(--text-main)]">
-            {summary?.upcomingObligations
-              ?.slice(0, 3)
-              .map((obligation) => (
-                <div key={obligation}>{obligation}</div>
-              )) ?? (
-              <div className="text-[color:var(--text-muted)]">
-                No immediate obligations.
-              </div>
-            )}
-          </div>
-        </div>
-        <div>
-          <div className="text-[11px] uppercase tracking-[0.2em] text-[color:var(--text-dim)]">
-            Global risks
-          </div>
-          <div className="mt-2">
-            <RiskSummary
-              risks={
-                summary?.risks ?? {
-                  money: "low",
-                  relationship: "low",
-                  health: "low",
-                  schedule: "low",
-                }
-              }
-            />
-          </div>
-        </div>
-      </div>
-    </Card>
+    </div>
+  );
+}
+
+interface StripBlockProps {
+  value: string;
+  wide?: boolean;
+}
+
+function StripBlock({ value, wide = false }: StripBlockProps) {
+  return (
+    <div
+      className={`border-r border-[color:var(--border-subtle)] px-6 py-3 text-[1rem] text-[color:var(--text-main)] ${
+        wide ? "min-w-[340px]" : "min-w-[160px]"
+      }`}
+    >
+      {value || "No world loaded"}
+    </div>
+  );
+}
+
+interface ControlButtonProps {
+  children: ReactNode;
+  disabled?: boolean;
+  onClick?: () => void;
+}
+
+function ControlButton({ children, disabled, onClick }: ControlButtonProps) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] px-4 py-2 text-[1rem] text-[color:var(--text-main)] disabled:opacity-45"
+    >
+      {children}
+    </button>
   );
 }

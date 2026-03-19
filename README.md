@@ -1,21 +1,16 @@
 # Many Lives
 
-Many Lives is a text-forward prototype for an asynchronous life-management sim. You manage multiple semi-autonomous characters through an inbox, step in on high-pressure decisions, and shape long-term behavior through standing policies.
+Many Lives is a web-first prototype for an asynchronous life-management sim. You manage several semi-autonomous lives through an attention dashboard: triage inbox threads, step in on unstable decisions, and train autonomy with standing policies and lightweight rules.
 
-This first vertical slice includes:
-
-- A deterministic simulation server in Node.js + TypeScript.
-- A Next.js web client focused on inbox triage, character oversight, policy editing, and world pacing.
-- A mock AI provider that generates summaries, escalation copy, and suggested actions without requiring any API keys.
-- A local mock fallback so the UI remains playable even when the backend is offline.
+This vertical slice is intentionally desktop-first and mock-first. The inbox is the heartbeat, the right panel is the active decision or policy surface, and the bottom strip keeps time and world pressure visible while you work.
 
 ## Prototype Pillars
 
-- The inbox is the main place where the player pays attention.
-- The simulation is authoritative.
-- AI is optional and currently mocked so the game is playable offline.
-- Policies shape how often characters escalate issues.
-- The prototype emphasizes readable UI and simulation structure over art polish.
+- Inbox triage is the primary intervention loop.
+- Policies shape long-term autonomy instead of replacing moment-to-moment decisions.
+- The simulation remains authoritative when the backend is available.
+- Mock mode is a first-class play and demo path when the backend is unavailable.
+- The UI favors cards, dashboards, and explicit actions over chat-style interaction.
 
 ## Repo Layout
 
@@ -32,32 +27,53 @@ many-lives/
 ## Install
 
 1. Make sure you have Node.js 20+.
-2. Use Corepack or a local `pnpm` install.
+2. Enable Corepack or use a local `pnpm` install.
 3. Install dependencies from the repo root:
 
 ```bash
 corepack pnpm install
 ```
 
-## Run The Web Client
+## Run
 
-From the repo root:
+Run the web app:
 
 ```bash
 corepack pnpm dev:web
 ```
 
-The web app starts on `http://127.0.0.1:3001`.
+The Next.js app starts on [http://127.0.0.1:3001](http://127.0.0.1:3001).
 
-## Run The Server
-
-From the repo root:
+Run the simulation server:
 
 ```bash
 corepack pnpm dev:server
 ```
 
-The Fastify server starts on `http://127.0.0.1:3000` by default.
+The Fastify sim server starts on [http://127.0.0.1:3000](http://127.0.0.1:3000).
+
+Run both together:
+
+```bash
+corepack pnpm dev
+```
+
+## Mock Mode
+
+Mock mode is the default fallback if the backend cannot be reached.
+
+- The client attempts the real `/game/*` flow first.
+- If create, fetch, tick, resolve, delegate, snooze, or policy requests fail, the web app swaps to seeded local game state.
+- The UI shows a subtle `Mock Mode` indicator so the app still feels intentional instead of broken.
+- Mock state stays playable during the session: ticking time spawns follow-ups, actions resolve threads, and policy changes persist in memory.
+
+The mock seed currently starts with Jordan, Maya, and Leo already under pressure so the inbox loop is demo-ready immediately.
+
+## Backend Mode
+
+When the sim server is available, the web client uses the real game endpoints and treats the simulation as authoritative.
+
+For hosted environments such as Azure Web App, set `NEXT_PUBLIC_MANY_LIVES_API_URL` to the deployed sim-server base URL. If you leave it unset, the client proxy falls back to `http://127.0.0.1:3000`, which is only correct for local development.
 
 Helpful endpoints:
 
@@ -68,69 +84,49 @@ Helpful endpoints:
 - `POST /game/:id/command`
 - `POST /game/:id/policy`
 
-## Run Both Together
+The web app reaches those routes through the Next.js proxy layer in [client.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/api/client.ts) and [gameApi.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/api/gameApi.ts).
 
-From the repo root:
+## Dashboard Model
+
+- Left rail: character triage and pressure read.
+- Center panel: inbox filters, counts, and thread cards.
+- Right panel: selected message detail first, otherwise character detail plus policy.
+- Bottom strip: world time, thread pressure, upcoming obligation, risk read, and tick controls.
+
+Right-panel priority is deliberate:
+
+1. If a message is selected, show message detail.
+2. Otherwise, if a character is selected, show character detail plus policy.
+3. Otherwise, default to the first urgent message, then the first character.
+
+## Key Component Locations
+
+- Shell and panel composition: [AppShell.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/layout/AppShell.tsx)
+- Character rail and summary: [LeftRail.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/layout/LeftRail.tsx)
+- Inbox triage flow: [InboxPanel.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/inbox/InboxPanel.tsx)
+- Message decisions and rule training: [MessageDetailPanel.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/inbox/MessageDetailPanel.tsx)
+- Character management: [CharacterDetailView.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/characters/CharacterDetailView.tsx)
+- Policy editing: [PolicyPanel.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/policies/PolicyPanel.tsx)
+- Control strip: [TimelineStrip.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/timeline/TimelineStrip.tsx)
+- Mock seed and client-side mutations: [mockData.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/utils/mockData.ts)
+- Selection and attention state: [selectionStore.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/state/selectionStore.ts)
+
+## Validation
+
+Run the web lint pass:
 
 ```bash
-corepack pnpm dev
+corepack pnpm --filter @many-lives/many-lives-web lint
 ```
 
-This runs:
-
-- the web client on `http://127.0.0.1:3001`
-- the sim server on `http://127.0.0.1:3000`
-
-## Mock Mode
-
-The web client is usable even if the sim server is unavailable.
-
-- UI requests go through the Next.js `/sim/*` proxy.
-- If the backend cannot be reached, the client falls back to seeded local Many Lives state.
-- Mock mode still supports the playable loop: new game, inbox decisions, snooze, delegate, policy edits, and ticking time forward.
-
-## Backend Mode
-
-When the sim server is available, the web client uses the real game endpoints and treats the simulation as authoritative.
-
-The main UI loop is:
-
-- Left: character cards with stress and obligation snapshots.
-- Center: inbox cards with inline actions and filters.
-- Right: selected message detail or selected character policy editing.
-- Bottom: time, risks, obligations, and tick controls.
-
-Main UI files live in:
-
-- [apps/many-lives-web/src/app/page.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/app/page.tsx)
-- [apps/many-lives-web/src/components/layout/AppShell.tsx](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/layout/AppShell.tsx)
-- [apps/many-lives-web/src/components/characters](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/characters)
-- [apps/many-lives-web/src/components/inbox](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/inbox)
-- [apps/many-lives-web/src/components/policies](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/policies)
-- [apps/many-lives-web/src/components/timeline](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/components/timeline)
-- [apps/many-lives-web/src/lib](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib)
-
-## Run Tests
-
-From the repo root:
+Run the sim tests:
 
 ```bash
 corepack pnpm test
 ```
 
-## Useful Scripts
-
-- `corepack pnpm dev`
-- `corepack pnpm dev:server`
-- `corepack pnpm dev:web`
-- `corepack pnpm test`
-- `corepack pnpm lint`
-- `corepack pnpm format`
-
 ## Notes
 
 - The simulation advances in 30-minute steps.
-- New games seed three playable characters: Jordan, Maya, and Leo.
-- The OpenAI integration file is a stubbed adapter so the repo stays runnable without secrets.
 - The old Godot client scaffold is legacy and no longer part of the main workflow.
-- Future work is marked with targeted `TODO` comments in the code where the next extension is obvious.
+- OpenAI integration remains stubbed so the prototype stays runnable without secrets.

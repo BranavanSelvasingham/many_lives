@@ -7,7 +7,7 @@ interface RiskSummaryProps {
 
 export function RiskSummary({ risks }: RiskSummaryProps) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-nowrap gap-2">
       {Object.entries(risks).map(([key, value]) => (
         <PillTag key={key} label={`${key} ${value}`} tone={key} />
       ))}

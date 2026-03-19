@@ -12,7 +12,6 @@ export const inboxTabs: InboxTab[] = [
   "Urgent",
   "Waiting",
   "Reports",
-  "Opportunities",
 ];
 
 export const autonomyOptions: Array<{
@@ -129,7 +128,6 @@ export function filterInboxMessages(
       if (tab === "Urgent") return priorityRank(message.priority) <= 1;
       if (tab === "Waiting") return message.requiresResponse;
       if (tab === "Reports") return ["status", "social"].includes(message.type);
-      if (tab === "Opportunities") return message.type === "opportunity";
       return true;
     })
     .sort((left, right) => {
@@ -138,4 +136,25 @@ export function filterInboxMessages(
       if (rankDelta !== 0) return rankDelta;
       return right.createdAtIso.localeCompare(left.createdAtIso);
     });
+}
+
+export function buildInboxTabCounts(
+  messages: InboxMessageView[],
+  currentTimeIso: string,
+) {
+  return Object.fromEntries(
+    inboxTabs.map((tab) => [
+      tab,
+      filterInboxMessages(messages, tab, currentTimeIso).length,
+    ]),
+  ) as Record<InboxTab, number>;
+}
+
+export function findFirstUrgentMessage(
+  messages: InboxMessageView[],
+  currentTimeIso: string,
+) {
+  return filterInboxMessages(messages, "All", currentTimeIso).find(
+    (message) => message.priority === "urgent",
+  );
 }

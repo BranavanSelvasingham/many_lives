@@ -24,11 +24,11 @@ export function ActionButtonRow({
             type="button"
             onClick={() => onSelect(action.id)}
             className={cx(
-              "rounded-full border px-3 py-2 text-left transition-colors",
-              compact ? "text-xs font-medium" : "text-sm font-medium",
+              "border px-3 py-2 text-left transition-colors",
+              compact ? "text-[11px] font-medium" : "text-sm font-medium",
               isSelected
-                ? "border-[color:var(--accent-cyan)] bg-[color:var(--surface-selected)] text-[color:var(--text-main)]"
-                : "border-white/10 bg-white/5 text-[color:var(--text-muted)] hover:border-white/20 hover:text-[color:var(--text-main)]",
+                ? "border-[color:var(--border-strong)] bg-[color:var(--surface-selected)] text-[color:var(--text-main)]"
+                : "border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] text-[color:var(--text-muted)] hover:text-[color:var(--text-main)]",
             )}
           >
             {action.label}

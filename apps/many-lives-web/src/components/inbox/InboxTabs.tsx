@@ -1,30 +1,38 @@
 import type { InboxTab } from "@/lib/types/game";
-import { inboxTabs } from "@/lib/utils/priorities";
 import { cx } from "@/lib/utils/format";
+import { inboxTabs } from "@/lib/utils/priorities";
 
 interface InboxTabsProps {
   activeTab: InboxTab;
+  counts: Record<InboxTab, number>;
   onChange: (tab: InboxTab) => void;
 }
 
-export function InboxTabs({ activeTab, onChange }: InboxTabsProps) {
+export function InboxTabs({ activeTab, counts, onChange }: InboxTabsProps) {
   return (
-    <div className="flex flex-wrap gap-2">
-      {inboxTabs.map((tab) => (
-        <button
-          key={tab}
-          type="button"
-          onClick={() => onChange(tab)}
-          className={cx(
-            "rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] transition-colors",
-            tab === activeTab
-              ? "border-[color:var(--accent-cyan)] bg-[color:var(--surface-selected)] text-[color:var(--text-main)]"
-              : "border-white/10 bg-white/[0.03] text-[color:var(--text-dim)] hover:border-white/20 hover:text-[color:var(--text-main)]",
-          )}
-        >
-          {tab}
-        </button>
-      ))}
+    <div className="flex items-end gap-2 border-b border-[color:var(--border-subtle)]">
+      {inboxTabs.map((tab) => {
+        const isActive = tab === activeTab;
+        const count = counts[tab];
+        const label =
+          count > 0 && tab !== "All" ? `${tab} (${count})` : tab;
+
+        return (
+          <button
+            key={tab}
+            type="button"
+            onClick={() => onChange(tab)}
+            className={cx(
+              "border border-[color:var(--border-subtle)] px-4 py-2 text-[0.95rem] text-[color:var(--text-muted)]",
+              isActive
+                ? "border-b-[color:var(--surface-panel)] bg-[color:var(--surface-panel)] font-semibold text-[color:var(--text-main)]"
+                : "bg-[color:var(--surface-overlay)]",
+            )}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }

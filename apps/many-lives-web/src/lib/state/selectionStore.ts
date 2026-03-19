@@ -2,86 +2,98 @@
 
 import { create } from "zustand";
 
-import type {
-  GameState,
-  InboxMessageView,
-  InboxTab,
-  RightPanelMode,
-} from "@/lib/types/game";
-import { filterInboxMessages } from "@/lib/utils/priorities";
+import type { GameState, InboxMessageView, InboxTab } from "@/lib/types/game";
+import {
+  filterInboxMessages,
+  findFirstUrgentMessage,
+} from "@/lib/utils/priorities";
 
 interface SelectionState {
   selectedCharacterId: string | null;
   selectedMessageId: string | null;
   activeInboxTab: InboxTab;
-  rightPanelMode: RightPanelMode;
   draftOverrideText: string;
   ruleComposerDraft: string;
+  isRuleComposerOpen: boolean;
   selectCharacter: (characterId: string) => void;
   selectMessage: (message: InboxMessageView) => void;
   setActiveInboxTab: (tab: InboxTab) => void;
-  setRightPanelMode: (mode: RightPanelMode) => void;
   setDraftOverrideText: (value: string) => void;
   setRuleComposerDraft: (value: string) => void;
-  beginRuleFromMessage: (message: InboxMessageView) => void;
+  openRuleComposer: (message: InboxMessageView) => void;
+  closeRuleComposer: () => void;
   clearMessageSelection: () => void;
   syncFromGame: (game: GameState) => void;
+}
+
+function defaultRuleDraft(message: InboxMessageView) {
+  return `When ${message.subject.toLowerCase()} affects schedule or commitments, protect the fragile obligation first and only escalate when the impact spreads.`;
 }
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
   selectedCharacterId: null,
   selectedMessageId: null,
   activeInboxTab: "All",
-  rightPanelMode: "message",
   draftOverrideText: "",
   ruleComposerDraft: "",
+  isRuleComposerOpen: false,
   selectCharacter: (characterId) =>
     set({
       selectedCharacterId: characterId,
-      selectedMessageId: null,
-      rightPanelMode: "character",
-      draftOverrideText: "",
     }),
   selectMessage: (message) =>
-    set({
+    set((state) => ({
       selectedCharacterId: message.characterId,
       selectedMessageId: message.id,
-      rightPanelMode: "message",
-      draftOverrideText: "",
-    }),
+      draftOverrideText:
+        state.selectedMessageId === message.id ? state.draftOverrideText : "",
+      isRuleComposerOpen:
+        state.selectedMessageId === message.id ? state.isRuleComposerOpen : false,
+      ruleComposerDraft:
+        state.selectedMessageId === message.id && state.ruleComposerDraft
+          ? state.ruleComposerDraft
+          : defaultRuleDraft(message),
+    })),
   setActiveInboxTab: (tab) => set({ activeInboxTab: tab }),
-  setRightPanelMode: (mode) => set({ rightPanelMode: mode }),
   setDraftOverrideText: (value) => set({ draftOverrideText: value }),
   setRuleComposerDraft: (value) => set({ ruleComposerDraft: value }),
-  beginRuleFromMessage: (message) =>
-    set({
+  openRuleComposer: (message) =>
+    set((state) => ({
       selectedCharacterId: message.characterId,
       selectedMessageId: message.id,
-      rightPanelMode: "rule",
-      ruleComposerDraft: `When ${message.subject.toLowerCase()} appears, protect the most fragile commitment first.`,
-    }),
+      isRuleComposerOpen: true,
+      ruleComposerDraft:
+        state.selectedMessageId === message.id && state.ruleComposerDraft
+          ? state.ruleComposerDraft
+          : defaultRuleDraft(message),
+    })),
+  closeRuleComposer: () => set({ isRuleComposerOpen: false }),
   clearMessageSelection: () =>
     set({
       selectedMessageId: null,
-      rightPanelMode: "character",
       draftOverrideText: "",
+      isRuleComposerOpen: false,
     }),
   syncFromGame: (game) => {
     const state = get();
-    const allVisibleMessages = filterInboxMessages(
+    const visibleMessages = filterInboxMessages(
       game.inbox,
       "All",
       game.currentTimeIso,
     );
-    const selectedMessageStillExists = allVisibleMessages.some(
+    const selectedMessage = visibleMessages.find(
       (message) => message.id === state.selectedMessageId,
     );
     const selectedCharacterStillExists = game.characters.some(
       (character) => character.id === state.selectedCharacterId,
     );
 
-    if (state.selectedMessageId && !selectedMessageStillExists) {
-      set({ selectedMessageId: null, draftOverrideText: "" });
+    if (state.selectedMessageId && !selectedMessage) {
+      set({
+        selectedMessageId: null,
+        draftOverrideText: "",
+        isRuleComposerOpen: false,
+      });
     }
 
     if (state.selectedCharacterId && !selectedCharacterStillExists) {
@@ -89,16 +101,26 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     }
 
     const nextState = get();
+    if (nextState.selectedMessageId && !nextState.selectedCharacterId) {
+      const messageMatch = visibleMessages.find(
+        (message) => message.id === nextState.selectedMessageId,
+      );
+      if (messageMatch) {
+        set({ selectedCharacterId: messageMatch.characterId });
+      }
+      return;
+    }
+
     if (nextState.selectedMessageId || nextState.selectedCharacterId) {
       return;
     }
 
-    if (allVisibleMessages.length > 0) {
-      const [firstMessage] = allVisibleMessages;
+    const urgentMessage = findFirstUrgentMessage(game.inbox, game.currentTimeIso);
+    if (urgentMessage) {
       set({
-        selectedMessageId: firstMessage.id,
-        selectedCharacterId: firstMessage.characterId,
-        rightPanelMode: "message",
+        selectedMessageId: urgentMessage.id,
+        selectedCharacterId: urgentMessage.characterId,
+        ruleComposerDraft: defaultRuleDraft(urgentMessage),
       });
       return;
     }
@@ -106,7 +128,6 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
     if (game.characters[0]) {
       set({
         selectedCharacterId: game.characters[0].id,
-        rightPanelMode: "character",
       });
     }
   },

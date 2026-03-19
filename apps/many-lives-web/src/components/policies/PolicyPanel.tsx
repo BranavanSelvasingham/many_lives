@@ -1,11 +1,8 @@
 import { useMemo, useState } from "react";
 
 import { Card } from "@/components/shared/Card";
-import { SectionHeader } from "@/components/shared/SectionHeader";
-import { RuleComposer } from "@/components/policies/RuleComposer";
 import type { CharacterView, PolicySettings } from "@/lib/types/game";
 import {
-  autonomyOptions,
   interruptOptions,
   priorityBiasOptions,
   reportingOptions,
@@ -14,41 +11,29 @@ import {
   sensitivityOptions,
   spendPresetOptions,
 } from "@/lib/utils/priorities";
-import { formatCurrencyLimit } from "@/lib/utils/format";
 
 interface PolicyPanelProps {
   character: CharacterView | null;
-  ruleComposerDraft: string;
-  showRuleComposer: boolean;
-  onRuleComposerChange: (value: string) => void;
   onSave: (draft: PolicySettings) => void;
 }
 
-export function PolicyPanel({
-  character,
-  ruleComposerDraft,
-  showRuleComposer,
-  onRuleComposerChange,
-  onSave,
-}: PolicyPanelProps) {
-  const initialDraft = useMemo(
-    () =>
-      character
-        ? {
-            ...character.policy,
-            ruleSummary: showRuleComposer
-              ? ruleComposerDraft || character.policy.ruleSummary
-              : character.policy.ruleSummary,
-          }
-        : null,
-    [character, ruleComposerDraft, showRuleComposer],
+export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
+  const [draft, setDraft] = useState<PolicySettings | null>(
+    character ? structuredClone(character.policy) : null,
   );
-  const [draft, setDraft] = useState<PolicySettings | null>(initialDraft);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const isDirty = useMemo(() => {
+    if (!character || !draft) return false;
+    return JSON.stringify(character.policy) !== JSON.stringify(draft);
+  }, [character, draft]);
 
   if (!character || !draft) {
     return (
       <Card tone="panel">
-        <SectionHeader eyebrow="Standing Direction" title="No Policy Context" />
+        <div className="text-[1rem] text-[color:var(--text-muted)]">
+          No policy context
+        </div>
       </Card>
     );
   }
@@ -61,160 +46,196 @@ export function PolicyPanel({
   };
 
   return (
-    <Card tone="panel" className="space-y-5">
-      <SectionHeader
-        eyebrow="Standing Direction"
-        title={`${character.name}'s Policy`}
-      />
-      <div className="grid gap-4 md:grid-cols-2">
-        <PolicySelect
+    <Card tone="panel" className="space-y-4">
+      <div className="border-b border-[color:var(--border-subtle)] pb-3">
+        <div className="text-[1.1rem] font-semibold uppercase tracking-[0.03em] text-[color:var(--text-main)]">
+          Policy
+        </div>
+      </div>
+      <div className="grid gap-3">
+        <SegmentedField
           label="Autonomy"
           value={draft.autonomy}
+          options={[
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+          ]}
           onChange={(value) =>
             setField("autonomy", value as PolicySettings["autonomy"])
           }
-          options={autonomyOptions}
         />
-        <div className="space-y-2">
-          <label className="text-[11px] uppercase tracking-[0.2em] text-[color:var(--text-dim)]">
-            Spend without asking
-          </label>
-          <div className="grid gap-2 sm:grid-cols-[160px_1fr]">
-            <select
-              value={draft.spendPreset}
-              onChange={(event) => {
-                const nextValue = event.target
-                  .value as PolicySettings["spendPreset"];
-                setField("spendPreset", nextValue);
-                if (nextValue !== "custom") {
-                  setField("spendWithoutAsking", Number(nextValue));
-                }
-              }}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-[color:var(--text-main)]"
-            >
-              {spendPresetOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              min={0}
-              step={10}
-              disabled={draft.spendPreset !== "custom"}
-              value={draft.spendWithoutAsking}
-              onChange={(event) =>
-                setField("spendWithoutAsking", Number(event.target.value))
+        <div className="grid gap-3 md:grid-cols-[180px_1fr]">
+          <SelectField
+            label="Spend without asking"
+            value={draft.spendPreset}
+            options={spendPresetOptions}
+            onChange={(value) => {
+              const nextValue = value as PolicySettings["spendPreset"];
+              setField("spendPreset", nextValue);
+              if (nextValue !== "custom") {
+                setField("spendWithoutAsking", Number(nextValue));
               }
-              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-[color:var(--text-main)] disabled:opacity-40"
-            />
-          </div>
-          <div className="text-xs text-[color:var(--text-muted)]">
-            Current limit: {formatCurrencyLimit(draft.spendWithoutAsking)}
-          </div>
+            }}
+          />
+          <InputField
+            label="Custom amount"
+            disabled={draft.spendPreset !== "custom"}
+            value={String(draft.spendWithoutAsking)}
+            onChange={(value) => setField("spendWithoutAsking", Number(value))}
+          />
         </div>
-        <PolicySelect
+        <SelectField
           label="Interrupt me when"
           value={draft.interruptWhen}
+          options={interruptOptions}
           onChange={(value) =>
             setField("interruptWhen", value as PolicySettings["interruptWhen"])
           }
-          options={interruptOptions}
         />
-        <PolicySelect
+        <SelectField
           label="Priority bias"
           value={draft.priorityBias}
+          options={priorityBiasOptions}
           onChange={(value) =>
             setField("priorityBias", value as PolicySettings["priorityBias"])
           }
-          options={priorityBiasOptions}
         />
-        <PolicySelect
+        <SelectField
           label="Risk tolerance"
           value={draft.riskTolerance}
+          options={riskToleranceOptions}
           onChange={(value) =>
             setField("riskTolerance", value as PolicySettings["riskTolerance"])
           }
-          options={riskToleranceOptions}
         />
-        <PolicySelect
+        <SelectField
           label="Schedule protection"
           value={draft.scheduleProtection}
+          options={scheduleProtectionOptions}
           onChange={(value) =>
             setField(
               "scheduleProtection",
               value as PolicySettings["scheduleProtection"],
             )
           }
-          options={scheduleProtectionOptions}
         />
-        <PolicySelect
-          label="Reporting frequency"
-          value={draft.reportingFrequency}
-          onChange={(value) =>
-            setField(
-              "reportingFrequency",
-              value as PolicySettings["reportingFrequency"],
-            )
-          }
-          options={reportingOptions}
-        />
-        <PolicySelect
-          label="Escalation sensitivity"
-          value={draft.escalationSensitivity}
-          onChange={(value) =>
-            setField(
-              "escalationSensitivity",
-              value as PolicySettings["escalationSensitivity"],
-            )
-          }
-          options={sensitivityOptions}
-        />
+        <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-3">
+          <FieldLabel>Standing rule</FieldLabel>
+          <textarea
+            value={draft.ruleSummary}
+            onChange={(event) => setField("ruleSummary", event.target.value)}
+            rows={2}
+            className="mt-2 w-full border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-2 text-[0.95rem] text-[color:var(--text-main)] outline-none"
+            placeholder="Protect family commitments when work starts to sprawl."
+          />
+        </div>
+        <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)]">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((current) => !current)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left text-[0.95rem] text-[color:var(--text-main)]"
+          >
+            <span>Advanced options</span>
+            <span className="text-[0.9rem] text-[color:var(--text-muted)]">
+              {showAdvanced ? "Hide" : "Show"}
+            </span>
+          </button>
+          {showAdvanced ? (
+            <div className="grid gap-3 border-t border-[color:var(--border-subtle)] px-4 py-4">
+              <SelectField
+                label="Reporting frequency"
+                value={draft.reportingFrequency}
+                options={reportingOptions}
+                onChange={(value) =>
+                  setField(
+                    "reportingFrequency",
+                    value as PolicySettings["reportingFrequency"],
+                  )
+                }
+              />
+              <SelectField
+                label="Escalation sensitivity"
+                value={draft.escalationSensitivity}
+                options={sensitivityOptions}
+                onChange={(value) =>
+                  setField(
+                    "escalationSensitivity",
+                    value as PolicySettings["escalationSensitivity"],
+                  )
+                }
+              />
+            </div>
+          ) : null}
+        </div>
       </div>
-      {showRuleComposer ? (
-        <RuleComposer
-          value={ruleComposerDraft || draft.ruleSummary}
-          onChange={(value) => {
-            setField("ruleSummary", value);
-            onRuleComposerChange(value);
-          }}
-        />
-      ) : null}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[0.95rem] text-[color:var(--text-muted)]">
+          {isDirty ? "Unsaved changes" : "Policy is up to date"}
+        </div>
         <button
           type="button"
           onClick={() => onSave(draft)}
-          className="rounded-full bg-[color:var(--accent-cyan)] px-4 py-2 text-sm font-semibold text-[#122023]"
+          className="border border-[color:var(--border-subtle)] bg-[#e6e6e3] px-4 py-2 text-[1rem] font-medium text-[color:var(--text-main)]"
         >
-          Save Policy
+          Apply
         </button>
-        <div className="text-sm text-[color:var(--text-muted)]">
-          Standing rules shape how often this life surfaces issues and how
-          aggressively it self-directs.
-        </div>
       </div>
     </Card>
   );
 }
 
-interface PolicySelectProps {
+interface SegmentedFieldProps {
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
 }
 
-function PolicySelect({ label, value, options, onChange }: PolicySelectProps) {
+function SegmentedField({
+  label,
+  value,
+  options,
+  onChange,
+}: SegmentedFieldProps) {
   return (
     <div className="space-y-2">
-      <label className="text-[11px] uppercase tracking-[0.2em] text-[color:var(--text-dim)]">
-        {label}
-      </label>
+      <FieldLabel>{label}</FieldLabel>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`border px-3 py-2 text-[0.95rem] ${
+              option.value === value
+                ? "border-[color:var(--border-strong)] bg-[color:var(--surface-selected)]"
+                : "border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)]"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface SelectFieldProps {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}
+
+function SelectField({ label, value, options, onChange }: SelectFieldProps) {
+  return (
+    <div className="space-y-2">
+      <FieldLabel>{label}</FieldLabel>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-[color:var(--text-main)] outline-none"
+        className="w-full border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-2 text-[0.95rem] text-[color:var(--text-main)] outline-none"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -223,5 +244,41 @@ function PolicySelect({ label, value, options, onChange }: PolicySelectProps) {
         ))}
       </select>
     </div>
+  );
+}
+
+interface InputFieldProps {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  onChange: (value: string) => void;
+}
+
+function InputField({ label, value, disabled, onChange }: InputFieldProps) {
+  return (
+    <div className="space-y-2">
+      <FieldLabel>{label}</FieldLabel>
+      <input
+        type="number"
+        min={0}
+        step={10}
+        value={value}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-2 text-[0.95rem] text-[color:var(--text-main)] outline-none disabled:opacity-40"
+      />
+    </div>
+  );
+}
+
+interface FieldLabelProps {
+  children: string;
+}
+
+function FieldLabel({ children }: FieldLabelProps) {
+  return (
+    <label className="text-[0.85rem] uppercase tracking-[0.04em] text-[color:var(--text-dim)]">
+      {children}
+    </label>
   );
 }

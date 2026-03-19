@@ -1,17 +1,24 @@
 import { cx, titleCase } from "@/lib/utils/format";
 
 const toneClasses: Record<string, string> = {
-  urgent: "bg-[#5c221d] text-[#ffb4a8] border-[#914136]",
-  high: "bg-[#5b3919] text-[#ffcb90] border-[#8c6232]",
-  normal: "bg-[#1c3f49] text-[#9fe4eb] border-[#2f6067]",
-  low: "bg-[#1d4931] text-[#9de3b7] border-[#326b48]",
-  money: "bg-[#524417] text-[#f5dd8e] border-[#776329]",
-  relationship: "bg-[#5c2441] text-[#f0b6d1] border-[#874566]",
-  health: "bg-[#20463b] text-[#9fdec7] border-[#316e5d]",
-  schedule: "bg-[#1c3f49] text-[#9fe4eb] border-[#2f6067]",
-  social: "bg-[#44305b] text-[#cab1ec] border-[#665086]",
-  opportunity: "bg-[#20463b] text-[#9fdec7] border-[#316e5d]",
-  interruption: "bg-[#40322a] text-[#dfc5b2] border-[#68574a]",
+  urgent: "bg-[#f5f5f2] text-[#2f2f2b] border-[#7d7d78]",
+  high: "bg-[#f6f6f3] text-[#2f2f2b] border-[#8c8c84]",
+  normal: "bg-[#f9f9f6] text-[#44443f] border-[#b1b1ab]",
+  low: "bg-[#fbfbf8] text-[#575750] border-[#c1c1bc]",
+  money: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  relationship: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  health: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  schedule: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  reputation: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  social: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  opportunity: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  interruption: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  status: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  decision: "bg-[#f7f7f4] text-[#44443f] border-[#b1b1ab]",
+  mock: "bg-[#f5f5f2] text-[#44443f] border-[#8c8c84]",
+  backend: "bg-[#fbfbf8] text-[#575750] border-[#c1c1bc]",
+  none: "bg-[#fbfbf8] text-[color:var(--text-dim)] border-[color:var(--border-subtle)]",
+  muted: "bg-[#fbfbf8] text-[color:var(--text-muted)] border-[color:var(--border-subtle)]",
 };
 
 interface PillTagProps {
@@ -24,8 +31,9 @@ export function PillTag({ label, tone = "normal", className }: PillTagProps) {
   return (
     <span
       className={cx(
-        "inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]",
-        toneClasses[tone] ?? "border-white/10 bg-white/5 text-white/75",
+        "inline-flex items-center rounded-[2px] border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]",
+        toneClasses[tone] ??
+          "border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] text-[color:var(--text-muted)]",
         className,
       )}
     >
