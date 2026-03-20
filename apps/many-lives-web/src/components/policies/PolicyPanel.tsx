@@ -51,6 +51,9 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
         <div className="text-[1.1rem] font-semibold uppercase tracking-[0.03em] text-[color:var(--text-main)]">
           Policy
         </div>
+        <div className="mt-1 text-[0.92rem] text-[color:var(--text-muted)]">
+          Shape how this self pursues openings when you are not directly steering.
+        </div>
       </div>
       <div className="grid gap-3">
         <SegmentedField
@@ -67,7 +70,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
         />
         <div className="grid gap-3 md:grid-cols-[180px_1fr]">
           <SelectField
-            label="Spend without asking"
+            label="Commit resources"
             value={draft.spendPreset}
             options={spendPresetOptions}
             onChange={(value) => {
@@ -86,7 +89,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
           />
         </div>
         <SelectField
-          label="Interrupt me when"
+          label="Escalate when"
           value={draft.interruptWhen}
           options={interruptOptions}
           onChange={(value) =>
@@ -94,7 +97,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
           }
         />
         <SelectField
-          label="Priority bias"
+          label="Primary pursuit"
           value={draft.priorityBias}
           options={priorityBiasOptions}
           onChange={(value) =>
@@ -102,7 +105,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
           }
         />
         <SelectField
-          label="Risk tolerance"
+          label="Risk appetite"
           value={draft.riskTolerance}
           options={riskToleranceOptions}
           onChange={(value) =>
@@ -110,7 +113,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
           }
         />
         <SelectField
-          label="Schedule protection"
+          label="Protect this thread"
           value={draft.scheduleProtection}
           options={scheduleProtectionOptions}
           onChange={(value) =>
@@ -121,13 +124,13 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
           }
         />
         <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-3">
-          <FieldLabel>Standing rule</FieldLabel>
+          <FieldLabel>Standing instinct</FieldLabel>
           <textarea
             value={draft.ruleSummary}
             onChange={(event) => setField("ruleSummary", event.target.value)}
             rows={2}
             className="mt-2 w-full border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-2 text-[0.95rem] text-[color:var(--text-main)] outline-none"
-            placeholder="Protect family commitments when work starts to sprawl."
+            placeholder="If access rises but coherence frays, slow the split before it becomes identity."
           />
         </div>
         <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)]">
@@ -136,7 +139,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
             onClick={() => setShowAdvanced((current) => !current)}
             className="flex w-full items-center justify-between px-4 py-3 text-left text-[0.95rem] text-[color:var(--text-main)]"
           >
-            <span>Advanced options</span>
+            <span>Secondary settings</span>
             <span className="text-[0.9rem] text-[color:var(--text-muted)]">
               {showAdvanced ? "Hide" : "Show"}
             </span>
@@ -144,7 +147,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
           {showAdvanced ? (
             <div className="grid gap-3 border-t border-[color:var(--border-subtle)] px-4 py-4">
               <SelectField
-                label="Reporting frequency"
+                label="Signal cadence"
                 value={draft.reportingFrequency}
                 options={reportingOptions}
                 onChange={(value) =>
@@ -155,7 +158,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
                 }
               />
               <SelectField
-                label="Escalation sensitivity"
+                label="Pressure sensitivity"
                 value={draft.escalationSensitivity}
                 options={sensitivityOptions}
                 onChange={(value) =>
@@ -171,14 +174,14 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
       </div>
       <div className="flex items-center justify-between gap-3">
         <div className="text-[0.95rem] text-[color:var(--text-muted)]">
-          {isDirty ? "Unsaved changes" : "Policy is up to date"}
+          {isDirty ? "Uncommitted changes" : "Policy is live"}
         </div>
         <button
           type="button"
           onClick={() => onSave(draft)}
-          className="border border-[color:var(--border-subtle)] bg-[#e6e6e3] px-4 py-2 text-[1rem] font-medium text-[color:var(--text-main)]"
+          className="border border-[color:var(--border-subtle)] bg-[color:var(--button-primary)] px-4 py-2 text-[1rem] font-medium text-[color:var(--button-primary-text)]"
         >
-          Apply
+          Commit
         </button>
       </div>
     </Card>

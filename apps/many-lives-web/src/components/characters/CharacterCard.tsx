@@ -40,16 +40,16 @@ export function CharacterCard({
             {character.name}
           </div>
           {selected ? (
-            <div className="h-4 w-20 border border-[color:var(--border-subtle)] bg-[#f5f5f1]">
+            <div className="h-4 w-20 border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)]">
               <div
-                className="h-full bg-[#ead769]"
+                className="h-full bg-[color:var(--accent-brass)]"
                 style={{ width: `${Math.max(20, Math.min(100, character.stress))}%` }}
               />
             </div>
           ) : null}
         </div>
         <div className="mt-1 text-[0.95rem] text-[color:var(--text-muted)]">
-          {character.location}
+          {character.role} • {character.location}
         </div>
         <div className="mt-2 truncate text-[0.95rem] text-[color:var(--text-main)]">
           {character.currentTask}

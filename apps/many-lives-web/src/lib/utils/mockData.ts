@@ -1,5 +1,6 @@
 import type {
   CharacterView,
+  CityState,
   GameResponse,
   GameState,
   InboxMessageView,
@@ -9,26 +10,56 @@ import type {
   RawEvent,
   RawInboxMessage,
   RawPolicySettings,
-  RawTask,
   RawWorldState,
   RiskLevel,
   SourceMode,
+  WorldAxis,
 } from "@/lib/types/game";
+import { ascensionDeck, initialAscensionMessageIds } from "@/lib/utils/ascensionDeck";
+import { clamp, formatClock, previewText } from "@/lib/utils/format";
 import {
-  clamp,
-  formatClock,
-  previewText,
-  toActionId,
-} from "@/lib/utils/format";
-import { filterInboxMessages, priorityRank } from "@/lib/utils/priorities";
+  filterInboxMessages,
+  messageConsequenceScore,
+  priorityRank,
+} from "@/lib/utils/priorities";
 
 const mockGames = new Map<string, GameState>();
+const axisKeys: WorldAxis[] = ["access", "momentum", "signal", "integrity"];
+const pressureKeys = [
+  "risk",
+  "socialDebt",
+  "rivalAttention",
+  "windowNarrowing",
+] as const;
+const cityKeys = [...axisKeys, ...pressureKeys] as const;
+const BASE_TIME = "2026-03-16T20:00:00.000Z";
 let mockCounter = 1;
 
+type CityDelta = Partial<Record<(typeof cityKeys)[number], number>>;
+
 export const avatarByCharacterId: Record<string, string> = {
-  jordan: "/placeholder-avatar-jordan.png",
-  maya: "/placeholder-avatar-maya.png",
-  leo: "/placeholder-avatar-leo.png",
+  ivo: "/placeholder-avatar-jordan.png",
+  sia: "/placeholder-avatar-maya.png",
+  ren: "/placeholder-avatar-leo.png",
+  vale: "/placeholder-avatar-maya.png",
+};
+
+const seedCityState: CityState = {
+  access: 61,
+  momentum: 57,
+  signal: 45,
+  integrity: 63,
+  risk: 58,
+  socialDebt: 34,
+  rivalAttention: 54,
+  windowNarrowing: 47,
+  worldPulse: [
+    "A patronage network is collapsing in public and closing in private.",
+    "Private technology is surfacing before the city has rules for it.",
+    "A cultural vacuum is opening while rival circles search for new anchors.",
+  ],
+  rivalStatus:
+    "Rival movement detected across the velvet rooms and hidden circuits.",
 };
 
 export function cloneGame(game: GameState) {
@@ -70,8 +101,7 @@ export function buildPolicyPatchFromDraft(draft: PolicySettings) {
 
   return {
     spendingLimit: draft.spendWithoutAsking,
-    priorityBias:
-      draft.priorityBias === "relationships" ? "family" : draft.priorityBias,
+    priorityBias: draft.priorityBias,
     riskTolerance:
       draft.riskTolerance === "careful"
         ? 0.2
@@ -124,7 +154,7 @@ export function normalizeGameState(
   raw: RawWorldState | GameState,
   source: SourceMode,
 ) {
-  if ("gameId" in raw && "worldSummary" in raw) {
+  if ("gameId" in raw && "worldSummary" in raw && "cityState" in raw) {
     return {
       ...cloneGame(raw),
       source,
@@ -138,6 +168,9 @@ export function normalizeGameState(
     normalizeCharacter(character, raw),
   );
   const inbox = raw.inbox.map((message) => normalizeInboxMessage(message, raw));
+  const cityState = raw.cityState
+    ? structuredClone(raw.cityState)
+    : inferCityState(raw, characters, inbox);
 
   const game: GameState = {
     gameId: raw.id,
@@ -149,16 +182,25 @@ export function normalizeGameState(
     source,
     characters,
     inbox,
+    cityState,
     worldSummary: {
       urgentCount: 0,
       activeThreads: 0,
       upcomingObligations: [],
-      risks: {
-        money: "low",
-        relationship: "low",
-        health: "low",
-        schedule: "low",
+      axes: {
+        access: 0,
+        momentum: 0,
+        signal: 0,
+        integrity: 0,
       },
+      pressures: {
+        risk: "low",
+        socialDebt: "low",
+        rivalAttention: "low",
+        windowNarrowing: "low",
+      },
+      worldPulse: [],
+      rivalStatus: "",
     },
   };
 
@@ -191,6 +233,16 @@ export function tickMockGame(
     ),
   }));
 
+  nextGame.cityState = {
+    ...nextGame.cityState,
+    momentum: clamp(nextGame.cityState.momentum + 1, 0, 100),
+    integrity: clamp(nextGame.cityState.integrity - Math.ceil(steps / 2), 0, 100),
+    risk: clamp(nextGame.cityState.risk + steps, 0, 100),
+    rivalAttention: clamp(nextGame.cityState.rivalAttention + steps, 0, 100),
+    windowNarrowing: clamp(nextGame.cityState.windowNarrowing + steps * 2, 0, 100),
+    rivalStatus: rivalStatusFor(nextGame.cityState.rivalAttention + steps * 2),
+  };
+
   spawnMockFollowups(nextGame);
   nextGame.summary = buildMockSummary(nextGame);
   nextGame.worldSummary = buildWorldSummary(nextGame);
@@ -207,41 +259,31 @@ export function resolveMockMessage(
   const nextGame = cloneGame(ensureMockBase(gameId, fallback));
   nextGame.source = "mock";
 
-  nextGame.inbox = nextGame.inbox.map((message) =>
-    message.id === messageId
+  const message = nextGame.inbox.find((item) => item.id === messageId);
+  if (!message) {
+    return storeMockGame(nextGame);
+  }
+
+  nextGame.inbox = nextGame.inbox.map((item) =>
+    item.id === messageId
       ? {
-          ...message,
+          ...item,
           resolvedAt: nextGame.currentTimeIso,
           requiresResponse: false,
           snoozedUntil: null,
         }
-      : message,
+      : item,
   );
 
-  const message = nextGame.inbox.find((item) => item.id === messageId);
-  if (message) {
-    nextGame.characters = nextGame.characters.map((character) => {
-      if (character.id !== message.characterId) return character;
+  const character = nextGame.characters.find(
+    (candidate) => candidate.id === message.characterId,
+  );
 
-      const cashDelta =
-        actionId.includes("switch") ||
-        actionId.includes("vendor") ||
-        actionId.includes("cover")
-          ? -40
-          : 0;
-      const stressDelta = actionId.includes("wait")
-        ? 3
-        : actionId.includes("cancel")
-          ? 5
-          : -6;
-
-      return {
-        ...character,
-        cash: Math.max(0, character.cash + cashDelta),
-        stress: clamp(character.stress + stressDelta, 0, 100),
-      };
-    });
+  if (character) {
+    applyCharacterOutcome(character, actionId);
   }
+
+  applyCityOutcome(nextGame, message, actionId, overrideText);
 
   nextGame.summary = buildMockSummary(nextGame, actionId, overrideText);
   nextGame.worldSummary = buildWorldSummary(nextGame);
@@ -264,6 +306,13 @@ export function snoozeMockMessage(
         }
       : message,
   );
+  nextGame.cityState = {
+    ...nextGame.cityState,
+    momentum: clamp(nextGame.cityState.momentum - 2, 0, 100),
+    windowNarrowing: clamp(nextGame.cityState.windowNarrowing + 2, 0, 100),
+    rivalAttention: clamp(nextGame.cityState.rivalAttention + 1, 0, 100),
+    rivalStatus: "Window narrowing while rival circles keep moving.",
+  };
   nextGame.worldSummary = buildWorldSummary(nextGame);
   return storeMockGame(nextGame);
 }
@@ -277,7 +326,7 @@ export function delegateMockMessage(
   const resolved = resolveMockMessage(
     gameId,
     messageId,
-    "delegate",
+    "delegate_thread",
     "",
     fallback,
   );
@@ -289,23 +338,25 @@ export function delegateMockMessage(
     return storeMockGame(nextGame);
   }
 
-  nextGame.inbox.push({
+  nextGame.inbox.unshift({
     id: `delegate-${targetCharacterId}-${nextGame.tickCount}`,
     characterId: target.id,
     senderName: target.name,
     type: "status",
     priority: "normal",
-    subject: "Delegated Thread Accepted",
-    body: `${target.name} will absorb the redirected work and report back after the next block.`,
-    preview: `${target.name} will absorb the redirected work and report back after the next block.`,
+    subject: "Redirected Thread Accepted",
+    body: `${target.name} will absorb the redirected opening and report back once the room stabilizes.`,
+    preview: `${target.name} will absorb the redirected opening and report back once the room stabilizes.`,
     createdAt: formatClock(nextGame.currentTimeIso),
     createdAtIso: nextGame.currentTimeIso,
     requiresResponse: false,
     suggestedActions: [{ id: "acknowledge", label: "Acknowledge" }],
     consequences: {
-      stress: "medium",
-      schedule: "medium",
+      momentum: "medium",
+      integrity: "medium",
     },
+    tags: ["handoff", "redistribution"],
+    followupHooks: ["Delegation buys reach now and coherence later only if the thread holds."],
   });
 
   nextGame.characters = nextGame.characters.map((character) =>
@@ -313,11 +364,18 @@ export function delegateMockMessage(
       ? {
           ...character,
           stress: clamp(character.stress + 6, 0, 100),
+          load: clamp(character.load + 4, 0, 100),
         }
       : character,
   );
 
-  nextGame.summary = buildMockSummary(nextGame, "delegate");
+  nextGame.cityState = {
+    ...nextGame.cityState,
+    momentum: clamp(nextGame.cityState.momentum + 2, 0, 100),
+    integrity: clamp(nextGame.cityState.integrity - 3, 0, 100),
+    socialDebt: clamp(nextGame.cityState.socialDebt + 2, 0, 100),
+  };
+  nextGame.summary = buildMockSummary(nextGame, "delegate_thread");
   nextGame.worldSummary = buildWorldSummary(nextGame);
   return storeMockGame(nextGame);
 }
@@ -370,8 +428,8 @@ function normalizeCharacter(
     id: rawCharacter.id,
     name: rawCharacter.name,
     role: formatRole(rawCharacter.role),
-    subtitle: formatRole(rawCharacter.role),
-    currentTask: activeTask?.title ?? "Reviewing the next block",
+    subtitle: subtitleForRole(rawCharacter.role),
+    currentTask: activeTask?.title ?? "Holding for the next opening",
     currentTaskEnds: activeTask ? formatClock(activeTask.dueAt) : "",
     location:
       rawCharacter.currentLocation || rawCharacter.homeLocation || "Unknown",
@@ -381,8 +439,9 @@ function normalizeCharacter(
     urgency: characterUrgency(rawCharacter, rawWorld),
     nextObligation: nextTask
       ? `${nextTask.title} at ${formatClock(nextTask.dueAt)}`
-      : "No immediate obligation",
-    nextObligationSnippet: nextTask?.description ?? "No pressure queued",
+      : "No immediate opening locked",
+    nextObligationSnippet:
+      nextTask?.description ?? "The next decisive room has not hardened yet.",
     recentEvents: recentEvents(rawWorld.events, rawCharacter.id),
     priorities: characterPriorities(rawCharacter),
     autonomyProfile: describeAutonomyProfile(policy),
@@ -427,6 +486,8 @@ function normalizeInboxMessage(
     requiresResponse: rawMessage.requiresResponse,
     suggestedActions: normalizeActions(rawMessage.suggestedActions),
     consequences: rawMessage.consequences ?? defaultConsequences(priority),
+    tags: rawMessage.tags ?? [],
+    followupHooks: rawMessage.followupHooks ?? [],
     snoozedUntil: rawMessage.snoozedUntil ?? null,
     delegatedToCharacterId: rawMessage.delegatedToCharacterId ?? undefined,
     resolvedAt: rawMessage.resolvedAt ?? null,
@@ -443,37 +504,48 @@ function buildWorldSummary(game: GameState, rawWorld?: RawWorldState) {
     (message) => priorityRank(message.priority) <= 1,
   ).length;
 
-  const upcomingObligations = rawWorld
-    ? rawWorld.tasks
-        .filter((task) => task.status !== "completed")
-        .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
+  const upcomingObligations = visibleMessages.length
+    ? [...visibleMessages]
+        .sort((left, right) => messageConsequenceScore(right) - messageConsequenceScore(left))
         .slice(0, 3)
-        .map((task) => `${task.title} at ${formatClock(task.dueAt)}`)
-    : game.characters
-        .map((character) => character.nextObligation)
-        .filter(Boolean)
-        .slice(0, 3);
+        .map((message) => message.subject)
+    : rawWorld
+      ? rawWorld.tasks
+          .filter((task) => task.status !== "completed")
+          .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
+          .slice(0, 3)
+          .map((task) => `${task.title} at ${formatClock(task.dueAt)}`)
+      : game.characters
+          .map((character) => character.nextObligation)
+          .filter(Boolean)
+          .slice(0, 3);
 
   return {
     urgentCount,
     activeThreads: visibleMessages.length,
     upcomingObligations,
-    risks: {
-      money: highestConsequence(
-        visibleMessages,
-        "money",
-        rawWorld?.tasks,
-        "money",
-      ),
-      relationship: highestConsequence(
-        visibleMessages,
-        "relationship",
-        rawWorld?.tasks,
-        "family",
-      ),
-      health: healthRisk(game.characters),
-      schedule: scheduleRisk(visibleMessages, rawWorld?.tasks),
+    axes: {
+      access: game.cityState.access,
+      momentum: game.cityState.momentum,
+      signal: game.cityState.signal,
+      integrity: game.cityState.integrity,
     },
+    pressures: {
+      risk: pressureFromSources(game.cityState.risk, visibleMessages, "risk"),
+      socialDebt: pressureFromSources(
+        game.cityState.socialDebt,
+        visibleMessages,
+        "socialDebt",
+      ),
+      rivalAttention: pressureFromSources(
+        game.cityState.rivalAttention,
+        visibleMessages,
+        "rivalAttention",
+      ),
+      windowNarrowing: levelFromValue(game.cityState.windowNarrowing),
+    },
+    worldPulse: game.cityState.worldPulse,
+    rivalStatus: game.cityState.rivalStatus,
   };
 }
 
@@ -526,224 +598,204 @@ function normalizePolicy(rawPolicy: RawPolicySettings): PolicySettings {
         : rawPolicy.escalationThreshold >= 5
           ? "low"
           : "normal",
-    ruleSummary: "",
+    ruleSummary: standingRuleFor(rawPolicy.priorityBias),
   };
 }
 
 function buildSeedGame(gameId: string): GameState {
-  const baseTime = "2026-03-16T12:00:00.000Z";
   const game: GameState = {
     gameId,
-    scenarioName: "Busy Day Prototype",
-    time: formatClock(baseTime),
-    currentTimeIso: baseTime,
+    scenarioName: "The Ascension Window",
+    time: formatClock(BASE_TIME),
+    currentTimeIso: BASE_TIME,
     tickCount: 0,
     summary:
-      "Three lives are already in motion. The inbox is where the unstable parts surface.",
+      "The city is reordering itself, and no one with only one life can shape what comes next.",
     source: "mock",
     characters: [
       {
-        id: "jordan",
-        name: "Jordan",
-        role: "Office worker parent",
-        subtitle: "Office worker parent",
-        currentTask: "Morning standup prep",
-        currentTaskEnds: "12:30",
-        location: "Home office",
-        stress: 58,
-        energy: 51,
-        cash: 120,
+        id: "ivo",
+        name: "Ivo",
+        role: "The Architect",
+        subtitle: "Secures structural advantage inside private machinery.",
+        currentTask: "Holding the guest-ledger seam",
+        currentTaskEnds: formatClock(addMinutes(BASE_TIME, 60)),
+        location: "Vantage Annex",
+        stress: 42,
+        energy: 72,
+        cash: 380,
         urgency: "high",
-        nextObligation: "School pickup at 15:30",
+        nextObligation: `Ghost List at ${formatClock(addMinutes(BASE_TIME, 90))}`,
         nextObligationSnippet:
-          "Family logistics will collide with office time later today.",
+          "A private gap is open and will close the moment someone audits the room.",
         recentEvents: [
-          "Slept lightly",
-          "Manager asked for a tighter budget pass",
-          "School reminder came in early",
+          "Borrowed access became available",
+          "A patron ledger surfaced your name",
+          "Two rooms asked for a version of you tonight",
         ],
-        priorities: ["Family", "Job stability", "Health"],
+        priorities: ["Access", "Leverage", "Control"],
         autonomyProfile:
-          "Medium autonomy, important only interruption, strict schedule protection",
-        policy: {
-          autonomy: "medium",
-          spendWithoutAsking: 140,
-          spendPreset: "custom",
-          interruptWhen: "important_only",
-          priorityBias: "family",
-          riskTolerance: "balanced",
-          scheduleProtection: "strict",
-          reportingFrequency: "standard",
-          escalationSensitivity: "normal",
-          ruleSummary: "Protect family commitments when work starts to sprawl.",
-        },
-        scheduleSummary:
-          "Balancing office work with school logistics and household handoffs.",
-        load: 53,
-      },
-      {
-        id: "maya",
-        name: "Maya",
-        role: "Freelancer",
-        subtitle: "Freelancer",
-        currentTask: "Client handoff prep",
-        currentTaskEnds: "13:00",
-        location: "Studio apartment",
-        stress: 62,
-        energy: 57,
-        cash: 230,
-        urgency: "urgent",
-        nextObligation: "Client handoff at 13:00",
-        nextObligationSnippet: "The delivery thread is live right now.",
-        recentEvents: [
-          "Vendor slipped the schedule",
-          "Cash flow is stable for now",
-          "Client is waiting on assets",
-        ],
-        priorities: ["Work", "Money", "Health"],
-        autonomyProfile:
-          "High autonomy, emergencies only interruption, flexible schedule protection",
+          "High autonomy, high-value openings only, guard coherence",
         policy: {
           autonomy: "high",
           spendWithoutAsking: 200,
           spendPreset: "200",
-          interruptWhen: "emergencies_only",
-          priorityBias: "money",
-          riskTolerance: "aggressive",
-          scheduleProtection: "flexible",
+          interruptWhen: "important_only",
+          priorityBias: "access",
+          riskTolerance: "balanced",
+          scheduleProtection: "strict",
           reportingFrequency: "minimal",
-          escalationSensitivity: "low",
-          ruleSummary: "",
+          escalationSensitivity: "normal",
+          ruleSummary:
+            "Trade comfort for structural advantage, but never accept leverage you do not understand.",
         },
         scheduleSummary:
-          "Protecting client reputation without burning the whole day on one crisis.",
-        load: 52,
+          "Moving through gatekeepers, hidden systems, and rooms that decide who gets written into the next order.",
+        load: 35,
       },
       {
-        id: "leo",
-        name: "Leo",
-        role: "Student",
-        subtitle: "Student",
-        currentTask: "Campus commute",
-        currentTaskEnds: "12:45",
-        location: "Dorm stop",
-        stress: 46,
+        id: "sia",
+        name: "Sia",
+        role: "The Signal",
+        subtitle: "Turns your life into work the next era cannot ignore.",
+        currentTask: "Tuning the unfinished debut",
+        currentTaskEnds: formatClock(addMinutes(BASE_TIME, 45)),
+        location: "Glasshouse rehearsal floor",
+        stress: 56,
         energy: 66,
-        cash: 48,
-        urgency: "normal",
-        nextObligation: "Chemistry lab at 13:00",
-        nextObligationSnippet: "Lab is still manageable if the commute holds.",
+        cash: 140,
+        urgency: "urgent",
+        nextObligation: `Unfinished Debut at ${formatClock(addMinutes(BASE_TIME, 60))}`,
+        nextObligationSnippet:
+          "The work can go live before it is safe, while attention is still unstable.",
         recentEvents: [
-          "Bus board is slipping",
-          "Group project still quiet",
-          "Shift starts tonight",
+          "A leak began breathing among tastemakers",
+          "A bigger name asked into the work",
+          "An afterhours slot opened out of nowhere",
         ],
-        priorities: ["School", "Work", "Relationships"],
+        priorities: ["Signal", "Myth", "Originality"],
         autonomyProfile:
-          "Medium autonomy, important only interruption, flexible schedule protection",
+          "High autonomy, any decisive shift, chase openings",
+        policy: {
+          autonomy: "high",
+          spendWithoutAsking: 50,
+          spendPreset: "50",
+          interruptWhen: "always",
+          priorityBias: "signal",
+          riskTolerance: "aggressive",
+          scheduleProtection: "opportunistic",
+          reportingFrequency: "detailed",
+          escalationSensitivity: "high",
+          ruleSummary:
+            "If the work can wound the room into remembering us, do not sand it down for safety.",
+        },
+        scheduleSummary:
+          "Moving between debut energy, leaking signal, and the danger of becoming unforgettable too early.",
+        load: 45,
+      },
+      {
+        id: "ren",
+        name: "Ren",
+        role: "The Gravity",
+        subtitle: "Makes powerful people begin arranging themselves around you.",
+        currentTask: "Reading the velvet room before the doors reset",
+        currentTaskEnds: formatClock(addMinutes(BASE_TIME, 30)),
+        location: "Velvet district antechamber",
+        stress: 48,
+        energy: 74,
+        cash: 260,
+        urgency: "urgent",
+        nextObligation: `Velvet Window at ${formatClock(addMinutes(BASE_TIME, 30))}`,
+        nextObligationSnippet:
+          "A room that never opens to newcomers is open, but not for long.",
+        recentEvents: [
+          "A constellation began to split",
+          "An impossible introduction came within reach",
+          "Someone central looked at you twice",
+        ],
+        priorities: ["Momentum", "Orbit", "Invitation"],
+        autonomyProfile:
+          "Medium autonomy, high-value openings only, stay fluid",
+        policy: {
+          autonomy: "medium",
+          spendWithoutAsking: 200,
+          spendPreset: "200",
+          interruptWhen: "important_only",
+          priorityBias: "momentum",
+          riskTolerance: "balanced",
+          scheduleProtection: "flexible",
+          reportingFrequency: "standard",
+          escalationSensitivity: "normal",
+          ruleSummary:
+            "Do not collect attention. Convert it into orbit around the people the future will bend through.",
+        },
+        scheduleSummary:
+          "Holding chemistry, status, and invitation at the exact moment rival circles are choosing sides.",
+        load: 37,
+      },
+      {
+        id: "vale",
+        name: "Vale",
+        role: "The Threshold",
+        subtitle: "Finds the crack through which tomorrow enters the city.",
+        currentTask: "Following a rumor with coordinates",
+        currentTaskEnds: formatClock(addMinutes(BASE_TIME, 75)),
+        location: "North tram undercroft",
+        stress: 51,
+        energy: 63,
+        cash: 90,
+        urgency: "high",
+        nextObligation: `Hidden circuit at ${formatClock(addMinutes(BASE_TIME, 105))}`,
+        nextObligationSnippet:
+          "A hidden floor, a dark prototype, and an ugly room all point to the same emerging scene.",
+        recentEvents: [
+          "A rumor gained coordinates",
+          "A stairwell opened where none should be",
+          "The future started in a room with bad lighting",
+        ],
+        priorities: ["Thresholds", "Discovery", "Destiny"],
+        autonomyProfile:
+          "Medium autonomy, any decisive shift, chase openings",
         policy: {
           autonomy: "medium",
           spendWithoutAsking: 50,
           spendPreset: "50",
-          interruptWhen: "important_only",
-          priorityBias: "work",
-          riskTolerance: "balanced",
-          scheduleProtection: "flexible",
-          reportingFrequency: "detailed",
+          interruptWhen: "always",
+          priorityBias: "integrity",
+          riskTolerance: "aggressive",
+          scheduleProtection: "opportunistic",
+          reportingFrequency: "standard",
           escalationSensitivity: "high",
-          ruleSummary: "",
+          ruleSummary:
+            "Go where tomorrow is leaking in, but do not let the strange thread tear the network apart.",
         },
         scheduleSummary:
-          "Trying to keep school, a shift, and basic wellbeing from colliding.",
-        load: 40,
+          "Sampling rumors, fringe signals, and unstable openings before anyone has named the scene.",
+        load: 44,
       },
     ],
-    inbox: [
-      {
-        id: "msg_1",
-        characterId: "maya",
-        senderName: "Maya",
-        type: "decision",
-        priority: "urgent",
-        subject: "Delivery Conflict",
-        body: "The supplier is delayed by about two hours. If I wait, I will likely miss the client handoff.",
-        preview:
-          "The supplier is delayed by about two hours. If I wait, I will likely miss the client handoff.",
-        createdAt: formatClock("2026-03-16T11:50:00.000Z"),
-        createdAtIso: "2026-03-16T11:50:00.000Z",
-        requiresResponse: true,
-        suggestedActions: [
-          { id: "switch_vendor", label: "Switch Vendor" },
-          { id: "wait_2h", label: "Wait 2h" },
-          { id: "reschedule_handoff", label: "Reschedule Handoff" },
-          { id: "ask_jordan", label: "Ask Jordan" },
-        ],
-        consequences: {
-          money: "medium",
-          stress: "low",
-          reputation: "high",
-          relationship: "none",
-          schedule: "high",
-        },
-      },
-      {
-        id: "msg_2",
-        characterId: "jordan",
-        senderName: "Jordan",
-        type: "decision",
-        priority: "high",
-        subject: "Pickup Coverage Question",
-        body: "If the budget review slips this afternoon, I should lock the family plan now instead of hoping it works itself out.",
-        preview:
-          "If the budget review slips this afternoon, I should lock the family plan now instead of hoping it works itself out.",
-        createdAt: formatClock("2026-03-16T11:55:00.000Z"),
-        createdAtIso: "2026-03-16T11:55:00.000Z",
-        requiresResponse: true,
-        suggestedActions: [
-          { id: "protect_pickup", label: "Protect Pickup" },
-          { id: "stay_flexible", label: "Stay Flexible" },
-          { id: "ask_maya", label: "Ask Maya" },
-        ],
-        consequences: {
-          stress: "medium",
-          relationship: "high",
-          schedule: "medium",
-        },
-      },
-      {
-        id: "msg_3",
-        characterId: "leo",
-        senderName: "Leo",
-        type: "status",
-        priority: "normal",
-        subject: "Late Bus to Campus",
-        body: "The campus shuttle is drifting. I should still make lab, but setup time is getting thinner.",
-        preview:
-          "The campus shuttle is drifting. I should still make lab, but setup time is getting thinner.",
-        createdAt: formatClock("2026-03-16T11:45:00.000Z"),
-        createdAtIso: "2026-03-16T11:45:00.000Z",
-        requiresResponse: false,
-        suggestedActions: [
-          { id: "acknowledge", label: "Acknowledge" },
-          { id: "call_rideshare", label: "Call a Rideshare" },
-        ],
-        consequences: {
-          money: "low",
-          stress: "medium",
-          schedule: "medium",
-        },
-      },
-    ],
+    inbox: initialAscensionMessageIds.map((id) =>
+      deckMessageToInbox(id, BASE_TIME),
+    ),
+    cityState: structuredClone(seedCityState),
     worldSummary: {
       urgentCount: 0,
       activeThreads: 0,
       upcomingObligations: [],
-      risks: {
-        money: "low",
-        relationship: "low",
-        health: "low",
-        schedule: "low",
+      axes: {
+        access: 0,
+        momentum: 0,
+        signal: 0,
+        integrity: 0,
       },
+      pressures: {
+        risk: "low",
+        socialDebt: "low",
+        rivalAttention: "low",
+        windowNarrowing: "low",
+      },
+      worldPulse: [],
+      rivalStatus: "",
     },
   };
 
@@ -752,83 +804,197 @@ function buildSeedGame(gameId: string): GameState {
 }
 
 function buildMockSummary(game: GameState, actionId = "", overrideText = "") {
-  let summary = "Attention is distributed across three unstable lives.";
+  let summary =
+    "The city is reordering itself, and no one with only one life can shape what comes next.";
+
   if (actionId) {
-    summary += ` Last decision: ${actionId.replaceAll("_", " ")}.`;
+    summary += ` Last directive: ${humanizeActionId(actionId)}.`;
   }
+
   if (overrideText) {
-    summary += ` Override sent: ${overrideText}.`;
+    summary += ` Custom directive sent: ${overrideText}.`;
   }
+
+  summary += ` Access ${game.cityState.access}. Momentum ${game.cityState.momentum}. Signal ${game.cityState.signal}. Integrity ${game.cityState.integrity}.`;
   return summary;
 }
 
 function spawnMockFollowups(game: GameState) {
-  if (
-    game.tickCount >= 4 &&
-    !game.inbox.some((message) => message.id === "msg_followup_maya")
-  ) {
-    game.inbox.push({
-      id: "msg_followup_maya",
-      characterId: "maya",
-      senderName: "Maya",
-      type: "decision",
-      priority: "urgent",
-      subject: "Client Window Is Closing",
-      body: "I can still preserve the handoff if I spend extra and reroute now.",
-      preview:
-        "I can still preserve the handoff if I spend extra and reroute now.",
-      createdAt: formatClock(game.currentTimeIso),
-      createdAtIso: game.currentTimeIso,
-      requiresResponse: true,
-      suggestedActions: [
-        { id: "approve_spend", label: "Approve Spend" },
-        { id: "delay_handoff", label: "Delay Handoff" },
-        { id: "ask_jordan", label: "Ask Jordan" },
-      ],
-      consequences: {
-        money: "high",
-        stress: "medium",
-        reputation: "high",
-        schedule: "high",
-      },
-    });
-  }
+  const unlocked = ascensionDeck.filter(
+    (seed) =>
+      seed.unlockAtTick > 0 &&
+      seed.unlockAtTick <= game.tickCount &&
+      !game.inbox.some((message) => message.id === seed.id),
+  );
 
-  if (
-    game.tickCount >= 8 &&
-    !game.inbox.some((message) => message.id === "msg_followup_jordan")
-  ) {
-    game.inbox.push({
-      id: "msg_followup_jordan",
-      characterId: "jordan",
-      senderName: "Jordan",
-      type: "decision",
-      priority: "high",
-      subject: "Pickup Plan Needs Locking",
-      body: "The calendar is getting tighter. If you want family protected, I should commit now.",
-      preview:
-        "The calendar is getting tighter. If you want family protected, I should commit now.",
-      createdAt: formatClock(game.currentTimeIso),
-      createdAtIso: game.currentTimeIso,
-      requiresResponse: true,
-      suggestedActions: [
-        { id: "protect_pickup", label: "Protect Pickup" },
-        { id: "stay_flexible", label: "Stay Flexible" },
-      ],
-      consequences: {
-        relationship: "high",
-        stress: "medium",
-        schedule: "medium",
-      },
-    });
+  for (const seed of unlocked) {
+    game.inbox.unshift(deckMessageToInbox(seed.id, game.currentTimeIso));
   }
 }
 
+function deckMessageToInbox(messageId: string, createdAtIso: string) {
+  const seed = ascensionDeck.find((entry) => entry.id === messageId);
+  if (!seed) {
+    throw new Error(`Unknown deck message ${messageId}`);
+  }
+
+  const resolvedCreatedAtIso =
+    createdAtIso === BASE_TIME
+      ? addMinutes(BASE_TIME, seed.createdOffsetMinutes)
+      : createdAtIso;
+
+  return {
+    id: seed.id,
+    characterId: seed.characterId,
+    senderName: seed.senderName,
+    type: seed.type,
+    priority: seed.priority,
+    subject: seed.subject,
+    body: seed.body,
+    preview: seed.preview,
+    createdAt: formatClock(resolvedCreatedAtIso),
+    createdAtIso: resolvedCreatedAtIso,
+    requiresResponse: seed.requiresResponse,
+    suggestedActions: structuredClone(seed.suggestedActions),
+    consequences: structuredClone(seed.consequences),
+    tags: structuredClone(seed.tags ?? []),
+    followupHooks: structuredClone(seed.followupHooks ?? []),
+  } satisfies InboxMessageView;
+}
+
+function applyCharacterOutcome(character: CharacterView, actionId: string) {
+  let stressDelta = -4;
+  let energyDelta = -2;
+
+  if (matchesAction(actionId, ["wait", "hold", "save", "verify", "watch"])) {
+    stressDelta = -1;
+    energyDelta = 1;
+  } else if (
+    matchesAction(actionId, [
+      "split",
+      "reveal",
+      "enter",
+      "take",
+      "touch",
+      "move",
+      "claim",
+      "back",
+      "collaborate",
+    ])
+  ) {
+    stressDelta = 2;
+    energyDelta = -4;
+  } else if (matchesAction(actionId, ["decline", "leave", "refuse", "deny"])) {
+    stressDelta = -2;
+    energyDelta = 1;
+  }
+
+  character.stress = clamp(character.stress + stressDelta, 0, 100);
+  character.energy = clamp(character.energy + energyDelta, 0, 100);
+  character.load = clamp(
+    Math.round((character.stress + (100 - character.energy)) / 2),
+    0,
+    100,
+  );
+}
+
+function applyCityOutcome(
+  game: GameState,
+  message: InboxMessageView,
+  actionId: string,
+  overrideText: string,
+) {
+  const seed = ascensionDeck.find((entry) => entry.id === message.id);
+  const delta: CityDelta =
+    (seed?.actionImpacts?.[actionId] as CityDelta | undefined) ??
+    genericActionImpact(actionId);
+
+  for (const key of cityKeys) {
+    if (delta[key] == null) continue;
+    game.cityState[key] = clamp(game.cityState[key] + (delta[key] ?? 0), 0, 100);
+  }
+
+  if (overrideText) {
+    game.cityState.signal = clamp(game.cityState.signal + 1, 0, 100);
+  }
+
+  if (message.consequences.risk) {
+    game.cityState.risk = clamp(
+      game.cityState.risk - riskScore(message.consequences.risk),
+      0,
+      100,
+    );
+  }
+
+  game.cityState.rivalStatus = rivalStatusFor(game.cityState.rivalAttention);
+}
+
+function genericActionImpact(actionId: string): CityDelta {
+  if (matchesAction(actionId, ["claim", "enter", "take", "move", "convert"])) {
+    return {
+      access: 4,
+      momentum: 4,
+      integrity: -1,
+      rivalAttention: 2,
+    };
+  }
+
+  if (matchesAction(actionId, ["reveal", "feed", "inhabit", "collaborate"])) {
+    return {
+      signal: 5,
+      momentum: 2,
+      rivalAttention: 3,
+      integrity: -1,
+    };
+  }
+
+  if (matchesAction(actionId, ["verify", "refine", "correct", "save"])) {
+    return {
+      integrity: 3,
+      momentum: -1,
+    };
+  }
+
+  if (matchesAction(actionId, ["decline", "leave", "deny", "refuse"])) {
+    return {
+      integrity: 2,
+      access: -2,
+      signal: -1,
+      windowNarrowing: 2,
+    };
+  }
+
+  if (matchesAction(actionId, ["wait", "hold", "watch"])) {
+    return {
+      integrity: 1,
+      momentum: -2,
+      rivalAttention: 1,
+    };
+  }
+
+  return {
+    momentum: 1,
+  };
+}
+
 function formatRole(role: string) {
-  if (role === "office-worker-parent") return "Office worker parent";
-  if (role === "freelancer") return "Freelancer";
-  if (role === "student") return "Student";
+  if (role === "architect") return "The Architect";
+  if (role === "signal") return "The Signal";
+  if (role === "gravity") return "The Gravity";
+  if (role === "threshold") return "The Threshold";
   return role.replaceAll("-", " ");
+}
+
+function subtitleForRole(role: string) {
+  if (role === "architect")
+    return "Secures structural advantage through quiet leverage.";
+  if (role === "signal")
+    return "Creates the work the next era cannot ignore.";
+  if (role === "gravity")
+    return "Turns attention into orbit and allegiance.";
+  if (role === "threshold")
+    return "Finds tomorrow while it is still deniable.";
+  return formatRole(role);
 }
 
 function normalizePriority(
@@ -847,42 +1013,59 @@ function normalizeMessageType(
   if (requiresResponse) return "decision";
   if (type === "update") return "status";
   if (type === "summary") return "social";
-  return "interruption";
+  if (type === "alert") return "interruption";
+  return "opportunity";
 }
 
 function normalizeActions(rawActions: RawInboxMessage["suggestedActions"]) {
   return rawActions.map((action) =>
     typeof action === "string"
-      ? { id: toActionId(action), label: action }
-      : { id: action.id ?? toActionId(action.label), label: action.label },
+      ? { id: action.toLowerCase().replaceAll(/\s+/g, "_"), label: action }
+      : {
+          id: action.id ?? action.label.toLowerCase().replaceAll(/\s+/g, "_"),
+          label: action.label,
+        },
   );
 }
 
 function defaultConsequences(priority: PriorityLevel) {
   if (priority === "urgent") {
-    return { money: "medium", schedule: "high", stress: "medium" } as const;
+    return {
+      momentum: "high",
+      integrity: "medium",
+      rivalAttention: "medium",
+    } as const;
   }
   if (priority === "high") {
-    return { schedule: "medium", stress: "medium" } as const;
+    return {
+      momentum: "medium",
+      risk: "medium",
+    } as const;
   }
-  return { schedule: "low" } as const;
+  return { momentum: "low" } as const;
 }
 
 function describeAutonomyProfile(policy: PolicySettings) {
-  return `${capitalize(policy.autonomy)} autonomy, ${policy.interruptWhen.replaceAll(
-    "_",
-    " ",
-  )} interruption, ${capitalize(policy.scheduleProtection)} schedule protection`;
+  const interruptLabel =
+    policy.interruptWhen === "always"
+      ? "any decisive shift"
+      : policy.interruptWhen === "important_only"
+        ? "high-value openings only"
+        : "coherence breaks only";
+  const scheduleLabel =
+    policy.scheduleProtection === "strict"
+      ? "guard coherence"
+      : policy.scheduleProtection === "opportunistic"
+        ? "chase openings"
+        : "stay fluid";
+
+  return `${capitalize(policy.autonomy)} autonomy, ${interruptLabel}, ${scheduleLabel}`;
 }
 
 function characterPriorities(rawCharacter: RawCharacter) {
-  const priorities = [
-    rawCharacter.policies.priorityBias === "family"
-      ? "Family"
-      : capitalize(rawCharacter.policies.priorityBias),
-  ];
+  const priorities = [capitalize(rawCharacter.policies.priorityBias)];
   for (const obligation of rawCharacter.obligations) {
-    const label = capitalize(obligation);
+    const label = capitalize(obligation.replaceAll("-", " "));
     if (!priorities.includes(label)) priorities.push(label);
     if (priorities.length >= 3) break;
   }
@@ -898,7 +1081,7 @@ function recentEvents(events: RawEvent[], characterId: string) {
 
   return entries.length > 0
     ? entries
-    : ["No major interruptions yet", "Routine still holding"];
+    : ["No decisive openings yet", "The city is still rearranging itself"];
 }
 
 function characterUrgency(
@@ -913,73 +1096,108 @@ function characterUrgency(
     .map((message) => normalizePriority(message.priority))
     .sort((left, right) => priorityRank(left) - priorityRank(right))[0];
 
-  if (messagePriority && priorityRank(messagePriority) <= 1)
+  if (messagePriority && priorityRank(messagePriority) <= 1) {
     return messagePriority;
+  }
   if (rawCharacter.stress >= 80) return "urgent";
   if (rawCharacter.stress >= 60) return "high";
   if (rawCharacter.energy <= 35) return "normal";
   return "low";
 }
 
-function healthRisk(characters: CharacterView[]): RiskLevel {
-  if (
-    characters.some(
-      (character) => character.stress >= 80 || character.energy <= 30,
-    )
-  ) {
-    return "high";
+function inferCityState(
+  rawWorld: RawWorldState,
+  characters: CharacterView[],
+  inbox: InboxMessageView[],
+): CityState {
+  const unresolved = filterInboxMessages(inbox, "All", rawWorld.currentTime);
+  const accessPressure = riskRank(highestConsequence(unresolved, "access"));
+  const signalPressure = riskRank(highestConsequence(unresolved, "signal"));
+  const riskPressure = riskRank(highestConsequence(unresolved, "risk"));
+  const debtPressure = riskRank(highestConsequence(unresolved, "socialDebt"));
+  const rivalPressure = riskRank(
+    highestConsequence(unresolved, "rivalAttention"),
+  );
+  const values = {
+    access: 42 + accessPressure * 6,
+    momentum: 40 + unresolved.length * 2,
+    signal: 36 + signalPressure * 7,
+    integrity:
+      72 -
+      Math.round(
+        characters.reduce((sum, character) => sum + character.stress, 0) /
+          Math.max(1, characters.length) /
+          2,
+      ),
+    risk: 34 + riskPressure * 8,
+    socialDebt: 22 + debtPressure * 8,
+    rivalAttention: 28 + rivalPressure * 9,
+    windowNarrowing: 36 + Math.min(18, rawWorld.tickCount * 2),
+  };
+
+  return {
+    ...Object.fromEntries(
+      [...axisKeys, ...pressureKeys].map((key) => [
+        key,
+        clamp(values[key], 0, 100),
+      ]),
+    ),
+    worldPulse: [
+      "Power, culture, and technology are changing hands at once.",
+      "Rival circles are searching for figures to anchor themselves to.",
+      "A hidden circuit is briefly accessible.",
+    ],
+    rivalStatus: rivalStatusFor(values.rivalAttention),
+  } as CityState;
+}
+
+function standingRuleFor(axis: WorldAxis) {
+  switch (axis) {
+    case "access":
+      return "Enter cleanly or do not enter at all.";
+    case "momentum":
+      return "Do not let the room cool while the city is choosing.";
+    case "signal":
+      return "Make work they cannot reorganize around without naming us.";
+    case "integrity":
+      return "Protect coherence before brilliance turns into fragmentation.";
   }
-  if (
-    characters.some(
-      (character) => character.stress >= 65 || character.energy <= 45,
-    )
-  ) {
-    return "medium";
-  }
-  return "low";
+}
+
+function pressureFromSources(
+  baseValue: number,
+  messages: InboxMessageView[],
+  key: keyof InboxMessageView["consequences"],
+): RiskLevel {
+  const messagePressure = highestConsequence(messages, key);
+  const basePressure = levelFromValue(baseValue);
+  return riskRank(messagePressure) > riskRank(basePressure)
+    ? messagePressure
+    : basePressure;
 }
 
 function highestConsequence(
   messages: InboxMessageView[],
   key: keyof InboxMessageView["consequences"],
-  rawTasks?: RawTask[],
-  taskKind?: string,
-): RiskLevel {
-  const messageLevel = messages.reduce<RiskLevel>((best, message) => {
+) {
+  return messages.reduce<RiskLevel>((best, message) => {
     const next = message.consequences[key] ?? "none";
     return riskRank(next) > riskRank(best) ? next : best;
   }, "none");
-
-  if (messageLevel !== "none") return messageLevel;
-  if (
-    rawTasks?.some(
-      (task) => task.kind === taskKind && task.status !== "completed",
-    )
-  ) {
-    return "medium";
-  }
-  return "low";
 }
 
-function scheduleRisk(
-  messages: InboxMessageView[],
-  tasks?: RawTask[],
-): RiskLevel {
-  const consequenceLevel = messages.reduce<RiskLevel>((best, message) => {
-    const next = message.consequences.schedule ?? "none";
-    return riskRank(next) > riskRank(best) ? next : best;
-  }, "none");
+function levelFromValue(value: number): RiskLevel {
+  if (value >= 75) return "high";
+  if (value >= 45) return "medium";
+  if (value >= 15) return "low";
+  return "none";
+}
 
-  if (consequenceLevel === "high" || consequenceLevel === "medium") {
-    return consequenceLevel;
-  }
-
-  const activeMandatory =
-    tasks?.filter((task) => task.mandatory && task.status !== "completed")
-      .length ?? 0;
-  if (activeMandatory >= 2) return "high";
-  if (activeMandatory === 1) return "medium";
-  return "low";
+function riskScore(level: RiskLevel) {
+  if (level === "high") return 6;
+  if (level === "medium") return 3;
+  if (level === "low") return 1;
+  return 0;
 }
 
 function riskRank(level: RiskLevel) {
@@ -987,6 +1205,25 @@ function riskRank(level: RiskLevel) {
   if (level === "medium") return 2;
   if (level === "low") return 1;
   return 0;
+}
+
+function rivalStatusFor(rivalAttention: number) {
+  if (rivalAttention >= 75) {
+    return "Another circle is claiming openings before the room can cool.";
+  }
+  if (rivalAttention >= 50) {
+    return "Rival movement detected around the same decisive rooms.";
+  }
+  return "Rivals are watching, but they have not yet fixed the story.";
+}
+
+function matchesAction(actionId: string, tokens: string[]) {
+  const normalized = actionId.toLowerCase();
+  return tokens.some((token) => normalized.includes(token));
+}
+
+function humanizeActionId(actionId: string) {
+  return actionId.replaceAll("_", " ").replaceAll("-", " ");
 }
 
 function addMinutes(raw: string, minutes: number) {

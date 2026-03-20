@@ -18,13 +18,13 @@ export function CharacterList({
     <div className="space-y-4">
       <SectionHeader
         eyebrow="Who"
-        title="Lives in Motion"
+        title="Selves in Motion"
         detail={`${characters.length} active`}
       />
       {characters.length === 0 ? (
         <EmptyState
           title="No lives loaded"
-          body="Create a new game to start triaging the household."
+          body="Create a new run to start triaging the Ascension Window."
         />
       ) : (
         <div className="space-y-3">

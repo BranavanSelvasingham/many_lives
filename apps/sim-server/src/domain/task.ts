@@ -1,12 +1,10 @@
 export type TaskKind =
-  | "work"
-  | "family"
-  | "health"
-  | "money"
-  | "study"
+  | "access"
+  | "momentum"
+  | "signal"
+  | "integrity"
   | "travel"
-  | "rest"
-  | "errand";
+  | "recovery";
 
 export type TaskStatus = "pending" | "active" | "completed" | "missed";
 

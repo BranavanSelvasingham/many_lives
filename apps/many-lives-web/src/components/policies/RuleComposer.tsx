@@ -15,9 +15,9 @@ export function RuleComposer({
   value,
   onChange,
   examples = [],
-  title = "Set As Policy",
-  description = "Turn this decision into a standing rule for future situations.",
-  saveLabel = "Save Rule",
+  title = "Make This A Standing Instinct",
+  description = "Turn this thread into a default reflex for future openings.",
+  saveLabel = "Save Instinct",
   onSave,
   onCancel,
 }: RuleComposerProps) {
@@ -66,7 +66,7 @@ export function RuleComposer({
         onChange={(event) => onChange(event.target.value)}
         rows={2}
         className="w-full border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-3 text-[0.95rem] leading-6 text-[color:var(--text-main)] outline-none"
-        placeholder="Ask only if family schedule is affected."
+        placeholder="Escalate if a rival can claim the opening before we do."
       />
       {onSave || onCancel ? (
         <div className="flex items-center justify-end gap-2">
@@ -83,7 +83,7 @@ export function RuleComposer({
             <button
               type="button"
               onClick={onSave}
-              className="border border-[color:var(--border-subtle)] bg-[#e7e7e4] px-3 py-2 text-[0.95rem] font-medium text-[color:var(--text-main)]"
+              className="border border-[color:var(--border-subtle)] bg-[color:var(--button-primary)] px-3 py-2 text-[0.95rem] font-medium text-[color:var(--button-primary-text)]"
             >
               {saveLabel}
             </button>

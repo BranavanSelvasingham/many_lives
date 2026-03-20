@@ -1,8 +1,8 @@
 # Many Lives
 
-Many Lives is a web-first prototype for an asynchronous life-management sim. You manage several semi-autonomous lives through an attention dashboard: triage inbox threads, step in on unstable decisions, and train autonomy with standing policies and lightweight rules.
+Many Lives is a web-first narrative strategy prototype set during a rare Ascension Window, a volatile period when the city is reordering itself. You manage several semi-autonomous selves through an attention dashboard: triage decisive threads, step into dangerous openings, and shape standing instincts before your lives splinter into leverage, myth, or ruin.
 
-This vertical slice is intentionally desktop-first and mock-first. The inbox is the heartbeat, the right panel is the active decision or policy surface, and the bottom strip keeps time and world pressure visible while you work.
+This vertical slice is intentionally desktop-first and mock-first. The attention feed is the heartbeat, the right panel holds the active opening or policy surface, and the bottom strip keeps city-scale pressure visible while you work.
 
 ## Prototype Pillars
 
@@ -67,7 +67,7 @@ Mock mode is the default fallback if the backend cannot be reached.
 - The UI shows a subtle `Mock Mode` indicator so the app still feels intentional instead of broken.
 - Mock state stays playable during the session: ticking time spawns follow-ups, actions resolve threads, and policy changes persist in memory.
 
-The mock seed currently starts with Jordan, Maya, and Leo already under pressure so the inbox loop is demo-ready immediately.
+The mock seed starts during the Ascension Window with Ivo, Sia, Ren, and Vale already in motion so the inbox loop is hot immediately.
 
 ## Backend Mode
 
@@ -88,10 +88,10 @@ The web app reaches those routes through the Next.js proxy layer in [client.ts](
 
 ## Dashboard Model
 
-- Left rail: character triage and pressure read.
-- Center panel: inbox filters, counts, and thread cards.
-- Right panel: selected message detail first, otherwise character detail plus policy.
-- Bottom strip: world time, thread pressure, upcoming obligation, risk read, and tick controls.
+- Left rail: self triage and pressure read.
+- Center panel: attention feed filters, counts, and thread cards.
+- Right panel: scenario framing, selected thread detail first, otherwise self detail plus policy.
+- Bottom strip: world time, Access, Momentum, Signal, Integrity, rival pressure, next opening, and tick controls.
 
 Right-panel priority is deliberate:
 

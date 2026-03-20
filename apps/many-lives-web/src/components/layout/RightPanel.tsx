@@ -1,9 +1,16 @@
 import { CharacterDetailView } from "@/components/characters/CharacterDetailView";
 import { MessageDetailPanel } from "@/components/inbox/MessageDetailPanel";
 import { PolicyPanel } from "@/components/policies/PolicyPanel";
-import type { CharacterView, InboxMessageView, PolicySettings } from "@/lib/types/game";
+import { ScenarioContextCard } from "@/components/world/ScenarioContextCard";
+import type {
+  CharacterView,
+  GameState,
+  InboxMessageView,
+  PolicySettings,
+} from "@/lib/types/game";
 
 interface RightPanelProps {
+  game: GameState | null;
   mode: "message" | "character";
   character: CharacterView | null;
   message: InboxMessageView | null;
@@ -24,6 +31,7 @@ interface RightPanelProps {
 }
 
 export function RightPanel({
+  game,
   mode,
   character,
   message,
@@ -44,30 +52,38 @@ export function RightPanel({
 }: RightPanelProps) {
   if (mode === "message") {
     return (
-      <MessageDetailPanel
-        key={message?.id ?? "message-empty"}
-        message={message}
-        characters={characters}
-        draftOverrideText={draftOverrideText}
-        ruleComposerDraft={ruleComposerDraft}
-        isRuleComposerOpen={isRuleComposerOpen}
-        onClose={onCloseMessage}
-        onOverrideChange={onOverrideChange}
-        onSendDecision={onResolveMessage}
-        onSnooze={onSnoozeMessage}
-        onDelegate={onDelegateMessage}
-        onOpenRuleComposer={onOpenRuleComposer}
-        onCloseRuleComposer={onCloseRuleComposer}
-        onRuleComposerChange={onRuleComposerChange}
-        onSaveRuleDraft={onSaveRuleDraft}
-      />
+      <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
+        <ScenarioContextCard game={game} />
+        <MessageDetailPanel
+          key={message?.id ?? "message-empty"}
+          message={message}
+          characters={characters}
+          draftOverrideText={draftOverrideText}
+          ruleComposerDraft={ruleComposerDraft}
+          isRuleComposerOpen={isRuleComposerOpen}
+          onClose={onCloseMessage}
+          onOverrideChange={onOverrideChange}
+          onSendDecision={onResolveMessage}
+          onSnooze={onSnoozeMessage}
+          onDelegate={onDelegateMessage}
+          onOpenRuleComposer={onOpenRuleComposer}
+          onCloseRuleComposer={onCloseRuleComposer}
+          onRuleComposerChange={onRuleComposerChange}
+          onSaveRuleDraft={onSaveRuleDraft}
+        />
+      </div>
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1">
+      <ScenarioContextCard game={game} />
       <CharacterDetailView character={character} />
-      <PolicyPanel key={character?.id ?? "no-character"} character={character} onSave={onSavePolicy} />
+      <PolicyPanel
+        key={character?.id ?? "no-character"}
+        character={character}
+        onSave={onSavePolicy}
+      />
     </div>
   );
 }

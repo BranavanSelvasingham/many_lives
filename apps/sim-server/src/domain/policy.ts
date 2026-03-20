@@ -1,4 +1,4 @@
-export type PriorityBias = "work" | "family" | "health" | "money";
+export type PriorityBias = "access" | "momentum" | "signal" | "integrity";
 export type ReportingFrequency = "low" | "normal" | "high";
 
 export interface PolicySettings {
@@ -14,7 +14,7 @@ export const DEFAULT_POLICY: PolicySettings = {
   spendingLimit: 100,
   escalationThreshold: 3,
   reportingFrequency: "normal",
-  priorityBias: "work",
+  priorityBias: "momentum",
 };
 
 export function normalizePolicySettings(

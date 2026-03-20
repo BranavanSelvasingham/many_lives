@@ -17,16 +17,22 @@ export function TimelineStrip({
   onTick,
 }: TimelineStripProps) {
   const summary = game?.worldSummary;
-  const nextObligation =
-    summary?.upcomingObligations[0] ?? "No immediate obligation";
+  const nextOpening = summary?.upcomingObligations[0] ?? "No decisive opening locked";
 
   return (
     <div className="overflow-x-auto border-t border-[color:var(--border-subtle)] pt-3">
       <div className="flex min-w-max items-stretch border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)]">
-        <StripBlock value={formatWorldTime(game?.currentTimeIso ?? "")} />
-        <StripBlock value={`Urgent: ${summary?.urgentCount ?? 0}`} />
-        <StripBlock value={`Threads: ${summary?.activeThreads ?? 0}`} />
-        <StripBlock value={`Next: ${nextObligation}`} wide />
+        <StripBlock label="World Time" value={formatWorldTime(game?.currentTimeIso ?? "")} />
+        <StripBlock label="Access" value={`${summary?.axes.access ?? 0}`} />
+        <StripBlock label="Momentum" value={`${summary?.axes.momentum ?? 0}`} />
+        <StripBlock label="Signal" value={`${summary?.axes.signal ?? 0}`} />
+        <StripBlock label="Integrity" value={`${summary?.axes.integrity ?? 0}`} />
+        <StripBlock
+          label="Rival Pressure"
+          value={summary?.rivalStatus ?? "No world loaded"}
+          wide
+        />
+        <StripBlock label="Next Opening" value={nextOpening} wide />
         <div className="flex items-center gap-2 border-l border-[color:var(--border-subtle)] px-3 py-2">
           {game?.source === "mock" ? (
             <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] px-3 py-2 text-[0.95rem] text-[color:var(--text-main)]">
@@ -34,15 +40,15 @@ export function TimelineStrip({
             </div>
           ) : null}
           <ControlButton disabled={busy} onClick={onNewGame}>
-            New Game
+            New Run
           </ControlButton>
           <ControlButton disabled={busy || !game} onClick={() => onTick(30)}>
-            ≪ Tick 30m
+            Advance 30m
           </ControlButton>
           <ControlButton disabled={busy || !game} onClick={() => onTick(120)}>
-            ≫ Tick 2h
+            Advance 2h
           </ControlButton>
-          <ControlButton disabled>▮▮</ControlButton>
+          <ControlButton disabled>Hold</ControlButton>
         </div>
       </div>
     </div>
@@ -50,18 +56,24 @@ export function TimelineStrip({
 }
 
 interface StripBlockProps {
+  label: string;
   value: string;
   wide?: boolean;
 }
 
-function StripBlock({ value, wide = false }: StripBlockProps) {
+function StripBlock({ label, value, wide = false }: StripBlockProps) {
   return (
     <div
-      className={`border-r border-[color:var(--border-subtle)] px-6 py-3 text-[1rem] text-[color:var(--text-main)] ${
+      className={`space-y-1 border-r border-[color:var(--border-subtle)] px-6 py-3 ${
         wide ? "min-w-[340px]" : "min-w-[160px]"
       }`}
     >
-      {value || "No world loaded"}
+      <div className="text-[0.72rem] uppercase tracking-[0.14em] text-[color:var(--text-dim)]">
+        {label}
+      </div>
+      <div className="text-[1rem] text-[color:var(--text-main)]">
+        {value || "No world loaded"}
+      </div>
     </div>
   );
 }

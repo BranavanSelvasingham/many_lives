@@ -22,7 +22,7 @@ import { buildPolicyPatchFromDraft } from "@/lib/utils/mockData";
 import {
   buildInboxTabCounts,
   filterInboxMessages,
-  findFirstUrgentMessage,
+  findDefaultMessage,
 } from "@/lib/utils/priorities";
 
 export function AppShell() {
@@ -88,8 +88,8 @@ export function AppShell() {
         : {
             All: 0,
             Urgent: 0,
-            Waiting: 0,
-            Reports: 0,
+            Pending: 0,
+            Signals: 0,
           },
     [game],
   );
@@ -112,8 +112,7 @@ export function AppShell() {
   );
 
   const fallbackMessage = useMemo(
-    () =>
-      game ? findFirstUrgentMessage(game.inbox, game.currentTimeIso) ?? null : null,
+    () => (game ? findDefaultMessage(game.inbox, game.currentTimeIso) : null),
     [game],
   );
 
@@ -200,6 +199,7 @@ export function AppShell() {
           </div>
           <div className="min-h-0 lg:col-span-2 xl:col-span-1">
             <RightPanel
+              game={game}
               mode={rightPanelMode}
               character={rightPanelCharacter}
               message={rightPanelMessage}

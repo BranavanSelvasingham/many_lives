@@ -11,7 +11,7 @@ export function CharacterDetailView({ character }: CharacterDetailViewProps) {
     return (
       <Card tone="panel">
         <div className="text-[1rem] text-[color:var(--text-muted)]">
-          No character selected
+          No self selected
         </div>
       </Card>
     );
@@ -21,7 +21,7 @@ export function CharacterDetailView({ character }: CharacterDetailViewProps) {
     <Card tone="panel" className="space-y-4">
       <div className="border-b border-[color:var(--border-subtle)] pb-3">
         <div className="text-[1.1rem] font-semibold uppercase tracking-[0.03em] text-[color:var(--text-main)]">
-          Character Detail
+          Self Detail
         </div>
       </div>
       <div>
@@ -37,12 +37,15 @@ export function CharacterDetailView({ character }: CharacterDetailViewProps) {
         <PillTag label={character.urgency} tone={character.urgency} />
       </div>
       <div className="grid gap-3 border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-4">
-        <SummaryRow label="Current task" value={character.currentTask} />
-        <SummaryRow label="Next obligation" value={character.nextObligation} />
-        <SummaryRow label="Stress" value={`${Math.round(character.stress)}`} />
-        <SummaryRow label="Energy" value={`${Math.round(character.energy)}`} />
-        <SummaryRow label="Priorities" value={character.priorities.join(", ")} />
-        <SummaryRow label="Recent events" value={character.recentEvents.join(" • ")} />
+        <SummaryRow label="Current thread" value={character.currentTask} />
+        <SummaryRow label="Next opening" value={character.nextObligation} />
+        <SummaryRow label="Strain" value={`${Math.round(character.stress)}`} />
+        <SummaryRow label="Focus" value={`${Math.round(character.energy)}`} />
+        <SummaryRow label="Primary pulls" value={character.priorities.join(", ")} />
+        <SummaryRow
+          label="Recent signs"
+          value={character.recentEvents.join(" • ")}
+        />
       </div>
     </Card>
   );

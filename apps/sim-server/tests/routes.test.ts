@@ -85,7 +85,7 @@ describe("HTTP routes", () => {
       method: "POST",
       url: `/game/${createdGame.id}/policy`,
       payload: {
-        characterId: "jordan",
+        characterId: "ivo",
         policy: {
           spendingLimit: 50,
         },
@@ -97,7 +97,7 @@ describe("HTTP routes", () => {
       policyResponse
         .json()
         .game.characters.find(
-          (character: { id: string }) => character.id === "jordan",
+          (character: { id: string }) => character.id === "ivo",
         )?.policies.spendingLimit,
     ).toBe(50);
   });

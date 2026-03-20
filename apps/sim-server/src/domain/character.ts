@@ -1,6 +1,6 @@
 import type { PolicySettings } from "./policy.js";
 
-export type CharacterRole = "office-worker-parent" | "freelancer" | "student";
+export type CharacterRole = "architect" | "signal" | "gravity" | "threshold";
 
 export interface Character {
   id: string;

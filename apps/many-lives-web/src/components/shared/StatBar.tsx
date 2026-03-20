@@ -7,10 +7,14 @@ interface StatBarProps {
 }
 
 const toneClasses: Record<string, string> = {
-  urgent: "bg-[#e3d06f]",
-  high: "bg-[#dbdbd4]",
-  normal: "bg-[#c9c9c3]",
-  low: "bg-[#d9d9d3]",
+  urgent: "bg-[#d8b867]",
+  high: "bg-[#8f6f44]",
+  normal: "bg-[#5b6673]",
+  low: "bg-[#3d4650]",
+  access: "bg-[#c4a15d]",
+  momentum: "bg-[#7c9ab4]",
+  signal: "bg-[#b77870]",
+  integrity: "bg-[#6d8a72]",
 };
 
 export function StatBar({ label, value, tone = "normal" }: StatBarProps) {
@@ -24,7 +28,7 @@ export function StatBar({ label, value, tone = "normal" }: StatBarProps) {
           {Math.round(value)}
         </span>
       </div>
-      <div className="h-3 overflow-hidden border border-[color:var(--border-subtle)] bg-[#f4f4f1]">
+      <div className="h-3 overflow-hidden border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)]">
         <div
           className={cx(
             "h-full transition-all",

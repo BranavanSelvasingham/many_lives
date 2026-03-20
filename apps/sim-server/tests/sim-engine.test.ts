@@ -29,26 +29,36 @@ describe("SimulationEngine ticking", () => {
     const world = await engine.createGame("game-travel");
 
     const nextWorld = await engine.tick(world, 4);
-    const standupTask = nextWorld.tasks.find(
-      (task) => task.id === "task-jordan-standup",
+    const windowTask = nextWorld.tasks.find(
+      (task) => task.id === "task-ren-velvet-window",
     );
-    const missedStandup = nextWorld.events.find(
+    const missedWindow = nextWorld.events.find(
       (event) =>
         event.type === "obligation_missed" &&
-        event.relatedTaskId === "task-jordan-standup",
+        event.relatedTaskId === "task-ren-velvet-window",
     );
 
-    expect(standupTask?.status).toBe("completed");
-    expect(missedStandup).toBeUndefined();
+    expect(windowTask?.status).toBe("completed");
+    expect(missedWindow).toBeUndefined();
   });
 
   it("keeps routine task progress out of the inbox", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     const world = await engine.createGame("game-quiet-inbox");
-    const initialInboxCount = world.inbox.length;
 
     const nextWorld = await engine.tick(world, 4);
 
-    expect(nextWorld.inbox).toHaveLength(initialInboxCount);
+    const taskCompletedEventIds = new Set(
+      nextWorld.events
+        .filter((event) => event.type === "task_completed")
+        .map((event) => event.id),
+    );
+
+    const progressMessages = nextWorld.inbox.filter((message) =>
+      taskCompletedEventIds.has(message.eventId),
+    );
+
+    expect(progressMessages).toHaveLength(1);
+    expect(progressMessages[0]?.characterId).toBe("sia");
   });
 });

@@ -59,7 +59,7 @@ export function detectScheduleConflicts(
           type: "schedule_conflict",
           priority: task.mandatory && peer.mandatory ? "high" : "medium",
           title: `${character.name} has overlapping obligations`,
-          description: `${task.title} overlaps with ${peer.title}. Their current policy bias is ${character.policies.priorityBias}.`,
+          description: `${task.title} overlaps with ${peer.title}. Their current primary pursuit is ${character.policies.priorityBias}.`,
           createdAt: currentTime,
           relatedTaskIds: [task.id, peer.id],
           metadata: {
@@ -264,7 +264,7 @@ export function detectStressEvents(
       type: "stress_spike",
       priority: character.stress >= 90 ? "critical" : "high",
       title: `${character.name} is nearing overload`,
-      description: `${character.name}'s stress reached ${character.stress}, which risks poorer autonomous decisions.`,
+      description: `${character.name}'s strain reached ${character.stress}, which risks fragmentation across the network.`,
       createdAt: currentTime,
     });
   }
@@ -324,23 +324,19 @@ function applyIdleRecovery(character: Character): void {
 
 function applyTaskEffect(character: Character, task: Task): void {
   switch (task.kind) {
-    case "health":
+    case "integrity":
       character.energy = clamp(character.energy + 8, 0, 100);
       character.stress = clamp(character.stress - 10, 0, 100);
       break;
-    case "family":
+    case "access":
       character.energy = clamp(character.energy - 6, 0, 100);
-      character.stress = clamp(character.stress + 4, 0, 100);
+      character.stress = clamp(character.stress + 5, 0, 100);
       break;
-    case "money":
+    case "momentum":
       character.energy = clamp(character.energy - 5, 0, 100);
       character.stress = clamp(character.stress + 7, 0, 100);
       break;
-    case "study":
-      character.energy = clamp(character.energy - 8, 0, 100);
-      character.stress = clamp(character.stress + 5, 0, 100);
-      break;
-    case "work":
+    case "signal":
       character.energy = clamp(character.energy - 7, 0, 100);
       character.stress = clamp(character.stress + 6, 0, 100);
       break;

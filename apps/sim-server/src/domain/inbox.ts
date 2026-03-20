@@ -16,10 +16,18 @@ export interface InboxMessage {
   eventId: string;
   consequences?: Partial<
     Record<
-      "money" | "stress" | "reputation" | "relationship" | "schedule",
+      | "access"
+      | "momentum"
+      | "signal"
+      | "integrity"
+      | "risk"
+      | "socialDebt"
+      | "rivalAttention",
       InboxConsequenceLevel
     >
   >;
+  tags?: string[];
+  followupHooks?: string[];
   snoozedUntil?: string | null;
   delegatedToCharacterId?: string | null;
   resolvedAt?: string | null;

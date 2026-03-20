@@ -1,5 +1,5 @@
 export type SourceMode = "backend" | "mock";
-export type InboxTab = "All" | "Urgent" | "Waiting" | "Reports";
+export type InboxTab = "All" | "Urgent" | "Pending" | "Signals";
 export type PriorityLevel = "urgent" | "high" | "normal" | "low";
 export type MessageType =
   | "interruption"
@@ -9,14 +9,16 @@ export type MessageType =
   | "social";
 export type RiskLevel = "none" | "low" | "medium" | "high";
 
+export type WorldAxis = "access" | "momentum" | "signal" | "integrity";
+export type ConsequenceCategory =
+  | WorldAxis
+  | "risk"
+  | "socialDebt"
+  | "rivalAttention";
+
 export type AutonomyLevel = "low" | "medium" | "high";
 export type InterruptWhen = "always" | "important_only" | "emergencies_only";
-export type PriorityBias =
-  | "work"
-  | "family"
-  | "money"
-  | "health"
-  | "relationships";
+export type PriorityBias = WorldAxis;
 export type RiskTolerance = "careful" | "balanced" | "aggressive";
 export type ScheduleProtection = "strict" | "flexible" | "opportunistic";
 export type ReportingFrequency = "minimal" | "standard" | "detailed";
@@ -76,27 +78,40 @@ export interface InboxMessageView {
   createdAtIso: string;
   requiresResponse: boolean;
   suggestedActions: InboxAction[];
-  consequences: Partial<
-    Record<
-      "money" | "stress" | "reputation" | "relationship" | "schedule",
-      RiskLevel
-    >
-  >;
+  consequences: Partial<Record<ConsequenceCategory, RiskLevel>>;
+  tags?: string[];
+  followupHooks?: string[];
   snoozedUntil?: string | null;
   delegatedToCharacterId?: string;
   resolvedAt?: string | null;
+}
+
+export interface CityState {
+  access: number;
+  momentum: number;
+  signal: number;
+  integrity: number;
+  risk: number;
+  socialDebt: number;
+  rivalAttention: number;
+  windowNarrowing: number;
+  worldPulse: string[];
+  rivalStatus: string;
 }
 
 export interface WorldSummary {
   urgentCount: number;
   activeThreads: number;
   upcomingObligations: string[];
-  risks: {
-    money: RiskLevel;
-    relationship: RiskLevel;
-    health: RiskLevel;
-    schedule: RiskLevel;
+  axes: Record<WorldAxis, number>;
+  pressures: {
+    risk: RiskLevel;
+    socialDebt: RiskLevel;
+    rivalAttention: RiskLevel;
+    windowNarrowing: RiskLevel;
   };
+  worldPulse: string[];
+  rivalStatus: string;
 }
 
 export interface GameState {
@@ -109,6 +124,7 @@ export interface GameState {
   source: SourceMode;
   characters: CharacterView[];
   inbox: InboxMessageView[];
+  cityState: CityState;
   worldSummary: WorldSummary;
 }
 
@@ -117,7 +133,7 @@ export interface RawPolicySettings {
   spendingLimit: number;
   escalationThreshold: number;
   reportingFrequency: "low" | "normal" | "high";
-  priorityBias: "work" | "family" | "money" | "health";
+  priorityBias: WorldAxis;
 }
 
 export interface RawCharacter {
@@ -176,12 +192,9 @@ export interface RawInboxMessage {
   requiresResponse: boolean;
   createdAt: string;
   eventId: string;
-  consequences?: Partial<
-    Record<
-      "money" | "stress" | "reputation" | "relationship" | "schedule",
-      RiskLevel
-    >
-  >;
+  consequences?: Partial<Record<ConsequenceCategory, RiskLevel>>;
+  tags?: string[];
+  followupHooks?: string[];
   snoozedUntil?: string | null;
   delegatedToCharacterId?: string | null;
   resolvedAt?: string | null;
@@ -198,6 +211,7 @@ export interface RawWorldState {
   tasks: RawTask[];
   events: RawEvent[];
   inbox: RawInboxMessage[];
+  cityState?: CityState;
 }
 
 export interface GameResponse {
@@ -224,7 +238,7 @@ export interface UpdatePolicyInput {
   characterId: string;
   policyPatch: Partial<{
     spendingLimit: number;
-    priorityBias: "work" | "family" | "money" | "health";
+    priorityBias: WorldAxis;
     riskTolerance: number;
     reportingFrequency: "low" | "normal" | "high";
     escalationThreshold: number;

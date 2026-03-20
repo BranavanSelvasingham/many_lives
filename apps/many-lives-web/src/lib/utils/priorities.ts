@@ -10,64 +10,63 @@ import type {
 export const inboxTabs: InboxTab[] = [
   "All",
   "Urgent",
-  "Waiting",
-  "Reports",
+  "Pending",
+  "Signals",
 ];
 
 export const autonomyOptions: Array<{
   value: PolicySettings["autonomy"];
   label: string;
 }> = [
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
+  { value: "low", label: "Tight leash" },
+  { value: "medium", label: "Shared control" },
+  { value: "high", label: "Independent" },
 ];
 
 export const interruptOptions: Array<{
   value: PolicySettings["interruptWhen"];
   label: string;
 }> = [
-  { value: "always", label: "Always" },
-  { value: "important_only", label: "Important only" },
-  { value: "emergencies_only", label: "Emergencies only" },
+  { value: "always", label: "Any decisive shift" },
+  { value: "important_only", label: "High-value openings" },
+  { value: "emergencies_only", label: "Only when coherence breaks" },
 ];
 
 export const priorityBiasOptions: Array<{
   value: PolicySettings["priorityBias"];
   label: string;
 }> = [
-  { value: "work", label: "Work" },
-  { value: "family", label: "Family" },
-  { value: "money", label: "Money" },
-  { value: "health", label: "Health" },
-  { value: "relationships", label: "Relationships" },
+  { value: "access", label: "Access" },
+  { value: "momentum", label: "Momentum" },
+  { value: "signal", label: "Signal" },
+  { value: "integrity", label: "Integrity" },
 ];
 
 export const riskToleranceOptions: Array<{
   value: PolicySettings["riskTolerance"];
   label: string;
 }> = [
-  { value: "careful", label: "Careful" },
+  { value: "careful", label: "Measured" },
   { value: "balanced", label: "Balanced" },
-  { value: "aggressive", label: "Aggressive" },
+  { value: "aggressive", label: "Predatory" },
 ];
 
 export const scheduleProtectionOptions: Array<{
   value: PolicySettings["scheduleProtection"];
   label: string;
 }> = [
-  { value: "strict", label: "Strict" },
-  { value: "flexible", label: "Flexible" },
-  { value: "opportunistic", label: "Opportunistic" },
+  { value: "strict", label: "Guard coherence" },
+  { value: "flexible", label: "Stay fluid" },
+  { value: "opportunistic", label: "Chase openings" },
 ];
 
 export const reportingOptions: Array<{
   value: PolicySettings["reportingFrequency"];
   label: string;
 }> = [
-  { value: "minimal", label: "Minimal" },
+  { value: "minimal", label: "Sparse" },
   { value: "standard", label: "Standard" },
-  { value: "detailed", label: "Detailed" },
+  { value: "detailed", label: "Constant signal" },
 ];
 
 export const sensitivityOptions: Array<{
@@ -126,16 +125,12 @@ export function filterInboxMessages(
     .filter((message) => isVisibleMessage(message, currentTimeIso))
     .filter((message) => {
       if (tab === "Urgent") return priorityRank(message.priority) <= 1;
-      if (tab === "Waiting") return message.requiresResponse;
-      if (tab === "Reports") return ["status", "social"].includes(message.type);
+      if (tab === "Pending") return message.requiresResponse;
+      if (tab === "Signals")
+        return ["status", "social", "opportunity"].includes(message.type);
       return true;
     })
-    .sort((left, right) => {
-      const rankDelta =
-        priorityRank(left.priority) - priorityRank(right.priority);
-      if (rankDelta !== 0) return rankDelta;
-      return right.createdAtIso.localeCompare(left.createdAtIso);
-    });
+    .sort(compareMessages);
 }
 
 export function buildInboxTabCounts(
@@ -157,4 +152,60 @@ export function findFirstUrgentMessage(
   return filterInboxMessages(messages, "All", currentTimeIso).find(
     (message) => message.priority === "urgent",
   );
+}
+
+export function findDefaultMessage(
+  messages: InboxMessageView[],
+  currentTimeIso: string,
+) {
+  const visible = filterInboxMessages(messages, "All", currentTimeIso);
+  const urgent = visible.find((message) => message.priority === "urgent");
+  if (urgent) return urgent;
+  return [...visible].sort(compareMessages)[0] ?? null;
+}
+
+export function messageConsequenceScore(message: InboxMessageView) {
+  const weights = {
+    access: 6,
+    momentum: 5,
+    signal: 5,
+    integrity: 6,
+    risk: 4,
+    socialDebt: 4,
+    rivalAttention: 5,
+  } as const;
+
+  return Object.entries(message.consequences).reduce((total, [key, value]) => {
+    const level = riskWeight(value ?? "none");
+    const weight = weights[key as keyof typeof weights] ?? 1;
+    return total + level * weight;
+  }, 0);
+}
+
+function compareMessages(left: InboxMessageView, right: InboxMessageView) {
+  const rankDelta = priorityRank(left.priority) - priorityRank(right.priority);
+  if (rankDelta !== 0) return rankDelta;
+
+  const responseDelta =
+    Number(right.requiresResponse) - Number(left.requiresResponse);
+  if (responseDelta !== 0) return responseDelta;
+
+  const consequenceDelta =
+    messageConsequenceScore(right) - messageConsequenceScore(left);
+  if (consequenceDelta !== 0) return consequenceDelta;
+
+  return right.createdAtIso.localeCompare(left.createdAtIso);
+}
+
+function riskWeight(level: RiskLevel) {
+  switch (level) {
+    case "high":
+      return 4;
+    case "medium":
+      return 2;
+    case "low":
+      return 1;
+    default:
+      return 0;
+  }
 }

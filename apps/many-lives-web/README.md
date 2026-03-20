@@ -1,6 +1,6 @@
 # Many Lives Web Client
 
-Many Lives is an inbox-first life-management sim prototype. This package is the web client: a desktop-first Next.js dashboard for triaging characters, resolving interruptions, editing policies, and advancing the world.
+Many Lives is an inbox-first narrative strategy prototype set during the Ascension Window. This package is the web client: a desktop-first Next.js dashboard for triaging selves, resolving decisive openings, editing standing instincts, and advancing the world.
 
 ## Stack
 
@@ -36,6 +36,7 @@ The web client stays playable even if the backend is unavailable.
 - API requests first try the sim server through the Next.js `/sim/*` proxy.
 - If the backend cannot be reached, the app falls back to seeded local Many Lives mock data.
 - Mock mode still supports the core loop: new game, message resolution, snooze, delegate, policy edits, and ticking time forward.
+- The seeded mock state opens hot with five charged threads, visible rival pressure, and the full Ascension Window cast.
 
 ## Backend Mode
 
@@ -63,4 +64,4 @@ When the sim server is available, the client uses these endpoints:
 
 - The design is intentionally dashboard-heavy and game-like, not a marketing site or chat app.
 - Desktop is the main target for this prototype.
-- The inbox is the primary attention surface.
+- The attention feed is the primary surface.

@@ -56,9 +56,9 @@ export class SimulationEngine {
             characterId: character.id,
             type: "player_response",
             priority: "low",
-            title: `Player resolved ${message.subject}`,
-            description: buildResponseDescription(
-              character.name,
+          title: `Player resolved ${message.subject}`,
+          description: buildResponseDescription(
+            character.name,
               command.actionId,
               command.overrideText,
             ),
@@ -142,8 +142,8 @@ export class SimulationEngine {
             createdAt: nextWorld.currentTime,
             eventId: delegationEvent.id,
             consequences: {
-              stress: "medium",
-              schedule: "medium",
+              momentum: "medium",
+              integrity: "medium",
             },
           });
         }
@@ -182,7 +182,7 @@ function buildResponseDescription(
   actionId?: string,
   overrideText?: string,
 ): string {
-  let description = `${characterName} has received a player response.`;
+  let description = `${characterName} has received a player directive.`;
 
   if (actionId) {
     description += ` Decision: ${prettifyActionId(actionId)}.`;
@@ -192,7 +192,7 @@ function buildResponseDescription(
     description += ` Override: ${overrideText}.`;
   }
 
-  return description + " Pressure eased for now.";
+  return description + " The board has shifted for now.";
 }
 
 function applyActionOutcome(

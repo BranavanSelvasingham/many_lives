@@ -1,22 +1,24 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #efefeb;
-  --surface-panel: #ffffff;
-  --surface-raised: #ffffff;
-  --surface-selected: #f3f3f0;
-  --surface-muted: #fafaf8;
-  --surface-overlay: #f8f8f5;
-  --border-subtle: #b7b7b0;
-  --border-strong: #7d7d78;
-  --text-main: #2f2f2b;
-  --text-muted: #5f5f59;
-  --text-dim: #7f7f77;
-  --accent-steel: #d8d8d2;
-  --accent-brass: #ebe6d8;
-  --accent-alert: #8c8c84;
-  --font-body: "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --font-display: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --bg-main: #090b0d;
+  --surface-panel: #10151a;
+  --surface-raised: #151b21;
+  --surface-selected: #182028;
+  --surface-muted: #0d1217;
+  --surface-overlay: #121920;
+  --border-subtle: #2f3944;
+  --border-strong: #6b7b8c;
+  --text-main: #eee3d3;
+  --text-muted: #b1a99c;
+  --text-dim: #7c7a75;
+  --accent-steel: #33414f;
+  --accent-brass: #b79259;
+  --accent-alert: #a76963;
+  --button-primary: #d1b06f;
+  --button-primary-text: #17120b;
+  --font-body: "Avenir Next", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
   --font-mono: "SFMono-Regular", "Menlo", monospace;
 }
 
@@ -26,13 +28,15 @@
 }
 
 html {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--bg-main);
+  background:
+    radial-gradient(circle at top, rgba(183, 146, 89, 0.14), transparent 28%),
+    linear-gradient(180deg, #0c1014 0%, var(--bg-main) 46%, #07090b 100%);
   color: var(--text-main);
   font-family: var(--font-body), sans-serif;
 }

@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 
 import { RuleComposer } from "@/components/policies/RuleComposer";
+import { PillTag } from "@/components/shared/PillTag";
 import type { CharacterView, InboxMessageView } from "@/lib/types/game";
 import { titleCase } from "@/lib/utils/format";
 
@@ -22,11 +23,13 @@ interface MessageDetailPanelProps {
 }
 
 const consequenceOrder = [
-  "money",
-  "stress",
-  "schedule",
-  "reputation",
-  "relationship",
+  "access",
+  "momentum",
+  "signal",
+  "integrity",
+  "risk",
+  "socialDebt",
+  "rivalAttention",
 ] as const;
 
 export function MessageDetailPanel({
@@ -59,7 +62,7 @@ export function MessageDetailPanel({
   if (!message) {
     return (
       <section className="flex h-full items-center justify-center border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-4 py-10 text-[0.95rem] text-[color:var(--text-muted)]">
-        Select a thread to inspect its decision detail.
+        Select a thread to inspect the opening in full.
       </section>
     );
   }
@@ -68,13 +71,13 @@ export function MessageDetailPanel({
     <section className="flex h-full min-h-0 flex-col overflow-hidden border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)]">
       <div className="flex flex-none items-center justify-between gap-4 border-b border-[color:var(--border-subtle)] px-5 py-4">
         <h2 className="text-[1.1rem] font-semibold uppercase tracking-[0.03em] text-[color:var(--text-main)]">
-          Message Detail
+          Thread Detail
         </h2>
         <button
           type="button"
           onClick={onClose}
           className="flex h-10 w-10 items-center justify-center text-[color:var(--text-muted)]"
-          aria-label="Close message detail"
+          aria-label="Close thread detail"
         >
           <CloseGlyph />
         </button>
@@ -85,13 +88,20 @@ export function MessageDetailPanel({
             <div className="text-[1.15rem] font-medium text-[color:var(--text-main)]">
               {message.subject}
             </div>
+            {message.tags && message.tags.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {message.tags.map((tag) => (
+                  <PillTag key={tag} label={tag} tone="muted" />
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="text-[1.05rem] leading-8 text-[color:var(--text-main)]">
             {message.body}
           </div>
           <div className="border-t border-[color:var(--border-subtle)] pt-4">
             <div className="mb-2 text-[0.95rem] font-medium text-[color:var(--text-main)]">
-              Consequence Summary
+              Potential Fallout
             </div>
             <div className="grid gap-2">
               {consequenceOrder
@@ -109,20 +119,32 @@ export function MessageDetailPanel({
                 ))}
             </div>
           </div>
+          {message.followupHooks && message.followupHooks.length > 0 ? (
+            <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-3">
+              <div className="mb-2 text-[0.85rem] uppercase tracking-[0.08em] text-[color:var(--text-dim)]">
+                Follow-On Pressure
+              </div>
+              <div className="space-y-2 text-[0.95rem] leading-6 text-[color:var(--text-main)]">
+                {message.followupHooks.map((hook) => (
+                  <div key={hook}>{hook}</div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="space-y-2">
             {message.suggestedActions.slice(0, 4).map((action) => (
               <button
                 key={action.id}
                 type="button"
                 onClick={() => onSendDecision(message.id, action.id)}
-                className="flex w-full items-center justify-center border border-[color:var(--border-subtle)] bg-[#e6e6e3] px-4 py-3 text-[1rem] font-medium text-[color:var(--text-main)]"
+                className="flex w-full items-center justify-center border border-[color:var(--border-subtle)] bg-[color:var(--button-primary)] px-4 py-3 text-[1rem] font-medium text-[color:var(--button-primary-text)]"
               >
                 {action.label}
               </button>
             ))}
           </div>
           <div className="border-t border-[color:var(--border-subtle)] pt-3">
-            <LineAction label="Snooze">
+            <LineAction label="Delay">
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -140,14 +162,14 @@ export function MessageDetailPanel({
                 </button>
               </div>
             </LineAction>
-            <LineAction label="Delegate">
+            <LineAction label="Redistribute">
               <div className="flex items-center gap-2">
                 <select
                   value={delegateTargetId}
                   onChange={(event) => setDelegateTargetId(event.target.value)}
                   className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-2 py-1.5 text-[0.95rem] outline-none"
                 >
-                  <option value="">Choose life</option>
+                  <option value="">Choose self</option>
                   {delegateTargets.map((character) => (
                     <option key={character.id} value={character.id}>
                       {character.name}
@@ -160,17 +182,17 @@ export function MessageDetailPanel({
                   onClick={() => onDelegate(message.id, delegateTargetId)}
                   className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-1.5 text-[0.95rem] disabled:opacity-40"
                 >
-                  Apply
+                  Redirect
                 </button>
               </div>
             </LineAction>
-            <LineAction label="Set as Policy">
+            <LineAction label="Standing instinct">
               <button
                 type="button"
                 onClick={() => onOpenRuleComposer(message)}
                 className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-1.5 text-[0.95rem]"
               >
-                Open
+                Shape it
               </button>
             </LineAction>
           </div>
@@ -179,9 +201,9 @@ export function MessageDetailPanel({
               value={ruleComposerDraft}
               onChange={onRuleComposerChange}
               examples={[
-                "Always switch vendors if delay > 1 hour.",
-                "Never alert for minor delays.",
-                "Ask only if family schedule is affected.",
+                "Escalate whenever a rival network can claim the room before we do.",
+                "Protect integrity if a split move gains access but fractures coherence.",
+                "If signal can multiply without dissolving authorship, press forward.",
               ]}
               onSave={() => onSaveRuleDraft(message, ruleComposerDraft)}
               onCancel={onCloseRuleComposer}
@@ -189,7 +211,7 @@ export function MessageDetailPanel({
           ) : null}
           <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-3">
             <div className="mb-2 text-[0.95rem] font-medium text-[color:var(--text-main)]">
-              Custom Response
+              Custom Directive
             </div>
             <div className="space-y-2">
               <select
@@ -208,16 +230,16 @@ export function MessageDetailPanel({
                 onChange={(event) => onOverrideChange(event.target.value)}
                 rows={2}
                 className="w-full border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-2 text-[0.95rem] outline-none"
-                placeholder="Custom Response..."
+                placeholder="Shape the move in your own words."
               />
               <div className="flex justify-end">
                 <button
                   type="button"
                   disabled={!overrideActionId}
                   onClick={() => onSendDecision(message.id, overrideActionId)}
-                  className="border border-[color:var(--border-subtle)] bg-[#e6e6e3] px-5 py-2 text-[1rem] font-medium text-[color:var(--text-main)] disabled:opacity-40"
+                  className="border border-[color:var(--border-subtle)] bg-[color:var(--button-primary)] px-5 py-2 text-[1rem] font-medium text-[color:var(--button-primary-text)] disabled:opacity-40"
                 >
-                  Send
+                  Transmit
                 </button>
               </div>
             </div>

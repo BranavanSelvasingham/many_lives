@@ -1,5 +1,6 @@
 import type { InboxMessageView } from "@/lib/types/game";
 import { cx, formatTimeAgo } from "@/lib/utils/format";
+import { PillTag } from "@/components/shared/PillTag";
 
 interface InboxItemCardProps {
   message: InboxMessageView;
@@ -37,8 +38,11 @@ export function InboxItemCard({
             <ThreadGlyph />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[1rem] font-semibold text-[color:var(--text-main)]">
-              {message.subject}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="truncate text-[1rem] font-semibold text-[color:var(--text-main)]">
+                {message.subject}
+              </div>
+              <PillTag label={message.priority} tone={message.priority} />
             </div>
             <div className="mt-1 text-[0.95rem] text-[color:var(--text-muted)]">
               {message.senderName} • {formatTimeAgo(message.createdAtIso, currentTimeIso)}

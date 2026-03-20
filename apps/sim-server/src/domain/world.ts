@@ -3,6 +3,19 @@ import type { EventRecord } from "./event.js";
 import type { InboxMessage } from "./inbox.js";
 import type { Task } from "./task.js";
 
+export interface CityState {
+  access: number;
+  momentum: number;
+  signal: number;
+  integrity: number;
+  risk: number;
+  socialDebt: number;
+  rivalAttention: number;
+  windowNarrowing: number;
+  worldPulse: string[];
+  rivalStatus: string;
+}
+
 export interface WorldState {
   id: string;
   scenarioId: string;
@@ -14,6 +27,7 @@ export interface WorldState {
   tasks: Task[];
   events: EventRecord[];
   inbox: InboxMessage[];
+  cityState: CityState;
   systemFlags: string[];
   counters: {
     event: number;

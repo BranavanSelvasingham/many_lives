@@ -5,7 +5,7 @@ import { create } from "zustand";
 import type { GameState, InboxMessageView, InboxTab } from "@/lib/types/game";
 import {
   filterInboxMessages,
-  findFirstUrgentMessage,
+  findDefaultMessage,
 } from "@/lib/utils/priorities";
 
 interface SelectionState {
@@ -27,7 +27,7 @@ interface SelectionState {
 }
 
 function defaultRuleDraft(message: InboxMessageView) {
-  return `When ${message.subject.toLowerCase()} affects schedule or commitments, protect the fragile obligation first and only escalate when the impact spreads.`;
+  return `When ${message.subject.toLowerCase()} opens a decisive room, pursue the gain without letting integrity collapse or rivals frame the story first.`;
 }
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({
@@ -115,12 +115,12 @@ export const useSelectionStore = create<SelectionState>((set, get) => ({
       return;
     }
 
-    const urgentMessage = findFirstUrgentMessage(game.inbox, game.currentTimeIso);
-    if (urgentMessage) {
+    const defaultMessage = findDefaultMessage(game.inbox, game.currentTimeIso);
+    if (defaultMessage) {
       set({
-        selectedMessageId: urgentMessage.id,
-        selectedCharacterId: urgentMessage.characterId,
-        ruleComposerDraft: defaultRuleDraft(urgentMessage),
+        selectedMessageId: defaultMessage.id,
+        selectedCharacterId: defaultMessage.characterId,
+        ruleComposerDraft: defaultRuleDraft(defaultMessage),
       });
       return;
     }

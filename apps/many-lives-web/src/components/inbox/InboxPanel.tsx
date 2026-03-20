@@ -31,7 +31,7 @@ export function InboxPanel({
       <div className="flex-none border-b border-[color:var(--border-subtle)] px-5 py-4">
         <div className="flex items-start justify-between gap-4">
           <h2 className="text-[1.1rem] font-semibold uppercase tracking-[0.03em] text-[color:var(--text-main)]">
-            Inbox
+            Attention Feed
           </h2>
           <div className="flex items-center gap-2 text-[color:var(--text-muted)]">
             <HeaderIcon label="Comments">
@@ -54,7 +54,7 @@ export function InboxPanel({
         {messages.length === 0 ? (
           <EmptyState
             title={`No ${activeTab.toLowerCase()} threads right now`}
-            body="Advance time or switch tabs to bring another thread into focus."
+            body="Advance the window or shift filters to surface another decisive thread."
           />
         ) : (
           <div className="space-y-4">

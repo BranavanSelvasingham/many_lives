@@ -24,11 +24,11 @@ export class MockAIProvider implements AIProvider {
       );
       const taskLabel = activeTask
         ? activeTask.title
-        : "awaiting the next slot";
-      return `${character.name} is ${taskLabel.toLowerCase()} (energy ${character.energy}, stress ${character.stress})`;
+        : "holding for the next opening";
+      return `${character.name} is ${taskLabel.toLowerCase()} (energy ${character.energy}, strain ${character.stress})`;
     });
 
-    return `${world.scenarioName} at ${world.currentTime}. Open inbox: ${openMessages}. ${characterSummaries.join(
+    return `${world.scenarioName} at ${world.currentTime}. Open threads: ${openMessages}. ${characterSummaries.join(
       " | ",
     )}`;
   }
@@ -48,7 +48,7 @@ export class MockAIProvider implements AIProvider {
     return {
       shouldEscalate,
       priority: context.event.priority,
-      rationale: `${context.character.name} needs player attention because ${context.event.title.toLowerCase()}.`,
+      rationale: `${context.character.name} needs player attention because ${context.event.title.toLowerCase()} could reshape the board.`,
     };
   }
 
@@ -73,10 +73,10 @@ export class MockAIProvider implements AIProvider {
       subject: `${subjectPrefix}: ${context.character.name} - ${taskLabel}`,
       body: [
         `${context.character.name} reports: ${context.event.description}`,
-        `Current energy is ${context.character.energy} and stress is ${context.character.stress}.`,
+        `Current energy is ${context.character.energy} and strain is ${context.character.stress}.`,
         context.task
-          ? `Related obligation: ${context.task.title} (${context.task.kind}, due ${context.task.dueAt}).`
-          : "No single task fully explains the situation.",
+          ? `Related opening: ${context.task.title} (${context.task.kind}, due ${context.task.dueAt}).`
+          : "No single opening fully explains the situation.",
       ].join(" "),
       suggestedActions: context.suggestedActions,
       requiresResponse:
@@ -93,28 +93,28 @@ export class MockAIProvider implements AIProvider {
     );
 
     const genericActions = [
-      `Acknowledge ${context.character.name} and let them continue.`,
-      `Raise ${context.character.name}'s ${context.character.policies.priorityBias} priority for the rest of the day.`,
+      `Acknowledge ${context.character.name} and let the thread run.`,
+      `Tilt ${context.character.name} toward ${context.character.policies.priorityBias} for the next block.`,
     ];
 
     switch (context.event.type) {
       case "obligation_missed":
         return [
-          `Reschedule the missed item tied to ${context.task?.title ?? "the incident"}.`,
-          `Accept the miss and protect the next commitment.`,
-          `Ask ${context.character.name} to spend up to $${context.character.policies.spendingLimit} to recover.`,
+          `Recover the miss tied to ${context.task?.title ?? "the incident"}.`,
+          "Accept the loss and protect the next decisive opening.",
+          `Authorize up to $${context.character.policies.spendingLimit} to buy back momentum.`,
         ];
       case "schedule_conflict":
         return [
-          `Tell ${context.character.name} to prioritize ${context.character.policies.priorityBias}.`,
-          "Choose the more important obligation manually in a later build.",
-          "Accept a delay and monitor the fallout in the inbox.",
+          `Tell ${context.character.name} to pursue ${context.character.policies.priorityBias}.`,
+          "Choose one room and sacrifice the other.",
+          "Delay the choice and monitor who moves faster.",
         ];
       case "stress_spike":
         return [
-          `Give ${context.character.name} permission to take a recovery block.`,
-          "Reduce reporting noise and check back later.",
-          "Keep them on schedule and absorb the stress cost.",
+          `Give ${context.character.name} permission to recover coherence.`,
+          "Reduce noise and check back after the next block.",
+          "Keep the thread live and absorb the fragmentation cost.",
         ];
       default:
         return genericActions;
@@ -131,7 +131,7 @@ function subjectPrefixForPriority(
     case "high":
       return "Important";
     case "medium":
-      return "Heads-up";
+      return "Signal";
     case "low":
       return "Update";
   }

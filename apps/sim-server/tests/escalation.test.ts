@@ -18,7 +18,7 @@ describe("Escalation behavior", () => {
 
     const missedEvent = nextWorld.events.find(
       (event) =>
-        event.type === "obligation_missed" && event.characterId === "jordan",
+        event.type === "obligation_missed" && event.characterId === "ivo",
     );
 
     expect(missedEvent).toBeDefined();
@@ -28,7 +28,7 @@ describe("Escalation behavior", () => {
     );
 
     expect(message).toBeDefined();
-    expect(message?.characterId).toBe("jordan");
+    expect(message?.characterId).toBe("ivo");
     expect(
       message?.priority === "high" || message?.priority === "critical",
     ).toBe(true);
@@ -37,10 +37,10 @@ describe("Escalation behavior", () => {
   it("changes escalation frequency when policy settings change", () => {
     const world = seedScenario("game-policy");
     const baseCharacter = world.characters.find(
-      (character) => character.id === "maya",
+      (character) => character.id === "ivo",
     ) as Character;
     const baseTask = world.tasks.find(
-      (task) => task.id === "task-maya-rent",
+      (task) => task.id === "task-ivo-private-room",
     ) as Task;
     const event = buildMissedEvent(baseCharacter, baseTask, world);
 
@@ -53,6 +53,7 @@ describe("Escalation behavior", () => {
         riskTolerance: 0.95,
         escalationThreshold: 6,
         reportingFrequency: "low",
+        priorityBias: "signal",
       },
     };
 
@@ -90,7 +91,7 @@ describe("Escalation behavior", () => {
   it("does not repeat stress alerts every tick without recovery", () => {
     const world = seedScenario("game-stress");
     const character = world.characters.find(
-      (entry) => entry.id === "leo",
+      (entry) => entry.id === "vale",
     ) as Character;
 
     character.stress = 84;

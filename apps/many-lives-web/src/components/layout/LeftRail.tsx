@@ -17,7 +17,7 @@ export function LeftRail({
     <section className="flex h-full min-h-0 flex-col overflow-hidden border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)]">
       <div className="flex-none border-b border-[color:var(--border-subtle)] px-6 py-4">
         <h2 className="text-[1rem] font-medium uppercase tracking-[0.03em] text-[color:var(--text-main)]">
-          Characters
+          Selves
         </h2>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -25,7 +25,7 @@ export function LeftRail({
           <div className="p-4">
             <EmptyState
               title="No lives loaded"
-              body="Create a new game to start managing the household."
+              body="Create a new run to divide yourself across the Ascension Window."
             />
           </div>
         ) : (
