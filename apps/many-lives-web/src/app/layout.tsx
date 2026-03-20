@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Many Lives",
   description:
-    "Inbox-first prototype for managing multiple semi-autonomous lives.",
+    "The city is reordering itself, and no one with only one life can shape what comes next.",
 };
 
 export default function RootLayout({
