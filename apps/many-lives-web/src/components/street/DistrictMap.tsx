@@ -32,6 +32,28 @@ type AnimatedNpcState = {
   step: number;
 };
 
+type NpcAppearance = {
+  headY: number;
+  headRadius: number;
+  bodyWidth: number;
+  hemWidth: number;
+  shoulderY: number;
+  hemY: number;
+  strideScale: number;
+  coat: string;
+  accent: string;
+  hair: string;
+  face: string;
+  cheek: string;
+  eye: string;
+  outline: string;
+  leg: string;
+  shoe: string;
+  hairStyle: "bun" | "scarf" | "cap" | "beard-cap" | "ponytail" | "cropped";
+  faceStyle: "soft" | "wry" | "steady" | "stern" | "bright" | "guarded";
+  accessory?: "apron" | "shawl" | "satchel" | "vest" | "scarf";
+};
+
 export function DistrictMap({
   game,
   onTileClick,
@@ -78,21 +100,6 @@ export function DistrictMap({
   };
   const awarenessMaskId = `${game.id}-awareness-mask`;
   const playerFieldGradientId = `${game.id}-player-fov`;
-  const knownAwarenessZones = game.locations
-    .filter((location) => knownLocationIds.has(location.id))
-    .map((location) => {
-      const door = primaryDoorByLocation.get(location.id);
-
-      return {
-        id: location.id,
-        x: door ? (door.x + door.width / 2) * CELL : (location.entryX + 0.5) * CELL,
-        y: door ? (door.y + door.height / 2) * CELL : (location.entryY + 0.5) * CELL,
-        radius: Math.max(location.width, location.height) * CELL * 0.58,
-      };
-    });
-  const knownFieldGradientIds = knownAwarenessZones.map(
-    (zone) => `${game.id}-known-fov-${zone.id}`,
-  );
   const animatedNpcs = useMemo(
     () =>
       game.npcs.map((npc, index) =>
@@ -116,10 +123,12 @@ export function DistrictMap({
       propsByLocation,
     ],
   );
+  const playerThought = buildPlayerThought(game);
+  const playerBubbleY = playerPixel.y + Math.sin(animationBeat * 1.2) * 0.7;
 
   return (
     <div className="space-y-5">
-      <div className="overflow-hidden rounded-[30px] border border-[rgba(117,128,137,0.22)] bg-[rgba(8,12,15,0.97)] shadow-[0_34px_90px_rgba(0,0,0,0.36)]">
+      <div className="overflow-hidden rounded-[30px] border border-[rgba(134,145,154,0.24)] bg-[rgba(19,26,31,0.9)] shadow-[0_34px_90px_rgba(0,0,0,0.24)]">
         <div className="overflow-x-auto p-4 sm:p-5">
           <div className="mx-auto min-w-[920px]">
             <svg
@@ -128,8 +137,6 @@ export function DistrictMap({
             >
               <SceneDefs />
               <AwarenessDefs
-                knownZones={knownAwarenessZones}
-                knownZoneGradientIds={knownFieldGradientIds}
                 mapHeight={mapHeight}
                 mapWidth={mapWidth}
                 maskId={awarenessMaskId}
@@ -148,10 +155,10 @@ export function DistrictMap({
 
               <g transform={`translate(${MAP_PADDING} ${MAP_PADDING})`}>
                 <rect
-                  fill="rgba(6,9,11,0.42)"
+                  fill="rgba(19,24,28,0.22)"
                   height={mapHeight}
                   rx="24"
-                  stroke="rgba(126,144,157,0.18)"
+                  stroke="rgba(142,159,170,0.18)"
                   width={mapWidth}
                   x="0"
                   y="0"
@@ -249,15 +256,14 @@ export function DistrictMap({
                             className={busy ? "" : "cursor-pointer"}
                             cx={(door.x + door.width / 2) * CELL}
                             cy={(door.y + door.height / 2) * CELL}
-                            fill="rgba(0,0,0,0)"
+                            fill="transparent"
                             onClick={() => {
                               if (!busy) {
                                 onTileClick(location.entryX, location.entryY);
                               }
                             }}
                             r="18"
-                            stroke={isHere ? "rgba(183,146,89,0.38)" : "rgba(146,159,169,0.14)"}
-                            strokeWidth="1.2"
+                            stroke="none"
                           />
                         ) : null}
                       </g>
@@ -271,6 +277,7 @@ export function DistrictMap({
                       facing={entry.facing}
                       key={entry.npc.id}
                       known={entry.known}
+                      npcId={entry.npc.id}
                       step={entry.step}
                       x={entry.x}
                       y={entry.y}
@@ -285,7 +292,35 @@ export function DistrictMap({
                   width={mapWidth}
                 />
 
+                <g>
+                  {animatedNpcs.map((entry) => {
+                    const offset = thoughtBubbleOffset(entry.npc.id);
+
+                    return (
+                      <ThoughtBubble
+                        dx={offset.x}
+                        dy={offset.y}
+                        key={`thought-${entry.npc.id}`}
+                        mapWidth={mapWidth}
+                        text={buildNpcThought(entry.npc, game)}
+                        tone="npc"
+                        x={entry.x}
+                        y={entry.y + Math.abs(entry.step) * -1.4}
+                      />
+                    );
+                  })}
+                </g>
+
                 <PlayerMarker animationBeat={animationBeat} x={game.player.x} y={game.player.y} />
+                <ThoughtBubble
+                  dx={0}
+                  dy={-42}
+                  mapWidth={mapWidth}
+                  text={playerThought}
+                  tone="player"
+                  x={playerPixel.x}
+                  y={playerBubbleY}
+                />
 
                 <g opacity="0">
                   {game.map.tiles.map((tile) => {
@@ -346,19 +381,19 @@ function SceneDefs() {
   return (
     <defs>
       <linearGradient id="scene-backdrop" x1="0%" x2="100%" y1="0%" y2="100%">
-        <stop offset="0%" stopColor="#162028" />
-        <stop offset="55%" stopColor="#0d151a" />
-        <stop offset="100%" stopColor="#090d10" />
+        <stop offset="0%" stopColor="#2d3d48" />
+        <stop offset="55%" stopColor="#1f2b33" />
+        <stop offset="100%" stopColor="#182127" />
       </linearGradient>
 
       <radialGradient id="sun-haze" cx="28%" cy="18%" r="55%">
-        <stop offset="0%" stopColor="rgba(222,187,121,0.17)" />
+        <stop offset="0%" stopColor="rgba(222,187,121,0.22)" />
         <stop offset="100%" stopColor="rgba(222,187,121,0)" />
       </radialGradient>
 
       <radialGradient id="street-vignette" cx="50%" cy="50%" r="70%">
         <stop offset="62%" stopColor="rgba(0,0,0,0)" />
-        <stop offset="100%" stopColor="rgba(0,0,0,0.28)" />
+        <stop offset="100%" stopColor="rgba(0,0,0,0.16)" />
       </radialGradient>
 
       <linearGradient id="river-glint" x1="0%" x2="100%" y1="0%" y2="0%">
@@ -368,91 +403,91 @@ function SceneDefs() {
       </linearGradient>
 
       <pattern id="lane-cobble" height="22" patternUnits="userSpaceOnUse" width="22">
-        <rect fill="#47525c" height="22" width="22" />
+        <rect fill="#5b6771" height="22" width="22" />
         <path
           d="M0 6 C4 4,7 4,11 6 C15 8,18 8,22 6 M0 16 C4 14,7 14,11 16 C15 18,18 18,22 16"
           fill="none"
-          stroke="#5f6a73"
+          stroke="#74818b"
           strokeWidth="1.1"
         />
         <path
           d="M5 0 V22 M16 0 V22"
           fill="none"
-          stroke="rgba(33,38,43,0.28)"
+          stroke="rgba(38,44,49,0.18)"
           strokeWidth="0.9"
         />
       </pattern>
 
       <pattern id="plaza-pavers" height="26" patternUnits="userSpaceOnUse" width="26">
-        <rect fill="#6c624c" height="26" width="26" />
+        <rect fill="#81745d" height="26" width="26" />
         <path
           d="M0 13 H26 M13 0 V26"
           fill="none"
-          stroke="#8b7c5d"
+          stroke="#a08f6d"
           strokeWidth="1.2"
         />
         <path
           d="M0 0 L26 26 M26 0 L0 26"
           fill="none"
-          stroke="rgba(53,44,31,0.16)"
+          stroke="rgba(70,58,41,0.12)"
           strokeWidth="0.9"
         />
       </pattern>
 
       <pattern id="yard-ground" height="16" patternUnits="userSpaceOnUse" width="16">
-        <rect fill="#5d5647" height="16" width="16" />
-        <path d="M0 4 H16 M0 12 H16" stroke="#746852" strokeWidth="0.9" />
+        <rect fill="#716856" height="16" width="16" />
+        <path d="M0 4 H16 M0 12 H16" stroke="#887960" strokeWidth="0.9" />
       </pattern>
 
       <pattern id="dock-planks" height="14" patternUnits="userSpaceOnUse" width="14">
-        <rect fill="#72583b" height="14" width="14" />
-        <path d="M0 7 H14" stroke="#8d6f4e" strokeWidth="1.1" />
-        <path d="M0 0 V14 M7 0 V14" stroke="rgba(55,39,25,0.24)" strokeWidth="0.9" />
+        <rect fill="#89684a" height="14" width="14" />
+        <path d="M0 7 H14" stroke="#a27f5a" strokeWidth="1.1" />
+        <path d="M0 0 V14 M7 0 V14" stroke="rgba(72,53,34,0.18)" strokeWidth="0.9" />
       </pattern>
 
       <pattern id="water-ripple" height="24" patternUnits="userSpaceOnUse" width="24">
-        <rect fill="#224962" height="24" width="24" />
+        <rect fill="#346580" height="24" width="24" />
         <path
           d="M0 8 C4 6,8 6,12 8 C16 10,20 10,24 8 M0 18 C4 16,8 16,12 18 C16 20,20 20,24 18"
           fill="none"
-          stroke="#4b86a7"
+          stroke="#6da3c0"
           strokeWidth="1.2"
         />
       </pattern>
 
       <pattern id="garden-ground" height="18" patternUnits="userSpaceOnUse" width="18">
-        <rect fill="#335138" height="18" width="18" />
-        <circle cx="4" cy="5" fill="#456b49" r="1.8" />
-        <circle cx="11" cy="10" fill="#416543" r="1.8" />
+        <rect fill="#446947" height="18" width="18" />
+        <circle cx="4" cy="5" fill="#5f8a60" r="1.8" />
+        <circle cx="11" cy="10" fill="#587e59" r="1.8" />
       </pattern>
 
       <pattern id="roof-slate" height="16" patternUnits="userSpaceOnUse" width="16">
-        <rect fill="#2d343c" height="16" width="16" />
-        <path d="M0 12 L16 0" stroke="#404b55" strokeWidth="1.4" />
-        <path d="M-4 16 L12 0" stroke="rgba(79,91,101,0.52)" strokeWidth="1" />
+        <rect fill="#44505a" height="16" width="16" />
+        <path d="M0 12 L16 0" stroke="#61707b" strokeWidth="1.4" />
+        <path d="M-4 16 L12 0" stroke="rgba(112,124,134,0.52)" strokeWidth="1" />
       </pattern>
 
       <pattern id="roof-tin" height="14" patternUnits="userSpaceOnUse" width="14">
-        <rect fill="#50575c" height="14" width="14" />
-        <path d="M4 0 V14 M10 0 V14" stroke="#6d767d" strokeWidth="1.2" />
+        <rect fill="#666d72" height="14" width="14" />
+        <path d="M4 0 V14 M10 0 V14" stroke="#87939a" strokeWidth="1.2" />
       </pattern>
 
       <pattern id="roof-plaster" height="18" patternUnits="userSpaceOnUse" width="18">
-        <rect fill="#82786b" height="18" width="18" />
-        <circle cx="5" cy="6" fill="#968b7b" r="1.4" />
-        <circle cx="13" cy="12" fill="#8d8374" r="1.4" />
+        <rect fill="#9c9183" height="18" width="18" />
+        <circle cx="5" cy="6" fill="#b1a595" r="1.4" />
+        <circle cx="13" cy="12" fill="#a89d8d" r="1.4" />
       </pattern>
 
       <pattern id="roof-timber" height="16" patternUnits="userSpaceOnUse" width="16">
-        <rect fill="#694f39" height="16" width="16" />
-        <path d="M0 6 H16 M0 12 H16" stroke="#4f3a2a" strokeWidth="1.2" />
+        <rect fill="#826249" height="16" width="16" />
+        <path d="M0 6 H16 M0 12 H16" stroke="#664b36" strokeWidth="1.2" />
       </pattern>
 
       <filter id="soft-shadow" height="220%" width="220%" x="-60%" y="-60%">
         <feDropShadow
           dx="0"
           dy="10"
-          floodColor="rgba(0,0,0,0.42)"
+          floodColor="rgba(0,0,0,0.28)"
           stdDeviation="10"
         />
       </filter>
@@ -470,16 +505,12 @@ function AwarenessDefs({
   mapHeight,
   playerGradientId,
   playerPixel,
-  knownZones,
-  knownZoneGradientIds,
 }: {
   maskId: string;
   mapWidth: number;
   mapHeight: number;
   playerGradientId: string;
   playerPixel: Point;
-  knownZones: Array<{ id: string; x: number; y: number; radius: number }>;
-  knownZoneGradientIds: string[];
 }) {
   const playerOuterRadius = CELL * 5.6;
   const playerInnerRadius = CELL * 3.1;
@@ -493,30 +524,15 @@ function AwarenessDefs({
         id={playerGradientId}
         r={playerOuterRadius}
       >
-        <stop offset="0%" stopColor="black" />
+        <stop offset="0%" stopColor="#020202" />
         <stop
           offset={`${(playerInnerRadius / playerOuterRadius) * 100}%`}
-          stopColor="#030303"
+          stopColor="#121212"
         />
-        <stop offset="63%" stopColor="#2f2f2f" />
-        <stop offset="82%" stopColor="#9c9c9c" />
+        <stop offset="63%" stopColor="#484848" />
+        <stop offset="82%" stopColor="#b5b5b5" />
         <stop offset="100%" stopColor="white" />
       </radialGradient>
-
-      {knownZones.map((zone, index) => (
-        <radialGradient
-          cx={zone.x}
-          cy={zone.y}
-          gradientUnits="userSpaceOnUse"
-          id={knownZoneGradientIds[index]}
-          key={zone.id}
-          r={zone.radius}
-        >
-          <stop offset="0%" stopColor="#c4c4c4" />
-          <stop offset="45%" stopColor="#dddddd" />
-          <stop offset="100%" stopColor="white" />
-        </radialGradient>
-      ))}
 
       <mask id={maskId} maskUnits="userSpaceOnUse">
         <rect fill="white" height={mapHeight} width={mapWidth} x="0" y="0" />
@@ -526,15 +542,6 @@ function AwarenessDefs({
           fill={`url(#${playerGradientId})`}
           r={playerOuterRadius}
         />
-        {knownZones.map((zone, index) => (
-          <circle
-            cx={zone.x}
-            cy={zone.y}
-            fill={`url(#${knownZoneGradientIds[index]})`}
-            key={`${zone.id}-mask`}
-            r={zone.radius}
-          />
-        ))}
       </mask>
     </defs>
   );
@@ -556,7 +563,7 @@ function AwarenessOverlay({
   return (
     <g pointerEvents="none">
       <rect
-        fill="rgba(4,7,10,0.54)"
+        fill="rgba(9,13,16,0.32)"
         height={height}
         mask={`url(#${maskId})`}
         width={width}
@@ -566,29 +573,11 @@ function AwarenessOverlay({
       <circle
         cx={playerPixel.x}
         cy={playerPixel.y}
-        fill="rgba(236,222,193,0.04)"
+        fill="rgba(236,222,193,0.06)"
         r={playerRadius - CELL * 1.2}
       />
-      <circle
-        cx={playerPixel.x}
-        cy={playerPixel.y}
-        fill="none"
-        opacity="0.95"
-        r={playerRadius - CELL * 0.6}
-        stroke="rgba(234,220,189,0.26)"
-        strokeWidth="1.5"
-      />
-      <circle
-        cx={playerPixel.x}
-        cy={playerPixel.y}
-        fill="none"
-        opacity="0.35"
-        r={playerRadius}
-        stroke="rgba(180,198,214,0.18)"
-        strokeWidth="5"
-      />
       <rect
-        fill="rgba(0,0,0,0.12)"
+        fill="rgba(0,0,0,0.04)"
         height={height}
         rx="20"
         width={width}
@@ -1251,6 +1240,7 @@ function LocationPlacard({
 function NpcMarker({
   x,
   known,
+  npcId,
   y,
   facing,
   step,
@@ -1258,51 +1248,99 @@ function NpcMarker({
   x: number;
   y: number;
   known: boolean;
+  npcId: string;
   facing: 1 | -1;
   step: number;
 }) {
   const bob = Math.abs(step) * -1.4;
-  const stride = step * 1.8;
+  const appearance = npcAppearanceForId(npcId, known);
+  const stride = step * appearance.strideScale;
 
   return (
     <g transform={`translate(${x} ${y + bob}) scale(${facing} 1)`} pointerEvents="none">
       <ellipse
         cx="0"
-        cy="12"
-        fill="rgba(0,0,0,0.26)"
-        rx="5.5"
-        ry="2.6"
-      />
-      <circle
-        cx="0"
-        cy="-6"
-        fill={known ? "rgba(236,222,193,0.94)" : "rgba(156,168,177,0.9)"}
-        r="4"
-        stroke="rgba(11,15,19,0.92)"
-        strokeWidth="1.5"
+        cy="12.9"
+        fill="rgba(0,0,0,0.2)"
+        rx="6.8"
+        ry="2.25"
       />
       <path
-        d="M -4 0 Q 0 -4 4 0 L 3 8 L -3 8 Z"
-        fill={known ? "rgba(97,122,141,0.95)" : "rgba(83,92,100,0.95)"}
-        stroke="rgba(11,15,19,0.72)"
+        d={`M -2 7.7 L ${-3.2 - stride} 13.2`}
+        fill="none"
+        stroke={appearance.leg}
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+      <path
+        d={`M 1.8 7.7 L ${3.2 + stride} 13.2`}
+        fill="none"
+        stroke={appearance.leg}
+        strokeLinecap="round"
+        strokeWidth="1.8"
+      />
+      <ellipse
+        cx={-3.7 - stride}
+        cy="13.45"
+        fill={appearance.shoe}
+        rx="2"
+        ry="0.95"
+      />
+      <ellipse
+        cx={3.6 + stride}
+        cy="13.45"
+        fill={appearance.shoe}
+        rx="2"
+        ry="0.95"
+      />
+      <path
+        d={`M ${-appearance.bodyWidth} ${appearance.shoulderY} Q 0 ${appearance.shoulderY - 3.2} ${appearance.bodyWidth} ${appearance.shoulderY} L ${appearance.hemWidth} ${appearance.hemY - 2.3} Q ${appearance.hemWidth - 0.2} ${appearance.hemY + 0.6} 0 ${appearance.hemY + 1.1} Q ${-appearance.hemWidth + 0.2} ${appearance.hemY + 0.6} ${-appearance.hemWidth} ${appearance.hemY - 2.3} Z`}
+        fill={appearance.coat}
+        stroke={appearance.outline}
+        strokeWidth="1.1"
+      />
+      <path
+        d={`M ${-appearance.bodyWidth * 0.34} ${appearance.shoulderY + 0.2} Q 0 ${appearance.shoulderY - 1} ${appearance.bodyWidth * 0.34} ${appearance.shoulderY + 0.2} L ${appearance.bodyWidth * 0.25} ${appearance.hemY - 0.8} L ${-appearance.bodyWidth * 0.25} ${appearance.hemY - 0.8} Z`}
+        fill={appearance.accent}
+        opacity="0.92"
+      />
+      {renderNpcAccessory(appearance)}
+      <path
+        d={`M ${-appearance.bodyWidth + 0.4} ${appearance.shoulderY + 2} Q -6.9 3.9 -7.2 6.5`}
+        fill="none"
+        stroke={appearance.outline}
+        strokeLinecap="round"
         strokeWidth="1.2"
       />
       <path
-        d={`M -1 8 L ${-2.8 - stride} 14`}
+        d={`M ${appearance.bodyWidth - 0.4} ${appearance.shoulderY + 2} Q 6.9 3.9 7.2 6.5`}
         fill="none"
-        opacity="0.62"
-        stroke="rgba(214,200,176,0.62)"
+        stroke={appearance.outline}
         strokeLinecap="round"
-        strokeWidth="1.4"
+        strokeWidth="1.2"
       />
-      <path
-        d={`M 1 8 L ${2.8 + stride} 14`}
-        fill="none"
-        opacity="0.62"
-        stroke="rgba(214,200,176,0.62)"
-        strokeLinecap="round"
-        strokeWidth="1.4"
+      <circle
+        cx="0"
+        cy={appearance.headY}
+        fill={appearance.face}
+        r={appearance.headRadius}
+        stroke={appearance.outline}
+        strokeWidth="1.25"
       />
+      <circle
+        cx={-appearance.headRadius * 0.45}
+        cy={appearance.headY + appearance.headRadius * 0.3}
+        fill={appearance.cheek}
+        r="1.1"
+      />
+      <circle
+        cx={appearance.headRadius * 0.45}
+        cy={appearance.headY + appearance.headRadius * 0.3}
+        fill={appearance.cheek}
+        r="1.1"
+      />
+      {renderNpcHair(appearance)}
+      {renderNpcFace(appearance)}
     </g>
   );
 }
@@ -1323,28 +1361,780 @@ function PlayerMarker({
     <g pointerEvents="none">
       <ellipse
         cx={pixelX}
-        cy={pixelY + 12}
-        fill="rgba(0,0,0,0.28)"
-        rx="8"
-        ry="3.2"
+        cy={pixelY + 13.4}
+        fill="rgba(0,0,0,0.24)"
+        rx="8.8"
+        ry="2.9"
       />
-      <circle cx={pixelX} cy={pixelY} fill="rgba(183,146,89,0.16)" r="19" />
-      <circle
-        cx={pixelX}
-        cy={pixelY - 7}
-        fill="rgba(245,235,219,0.96)"
-        r="5"
-        stroke="rgba(16,20,23,0.94)"
-        strokeWidth="1.6"
+      <circle cx={pixelX} cy={pixelY + 0.6} fill="rgba(183,146,89,0.12)" r="16.5" />
+      <path
+        d={`M ${pixelX - 2.4} ${pixelY + 8.3} L ${pixelX - 4.6} ${pixelY + 15}`}
+        fill="none"
+        stroke="rgba(85,64,41,0.96)"
+        strokeLinecap="round"
+        strokeWidth="2"
       />
       <path
-        d={`M ${pixelX - 6} ${pixelY - 1} Q ${pixelX} ${pixelY - 8} ${pixelX + 6} ${pixelY - 1} L ${pixelX + 4} ${pixelY + 10} L ${pixelX - 4} ${pixelY + 10} Z`}
-        fill="rgba(183,146,89,0.98)"
-        stroke="rgba(244,235,220,0.7)"
-        strokeWidth="1.6"
+        d={`M ${pixelX + 2.2} ${pixelY + 8.3} L ${pixelX + 4.3} ${pixelY + 15}`}
+        fill="none"
+        stroke="rgba(85,64,41,0.96)"
+        strokeLinecap="round"
+        strokeWidth="2"
+      />
+      <ellipse cx={pixelX - 5.1} cy={pixelY + 15.2} fill="rgba(61,45,30,0.98)" rx="1.9" ry="1" />
+      <ellipse cx={pixelX + 4.7} cy={pixelY + 15.2} fill="rgba(61,45,30,0.98)" rx="1.9" ry="1" />
+      <path
+        d={`M ${pixelX - 6.1} ${pixelY + 1.1} Q ${pixelX} ${pixelY - 3.9} ${pixelX + 6.1} ${pixelY + 1.1} L ${pixelX + 5.1} ${pixelY + 4.9} Q ${pixelX + 4.3} ${pixelY + 10.8} ${pixelX} ${pixelY + 11.8} Q ${pixelX - 4.3} ${pixelY + 10.8} ${pixelX - 5.1} ${pixelY + 4.9} Z`}
+        fill="rgba(191,152,93,0.98)"
+        stroke="rgba(250,239,219,0.7)"
+        strokeWidth="1.35"
+      />
+      <path
+        d={`M ${pixelX - 2.4} ${pixelY + 1.2} Q ${pixelX} ${pixelY - 0.2} ${pixelX + 2.4} ${pixelY + 1.2} L ${pixelX + 1.7} ${pixelY + 9.5} L ${pixelX - 1.7} ${pixelY + 9.5} Z`}
+        fill="rgba(235,214,175,0.9)"
+      />
+      <path
+        d={`M ${pixelX + 5.4} ${pixelY + 1.8} Q ${pixelX + 8.7} ${pixelY + 4.2} ${pixelX + 7.9} ${pixelY + 8.6}`}
+        fill="none"
+        stroke="rgba(102,78,48,0.94)"
+        strokeLinecap="round"
+        strokeWidth="1.4"
+      />
+      <rect
+        fill="rgba(121,88,46,0.98)"
+        height="5.7"
+        rx="1.6"
+        stroke="rgba(245,225,190,0.45)"
+        strokeWidth="0.8"
+        width="3.8"
+        x={pixelX + 6.2}
+        y={pixelY + 3.9}
+      />
+      <circle
+        cx={pixelX}
+        cy={pixelY - 7.8}
+        fill="rgba(245,235,219,0.98)"
+        r="7.35"
+        stroke="rgba(16,20,23,0.92)"
+        strokeWidth="1.45"
+      />
+      <path
+        d={`M ${pixelX - 7.2} ${pixelY - 9.4} Q ${pixelX - 6} ${pixelY - 15.8} ${pixelX + 0.8} ${pixelY - 15.2} Q ${pixelX + 6.9} ${pixelY - 14.1} ${pixelX + 7.2} ${pixelY - 8.1} L ${pixelX + 5.3} ${pixelY - 4.4} Q ${pixelX + 2.9} ${pixelY - 6.4} ${pixelX - 0.3} ${pixelY - 5.7} Q ${pixelX - 4.4} ${pixelY - 4.9} ${pixelX - 5.8} ${pixelY - 3.6} Z`}
+        fill="rgba(122,91,55,0.98)"
+      />
+      <circle cx={pixelX - 2.2} cy={pixelY - 6.3} fill="rgba(223,179,160,0.35)" r="1.35" />
+      <circle cx={pixelX + 2.4} cy={pixelY - 6.3} fill="rgba(223,179,160,0.35)" r="1.35" />
+      <path
+        d={`M ${pixelX - 3.6} ${pixelY - 10} Q ${pixelX - 2.1} ${pixelY - 11} ${pixelX - 0.5} ${pixelY - 10}`}
+        fill="none"
+        stroke="rgba(92,69,45,0.96)"
+        strokeLinecap="round"
+        strokeWidth="0.82"
+      />
+      <path
+        d={`M ${pixelX + 0.6} ${pixelY - 10} Q ${pixelX + 2.1} ${pixelY - 11} ${pixelX + 3.6} ${pixelY - 10}`}
+        fill="none"
+        stroke="rgba(92,69,45,0.96)"
+        strokeLinecap="round"
+        strokeWidth="0.82"
+      />
+      <circle cx={pixelX - 1.95} cy={pixelY - 8.4} fill="rgba(41,33,27,0.94)" r="0.86" />
+      <circle cx={pixelX + 1.8} cy={pixelY - 8.4} fill="rgba(41,33,27,0.94)" r="0.86" />
+      <path
+        d={`M ${pixelX} ${pixelY - 7.1} L ${pixelX - 0.55} ${pixelY - 5.3}`}
+        fill="none"
+        stroke="rgba(120,90,63,0.62)"
+        strokeLinecap="round"
+        strokeWidth="0.8"
+      />
+      <path
+        d={`M ${pixelX - 2.4} ${pixelY - 3.9} Q ${pixelX} ${pixelY - 2.1} ${pixelX + 2.5} ${pixelY - 3.9}`}
+        fill="none"
+        stroke="rgba(75,54,37,0.9)"
+        strokeLinecap="round"
+        strokeWidth="0.92"
       />
     </g>
   );
+}
+
+function ThoughtBubble({
+  x,
+  y,
+  text,
+  tone,
+  mapWidth,
+  dx,
+  dy,
+}: {
+  x: number;
+  y: number;
+  text: string;
+  tone: "player" | "npc";
+  mapWidth: number;
+  dx: number;
+  dy: number;
+}) {
+  const lines = wrapThoughtLines(text, 18);
+  const contentWidth =
+    Math.max(...lines.map((line) => line.length), 6) * (tone === "player" ? 6.2 : 5.9) + 16;
+  const bubbleWidth = clamp(contentWidth, 70, 152);
+  const bubbleHeight = 14 + lines.length * 12;
+  const bubbleX = clamp(x - bubbleWidth / 2 + dx, 8, mapWidth - bubbleWidth - 8);
+  const bubbleY = y + dy - bubbleHeight;
+  const tailX = clamp(x + dx * 0.24, bubbleX + 14, bubbleX + bubbleWidth - 14);
+  const fill =
+    tone === "player" ? "rgba(244,235,220,0.94)" : "rgba(241,236,228,0.9)";
+  const stroke =
+    tone === "player" ? "rgba(183,146,89,0.54)" : "rgba(126,136,143,0.36)";
+  const textFill = tone === "player" ? "rgba(69,50,34,0.94)" : "rgba(54,58,63,0.94)";
+
+  return (
+    <g pointerEvents="none">
+      <circle cx={tailX - 2} cy={bubbleY + bubbleHeight + 7} fill={fill} r="2.3" opacity="0.94" />
+      <circle cx={tailX + 1.4} cy={bubbleY + bubbleHeight + 11.2} fill={fill} r="1.5" opacity="0.9" />
+      <rect
+        fill={fill}
+        height={bubbleHeight}
+        rx="10"
+        stroke={stroke}
+        strokeWidth="1"
+        width={bubbleWidth}
+        x={bubbleX}
+        y={bubbleY}
+      />
+      <path
+        d={`M ${tailX - 6} ${bubbleY + bubbleHeight - 1} Q ${tailX - 1} ${bubbleY + bubbleHeight + 4} ${tailX + 4} ${bubbleY + bubbleHeight - 1}`}
+        fill={fill}
+        stroke={stroke}
+        strokeLinecap="round"
+        strokeWidth="0.8"
+      />
+      <text
+        fill={textFill}
+        fontSize={tone === "player" ? "10.7" : "10.2"}
+        fontWeight={tone === "player" ? "600" : "500"}
+        x={bubbleX + bubbleWidth / 2}
+        y={bubbleY + 15}
+        textAnchor="middle"
+      >
+        {lines.map((line, index) => (
+          <tspan
+            dy={index === 0 ? 0 : 11.6}
+            key={`${line}-${index}`}
+            x={bubbleX + bubbleWidth / 2}
+          >
+            {line}
+          </tspan>
+        ))}
+      </text>
+    </g>
+  );
+}
+
+function npcAppearanceForId(npcId: string, known: boolean): NpcAppearance {
+  const outline = "rgba(19,24,28,0.9)";
+  const muted = !known;
+
+  switch (npcId) {
+    case "npc-mara":
+      return {
+        headY: -8.8,
+        headRadius: 6.6,
+        bodyWidth: 5.2,
+        hemWidth: 5.9,
+        shoulderY: -0.2,
+        hemY: 8.7,
+        strideScale: 1.42,
+        coat: muted ? "rgba(111,103,90,0.95)" : "rgba(131,112,88,0.98)",
+        accent: muted ? "rgba(183,174,162,0.78)" : "rgba(219,206,183,0.92)",
+        hair: muted ? "rgba(95,94,88,0.96)" : "rgba(124,121,111,0.98)",
+        face: "rgba(191,132,102,0.98)",
+        cheek: "rgba(223,170,150,0.34)",
+        eye: "rgba(66,45,31,0.92)",
+        outline,
+        leg: muted ? "rgba(96,86,72,0.94)" : "rgba(104,79,61,0.95)",
+        shoe: "rgba(58,44,31,0.96)",
+        hairStyle: "bun",
+        faceStyle: "soft",
+        accessory: "apron",
+      };
+    case "npc-ada":
+      return {
+        headY: -8.5,
+        headRadius: 6.3,
+        bodyWidth: 4.6,
+        hemWidth: 5,
+        shoulderY: -0.3,
+        hemY: 8.5,
+        strideScale: 1.5,
+        coat: muted ? "rgba(98,111,112,0.95)" : "rgba(86,119,118,0.98)",
+        accent: muted ? "rgba(177,166,155,0.8)" : "rgba(220,191,160,0.92)",
+        hair: muted ? "rgba(88,79,71,0.94)" : "rgba(109,71,48,0.98)",
+        face: "rgba(228,187,153,0.98)",
+        cheek: "rgba(231,189,169,0.28)",
+        eye: "rgba(60,41,28,0.92)",
+        outline,
+        leg: muted ? "rgba(82,91,92,0.94)" : "rgba(63,86,88,0.95)",
+        shoe: "rgba(44,38,31,0.96)",
+        hairStyle: "scarf",
+        faceStyle: "wry",
+        accessory: "shawl",
+      };
+    case "npc-jo":
+      return {
+        headY: -8.2,
+        headRadius: 6.15,
+        bodyWidth: 4.9,
+        hemWidth: 5.2,
+        shoulderY: -0.1,
+        hemY: 8.4,
+        strideScale: 1.38,
+        coat: muted ? "rgba(95,104,109,0.96)" : "rgba(89,103,113,0.98)",
+        accent: muted ? "rgba(148,158,165,0.78)" : "rgba(178,190,198,0.88)",
+        hair: muted ? "rgba(72,78,83,0.95)" : "rgba(59,64,67,0.98)",
+        face: "rgba(159,108,84,0.98)",
+        cheek: "rgba(196,141,121,0.22)",
+        eye: "rgba(40,33,28,0.92)",
+        outline,
+        leg: muted ? "rgba(79,85,90,0.94)" : "rgba(70,78,85,0.95)",
+        shoe: "rgba(38,43,47,0.96)",
+        hairStyle: "cap",
+        faceStyle: "steady",
+        accessory: "satchel",
+      };
+    case "npc-tomas":
+      return {
+        headY: -8.7,
+        headRadius: 6.75,
+        bodyWidth: 5.6,
+        hemWidth: 6,
+        shoulderY: 0,
+        hemY: 8.9,
+        strideScale: 1.28,
+        coat: muted ? "rgba(106,100,84,0.95)" : "rgba(119,104,74,0.98)",
+        accent: muted ? "rgba(160,155,141,0.76)" : "rgba(190,176,133,0.9)",
+        hair: muted ? "rgba(56,52,46,0.96)" : "rgba(41,36,32,0.98)",
+        face: "rgba(104,69,49,0.99)",
+        cheek: "rgba(163,108,86,0.18)",
+        eye: "rgba(22,18,14,0.94)",
+        outline,
+        leg: muted ? "rgba(84,75,61,0.94)" : "rgba(88,72,52,0.96)",
+        shoe: "rgba(31,28,24,0.98)",
+        hairStyle: "beard-cap",
+        faceStyle: "stern",
+        accessory: "vest",
+      };
+    case "npc-nia":
+      return {
+        headY: -8.6,
+        headRadius: 6.2,
+        bodyWidth: 4.4,
+        hemWidth: 4.9,
+        shoulderY: -0.4,
+        hemY: 8.2,
+        strideScale: 1.92,
+        coat: muted ? "rgba(90,107,99,0.95)" : "rgba(79,131,112,0.98)",
+        accent: muted ? "rgba(167,180,166,0.78)" : "rgba(192,218,175,0.9)",
+        hair: muted ? "rgba(72,58,45,0.95)" : "rgba(98,69,46,0.98)",
+        face: "rgba(207,146,108,0.99)",
+        cheek: "rgba(233,180,146,0.28)",
+        eye: "rgba(56,35,22,0.92)",
+        outline,
+        leg: muted ? "rgba(73,86,79,0.94)" : "rgba(59,96,81,0.95)",
+        shoe: "rgba(35,46,40,0.96)",
+        hairStyle: "ponytail",
+        faceStyle: "bright",
+        accessory: "scarf",
+      };
+    default:
+      return {
+        headY: -8.4,
+        headRadius: 6.3,
+        bodyWidth: 4.9,
+        hemWidth: 5.2,
+        shoulderY: -0.2,
+        hemY: 8.5,
+        strideScale: 1.48,
+        coat: muted ? "rgba(100,104,108,0.96)" : "rgba(110,100,82,0.98)",
+        accent: muted ? "rgba(164,170,176,0.84)" : "rgba(196,178,143,0.9)",
+        hair: muted ? "rgba(82,88,94,0.95)" : "rgba(67,57,45,0.98)",
+        face: "rgba(205,158,121,0.98)",
+        cheek: "rgba(222,176,159,0.3)",
+        eye: "rgba(49,39,30,0.92)",
+        outline,
+        leg: muted ? "rgba(82,88,94,0.94)" : "rgba(84,74,58,0.94)",
+        shoe: "rgba(49,43,36,0.96)",
+        hairStyle: "cropped",
+        faceStyle: "guarded",
+      };
+  }
+}
+
+function renderNpcAccessory(appearance: NpcAppearance) {
+  switch (appearance.accessory) {
+    case "apron":
+      return (
+        <path
+          d="M -2.1 1.4 L 2.1 1.4 L 1.7 8.4 L -1.7 8.4 Z"
+          fill="rgba(233,222,202,0.78)"
+        />
+      );
+    case "shawl":
+      return (
+        <path
+          d="M -5.2 0.9 Q 0 -2.6 5.2 0.9 L 3.5 2.6 Q 0 1.5 -3.5 2.6 Z"
+          fill="rgba(208,183,147,0.88)"
+          opacity="0.9"
+        />
+      );
+    case "satchel":
+      return (
+        <>
+          <path
+            d="M 2.3 -0.2 Q -0.4 3.1 -0.7 9.1"
+            fill="none"
+            stroke="rgba(67,51,36,0.86)"
+            strokeLinecap="round"
+            strokeWidth="1"
+          />
+          <rect
+            x="-1.9"
+            y="4.2"
+            width="2.6"
+            height="2.7"
+            rx="0.8"
+            fill="rgba(106,78,54,0.95)"
+          />
+        </>
+      );
+    case "vest":
+      return (
+        <path
+          d="M -3 0.4 L -0.8 0.4 L -0.2 7.6 L -2.2 7.6 Z M 0.8 0.4 L 3 0.4 L 2.2 7.6 L 0.2 7.6 Z"
+          fill="rgba(78,58,39,0.64)"
+        />
+      );
+    case "scarf":
+      return (
+        <>
+          <path
+            d="M -3.8 0.9 Q 0 -1.1 3.8 0.9 Q 2.2 2.1 0 2.2 Q -2.2 2.1 -3.8 0.9 Z"
+            fill="rgba(222,193,152,0.9)"
+          />
+          <path
+            d="M 2.3 2.1 L 4.6 5.4"
+            fill="none"
+            stroke="rgba(222,193,152,0.9)"
+            strokeLinecap="round"
+            strokeWidth="1.15"
+          />
+        </>
+      );
+    default:
+      return null;
+  }
+}
+
+function renderNpcHair(appearance: NpcAppearance) {
+  const { hairStyle, hair, headY, headRadius } = appearance;
+
+  switch (hairStyle) {
+    case "bun":
+      return (
+        <>
+          <circle cx="2.9" cy={headY - headRadius + 0.3} fill={hair} r="2.2" />
+          <path
+            d={`M ${-headRadius + 0.8} ${headY - 0.9} Q -4.5 ${headY - headRadius + 0.4} 0 ${headY - headRadius + 0.1} Q 4.9 ${headY - headRadius + 0.4} ${headRadius - 0.2} ${headY - 0.6} Q 2.9 ${headY + 0.9} -2.1 ${headY + 0.7} Z`}
+            fill={hair}
+          />
+        </>
+      );
+    case "scarf":
+      return (
+        <>
+          <path
+            d={`M ${-headRadius - 0.5} ${headY - headRadius + 1.1} Q 0 ${headY - headRadius - 1.6} ${headRadius + 0.5} ${headY - headRadius + 1.1} L ${headRadius - 0.2} ${headY - 2.1} Q 0 ${headY - 3.3} ${-headRadius + 0.1} ${headY - 2.1} Z`}
+            fill="rgba(205,148,95,0.98)"
+          />
+          <path
+            d={`M ${headRadius - 1.5} ${headY - 1.8} Q ${headRadius + 1.4} ${headY + 1.2} ${headRadius - 0.4} ${headY + 4.1}`}
+            fill="none"
+            stroke="rgba(205,148,95,0.98)"
+            strokeLinecap="round"
+            strokeWidth="1.5"
+          />
+        </>
+      );
+    case "cap":
+      return (
+        <>
+          <path
+            d={`M ${-headRadius - 0.2} ${headY - 1.6} Q -2 ${headY - headRadius - 1.3} ${headRadius - 0.3} ${headY - 1.7} Q 3.2 ${headY - 0.8} -1.5 ${headY - 0.6} Z`}
+            fill={hair}
+          />
+          <path
+            d={`M ${headRadius - 1.2} ${headY - 1.8} Q ${headRadius + 1.6} ${headY - 1.1} ${headRadius + 0.2} ${headY - 0.2}`}
+            fill="none"
+            stroke={hair}
+            strokeLinecap="round"
+            strokeWidth="1.4"
+          />
+        </>
+      );
+    case "beard-cap":
+      return (
+        <>
+          <path
+            d={`M ${-headRadius - 0.4} ${headY - 1.7} Q -1.9 ${headY - headRadius - 1.7} ${headRadius - 0.4} ${headY - 1.8} Q 2.6 ${headY - 1.1} -1.3 ${headY - 0.8} Z`}
+            fill={hair}
+          />
+          <path
+            d={`M ${-3.6} ${headY + 2.9} Q 0 ${headY + 6.1} 3.6 ${headY + 2.9} Q 2.9 ${headY + 5.2} 0 ${headY + 5.6} Q -2.9 ${headY + 5.2} -3.6 ${headY + 2.9} Z`}
+            fill={hair}
+          />
+        </>
+      );
+    case "ponytail":
+      return (
+        <>
+          <path
+            d={`M ${-headRadius + 0.4} ${headY - 1.3} Q -3.8 ${headY - headRadius + 0.2} 0 ${headY - headRadius - 0.2} Q 4.6 ${headY - headRadius + 0.1} ${headRadius - 0.1} ${headY - 1.1} Q 1.2 ${headY + 0.5} -2.6 ${headY + 0.6} Z`}
+            fill={hair}
+          />
+          <path
+            d={`M ${headRadius - 1} ${headY - headRadius + 1.8} Q ${headRadius + 2.8} ${headY - headRadius + 0.8} ${headRadius + 1.3} ${headY + 2.6}`}
+            fill="none"
+            stroke={hair}
+            strokeLinecap="round"
+            strokeWidth="1.7"
+          />
+        </>
+      );
+    default:
+      return (
+        <path
+          d={`M ${-headRadius + 0.6} ${headY - 1.1} Q -3.8 ${headY - headRadius + 0.1} 0 ${headY - headRadius + 0.1} Q 4.4 ${headY - headRadius + 0.2} ${headRadius - 0.2} ${headY - 0.8} Q 2.7 ${headY + 0.3} -2.5 ${headY + 0.5} Z`}
+          fill={hair}
+        />
+      );
+  }
+}
+
+function renderNpcFace(appearance: NpcAppearance) {
+  const { faceStyle, eye, headY } = appearance;
+
+  switch (faceStyle) {
+    case "soft":
+      return (
+        <>
+          <path
+            d={`M -3.4 ${headY - 2.1} Q -1.8 ${headY - 2.9} -0.4 ${headY - 1.9}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.72"
+          />
+          <path
+            d={`M 0.4 ${headY - 1.9} Q 1.8 ${headY - 2.9} 3.4 ${headY - 2.1}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.72"
+          />
+          <circle cx="-1.85" cy={headY - 1.1} fill={eye} r="0.52" />
+          <circle cx="1.85" cy={headY - 1.1} fill={eye} r="0.52" />
+          <path
+            d={`M -2 ${headY + 2.2} Q 0 ${headY + 3.6} 2 ${headY + 2.2}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.8"
+          />
+        </>
+      );
+    case "wry":
+      return (
+        <>
+          <path
+            d={`M -3 ${headY - 2.5} L -0.9 ${headY - 2.9}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.74"
+          />
+          <path
+            d={`M 0.7 ${headY - 3} L 3.1 ${headY - 2.4}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.74"
+          />
+          <ellipse cx="-1.85" cy={headY - 1.1} fill={eye} rx="0.58" ry="0.72" />
+          <ellipse cx="1.8" cy={headY - 1.1} fill={eye} rx="0.58" ry="0.72" />
+          <path
+            d={`M 0 ${headY - 0.2} L -0.4 ${headY + 1.3}`}
+            fill="none"
+            stroke="rgba(126,93,65,0.5)"
+            strokeLinecap="round"
+            strokeWidth="0.64"
+          />
+          <path
+            d={`M -1.8 ${headY + 2.4} Q -0.1 ${headY + 3.2} 2 ${headY + 1.9}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.82"
+          />
+        </>
+      );
+    case "steady":
+      return (
+        <>
+          <path
+            d={`M -3 ${headY - 2.1} Q -1.8 ${headY - 2.9} -0.7 ${headY - 2.1}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.7"
+          />
+          <path
+            d={`M 0.7 ${headY - 2.1} Q 1.8 ${headY - 2.9} 3 ${headY - 2.1}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.7"
+          />
+          <circle cx="-1.65" cy={headY - 1.1} fill={eye} r="0.5" />
+          <circle cx="1.65" cy={headY - 1.1} fill={eye} r="0.5" />
+          <path
+            d={`M -1.7 ${headY + 2.6} Q 0 ${headY + 2.2} 1.7 ${headY + 2.6}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.72"
+          />
+        </>
+      );
+    case "stern":
+      return (
+        <>
+          <path
+            d={`M -3.3 ${headY - 2.8} L -0.9 ${headY - 3.4}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.82"
+          />
+          <path
+            d={`M 0.9 ${headY - 3.4} L 3.3 ${headY - 2.8}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.82"
+          />
+          <circle cx="-1.8" cy={headY - 1.6} fill={eye} r="0.56" />
+          <circle cx="1.8" cy={headY - 1.6} fill={eye} r="0.56" />
+          <path
+            d={`M -1.9 ${headY + 2.7} Q 0 ${headY + 2.2} 1.9 ${headY + 2.7}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.7"
+          />
+        </>
+      );
+    case "bright":
+      return (
+        <>
+          <circle cx="-1.9" cy={headY - 1.3} fill={eye} r="0.58" />
+          <circle cx="1.9" cy={headY - 1.3} fill={eye} r="0.58" />
+          <path
+            d={`M -3.1 ${headY - 2.4} Q -1.7 ${headY - 3.3} -0.4 ${headY - 2.3}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.7"
+          />
+          <path
+            d={`M 0.4 ${headY - 2.3} Q 1.7 ${headY - 3.3} 3.1 ${headY - 2.4}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.7"
+          />
+          <circle cx="-2.55" cy={headY + 0.8} fill={eye} r="0.3" opacity="0.45" />
+          <circle cx="-1.6" cy={headY + 1.4} fill={eye} r="0.3" opacity="0.45" />
+          <circle cx="-0.6" cy={headY + 0.9} fill={eye} r="0.3" opacity="0.45" />
+          <path
+            d={`M -2.1 ${headY + 2.3} Q 0 ${headY + 4.1} 2.2 ${headY + 2.3}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.88"
+          />
+        </>
+      );
+    default:
+      return (
+        <>
+          <path
+            d={`M -3 ${headY - 2} Q -1.7 ${headY - 2.8} -0.5 ${headY - 1.9}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.7"
+          />
+          <path
+            d={`M 0.5 ${headY - 1.9} Q 1.7 ${headY - 2.8} 3 ${headY - 2}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.7"
+          />
+          <circle cx="-1.55" cy={headY - 1.05} fill={eye} r="0.5" />
+          <circle cx="1.55" cy={headY - 1.05} fill={eye} r="0.5" />
+          <path
+            d={`M -1.8 ${headY + 2.2} Q 0 ${headY + 3} 1.8 ${headY + 2.2}`}
+            fill="none"
+            stroke={eye}
+            strokeLinecap="round"
+            strokeWidth="0.74"
+          />
+        </>
+      );
+  }
+}
+
+function buildPlayerThought(game: StreetGameState) {
+  const activeJob = game.jobs.find((job) => job.id === game.player.activeJobId);
+  const pumpProblem = game.problems.find((problem) => problem.id === "problem-pump");
+  const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
+  const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
+
+  if (activeJob && !activeJob.completed) {
+    return "Don't blow this shift.";
+  }
+
+  if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
+    return "Need a wrench first.";
+  }
+
+  if (pumpProblem?.discovered && pumpProblem.status === "active" && hasWrench) {
+    return "Go fix that pump.";
+  }
+
+  if (cartProblem?.discovered && cartProblem.status === "active") {
+    return "That cart needs moving.";
+  }
+
+  if (game.player.energy < 38) {
+    return "Could use a proper sit-down.";
+  }
+
+  if (game.player.knownLocationIds.length < 4) {
+    return "Need to learn these lanes.";
+  }
+
+  if (game.player.money < 18) {
+    return "Need work before dark.";
+  }
+
+  return "Someone here needs a hand.";
+}
+
+function buildNpcThought(npc: NpcState, game: StreetGameState) {
+  const hour = game.clock.hour + game.clock.minute / 60;
+  const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
+  const yardJob = game.jobs.find((job) => job.id === "job-yard-shift");
+  const pumpProblem = game.problems.find((problem) => problem.id === "problem-pump");
+  const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
+  const playerHasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
+
+  switch (npc.id) {
+    case "npc-mara":
+      if (pumpProblem?.status === "active") {
+        return "That pump is making a mess.";
+      }
+      if (pumpProblem?.status === "solved") {
+        return "At least the yard's holding.";
+      }
+      return hour < 12 ? "Somebody's late on rent." : "House still has a memory.";
+    case "npc-ada":
+      if (!teaJob?.accepted && hour < 12.25) {
+        return "Need another pair of hands.";
+      }
+      if (teaJob?.accepted && !teaJob.completed) {
+        return "Keep the cups moving.";
+      }
+      return "Noon rush is almost here.";
+    case "npc-jo":
+      if (pumpProblem?.discovered && pumpProblem.status === "active" && !playerHasWrench) {
+        return "That wrench should sell today.";
+      }
+      return "Everything breaks eventually.";
+    case "npc-tomas":
+      if (!yardJob?.accepted && hour < 13.5) {
+        return "Need one more back today.";
+      }
+      if (yardJob?.accepted && !yardJob.completed) {
+        return "Move the load, not excuses.";
+      }
+      return "Weather won't lift these crates.";
+    case "npc-nia":
+      if (cartProblem?.discovered && cartProblem.status === "active") {
+        return "That cart will jam the square.";
+      }
+      return npc.currentLocationId === "moss-pier"
+        ? "Watch the boats, not the gulls."
+        : "One rumor here is real.";
+    default:
+      return npc.summary.split(".")[0] ?? "Need to keep moving.";
+  }
+}
+
+function thoughtBubbleOffset(characterId: string) {
+  switch (characterId) {
+    case "npc-mara":
+      return { x: -26, y: -32 };
+    case "npc-ada":
+      return { x: 24, y: -34 };
+    case "npc-jo":
+      return { x: 28, y: -30 };
+    case "npc-tomas":
+      return { x: -30, y: -34 };
+    case "npc-nia":
+      return { x: 26, y: -36 };
+    default:
+      return { x: 0, y: -32 };
+  }
+}
+
+function wrapThoughtLines(text: string, maxChars: number) {
+  const words = text.trim().split(/\s+/);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length <= maxChars || current.length === 0) {
+      current = candidate;
+      continue;
+    }
+
+    lines.push(current);
+    current = word;
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines.slice(0, 2);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function LegendChip({

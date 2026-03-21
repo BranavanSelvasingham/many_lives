@@ -1,21 +1,21 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #0b0f11;
-  --surface-panel: #11181c;
-  --surface-raised: #162026;
-  --surface-selected: #1a252d;
-  --surface-muted: #0d1418;
-  --surface-overlay: #121b20;
-  --border-subtle: #34414a;
-  --border-strong: #74818a;
-  --text-main: #ede4d4;
-  --text-muted: #b7ad9f;
-  --text-dim: #87847c;
-  --accent-steel: #41515e;
-  --accent-brass: #b9965c;
+  --bg-main: #141c21;
+  --surface-panel: #1d272d;
+  --surface-raised: #243139;
+  --surface-selected: #2a3840;
+  --surface-muted: #182127;
+  --surface-overlay: #212d34;
+  --border-subtle: #4b5d68;
+  --border-strong: #8797a1;
+  --text-main: #f2eadb;
+  --text-muted: #cbc0b0;
+  --text-dim: #9f9586;
+  --accent-steel: #566976;
+  --accent-brass: #c4a06a;
   --accent-alert: #b16c62;
-  --button-primary: #d0ad72;
+  --button-primary: #deba80;
   --button-primary-text: #18120b;
   --font-body: "Avenir Next", "Segoe UI", sans-serif;
   --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
@@ -35,9 +35,9 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(circle at top, rgba(185, 150, 92, 0.12), transparent 24%),
-    radial-gradient(circle at 20% 20%, rgba(67, 92, 78, 0.12), transparent 22%),
-    linear-gradient(180deg, #0f1418 0%, var(--bg-main) 42%, #07090b 100%);
+    radial-gradient(circle at top, rgba(204, 169, 111, 0.18), transparent 26%),
+    radial-gradient(circle at 18% 18%, rgba(98, 125, 108, 0.15), transparent 24%),
+    linear-gradient(180deg, #243038 0%, var(--bg-main) 44%, #10161a 100%);
   color: var(--text-main);
   font-family: var(--font-body), sans-serif;
   line-height: 1.5;

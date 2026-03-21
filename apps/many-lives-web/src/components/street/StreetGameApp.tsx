@@ -171,7 +171,7 @@ export function StreetGameApp() {
   if (!game) {
     return (
       <main className="flex min-h-screen items-center justify-center px-6 py-10">
-        <div className="w-full max-w-xl rounded-[28px] border border-[color:var(--border-subtle)] bg-[rgba(15,20,24,0.92)] p-8 shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
+        <div className="w-full max-w-xl rounded-[28px] border border-[color:var(--border-subtle)] bg-[rgba(28,36,42,0.86)] p-8 shadow-[0_30px_90px_rgba(0,0,0,0.24)]">
           <div className="font-display text-[2rem] text-[color:var(--text-main)]">
             Many Lives
           </div>
@@ -214,14 +214,14 @@ export function StreetGameApp() {
   return (
     <main className="min-h-screen px-4 py-5 sm:px-6 sm:py-6 xl:px-8">
       <div className="mx-auto max-w-[1660px] space-y-5">
-        <header className="rounded-[32px] border border-[rgba(117,128,137,0.2)] bg-[linear-gradient(180deg,rgba(12,16,19,0.94)_0%,rgba(10,14,17,0.92)_100%)] px-6 py-6 shadow-[0_30px_100px_rgba(0,0,0,0.34)] sm:px-7 sm:py-7">
+        <header className="rounded-[32px] border border-[rgba(134,145,154,0.24)] bg-[linear-gradient(180deg,rgba(31,40,46,0.92)_0%,rgba(24,32,38,0.88)_100%)] px-6 py-6 shadow-[0_30px_100px_rgba(0,0,0,0.24)] sm:px-7 sm:py-7">
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.28fr)_minmax(340px,0.72fr)] xl:items-end">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2 text-[0.76rem] uppercase tracking-[0.24em] text-[color:var(--text-dim)]">
-                <span className="rounded-full border border-[rgba(117,128,137,0.2)] bg-[rgba(20,27,33,0.72)] px-3 py-1.5">
+                <span className="rounded-full border border-[rgba(134,145,154,0.22)] bg-[rgba(42,52,59,0.62)] px-3 py-1.5">
                   {game.cityName}
                 </span>
-                <span className="rounded-full border border-[rgba(117,128,137,0.2)] bg-[rgba(20,27,33,0.72)] px-3 py-1.5">
+                <span className="rounded-full border border-[rgba(134,145,154,0.22)] bg-[rgba(42,52,59,0.62)] px-3 py-1.5">
                   {game.scenarioName}
                 </span>
               </div>
@@ -248,7 +248,7 @@ export function StreetGameApp() {
           </div>
 
           <div className="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.18fr)_minmax(360px,0.82fr)]">
-            <div className="rounded-[24px] border border-[rgba(117,128,137,0.2)] bg-[rgba(20,27,33,0.8)] px-5 py-4">
+            <div className="rounded-[24px] border border-[rgba(134,145,154,0.22)] bg-[rgba(40,50,57,0.68)] px-5 py-4">
               <div className="text-[0.74rem] uppercase tracking-[0.22em] text-[color:var(--text-dim)]">
                 District Read
               </div>
@@ -274,7 +274,7 @@ export function StreetGameApp() {
           </div>
 
           {error ? (
-            <div className="mt-4 rounded-[22px] border border-[rgba(167,105,99,0.5)] bg-[rgba(167,105,99,0.12)] px-4 py-3 text-[0.92rem] text-[color:var(--text-main)]">
+            <div className="mt-4 rounded-[22px] border border-[rgba(167,105,99,0.42)] bg-[rgba(167,105,99,0.14)] px-4 py-3 text-[0.92rem] text-[color:var(--text-main)]">
               {error}
             </div>
           ) : null}
@@ -295,7 +295,7 @@ export function StreetGameApp() {
                   }}
                 />
 
-                <div className="rounded-[24px] border border-[rgba(117,128,137,0.2)] bg-[rgba(16,22,27,0.72)] px-4 py-3">
+                <div className="rounded-[24px] border border-[rgba(134,145,154,0.22)] bg-[rgba(35,44,50,0.68)] px-4 py-3">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex flex-wrap gap-2">
                       <ControlButton
@@ -314,7 +314,7 @@ export function StreetGameApp() {
                       />
                     </div>
 
-                    <div className="min-h-[42px] rounded-full border border-[rgba(117,128,137,0.22)] px-4 py-2 text-[0.78rem] uppercase tracking-[0.18em] text-[color:var(--text-dim)] lg:text-right">
+                    <div className="min-h-[42px] rounded-full border border-[rgba(134,145,154,0.22)] bg-[rgba(44,54,61,0.45)] px-4 py-2 text-[0.78rem] uppercase tracking-[0.18em] text-[color:var(--text-dim)] lg:text-right">
                       {busyLabel ?? "The district keeps moving while you decide."}
                     </div>
                   </div>
