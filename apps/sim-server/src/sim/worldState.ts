@@ -3,6 +3,10 @@ import type { MemoryState } from "../domain/memory.js";
 import type { NotificationRecord } from "../domain/attention.js";
 import type { NewEvent, EventRecord } from "../domain/event.js";
 import type { InboxMessage } from "../domain/inbox.js";
+import type {
+  ActiveIntent,
+  InterpretationRecord,
+} from "../domain/intent.js";
 import type { PerceivedSignal } from "../domain/perception.js";
 import type { RelationshipState } from "../domain/relationship.js";
 import type { Task } from "../domain/task.js";
@@ -54,6 +58,24 @@ export function findSignalsForCharacter(
   return world.perceivedSignals.filter(
     (signal) => signal.characterId === characterId,
   );
+}
+
+export function findInterpretationsForCharacter(
+  world: WorldState,
+  characterId: string,
+): InterpretationRecord[] {
+  return world.interpretations.filter(
+    (interpretation) => interpretation.characterId === characterId,
+  );
+}
+
+export function findIntentsForCharacter(
+  world: WorldState,
+  characterId: string,
+): ActiveIntent[] {
+  return world.activeIntents
+    .filter((intent) => intent.characterId === characterId)
+    .sort((left, right) => left.rank - right.rank);
 }
 
 export function findRelationshipsForCharacter(
@@ -129,6 +151,32 @@ export function recordPerceivedSignal(
   };
   world.perceivedSignals.unshift(storedSignal);
   return storedSignal;
+}
+
+export function recordInterpretation(
+  world: WorldState,
+  interpretation: Omit<InterpretationRecord, "id">,
+): InterpretationRecord {
+  world.counters.interpretation += 1;
+  const storedInterpretation: InterpretationRecord = {
+    id: `interpretation-${world.counters.interpretation}`,
+    ...interpretation,
+  };
+  world.interpretations.unshift(storedInterpretation);
+  return storedInterpretation;
+}
+
+export function recordIntent(
+  world: WorldState,
+  intent: Omit<ActiveIntent, "id">,
+): ActiveIntent {
+  world.counters.intent += 1;
+  const storedIntent: ActiveIntent = {
+    id: `intent-${world.counters.intent}`,
+    ...intent,
+  };
+  world.activeIntents.unshift(storedIntent);
+  return storedIntent;
 }
 
 export function hasSystemFlag(world: WorldState, flag: string): boolean {

@@ -16,12 +16,33 @@ export interface MemoryEpisode {
   tags: string[];
 }
 
+export type BeliefStatus =
+  | "speculative"
+  | "held"
+  | "confirmed"
+  | "disproven";
+
+export type BeliefFrame =
+  | "claim"
+  | "verify"
+  | "counter"
+  | "entanglement"
+  | "stabilize"
+  | "anchor";
+
 export interface BeliefRecord {
   id: string;
   subject: string;
   belief: string;
   confidence: number;
-  lastConfirmedAt: string;
+  status: BeliefStatus;
+  frame: BeliefFrame;
+  source: string;
+  lastUpdatedAt: string;
+  sourceCurrentId?: string;
+  sourceSignalId?: string;
+  sourceRelationshipId?: string;
+  sourceRivalId?: string;
 }
 
 export interface MemoryState {

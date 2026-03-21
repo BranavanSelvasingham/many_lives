@@ -3,6 +3,7 @@ import type { NotificationRecord } from "./attention.js";
 import type { City } from "./city.js";
 import type { EventRecord } from "./event.js";
 import type { InboxMessage } from "./inbox.js";
+import type { ActiveIntent, InterpretationRecord } from "./intent.js";
 import type { MemoryState } from "./memory.js";
 import type { PerceivedSignal } from "./perception.js";
 import type { RelationshipState } from "./relationship.js";
@@ -33,6 +34,8 @@ export interface WorldState {
   memories: MemoryState[];
   relationships: RelationshipState[];
   perceivedSignals: PerceivedSignal[];
+  interpretations: InterpretationRecord[];
+  activeIntents: ActiveIntent[];
   tasks: Task[];
   events: EventRecord[];
   inbox: InboxMessage[];
@@ -45,5 +48,7 @@ export interface WorldState {
     memory: number;
     notification: number;
     signal: number;
+    interpretation: number;
+    intent: number;
   };
 }

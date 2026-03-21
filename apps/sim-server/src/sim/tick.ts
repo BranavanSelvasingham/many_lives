@@ -3,7 +3,11 @@ import type { EventRecord } from "../domain/event.js";
 import type { WorldState } from "../domain/world.js";
 import { maybeEscalateEvent } from "./resolvers/escalationResolver.js";
 import { synchronizeDerivedTasks } from "./resolvers/commitmentResolver.js";
-import { rememberEvent } from "./resolvers/memoryResolver.js";
+import { synchronizeInterpretationState } from "./resolvers/interpretationResolver.js";
+import {
+  rememberEvent,
+  synchronizeBeliefState,
+} from "./resolvers/memoryResolver.js";
 import { detectCharacterPerceptions } from "./resolvers/perceptionResolver.js";
 import {
   detectCoherenceDrift,
@@ -49,6 +53,13 @@ async function advanceSingleTick(
     eventsToHandle.push(recordEvent(world, draft));
   }
 
+  for (const character of world.characters) {
+    for (const draft of detectCharacterPerceptions(world, character)) {
+      eventsToHandle.push(recordEvent(world, draft));
+    }
+  }
+
+  synchronizeInterpretationState(world);
   synchronizeDerivedTasks(world);
 
   for (const draft of detectScheduleConflicts(world, stepStart)) {
@@ -56,10 +67,6 @@ async function advanceSingleTick(
   }
 
   for (const character of world.characters) {
-    for (const draft of detectCharacterPerceptions(world, character)) {
-      eventsToHandle.push(recordEvent(world, draft));
-    }
-
     for (const draft of resolveCharacterStep(
       world,
       character,
@@ -107,4 +114,8 @@ async function advanceSingleTick(
       aiProvider,
     );
   }
+
+  synchronizeInterpretationState(world);
+  synchronizeBeliefState(world);
+  synchronizeDerivedTasks(world);
 }

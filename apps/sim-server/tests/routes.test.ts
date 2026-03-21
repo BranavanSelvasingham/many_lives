@@ -25,7 +25,7 @@ describe("HTTP routes", () => {
     });
   });
 
-  it("creates, reads, ticks, and commands a game", async () => {
+  it("creates, reads, ticks, and acts in the street slice", async () => {
     const createResponse = await app.inject({
       method: "POST",
       url: "/game/new",
@@ -34,7 +34,8 @@ describe("HTTP routes", () => {
 
     expect(createResponse.statusCode).toBe(200);
     const createdGame = createResponse.json().game;
-    expect(createdGame.inbox.length).toBeGreaterThan(0);
+    expect(createdGame.player.name).toBe("Rowan");
+    expect(createdGame.locations.length).toBeGreaterThan(4);
 
     const stateResponse = await app.inject({
       method: "GET",
@@ -47,58 +48,42 @@ describe("HTTP routes", () => {
     const tickResponse = await app.inject({
       method: "POST",
       url: `/game/${createdGame.id}/tick`,
-      payload: { minutes: 600 },
+      payload: { minutes: 60 },
     });
 
     expect(tickResponse.statusCode).toBe(200);
-    const tickedGame = tickResponse.json().game;
-    expect(tickedGame.tickCount).toBe(20);
-
-    const firstOpenMessage = tickedGame.inbox.find(
-      (message: { resolvedAt?: string | null }) => message.resolvedAt == null,
+    expect(tickResponse.json().game.clock.totalMinutes).toBe(
+      createdGame.clock.totalMinutes + 60,
     );
 
-    if (!firstOpenMessage) {
-      throw new Error(
-        "Expected at least one inbox message after ticking the sim.",
-      );
-    }
-
-    const commandResponse = await app.inject({
+    const moveResponse = await app.inject({
       method: "POST",
       url: `/game/${createdGame.id}/command`,
       payload: {
-        type: "resolve_inbox",
-        messageId: firstOpenMessage.id,
+        type: "move_to",
+        x: 12,
+        y: 5,
       },
     });
 
-    expect(commandResponse.statusCode).toBe(200);
-    const resolvedGame = commandResponse.json().game;
-    const resolvedMessage = resolvedGame.inbox.find(
-      (message: { id: string }) => message.id === firstOpenMessage.id,
-    );
+    expect(moveResponse.statusCode).toBe(200);
+    expect(moveResponse.json().game.player.currentLocationId).toBe("tea-house");
 
-    expect(resolvedMessage?.resolvedAt).toBeTruthy();
-
-    const policyResponse = await app.inject({
+    const talkResponse = await app.inject({
       method: "POST",
-      url: `/game/${createdGame.id}/policy`,
+      url: `/game/${createdGame.id}/command`,
       payload: {
-        characterId: "ivo",
-        policy: {
-          spendingLimit: 50,
-        },
+        type: "act",
+        actionId: "talk:npc-ada",
       },
     });
 
-    expect(policyResponse.statusCode).toBe(200);
+    expect(talkResponse.statusCode).toBe(200);
     expect(
-      policyResponse
+      talkResponse
         .json()
-        .game.characters.find(
-          (character: { id: string }) => character.id === "ivo",
-        )?.policies.spendingLimit,
-    ).toBe(50);
+        .game.jobs.find((job: { id: string }) => job.id === "job-tea-shift")
+        ?.discovered,
+    ).toBe(true);
   });
 });

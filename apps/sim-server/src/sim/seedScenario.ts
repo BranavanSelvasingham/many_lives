@@ -548,6 +548,7 @@ export function seedScenario(gameId: string): WorldState {
       travelMinutes: 15,
       importance: 5,
       mandatory: true,
+      sourceCurrentId: "current-double-presence",
     }),
     createTask({
       id: "task-ivo-private-room",
@@ -563,6 +564,7 @@ export function seedScenario(gameId: string): WorldState {
       travelMinutes: 15,
       importance: 5,
       mandatory: true,
+      sourceCurrentId: "current-double-presence",
     }),
     createTask({
       id: "task-ivo-seam",
@@ -578,6 +580,7 @@ export function seedScenario(gameId: string): WorldState {
       travelMinutes: 30,
       importance: 4,
       mandatory: true,
+      sourceCurrentId: "current-seam",
     }),
     createTask({
       id: "task-sia-debut",
@@ -593,6 +596,7 @@ export function seedScenario(gameId: string): WorldState {
       travelMinutes: 0,
       importance: 5,
       mandatory: true,
+      sourceCurrentId: "current-unfinished-debut",
     }),
     createTask({
       id: "task-sia-afterhours",
@@ -623,6 +627,7 @@ export function seedScenario(gameId: string): WorldState {
       travelMinutes: 30,
       importance: 5,
       mandatory: true,
+      sourceCurrentId: "current-velvet-window",
     }),
     createTask({
       id: "task-ren-introduction",
@@ -653,6 +658,7 @@ export function seedScenario(gameId: string): WorldState {
       travelMinutes: 30,
       importance: 4,
       mandatory: true,
+      sourceCurrentId: "current-rumor-coordinates",
     }),
     createTask({
       id: "task-vale-hidden-floor",
@@ -668,6 +674,7 @@ export function seedScenario(gameId: string): WorldState {
       travelMinutes: 45,
       importance: 4,
       mandatory: true,
+      sourceCurrentId: "current-hidden-floor",
     }),
   ];
 
@@ -984,6 +991,8 @@ export function seedScenario(gameId: string): WorldState {
     memories,
     relationships,
     perceivedSignals: [],
+    interpretations: [],
+    activeIntents: [],
     tasks,
     events: seededEvents,
     inbox: seededInbox,
@@ -1021,6 +1030,8 @@ export function seedScenario(gameId: string): WorldState {
       memory: memories.reduce((count, memory) => count + memory.episodes.length, 0),
       notification: seededInbox.length,
       signal: 0,
+      interpretation: 0,
+      intent: 0,
     },
   };
 }
@@ -1038,6 +1049,10 @@ interface TaskSeed {
   travelMinutes: number;
   importance: number;
   mandatory: boolean;
+  sourceCurrentId?: string;
+  sourceSignalId?: string;
+  sourceRelationshipId?: string;
+  sourceRivalId?: string;
 }
 
 function createTask(seed: TaskSeed): Task {
@@ -1058,6 +1073,10 @@ function createTask(seed: TaskSeed): Task {
     importance: seed.importance,
     mandatory: seed.mandatory,
     createdBy: "scenario",
+    sourceCurrentId: seed.sourceCurrentId,
+    sourceSignalId: seed.sourceSignalId,
+    sourceRelationshipId: seed.sourceRelationshipId,
+    sourceRivalId: seed.sourceRivalId,
   };
 }
 
@@ -1084,7 +1103,10 @@ function createMemory(
       subject: index === 0 ? "world" : `belief-${index + 1}`,
       belief,
       confidence: 0.72,
-      lastConfirmedAt: addMinutes(SCENARIO_START, -(index + 1) * 30),
+      status: "held" as const,
+      frame: "anchor" as const,
+      source: index === 0 ? "world-state" : "seed-memory",
+      lastUpdatedAt: addMinutes(SCENARIO_START, -(index + 1) * 30),
     })),
     unresolvedThreads: episodes.slice(0, 2),
   };

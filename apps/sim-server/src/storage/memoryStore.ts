@@ -1,8 +1,5 @@
-import type { WorldState } from "../domain/world.js";
-import { cloneWorldState } from "../sim/worldState.js";
-
-export class MemoryGameStore {
-  private readonly games = new Map<string, WorldState>();
+export class MemoryGameStore<TGame extends { id: string } = { id: string }> {
+  private readonly games = new Map<string, TGame>();
 
   private nextGameNumber = 1;
 
@@ -12,18 +9,17 @@ export class MemoryGameStore {
     return id;
   }
 
-  save(world: WorldState): WorldState {
-    const clonedWorld = cloneWorldState(world);
+  save(world: TGame): TGame {
+    const clonedWorld = structuredClone(world);
     this.games.set(clonedWorld.id, clonedWorld);
-    return cloneWorldState(clonedWorld);
+    return structuredClone(clonedWorld);
   }
 
-  get(gameId: string): WorldState | undefined {
+  get(gameId: string): TGame | undefined {
     const world = this.games.get(gameId);
-    return world ? cloneWorldState(world) : undefined;
+    return world ? structuredClone(world) : undefined;
   }
 
-  // TODO: Swap this store for a persistent adapter once saves need to survive process restarts.
   has(gameId: string): boolean {
     return this.games.has(gameId);
   }

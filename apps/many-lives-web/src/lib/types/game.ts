@@ -58,6 +58,16 @@ export interface CharacterView {
   policy: PolicySettings;
   scheduleSummary: string;
   load: number;
+  currentRead: string;
+  currentReadRationale: string;
+  activeIntent: string;
+  activeIntentPriority: number;
+  heldBeliefs: Array<{
+    subject: string;
+    belief: string;
+    confidence: number;
+    status: "speculative" | "held" | "confirmed" | "disproven";
+  }>;
 }
 
 export interface InboxAction {
@@ -151,6 +161,50 @@ export interface RawCharacter {
   policies: RawPolicySettings;
 }
 
+export interface RawBeliefRecord {
+  id: string;
+  subject: string;
+  belief: string;
+  confidence: number;
+  status: "speculative" | "held" | "confirmed" | "disproven";
+  frame: string;
+  source: string;
+  lastUpdatedAt: string;
+}
+
+export interface RawMemoryState {
+  characterId: string;
+  coherence: number;
+  beliefs: RawBeliefRecord[];
+  unresolvedThreads: string[];
+}
+
+export interface RawInterpretation {
+  id: string;
+  characterId: string;
+  kind: string;
+  axis: WorldAxis;
+  summary: string;
+  rationale: string;
+  confidence: number;
+  urgency: number;
+  createdAt: string;
+}
+
+export interface RawActiveIntent {
+  id: string;
+  characterId: string;
+  kind: string;
+  axis: WorldAxis;
+  source: string;
+  summary: string;
+  rationale: string;
+  priority: number;
+  confidence: number;
+  createdAt: string;
+  rank: number;
+}
+
 export interface RawTask {
   id: string;
   characterId: string;
@@ -208,6 +262,9 @@ export interface RawWorldState {
   tickCount: number;
   summary: string;
   characters: RawCharacter[];
+  memories?: RawMemoryState[];
+  interpretations?: RawInterpretation[];
+  activeIntents?: RawActiveIntent[];
   tasks: RawTask[];
   events: RawEvent[];
   inbox: RawInboxMessage[];

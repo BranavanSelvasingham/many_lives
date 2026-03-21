@@ -2,48 +2,35 @@ import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
 
-describe("Inbox command handling", () => {
-  it("resolves an inbox item and records the player response", async () => {
+describe("Scene actions", () => {
+  it("offers grounded actions based on the player's current place", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-inbox");
-    const message = world.inbox[0];
+    const world = await engine.createGame("game-actions");
 
-    expect(message).toBeDefined();
-
-    const nextWorld = await engine.runCommand(world, {
-      type: "resolve_inbox",
-      messageId: message.id,
-      actionId: "switch_vendor",
-    });
-
-    const resolvedMessage = nextWorld.inbox.find(
-      (entry) => entry.id === message.id,
-    );
-    const responseEvent = nextWorld.events.find(
-      (event) => event.type === "player_response",
-    );
-
-    expect(resolvedMessage?.resolvedAt).toBe(nextWorld.currentTime);
-    expect(resolvedMessage?.requiresResponse).toBe(false);
-    expect(responseEvent).toBeDefined();
+    expect(
+      world.availableActions.some((action) => action.id === "talk:npc-mara"),
+    ).toBe(true);
+    expect(
+      world.availableActions.some((action) => action.id === "rest:home"),
+    ).toBe(true);
   });
 
-  it("snoozes a message without resolving it", async () => {
+  it("changes available actions when the player reaches a new location", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-snooze");
-    const message = world.inbox[0];
+    let world = await engine.createGame("game-location-actions");
 
-    const nextWorld = await engine.runCommand(world, {
-      type: "snooze_inbox",
-      messageId: message.id,
-      durationMinutes: 30,
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 18,
+      y: 5,
     });
 
-    const snoozedMessage = nextWorld.inbox.find(
-      (entry) => entry.id === message.id,
-    );
-
-    expect(snoozedMessage?.resolvedAt).toBeUndefined();
-    expect(snoozedMessage?.snoozedUntil).toBeTruthy();
+    expect(world.player.currentLocationId).toBe("repair-stall");
+    expect(
+      world.availableActions.some((action) => action.id === "talk:npc-jo"),
+    ).toBe(true);
+    expect(
+      world.availableActions.some((action) => action.id === "buy:item-wrench"),
+    ).toBe(true);
   });
 });

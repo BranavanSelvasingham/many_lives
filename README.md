@@ -1,22 +1,22 @@
 # Many Lives
 
-Many Lives is a web-first narrative strategy prototype set during a rare Ascension Window, a volatile period when the city is reordering itself. You manage several semi-autonomous selves through an attention dashboard: triage decisive threads, respond to dangerous signals, and shape standing instincts before your lives splinter into leverage, myth, or ruin.
+Many Lives is shifting toward a simpler core: a single-character city simulation where you find your way around, find work, meet people, and solve problems in a living world.
 
-This vertical slice is intentionally desktop-first and mock-first. The attention feed is the heartbeat, the right panel holds the active thread or policy surface, and the bottom strip keeps city-scale pressure visible while you work.
+The current repo still contains the earlier dashboard-based prototype, but the design direction has changed. The new foundation is a top-down 2D city, one embodied character, and a grounded loop built around place, time, memory, and local problems.
 
 ## Core Construct
 
 The living reference for the game's underlying simulation model is [CORE_CONSTRUCT.md](/Users/branavan/GitHub/many_lives/CORE_CONSTRUCT.md).
 
-Use that document as the architectural anchor for changes to world simulation, character behavior, memory, attention/escalation, and the canonical game loop.
+Use that document as the architectural anchor for changes to world simulation, character behavior, memory, embodiment, and the canonical game loop.
 
 ## Prototype Pillars
 
-- Inbox triage is the primary intervention loop.
-- Policies shape long-term autonomy instead of replacing moment-to-moment decisions.
+- One character in one city is the current gameplay foundation.
+- The world should be understandable through movement and presence, not only through abstract UI.
+- Memory and reputation should change future options quickly.
 - The simulation remains authoritative when the backend is available.
-- Mock mode is a first-class play and demo path when the backend is unavailable.
-- The UI favors cards, dashboards, and explicit actions over chat-style interaction.
+- Mock mode stays useful while the project transitions toward the new loop.
 
 ## Repo Layout
 
@@ -73,7 +73,7 @@ Mock mode is the default fallback if the backend cannot be reached.
 - The UI shows a subtle `Mock Mode` indicator so the app still feels intentional instead of broken.
 - Mock state stays playable during the session: ticking time spawns follow-ups, actions resolve threads, and policy changes persist in memory.
 
-The mock seed starts during the Ascension Window with Ivo, Sia, Ren, and Vale already in motion so the inbox loop is hot immediately.
+The current mock seed still reflects the older Ascension Window dashboard slice while the project transitions toward the simpler single-character city loop.
 
 ## Backend Mode
 
@@ -92,7 +92,7 @@ Helpful endpoints:
 
 The web app reaches those routes through the Next.js proxy layer in [client.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/api/client.ts) and [gameApi.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/api/gameApi.ts).
 
-## Dashboard Model
+## Current Prototype UI
 
 - Left rail: self triage and pressure read.
 - Center panel: attention feed filters, counts, and thread cards.

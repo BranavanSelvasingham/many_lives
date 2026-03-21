@@ -1,92 +1,73 @@
 import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
-import { addMinutes } from "../src/sim/worldState.js";
 
-describe("SimulationEngine ticking", () => {
-  it("seeds derived commitments from relationships and world state", async () => {
+describe("SimulationEngine street slice", () => {
+  it("lets the player discover and complete a first paid shift", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-derived");
+    let world = await engine.createGame("game-tea-shift");
 
-    expect(world.tasks.some((task) => task.dynamic)).toBe(true);
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 12,
+      y: 5,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+    world = await engine.tick(world, 1);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "work:job-tea-shift",
+    });
+
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")?.completed).toBe(
+      true,
+    );
+    expect(world.player.money).toBeGreaterThan(12);
     expect(
-      world.tasks.some((task) => task.sourceRelationshipId != null),
+      world.jobs.find((job) => job.id === "job-yard-shift")?.discovered,
     ).toBe(true);
   });
 
-  it("advances time by 30 minutes per tick", async () => {
+  it("lets the player buy a tool and solve a neighborhood problem", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-test");
+    let world = await engine.createGame("game-pump");
 
-    const nextWorld = await engine.tick(world, 1);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 18,
+      y: 5,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "buy:item-wrench",
+    });
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 3,
+      y: 11,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "solve:problem-pump",
+    });
 
-    expect(nextWorld.currentTime).toBe(addMinutes(world.currentTime, 30));
-    expect(nextWorld.tickCount).toBe(1);
-  });
-
-  it("advances four ticks for a two hour jump", async () => {
-    const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-test");
-
-    const nextWorld = await engine.tick(world, 4);
-
-    expect(nextWorld.currentTime).toBe(addMinutes(world.currentTime, 120));
-    expect(nextWorld.tickCount).toBe(4);
-  });
-
-  it("allows travel-heavy tasks to depart early enough to finish on time", async () => {
-    const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-travel");
-
-    const nextWorld = await engine.tick(world, 4);
-    const windowTask = nextWorld.tasks.find(
-      (task) => task.id === "task-ren-velvet-window",
+    expect(world.problems.find((problem) => problem.id === "problem-pump")?.status).toBe(
+      "solved",
     );
-    const missedWindow = nextWorld.events.find(
-      (event) =>
-        event.type === "obligation_missed" &&
-        event.relatedTaskId === "task-ren-velvet-window",
+    expect(world.player.inventory.some((item) => item.id === "item-wrench")).toBe(
+      true,
     );
-
-    expect(windowTask?.status).toBe("completed");
-    expect(missedWindow).toBeUndefined();
-  });
-
-  it("keeps routine task progress out of the inbox", async () => {
-    const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-quiet-inbox");
-
-    const nextWorld = await engine.tick(world, 4);
-
-    const taskCompletedEventIds = new Set(
-      nextWorld.events
-        .filter((event) => event.type === "task_completed")
-        .map((event) => event.id),
-    );
-
-    const progressMessages = nextWorld.inbox.filter((message) =>
-      taskCompletedEventIds.has(message.eventId),
-    );
-
-    expect(progressMessages).toHaveLength(1);
-    expect(progressMessages[0]?.characterId).toBe("sia");
-  });
-
-  it("records memory and attention outputs as the city advances", async () => {
-    const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-memory");
-
-    const nextWorld = await engine.tick(world, 3);
-    const ivoMemoryBefore =
-      world.memories.find((memory) => memory.characterId === "ivo")?.episodes
-        .length ?? 0;
-    const ivoMemoryAfter =
-      nextWorld.memories.find((memory) => memory.characterId === "ivo")
-        ?.episodes.length ?? 0;
-
-    expect(ivoMemoryAfter).toBeGreaterThan(ivoMemoryBefore);
-    expect(nextWorld.attentionLog.length).toBeGreaterThan(
-      world.attentionLog.length,
-    );
+    expect(world.player.reputation.morrow_house).toBeGreaterThan(1);
   });
 });

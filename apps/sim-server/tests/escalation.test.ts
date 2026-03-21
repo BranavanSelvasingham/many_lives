@@ -1,142 +1,40 @@
 import { describe, expect, it } from "vitest";
-import type { Character } from "../src/domain/character.js";
-import type { EventRecord } from "../src/domain/event.js";
-import type { Task } from "../src/domain/task.js";
-import type { WorldState } from "../src/domain/world.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
-import {
-  evaluateEscalation,
-  maybeEscalateEvent,
-} from "../src/sim/resolvers/escalationResolver.js";
-import { detectStressEvents } from "../src/sim/resolvers/taskResolver.js";
-import { seedScenario } from "../src/sim/seedScenario.js";
 
-describe("Escalation behavior", () => {
-  it("turns a missed obligation into an inbox escalation", async () => {
-    const world = seedScenario("game-escalation");
-    const character = world.characters.find(
-      (entry) => entry.id === "ivo",
-    ) as Character;
-    const task = world.tasks.find(
-      (entry) => entry.id === "task-ivo-private-room",
-    ) as Task;
-    const missedEvent = buildMissedEvent(character, task, world);
+describe("World time pressure", () => {
+  it("lets jobs expire if the player drifts past their window", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-expiring-jobs");
 
-    await maybeEscalateEvent(
-      {
-        world,
-        character,
-        event: missedEvent,
-        task,
-      },
-      new MockAIProvider(),
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 12,
+      y: 5,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.tick(world, 9);
+
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")?.missed).toBe(
+      true,
     );
-
-    const message = world.inbox.find((entry) => entry.eventId === missedEvent.id);
-
-    expect(message).toBeDefined();
-    expect(message?.characterId).toBe("ivo");
-    expect(
-      message?.priority === "high" || message?.priority === "critical",
-    ).toBe(true);
   });
 
-  it("changes escalation frequency when policy settings change", () => {
-    const world = seedScenario("game-policy");
-    const baseCharacter = world.characters.find(
-      (character) => character.id === "ivo",
-    ) as Character;
-    const baseTask = world.tasks.find(
-      (task) => task.id === "task-ivo-private-room",
-    ) as Task;
-    const event = buildMissedEvent(baseCharacter, baseTask, world);
+  it("lets local problems expire if the block gets away from you", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-expiring-problems");
 
-    const conservativeCharacter: Character = {
-      ...baseCharacter,
-      stress: 40,
-      energy: 55,
-      policies: {
-        ...baseCharacter.policies,
-        riskTolerance: 0.95,
-        escalationThreshold: 6,
-        reportingFrequency: "low",
-        priorityBias: "signal",
-      },
-    };
-
-    const attentiveCharacter: Character = {
-      ...baseCharacter,
-      stress: 74,
-      energy: 20,
-      policies: {
-        ...baseCharacter.policies,
-        riskTolerance: 0.1,
-        escalationThreshold: 2,
-        reportingFrequency: "high",
-      },
-    };
-
-    const conservativeDecision = evaluateEscalation({
-      world,
-      character: conservativeCharacter,
-      event,
-      task: baseTask,
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
     });
+    world = await engine.tick(world, 14);
 
-    const attentiveDecision = evaluateEscalation({
-      world,
-      character: attentiveCharacter,
-      event,
-      task: baseTask,
-    });
-
-    expect(conservativeDecision.shouldEscalate).toBe(false);
-    expect(attentiveDecision.shouldEscalate).toBe(true);
-    expect(attentiveDecision.score).toBeGreaterThan(conservativeDecision.score);
-  });
-
-  it("does not repeat stress alerts every tick without recovery", () => {
-    const world = seedScenario("game-stress");
-    const character = world.characters.find(
-      (entry) => entry.id === "vale",
-    ) as Character;
-
-    character.stress = 84;
-    world.tickCount = 1;
-    const firstAlerts = detectStressEvents(world, world.currentTime);
-
-    world.tickCount = 2;
-    character.stress = 88;
-    const repeatedAlerts = detectStressEvents(world, world.currentTime);
-
-    world.tickCount = 3;
-    character.stress = 65;
-    detectStressEvents(world, world.currentTime);
-
-    world.tickCount = 4;
-    character.stress = 82;
-    const recoveredAlerts = detectStressEvents(world, world.currentTime);
-
-    expect(firstAlerts).toHaveLength(1);
-    expect(repeatedAlerts).toHaveLength(0);
-    expect(recoveredAlerts).toHaveLength(1);
+    expect(world.problems.find((problem) => problem.id === "problem-pump")?.status).toBe(
+      "expired",
+    );
   });
 });
-
-function buildMissedEvent(
-  character: Character,
-  task: Task,
-  world: WorldState,
-): EventRecord {
-  return {
-    id: "event-test",
-    characterId: character.id,
-    type: "obligation_missed",
-    priority: "critical",
-    title: `${character.name} missed ${task.title}`,
-    description: `${task.title} slipped in ${world.scenarioName}.`,
-    createdAt: world.currentTime,
-    relatedTaskId: task.id,
-  };
-}

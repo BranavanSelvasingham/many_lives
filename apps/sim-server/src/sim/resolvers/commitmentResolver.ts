@@ -1,158 +1,145 @@
 import type { Character } from "../../domain/character.js";
-import type { RelationshipState } from "../../domain/relationship.js";
 import type { Task, TaskKind } from "../../domain/task.js";
 import type { WorldState } from "../../domain/world.js";
 import {
   STEP_MINUTES,
   addMinutes,
-  findMemoryState,
-  findSignalsForCharacter,
+  findIntentsForCharacter,
 } from "../worldState.js";
 
 export function synchronizeDerivedTasks(world: WorldState): void {
   for (const character of world.characters) {
-    deriveSignalTasks(world, character);
-    deriveRelationshipTasks(world, character);
-    deriveCoherenceTasks(world, character);
+    const intents = findIntentsForCharacter(world, character.id).slice(0, 2);
+    pruneDerivedTasks(world, character, intents);
+    deriveIntentTasks(world, character, intents);
   }
 }
 
-function deriveSignalTasks(world: WorldState, character: Character): void {
-  const recentSignals = findSignalsForCharacter(world, character.id)
-    .slice()
-    .sort((left, right) => right.strength - left.strength)
-    .slice(0, 4);
-
-  for (const signal of recentSignals) {
+function deriveIntentTasks(
+  world: WorldState,
+  character: Character,
+  intents: ReturnType<typeof findIntentsForCharacter>,
+): void {
+  for (const intent of intents) {
     if (
       hasMatchingTask(
         world.tasks,
         character.id,
-        signal.source,
-        signal.id,
+        taskTitleForIntent(world, intent),
+        intent.id,
+        intent.sourceCurrentId,
+        intent.sourceRelationshipId,
+        intent.sourceRivalId,
       )
     ) {
       continue;
     }
 
-    const relatedCurrent = signal.currentId
-      ? world.city.currents.find((current) => current.id === signal.currentId)
+    const relatedCurrent = intent.sourceCurrentId
+      ? world.city.currents.find((current) => current.id === intent.sourceCurrentId)
       : undefined;
+    const location = intentLocation(world, character, intent);
 
     world.tasks.push({
-      id: `task-derived-${character.id}-${signal.id}-${world.tickCount}`,
+      id: `task-derived-${character.id}-${intent.id}-${world.tickCount}`,
       characterId: character.id,
-      title: signal.source,
-      description: `${signal.summary} ${character.name} is moving because the city just became more legible here.`,
-      kind: signal.axis,
-      location: signal.districtId ?? character.currentLocation,
+      title: taskTitleForIntent(world, intent),
+      description: `${intent.summary} ${intent.rationale}`,
+      kind: taskKindForIntent(intent),
+      location,
       startAt: world.currentTime,
       dueAt: addMinutes(
         world.currentTime,
         relatedCurrent
           ? minutesUntilCurrentDissipates(world, relatedCurrent)
-          : STEP_MINUTES * 3,
+          : taskWindowForIntent(intent),
       ),
       durationMinutes: 60,
       progressMinutes: 0,
       travelMinutes:
-        character.currentLocation === (signal.districtId ?? character.currentLocation)
+        character.currentLocation === location
           ? 0
           : STEP_MINUTES,
       travelProgressMinutes: 0,
       status: "pending",
-      importance: Math.min(5, Math.max(3, Math.round(signal.strength / 2))),
+      importance: Math.min(5, Math.max(3, Math.round(intent.priority / 6))),
       mandatory:
-        signal.strength >= 8 || signal.axis === character.policies.priorityBias,
+        intent.kind === "protect_coherence" ||
+        intent.kind === "counter_rival" ||
+        intent.priority >= 18,
       createdBy: "system",
-      sourceSignalId: signal.id,
-      sourceCurrentId: signal.currentId,
+      sourceIntentId: intent.id,
+      sourceSignalId: intent.sourceSignalId,
+      sourceCurrentId: intent.sourceCurrentId,
+      sourceRelationshipId: intent.sourceRelationshipId,
+      sourceRivalId: intent.sourceRivalId,
       dynamic: true,
     });
   }
 }
 
-function deriveRelationshipTasks(world: WorldState, character: Character): void {
-  const relevantRelationships = world.relationships.filter(
-    (relationship) =>
-      relationship.sourceCharacterId === character.id &&
-      relationship.targetType !== "player" &&
-      relationship.targetType !== "city" &&
-      relationship.strain + relationship.dependency >= 85,
+function pruneDerivedTasks(
+  world: WorldState,
+  character: Character,
+  intents: ReturnType<typeof findIntentsForCharacter>,
+): void {
+  const liveIntentIds = new Set(intents.map((intent) => intent.id));
+  const liveCurrentIds = new Set(
+    intents
+      .map((intent) => intent.sourceCurrentId)
+      .filter((entry): entry is string => entry !== undefined),
+  );
+  const liveRelationshipIds = new Set(
+    intents
+      .map((intent) => intent.sourceRelationshipId)
+      .filter((entry): entry is string => entry !== undefined),
+  );
+  const liveRivalIds = new Set(
+    intents
+      .map((intent) => intent.sourceRivalId)
+      .filter((entry): entry is string => entry !== undefined),
   );
 
-  for (const relationship of relevantRelationships) {
-    const title = `Manage ${relationship.label}`;
+  world.tasks = world.tasks.filter((task) => {
     if (
-      hasMatchingTask(
-        world.tasks,
-        character.id,
-        title,
-        undefined,
-        relationship.id,
-      )
+      task.characterId !== character.id ||
+      task.createdBy !== "system" ||
+      !task.dynamic
     ) {
-      continue;
+      return true;
     }
 
-    world.tasks.push({
-      id: `task-derived-${character.id}-relationship-${relationship.id}-${world.tickCount}`,
-      characterId: character.id,
-      title,
-      description: `${relationship.summary} ${character.name} cannot ignore this pull without ceding leverage to someone else.`,
-      kind: relationshipTaskKind(character, relationship),
-      location: relationshipLocation(world, relationship),
-      startAt: world.currentTime,
-      dueAt: addMinutes(world.currentTime, STEP_MINUTES * 3),
-      durationMinutes: 30,
-      progressMinutes: 0,
-      travelMinutes:
-        character.currentLocation === relationshipLocation(world, relationship)
-          ? 0
-          : STEP_MINUTES,
-      travelProgressMinutes: 0,
-      status: "pending",
-      importance: relationship.strain >= 50 ? 4 : 3,
-      mandatory: relationship.strain >= 60,
-      createdBy: "system",
-      sourceRelationshipId: relationship.id,
-      sourceRivalId:
-        relationship.targetType === "rival" ? relationship.targetId : undefined,
-      dynamic: true,
-    });
-  }
-}
+    if (task.status === "active") {
+      return true;
+    }
 
-function deriveCoherenceTasks(world: WorldState, character: Character): void {
-  const memory = findMemoryState(world, character.id);
-  if (!memory || memory.coherence > 54) {
-    return;
-  }
+    if (
+      task.status === "completed" ||
+      task.status === "missed"
+    ) {
+      return false;
+    }
 
-  const title = "Recover coherence";
-  if (hasMatchingTask(world.tasks, character.id, title)) {
-    return;
-  }
+    if (task.sourceIntentId && liveIntentIds.has(task.sourceIntentId)) {
+      return true;
+    }
 
-  world.tasks.push({
-    id: `task-derived-${character.id}-coherence-${world.tickCount}`,
-    characterId: character.id,
-    title,
-    description:
-      "Recent moves are starting to contradict each other. Spend a block consolidating memory, narrative, and intent before the selves shear apart.",
-    kind: "coherence",
-    location: character.currentLocation,
-    startAt: world.currentTime,
-    dueAt: addMinutes(world.currentTime, STEP_MINUTES * 2),
-    durationMinutes: 30,
-    progressMinutes: 0,
-    travelMinutes: 0,
-    travelProgressMinutes: 0,
-    status: "pending",
-    importance: 5,
-    mandatory: true,
-    createdBy: "system",
-    dynamic: true,
+    if (task.sourceCurrentId && liveCurrentIds.has(task.sourceCurrentId)) {
+      return true;
+    }
+
+    if (
+      task.sourceRelationshipId &&
+      liveRelationshipIds.has(task.sourceRelationshipId)
+    ) {
+      return true;
+    }
+
+    if (task.sourceRivalId && liveRivalIds.has(task.sourceRivalId)) {
+      return true;
+    }
+
+    return false;
   });
 }
 
@@ -160,8 +147,10 @@ function hasMatchingTask(
   tasks: Task[],
   characterId: string,
   title: string,
-  sourceSignalId?: string,
+  sourceIntentId?: string,
+  sourceCurrentId?: string,
   sourceRelationshipId?: string,
+  sourceRivalId?: string,
 ): boolean {
   const normalizedTitle = normalize(title);
 
@@ -170,10 +159,14 @@ function hasMatchingTask(
       task.characterId === characterId &&
       task.status !== "missed" &&
       task.status !== "completed" &&
-      ((sourceSignalId !== undefined &&
-        task.sourceSignalId === sourceSignalId) ||
+      ((sourceIntentId !== undefined &&
+        task.sourceIntentId === sourceIntentId) ||
+        (sourceCurrentId !== undefined &&
+          task.sourceCurrentId === sourceCurrentId) ||
         (sourceRelationshipId !== undefined &&
           task.sourceRelationshipId === sourceRelationshipId) ||
+        (sourceRivalId !== undefined &&
+          task.sourceRivalId === sourceRivalId) ||
         normalize(task.title) === normalizedTitle),
   );
 }
@@ -196,28 +189,71 @@ function minutesUntilCurrentDissipates(
   );
 }
 
-function relationshipTaskKind(
-  character: Character,
-  relationship: RelationshipState,
+function taskKindForIntent(
+  intent: ReturnType<typeof findIntentsForCharacter>[number],
 ): TaskKind {
-  if (relationship.targetType === "rival") {
-    return "momentum";
+  switch (intent.kind) {
+    case "protect_coherence":
+      return "coherence";
+    case "counter_rival":
+      return "momentum";
+    case "manage_entanglement":
+      return intent.axis === "coherence" ? "coherence" : intent.axis;
+    case "verify_signal":
+    case "press_advantage":
+    default:
+      return intent.axis;
   }
-
-  if (relationship.targetType === "faction") {
-    return character.policies.priorityBias;
-  }
-
-  return "access";
 }
 
-function relationshipLocation(
+function taskTitleForIntent(
   world: WorldState,
-  relationship: RelationshipState,
+  intent: ReturnType<typeof findIntentsForCharacter>[number],
 ): string {
-  if (relationship.targetType === "faction") {
-    const matchingCurrent = world.city.currents.find((current) =>
-      current.factionIds.includes(relationship.targetId),
+  const current = intent.sourceCurrentId
+    ? world.city.currents.find((entry) => entry.id === intent.sourceCurrentId)
+    : undefined;
+  const rival = intent.sourceRivalId
+    ? world.city.rivals.find((entry) => entry.id === intent.sourceRivalId)
+    : undefined;
+  const sourceLabel = current?.title ?? rival?.name ?? intent.source ?? intent.axis;
+
+  switch (intent.kind) {
+    case "verify_signal":
+      return `Verify ${sourceLabel}`;
+    case "counter_rival":
+      return rival ? `Counter ${rival.name}` : `Counter movement around ${sourceLabel}`;
+    case "manage_entanglement":
+      return `Untangle ${sourceLabel}`;
+    case "protect_coherence":
+      return "Recover coherence";
+    case "press_advantage":
+    default:
+      return sourceLabel === intent.axis ? "Press advantage" : `Press ${sourceLabel}`;
+  }
+}
+
+function taskWindowForIntent(
+  intent: ReturnType<typeof findIntentsForCharacter>[number],
+) {
+  switch (intent.kind) {
+    case "protect_coherence":
+      return STEP_MINUTES * 2;
+    case "counter_rival":
+      return STEP_MINUTES * 2;
+    default:
+      return STEP_MINUTES * 3;
+  }
+}
+
+function intentLocation(
+  world: WorldState,
+  character: Character,
+  intent: ReturnType<typeof findIntentsForCharacter>[number],
+): string {
+  if (intent.sourceCurrentId) {
+    const matchingCurrent = world.city.currents.find(
+      (current) => current.id === intent.sourceCurrentId,
     );
 
     if (matchingCurrent) {
@@ -225,9 +261,25 @@ function relationshipLocation(
     }
   }
 
-  if (relationship.targetType === "rival") {
+  if (intent.sourceRelationshipId) {
+    const relationship = world.relationships.find(
+      (entry) => entry.id === intent.sourceRelationshipId,
+    );
+
+    if (relationship?.targetType === "faction") {
+      const matchingCurrent = world.city.currents.find((current) =>
+        current.factionIds.includes(relationship.targetId),
+      );
+
+      if (matchingCurrent) {
+        return matchingCurrent.districtId;
+      }
+    }
+  }
+
+  if (intent.sourceRivalId) {
     const matchingRivalCurrent = world.city.currents.find(
-      (current) => current.lockedByRivalId === relationship.targetId,
+      (current) => current.lockedByRivalId === intent.sourceRivalId,
     );
 
     if (matchingRivalCurrent) {
@@ -235,5 +287,5 @@ function relationshipLocation(
     }
   }
 
-  return world.city.districts[0]?.id ?? "the-city";
+  return character.currentLocation || world.city.districts[0]?.id || "the-city";
 }

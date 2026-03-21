@@ -5,7 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Many Lives",
   description:
-    "The city is reordering itself, and no one with only one life can shape what comes next.",
+    "Find your way in South Quay, a river district of Brackenport: learn the streets, find work, meet people, and solve local problems.",
 };
 
 export default function RootLayout({

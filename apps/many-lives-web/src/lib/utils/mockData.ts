@@ -423,6 +423,9 @@ function normalizeCharacter(
     )
     .sort((left, right) => left.dueAt.localeCompare(right.dueAt))[0];
   const policy = normalizePolicy(rawCharacter.policies);
+  const currentRead = findCurrentRead(rawWorld, rawCharacter.id);
+  const activeIntent = findActiveIntent(rawWorld, rawCharacter.id);
+  const heldBeliefs = findHeldBeliefs(rawWorld, rawCharacter.id);
 
   return {
     id: rawCharacter.id,
@@ -452,7 +455,67 @@ function normalizeCharacter(
       0,
       100,
     ),
+    currentRead:
+      currentRead?.summary ?? "No clear read yet. This self is still triangulating.",
+    currentReadRationale:
+      currentRead?.rationale ??
+      "The city is still moving faster than this self's model of it.",
+    activeIntent:
+      activeIntent?.summary ?? "No dominant intent. This self is holding position.",
+    activeIntentPriority: activeIntent?.priority ?? 0,
+    heldBeliefs,
   };
+}
+
+function findCurrentRead(rawWorld: RawWorldState, characterId: string) {
+  return rawWorld.interpretations
+    ?.filter((interpretation) => interpretation.characterId === characterId)
+    .sort(
+      (left, right) =>
+        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    )[0];
+}
+
+function findActiveIntent(rawWorld: RawWorldState, characterId: string) {
+  return rawWorld.activeIntents
+    ?.filter((intent) => intent.characterId === characterId)
+    .sort((left, right) => left.rank - right.rank)[0];
+}
+
+function findHeldBeliefs(rawWorld: RawWorldState, characterId: string) {
+  return (
+    rawWorld.memories
+      ?.find((memory) => memory.characterId === characterId)
+      ?.beliefs.slice()
+      .filter((belief) => belief.subject !== "player")
+      .sort(
+        (left, right) =>
+          beliefStatusRank(right.status) - beliefStatusRank(left.status) ||
+          right.confidence - left.confidence,
+      )
+      .slice(0, 3)
+      .map((belief) => ({
+        subject: belief.subject,
+        belief: belief.belief,
+        confidence: belief.confidence,
+        status: belief.status ?? "held",
+      })) ?? []
+  );
+}
+
+function beliefStatusRank(status: string) {
+  switch (status) {
+    case "confirmed":
+      return 4;
+    case "held":
+      return 3;
+    case "speculative":
+      return 2;
+    case "disproven":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 function normalizeInboxMessage(
@@ -652,6 +715,27 @@ function buildSeedGame(gameId: string): GameState {
         scheduleSummary:
           "Moving through gatekeepers, hidden systems, and rooms that decide who gets written into the next order.",
         load: 35,
+        currentRead:
+          "Ivo thinks the guest-ledger seam is real, but still shaped by someone else's hidden terms.",
+        currentReadRationale:
+          "A missing name created access, but access created by absence usually comes with an owner waiting nearby.",
+        activeIntent:
+          "Ivo wants to verify the seam before turning it into durable leverage.",
+        activeIntentPriority: 20,
+        heldBeliefs: [
+          {
+            subject: "intent:ghost-list",
+            belief: "The gap is real, but it may already belong to whoever removed the name.",
+            confidence: 0.68,
+            status: "speculative",
+          },
+          {
+            subject: "world",
+            belief: "Hidden systems will decide visible winners before the city admits it.",
+            confidence: 0.72,
+            status: "held",
+          },
+        ],
       },
       {
         id: "sia",
@@ -692,6 +776,27 @@ function buildSeedGame(gameId: string): GameState {
         scheduleSummary:
           "Moving between debut energy, leaking signal, and the danger of becoming unforgettable too early.",
         load: 45,
+        currentRead:
+          "Sia thinks the unfinished debut should be forced into the room before the city stabilizes around someone safer.",
+        currentReadRationale:
+          "The work is dangerous, but the danger is part of the signal. Waiting mostly helps prettier, emptier acts.",
+        activeIntent:
+          "Sia wants to press the unfinished debut into cultural fact.",
+        activeIntentPriority: 24,
+        heldBeliefs: [
+          {
+            subject: "intent:unfinished-debut",
+            belief: "If the work lands during the vacuum, culture will have to reorganize around it.",
+            confidence: 0.74,
+            status: "held",
+          },
+          {
+            subject: "authorship",
+            belief: "Bigger names enter the work to inherit signal they did not generate.",
+            confidence: 0.66,
+            status: "held",
+          },
+        ],
       },
       {
         id: "ren",
@@ -732,6 +837,27 @@ function buildSeedGame(gameId: string): GameState {
         scheduleSummary:
           "Holding chemistry, status, and invitation at the exact moment rival circles are choosing sides.",
         load: 37,
+        currentRead:
+          "Ren thinks the velvet room is live, but still unstable enough that entering badly would make us decor.",
+        currentReadRationale:
+          "Thresholds like this reward timing more than entitlement. Another circle is already close enough to author the room's memory.",
+        activeIntent:
+          "Ren wants to verify the room, then counter rival movement before the orbit map hardens.",
+        activeIntentPriority: 22,
+        heldBeliefs: [
+          {
+            subject: "intent:velvet-window",
+            belief: "The room is open, but only the first convincing arrival gets remembered as inevitable.",
+            confidence: 0.7,
+            status: "speculative",
+          },
+          {
+            subject: "rival",
+            belief: "Bright Table is moving early enough to shape status, not just enjoy it.",
+            confidence: 0.64,
+            status: "held",
+          },
+        ],
       },
       {
         id: "vale",
@@ -772,6 +898,27 @@ function buildSeedGame(gameId: string): GameState {
         scheduleSummary:
           "Sampling rumors, fringe signals, and unstable patterns before anyone has named the scene.",
         load: 44,
+        currentRead:
+          "Vale thinks the signal is real, but coherence is already paying for how many unstable threads are live at once.",
+        currentReadRationale:
+          "Tomorrow is leaking in through multiple bad rooms at once. Chasing all of them would turn destiny into fragmentation.",
+        activeIntent:
+          "Vale wants to protect coherence while staying early to the next scene.",
+        activeIntentPriority: 22,
+        heldBeliefs: [
+          {
+            subject: "coherence",
+            belief: "Reach is outrunning coherence. Without consolidation, later wins will belong to incompatible selves.",
+            confidence: 0.69,
+            status: "confirmed",
+          },
+          {
+            subject: "world",
+            belief: "If we are early enough, risk and destiny are still the same shape.",
+            confidence: 0.71,
+            status: "held",
+          },
+        ],
       },
     ],
     inbox: initialAscensionMessageIds.map((id) =>

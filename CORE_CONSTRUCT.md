@@ -4,190 +4,264 @@ This is a living design document. It should stay lightweight, current, and close
 
 When implementation details drift, this document is the reference point for what the game is trying to be.
 
-## Core Principle
+## Current Direction
 
-Many Lives is not fundamentally an inbox app.
+Many Lives is now centered on a single embodied character in one living city.
 
-It is a simulation about selves moving through living cities during periods of unstable transformation.
+The game starts small and concrete:
 
-The inbox, notifications, and UI panels are outputs of that simulation, not the simulation itself.
+- find your way around
+- find work
+- find people
+- find somewhere safe to return to
+- find a problem worth solving
+
+The older multi-self version is not the current foundation.
+
+It may return later, but only after the single-character city simulation is genuinely fun on its own.
+
+## Core Fantasy
+
+The core fantasy is:
+
+**Find your way in a living city.**
+
+The player should not begin as someone important.
+
+They should begin as someone new, uncertain, and limited:
+
+- they do not know the streets yet
+- they do not know who matters
+- they do not yet have stable work
+- they do not know which local problems are real
+- the city does not care about them yet
+
+The early emotional arc is orientation, not dominance.
+
+Importance should emerge later from:
+
+- reliability
+- local knowledge
+- remembered actions
+- trust
+- reputation
+- solving real problems for real people
 
 ## Core Systems
 
-The game has 4 primary systems:
+The game currently has 4 primary systems.
 
 ### 1. World
 
-The world is encapsulated as cities.
+The world is a living city presented as a top-down 2D space.
 
-Each city should evolve on its own, even without player input.
+The visual target is:
 
-Cities contain:
+- readable like an older game
+- systemic like a modern sim
+- spatially legible
+- grounded enough that place matters
 
-- factions
-- institutions
-- patronage networks
-- scenes and subcultures
-- technologies and infrastructures
-- myths, rumors, and reputations
-- active tensions and transformations
-- hidden currents that intensify, dissipate, and change who can move
+The world should contain:
 
-The world must feel alive, partial, and ahead of the player.
+- neighborhoods
+- streets and interiors
+- homes, shops, job sites, and public places
+- NPCs with schedules
+- local institutions and factions
+- jobs
+- shortages
+- rumors
+- recurring problems
+- world states that change with time
 
-Characters should not perceive the whole current directly.
+The world must keep moving even when the player does nothing.
 
-Instead, they receive partial signals:
+That movement should be tangible and local:
 
-- a contact goes warm or cold
-- a threshold changes
-- a rumor sharpens
-- a rival trace appears
-- a scene starts heating
-- a technical glimmer changes what seems possible
+- a shop closes
+- a shift starts
+- a person leaves for work
+- a rumor reaches a district
+- a gate opens or locks
+- someone else solves a problem first
 
-Commitments and inbox items should be derived from these signals, not from explicit authored set-pieces.
+The world should not feel like a static quest board.
 
-### 2. Characters
+### 2. Character
 
-Characters are semi-autonomous agents, not just containers for tasks.
+The player controls one character directly.
 
-Each character needs:
+The character needs a simple, grounded state:
 
-- personality
-- values
-- ambitions
-- fears
-- style of action
-- configurable standing instincts
-- resources
-- commitments
-- relationships to the player, the world, and other characters
+- location
+- money
+- energy
+- inventory
+- known places
+- known people
+- skills or capabilities
+- current obligations
+- reputation
 
-The player should be able to shape how a character behaves, but not directly author every move.
+The character should feel limited at first.
+
+The player is not shaping a dashboard policy system first.
+
+The player is moving a person through streets, doors, work, and social situations.
 
 ### 3. Memory
 
-Memory is what gives continuity and identity to characters.
+Memory is what gives the character and the city continuity.
 
-Characters should remember:
+The player character should remember:
 
-- what happened to them
-- what they did
-- who helped them
-- who used them
-- what they believe is true
-- what they are wrong about
-- what they owe
-- what they resent
-- what they are trying not to become
+- where places are
+- who said what
+- what jobs paid well
+- who can be trusted
+- what went wrong
+- what was promised
+- what is still unresolved
 
-Memory should affect future interpretation, action, trust, and escalation.
+The world should remember too.
 
-### 4. Attention
+NPCs, groups, and places should remember:
 
-Attention decides what reaches the player.
+- whether you showed up
+- whether you were useful
+- whether you caused trouble
+- whether you solved something
+- whether you can be relied on
 
-This is a first-class game system, not just UI behavior.
+Memory should unlock future play.
 
-For any event or decision point, the system should decide whether it becomes:
+It should change:
 
-- `silent`
-  - handled locally, memory only
-- `ambient`
-  - visible in history/logs, no direct player ask
-- `digest`
-  - bundled into a later summary
-- `message`
-  - surfaced in the inbox / attention feed
-- `interrupt`
-  - immediate direct escalation to the player
+- dialogue
+- prices
+- access
+- jobs offered
+- trust
+- who asks for help
+- which problems become visible
 
-The inbox is therefore a derived artifact of attention decisions.
+### 4. Embodiment
+
+Embodiment means the player is in the city, not above it.
+
+This is critical.
+
+The game should be about physically being somewhere:
+
+- walking to a place
+- arriving too early or too late
+- seeing who is there
+- noticing what changed
+- choosing whether to enter, wait, leave, or talk
+
+Distance and time should matter.
+
+Knowledge should often come from presence, not from abstract menus.
+
+If a job, problem, or person matters, the player should usually have to go there.
 
 ## Clean Loop
 
 The canonical game loop is:
 
-1. The world advances.
-2. Each character perceives only part of what changed.
-3. That perception is filtered through personality and memory.
-4. The character decides how to act.
-5. The character decides whether the player needs to know.
-6. The world resolves outcomes.
-7. Memory updates.
-8. Player-facing notifications are produced when attention rules say they should be.
+1. Wake up or step into the city.
+2. Move through the map.
+3. Notice places, people, work, and trouble.
+4. Choose where to go and what to do.
+5. Spend time, money, and energy.
+6. The world advances.
+7. Memory and reputation update.
+8. New jobs, relationships, and problems become available.
 
-## Escalation Logic
+This loop should work before any larger narrative layer is added.
 
-A character should not surface everything.
+## Early-Game Priorities
 
-Escalation should consider:
+The first playable version should emphasize:
 
-- stakes
-- reversibility
-- confidence
-- novelty
-- fit with standing instincts
-- threat to coherence
-- relationship to the player
-- whether another actor or rival network is likely to move first
+- movement that feels good enough to explore with
+- a small but believable district
+- a few NPCs with routines
+- simple jobs
+- simple needs
+- a few small problems that can be solved in different ways
+- clear consequences for lateness, helpfulness, and curiosity
 
-Different characters should escalate differently.
+At the beginning, the player should be asking:
 
-Examples:
+- Where can I sleep?
+- Who is hiring?
+- What is this neighborhood like?
+- Who seems trustworthy?
+- What happened here?
+- Is there a better use of my time today?
 
-- Ivo escalates when leverage, structural access, or hidden cost is at stake.
-- Sia escalates when meaning, authorship, or signal is at stake.
-- Ren escalates when timing, status, or allegiance is slipping.
-- Vale escalates when weak signals may become destiny.
+Not:
+
+- How do I optimize a complex meta-system?
+- Which grand strategy path should I take?
+- How do I coordinate multiple selves?
 
 ## Design Consequences
 
 These should stay true as the game evolves:
 
-- The world changes independently.
-- Characters are not omniscient.
-- Memory meaningfully shapes future behavior.
-- The player shapes personalities and thresholds more than individual micro-actions.
-- The inbox is a projection of simulation state, not the source of truth.
-- Notifications are characterful and strategic, not generic system alerts.
+- start grounded, not grandiose
+- one body in one place is enough for now
+- movement through the city is core gameplay, not decoration
+- early problems should be local and understandable
+- the world should reveal itself through presence
+- memory should matter quickly
+- trust and familiarity should be valuable rewards
+- larger stakes should emerge from repeated local play
 
 ## Canonical Domain Shape
 
 At a minimum, the simulation should converge on these canonical concepts:
 
-- `CityState`
+- `WorldState`
+- `CityMap`
+- `LocationState`
 - `CharacterState`
+- `NpcState`
 - `MemoryState`
-- `RelationshipState`
-- `AttentionPolicy`
-- `EscalationDecision`
-- `PlayerNotification`
+- `ReputationState`
+- `ScheduleState`
+- `JobState`
+- `ProblemState`
+- `InteractionState`
 - `SimulationTick`
 
 ## Working Rule
 
 When making architecture or content decisions, prefer the option that makes the game more like:
 
-- a living city simulation
-- semi-autonomous selves with identity
+- a living top-down city sim
+- one character finding their footing
+- local work, local people, local problems
 - remembered consequences
-- selective, characterful escalation
+- knowledge earned by going places
 
 And less like:
 
+- a dashboard-first strategy game
+- multi-agent coordination too early
 - a task manager
-- a static event deck
-- a pure UI shell
-- a system where the inbox is the whole game
+- a static quest list
+- a game that starts abstract before it becomes human
 
 ## Update Rule
 
 Update this document whenever one of these changes:
 
-- what the simulation fundamentally models
-- what characters fundamentally are
+- what the world fundamentally simulates
+- what the player character fundamentally is
 - what memory fundamentally does
-- what qualifies for escalation to the player
+- what the map and embodiment layer fundamentally require
 - what the canonical loop is

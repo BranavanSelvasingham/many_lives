@@ -66,6 +66,10 @@ export async function maybeEscalateEvent(
     suggestedActions: suggestedActions.slice(0, 4),
   });
 
+  if (hasOpenThreadCovering(input, message.subject)) {
+    return;
+  }
+
   recordInboxMessage(input.world, {
     characterId: input.character.id,
     type: message.type,
@@ -79,6 +83,32 @@ export async function maybeEscalateEvent(
     attentionTier: decision.tier,
     escalationReason: decision.reason,
   });
+}
+
+function hasOpenThreadCovering(
+  input: EscalationInput,
+  subject: string,
+) {
+  if (input.event.type === "task_completed") {
+    return false;
+  }
+
+  const normalizedSubject = normalize(subject);
+  const normalizedTask = normalize(input.task?.title);
+  const normalizedEvent = normalize(input.event.title);
+
+  return input.world.inbox.some(
+    (message) =>
+      message.characterId === input.character.id &&
+      message.resolvedAt == null &&
+      (
+        normalize(message.subject) === normalizedSubject ||
+        (normalizedTask.length > 0 &&
+          normalize(message.subject).includes(normalizedTask)) ||
+        (normalizedEvent.length > 0 &&
+          normalize(message.subject).includes(normalizedEvent))
+      ),
+  );
 }
 
 export function evaluateEscalation(input: EscalationInput): EscalationDecision {
@@ -155,6 +185,8 @@ export function evaluateEscalation(input: EscalationInput): EscalationDecision {
 }
 
 function isInboxEligibleEvent(input: EscalationInput): boolean {
+  const systemTask = input.task?.createdBy === "system";
+
   switch (input.event.type) {
     case "world_shift":
     case "signal_detected":
@@ -167,11 +199,12 @@ function isInboxEligibleEvent(input: EscalationInput): boolean {
     case "scene_heat":
     case "tech_glimmer":
     case "coherence_drift":
-    case "obligation_missed":
     case "schedule_conflict":
-    case "travel_delay":
     case "stress_spike":
       return true;
+    case "obligation_missed":
+    case "travel_delay":
+      return !systemTask;
     case "task_completed":
       return (
         input.character.policies.reportingFrequency === "high" &&
@@ -230,6 +263,10 @@ function tierForScore(
     return "ambient";
   }
   return "silent";
+}
+
+function normalize(value?: string) {
+  return value?.trim().toLowerCase() ?? "";
 }
 
 function reversibilityFor(event: EventRecord): number {

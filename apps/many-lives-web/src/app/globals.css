@@ -1,22 +1,22 @@
 @import "tailwindcss";
 
 :root {
-  --bg-main: #090b0d;
-  --surface-panel: #10151a;
-  --surface-raised: #151b21;
-  --surface-selected: #182028;
-  --surface-muted: #0d1217;
-  --surface-overlay: #121920;
-  --border-subtle: #2f3944;
-  --border-strong: #6b7b8c;
-  --text-main: #eee3d3;
-  --text-muted: #b1a99c;
-  --text-dim: #7c7a75;
-  --accent-steel: #33414f;
-  --accent-brass: #b79259;
-  --accent-alert: #a76963;
-  --button-primary: #d1b06f;
-  --button-primary-text: #17120b;
+  --bg-main: #0b0f11;
+  --surface-panel: #11181c;
+  --surface-raised: #162026;
+  --surface-selected: #1a252d;
+  --surface-muted: #0d1418;
+  --surface-overlay: #121b20;
+  --border-subtle: #34414a;
+  --border-strong: #74818a;
+  --text-main: #ede4d4;
+  --text-muted: #b7ad9f;
+  --text-dim: #87847c;
+  --accent-steel: #41515e;
+  --accent-brass: #b9965c;
+  --accent-alert: #b16c62;
+  --button-primary: #d0ad72;
+  --button-primary-text: #18120b;
   --font-body: "Avenir Next", "Segoe UI", sans-serif;
   --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
   --font-mono: "SFMono-Regular", "Menlo", monospace;
@@ -35,10 +35,15 @@ body {
   margin: 0;
   min-height: 100vh;
   background:
-    radial-gradient(circle at top, rgba(183, 146, 89, 0.14), transparent 28%),
-    linear-gradient(180deg, #0c1014 0%, var(--bg-main) 46%, #07090b 100%);
+    radial-gradient(circle at top, rgba(185, 150, 92, 0.12), transparent 24%),
+    radial-gradient(circle at 20% 20%, rgba(67, 92, 78, 0.12), transparent 22%),
+    linear-gradient(180deg, #0f1418 0%, var(--bg-main) 42%, #07090b 100%);
   color: var(--text-main);
   font-family: var(--font-body), sans-serif;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 * {
@@ -67,6 +72,13 @@ button {
 
 button:disabled {
   cursor: not-allowed;
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid rgba(208, 173, 114, 0.72);
+  outline-offset: 3px;
 }
 
 *::-webkit-scrollbar {

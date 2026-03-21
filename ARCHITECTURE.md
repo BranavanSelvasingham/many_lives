@@ -6,12 +6,14 @@ The simulation server owns the authoritative world state. Each tick advances tim
 
 1. world pressure advances
 2. characters perceive part of that change
-3. characters act through current commitments
-4. outcomes resolve
-5. memory updates
-6. attention routing decides what reaches the player
+3. characters interpret those signals through memory and personality
+4. characters form active intents
+5. commitments and tasks are derived from those intents
+6. outcomes resolve
+7. memory updates
+8. attention routing decides what reaches the player
 
-The current commitment layer still uses tasks, travel, and obligations, but those now sit inside a broader model that also tracks city structure, rival movement, character memory, and attention decisions.
+The current commitment layer still uses tasks, travel, and obligations, but those now sit inside a broader model that also tracks city structure, rival movement, character memory, interpretations, intents, and attention decisions.
 
 ## Web Client Shell
 

@@ -6,6 +6,7 @@ import {
   STEP_MINUTES,
   addSystemFlag,
   clamp,
+  findIntentsForCharacter,
   findMemoryState,
   findRelationship,
   findSignalsForCharacter,
@@ -349,6 +350,11 @@ function scoreTask(
         (entry) => entry.id === task.sourceSignalId,
       )
     : undefined;
+  const intent = task.sourceIntentId
+    ? findIntentsForCharacter(world, character.id).find(
+        (entry) => entry.id === task.sourceIntentId,
+      )
+    : undefined;
   const relationship = task.sourceRelationshipId
     ? findRelationship(world, task.sourceRelationshipId)
     : undefined;
@@ -388,6 +394,24 @@ function scoreTask(
     character.energy <= 25 && task.kind !== "coherence" ? 8 : 0;
   const rivalBonus = rival ? Math.round(rival.threat / 15) : 0;
   const dynamicBonus = task.dynamic ? 4 : 0;
+  const intentBonus = intent
+    ? Math.round((intent.priority + intent.confidence) / 4)
+    : 0;
+  const primaryIntentBonus = intent?.rank === 1 ? 6 : 0;
+  const scenarioBonus = task.createdBy === "scenario" ? 12 : 0;
+  const pendingMandatoryScenario = world.tasks.some(
+    (entry) =>
+      entry.id !== task.id &&
+      entry.characterId === character.id &&
+      entry.status === "pending" &&
+      entry.createdBy === "scenario" &&
+      entry.mandatory &&
+      minutesBetween(currentTime, entry.dueAt) <= 180,
+  );
+  const systemDeferralPenalty =
+    task.createdBy === "system" && task.dynamic && pendingMandatoryScenario
+      ? 14
+      : 0;
 
   return (
     task.importance * 10 +
@@ -403,7 +427,11 @@ function scoreTask(
     relationshipBonus +
     coherenceBonus +
     rivalBonus +
-    dynamicBonus
+    dynamicBonus +
+    intentBonus +
+    primaryIntentBonus +
+    scenarioBonus -
+    systemDeferralPenalty
   );
 }
 

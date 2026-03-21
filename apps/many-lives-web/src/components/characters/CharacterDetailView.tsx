@@ -47,6 +47,40 @@ export function CharacterDetailView({ character }: CharacterDetailViewProps) {
           value={character.recentEvents.join(" • ")}
         />
       </div>
+      <div className="space-y-3 border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-4">
+        <SectionLine
+          label="Current Read"
+          value={character.currentRead}
+          detail={character.currentReadRationale}
+        />
+        <SectionLine
+          label="Active Intent"
+          value={character.activeIntent}
+          detail={`Intent pressure ${Math.round(character.activeIntentPriority)}`}
+        />
+      </div>
+      <div className="space-y-3 border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-4">
+        <div className="text-[0.85rem] uppercase tracking-[0.04em] text-[color:var(--text-dim)]">
+          Held Beliefs
+        </div>
+        <div className="space-y-3">
+          {character.heldBeliefs.map((belief) => (
+            <div key={`${belief.subject}-${belief.belief}`} className="space-y-1">
+              <div className="text-[0.95rem] leading-6 text-[color:var(--text-main)]">
+                {belief.belief}
+              </div>
+              <div
+                className={`text-[0.8rem] uppercase tracking-[0.04em] ${beliefStatusTone(
+                  belief.status,
+                )}`}
+              >
+                {belief.status.replace("_", " ")} •{" "}
+                {Math.round(belief.confidence * 100)}% confidence
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </Card>
   );
 }
@@ -67,4 +101,40 @@ function SummaryRow({ label, value }: SummaryRowProps) {
       </div>
     </div>
   );
+}
+
+interface SectionLineProps {
+  label: string;
+  value: string;
+  detail: string;
+}
+
+function SectionLine({ label, value, detail }: SectionLineProps) {
+  return (
+    <div className="space-y-1">
+      <div className="text-[0.85rem] uppercase tracking-[0.04em] text-[color:var(--text-dim)]">
+        {label}
+      </div>
+      <div className="text-[0.98rem] leading-6 text-[color:var(--text-main)]">
+        {value}
+      </div>
+      <div className="text-[0.88rem] leading-6 text-[color:var(--text-muted)]">
+        {detail}
+      </div>
+    </div>
+  );
+}
+
+function beliefStatusTone(status: CharacterView["heldBeliefs"][number]["status"]) {
+  switch (status) {
+    case "confirmed":
+      return "text-[color:var(--accent-gold)]";
+    case "disproven":
+      return "text-[color:var(--accent-rose)]";
+    case "speculative":
+      return "text-[color:var(--text-dim)]";
+    case "held":
+    default:
+      return "text-[color:var(--text-muted)]";
+  }
 }

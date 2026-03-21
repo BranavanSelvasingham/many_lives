@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import { STEP_MINUTES } from "../sim/engine.js";
 import type { SimulationEngine } from "../sim/engine.js";
-import { STEP_MINUTES } from "../sim/worldState.js";
+import type { StreetGameState } from "../street-sim/types.js";
 import type { MemoryGameStore } from "../storage/memoryStore.js";
 import type {
   CreateGameRequest,
@@ -12,7 +13,7 @@ import type {
 
 interface GameRouteDependencies {
   engine: SimulationEngine;
-  store: MemoryGameStore;
+  store: MemoryGameStore<StreetGameState>;
 }
 
 export function registerGameRoutes(
