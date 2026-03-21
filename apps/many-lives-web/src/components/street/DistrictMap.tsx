@@ -72,6 +72,27 @@ export function DistrictMap({
   const findRoute = useMemo(() => createRouteFinder(game.map.tiles), [game.map.tiles]);
   const mapWidth = game.map.width * CELL;
   const mapHeight = game.map.height * CELL;
+  const playerPixel = {
+    x: (game.player.x + 0.5) * CELL,
+    y: (game.player.y + 0.5) * CELL,
+  };
+  const awarenessMaskId = `${game.id}-awareness-mask`;
+  const playerFieldGradientId = `${game.id}-player-fov`;
+  const knownAwarenessZones = game.locations
+    .filter((location) => knownLocationIds.has(location.id))
+    .map((location) => {
+      const door = primaryDoorByLocation.get(location.id);
+
+      return {
+        id: location.id,
+        x: door ? (door.x + door.width / 2) * CELL : (location.entryX + 0.5) * CELL,
+        y: door ? (door.y + door.height / 2) * CELL : (location.entryY + 0.5) * CELL,
+        radius: Math.max(location.width, location.height) * CELL * 0.58,
+      };
+    });
+  const knownFieldGradientIds = knownAwarenessZones.map(
+    (zone) => `${game.id}-known-fov-${zone.id}`,
+  );
   const animatedNpcs = useMemo(
     () =>
       game.npcs.map((npc, index) =>
@@ -106,6 +127,15 @@ export function DistrictMap({
               viewBox={`0 0 ${mapWidth + MAP_PADDING * 2} ${mapHeight + MAP_PADDING * 2}`}
             >
               <SceneDefs />
+              <AwarenessDefs
+                knownZones={knownAwarenessZones}
+                knownZoneGradientIds={knownFieldGradientIds}
+                mapHeight={mapHeight}
+                mapWidth={mapWidth}
+                maskId={awarenessMaskId}
+                playerGradientId={playerFieldGradientId}
+                playerPixel={playerPixel}
+              />
 
               <rect
                 fill="url(#scene-backdrop)"
@@ -247,6 +277,13 @@ export function DistrictMap({
                     />
                   ))}
                 </g>
+
+                <AwarenessOverlay
+                  playerPixel={playerPixel}
+                  height={mapHeight}
+                  maskId={awarenessMaskId}
+                  width={mapWidth}
+                />
 
                 <PlayerMarker animationBeat={animationBeat} x={game.player.x} y={game.player.y} />
 
@@ -424,6 +461,141 @@ function SceneDefs() {
         <feGaussianBlur stdDeviation="10" />
       </filter>
     </defs>
+  );
+}
+
+function AwarenessDefs({
+  maskId,
+  mapWidth,
+  mapHeight,
+  playerGradientId,
+  playerPixel,
+  knownZones,
+  knownZoneGradientIds,
+}: {
+  maskId: string;
+  mapWidth: number;
+  mapHeight: number;
+  playerGradientId: string;
+  playerPixel: Point;
+  knownZones: Array<{ id: string; x: number; y: number; radius: number }>;
+  knownZoneGradientIds: string[];
+}) {
+  const playerOuterRadius = CELL * 5.6;
+  const playerInnerRadius = CELL * 3.1;
+
+  return (
+    <defs>
+      <radialGradient
+        cx={playerPixel.x}
+        cy={playerPixel.y}
+        gradientUnits="userSpaceOnUse"
+        id={playerGradientId}
+        r={playerOuterRadius}
+      >
+        <stop offset="0%" stopColor="black" />
+        <stop
+          offset={`${(playerInnerRadius / playerOuterRadius) * 100}%`}
+          stopColor="#030303"
+        />
+        <stop offset="63%" stopColor="#2f2f2f" />
+        <stop offset="82%" stopColor="#9c9c9c" />
+        <stop offset="100%" stopColor="white" />
+      </radialGradient>
+
+      {knownZones.map((zone, index) => (
+        <radialGradient
+          cx={zone.x}
+          cy={zone.y}
+          gradientUnits="userSpaceOnUse"
+          id={knownZoneGradientIds[index]}
+          key={zone.id}
+          r={zone.radius}
+        >
+          <stop offset="0%" stopColor="#c4c4c4" />
+          <stop offset="45%" stopColor="#dddddd" />
+          <stop offset="100%" stopColor="white" />
+        </radialGradient>
+      ))}
+
+      <mask id={maskId} maskUnits="userSpaceOnUse">
+        <rect fill="white" height={mapHeight} width={mapWidth} x="0" y="0" />
+        <circle
+          cx={playerPixel.x}
+          cy={playerPixel.y}
+          fill={`url(#${playerGradientId})`}
+          r={playerOuterRadius}
+        />
+        {knownZones.map((zone, index) => (
+          <circle
+            cx={zone.x}
+            cy={zone.y}
+            fill={`url(#${knownZoneGradientIds[index]})`}
+            key={`${zone.id}-mask`}
+            r={zone.radius}
+          />
+        ))}
+      </mask>
+    </defs>
+  );
+}
+
+function AwarenessOverlay({
+  maskId,
+  width,
+  height,
+  playerPixel,
+}: {
+  maskId: string;
+  width: number;
+  height: number;
+  playerPixel: Point;
+}) {
+  const playerRadius = CELL * 5.55;
+
+  return (
+    <g pointerEvents="none">
+      <rect
+        fill="rgba(4,7,10,0.54)"
+        height={height}
+        mask={`url(#${maskId})`}
+        width={width}
+        x="0"
+        y="0"
+      />
+      <circle
+        cx={playerPixel.x}
+        cy={playerPixel.y}
+        fill="rgba(236,222,193,0.04)"
+        r={playerRadius - CELL * 1.2}
+      />
+      <circle
+        cx={playerPixel.x}
+        cy={playerPixel.y}
+        fill="none"
+        opacity="0.95"
+        r={playerRadius - CELL * 0.6}
+        stroke="rgba(234,220,189,0.26)"
+        strokeWidth="1.5"
+      />
+      <circle
+        cx={playerPixel.x}
+        cy={playerPixel.y}
+        fill="none"
+        opacity="0.35"
+        r={playerRadius}
+        stroke="rgba(180,198,214,0.18)"
+        strokeWidth="5"
+      />
+      <rect
+        fill="rgba(0,0,0,0.12)"
+        height={height}
+        rx="20"
+        width={width}
+        x="0"
+        y="0"
+      />
+    </g>
   );
 }
 

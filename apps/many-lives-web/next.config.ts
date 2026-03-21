@@ -4,18 +4,23 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  outputFileTracingRoot: fileURLToPath(new URL("../..", import.meta.url)),
+  experimental: {
+    externalDir: true,
+  },
   turbopack: {
     root: fileURLToPath(new URL("../..", import.meta.url)),
   },
-  async rewrites() {
-    return [
-      {
-        source: "/sim/:path*",
-        destination: `${
-          process.env.NEXT_PUBLIC_MANY_LIVES_API_URL ?? "http://127.0.0.1:3000"
-        }/:path*`,
-      },
-    ];
+  webpack(config) {
+    config.resolve ??= {};
+    config.resolve.extensionAlias = {
+      ...(config.resolve.extensionAlias ?? {}),
+      ".js": [".ts", ".tsx", ".js"],
+      ".mjs": [".mts", ".mjs"],
+      ".cjs": [".cts", ".cjs"],
+    };
+
+    return config;
   },
 };
 
