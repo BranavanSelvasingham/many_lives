@@ -3,6 +3,7 @@ import type { MemoryState } from "../domain/memory.js";
 import type { NotificationRecord } from "../domain/attention.js";
 import type { NewEvent, EventRecord } from "../domain/event.js";
 import type { InboxMessage } from "../domain/inbox.js";
+import type { PerceivedSignal } from "../domain/perception.js";
 import type { RelationshipState } from "../domain/relationship.js";
 import type { Task } from "../domain/task.js";
 import type { WorldState } from "../domain/world.js";
@@ -44,6 +45,15 @@ export function findMemoryState(
   characterId: string,
 ): MemoryState | undefined {
   return world.memories.find((memory) => memory.characterId === characterId);
+}
+
+export function findSignalsForCharacter(
+  world: WorldState,
+  characterId: string,
+): PerceivedSignal[] {
+  return world.perceivedSignals.filter(
+    (signal) => signal.characterId === characterId,
+  );
 }
 
 export function findRelationshipsForCharacter(
@@ -106,6 +116,19 @@ export function recordNotification(
   };
   world.attentionLog.unshift(storedNotification);
   return storedNotification;
+}
+
+export function recordPerceivedSignal(
+  world: WorldState,
+  signal: Omit<PerceivedSignal, "id">,
+): PerceivedSignal {
+  world.counters.signal += 1;
+  const storedSignal: PerceivedSignal = {
+    id: `signal-${world.counters.signal}`,
+    ...signal,
+  };
+  world.perceivedSignals.unshift(storedSignal);
+  return storedSignal;
 }
 
 export function hasSystemFlag(world: WorldState, flag: string): boolean {

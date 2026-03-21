@@ -1,60 +1,72 @@
 import type { Character } from "../../domain/character.js";
-import type { CityOpening } from "../../domain/city.js";
 import type { RelationshipState } from "../../domain/relationship.js";
 import type { Task, TaskKind } from "../../domain/task.js";
 import type { WorldState } from "../../domain/world.js";
-import { STEP_MINUTES, addMinutes, findMemoryState } from "../worldState.js";
+import {
+  STEP_MINUTES,
+  addMinutes,
+  findMemoryState,
+  findSignalsForCharacter,
+} from "../worldState.js";
 
 export function synchronizeDerivedTasks(world: WorldState): void {
   for (const character of world.characters) {
-    deriveOpeningTasks(world, character);
+    deriveSignalTasks(world, character);
     deriveRelationshipTasks(world, character);
-    deriveIntegrityTasks(world, character);
+    deriveCoherenceTasks(world, character);
   }
 }
 
-function deriveOpeningTasks(world: WorldState, character: Character): void {
-  const activeOpenings = world.city.openings.filter(
-    (opening) =>
-      opening.status === "active" &&
-      opening.discoveredByCharacterIds.includes(character.id),
-  );
+function deriveSignalTasks(world: WorldState, character: Character): void {
+  const recentSignals = findSignalsForCharacter(world, character.id)
+    .slice()
+    .sort((left, right) => right.strength - left.strength)
+    .slice(0, 4);
 
-  for (const opening of activeOpenings) {
+  for (const signal of recentSignals) {
     if (
       hasMatchingTask(
         world.tasks,
         character.id,
-        opening.title,
-        opening.id,
+        signal.source,
+        signal.id,
       )
     ) {
       continue;
     }
 
+    const relatedCurrent = signal.currentId
+      ? world.city.currents.find((current) => current.id === signal.currentId)
+      : undefined;
+
     world.tasks.push({
-      id: `task-derived-${character.id}-${opening.id}-${world.tickCount}`,
+      id: `task-derived-${character.id}-${signal.id}-${world.tickCount}`,
       characterId: character.id,
-      title: opening.title,
-      description: opening.summary,
-      kind: opening.axis,
-      location: opening.districtId,
+      title: signal.source,
+      description: `${signal.summary} ${character.name} is moving because the city just became more legible here.`,
+      kind: signal.axis,
+      location: signal.districtId ?? character.currentLocation,
       startAt: world.currentTime,
       dueAt: addMinutes(
         world.currentTime,
-        minutesUntilOpeningCloses(world, opening),
+        relatedCurrent
+          ? minutesUntilCurrentDissipates(world, relatedCurrent)
+          : STEP_MINUTES * 3,
       ),
       durationMinutes: 60,
       progressMinutes: 0,
       travelMinutes:
-        character.currentLocation === opening.districtId ? 0 : STEP_MINUTES,
+        character.currentLocation === (signal.districtId ?? character.currentLocation)
+          ? 0
+          : STEP_MINUTES,
       travelProgressMinutes: 0,
       status: "pending",
-      importance: Math.min(5, Math.max(3, Math.round(opening.urgency / 2))),
+      importance: Math.min(5, Math.max(3, Math.round(signal.strength / 2))),
       mandatory:
-        opening.urgency >= 8 || opening.axis === character.policies.priorityBias,
+        signal.strength >= 8 || signal.axis === character.policies.priorityBias,
       createdBy: "system",
-      sourceOpeningId: opening.id,
+      sourceSignalId: signal.id,
+      sourceCurrentId: signal.currentId,
       dynamic: true,
     });
   }
@@ -111,7 +123,7 @@ function deriveRelationshipTasks(world: WorldState, character: Character): void 
   }
 }
 
-function deriveIntegrityTasks(world: WorldState, character: Character): void {
+function deriveCoherenceTasks(world: WorldState, character: Character): void {
   const memory = findMemoryState(world, character.id);
   if (!memory || memory.coherence > 54) {
     return;
@@ -148,7 +160,7 @@ function hasMatchingTask(
   tasks: Task[],
   characterId: string,
   title: string,
-  sourceOpeningId?: string,
+  sourceSignalId?: string,
   sourceRelationshipId?: string,
 ): boolean {
   const normalizedTitle = normalize(title);
@@ -158,8 +170,8 @@ function hasMatchingTask(
       task.characterId === characterId &&
       task.status !== "missed" &&
       task.status !== "completed" &&
-      ((sourceOpeningId !== undefined &&
-        task.sourceOpeningId === sourceOpeningId) ||
+      ((sourceSignalId !== undefined &&
+        task.sourceSignalId === sourceSignalId) ||
         (sourceRelationshipId !== undefined &&
           task.sourceRelationshipId === sourceRelationshipId) ||
         normalize(task.title) === normalizedTitle),
@@ -170,17 +182,17 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function minutesUntilOpeningCloses(
+function minutesUntilCurrentDissipates(
   world: WorldState,
-  opening: CityOpening,
+  current: WorldState["city"]["currents"][number],
 ): number {
-  if (opening.closesAtTick === undefined) {
+  if (current.dissipatesAtTick === undefined) {
     return STEP_MINUTES * 4;
   }
 
   return Math.max(
     STEP_MINUTES,
-    (opening.closesAtTick - world.tickCount) * STEP_MINUTES,
+    (current.dissipatesAtTick - world.tickCount) * STEP_MINUTES,
   );
 }
 
@@ -204,22 +216,22 @@ function relationshipLocation(
   relationship: RelationshipState,
 ): string {
   if (relationship.targetType === "faction") {
-    const matchingOpening = world.city.openings.find((opening) =>
-      opening.factionIds.includes(relationship.targetId),
+    const matchingCurrent = world.city.currents.find((current) =>
+      current.factionIds.includes(relationship.targetId),
     );
 
-    if (matchingOpening) {
-      return matchingOpening.districtId;
+    if (matchingCurrent) {
+      return matchingCurrent.districtId;
     }
   }
 
   if (relationship.targetType === "rival") {
-    const matchingRivalOpening = world.city.openings.find(
-      (opening) => opening.claimedByRivalId === relationship.targetId,
+    const matchingRivalCurrent = world.city.currents.find(
+      (current) => current.lockedByRivalId === relationship.targetId,
     );
 
-    if (matchingRivalOpening) {
-      return matchingRivalOpening.districtId;
+    if (matchingRivalCurrent) {
+      return matchingRivalCurrent.districtId;
     }
   }
 

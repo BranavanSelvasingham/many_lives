@@ -16,7 +16,7 @@ export function RuleComposer({
   onChange,
   examples = [],
   title = "Make This A Standing Instinct",
-  description = "Turn this thread into a default reflex for future openings.",
+  description = "Turn this thread into a default reflex for future signals.",
   saveLabel = "Save Instinct",
   onSave,
   onCancel,
@@ -66,7 +66,7 @@ export function RuleComposer({
         onChange={(event) => onChange(event.target.value)}
         rows={2}
         className="w-full border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-3 py-3 text-[0.95rem] leading-6 text-[color:var(--text-main)] outline-none"
-        placeholder="Escalate if a rival can claim the opening before we do."
+        placeholder="Escalate if a rival can claim the thread before we do."
       />
       {onSave || onCancel ? (
         <div className="flex items-center justify-end gap-2">

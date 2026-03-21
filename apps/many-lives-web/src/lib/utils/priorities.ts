@@ -28,7 +28,7 @@ export const interruptOptions: Array<{
   label: string;
 }> = [
   { value: "always", label: "Any decisive shift" },
-  { value: "important_only", label: "High-value openings" },
+  { value: "important_only", label: "High-leverage threads" },
   { value: "emergencies_only", label: "Only when coherence breaks" },
 ];
 
@@ -57,7 +57,7 @@ export const scheduleProtectionOptions: Array<{
 }> = [
   { value: "strict", label: "Guard coherence" },
   { value: "flexible", label: "Stay fluid" },
-  { value: "opportunistic", label: "Chase openings" },
+  { value: "opportunistic", label: "Chase weak signals" },
 ];
 
 export const reportingOptions: Array<{

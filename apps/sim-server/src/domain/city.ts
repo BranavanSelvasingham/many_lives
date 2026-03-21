@@ -1,6 +1,6 @@
 export type CityAxis = "access" | "momentum" | "signal" | "coherence";
-export type OpeningVisibility = "hidden" | "whispered" | "open";
-export type OpeningStatus = "emerging" | "active" | "claimed" | "closed";
+export type CurrentVisibility = "hidden" | "whispered" | "open";
+export type CurrentStatus = "forming" | "live" | "claimed" | "dissolved";
 
 export interface CityDistrict {
   id: string;
@@ -20,7 +20,7 @@ export interface CityFaction {
   summary: string;
 }
 
-export interface CityOpening {
+export interface CityCurrent {
   id: string;
   title: string;
   summary: string;
@@ -29,12 +29,12 @@ export interface CityOpening {
   factionIds: string[];
   urgency: number;
   exclusivity: number;
-  visibility: OpeningVisibility;
-  status: OpeningStatus;
-  discoveredByCharacterIds: string[];
-  claimCharacterId?: string;
-  claimedByRivalId?: string;
-  closesAtTick?: number;
+  visibility: CurrentVisibility;
+  status: CurrentStatus;
+  sensedByCharacterIds: string[];
+  seizedByCharacterId?: string;
+  lockedByRivalId?: string;
+  dissipatesAtTick?: number;
   tags: string[];
 }
 
@@ -62,7 +62,7 @@ export interface City {
   premise: string;
   districts: CityDistrict[];
   factions: CityFaction[];
-  openings: CityOpening[];
+  currents: CityCurrent[];
   rivals: RivalNetwork[];
   clocks: CityClock[];
   summaryLines: string[];

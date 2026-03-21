@@ -31,9 +31,22 @@ Cities contain:
 - technologies and infrastructures
 - myths, rumors, and reputations
 - active tensions and transformations
-- openings that appear and close over time
+- hidden currents that intensify, dissipate, and change who can move
 
 The world must feel alive, partial, and ahead of the player.
+
+Characters should not perceive the whole current directly.
+
+Instead, they receive partial signals:
+
+- a contact goes warm or cold
+- a threshold changes
+- a rumor sharpens
+- a rival trace appears
+- a scene starts heating
+- a technical glimmer changes what seems possible
+
+Commitments and inbox items should be derived from these signals, not from explicit authored set-pieces.
 
 ### 2. Characters
 

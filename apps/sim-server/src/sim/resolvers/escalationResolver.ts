@@ -157,9 +157,15 @@ export function evaluateEscalation(input: EscalationInput): EscalationDecision {
 function isInboxEligibleEvent(input: EscalationInput): boolean {
   switch (input.event.type) {
     case "world_shift":
-    case "opening_detected":
-    case "opening_claimed":
+    case "signal_detected":
+    case "current_lost":
     case "rival_advance":
+    case "rival_trace":
+    case "contact_shift":
+    case "threshold_shift":
+    case "rumor_sharpened":
+    case "scene_heat":
+    case "tech_glimmer":
     case "coherence_drift":
     case "obligation_missed":
     case "schedule_conflict":
@@ -228,11 +234,12 @@ function tierForScore(
 
 function reversibilityFor(event: EventRecord): number {
   switch (event.type) {
-    case "opening_claimed":
+    case "current_lost":
     case "obligation_missed":
       return 3;
     case "world_shift":
     case "rival_advance":
+    case "rival_trace":
     case "coherence_drift":
       return 2;
     default:
@@ -242,10 +249,15 @@ function reversibilityFor(event: EventRecord): number {
 
 function noveltyFor(event: EventRecord): number {
   switch (event.type) {
-    case "opening_detected":
+    case "signal_detected":
+    case "rumor_sharpened":
+    case "tech_glimmer":
     case "world_shift":
       return 2;
     case "rival_advance":
+    case "contact_shift":
+    case "threshold_shift":
+    case "scene_heat":
       return 1;
     default:
       return 0;
@@ -276,7 +288,8 @@ function coherenceThreatFor(
 
 function rivalPressureFor(input: EscalationInput): number {
   if (
-    input.event.type === "opening_claimed" ||
+    input.event.type === "current_lost" ||
+    input.event.type === "rival_trace" ||
     input.event.type === "rival_advance"
   ) {
     return 3;

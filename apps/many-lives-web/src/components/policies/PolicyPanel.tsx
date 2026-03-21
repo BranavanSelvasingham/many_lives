@@ -52,7 +52,7 @@ export function PolicyPanel({ character, onSave }: PolicyPanelProps) {
           Policy
         </div>
         <div className="mt-1 text-[0.92rem] text-[color:var(--text-muted)]">
-          Shape how this self pursues openings when you are not directly steering.
+          Shape how this self pursues live signals when you are not directly steering.
         </div>
       </div>
       <div className="grid gap-3">

@@ -1,6 +1,6 @@
 # Many Lives Web Client
 
-Many Lives is an inbox-first narrative strategy prototype set during the Ascension Window. This package is the web client: a desktop-first Next.js dashboard for triaging selves, resolving decisive openings, editing standing instincts, and advancing the world.
+Many Lives is an inbox-first narrative strategy prototype set during the Ascension Window. This package is the web client: a desktop-first Next.js dashboard for triaging selves, resolving decisive threads, editing standing instincts, and advancing the world.
 
 ## Stack
 

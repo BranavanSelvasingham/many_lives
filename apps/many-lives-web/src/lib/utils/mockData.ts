@@ -56,7 +56,7 @@ const seedCityState: CityState = {
   worldPulse: [
     "A patronage network is collapsing in public and closing in private.",
     "Private technology is surfacing before the city has rules for it.",
-    "A cultural vacuum is opening while rival circles search for new anchors.",
+    "A cultural vacuum is widening while rival circles search for new anchors.",
   ],
   rivalStatus:
     "Rival movement detected across the velvet rooms and hidden circuits.",
@@ -345,8 +345,8 @@ export function delegateMockMessage(
     type: "status",
     priority: "normal",
     subject: "Redirected Thread Accepted",
-    body: `${target.name} will absorb the redirected opening and report back once the room stabilizes.`,
-    preview: `${target.name} will absorb the redirected opening and report back once the room stabilizes.`,
+    body: `${target.name} will absorb the redirected thread and report back once the room stabilizes.`,
+    preview: `${target.name} will absorb the redirected thread and report back once the room stabilizes.`,
     createdAt: formatClock(nextGame.currentTimeIso),
     createdAtIso: nextGame.currentTimeIso,
     requiresResponse: false,
@@ -429,7 +429,7 @@ function normalizeCharacter(
     name: rawCharacter.name,
     role: formatRole(rawCharacter.role),
     subtitle: subtitleForRole(rawCharacter.role),
-    currentTask: activeTask?.title ?? "Holding for the next opening",
+    currentTask: activeTask?.title ?? "Reading the next signal",
     currentTaskEnds: activeTask ? formatClock(activeTask.dueAt) : "",
     location:
       rawCharacter.currentLocation || rawCharacter.homeLocation || "Unknown",
@@ -439,9 +439,9 @@ function normalizeCharacter(
     urgency: characterUrgency(rawCharacter, rawWorld),
     nextObligation: nextTask
       ? `${nextTask.title} at ${formatClock(nextTask.dueAt)}`
-      : "No immediate opening locked",
+      : "No immediate thread locked",
     nextObligationSnippet:
-      nextTask?.description ?? "The next decisive room has not hardened yet.",
+      nextTask?.description ?? "The next decisive pattern has not hardened yet.",
     recentEvents: recentEvents(rawWorld.events, rawCharacter.id),
     priorities: characterPriorities(rawCharacter),
     autonomyProfile: describeAutonomyProfile(policy),
@@ -635,7 +635,7 @@ function buildSeedGame(gameId: string): GameState {
         ],
         priorities: ["Access", "Leverage", "Control"],
         autonomyProfile:
-          "High autonomy, high-value openings only, guard coherence",
+          "High autonomy, high-leverage threads only, guard coherence",
         policy: {
           autonomy: "high",
           spendWithoutAsking: 200,
@@ -675,7 +675,7 @@ function buildSeedGame(gameId: string): GameState {
         ],
         priorities: ["Signal", "Myth", "Originality"],
         autonomyProfile:
-          "High autonomy, any decisive shift, chase openings",
+          "High autonomy, any decisive shift, chase weak signals",
         policy: {
           autonomy: "high",
           spendWithoutAsking: 50,
@@ -715,7 +715,7 @@ function buildSeedGame(gameId: string): GameState {
         ],
         priorities: ["Momentum", "Orbit", "Invitation"],
         autonomyProfile:
-          "Medium autonomy, high-value openings only, stay fluid",
+          "Medium autonomy, high-leverage threads only, stay fluid",
         policy: {
           autonomy: "medium",
           spendWithoutAsking: 200,
@@ -755,7 +755,7 @@ function buildSeedGame(gameId: string): GameState {
         ],
         priorities: ["Thresholds", "Discovery", "Destiny"],
         autonomyProfile:
-          "Medium autonomy, any decisive shift, chase openings",
+          "Medium autonomy, any decisive shift, chase weak signals",
         policy: {
           autonomy: "medium",
           spendWithoutAsking: 50,
@@ -770,7 +770,7 @@ function buildSeedGame(gameId: string): GameState {
             "Go where tomorrow is leaking in, but do not let the strange thread tear the network apart.",
         },
         scheduleSummary:
-          "Sampling rumors, fringe signals, and unstable openings before anyone has named the scene.",
+          "Sampling rumors, fringe signals, and unstable patterns before anyone has named the scene.",
         load: 44,
       },
     ],
@@ -1050,13 +1050,13 @@ function describeAutonomyProfile(policy: PolicySettings) {
     policy.interruptWhen === "always"
       ? "any decisive shift"
       : policy.interruptWhen === "important_only"
-        ? "high-value openings only"
+        ? "high-leverage threads only"
         : "coherence breaks only";
   const scheduleLabel =
     policy.scheduleProtection === "strict"
       ? "guard coherence"
       : policy.scheduleProtection === "opportunistic"
-        ? "chase openings"
+        ? "chase weak signals"
         : "stay fluid";
 
   return `${capitalize(policy.autonomy)} autonomy, ${interruptLabel}, ${scheduleLabel}`;
@@ -1081,7 +1081,7 @@ function recentEvents(events: RawEvent[], characterId: string) {
 
   return entries.length > 0
     ? entries
-    : ["No decisive openings yet", "The city is still rearranging itself"];
+    : ["No decisive threads yet", "The city is still rearranging itself"];
 }
 
 function characterUrgency(
@@ -1209,7 +1209,7 @@ function riskRank(level: RiskLevel) {
 
 function rivalStatusFor(rivalAttention: number) {
   if (rivalAttention >= 75) {
-    return "Another circle is claiming openings before the room can cool.";
+    return "Another circle is claiming the board before the room can cool.";
   }
   if (rivalAttention >= 50) {
     return "Rival movement detected around the same decisive rooms.";

@@ -26,7 +26,8 @@ export interface Task {
   mandatory: boolean;
   createdBy: "scenario" | "system" | "player";
   dynamic?: boolean;
-  sourceOpeningId?: string;
+  sourceSignalId?: string;
+  sourceCurrentId?: string;
   sourceRelationshipId?: string;
   sourceRivalId?: string;
   startedAt?: string;

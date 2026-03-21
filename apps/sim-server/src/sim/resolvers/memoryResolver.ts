@@ -35,18 +35,32 @@ export function rememberEvent(
   if (
     event.type === "stress_spike" ||
     event.type === "coherence_drift" ||
+    event.type === "current_lost" ||
     event.type === "obligation_missed"
   ) {
     memory.coherence = clamp(memory.coherence - 4, 0, 100);
   } else if (
-    event.type === "opening_detected" ||
+    event.type === "signal_detected" ||
+    event.type === "contact_shift" ||
+    event.type === "threshold_shift" ||
+    event.type === "rumor_sharpened" ||
+    event.type === "scene_heat" ||
+    event.type === "tech_glimmer" ||
     event.type === "task_completed" ||
     event.type === "player_response"
   ) {
     memory.coherence = clamp(memory.coherence + 1, 0, 100);
   }
 
-  if (event.type === "opening_detected" || event.type === "opening_claimed") {
+  if (
+    event.type === "signal_detected" ||
+    event.type === "contact_shift" ||
+    event.type === "threshold_shift" ||
+    event.type === "rumor_sharpened" ||
+    event.type === "scene_heat" ||
+    event.type === "tech_glimmer" ||
+    event.type === "current_lost"
+  ) {
     memory.unresolvedThreads = uniqueThreads([
       event.title,
       ...memory.unresolvedThreads,
@@ -68,12 +82,18 @@ export function rememberEvent(
 
 function toneForEvent(eventType: EventRecord["type"]): MemoryTone {
   switch (eventType) {
-    case "opening_detected":
+    case "signal_detected":
+    case "contact_shift":
+    case "threshold_shift":
+    case "rumor_sharpened":
+    case "scene_heat":
+    case "tech_glimmer":
     case "task_completed":
       return "opportunity";
     case "world_shift":
     case "rival_advance":
-    case "opening_claimed":
+    case "rival_trace":
+    case "current_lost":
       return "warning";
     case "stress_spike":
     case "coherence_drift":
@@ -149,7 +169,8 @@ function updateRelationships(
         }
         break;
       case "rival_advance":
-      case "opening_claimed":
+      case "current_lost":
+      case "rival_trace":
         if (relationship.targetType === "rival") {
           relationship.strain = clamp(relationship.strain + 3, 0, 100);
           relationship.lastUpdatedAt = event.createdAt;

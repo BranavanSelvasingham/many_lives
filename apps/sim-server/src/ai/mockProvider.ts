@@ -18,8 +18,8 @@ export class MockAIProvider implements AIProvider {
     const openMessages = world.inbox.filter(
       (message) => !message.resolvedAt,
     ).length;
-    const activeOpenings = world.city.openings.filter(
-      (opening) => opening.status === "active",
+    const liveCurrents = world.city.currents.filter(
+      (current) => current.status === "live",
     ).length;
     const hottestRival = world.city.rivals
       .slice()
@@ -30,11 +30,11 @@ export class MockAIProvider implements AIProvider {
       );
       const taskLabel = activeTask
         ? activeTask.title
-        : "holding for the next opening";
+        : "reading the next signal";
       return `${character.name} is ${taskLabel.toLowerCase()} (energy ${character.energy}, strain ${character.stress}, coherence ${character.memoryCoherence})`;
     });
 
-    return `${world.scenarioName} at ${world.currentTime}. Open threads: ${openMessages}. Active openings: ${activeOpenings}. Rival pressure: ${hottestRival?.name ?? "unknown rival"} on ${hottestRival?.focus ?? "multiple fronts"}. ${characterSummaries.join(
+    return `${world.scenarioName} at ${world.currentTime}. Open threads: ${openMessages}. Live currents: ${liveCurrents}. Rival pressure: ${hottestRival?.name ?? "unknown rival"} on ${hottestRival?.focus ?? "multiple fronts"}. ${characterSummaries.join(
       " | ",
     )}`;
   }
@@ -81,8 +81,8 @@ export class MockAIProvider implements AIProvider {
         `${context.character.name} reports: ${context.event.description}`,
         `Current energy is ${context.character.energy} and strain is ${context.character.stress}.`,
         context.task
-          ? `Related opening: ${context.task.title} (${context.task.kind}, due ${context.task.dueAt}).`
-          : "No single opening fully explains the situation.",
+          ? `Related thread: ${context.task.title} (${context.task.kind}, due ${context.task.dueAt}).`
+          : "No single signal fully explains the situation.",
       ].join(" "),
       suggestedActions: context.suggestedActions,
       requiresResponse:
@@ -104,29 +104,35 @@ export class MockAIProvider implements AIProvider {
     ];
 
     switch (context.event.type) {
-      case "opening_detected":
+      case "signal_detected":
+      case "contact_shift":
+      case "threshold_shift":
+      case "rumor_sharpened":
+      case "scene_heat":
+      case "tech_glimmer":
         return [
-          `Tell ${context.character.name} to seize the opening before rivals can name it.`,
+          `Tell ${context.character.name} to move before the signal hardens into someone else's leverage.`,
           `Hold position and gather one more layer of signal around ${context.event.title}.`,
-          `Route the opening toward the self best suited to ${context.character.policies.priorityBias}.`,
+          `Route the thread toward the self best suited to ${context.character.policies.priorityBias}.`,
         ];
-      case "opening_claimed":
+      case "current_lost":
       case "rival_advance":
+      case "rival_trace":
         return [
           `Countermove immediately and contest the board shift.`,
-          "Let the rival take this layer and protect coherence for the next opening.",
+          "Let the rival take this layer and protect coherence for the next turn of the city.",
           `Ask ${context.character.name} who still changes the map if approached tonight.`,
         ];
       case "coherence_drift":
         return [
           `Pull ${context.character.name} back toward coherence before the selves start contradicting each other.`,
           "Keep the thread hot and accept the fragmentation cost for now.",
-          "Reassign one live opening to reduce internal strain.",
+          "Reassign one live thread to reduce internal strain.",
         ];
       case "obligation_missed":
         return [
           `Recover the miss tied to ${context.task?.title ?? "the incident"}.`,
-          "Accept the loss and protect the next decisive opening.",
+          "Accept the loss and protect the next decisive shift.",
           `Authorize up to $${context.character.policies.spendingLimit} to buy back momentum.`,
         ];
       case "schedule_conflict":

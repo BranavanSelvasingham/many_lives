@@ -7,6 +7,7 @@
     "dev": "corepack pnpm --parallel --filter @many-lives/sim-server --filter @many-lives/many-lives-web dev",
     "dev:server": "corepack pnpm --filter @many-lives/sim-server dev",
     "dev:web": "corepack pnpm --filter @many-lives/many-lives-web dev",
+    "deploy:check": "bash scripts/check-manylives-deploy.sh",
     "test": "corepack pnpm --filter @many-lives/sim-server test",
     "lint": "corepack pnpm --filter @many-lives/sim-server lint && corepack pnpm --filter @many-lives/many-lives-web lint",
     "format": "corepack pnpm --filter @many-lives/sim-server format && corepack pnpm --filter @many-lives/many-lives-web format"

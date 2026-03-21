@@ -6,7 +6,7 @@ import { synchronizeDerivedTasks } from "./resolvers/commitmentResolver.js";
 import { rememberEvent } from "./resolvers/memoryResolver.js";
 import { detectCharacterPerceptions } from "./resolvers/perceptionResolver.js";
 import {
-  detectIntegrityDrift,
+  detectCoherenceDrift,
   detectMissedObligations,
   detectScheduleConflicts,
   detectStressEvents,
@@ -81,7 +81,7 @@ async function advanceSingleTick(
     eventsToHandle.push(recordEvent(world, draft));
   }
 
-  for (const draft of detectIntegrityDrift(world, world.currentTime)) {
+  for (const draft of detectCoherenceDrift(world, world.currentTime)) {
     eventsToHandle.push(recordEvent(world, draft));
   }
 

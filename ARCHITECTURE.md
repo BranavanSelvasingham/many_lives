@@ -28,11 +28,13 @@ The web client can talk to the live sim server or fall back to local mock state 
 
 The world model now carries:
 
-- city districts, factions, rivals, clocks, and openings
+- city districts, factions, rivals, clocks, and hidden currents
 - richer character identity and standing instincts
 - memory state per character
 - relationship state
 - an attention log alongside inbox items
+
+Characters do not perceive whole currents directly. They receive structured signals such as contact shifts, threshold shifts, rumor sharpenings, scene heat, rival traces, and technical glimmers. Commitments and inbox threads are derived from those signals.
 
 Events are still the raw outputs of simulation, but inbox messages are now only one possible attention outcome. The attention resolver can classify events as silent, ambient, digest, message, or interrupt based on stakes, reversibility, coherence threat, rival pressure, and character policy.
 

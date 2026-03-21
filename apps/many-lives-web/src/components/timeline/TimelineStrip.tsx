@@ -1,7 +1,12 @@
 import type { ReactNode } from "react";
 
 import type { GameState } from "@/lib/types/game";
-import { formatWorldTime } from "@/lib/utils/format";
+import {
+  describeBoardState,
+  describeRivalMovement,
+  describeWindowPressure,
+  describeWindowTime,
+} from "@/lib/utils/worldPresentation";
 
 interface TimelineStripProps {
   game: GameState | null;
@@ -17,22 +22,33 @@ export function TimelineStrip({
   onTick,
 }: TimelineStripProps) {
   const summary = game?.worldSummary;
-  const nextOpening = summary?.upcomingObligations[0] ?? "No decisive opening locked";
+  const nextThread = summary?.upcomingObligations[0] ?? "No decisive thread locked";
+  const windowTime = describeWindowTime(game);
+  const boardState = describeBoardState(game);
+  const windowPressure = describeWindowPressure(
+    summary?.pressures.windowNarrowing ?? "low",
+  );
+  const rivalMovement = describeRivalMovement(
+    summary?.pressures.rivalAttention ?? "low",
+  );
 
   return (
     <div className="overflow-x-auto border-t border-[color:var(--border-subtle)] pt-3">
       <div className="flex min-w-max items-stretch border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)]">
-        <StripBlock label="World Time" value={formatWorldTime(game?.currentTimeIso ?? "")} />
-        <StripBlock label="Access" value={`${summary?.axes.access ?? 0}`} />
-        <StripBlock label="Momentum" value={`${summary?.axes.momentum ?? 0}`} />
-        <StripBlock label="Signal" value={`${summary?.axes.signal ?? 0}`} />
-        <StripBlock label="Coherence" value={`${summary?.axes.coherence ?? 0}`} />
+        <WorldTimeBlock
+          phase={windowTime.phase}
+          time={windowTime.clock}
+          detail={windowTime.detail}
+        />
+        <StripBlock label="Window" value={windowPressure} detail={summary?.rivalStatus} />
+        <StripBlock label="Board" value={boardState} detail="The city keeps moving while you decide." />
+        <StripBlock label="Rivals" value={rivalMovement} detail={summary?.rivalStatus} />
         <StripBlock
-          label="Rival Pressure"
-          value={summary?.rivalStatus ?? "No world loaded"}
+          label="World Pulse"
+          value={summary?.worldPulse[0] ?? "No world loaded"}
           wide
         />
-        <StripBlock label="Next Opening" value={nextOpening} wide />
+        <StripBlock label="Next Thread" value={nextThread} wide />
         <div className="flex items-center gap-2 border-l border-[color:var(--border-subtle)] px-3 py-2">
           {game?.source === "mock" ? (
             <div className="border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] px-3 py-2 text-[0.95rem] text-[color:var(--text-main)]">
@@ -58,10 +74,11 @@ export function TimelineStrip({
 interface StripBlockProps {
   label: string;
   value: string;
+  detail?: string;
   wide?: boolean;
 }
 
-function StripBlock({ label, value, wide = false }: StripBlockProps) {
+function StripBlock({ label, value, detail, wide = false }: StripBlockProps) {
   return (
     <div
       className={`space-y-1 border-r border-[color:var(--border-subtle)] px-6 py-3 ${
@@ -74,6 +91,31 @@ function StripBlock({ label, value, wide = false }: StripBlockProps) {
       <div className="text-[1rem] text-[color:var(--text-main)]">
         {value || "No world loaded"}
       </div>
+      {detail ? (
+        <div className="max-w-[36ch] text-[0.82rem] leading-5 text-[color:var(--text-muted)]">
+          {detail}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+interface WorldTimeBlockProps {
+  phase: string;
+  time: string;
+  detail: string;
+}
+
+function WorldTimeBlock({ phase, time, detail }: WorldTimeBlockProps) {
+  return (
+    <div className="min-w-[250px] space-y-1 border-r border-[color:var(--border-subtle)] bg-[linear-gradient(135deg,rgba(196,164,124,0.16),rgba(16,18,21,0.2))] px-6 py-4">
+      <div className="text-[0.72rem] uppercase tracking-[0.18em] text-[color:var(--accent-warm)]">
+        {phase}
+      </div>
+      <div className="font-display text-[1.55rem] leading-none text-[color:var(--text-main)]">
+        {time}
+      </div>
+      <div className="text-[0.9rem] text-[color:var(--text-muted)]">{detail}</div>
     </div>
   );
 }

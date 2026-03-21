@@ -62,7 +62,7 @@ export function MessageDetailPanel({
   if (!message) {
     return (
       <section className="flex h-full items-center justify-center border border-[color:var(--border-subtle)] bg-[color:var(--surface-panel)] px-4 py-10 text-[0.95rem] text-[color:var(--text-muted)]">
-        Select a thread to inspect the opening in full.
+        Select a thread to inspect the situation in full.
       </section>
     );
   }

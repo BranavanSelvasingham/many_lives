@@ -8,6 +8,7 @@ import {
   clamp,
   findMemoryState,
   findRelationship,
+  findSignalsForCharacter,
   hasSystemFlag,
   minutesBetween,
   removeSystemFlag,
@@ -274,7 +275,7 @@ export function detectStressEvents(
   return events;
 }
 
-export function detectIntegrityDrift(
+export function detectCoherenceDrift(
   world: WorldState,
   currentTime: string,
 ): NewEvent[] {
@@ -343,11 +344,16 @@ function scoreTask(
   currentTime: string,
 ): number {
   const memory = findMemoryState(world, character.id);
+  const signal = task.sourceSignalId
+    ? findSignalsForCharacter(world, character.id).find(
+        (entry) => entry.id === task.sourceSignalId,
+      )
+    : undefined;
   const relationship = task.sourceRelationshipId
     ? findRelationship(world, task.sourceRelationshipId)
     : undefined;
-  const opening = task.sourceOpeningId
-    ? world.city.openings.find((entry) => entry.id === task.sourceOpeningId)
+  const current = task.sourceCurrentId
+    ? world.city.currents.find((entry) => entry.id === task.sourceCurrentId)
     : undefined;
   const rival = task.sourceRivalId
     ? world.city.rivals.find((entry) => entry.id === task.sourceRivalId)
@@ -363,10 +369,13 @@ function scoreTask(
   )
     ? 10
     : 0;
-  const openingBonus =
-    opening && opening.status === "active"
-      ? opening.urgency + opening.exclusivity
+  const currentBonus =
+    current && current.status === "live"
+      ? current.urgency + current.exclusivity
       : 0;
+  const signalBonus = signal
+    ? Math.round((signal.strength + signal.clarity) / 3)
+    : 0;
   const relationshipBonus = relationship
     ? Math.round((relationship.trust + relationship.affinity) / 20) +
       Math.round((relationship.dependency + relationship.strain) / 25)
@@ -389,7 +398,8 @@ function scoreTask(
     coherencePenalty -
     exhaustionPenalty +
     unresolvedThreadBonus +
-    openingBonus +
+    currentBonus +
+    signalBonus +
     relationshipBonus +
     coherenceBonus +
     rivalBonus +

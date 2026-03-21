@@ -38,7 +38,7 @@ export function CharacterDetailView({ character }: CharacterDetailViewProps) {
       </div>
       <div className="grid gap-3 border border-[color:var(--border-subtle)] bg-[color:var(--surface-overlay)] p-4">
         <SummaryRow label="Current thread" value={character.currentTask} />
-        <SummaryRow label="Next opening" value={character.nextObligation} />
+        <SummaryRow label="Next thread" value={character.nextObligation} />
         <SummaryRow label="Strain" value={`${Math.round(character.stress)}`} />
         <SummaryRow label="Focus" value={`${Math.round(character.energy)}`} />
         <SummaryRow label="Primary pulls" value={character.priorities.join(", ")} />

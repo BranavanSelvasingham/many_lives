@@ -1,4 +1,4 @@
-import type { CityAxis, CityOpening } from "../../domain/city.js";
+import type { CityAxis, CityCurrent } from "../../domain/city.js";
 import type { NewEvent } from "../../domain/event.js";
 import type { WorldState } from "../../domain/world.js";
 import { clamp } from "../worldState.js";
@@ -23,32 +23,32 @@ export function advanceCityState(world: WorldState): NewEvent[] {
     );
   }
 
-  for (const opening of world.city.openings) {
-    if (opening.status === "emerging" && world.tickCount >= 1) {
-      opening.status = "active";
+  for (const current of world.city.currents) {
+    if (current.status === "forming" && world.tickCount >= 1) {
+      current.status = "live";
     }
 
     if (
-      opening.status === "active" &&
-      opening.closesAtTick !== undefined &&
-      world.tickCount >= opening.closesAtTick &&
-      !opening.claimCharacterId
+      current.status === "live" &&
+      current.dissipatesAtTick !== undefined &&
+      world.tickCount >= current.dissipatesAtTick &&
+      !current.seizedByCharacterId
     ) {
-      const rival = mostAlignedRival(world, opening.axis);
-      opening.status = "claimed";
-      opening.claimedByRivalId = rival?.id;
+      const rival = mostAlignedRival(world, current.axis);
+      current.status = "claimed";
+      current.lockedByRivalId = rival?.id;
 
       events.push({
-        characterId: primaryCharacterIdForAxis(opening.axis),
-        type: "opening_claimed",
-        priority: opening.urgency >= 8 ? "critical" : "high",
-        title: `${opening.title} was claimed elsewhere`,
+        characterId: primaryCharacterIdForAxis(current.axis),
+        type: "current_lost",
+        priority: current.urgency >= 8 ? "critical" : "high",
+        title: `${current.title} hardened elsewhere`,
         description: rival
-          ? `${rival.name} moved first on ${opening.title.toLowerCase()}, narrowing one of the city's live openings.`
-          : `${opening.title} closed before one of your selves could secure it.`,
+          ? `${rival.name} moved first on ${current.title.toLowerCase()}, turning a live city current into someone else's leverage.`
+          : `${current.title} hardened before one of your selves could translate it into position.`,
         createdAt: world.currentTime,
         metadata: {
-          urgency: opening.urgency,
+          urgency: current.urgency,
         },
       });
     }
@@ -73,7 +73,7 @@ export function advanceCityState(world: WorldState): NewEvent[] {
 
   world.city.summaryLines = [
     `${world.city.name} is reordering itself under pressure from patronage collapse, emergent technology, and cultural vacancy.`,
-    `${world.city.openings.filter((opening) => opening.status === "active").length} active openings remain reachable.`,
+    `${world.city.currents.filter((current) => current.status === "live").length} live currents are still shaping the map.`,
     `${world.city.rivals
       .slice()
       .sort((left, right) => right.threat - left.threat)[0]?.name ?? "Rival circles"} are moving faster than yesterday.`,
@@ -117,7 +117,7 @@ export function advanceCityState(world: WorldState): NewEvent[] {
   }
 
   world.cityState.worldPulse = [
-    `${world.city.openings.filter((opening) => opening.status === "active").length} live openings`,
+    `${world.city.currents.filter((current) => current.status === "live").length} live currents beneath the city`,
     `${world.city.rivals.length} rival circles in motion`,
     `${world.city.clocks.map((clock) => `${clock.label} ${clock.progress}/${clock.maxProgress}`).join(" | ")}`,
   ];

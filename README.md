@@ -1,8 +1,8 @@
 # Many Lives
 
-Many Lives is a web-first narrative strategy prototype set during a rare Ascension Window, a volatile period when the city is reordering itself. You manage several semi-autonomous selves through an attention dashboard: triage decisive threads, step into dangerous openings, and shape standing instincts before your lives splinter into leverage, myth, or ruin.
+Many Lives is a web-first narrative strategy prototype set during a rare Ascension Window, a volatile period when the city is reordering itself. You manage several semi-autonomous selves through an attention dashboard: triage decisive threads, respond to dangerous signals, and shape standing instincts before your lives splinter into leverage, myth, or ruin.
 
-This vertical slice is intentionally desktop-first and mock-first. The attention feed is the heartbeat, the right panel holds the active opening or policy surface, and the bottom strip keeps city-scale pressure visible while you work.
+This vertical slice is intentionally desktop-first and mock-first. The attention feed is the heartbeat, the right panel holds the active thread or policy surface, and the bottom strip keeps city-scale pressure visible while you work.
 
 ## Core Construct
 
@@ -97,7 +97,7 @@ The web app reaches those routes through the Next.js proxy layer in [client.ts](
 - Left rail: self triage and pressure read.
 - Center panel: attention feed filters, counts, and thread cards.
 - Right panel: scenario framing, selected thread detail first, otherwise self detail plus policy.
-- Bottom strip: world time, Access, Momentum, Signal, Coherence, rival pressure, next opening, and tick controls.
+- Bottom strip: world time, window pressure, board state, rival movement, world pulse, next thread, and tick controls.
 
 Right-panel priority is deliberate:
 

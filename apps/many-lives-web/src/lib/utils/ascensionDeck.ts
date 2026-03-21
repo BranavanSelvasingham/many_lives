@@ -246,7 +246,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
       coherence: "medium",
       rivalAttention: "high",
     },
-    tags: ["debut", "cultural opening"],
+    tags: ["debut", "cultural vacuum"],
     followupHooks: [
       "If it lands, bigger names will try to stand inside the signal.",
     ],
@@ -306,9 +306,9 @@ export const ascensionDeck: DeckMessageSeed[] = [
     priority: "high",
     subject: "Afterhours Slot",
     preview:
-      "A late-stage opening appeared in a room where careers sometimes begin by accident and never return to normal.",
+      "A late-stage slot appeared in a room where careers sometimes begin by accident and never return to normal.",
     body:
-      "A late-stage opening appeared in a room where careers sometimes begin by accident and never return to normal. We can step into the breach with unfinished heat, or stay out and preserve the work for a cleaner debut. If we hesitate too long, another act takes the slot and writes us out of the myth.",
+      "A late-stage slot appeared in a room where careers sometimes begin by accident and never return to normal. We can step into the breach with unfinished heat, or stay out and preserve the work for a cleaner debut. If we hesitate too long, another act takes the slot and writes us out of the myth.",
     createdOffsetMinutes: -31,
     unlockAtTick: 5,
     requiresResponse: true,
@@ -703,6 +703,6 @@ export const ascensionDeck: DeckMessageSeed[] = [
       signal: "medium",
       coherence: "medium",
     },
-    tags: ["historical opening", "uncatalogued"],
+    tags: ["historical signal", "uncatalogued"],
   },
 ];

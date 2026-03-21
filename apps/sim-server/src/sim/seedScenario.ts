@@ -116,9 +116,9 @@ export function seedScenario(gameId: string): WorldState {
           "A fragmented cultural sphere looking for its next unavoidable figure.",
       },
     ],
-    openings: [
+    currents: [
       {
-        id: "opening-velvet-window",
+        id: "current-velvet-window",
         title: "Velvet Window",
         summary:
           "A room that almost never opens to newcomers is open long enough to decide the next orbit map.",
@@ -128,13 +128,13 @@ export function seedScenario(gameId: string): WorldState {
         urgency: 9,
         exclusivity: 6,
         visibility: "whispered",
-        status: "active",
-        discoveredByCharacterIds: ["ren"],
-        closesAtTick: 2,
+        status: "live",
+        sensedByCharacterIds: ["ren"],
+        dissipatesAtTick: 2,
         tags: ["room", "orbit", "rival movement"],
       },
       {
-        id: "opening-unfinished-debut",
+        id: "current-unfinished-debut",
         title: "The Unfinished Debut",
         summary:
           "The work can be seen before it is safe, while the room is still unstable enough to matter.",
@@ -144,13 +144,13 @@ export function seedScenario(gameId: string): WorldState {
         urgency: 9,
         exclusivity: 5,
         visibility: "open",
-        status: "active",
-        discoveredByCharacterIds: ["sia"],
-        closesAtTick: 3,
+        status: "live",
+        sensedByCharacterIds: ["sia"],
+        dissipatesAtTick: 3,
         tags: ["debut", "cultural vacuum"],
       },
       {
-        id: "opening-double-presence",
+        id: "current-double-presence",
         title: "Double Presence",
         summary:
           "Public ascent and private power are both expecting a version of you at once.",
@@ -160,13 +160,13 @@ export function seedScenario(gameId: string): WorldState {
         urgency: 10,
         exclusivity: 7,
         visibility: "hidden",
-        status: "active",
-        discoveredByCharacterIds: ["ivo"],
-        closesAtTick: 2,
+        status: "live",
+        sensedByCharacterIds: ["ivo"],
+        dissipatesAtTick: 2,
         tags: ["forked presence", "private leverage"],
       },
       {
-        id: "opening-rumor-coordinates",
+        id: "current-rumor-coordinates",
         title: "Rumor With Coordinates",
         summary:
           "The next scene has a place and time now, but only for a few people who moved early enough.",
@@ -176,13 +176,13 @@ export function seedScenario(gameId: string): WorldState {
         urgency: 8,
         exclusivity: 5,
         visibility: "hidden",
-        status: "active",
-        discoveredByCharacterIds: ["vale"],
-        closesAtTick: 4,
+        status: "live",
+        sensedByCharacterIds: ["vale"],
+        dissipatesAtTick: 4,
         tags: ["early signal", "hidden circuit"],
       },
       {
-        id: "opening-seam",
+        id: "current-seam",
         title: "The Seam",
         summary:
           "Luxury, underground, and venture circuits are touching in a way they only do before reordering.",
@@ -192,13 +192,13 @@ export function seedScenario(gameId: string): WorldState {
         urgency: 7,
         exclusivity: 6,
         visibility: "hidden",
-        status: "emerging",
-        discoveredByCharacterIds: [],
-        closesAtTick: 6,
+        status: "forming",
+        sensedByCharacterIds: [],
+        dissipatesAtTick: 6,
         tags: ["circuit overlap", "rare configuration"],
       },
       {
-        id: "opening-hidden-floor",
+        id: "current-hidden-floor",
         title: "The Hidden Floor",
         summary:
           "A stairwell is leading somewhere that might not exist tomorrow.",
@@ -208,9 +208,9 @@ export function seedScenario(gameId: string): WorldState {
         urgency: 7,
         exclusivity: 4,
         visibility: "hidden",
-        status: "emerging",
-        discoveredByCharacterIds: [],
-        closesAtTick: 5,
+        status: "forming",
+        sensedByCharacterIds: [],
+        dissipatesAtTick: 5,
         tags: ["threshold", "prototype"],
       },
     ],
@@ -271,7 +271,7 @@ export function seedScenario(gameId: string): WorldState {
     ],
     summaryLines: [
       "The city is reordering itself under active rival pressure.",
-      "Several decisive rooms are live at once, but no single self can cover the full board.",
+      "Several live currents are shaping the city at once, but no single self can cover the full board.",
       "Private technology, collapsing patronage, and cultural vacancy are overlapping in real time.",
     ],
   };
@@ -382,7 +382,7 @@ export function seedScenario(gameId: string): WorldState {
       activeTaskId: null,
       obligations: ["rumors", "hidden floors", "uncatalogued futures"],
       scheduleSummary:
-        "Following weird openings, unstable prototypes, and scenes that are still too early to name.",
+        "Following fringe signals, unstable prototypes, and scenes that are still too early to name.",
       policies: valePolicy,
     },
   ];
@@ -599,7 +599,7 @@ export function seedScenario(gameId: string): WorldState {
       characterId: "sia",
       title: "Afterhours slot",
       description:
-        "Take the late-stage opening where careers sometimes begin by accident.",
+        "Take the late-stage slot where careers sometimes begin by accident.",
       kind: "signal",
       location: "glasshouse-floor",
       startOffsetMinutes: 210,
@@ -707,7 +707,7 @@ export function seedScenario(gameId: string): WorldState {
     event(
       "event-5",
       "ivo",
-      "opening_detected",
+      "threshold_shift",
       "high",
       "The Seam",
       "Luxury, underground, and venture circuits are touching in one place.",
@@ -731,10 +731,10 @@ export function seedScenario(gameId: string): WorldState {
     event(
       "event-8",
       "sia",
-      "schedule_conflict",
+      "scene_heat",
       "high",
       "Afterhours Slot",
-      "A late-stage opening appeared in a room where careers sometimes begin by accident.",
+      "A late-stage slot appeared in a room where careers sometimes begin by accident.",
     ),
     event(
       "event-9",
@@ -755,7 +755,7 @@ export function seedScenario(gameId: string): WorldState {
     event(
       "event-11",
       "ren",
-      "opening_detected",
+      "threshold_shift",
       "critical",
       "Velvet Window",
       "A room that never opens to newcomers is open for a few minutes.",
@@ -795,7 +795,7 @@ export function seedScenario(gameId: string): WorldState {
     event(
       "event-16",
       "vale",
-      "opening_detected",
+      "threshold_shift",
       "high",
       "The Hidden Floor",
       "A stairwell opened to somewhere that may not exist tomorrow.",
@@ -803,7 +803,7 @@ export function seedScenario(gameId: string): WorldState {
     event(
       "event-17",
       "vale",
-      "opening_detected",
+      "tech_glimmer",
       "high",
       "Prototype in the Dark",
       "A private technology is surfacing in a room too ugly for cautious people.",
@@ -811,7 +811,7 @@ export function seedScenario(gameId: string): WorldState {
     event(
       "event-18",
       "vale",
-      "opening_detected",
+      "rumor_sharpened",
       "high",
       "Rumor With Coordinates",
       "A long-running rumor just arrived with an actual place and time.",
@@ -827,7 +827,7 @@ export function seedScenario(gameId: string): WorldState {
     event(
       "event-20",
       "vale",
-      "opening_detected",
+      "scene_heat",
       "high",
       "The Future With Bad Lighting",
       "An ugly room suddenly feels historically important.",
@@ -880,7 +880,7 @@ export function seedScenario(gameId: string): WorldState {
         coherence: "medium",
         rivalAttention: "high",
       },
-      tags: ["debut", "cultural opening"],
+      tags: ["debut", "cultural vacuum"],
       followupHooks: [
         "If it lands, bigger names will try to stand inside the signal.",
       ],
@@ -978,11 +978,12 @@ export function seedScenario(gameId: string): WorldState {
     currentTime: SCENARIO_START,
     tickCount: 0,
     summary:
-      "The city is reordering itself, and no one with only one life can shape what comes next. Spread yourself across decisive rooms, dangerous openings, and unrecoverable moments before your lives splinter into leverage, myth, or ruin.",
+      "The city is reordering itself, and no one with only one life can shape what comes next. Spread yourself across decisive rooms, dangerous shifts, and unrecoverable moments before your lives splinter into leverage, myth, or ruin.",
     city,
     characters,
     memories,
     relationships,
+    perceivedSignals: [],
     tasks,
     events: seededEvents,
     inbox: seededInbox,
@@ -1008,7 +1009,7 @@ export function seedScenario(gameId: string): WorldState {
       worldPulse: [
         "A patronage network is collapsing in public and closing in private.",
         "Private technology is surfacing before the city has rules for it.",
-        "A cultural vacuum is opening while rival circles search for new anchors.",
+        "A cultural vacuum is widening while rival circles search for new anchors.",
       ],
       rivalStatus:
         "Rival movement detected across the velvet rooms and hidden circuits.",
@@ -1019,6 +1020,7 @@ export function seedScenario(gameId: string): WorldState {
       inbox: seededInbox.length,
       memory: memories.reduce((count, memory) => count + memory.episodes.length, 0),
       notification: seededInbox.length,
+      signal: 0,
     },
   };
 }
