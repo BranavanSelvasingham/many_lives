@@ -1,6 +1,9 @@
 import type { Character } from "../domain/character.js";
+import type { MemoryState } from "../domain/memory.js";
+import type { NotificationRecord } from "../domain/attention.js";
 import type { NewEvent, EventRecord } from "../domain/event.js";
 import type { InboxMessage } from "../domain/inbox.js";
+import type { RelationshipState } from "../domain/relationship.js";
 import type { Task } from "../domain/task.js";
 import type { WorldState } from "../domain/world.js";
 
@@ -36,6 +39,31 @@ export function findTask(world: WorldState, taskId?: string): Task | undefined {
   return world.tasks.find((task) => task.id === taskId);
 }
 
+export function findMemoryState(
+  world: WorldState,
+  characterId: string,
+): MemoryState | undefined {
+  return world.memories.find((memory) => memory.characterId === characterId);
+}
+
+export function findRelationshipsForCharacter(
+  world: WorldState,
+  characterId: string,
+): RelationshipState[] {
+  return world.relationships.filter(
+    (relationship) => relationship.sourceCharacterId === characterId,
+  );
+}
+
+export function findRelationship(
+  world: WorldState,
+  relationshipId: string,
+): RelationshipState | undefined {
+  return world.relationships.find(
+    (relationship) => relationship.id === relationshipId,
+  );
+}
+
 export function remainingTaskMinutes(task: Task): number {
   return Math.max(0, task.durationMinutes - task.progressMinutes);
 }
@@ -65,6 +93,19 @@ export function recordInboxMessage(
   };
   world.inbox.unshift(storedMessage);
   return storedMessage;
+}
+
+export function recordNotification(
+  world: WorldState,
+  notification: Omit<NotificationRecord, "id">,
+): NotificationRecord {
+  world.counters.notification += 1;
+  const storedNotification: NotificationRecord = {
+    id: `notification-${world.counters.notification}`,
+    ...notification,
+  };
+  world.attentionLog.unshift(storedNotification);
+  return storedNotification;
 }
 
 export function hasSystemFlag(world: WorldState, flag: string): boolean {

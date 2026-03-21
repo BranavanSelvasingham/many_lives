@@ -2,7 +2,7 @@ export type TaskKind =
   | "access"
   | "momentum"
   | "signal"
-  | "integrity"
+  | "coherence"
   | "travel"
   | "recovery";
 
@@ -25,6 +25,10 @@ export interface Task {
   importance: number;
   mandatory: boolean;
   createdBy: "scenario" | "system" | "player";
+  dynamic?: boolean;
+  sourceOpeningId?: string;
+  sourceRelationshipId?: string;
+  sourceRivalId?: string;
   startedAt?: string;
   lastProgressAt?: string;
   completedAt?: string;

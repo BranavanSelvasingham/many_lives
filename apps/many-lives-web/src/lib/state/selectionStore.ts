@@ -27,7 +27,7 @@ interface SelectionState {
 }
 
 function defaultRuleDraft(message: InboxMessageView) {
-  return `When ${message.subject.toLowerCase()} opens a decisive room, pursue the gain without letting integrity collapse or rivals frame the story first.`;
+  return `When ${message.subject.toLowerCase()} opens a decisive room, pursue the gain without letting coherence collapse or rivals frame the story first.`;
 }
 
 export const useSelectionStore = create<SelectionState>((set, get) => ({

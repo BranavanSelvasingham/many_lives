@@ -1,4 +1,4 @@
-export type PriorityBias = "access" | "momentum" | "signal" | "integrity";
+export type PriorityBias = "access" | "momentum" | "signal" | "coherence";
 export type ReportingFrequency = "low" | "normal" | "high";
 
 export interface PolicySettings {

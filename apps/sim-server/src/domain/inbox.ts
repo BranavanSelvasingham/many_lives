@@ -1,3 +1,5 @@
+import type { AttentionTier } from "./attention.js";
+
 export type InboxMessageType = "alert" | "summary" | "request" | "update";
 export type InboxPriority = "low" | "medium" | "high" | "critical";
 export type InboxConsequenceLevel = "none" | "low" | "medium" | "high";
@@ -19,7 +21,7 @@ export interface InboxMessage {
       | "access"
       | "momentum"
       | "signal"
-      | "integrity"
+      | "coherence"
       | "risk"
       | "socialDebt"
       | "rivalAttention",
@@ -28,6 +30,8 @@ export interface InboxMessage {
   >;
   tags?: string[];
   followupHooks?: string[];
+  attentionTier?: AttentionTier;
+  escalationReason?: string;
   snoozedUntil?: string | null;
   delegatedToCharacterId?: string | null;
   resolvedAt?: string | null;

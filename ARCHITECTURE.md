@@ -2,7 +2,16 @@
 
 ## Simulation Core
 
-The simulation server owns the authoritative world state. Each tick advances time by 30 minutes, resolves travel and task progress, detects schedule conflicts or missed obligations, and records events. Characters carry their own energy, stress, location, active task, and policy settings so the world can evolve deterministically without any external services.
+The simulation server owns the authoritative world state. Each tick advances time by 30 minutes through a staged loop:
+
+1. world pressure advances
+2. characters perceive part of that change
+3. characters act through current commitments
+4. outcomes resolve
+5. memory updates
+6. attention routing decides what reaches the player
+
+The current commitment layer still uses tasks, travel, and obligations, but those now sit inside a broader model that also tracks city structure, rival movement, character memory, and attention decisions.
 
 ## Web Client Shell
 
@@ -15,9 +24,17 @@ The client is a desktop-first Next.js dashboard. It keeps the attention model ex
 
 The web client can talk to the live sim server or fall back to local mock state when the backend is unavailable.
 
-## Inbox And Escalation
+## World, Memory, And Attention
 
-Events are the raw outputs of simulation. An escalation resolver scores those events against character policy settings such as risk tolerance, reporting frequency, and escalation threshold. When the deterministic score crosses the threshold, the server generates an inbox message with suggested actions and response requirements. This keeps the inbox tightly tied to simulation consequences rather than freeform narration.
+The world model now carries:
+
+- city districts, factions, rivals, clocks, and openings
+- richer character identity and standing instincts
+- memory state per character
+- relationship state
+- an attention log alongside inbox items
+
+Events are still the raw outputs of simulation, but inbox messages are now only one possible attention outcome. The attention resolver can classify events as silent, ambient, digest, message, or interrupt based on stakes, reversibility, coherence threat, rival pressure, and character policy.
 
 ## State Boundaries
 

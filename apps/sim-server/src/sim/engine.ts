@@ -2,6 +2,8 @@ import type { AIProvider } from "../ai/provider.js";
 import type { GameCommand } from "../types/api.js";
 import { normalizePolicySettings } from "../domain/policy.js";
 import type { WorldState } from "../domain/world.js";
+import { synchronizeDerivedTasks } from "./resolvers/commitmentResolver.js";
+import { rememberEvent } from "./resolvers/memoryResolver.js";
 import { seedScenario } from "./seedScenario.js";
 import { advanceWorldByTicks } from "./tick.js";
 import {
@@ -22,6 +24,7 @@ export class SimulationEngine {
 
   async createGame(gameId: string): Promise<WorldState> {
     const world = seedScenario(gameId);
+    synchronizeDerivedTasks(world);
     world.summary = await this.aiProvider.summarizeState(world);
     return world;
   }
@@ -52,18 +55,19 @@ export class SimulationEngine {
         const character = findCharacter(nextWorld, message.characterId);
         if (character) {
           applyActionOutcome(character, command.actionId);
-          recordEvent(nextWorld, {
+          const responseEvent = recordEvent(nextWorld, {
             characterId: character.id,
             type: "player_response",
             priority: "low",
-          title: `Player resolved ${message.subject}`,
-          description: buildResponseDescription(
-            character.name,
+            title: `Player resolved ${message.subject}`,
+            description: buildResponseDescription(
+              character.name,
               command.actionId,
               command.overrideText,
             ),
             createdAt: nextWorld.currentTime,
           });
+          rememberEvent(nextWorld, responseEvent, character);
         }
 
         break;
@@ -81,7 +85,7 @@ export class SimulationEngine {
           command.durationMinutes,
         );
 
-        recordEvent(nextWorld, {
+        const snoozeEvent = recordEvent(nextWorld, {
           characterId: message.characterId,
           type: "player_response",
           priority: "low",
@@ -89,6 +93,10 @@ export class SimulationEngine {
           description: `${message.subject} was snoozed until ${message.snoozedUntil}.`,
           createdAt: nextWorld.currentTime,
         });
+        const character = findCharacter(nextWorld, message.characterId);
+        if (character) {
+          rememberEvent(nextWorld, snoozeEvent, character);
+        }
         break;
       }
       case "delegate_inbox": {
@@ -130,6 +138,7 @@ export class SimulationEngine {
         });
 
         if (targetCharacter) {
+          rememberEvent(nextWorld, delegationEvent, targetCharacter);
           recordInboxMessage(nextWorld, {
             characterId: targetCharacter.id,
             senderName: targetCharacter.name,
@@ -141,11 +150,18 @@ export class SimulationEngine {
             requiresResponse: false,
             createdAt: nextWorld.currentTime,
             eventId: delegationEvent.id,
+            attentionTier: "message",
+            escalationReason:
+              "Delegation changed which self is now carrying the thread.",
             consequences: {
               momentum: "medium",
-              integrity: "medium",
+              coherence: "medium",
             },
           });
+        }
+
+        if (sourceCharacter) {
+          rememberEvent(nextWorld, delegationEvent, sourceCharacter);
         }
         break;
       }
@@ -160,7 +176,7 @@ export class SimulationEngine {
           character.policies,
         );
 
-        recordEvent(nextWorld, {
+        const policyEvent = recordEvent(nextWorld, {
           characterId: character.id,
           type: "policy_update",
           priority: "low",
@@ -168,10 +184,12 @@ export class SimulationEngine {
           description: `The player updated ${character.name}'s escalation and spending settings.`,
           createdAt: nextWorld.currentTime,
         });
+        rememberEvent(nextWorld, policyEvent, character);
         break;
       }
     }
 
+    synchronizeDerivedTasks(nextWorld);
     nextWorld.summary = await this.aiProvider.summarizeState(nextWorld);
     return nextWorld;
   }

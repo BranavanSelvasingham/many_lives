@@ -1,6 +1,11 @@
 import type { InboxPriority } from "./inbox.js";
 
 export type EventType =
+  | "world_shift"
+  | "opening_detected"
+  | "opening_claimed"
+  | "rival_advance"
+  | "coherence_drift"
   | "task_started"
   | "task_completed"
   | "obligation_missed"

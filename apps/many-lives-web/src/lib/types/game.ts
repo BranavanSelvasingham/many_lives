@@ -9,7 +9,7 @@ export type MessageType =
   | "social";
 export type RiskLevel = "none" | "low" | "medium" | "high";
 
-export type WorldAxis = "access" | "momentum" | "signal" | "integrity";
+export type WorldAxis = "access" | "momentum" | "signal" | "coherence";
 export type ConsequenceCategory =
   | WorldAxis
   | "risk"
@@ -90,7 +90,7 @@ export interface CityState {
   access: number;
   momentum: number;
   signal: number;
-  integrity: number;
+  coherence: number;
   risk: number;
   socialDebt: number;
   rivalAttention: number;

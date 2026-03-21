@@ -4,6 +4,12 @@ Many Lives is a web-first narrative strategy prototype set during a rare Ascensi
 
 This vertical slice is intentionally desktop-first and mock-first. The attention feed is the heartbeat, the right panel holds the active opening or policy surface, and the bottom strip keeps city-scale pressure visible while you work.
 
+## Core Construct
+
+The living reference for the game's underlying simulation model is [CORE_CONSTRUCT.md](/Users/branavan/GitHub/many_lives/CORE_CONSTRUCT.md).
+
+Use that document as the architectural anchor for changes to world simulation, character behavior, memory, attention/escalation, and the canonical game loop.
+
 ## Prototype Pillars
 
 - Inbox triage is the primary intervention loop.
@@ -91,7 +97,7 @@ The web app reaches those routes through the Next.js proxy layer in [client.ts](
 - Left rail: self triage and pressure read.
 - Center panel: attention feed filters, counts, and thread cards.
 - Right panel: scenario framing, selected thread detail first, otherwise self detail plus policy.
-- Bottom strip: world time, Access, Momentum, Signal, Integrity, rival pressure, next opening, and tick controls.
+- Bottom strip: world time, Access, Momentum, Signal, Coherence, rival pressure, next opening, and tick controls.
 
 Right-panel priority is deliberate:
 

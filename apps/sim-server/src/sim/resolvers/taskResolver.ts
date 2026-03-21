@@ -6,6 +6,8 @@ import {
   STEP_MINUTES,
   addSystemFlag,
   clamp,
+  findMemoryState,
+  findRelationship,
   hasSystemFlag,
   minutesBetween,
   removeSystemFlag,
@@ -94,7 +96,7 @@ export function resolveCharacterStep(
   if (!character.activeTaskId) {
     const nextTask = selectNextTask(
       character,
-      world.tasks.filter((task) => task.characterId === character.id),
+      world,
       stepStart,
     );
 
@@ -272,6 +274,42 @@ export function detectStressEvents(
   return events;
 }
 
+export function detectIntegrityDrift(
+  world: WorldState,
+  currentTime: string,
+): NewEvent[] {
+  const events: NewEvent[] = [];
+
+  for (const character of world.characters) {
+    const driftFlag = `coherence-drift:${character.id}`;
+
+    if (character.memoryCoherence >= 60 || character.stress < 72) {
+      removeSystemFlag(world, driftFlag);
+      continue;
+    }
+
+    if (hasSystemFlag(world, driftFlag)) {
+      continue;
+    }
+
+    addSystemFlag(world, driftFlag);
+    events.push({
+      characterId: character.id,
+      type: "coherence_drift",
+      priority: character.memoryCoherence <= 40 ? "critical" : "high",
+      title: `${character.name} is drifting out of coherence`,
+      description: `${character.name}'s recent moves are starting to pull against each other. The network is gaining reach faster than it is staying whole.`,
+      createdAt: currentTime,
+      metadata: {
+        memoryCoherence: character.memoryCoherence,
+        stress: character.stress,
+      },
+    });
+  }
+
+  return events;
+}
+
 function windowsOverlap(left: Task, right: Task): boolean {
   return (
     taskWindowStartsAt(left) < taskWindowEndsAt(right) &&
@@ -281,68 +319,116 @@ function windowsOverlap(left: Task, right: Task): boolean {
 
 function selectNextTask(
   character: Character,
-  tasks: Task[],
+  world: WorldState,
   currentTime: string,
 ): Task | undefined {
-  return tasks
+  return world.tasks
     .filter(
       (task) =>
+        task.characterId === character.id &&
         task.status === "pending" &&
         taskWindowStartsAt(task) <= new Date(currentTime).getTime(),
     )
     .sort(
       (left, right) =>
-        scoreTask(character, right, currentTime) -
-        scoreTask(character, left, currentTime),
+        scoreTask(character, world, right, currentTime) -
+        scoreTask(character, world, left, currentTime),
     )[0];
 }
 
 function scoreTask(
   character: Character,
+  world: WorldState,
   task: Task,
   currentTime: string,
 ): number {
+  const memory = findMemoryState(world, character.id);
+  const relationship = task.sourceRelationshipId
+    ? findRelationship(world, task.sourceRelationshipId)
+    : undefined;
+  const opening = task.sourceOpeningId
+    ? world.city.openings.find((entry) => entry.id === task.sourceOpeningId)
+    : undefined;
+  const rival = task.sourceRivalId
+    ? world.city.rivals.find((entry) => entry.id === task.sourceRivalId)
+    : undefined;
   const minutesUntilDue = Math.max(0, minutesBetween(currentTime, task.dueAt));
   const urgencyScore = Math.max(0, 180 - minutesUntilDue) / 10;
   const mandatoryScore = task.mandatory ? 18 : 0;
   const biasScore = task.kind === character.policies.priorityBias ? 12 : 0;
   const travelPenalty = task.travelMinutes / 10;
+  const coherencePenalty = Math.max(0, 60 - character.memoryCoherence) / 8;
+  const unresolvedThreadBonus = memory?.unresolvedThreads.some((thread) =>
+    thread.toLowerCase().includes(task.title.toLowerCase()),
+  )
+    ? 10
+    : 0;
+  const openingBonus =
+    opening && opening.status === "active"
+      ? opening.urgency + opening.exclusivity
+      : 0;
+  const relationshipBonus = relationship
+    ? Math.round((relationship.trust + relationship.affinity) / 20) +
+      Math.round((relationship.dependency + relationship.strain) / 25)
+    : 0;
+  const coherenceBonus =
+    task.kind === "coherence" && (memory?.coherence ?? character.memoryCoherence) < 55
+      ? 16
+      : 0;
+  const exhaustionPenalty =
+    character.energy <= 25 && task.kind !== "coherence" ? 8 : 0;
+  const rivalBonus = rival ? Math.round(rival.threat / 15) : 0;
+  const dynamicBonus = task.dynamic ? 4 : 0;
 
   return (
     task.importance * 10 +
     urgencyScore +
     mandatoryScore +
     biasScore -
-    travelPenalty
+    travelPenalty -
+    coherencePenalty -
+    exhaustionPenalty +
+    unresolvedThreadBonus +
+    openingBonus +
+    relationshipBonus +
+    coherenceBonus +
+    rivalBonus +
+    dynamicBonus
   );
 }
 
 function applyIdleRecovery(character: Character): void {
   character.energy = clamp(character.energy + 4, 0, 100);
   character.stress = clamp(character.stress - 2, 0, 100);
+  character.memoryCoherence = clamp(character.memoryCoherence + 1, 0, 100);
 }
 
 function applyTaskEffect(character: Character, task: Task): void {
   switch (task.kind) {
-    case "integrity":
+    case "coherence":
       character.energy = clamp(character.energy + 8, 0, 100);
       character.stress = clamp(character.stress - 10, 0, 100);
+      character.memoryCoherence = clamp(character.memoryCoherence + 4, 0, 100);
       break;
     case "access":
       character.energy = clamp(character.energy - 6, 0, 100);
       character.stress = clamp(character.stress + 5, 0, 100);
+      character.memoryCoherence = clamp(character.memoryCoherence - 1, 0, 100);
       break;
     case "momentum":
       character.energy = clamp(character.energy - 5, 0, 100);
       character.stress = clamp(character.stress + 7, 0, 100);
+      character.memoryCoherence = clamp(character.memoryCoherence - 2, 0, 100);
       break;
     case "signal":
       character.energy = clamp(character.energy - 7, 0, 100);
       character.stress = clamp(character.stress + 6, 0, 100);
+      character.memoryCoherence = clamp(character.memoryCoherence - 2, 0, 100);
       break;
     default:
       character.energy = clamp(character.energy - 4, 0, 100);
       character.stress = clamp(character.stress + 3, 0, 100);
+      character.memoryCoherence = clamp(character.memoryCoherence - 1, 0, 100);
       break;
   }
 }

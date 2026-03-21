@@ -14,7 +14,7 @@ const toneClasses: Record<string, string> = {
   access: "bg-[#c4a15d]",
   momentum: "bg-[#7c9ab4]",
   signal: "bg-[#b77870]",
-  integrity: "bg-[#6d8a72]",
+  coherence: "bg-[#6d8a72]",
 };
 
 export function StatBar({ label, value, tone = "normal" }: StatBarProps) {

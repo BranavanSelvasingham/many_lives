@@ -39,7 +39,7 @@ export const priorityBiasOptions: Array<{
   { value: "access", label: "Access" },
   { value: "momentum", label: "Momentum" },
   { value: "signal", label: "Signal" },
-  { value: "integrity", label: "Integrity" },
+  { value: "coherence", label: "Coherence" },
 ];
 
 export const riskToleranceOptions: Array<{
@@ -169,7 +169,7 @@ export function messageConsequenceScore(message: InboxMessageView) {
     access: 6,
     momentum: 5,
     signal: 5,
-    integrity: 6,
+    coherence: 6,
     risk: 4,
     socialDebt: 4,
     rivalAttention: 5,

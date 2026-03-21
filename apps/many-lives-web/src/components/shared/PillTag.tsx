@@ -8,7 +8,7 @@ const toneClasses: Record<string, string> = {
   access: "bg-[#352d1f] text-[#f0d39b] border-[#86663a]",
   momentum: "bg-[#243545] text-[#b8d3eb] border-[#4d708f]",
   signal: "bg-[#3b2a2f] text-[#efc1b8] border-[#8a555a]",
-  integrity: "bg-[#263328] text-[#c5ddc8] border-[#607966]",
+  coherence: "bg-[#263328] text-[#c5ddc8] border-[#607966]",
   risk: "bg-[#40282b] text-[#efb7b0] border-[#8a5359]",
   socialDebt: "bg-[#33272d] text-[#e7c6d2] border-[#7b5969]",
   rivalAttention: "bg-[#352a24] text-[#f0c89f] border-[#8b6242]",

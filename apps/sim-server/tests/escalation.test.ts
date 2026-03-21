@@ -5,27 +5,35 @@ import type { Task } from "../src/domain/task.js";
 import type { WorldState } from "../src/domain/world.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
-import { evaluateEscalation } from "../src/sim/resolvers/escalationResolver.js";
+import {
+  evaluateEscalation,
+  maybeEscalateEvent,
+} from "../src/sim/resolvers/escalationResolver.js";
 import { detectStressEvents } from "../src/sim/resolvers/taskResolver.js";
 import { seedScenario } from "../src/sim/seedScenario.js";
 
 describe("Escalation behavior", () => {
   it("turns a missed obligation into an inbox escalation", async () => {
-    const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-escalation");
+    const world = seedScenario("game-escalation");
+    const character = world.characters.find(
+      (entry) => entry.id === "ivo",
+    ) as Character;
+    const task = world.tasks.find(
+      (entry) => entry.id === "task-ivo-private-room",
+    ) as Task;
+    const missedEvent = buildMissedEvent(character, task, world);
 
-    const nextWorld = await engine.tick(world, 20);
-
-    const missedEvent = nextWorld.events.find(
-      (event) =>
-        event.type === "obligation_missed" && event.characterId === "ivo",
+    await maybeEscalateEvent(
+      {
+        world,
+        character,
+        event: missedEvent,
+        task,
+      },
+      new MockAIProvider(),
     );
 
-    expect(missedEvent).toBeDefined();
-
-    const message = nextWorld.inbox.find(
-      (entry) => entry.eventId === missedEvent?.id,
-    );
+    const message = world.inbox.find((entry) => entry.eventId === missedEvent.id);
 
     expect(message).toBeDefined();
     expect(message?.characterId).toBe("ivo");

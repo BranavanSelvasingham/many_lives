@@ -26,7 +26,7 @@ const consequenceOrder = [
   "access",
   "momentum",
   "signal",
-  "integrity",
+  "coherence",
   "risk",
   "socialDebt",
   "rivalAttention",
@@ -202,7 +202,7 @@ export function MessageDetailPanel({
               onChange={onRuleComposerChange}
               examples={[
                 "Escalate whenever a rival network can claim the room before we do.",
-                "Protect integrity if a split move gains access but fractures coherence.",
+                "Protect coherence if a split move gains access but starts splitting the self.",
                 "If signal can multiply without dissolving authorship, press forward.",
               ]}
               onSave={() => onSaveRuleDraft(message, ruleComposerDraft)}

@@ -26,7 +26,7 @@ export function TimelineStrip({
         <StripBlock label="Access" value={`${summary?.axes.access ?? 0}`} />
         <StripBlock label="Momentum" value={`${summary?.axes.momentum ?? 0}`} />
         <StripBlock label="Signal" value={`${summary?.axes.signal ?? 0}`} />
-        <StripBlock label="Integrity" value={`${summary?.axes.integrity ?? 0}`} />
+        <StripBlock label="Coherence" value={`${summary?.axes.coherence ?? 0}`} />
         <StripBlock
           label="Rival Pressure"
           value={summary?.rivalStatus ?? "No world loaded"}

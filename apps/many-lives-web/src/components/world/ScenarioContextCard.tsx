@@ -33,9 +33,9 @@ export function ScenarioContextCard({ game }: ScenarioContextCardProps) {
         />
         <StatBar label="Signal" value={game.worldSummary.axes.signal} tone="signal" />
         <StatBar
-          label="Integrity"
-          value={game.worldSummary.axes.integrity}
-          tone="integrity"
+          label="Coherence"
+          value={game.worldSummary.axes.coherence}
+          tone="coherence"
         />
       </div>
       <div className="space-y-2">

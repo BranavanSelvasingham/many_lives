@@ -24,7 +24,7 @@ import {
 } from "@/lib/utils/priorities";
 
 const mockGames = new Map<string, GameState>();
-const axisKeys: WorldAxis[] = ["access", "momentum", "signal", "integrity"];
+const axisKeys: WorldAxis[] = ["access", "momentum", "signal", "coherence"];
 const pressureKeys = [
   "risk",
   "socialDebt",
@@ -48,7 +48,7 @@ const seedCityState: CityState = {
   access: 61,
   momentum: 57,
   signal: 45,
-  integrity: 63,
+  coherence: 63,
   risk: 58,
   socialDebt: 34,
   rivalAttention: 54,
@@ -191,7 +191,7 @@ export function normalizeGameState(
         access: 0,
         momentum: 0,
         signal: 0,
-        integrity: 0,
+        coherence: 0,
       },
       pressures: {
         risk: "low",
@@ -236,7 +236,7 @@ export function tickMockGame(
   nextGame.cityState = {
     ...nextGame.cityState,
     momentum: clamp(nextGame.cityState.momentum + 1, 0, 100),
-    integrity: clamp(nextGame.cityState.integrity - Math.ceil(steps / 2), 0, 100),
+    coherence: clamp(nextGame.cityState.coherence - Math.ceil(steps / 2), 0, 100),
     risk: clamp(nextGame.cityState.risk + steps, 0, 100),
     rivalAttention: clamp(nextGame.cityState.rivalAttention + steps, 0, 100),
     windowNarrowing: clamp(nextGame.cityState.windowNarrowing + steps * 2, 0, 100),
@@ -353,7 +353,7 @@ export function delegateMockMessage(
     suggestedActions: [{ id: "acknowledge", label: "Acknowledge" }],
     consequences: {
       momentum: "medium",
-      integrity: "medium",
+      coherence: "medium",
     },
     tags: ["handoff", "redistribution"],
     followupHooks: ["Delegation buys reach now and coherence later only if the thread holds."],
@@ -372,7 +372,7 @@ export function delegateMockMessage(
   nextGame.cityState = {
     ...nextGame.cityState,
     momentum: clamp(nextGame.cityState.momentum + 2, 0, 100),
-    integrity: clamp(nextGame.cityState.integrity - 3, 0, 100),
+    coherence: clamp(nextGame.cityState.coherence - 3, 0, 100),
     socialDebt: clamp(nextGame.cityState.socialDebt + 2, 0, 100),
   };
   nextGame.summary = buildMockSummary(nextGame, "delegate_thread");
@@ -528,7 +528,7 @@ function buildWorldSummary(game: GameState, rawWorld?: RawWorldState) {
       access: game.cityState.access,
       momentum: game.cityState.momentum,
       signal: game.cityState.signal,
-      integrity: game.cityState.integrity,
+      coherence: game.cityState.coherence,
     },
     pressures: {
       risk: pressureFromSources(game.cityState.risk, visibleMessages, "risk"),
@@ -761,7 +761,7 @@ function buildSeedGame(gameId: string): GameState {
           spendWithoutAsking: 50,
           spendPreset: "50",
           interruptWhen: "always",
-          priorityBias: "integrity",
+          priorityBias: "coherence",
           riskTolerance: "aggressive",
           scheduleProtection: "opportunistic",
           reportingFrequency: "standard",
@@ -786,7 +786,7 @@ function buildSeedGame(gameId: string): GameState {
         access: 0,
         momentum: 0,
         signal: 0,
-        integrity: 0,
+        coherence: 0,
       },
       pressures: {
         risk: "low",
@@ -815,7 +815,7 @@ function buildMockSummary(game: GameState, actionId = "", overrideText = "") {
     summary += ` Custom directive sent: ${overrideText}.`;
   }
 
-  summary += ` Access ${game.cityState.access}. Momentum ${game.cityState.momentum}. Signal ${game.cityState.signal}. Integrity ${game.cityState.integrity}.`;
+  summary += ` Access ${game.cityState.access}. Momentum ${game.cityState.momentum}. Signal ${game.cityState.signal}. Coherence ${game.cityState.coherence}.`;
   return summary;
 }
 
@@ -934,7 +934,7 @@ function genericActionImpact(actionId: string): CityDelta {
     return {
       access: 4,
       momentum: 4,
-      integrity: -1,
+      coherence: -1,
       rivalAttention: 2,
     };
   }
@@ -944,20 +944,20 @@ function genericActionImpact(actionId: string): CityDelta {
       signal: 5,
       momentum: 2,
       rivalAttention: 3,
-      integrity: -1,
+      coherence: -1,
     };
   }
 
   if (matchesAction(actionId, ["verify", "refine", "correct", "save"])) {
     return {
-      integrity: 3,
+      coherence: 3,
       momentum: -1,
     };
   }
 
   if (matchesAction(actionId, ["decline", "leave", "deny", "refuse"])) {
     return {
-      integrity: 2,
+      coherence: 2,
       access: -2,
       signal: -1,
       windowNarrowing: 2,
@@ -966,7 +966,7 @@ function genericActionImpact(actionId: string): CityDelta {
 
   if (matchesAction(actionId, ["wait", "hold", "watch"])) {
     return {
-      integrity: 1,
+      coherence: 1,
       momentum: -2,
       rivalAttention: 1,
     };
@@ -1032,7 +1032,7 @@ function defaultConsequences(priority: PriorityLevel) {
   if (priority === "urgent") {
     return {
       momentum: "high",
-      integrity: "medium",
+      coherence: "medium",
       rivalAttention: "medium",
     } as const;
   }
@@ -1122,7 +1122,7 @@ function inferCityState(
     access: 42 + accessPressure * 6,
     momentum: 40 + unresolved.length * 2,
     signal: 36 + signalPressure * 7,
-    integrity:
+    coherence:
       72 -
       Math.round(
         characters.reduce((sum, character) => sum + character.stress, 0) /
@@ -1159,7 +1159,7 @@ function standingRuleFor(axis: WorldAxis) {
       return "Do not let the room cool while the city is choosing.";
     case "signal":
       return "Make work they cannot reorganize around without naming us.";
-    case "integrity":
+    case "coherence":
       return "Protect coherence before brilliance turns into fragmentation.";
   }
 }

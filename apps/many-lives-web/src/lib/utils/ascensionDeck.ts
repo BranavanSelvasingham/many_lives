@@ -13,7 +13,7 @@ type CityDelta = Partial<
     | "access"
     | "momentum"
     | "signal"
-    | "integrity"
+    | "coherence"
     | "risk"
     | "socialDebt"
     | "rivalAttention"
@@ -74,7 +74,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     ],
     consequences: {
       access: "high",
-      integrity: "medium",
+      coherence: "medium",
       rivalAttention: "medium",
     },
     tags: ["private access", "ledger breach"],
@@ -104,7 +104,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       access: "high",
       socialDebt: "high",
-      integrity: "medium",
+      coherence: "medium",
     },
     tags: ["gatekeeper", "social debt"],
     followupHooks: [
@@ -150,7 +150,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     preview:
       "Two decisive rooms expect a version of us tonight. One shapes public ascent. The other shapes private power.",
     body:
-      "Two decisive rooms expect a version of us tonight. One shapes public ascent and will decide who becomes visible by morning. The other shapes private power and will decide who gets written into the machinery behind the visible city. We cannot inhabit both with equal force without straining coherence. Choose the room, or split and pay in integrity.",
+      "Two decisive rooms expect a version of us tonight. One shapes public ascent and will decide who becomes visible by morning. The other shapes private power and will decide who gets written into the machinery behind the visible city. We cannot inhabit both with equal force without straining coherence. Choose the room, or split and pay in coherence.",
     createdOffsetMinutes: -16,
     unlockAtTick: 0,
     requiresResponse: true,
@@ -162,7 +162,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       access: "high",
       signal: "high",
-      integrity: "high",
+      coherence: "high",
       rivalAttention: "medium",
     },
     tags: ["forked presence", "irreversible"],
@@ -175,20 +175,20 @@ export const ascensionDeck: DeckMessageSeed[] = [
         momentum: 4,
         access: 2,
         rivalAttention: 5,
-        integrity: -3,
+        coherence: -3,
       },
       claim_the_private_room: {
         access: 8,
         momentum: 3,
         signal: 1,
         socialDebt: 4,
-        integrity: -2,
+        coherence: -2,
       },
       split_the_network: {
         access: 5,
         signal: 5,
         momentum: 5,
-        integrity: -8,
+        coherence: -8,
         risk: 4,
         rivalAttention: 4,
       },
@@ -243,7 +243,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       signal: "high",
       momentum: "medium",
-      integrity: "medium",
+      coherence: "medium",
       rivalAttention: "high",
     },
     tags: ["debut", "cultural opening"],
@@ -255,16 +255,16 @@ export const ascensionDeck: DeckMessageSeed[] = [
         signal: 9,
         momentum: 3,
         rivalAttention: 6,
-        integrity: -2,
+        coherence: -2,
       },
       bleed_a_fragment: {
         signal: 5,
         momentum: 2,
-        integrity: -1,
+        coherence: -1,
         rivalAttention: 3,
       },
       hold_until_tomorrow: {
-        integrity: 3,
+        coherence: 3,
         momentum: -4,
         signal: -2,
         windowNarrowing: 4,
@@ -292,7 +292,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     ],
     consequences: {
       signal: "high",
-      integrity: "medium",
+      coherence: "medium",
       risk: "medium",
     },
     tags: ["artistic risk", "mythmaking"],
@@ -346,7 +346,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       signal: "high",
       rivalAttention: "medium",
-      integrity: "medium",
+      coherence: "medium",
     },
     tags: ["leak", "circulation"],
   },
@@ -372,7 +372,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       signal: "high",
       access: "medium",
-      integrity: "high",
+      coherence: "high",
     },
     tags: ["collaboration", "identity risk"],
   },
@@ -409,16 +409,16 @@ export const ascensionDeck: DeckMessageSeed[] = [
         access: 8,
         momentum: 7,
         rivalAttention: 5,
-        integrity: -2,
+        coherence: -2,
       },
       send_a_smaller_self: {
         access: 4,
         momentum: 4,
-        integrity: -1,
+        coherence: -1,
         rivalAttention: 2,
       },
       let_it_pass: {
-        integrity: 2,
+        coherence: 2,
         momentum: -6,
         access: -4,
         windowNarrowing: 5,
@@ -447,7 +447,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       momentum: "high",
       signal: "medium",
-      integrity: "medium",
+      coherence: "medium",
     },
     tags: ["status pivot", "attention"],
   },
@@ -461,7 +461,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     preview:
       "Someone just introduced us as a legend larger than our current reality.",
     body:
-      "Someone just introduced us as a legend larger than our current reality. We can inhabit the larger silhouette and let the myth run ahead, or correct it and keep the network honest. One path multiplies reach. The other protects integrity.",
+      "Someone just introduced us as a legend larger than our current reality. We can inhabit the larger silhouette and let the myth run ahead, or correct it and keep the network honest. One path multiplies reach. The other protects coherence.",
     createdOffsetMinutes: -6,
     unlockAtTick: 6,
     requiresResponse: true,
@@ -473,7 +473,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       signal: "high",
       momentum: "medium",
-      integrity: "medium",
+      coherence: "medium",
     },
     tags: ["myth", "reputation"],
   },
@@ -517,10 +517,10 @@ export const ascensionDeck: DeckMessageSeed[] = [
         access: 6,
         momentum: 2,
         socialDebt: 5,
-        integrity: -1,
+        coherence: -1,
       },
       stay_uncommitted: {
-        integrity: 2,
+        coherence: 2,
         momentum: -5,
         rivalAttention: 4,
         windowNarrowing: 3,
@@ -639,10 +639,10 @@ export const ascensionDeck: DeckMessageSeed[] = [
         momentum: 8,
         access: 3,
         risk: 4,
-        integrity: -2,
+        coherence: -2,
       },
       verify_the_source: {
-        integrity: 3,
+        coherence: 3,
         momentum: -2,
         windowNarrowing: 2,
       },
@@ -674,7 +674,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     ],
     consequences: {
       signal: "medium",
-      integrity: "medium",
+      coherence: "medium",
       risk: "medium",
     },
     tags: ["unknown talent", "off-grid"],
@@ -701,7 +701,7 @@ export const ascensionDeck: DeckMessageSeed[] = [
     consequences: {
       momentum: "high",
       signal: "medium",
-      integrity: "medium",
+      coherence: "medium",
     },
     tags: ["historical opening", "uncatalogued"],
   },

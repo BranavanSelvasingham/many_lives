@@ -2,12 +2,17 @@ import type { AIProvider } from "../ai/provider.js";
 import type { EventRecord } from "../domain/event.js";
 import type { WorldState } from "../domain/world.js";
 import { maybeEscalateEvent } from "./resolvers/escalationResolver.js";
+import { synchronizeDerivedTasks } from "./resolvers/commitmentResolver.js";
+import { rememberEvent } from "./resolvers/memoryResolver.js";
+import { detectCharacterPerceptions } from "./resolvers/perceptionResolver.js";
 import {
+  detectIntegrityDrift,
   detectMissedObligations,
   detectScheduleConflicts,
   detectStressEvents,
   resolveCharacterStep,
 } from "./resolvers/taskResolver.js";
+import { advanceCityState } from "./resolvers/worldResolver.js";
 import {
   STEP_MINUTES,
   addMinutes,
@@ -40,11 +45,21 @@ async function advanceSingleTick(
   const stepEnd = addMinutes(stepStart, STEP_MINUTES);
   const eventsToHandle: EventRecord[] = [];
 
+  for (const draft of advanceCityState(world)) {
+    eventsToHandle.push(recordEvent(world, draft));
+  }
+
+  synchronizeDerivedTasks(world);
+
   for (const draft of detectScheduleConflicts(world, stepStart)) {
     eventsToHandle.push(recordEvent(world, draft));
   }
 
   for (const character of world.characters) {
+    for (const draft of detectCharacterPerceptions(world, character)) {
+      eventsToHandle.push(recordEvent(world, draft));
+    }
+
     for (const draft of resolveCharacterStep(
       world,
       character,
@@ -66,6 +81,10 @@ async function advanceSingleTick(
     eventsToHandle.push(recordEvent(world, draft));
   }
 
+  for (const draft of detectIntegrityDrift(world, world.currentTime)) {
+    eventsToHandle.push(recordEvent(world, draft));
+  }
+
   for (const event of eventsToHandle) {
     const character = findCharacter(world, event.characterId);
     if (!character) {
@@ -75,6 +94,8 @@ async function advanceSingleTick(
     const task =
       findTask(world, event.relatedTaskId) ??
       world.tasks.find((entry) => event.relatedTaskIds?.includes(entry.id));
+
+    rememberEvent(world, event, character);
 
     await maybeEscalateEvent(
       {

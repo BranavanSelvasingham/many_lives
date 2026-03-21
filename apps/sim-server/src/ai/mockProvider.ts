@@ -18,6 +18,12 @@ export class MockAIProvider implements AIProvider {
     const openMessages = world.inbox.filter(
       (message) => !message.resolvedAt,
     ).length;
+    const activeOpenings = world.city.openings.filter(
+      (opening) => opening.status === "active",
+    ).length;
+    const hottestRival = world.city.rivals
+      .slice()
+      .sort((left, right) => right.threat - left.threat)[0];
     const characterSummaries = world.characters.map((character) => {
       const activeTask = world.tasks.find(
         (task) => task.id === character.activeTaskId,
@@ -25,10 +31,10 @@ export class MockAIProvider implements AIProvider {
       const taskLabel = activeTask
         ? activeTask.title
         : "holding for the next opening";
-      return `${character.name} is ${taskLabel.toLowerCase()} (energy ${character.energy}, strain ${character.stress})`;
+      return `${character.name} is ${taskLabel.toLowerCase()} (energy ${character.energy}, strain ${character.stress}, coherence ${character.memoryCoherence})`;
     });
 
-    return `${world.scenarioName} at ${world.currentTime}. Open threads: ${openMessages}. ${characterSummaries.join(
+    return `${world.scenarioName} at ${world.currentTime}. Open threads: ${openMessages}. Active openings: ${activeOpenings}. Rival pressure: ${hottestRival?.name ?? "unknown rival"} on ${hottestRival?.focus ?? "multiple fronts"}. ${characterSummaries.join(
       " | ",
     )}`;
   }
@@ -98,6 +104,25 @@ export class MockAIProvider implements AIProvider {
     ];
 
     switch (context.event.type) {
+      case "opening_detected":
+        return [
+          `Tell ${context.character.name} to seize the opening before rivals can name it.`,
+          `Hold position and gather one more layer of signal around ${context.event.title}.`,
+          `Route the opening toward the self best suited to ${context.character.policies.priorityBias}.`,
+        ];
+      case "opening_claimed":
+      case "rival_advance":
+        return [
+          `Countermove immediately and contest the board shift.`,
+          "Let the rival take this layer and protect coherence for the next opening.",
+          `Ask ${context.character.name} who still changes the map if approached tonight.`,
+        ];
+      case "coherence_drift":
+        return [
+          `Pull ${context.character.name} back toward coherence before the selves start contradicting each other.`,
+          "Keep the thread hot and accept the fragmentation cost for now.",
+          "Reassign one live opening to reduce internal strain.",
+        ];
       case "obligation_missed":
         return [
           `Recover the miss tied to ${context.task?.title ?? "the incident"}.`,
