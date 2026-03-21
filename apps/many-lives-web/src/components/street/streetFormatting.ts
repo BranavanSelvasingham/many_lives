@@ -16,6 +16,119 @@ export function humanizeKey(value: string) {
     .join(" ");
 }
 
+export function actionKindLabel(kind: ActionOption["kind"]) {
+  switch (kind) {
+    case "accept_job":
+      return "take work";
+    case "work_job":
+      return "shift";
+    case "inspect":
+      return "look closer";
+    case "solve":
+      return "help";
+    case "buy":
+      return "trade";
+    case "rest":
+      return "rest";
+    case "talk":
+    default:
+      return "talk";
+  }
+}
+
+export function jobStatusLabel(status: string) {
+  switch (status) {
+    case "done":
+    case "completed":
+      return "paid";
+    case "accepted":
+      return "taken";
+    case "missed":
+      return "slipped";
+    case "open":
+    default:
+      return "available";
+  }
+}
+
+export function problemStatusLabel(status: string) {
+  switch (status) {
+    case "solved":
+      return "settled";
+    case "expired":
+      return "missed";
+    case "active":
+      return "brewing";
+    default:
+      return "quiet";
+  }
+}
+
+export function reputationLabel(value: number) {
+  if (value >= 4) {
+    return "Part of the place";
+  }
+
+  if (value >= 3) {
+    return "Asked for by name";
+  }
+
+  if (value >= 2) {
+    return "Treated as useful";
+  }
+
+  if (value >= 1) {
+    return "Recognized on sight";
+  }
+
+  return "Still a stranger";
+}
+
+export function districtSenseLabel(knownPlaces: number) {
+  if (knownPlaces >= 5) {
+    return "Know the block";
+  }
+
+  if (knownPlaces >= 3) {
+    return "Learning lanes";
+  }
+
+  return "Still strange";
+}
+
+export function workReadLabel(completedJobs: number, activeJobId?: string) {
+  if (completedJobs >= 2) {
+    return "Pulling weight";
+  }
+
+  if (completedJobs >= 1) {
+    return "Work behind you";
+  }
+
+  if (activeJobId) {
+    return "Shift in hand";
+  }
+
+  return "Still looking";
+}
+
+export function standingReadLabel(
+  solvedProblems: number,
+  completedJobs: number,
+) {
+  const usefulMoments = solvedProblems + completedJobs;
+
+  if (usefulMoments >= 2) {
+    return "Known face";
+  }
+
+  if (usefulMoments >= 1) {
+    return "Getting known";
+  }
+
+  return "Still new";
+}
+
 export function noteTone(tone: "info" | "lead" | "warning") {
   switch (tone) {
     case "lead":

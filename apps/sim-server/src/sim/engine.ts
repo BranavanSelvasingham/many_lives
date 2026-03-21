@@ -711,12 +711,9 @@ function buildGoals(world: StreetGameState): string[] {
   const knownPlaces = world.player.knownLocationIds.length;
 
   return [
-    goalLine(
-      world.player.money >= 30,
-      `Earn enough that tonight stops feeling urgent ($${world.player.money}/$30)`,
-    ),
-    goalLine(solvedProblems >= 1, `Solve one neighborhood problem (${solvedProblems}/1)`),
-    goalLine(knownPlaces >= 5, `Learn the block by finding five places (${knownPlaces}/5)`),
+    moneyGoalLine(world.player.money),
+    problemGoalLine(solvedProblems),
+    placeGoalLine(knownPlaces),
   ];
 }
 
@@ -724,12 +721,13 @@ function buildSummary(world: StreetGameState): string {
   const location = currentLocation(world);
   const completedJobs = world.jobs.filter((job) => job.completed).length;
   const solvedProblems = world.problems.filter((problem) => problem.status === "solved").length;
+  const knownPlaces = world.player.knownLocationIds.length;
 
   return `${world.clock.label}, day ${world.clock.day}. You are at ${
     location?.name ?? "the street"
-  } in ${location?.neighborhood ?? world.districtName}, ${world.cityName} with $${world.player.money}, energy ${
-    world.player.energy
-  }, ${completedJobs} jobs finished, and ${solvedProblems} local problems solved.`;
+  } in ${location?.neighborhood ?? world.districtName}, ${describeMoney(world.player.money)}, and ${describeEnergy(
+    world.player.energy,
+  )}. ${describeDistrictSense(knownPlaces)} ${describeStanding(completedJobs, solvedProblems)}`;
 }
 
 function currentLocation(world: StreetGameState) {
@@ -851,10 +849,6 @@ function phaseForHour(hour: number) {
   return "Night";
 }
 
-function goalLine(done: boolean, text: string) {
-  return `${done ? "[done]" : "[ ]"} ${text}`;
-}
-
 function isoFor(totalMinutes: number) {
   const timestamp = new Date(BASE_DAY).getTime() + totalMinutes * 60_000;
   return new Date(timestamp).toISOString();
@@ -869,4 +863,94 @@ function formatHour(hour: number) {
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+function moneyGoalLine(money: number) {
+  if (money >= 30) {
+    return "You have enough coin on you that tonight no longer feels immediate.";
+  }
+
+  if (money >= 20) {
+    return "You can breathe a little, but you still need steadier money before night.";
+  }
+
+  return "Find enough paid work that tonight stops feeling sharp.";
+}
+
+function problemGoalLine(solvedProblems: number) {
+  if (solvedProblems >= 1) {
+    return "Someone on the block has a reason to remember your help.";
+  }
+
+  return "Find one local problem worth stepping into.";
+}
+
+function placeGoalLine(knownPlaces: number) {
+  if (knownPlaces >= 5) {
+    return "South Quay is starting to feel like a place you can cross without guessing.";
+  }
+
+  if (knownPlaces >= 3) {
+    return "Keep walking until the district starts to hold together in your head.";
+  }
+
+  return "Learn enough of the lanes that you stop feeling newly dropped here.";
+}
+
+function describeMoney(money: number) {
+  if (money >= 30) {
+    return "with enough coin in your pocket to breathe a little";
+  }
+
+  if (money >= 15) {
+    return "with a modest stack of coins in your pocket";
+  }
+
+  if (money >= 8) {
+    return "with a few coins left to work with";
+  }
+
+  return "with barely enough coin to feel comfortable";
+}
+
+function describeEnergy(energy: number) {
+  if (energy >= 75) {
+    return "still steady on your feet";
+  }
+
+  if (energy >= 50) {
+    return "feeling the day, but not bent by it";
+  }
+
+  if (energy >= 30) {
+    return "starting to feel the drag in your legs";
+  }
+
+  return "running on tired legs";
+}
+
+function describeDistrictSense(knownPlaces: number) {
+  if (knownPlaces >= 5) {
+    return "The lanes of South Quay are starting to make sense.";
+  }
+
+  if (knownPlaces >= 3) {
+    return "A few corners of South Quay are beginning to stick in your head.";
+  }
+
+  return "South Quay still feels bigger than what you know of it.";
+}
+
+function describeStanding(completedJobs: number, solvedProblems: number) {
+  const usefulMoments = completedJobs + solvedProblems;
+
+  if (usefulMoments >= 2) {
+    return "People are beginning to treat you like you belong here.";
+  }
+
+  if (usefulMoments >= 1) {
+    return "A few people have started to remember you for something useful.";
+  }
+
+  return "Most of the block is still trying to place your face.";
 }

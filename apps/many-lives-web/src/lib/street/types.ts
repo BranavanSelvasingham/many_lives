@@ -149,6 +149,11 @@ export interface NpcState {
   trust: number;
   known: boolean;
   memory: string[];
+  schedule: Array<{
+    locationId: string;
+    fromHour: number;
+    toHour: number;
+  }>;
 }
 
 export interface JobState {

@@ -1,3 +1,7 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
 import type {
   LocationState,
   MapDoor,
@@ -12,6 +16,21 @@ import type {
 
 const CELL = 38;
 const MAP_PADDING = 24;
+const ANIMATION_INTERVAL_MS = 110;
+
+type Point = {
+  x: number;
+  y: number;
+};
+
+type AnimatedNpcState = {
+  npc: NpcState;
+  known: boolean;
+  x: number;
+  y: number;
+  facing: 1 | -1;
+  step: number;
+};
 
 export function DistrictMap({
   game,
@@ -22,20 +41,60 @@ export function DistrictMap({
   onTileClick: (x: number, y: number) => void;
   busy: boolean;
 }) {
-  const locationById = Object.fromEntries(
-    game.locations.map((location) => [location.id, location]),
+  const [animationNow, setAnimationNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setAnimationNow(Date.now());
+    }, ANIMATION_INTERVAL_MS);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const animationBeat = animationNow / 1000;
+  const sceneMinutes = game.clock.totalMinutes + animationBeat * 2.4;
+  const locationById = useMemo(
+    () => Object.fromEntries(game.locations.map((location) => [location.id, location])),
+    [game.locations],
   );
   const knownLocationIds = new Set(game.player.knownLocationIds);
   const currentLocationId = game.player.currentLocationId;
-  const npcMarkersByLocation = groupNpcMarkers(game.npcs);
+  const propsByLocation = useMemo(
+    () => groupPropsByLocation(game.map.props),
+    [game.map.props],
+  );
   const activeJobCountByLocation = countActiveJobs(game);
   const activeProblemCountByLocation = countActiveProblems(game);
-  const sceneMinutes = game.clock.totalMinutes;
-  const primaryDoorByLocation = new Map(
-    game.map.doors.map((door) => [door.locationId, door]),
+  const primaryDoorByLocation = useMemo(
+    () => new Map(game.map.doors.map((door) => [door.locationId, door])),
+    [game.map.doors],
   );
+  const findRoute = useMemo(() => createRouteFinder(game.map.tiles), [game.map.tiles]);
   const mapWidth = game.map.width * CELL;
   const mapHeight = game.map.height * CELL;
+  const animatedNpcs = useMemo(
+    () =>
+      game.npcs.map((npc, index) =>
+        buildAnimatedNpcState({
+          animationBeat,
+          findRoute,
+          game,
+          index,
+          locationById,
+          npc,
+          primaryDoorByLocation,
+          propsByLocation,
+        }),
+      ),
+    [
+      animationBeat,
+      findRoute,
+      game,
+      locationById,
+      primaryDoorByLocation,
+      propsByLocation,
+    ],
+  );
 
   return (
     <div className="space-y-5">
@@ -113,7 +172,11 @@ export function DistrictMap({
 
                 <g>
                   {game.map.props.map((prop) => (
-                    <PropShape key={prop.id} prop={prop} />
+                    <PropShape
+                      animationBeat={animationBeat}
+                      key={prop.id}
+                      prop={prop}
+                    />
                   ))}
                 </g>
 
@@ -134,7 +197,6 @@ export function DistrictMap({
                     const known = knownLocationIds.has(location.id);
                     const isHere = currentLocationId === location.id;
                     const door = primaryDoorByLocation.get(location.id);
-                    const npcMarkers = npcMarkersByLocation.get(location.id) ?? [];
                     const workCount = activeJobCountByLocation.get(location.id) ?? 0;
                     const troubleCount =
                       activeProblemCountByLocation.get(location.id) ?? 0;
@@ -152,33 +214,41 @@ export function DistrictMap({
                           />
                         ) : null}
 
-                        <g
-                          className={busy ? "" : "cursor-pointer"}
-                          onClick={() => {
-                            if (!busy) {
-                              onTileClick(location.entryX, location.entryY);
-                            }
-                          }}
-                        >
-                          {npcMarkers.map((npc, index) => (
-                            <NpcMarker
-                              index={index}
-                              key={npc.id}
-                              known={npc.known}
-                              location={location}
-                              npc={npc}
-                              sceneMinutes={sceneMinutes}
-                              x={location.entryX}
-                              y={location.entryY}
-                            />
-                          ))}
-                        </g>
+                        {door ? (
+                          <circle
+                            className={busy ? "" : "cursor-pointer"}
+                            cx={(door.x + door.width / 2) * CELL}
+                            cy={(door.y + door.height / 2) * CELL}
+                            fill="rgba(0,0,0,0)"
+                            onClick={() => {
+                              if (!busy) {
+                                onTileClick(location.entryX, location.entryY);
+                              }
+                            }}
+                            r="18"
+                            stroke={isHere ? "rgba(183,146,89,0.38)" : "rgba(146,159,169,0.14)"}
+                            strokeWidth="1.2"
+                          />
+                        ) : null}
                       </g>
                     );
                   })}
                 </g>
 
-                <PlayerMarker x={game.player.x} y={game.player.y} />
+                <g>
+                  {animatedNpcs.map((entry) => (
+                    <NpcMarker
+                      facing={entry.facing}
+                      key={entry.npc.id}
+                      known={entry.known}
+                      step={entry.step}
+                      x={entry.x}
+                      y={entry.y}
+                    />
+                  ))}
+                </g>
+
+                <PlayerMarker animationBeat={animationBeat} x={game.player.x} y={game.player.y} />
 
                 <g opacity="0">
                   {game.map.tiles.map((tile) => {
@@ -849,14 +919,33 @@ function DoorShape({ door }: { door: MapDoor }) {
   );
 }
 
-function PropShape({ prop }: { prop: MapProp }) {
+function PropShape({
+  prop,
+  animationBeat,
+}: {
+  prop: MapProp;
+  animationBeat: number;
+}) {
   const x = prop.x * CELL;
   const y = prop.y * CELL;
   const scale = prop.scale ?? 1;
   const rotation = prop.rotation ?? 0;
+  const seed = hashString(prop.id);
+  const sway = Math.sin(animationBeat * 1.5 + seed) * 2.4;
+  const bob = Math.cos(animationBeat * 1.9 + seed * 0.7) * 0.7;
+  const animatedTransform =
+    prop.kind === "laundry"
+      ? `translate(0 ${bob}) rotate(${sway})`
+      : prop.kind === "canopy"
+        ? `translate(0 ${bob * 0.4}) rotate(${sway * 0.7})`
+        : prop.kind === "tree"
+          ? `translate(${Math.sin(animationBeat * 1.1 + seed) * 0.4} 0) rotate(${sway * 0.25})`
+          : "";
 
   return (
-    <g transform={`translate(${x} ${y}) rotate(${rotation}) scale(${scale})`}>
+    <g
+      transform={`translate(${x} ${y}) rotate(${rotation}) scale(${scale}) ${animatedTransform}`}
+    >
       {renderPropGlyph(prop)}
     </g>
   );
@@ -989,41 +1078,25 @@ function LocationPlacard({
 
 function NpcMarker({
   x,
-  y,
   known,
-  index,
-  npc,
-  location,
-  sceneMinutes,
+  y,
+  facing,
+  step,
 }: {
   x: number;
   y: number;
   known: boolean;
-  index: number;
-  npc: NpcState;
-  location: LocationState;
-  sceneMinutes: number;
+  facing: 1 | -1;
+  step: number;
 }) {
-  const seed = hashString(npc.id) + index * 13;
-  const phase = sceneMinutes / 14 + seed;
-  const range =
-    location.type === "square"
-      ? 9
-      : location.type === "workyard"
-        ? 7
-        : location.type === "pier"
-          ? 6
-          : 4.5;
-  const offsetX = Math.sin(phase * 0.19) * range;
-  const offsetY = Math.cos(phase * 0.23) * (range * 0.48);
-  const baseX = (x + 0.18 + index * 0.22) * CELL + offsetX;
-  const baseY = (y + 0.28) * CELL + offsetY;
+  const bob = Math.abs(step) * -1.4;
+  const stride = step * 1.8;
 
   return (
-    <g transform={`translate(${baseX} ${baseY})`} pointerEvents="none">
+    <g transform={`translate(${x} ${y + bob}) scale(${facing} 1)`} pointerEvents="none">
       <ellipse
         cx="0"
-        cy="10"
+        cy="12"
         fill="rgba(0,0,0,0.26)"
         rx="5.5"
         ry="2.6"
@@ -1043,19 +1116,36 @@ function NpcMarker({
         strokeWidth="1.2"
       />
       <path
-        d={`M -1 11 Q ${offsetX > 0 ? 4 : -4} 13 ${offsetX > 0 ? 6 : -6} 10`}
+        d={`M -1 8 L ${-2.8 - stride} 14`}
         fill="none"
-        opacity="0.45"
-        stroke="rgba(214,200,176,0.52)"
-        strokeWidth="1.2"
+        opacity="0.62"
+        stroke="rgba(214,200,176,0.62)"
+        strokeLinecap="round"
+        strokeWidth="1.4"
+      />
+      <path
+        d={`M 1 8 L ${2.8 + stride} 14`}
+        fill="none"
+        opacity="0.62"
+        stroke="rgba(214,200,176,0.62)"
+        strokeLinecap="round"
+        strokeWidth="1.4"
       />
     </g>
   );
 }
 
-function PlayerMarker({ x, y }: { x: number; y: number }) {
+function PlayerMarker({
+  x,
+  y,
+  animationBeat,
+}: {
+  x: number;
+  y: number;
+  animationBeat: number;
+}) {
   const pixelX = (x + 0.5) * CELL;
-  const pixelY = (y + 0.5) * CELL;
+  const pixelY = (y + 0.5) * CELL + Math.sin(animationBeat * 1.2) * 0.7;
 
   return (
     <g pointerEvents="none">
@@ -1137,16 +1227,316 @@ function countActiveProblems(game: StreetGameState) {
   return counts;
 }
 
-function groupNpcMarkers(npcs: NpcState[]) {
-  const markers = new Map<string, NpcState[]>();
+function groupPropsByLocation(props: MapProp[]) {
+  const grouped = new Map<string, MapProp[]>();
 
-  for (const npc of npcs) {
-    const current = markers.get(npc.currentLocationId) ?? [];
-    current.push(npc);
-    markers.set(npc.currentLocationId, current);
+  for (const prop of props) {
+    if (!prop.locationId) {
+      continue;
+    }
+
+    const current = grouped.get(prop.locationId) ?? [];
+    current.push(prop);
+    grouped.set(prop.locationId, current);
   }
 
-  return markers;
+  return grouped;
+}
+
+function buildAnimatedNpcState({
+  animationBeat,
+  findRoute,
+  game,
+  index,
+  locationById,
+  npc,
+  primaryDoorByLocation,
+  propsByLocation,
+}: {
+  animationBeat: number;
+  findRoute: (start: Point, end: Point) => Point[];
+  game: StreetGameState;
+  index: number;
+  locationById: Record<string, LocationState>;
+  npc: NpcState;
+  primaryDoorByLocation: Map<string, MapDoor>;
+  propsByLocation: Map<string, MapProp[]>;
+}): AnimatedNpcState {
+  const location = locationById[npc.currentLocationId];
+
+  if (!location) {
+    return {
+      npc,
+      known: npc.known,
+      x: 0,
+      y: 0,
+      facing: 1,
+      step: 0,
+    };
+  }
+
+  const nextLocation = nextScheduledLocation(npc, game.clock.hour + game.clock.minute / 60, locationById);
+  const patrolPath = buildNpcPatrolPath({
+    door: primaryDoorByLocation.get(location.id),
+    location,
+    nextLocation,
+    props: propsByLocation.get(location.id) ?? [],
+    findRoute,
+  });
+  const phaseOffset = ((hashString(npc.id) + index * 17) % 997) / 997;
+  const cycleSeconds =
+    location.type === "square"
+      ? 18
+      : location.type === "workyard"
+        ? 16
+        : location.type === "pier"
+          ? 14
+          : 11.5;
+  const progress = positiveModulo(
+    animationBeat / cycleSeconds + phaseOffset + game.clock.totalMinutes * 0.021,
+    1,
+  );
+  const point = sampleLoopPath(patrolPath, progress);
+  const lookAhead = sampleLoopPath(patrolPath, positiveModulo(progress + 0.018, 1));
+
+  return {
+    npc,
+    known: npc.known,
+    x: point.x * CELL,
+    y: point.y * CELL,
+    facing: lookAhead.x >= point.x ? 1 : -1,
+    step: Math.sin(progress * Math.PI * 2 * Math.max(3, patrolPath.length - 1)),
+  };
+}
+
+function nextScheduledLocation(
+  npc: NpcState,
+  currentHour: number,
+  locationById: Record<string, LocationState>,
+) {
+  if (npc.schedule.length <= 1) {
+    return undefined;
+  }
+
+  const stopIndex = npc.schedule.findIndex(
+    (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+  );
+  const resolvedIndex = stopIndex >= 0 ? stopIndex : npc.schedule.length - 1;
+  const nextStop = npc.schedule[(resolvedIndex + 1) % npc.schedule.length];
+
+  return nextStop ? locationById[nextStop.locationId] : undefined;
+}
+
+function buildNpcPatrolPath({
+  door,
+  location,
+  nextLocation,
+  props,
+  findRoute,
+}: {
+  door?: MapDoor;
+  location: LocationState;
+  nextLocation?: LocationState;
+  props: MapProp[];
+  findRoute: (start: Point, end: Point) => Point[];
+}) {
+  const entryPoint = door
+    ? { x: door.x + door.width / 2, y: door.y + door.height / 2 }
+    : { x: location.entryX + 0.5, y: location.entryY + 0.5 };
+  const centerPoint = {
+    x: location.x + location.width / 2,
+    y: location.y + location.height / 2,
+  };
+  const pump = props.find((prop) => prop.kind === "pump");
+
+  let basePath: Point[];
+
+  switch (location.type) {
+    case "square":
+      basePath = [
+        entryPoint,
+        { x: location.x + 1.4, y: location.y + 1.1 },
+        { x: location.x + location.width - 1.2, y: location.y + 1.15 },
+        { x: location.x + location.width - 1.05, y: location.y + location.height - 1.1 },
+        { x: location.x + 1.2, y: location.y + location.height - 1.0 },
+      ];
+      break;
+    case "workyard":
+      basePath = [
+        entryPoint,
+        { x: location.x + 1.2, y: location.y + 1.15 },
+        { x: location.x + location.width - 1.15, y: location.y + 1.15 },
+        { x: location.x + location.width - 1.15, y: location.y + location.height - 1.0 },
+        centerPoint,
+        { x: location.x + 1.25, y: location.y + location.height - 1.05 },
+      ];
+      break;
+    case "courtyard":
+      basePath = [
+        entryPoint,
+        { x: location.x + 1.2, y: location.y + 1.2 },
+        pump
+          ? { x: pump.x, y: pump.y }
+          : { x: location.x + location.width / 2, y: location.y + location.height / 2 },
+        { x: location.x + location.width - 1.1, y: location.y + 1.3 },
+        { x: location.x + location.width - 1.4, y: location.y + location.height - 1.0 },
+        { x: location.x + 1.35, y: location.y + location.height - 1.05 },
+      ];
+      break;
+    case "pier":
+      basePath = [
+        entryPoint,
+        { x: location.x + 1.45, y: location.y + 1.6 },
+        { x: location.x + location.width - 1.15, y: location.y + 1.4 },
+        { x: location.x + location.width - 1.7, y: location.y + 0.95 },
+        { x: location.x + 1.7, y: location.y + 0.9 },
+      ];
+      break;
+    default:
+      basePath = [
+        entryPoint,
+        { x: entryPoint.x - 0.85, y: entryPoint.y + 0.08 },
+        { x: entryPoint.x + 0.9, y: entryPoint.y - 0.04 },
+        { x: entryPoint.x + 0.15, y: entryPoint.y - 0.82 },
+      ];
+      break;
+  }
+
+  if (nextLocation && nextLocation.id !== location.id) {
+    const routeOut = findRoute(
+      { x: location.entryX, y: location.entryY },
+      { x: nextLocation.entryX, y: nextLocation.entryY },
+    )
+      .slice(1, location.type === "square" ? 7 : 6)
+      .map((point) => ({ x: point.x + 0.5, y: point.y + 0.5 }));
+
+    if (routeOut.length > 1) {
+      return [...basePath, ...routeOut, ...[...routeOut].reverse().slice(1)];
+    }
+  }
+
+  return basePath;
+}
+
+function createRouteFinder(tiles: MapTile[]) {
+  const walkable = new Set(
+    tiles.filter((tile) => tile.walkable).map((tile) => `${tile.x},${tile.y}`),
+  );
+  const cache = new Map<string, Point[]>();
+
+  return (start: Point, end: Point) => {
+    const startTile = `${Math.round(start.x)},${Math.round(start.y)}`;
+    const endTile = `${Math.round(end.x)},${Math.round(end.y)}`;
+    const cacheKey = `${startTile}->${endTile}`;
+
+    if (cache.has(cacheKey)) {
+      return cache.get(cacheKey)!;
+    }
+
+    const queue: Point[] = [{ x: Math.round(start.x), y: Math.round(start.y) }];
+    const visited = new Set([startTile]);
+    const parentByKey = new Map<string, string>();
+    let foundKey = startTile;
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const currentKey = `${current.x},${current.y}`;
+
+      if (currentKey === endTile) {
+        foundKey = currentKey;
+        break;
+      }
+
+      for (const [dx, dy] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const nextX = current.x + dx;
+        const nextY = current.y + dy;
+        const nextKey = `${nextX},${nextY}`;
+
+        if (!walkable.has(nextKey) || visited.has(nextKey)) {
+          continue;
+        }
+
+        visited.add(nextKey);
+        parentByKey.set(nextKey, currentKey);
+        queue.push({ x: nextX, y: nextY });
+      }
+    }
+
+    if (foundKey !== endTile) {
+      const fallback = [
+        { x: Math.round(start.x), y: Math.round(start.y) },
+        { x: Math.round(end.x), y: Math.round(end.y) },
+      ];
+      cache.set(cacheKey, fallback);
+      return fallback;
+    }
+
+    const path: Point[] = [];
+    let currentKey: string | undefined = foundKey;
+
+    while (currentKey) {
+      const [x, y] = currentKey.split(",").map(Number);
+      path.unshift({ x, y });
+      currentKey = parentByKey.get(currentKey);
+    }
+
+    cache.set(cacheKey, path);
+    return path;
+  };
+}
+
+function sampleLoopPath(path: Point[], progress: number) {
+  if (path.length === 0) {
+    return { x: 0, y: 0 };
+  }
+
+  if (path.length === 1) {
+    return path[0];
+  }
+
+  const segments = path.map((point, index) => ({
+    from: point,
+    to: path[(index + 1) % path.length],
+  }));
+  const totalLength = segments.reduce(
+    (sum, segment) => sum + distanceBetween(segment.from, segment.to),
+    0,
+  );
+  const target = totalLength * progress;
+  let covered = 0;
+
+  for (const segment of segments) {
+    const segmentLength = distanceBetween(segment.from, segment.to);
+
+    if (covered + segmentLength >= target) {
+      const localProgress = segmentLength === 0 ? 0 : (target - covered) / segmentLength;
+      return interpolatePoint(segment.from, segment.to, localProgress);
+    }
+
+    covered += segmentLength;
+  }
+
+  return path[path.length - 1];
+}
+
+function interpolatePoint(from: Point, to: Point, progress: number) {
+  return {
+    x: from.x + (to.x - from.x) * progress,
+    y: from.y + (to.y - from.y) * progress,
+  };
+}
+
+function distanceBetween(from: Point, to: Point) {
+  return Math.hypot(to.x - from.x, to.y - from.y);
+}
+
+function positiveModulo(value: number, base: number) {
+  return ((value % base) + base) % base;
 }
 
 function isOpenSurface(kind?: TileKind) {

@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { ActionOption, FeedEntry } from "@/lib/street/types";
 
 import {
+  actionKindLabel,
   actionTone,
   logTone,
   noteTone,
@@ -67,7 +68,7 @@ export function StatPill({ label, value }: { label: string; value: string }) {
       <div className="text-[0.72rem] uppercase tracking-[0.2em] text-[color:var(--text-dim)]">
         {label}
       </div>
-      <div className="mt-3 text-[1.16rem] font-medium text-[color:var(--text-main)]">
+      <div className="mt-3 text-[1.06rem] leading-5 font-medium text-[color:var(--text-main)] sm:text-[1.12rem]">
         {value}
       </div>
     </div>
@@ -107,7 +108,7 @@ export function ActionCard({
           ) : null}
         </div>
         <div className="rounded-full border border-[color:var(--border-subtle)] px-3 py-1 text-[0.72rem] uppercase tracking-[0.16em] text-[color:var(--text-dim)]">
-          {action.kind.replace("_", " ")}
+          {actionKindLabel(action.kind)}
         </div>
       </div>
     </button>
@@ -119,11 +120,13 @@ export function LeadCard({
   subtitle,
   body,
   status,
+  statusLabel,
 }: {
   title: string;
   subtitle: string;
   body: string;
   status: string;
+  statusLabel?: string;
 }) {
   return (
     <div className="rounded-[24px] border border-[rgba(117,128,137,0.2)] bg-[rgba(18,24,29,0.84)] px-4 py-4 sm:px-5">
@@ -141,7 +144,7 @@ export function LeadCard({
             status,
           )}`}
         >
-          {status.replace("_", " ")}
+          {statusLabel ?? status.replace("_", " ")}
         </div>
       </div>
       <div className="mt-3 text-[0.92rem] leading-6 text-[color:var(--text-muted)]">

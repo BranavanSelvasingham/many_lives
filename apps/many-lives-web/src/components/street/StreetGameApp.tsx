@@ -20,7 +20,16 @@ import {
   StatPill,
   SubSection,
 } from "@/components/street/StreetUi";
-import { formatClock, humanizeKey } from "@/components/street/streetFormatting";
+import {
+  districtSenseLabel,
+  formatClock,
+  humanizeKey,
+  jobStatusLabel,
+  problemStatusLabel,
+  reputationLabel,
+  standingReadLabel,
+  workReadLabel,
+} from "@/components/street/streetFormatting";
 import {
   actInStreetGame,
   createStreetGame,
@@ -201,7 +210,6 @@ export function StreetGameApp() {
     (problem) => problem.status === "solved",
   ).length;
   const completedJobCount = game.jobs.filter((job) => job.completed).length;
-  const totalLocationCount = game.locations.length;
 
   return (
     <main className="min-h-screen px-4 py-5 sm:px-6 sm:py-6 xl:px-8">
@@ -251,13 +259,16 @@ export function StreetGameApp() {
 
             <div className="grid gap-3 sm:grid-cols-3">
               <StatPill
-                label="Places Known"
-                value={`${knownLocationCount}/${totalLocationCount}`}
+                label="District Sense"
+                value={districtSenseLabel(knownLocationCount)}
               />
-              <StatPill label="Jobs Done" value={String(completedJobCount)} />
               <StatPill
-                label="Problems Solved"
-                value={String(solvedProblemCount)}
+                label="Work Read"
+                value={workReadLabel(completedJobCount, game.player.activeJobId)}
+              />
+              <StatPill
+                label="On The Block"
+                value={standingReadLabel(solvedProblemCount, completedJobCount)}
               />
             </div>
           </div>
@@ -322,7 +333,7 @@ export function StreetGameApp() {
                     <LogRow
                       key={memory.id}
                       body={memory.text}
-                      meta={`${memory.kind} • ${formatClock(memory.time)}`}
+                      meta={formatClock(memory.time)}
                       tone={memory.kind}
                     />
                   ))}
@@ -350,7 +361,7 @@ export function StreetGameApp() {
 
           <aside className="space-y-5 xl:sticky xl:top-5">
             <Panel
-              title="Current Scene"
+              title="Where You Are"
               subtitle={game.currentScene.title}
               contentClassName="space-y-5"
             >
@@ -367,7 +378,7 @@ export function StreetGameApp() {
                       <InfoChip
                         key={person.id}
                         title={person.name}
-                        detail={`${person.role}${person.known ? "" : " • new"}`}
+                        detail={`${person.role}${person.known ? "" : " • not yet introduced"}`}
                       />
                     ))
                   )}
@@ -409,7 +420,10 @@ export function StreetGameApp() {
             </Panel>
 
             <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-1">
-              <Panel title="Goals" subtitle="Small aims that make the city legible.">
+              <Panel
+                title="What Matters Today"
+                subtitle="The day gets easier when one of these starts moving in your favor."
+              >
                 <div className="space-y-3">
                   {game.goals.map((goal) => (
                     <div
@@ -423,8 +437,8 @@ export function StreetGameApp() {
               </Panel>
 
               <Panel
-                title="Pack & Standing"
-                subtitle="What you can carry and what the district is beginning to think."
+                title="Pack & Name"
+                subtitle="What you can carry and the kind of impression you are leaving behind."
                 contentClassName="space-y-5"
               >
                 <SubSection title="Inventory">
@@ -441,19 +455,19 @@ export function StreetGameApp() {
                   )}
                 </SubSection>
 
-                <SubSection title="Reputation">
+                <SubSection title="How You're Known">
                   {Object.entries(game.player.reputation).map(([key, value]) => (
                     <InfoChip
                       key={key}
                       title={humanizeKey(key)}
-                      detail={`Standing ${value}`}
+                      detail={reputationLabel(value)}
                     />
                   ))}
                 </SubSection>
               </Panel>
             </div>
 
-            <Panel title="Known Work" subtitle="Work gets clearer as you meet people.">
+            <Panel title="Work Around You" subtitle="The jobs people are willing to trust you with.">
               <div className="max-h-[300px] space-y-3 overflow-y-auto pr-1">
                 {visibleJobs.length === 0 ? (
                   <MutedLine text="No one has trusted you with work yet." />
@@ -472,6 +486,15 @@ export function StreetGameApp() {
                               ? "accepted"
                               : "open"
                       }
+                      statusLabel={jobStatusLabel(
+                        job.completed
+                          ? "done"
+                          : job.missed
+                            ? "missed"
+                            : job.accepted
+                              ? "accepted"
+                              : "open",
+                      )}
                       body={job.summary}
                     />
                   ))
@@ -493,6 +516,7 @@ export function StreetGameApp() {
                       title={problem.title}
                       subtitle={`${locationById[problem.locationId]?.name ?? "Unknown place"} • reward $${problem.rewardMoney}`}
                       status={problem.status}
+                      statusLabel={problemStatusLabel(problem.status)}
                       body={
                         problem.status === "solved"
                           ? problem.benefitIfSolved
