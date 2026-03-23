@@ -24,6 +24,9 @@ export interface MapLabel {
   x: number;
   y: number;
   tone: "street" | "district" | "landmark";
+  context?: string;
+  backstory?: string;
+  locationId?: string;
 }
 
 export type MapFootprintKind =
@@ -105,9 +108,16 @@ export interface LocationState {
   labelX: number;
   labelY: number;
   description: string;
+  context: string;
+  backstory: string;
   neighborhood: string;
   openHour: number;
   closeHour: number;
+}
+
+export interface SettingNarrativeProfile {
+  context: string;
+  backstory: string;
 }
 
 export interface InventoryItem {
@@ -123,9 +133,85 @@ export interface MemoryEntry {
   text: string;
 }
 
+export interface ConversationEntry {
+  id: string;
+  time: string;
+  threadId: string;
+  npcId: string;
+  speaker: "player" | "npc";
+  speakerName: string;
+  text: string;
+  locationId?: string;
+}
+
+export interface ConversationThreadState {
+  id: string;
+  npcId: string;
+  updatedAt: string;
+  locationId?: string;
+  decision?: string;
+  objectiveKey?: string;
+  objectiveText?: string;
+  summary?: string;
+  lines: ConversationEntry[];
+}
+
+export interface ActiveConversationState {
+  id: string;
+  threadId: string;
+  npcId: string;
+  locationId?: string;
+  updatedAt: string;
+  decision?: string;
+  objectiveKey?: string;
+  objectiveText?: string;
+  lines: ConversationEntry[];
+}
+
+export type ObjectiveFocus =
+  | "settle"
+  | "work"
+  | "explore"
+  | "help"
+  | "rest"
+  | "tool"
+  | "people"
+  | "custom";
+
+export type ObjectiveSource = "seed" | "manual" | "conversation" | "dynamic";
+
+export interface ObjectiveTrailItem {
+  id: string;
+  title: string;
+  detail?: string;
+  progress?: string;
+  timestamp?: string;
+  done?: boolean;
+}
+
+export interface ObjectiveProgressState {
+  completed: number;
+  total: number;
+  label: string;
+}
+
+export interface PlayerObjective {
+  id: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+  focus: ObjectiveFocus;
+  source: ObjectiveSource;
+  routeKey: string;
+  trail: ObjectiveTrailItem[];
+  completedTrail: ObjectiveTrailItem[];
+  progress: ObjectiveProgressState;
+}
+
 export interface PlayerState {
   id: string;
   name: string;
+  backstory: string;
   x: number;
   y: number;
   currentLocationId?: string;
@@ -136,8 +222,17 @@ export interface PlayerState {
   knownLocationIds: string[];
   knownNpcIds: string[];
   activeJobId?: string;
+  objective?: PlayerObjective;
+  currentThought?: string;
   reputation: Record<string, number>;
   memories: MemoryEntry[];
+}
+
+export interface NpcNarrativeProfile {
+  backstory: string;
+  context: string;
+  objective: string;
+  voice: string;
 }
 
 export interface NpcState {
@@ -145,9 +240,17 @@ export interface NpcState {
   name: string;
   role: string;
   summary: string;
+  narrative: NpcNarrativeProfile;
   currentLocationId: string;
   trust: number;
+  openness: number;
   known: boolean;
+  mood: string;
+  currentObjective: string;
+  currentConcern: string;
+  currentThought?: string;
+  lastSpokenLine?: string;
+  lastInteractionAt?: string;
   memory: string[];
   schedule: Array<{
     locationId: string;
@@ -170,6 +273,7 @@ export interface JobState {
   accepted: boolean;
   completed: boolean;
   missed: boolean;
+  deferredUntilMinutes?: number;
   unlockedBy?: string;
 }
 
@@ -198,6 +302,8 @@ export interface SceneSummary {
   locationId?: string;
   title: string;
   description: string;
+  context?: string;
+  backstory?: string;
   people: Array<{
     id: string;
     name: string;
@@ -224,6 +330,7 @@ export interface ActionOption {
     | "rest"
     | "inspect";
   emphasis: "low" | "medium" | "high";
+  matchesObjective?: boolean;
   disabled?: boolean;
   disabledReason?: string;
 }
@@ -240,7 +347,9 @@ export interface StreetGameState {
   id: string;
   scenarioName: string;
   cityName: string;
+  cityNarrative: SettingNarrativeProfile;
   districtName: string;
+  districtNarrative: SettingNarrativeProfile;
   currentTime: string;
   clock: ClockState;
   map: CityMap;
@@ -250,6 +359,9 @@ export interface StreetGameState {
   jobs: JobState[];
   problems: ProblemState[];
   feed: FeedEntry[];
+  conversations: ConversationEntry[];
+  conversationThreads: Record<string, ConversationThreadState>;
+  activeConversation?: ActiveConversationState;
   currentScene: SceneSummary;
   availableActions: ActionOption[];
   goals: string[];

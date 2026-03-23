@@ -5,9 +5,20 @@ import type {
   GeneratedInboxMessage,
 } from "./provider.js";
 import { buildClassifyEscalationPrompt } from "./prompts/classifyEscalation.js";
+import { buildGenerateStreetThoughtsPrompt } from "./prompts/generateStreetThoughts.js";
+import { buildGenerateStreetReplyPrompt } from "./prompts/generateStreetReply.js";
 import { buildGenerateInboxMessagePrompt } from "./prompts/generateInboxMessage.js";
 import { buildProposeNextActionPrompt } from "./prompts/proposeNextAction.js";
 import { buildSummarizeStatePrompt } from "./prompts/summarizeState.js";
+import {
+  buildDeterministicStreetReply,
+  type StreetDialogueRequest,
+  type StreetDialogueResult,
+} from "./streetDialogue.js";
+import {
+  buildDeterministicStreetThoughts,
+  type StreetThoughtsResult,
+} from "./streetThoughts.js";
 
 export class MockAIProvider implements AIProvider {
   readonly name = "mock";
@@ -150,6 +161,20 @@ export class MockAIProvider implements AIProvider {
       default:
         return genericActions;
     }
+  }
+
+  async generateStreetThoughts(
+    game: import("../street-sim/types.js").StreetGameState,
+  ): Promise<StreetThoughtsResult> {
+    buildGenerateStreetThoughtsPrompt(game);
+    return buildDeterministicStreetThoughts(game);
+  }
+
+  async generateStreetReply(
+    input: StreetDialogueRequest,
+  ): Promise<StreetDialogueResult> {
+    buildGenerateStreetReplyPrompt(input);
+    return buildDeterministicStreetReply(input);
   }
 }
 

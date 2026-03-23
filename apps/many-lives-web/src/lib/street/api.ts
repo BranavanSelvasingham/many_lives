@@ -45,11 +45,65 @@ export async function actInStreetGame(
 export async function waitInStreetGame(
   gameId: string,
   minutes: number,
+  options: {
+    silent?: boolean;
+  } = {},
 ): Promise<StreetGameState> {
-  const response = await requestJson<GameStateResponse>(`/game/${gameId}/tick`, {
+  const response = await requestJson<GameStateResponse>(`/game/${gameId}/command`, {
     method: "POST",
     body: JSON.stringify({
+      type: "wait",
       minutes,
+      silent: options.silent,
+    }),
+  });
+
+  return response.game;
+}
+
+export async function setStreetObjective(
+  gameId: string,
+  text: string,
+): Promise<StreetGameState> {
+  const response = await requestJson<GameStateResponse>(`/game/${gameId}/command`, {
+    method: "POST",
+    body: JSON.stringify({
+      type: "set_objective",
+      text,
+    }),
+  });
+
+  return response.game;
+}
+
+export async function speakToStreetNpc(
+  gameId: string,
+  npcId: string,
+  text: string,
+): Promise<StreetGameState> {
+  const response = await requestJson<GameStateResponse>(`/game/${gameId}/command`, {
+    method: "POST",
+    body: JSON.stringify({
+      type: "speak",
+      npcId,
+      text,
+    }),
+  });
+
+  return response.game;
+}
+
+export async function advanceStreetObjective(
+  gameId: string,
+  options: {
+    allowTimeSkip?: boolean;
+  } = {},
+): Promise<StreetGameState> {
+  const response = await requestJson<GameStateResponse>(`/game/${gameId}/command`, {
+    method: "POST",
+    body: JSON.stringify({
+      type: "advance_objective",
+      allowTimeSkip: options.allowTimeSkip,
     }),
   });
 

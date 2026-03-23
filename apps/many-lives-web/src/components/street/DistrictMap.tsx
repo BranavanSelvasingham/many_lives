@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { toFirstPersonText } from "@/components/street/streetFormatting";
 import type {
   LocationState,
   MapDoor,
@@ -16,7 +17,9 @@ import type {
 
 const CELL = 38;
 const MAP_PADDING = 24;
-const ANIMATION_INTERVAL_MS = 110;
+const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 1200;
+const PLAYER_MAX_MOVE_DURATION_MS = 12000;
+const DARKEN_OUTSIDE_PLAYER_FIELD_OF_VIEW = false;
 
 type Point = {
   x: number;
@@ -30,6 +33,14 @@ type AnimatedNpcState = {
   y: number;
   facing: 1 | -1;
   step: number;
+  isYielding?: boolean;
+};
+
+type PlayerMotionState = {
+  path: Point[];
+  startedAt: number;
+  durationMs: number;
+  to: Point;
 };
 
 type NpcAppearance = {
@@ -58,19 +69,26 @@ export function DistrictMap({
   game,
   onTileClick,
   busy,
+  playerPosition,
+  activeConversationNpcId,
+  activeConversationEntries = [],
 }: {
   game: StreetGameState;
   onTileClick: (x: number, y: number) => void;
   busy: boolean;
+  playerPosition?: Point;
+  activeConversationNpcId?: string;
+  activeConversationEntries?: StreetGameState["conversations"];
 }) {
   const [animationNow, setAnimationNow] = useState(() => Date.now());
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
+    let frame = window.requestAnimationFrame(function tick() {
       setAnimationNow(Date.now());
-    }, ANIMATION_INTERVAL_MS);
+      frame = window.requestAnimationFrame(tick);
+    });
 
-    return () => window.clearInterval(interval);
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   const animationBeat = animationNow / 1000;
@@ -81,6 +99,7 @@ export function DistrictMap({
   );
   const knownLocationIds = new Set(game.player.knownLocationIds);
   const currentLocationId = game.player.currentLocationId;
+  const currentLocation = currentLocationId ? locationById[currentLocationId] : undefined;
   const propsByLocation = useMemo(
     () => groupPropsByLocation(game.map.props),
     [game.map.props],
@@ -92,15 +111,83 @@ export function DistrictMap({
     [game.map.doors],
   );
   const findRoute = useMemo(() => createRouteFinder(game.map.tiles), [game.map.tiles]);
+  const playerMoveMsPerTile = useMemo(() => {
+    if (!currentLocation) {
+      return DEFAULT_PLAYER_MOVE_MS_PER_TILE;
+    }
+
+    const referencePath = buildNpcPatrolPath({
+      door: primaryDoorByLocation.get(currentLocation.id),
+      location: currentLocation,
+      props: propsByLocation.get(currentLocation.id) ?? [],
+      findRoute,
+    });
+    const patrolDistance = loopPathDistance(referencePath);
+
+    if (patrolDistance <= 0) {
+      return DEFAULT_PLAYER_MOVE_MS_PER_TILE;
+    }
+
+    return (patrolCycleSeconds(currentLocation.type) * 1000) / patrolDistance;
+  }, [currentLocation, findRoute, primaryDoorByLocation, propsByLocation]);
+  const [playerMotion, setPlayerMotion] = useState<PlayerMotionState>(() => {
+    const point = playerPosition ?? { x: game.player.x, y: game.player.y };
+    return {
+      path: [point],
+      startedAt: Date.now(),
+      durationMs: playerMoveMsPerTile,
+      to: point,
+    };
+  });
+  useEffect(() => {
+    const nextPoint = playerPosition ?? { x: game.player.x, y: game.player.y };
+
+    setPlayerMotion((current) => {
+      if (current.to.x === nextPoint.x && current.to.y === nextPoint.y) {
+        return current;
+      }
+
+      const path = findRoute(current.to, nextPoint);
+      const durationMs = clamp(
+        Math.max(path.length - 1, 1) * playerMoveMsPerTile,
+        playerMoveMsPerTile,
+        PLAYER_MAX_MOVE_DURATION_MS,
+      );
+
+      return {
+        path,
+        startedAt: Date.now(),
+        durationMs,
+        to: nextPoint,
+      };
+    });
+  }, [findRoute, game.player.x, game.player.y, playerMoveMsPerTile, playerPosition]);
+  const playerMotionProgress = useMemo(
+    () =>
+      clamp(
+        (animationNow - playerMotion.startedAt) / playerMotion.durationMs,
+        0,
+        1,
+      ),
+    [animationNow, playerMotion.durationMs, playerMotion.startedAt],
+  );
+  const playerTile = useMemo(() => {
+    const progress = easeInOutCubic(playerMotionProgress);
+
+    return samplePathPoint(playerMotion.path, progress);
+  }, [playerMotion.path, playerMotionProgress]);
   const mapWidth = game.map.width * CELL;
   const mapHeight = game.map.height * CELL;
-  const playerPixel = {
-    x: (game.player.x + 0.5) * CELL,
-    y: (game.player.y + 0.5) * CELL,
-  };
+  const playerPixel = useMemo(
+    () => ({
+      x: (playerTile.x + 0.5) * CELL,
+      y: (playerTile.y + 0.5) * CELL,
+    }),
+    [playerTile.x, playerTile.y],
+  );
   const awarenessMaskId = `${game.id}-awareness-mask`;
   const playerFieldGradientId = `${game.id}-player-fov`;
-  const animatedNpcs = useMemo(
+  const rawAnimatedNpcs = useMemo(
     () =>
       game.npcs.map((npc, index) =>
         buildAnimatedNpcState({
@@ -123,26 +210,75 @@ export function DistrictMap({
       propsByLocation,
     ],
   );
+  const animatedNpcs = useMemo(
+    () => resolveCrowdPositions(rawAnimatedNpcs, playerPixel),
+    [playerPixel, rawAnimatedNpcs],
+  );
+  const activeConversationNpc = useMemo(
+    () =>
+      activeConversationNpcId
+        ? game.npcs.find((npc) => npc.id === activeConversationNpcId)
+        : undefined,
+    [activeConversationNpcId, game.npcs],
+  );
+  const activeConversationNpcMarker = useMemo(
+    () =>
+      activeConversationNpcId
+        ? animatedNpcs.find((entry) => entry.npc.id === activeConversationNpcId)
+        : undefined,
+    [activeConversationNpcId, animatedNpcs],
+  );
+  const activeConversation = useMemo(
+    () =>
+      activeConversationNpc
+        ? buildConversationOverlay({
+            npc: activeConversationNpc,
+            recentConversation: activeConversationEntries,
+          })
+        : undefined,
+    [activeConversationEntries, activeConversationNpc],
+  );
+  const frozenConversationNpcMarker = useMemo(
+    () =>
+      activeConversationNpcMarker
+        ? freezeConversationMarker(
+            activeConversationNpcMarker,
+            playerPixel,
+            mapWidth,
+            mapHeight,
+          )
+        : undefined,
+    [activeConversationNpcMarker, mapHeight, mapWidth, playerPixel],
+  );
+  const showConversationOverlay = Boolean(
+    activeConversation &&
+      frozenConversationNpcMarker &&
+      playerMotionProgress >= 0.995,
+  );
   const playerThought = buildPlayerThought(game);
-  const playerBubbleY = playerPixel.y + Math.sin(animationBeat * 1.2) * 0.7;
+  const playerBubbleY = showConversationOverlay
+    ? playerPixel.y
+    : playerPixel.y + Math.sin(animationBeat * 1.2) * 0.7;
 
   return (
     <div className="space-y-5">
       <div className="overflow-hidden rounded-[30px] border border-[rgba(134,145,154,0.24)] bg-[rgba(19,26,31,0.9)] shadow-[0_34px_90px_rgba(0,0,0,0.24)]">
         <div className="overflow-x-auto p-4 sm:p-5">
-          <div className="mx-auto min-w-[920px]">
+          <div className="mx-auto min-w-[920px] lg:min-w-0 lg:h-[80vh] lg:max-h-[56rem]">
             <svg
-              className="h-auto w-full"
+              className="h-auto w-full lg:h-full lg:w-full"
               viewBox={`0 0 ${mapWidth + MAP_PADDING * 2} ${mapHeight + MAP_PADDING * 2}`}
             >
               <SceneDefs />
-              <AwarenessDefs
-                mapHeight={mapHeight}
-                mapWidth={mapWidth}
-                maskId={awarenessMaskId}
-                playerGradientId={playerFieldGradientId}
-                playerPixel={playerPixel}
-              />
+              {DARKEN_OUTSIDE_PLAYER_FIELD_OF_VIEW ? (
+                <AwarenessDefs
+                  mapHeight={mapHeight}
+                  mapWidth={mapWidth}
+                  maskId={awarenessMaskId}
+                  playerGradientId={playerFieldGradientId}
+                  playerPixel={playerPixel}
+                />
+              ) : null}
 
               <rect
                 fill="url(#scene-backdrop)"
@@ -274,18 +410,35 @@ export function DistrictMap({
                 <g>
                   {animatedNpcs.map((entry) => (
                     <NpcMarker
-                      facing={entry.facing}
+                      facing={
+                        showConversationOverlay && entry.npc.id === frozenConversationNpcMarker?.npc.id
+                          ? frozenConversationNpcMarker.facing
+                          : entry.facing
+                      }
                       key={entry.npc.id}
                       known={entry.known}
                       npcId={entry.npc.id}
-                      step={entry.step}
-                      x={entry.x}
-                      y={entry.y}
+                      step={
+                        showConversationOverlay && entry.npc.id === frozenConversationNpcMarker?.npc.id
+                          ? frozenConversationNpcMarker.step
+                          : entry.step
+                      }
+                      x={
+                        showConversationOverlay && entry.npc.id === frozenConversationNpcMarker?.npc.id
+                          ? frozenConversationNpcMarker.x
+                          : entry.x
+                      }
+                      y={
+                        showConversationOverlay && entry.npc.id === frozenConversationNpcMarker?.npc.id
+                          ? frozenConversationNpcMarker.y
+                          : entry.y
+                      }
                     />
                   ))}
                 </g>
 
                 <AwarenessOverlay
+                  dimOutsideFieldOfView={DARKEN_OUTSIDE_PLAYER_FIELD_OF_VIEW}
                   playerPixel={playerPixel}
                   height={mapHeight}
                   maskId={awarenessMaskId}
@@ -294,6 +447,10 @@ export function DistrictMap({
 
                 <g>
                   {animatedNpcs.map((entry) => {
+                    if (showConversationOverlay && entry.npc.id === activeConversation?.npcId) {
+                      return null;
+                    }
+
                     const offset = thoughtBubbleOffset(entry.npc.id);
 
                     return (
@@ -302,6 +459,7 @@ export function DistrictMap({
                         dy={offset.y}
                         key={`thought-${entry.npc.id}`}
                         mapWidth={mapWidth}
+                        mapHeight={mapHeight}
                         text={buildNpcThought(entry.npc, game)}
                         tone="npc"
                         x={entry.x}
@@ -311,16 +469,31 @@ export function DistrictMap({
                   })}
                 </g>
 
-                <PlayerMarker animationBeat={animationBeat} x={game.player.x} y={game.player.y} />
-                <ThoughtBubble
-                  dx={0}
-                  dy={-42}
-                  mapWidth={mapWidth}
-                  text={playerThought}
-                  tone="player"
-                  x={playerPixel.x}
-                  y={playerBubbleY}
+                <PlayerMarker
+                  animationBeat={animationBeat}
+                  freeze={showConversationOverlay}
+                  x={playerTile.x}
+                  y={playerTile.y}
                 />
+                {showConversationOverlay && activeConversation && frozenConversationNpcMarker ? (
+                  <ConversationStatusPill
+                    label={`${game.player.name} and ${frozenConversationNpcMarker.npc.name} talking`}
+                    mapWidth={mapWidth}
+                    x={(playerPixel.x + frozenConversationNpcMarker.x) / 2}
+                    y={Math.min(playerBubbleY, frozenConversationNpcMarker.y) - 20}
+                  />
+                ) : (
+                  <ThoughtBubble
+                    dx={0}
+                    dy={-42}
+                    mapWidth={mapWidth}
+                    mapHeight={mapHeight}
+                    text={playerThought}
+                    tone="player"
+                    x={playerPixel.x}
+                    y={playerBubbleY}
+                  />
+                )}
 
                 <g opacity="0">
                   {game.map.tiles.map((tile) => {
@@ -548,11 +721,13 @@ function AwarenessDefs({
 }
 
 function AwarenessOverlay({
+  dimOutsideFieldOfView,
   maskId,
   width,
   height,
   playerPixel,
 }: {
+  dimOutsideFieldOfView: boolean;
   maskId: string;
   width: number;
   height: number;
@@ -562,19 +737,30 @@ function AwarenessOverlay({
 
   return (
     <g pointerEvents="none">
-      <rect
-        fill="rgba(9,13,16,0.32)"
-        height={height}
-        mask={`url(#${maskId})`}
-        width={width}
-        x="0"
-        y="0"
-      />
+      {dimOutsideFieldOfView ? (
+        <rect
+          fill="rgba(9,13,16,0.32)"
+          height={height}
+          mask={`url(#${maskId})`}
+          width={width}
+          x="0"
+          y="0"
+        />
+      ) : null}
       <circle
         cx={playerPixel.x}
         cy={playerPixel.y}
         fill="rgba(236,222,193,0.06)"
         r={playerRadius - CELL * 1.2}
+      />
+      <circle
+        cx={playerPixel.x}
+        cy={playerPixel.y}
+        fill="none"
+        r={playerRadius}
+        stroke="rgba(212,188,138,0.24)"
+        strokeDasharray="10 10"
+        strokeWidth="2"
       />
       <rect
         fill="rgba(0,0,0,0.04)"
@@ -647,7 +833,6 @@ function WaterMotionOverlay({
   const x = water.x * CELL;
   const y = water.y * CELL;
   const width = water.width * CELL;
-  const height = water.height * CELL;
   const phase = (sceneMinutes % 90) / 90;
   const shimmerOffset = phase * 22;
 
@@ -764,10 +949,19 @@ function FootprintShape({
   const isCurrent = currentLocationId === footprint.locationId;
   const stroke = isCurrent ? "rgba(183,146,89,0.74)" : footprintStroke(footprint);
   const strokeWidth = isCurrent ? 3 : 2;
+  const titleText = location
+    ? buildMapNarrativeTitle(
+        location.name,
+        location.description,
+        location.context,
+        location.backstory,
+      )
+    : undefined;
 
   if (footprint.kind === "building") {
     return (
       <g filter="url(#soft-shadow)">
+        {titleText ? <title>{titleText}</title> : null}
         <rect
           fill="rgba(0,0,0,0.22)"
           height={height}
@@ -804,6 +998,7 @@ function FootprintShape({
   if (footprint.kind === "market") {
     return (
       <g filter="url(#soft-shadow)">
+        {titleText ? <title>{titleText}</title> : null}
         <rect
           fill="rgba(0,0,0,0.18)"
           height={height}
@@ -836,6 +1031,7 @@ function FootprintShape({
   if (footprint.kind === "yard") {
     return (
       <g filter="url(#soft-shadow)">
+        {titleText ? <title>{titleText}</title> : null}
         <rect
           fill="rgba(0,0,0,0.16)"
           height={height}
@@ -867,6 +1063,7 @@ function FootprintShape({
   if (footprint.kind === "dock") {
     return (
       <g filter="url(#soft-shadow)">
+        {titleText ? <title>{titleText}</title> : null}
         <rect
           fill="rgba(0,0,0,0.18)"
           height={height}
@@ -901,16 +1098,19 @@ function FootprintShape({
   }
 
   return (
-    <rect
-      fill={footprintFill(footprint.kind)}
-      height={height}
-      rx="8"
-      stroke={stroke}
-      strokeWidth={strokeWidth}
-      width={width}
-      x={x}
-      y={y}
-    />
+    <g>
+      {titleText ? <title>{titleText}</title> : null}
+      <rect
+        fill={footprintFill(footprint.kind)}
+        height={height}
+        rx="8"
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        width={width}
+        x={x}
+        y={y}
+      />
+    </g>
   );
 }
 
@@ -1115,50 +1315,72 @@ function PropShape({
 function MapTextLabel({ label }: { label: MapLabel }) {
   const x = label.x * CELL;
   const y = label.y * CELL;
+  const titleText = buildMapNarrativeTitle(
+    label.text,
+    label.context,
+    label.backstory,
+  );
 
   if (label.tone === "district") {
     return (
-      <text
-        fill="rgba(237,228,212,0.34)"
-        fontSize="19"
-        letterSpacing="6.2"
-        textAnchor="middle"
-        x={x}
-        y={y}
-      >
-        {label.text.toUpperCase()}
-      </text>
+      <g>
+        {titleText ? <title>{titleText}</title> : null}
+        <text
+          fill="rgba(237,228,212,0.34)"
+          fontSize="19"
+          letterSpacing="6.2"
+          textAnchor="middle"
+          x={x}
+          y={y}
+        >
+          {label.text.toUpperCase()}
+        </text>
+      </g>
     );
   }
 
   if (label.tone === "landmark") {
     return (
+      <g>
+        {titleText ? <title>{titleText}</title> : null}
+        <text
+          fill="rgba(183,146,89,0.7)"
+          fontSize="12"
+          fontWeight="700"
+          letterSpacing="2"
+          textAnchor="middle"
+          x={x}
+          y={y}
+        >
+          {label.text.toUpperCase()}
+        </text>
+      </g>
+    );
+  }
+
+  return (
+    <g>
+      {titleText ? <title>{titleText}</title> : null}
       <text
-        fill="rgba(183,146,89,0.7)"
-        fontSize="12"
-        fontWeight="700"
-        letterSpacing="2"
+        fill="rgba(187,179,167,0.48)"
+        fontSize="11"
+        letterSpacing="2.1"
         textAnchor="middle"
         x={x}
         y={y}
       >
         {label.text.toUpperCase()}
       </text>
-    );
-  }
-
-  return (
-    <text
-      fill="rgba(187,179,167,0.48)"
-      fontSize="11"
-      letterSpacing="2.1"
-      textAnchor="middle"
-      x={x}
-      y={y}
-    >
-      {label.text.toUpperCase()}
-    </text>
+    </g>
   );
+}
+
+function buildMapNarrativeTitle(...lines: Array<string | undefined>) {
+  const content = lines
+    .map((line) => line?.trim())
+    .filter((line): line is string => Boolean(line));
+
+  return content.length > 0 ? content.join("\n") : undefined;
 }
 
 function LocationPlacard({
@@ -1349,13 +1571,16 @@ function PlayerMarker({
   x,
   y,
   animationBeat,
+  freeze = false,
 }: {
   x: number;
   y: number;
   animationBeat: number;
+  freeze?: boolean;
 }) {
   const pixelX = (x + 0.5) * CELL;
-  const pixelY = (y + 0.5) * CELL + Math.sin(animationBeat * 1.2) * 0.7;
+  const pixelY =
+    (y + 0.5) * CELL + (freeze ? 0 : Math.sin(animationBeat * 1.2) * 0.7);
 
   return (
     <g pointerEvents="none">
@@ -1458,41 +1683,154 @@ function PlayerMarker({
   );
 }
 
+function ConversationStatusPill({
+  x,
+  y,
+  mapWidth,
+  label,
+}: {
+  x: number;
+  y: number;
+  mapWidth: number;
+  label: string;
+}) {
+  const width = clamp(label.length * 6.4 + 28, 148, 280);
+  const pillX = clamp(x - width / 2, 12, mapWidth - width - 12);
+
+  return (
+    <g pointerEvents="none">
+      <rect
+        fill="rgba(16,22,27,0.9)"
+        height="28"
+        rx="14"
+        stroke="rgba(205,174,115,0.26)"
+        strokeWidth="1"
+        width={width}
+        x={pillX}
+        y={y - 24}
+      />
+      <circle cx={pillX + 14} cy={y - 10} fill="rgba(228,191,123,0.88)" r="2.3" />
+      <circle cx={pillX + 20} cy={y - 10} fill="rgba(228,191,123,0.66)" r="2" />
+      <circle cx={pillX + 26} cy={y - 10} fill="rgba(228,191,123,0.44)" r="1.8" />
+      <text
+        fill="rgba(235,228,214,0.94)"
+        fontSize="9.4"
+        fontWeight="600"
+        letterSpacing="0.6"
+        x={pillX + 36}
+        y={y - 7}
+      >
+        {label.toUpperCase()}
+      </text>
+    </g>
+  );
+}
+
 function ThoughtBubble({
   x,
   y,
   text,
   tone,
   mapWidth,
+  mapHeight,
   dx,
   dy,
+  variant = "thought",
+  speakerLabel,
 }: {
   x: number;
   y: number;
   text: string;
   tone: "player" | "npc";
   mapWidth: number;
+  mapHeight: number;
   dx: number;
   dy: number;
+  variant?: "thought" | "dialogue";
+  speakerLabel?: string;
 }) {
-  const lines = wrapThoughtLines(text, 18);
+  const isDialogue = variant === "dialogue";
+  const maxLines = isDialogue ? 9 : 5;
+  const maxChars = isDialogue ? 34 : 20;
+  const lines = wrapThoughtLines(text, maxChars, maxLines);
   const contentWidth =
-    Math.max(...lines.map((line) => line.length), 6) * (tone === "player" ? 6.2 : 5.9) + 16;
-  const bubbleWidth = clamp(contentWidth, 70, 152);
-  const bubbleHeight = 14 + lines.length * 12;
+    Math.max(...lines.map((line) => line.length), 6) *
+      (isDialogue ? (tone === "player" ? 6.5 : 6.2) : tone === "player" ? 6.2 : 5.9) +
+    (isDialogue ? 34 : 20);
+  const bubbleWidth = clamp(contentWidth, isDialogue ? 164 : 82, isDialogue ? 348 : 168);
+  const bubbleHeight =
+    (speakerLabel ? 28 : 16) +
+    lines.length * (isDialogue ? 15.5 : 12.5) +
+    (isDialogue ? 10 : 4);
   const bubbleX = clamp(x - bubbleWidth / 2 + dx, 8, mapWidth - bubbleWidth - 8);
-  const bubbleY = y + dy - bubbleHeight;
+  const anchorY = y + dy;
+  const aboveY = anchorY - bubbleHeight - 18;
+  const belowY = anchorY + 18;
+  const maxBubbleY = Math.max(8, mapHeight - bubbleHeight - 8);
+  const bubbleY =
+    aboveY >= 8
+      ? aboveY
+      : belowY + bubbleHeight <= mapHeight - 8
+        ? belowY
+        : clamp(aboveY, 8, maxBubbleY);
+  const bubbleBelowAnchor = bubbleY > anchorY;
   const tailX = clamp(x + dx * 0.24, bubbleX + 14, bubbleX + bubbleWidth - 14);
+  const speechTailTipX = clamp(x, bubbleX + 18, bubbleX + bubbleWidth - 18);
+  const speechTailTipY = bubbleBelowAnchor
+    ? bubbleY - 18
+    : bubbleY + bubbleHeight + 18;
   const fill =
-    tone === "player" ? "rgba(244,235,220,0.94)" : "rgba(241,236,228,0.9)";
+    tone === "player"
+      ? isDialogue
+        ? "rgba(246,237,223,0.97)"
+        : "rgba(244,235,220,0.94)"
+      : isDialogue
+        ? "rgba(238,241,244,0.95)"
+        : "rgba(241,236,228,0.9)";
   const stroke =
-    tone === "player" ? "rgba(183,146,89,0.54)" : "rgba(126,136,143,0.36)";
+    tone === "player"
+      ? isDialogue
+        ? "rgba(183,146,89,0.68)"
+        : "rgba(183,146,89,0.54)"
+      : isDialogue
+        ? "rgba(112,126,137,0.5)"
+        : "rgba(126,136,143,0.36)";
   const textFill = tone === "player" ? "rgba(69,50,34,0.94)" : "rgba(54,58,63,0.94)";
+  const textX = isDialogue ? bubbleX + 12 : bubbleX + bubbleWidth / 2;
+  const textY = bubbleY + (speakerLabel ? 27 : 16);
 
   return (
     <g pointerEvents="none">
-      <circle cx={tailX - 2} cy={bubbleY + bubbleHeight + 7} fill={fill} r="2.3" opacity="0.94" />
-      <circle cx={tailX + 1.4} cy={bubbleY + bubbleHeight + 11.2} fill={fill} r="1.5" opacity="0.9" />
+      {isDialogue ? (
+        <path
+          d={
+            bubbleBelowAnchor
+              ? `M ${tailX - 12} ${bubbleY + 1} Q ${tailX - 4} ${bubbleY - 3} ${speechTailTipX} ${speechTailTipY} Q ${tailX + 4} ${bubbleY - 5} ${tailX + 12} ${bubbleY + 1} Z`
+              : `M ${tailX - 12} ${bubbleY + bubbleHeight - 1} Q ${tailX - 4} ${bubbleY + bubbleHeight + 3} ${speechTailTipX} ${speechTailTipY} Q ${tailX + 4} ${bubbleY + bubbleHeight + 5} ${tailX + 12} ${bubbleY + bubbleHeight - 1} Z`
+          }
+          fill={fill}
+          stroke={stroke}
+          strokeLinejoin="round"
+          strokeWidth="1"
+        />
+      ) : (
+        <>
+          <circle
+            cx={tailX - 2}
+            cy={bubbleBelowAnchor ? bubbleY - 7 : bubbleY + bubbleHeight + 7}
+            fill={fill}
+            r="2.3"
+            opacity="0.94"
+          />
+          <circle
+            cx={tailX + 1.4}
+            cy={bubbleBelowAnchor ? bubbleY - 11.2 : bubbleY + bubbleHeight + 11.2}
+            fill={fill}
+            r="1.5"
+            opacity="0.9"
+          />
+        </>
+      )}
       <rect
         fill={fill}
         height={bubbleHeight}
@@ -1503,26 +1841,44 @@ function ThoughtBubble({
         x={bubbleX}
         y={bubbleY}
       />
-      <path
-        d={`M ${tailX - 6} ${bubbleY + bubbleHeight - 1} Q ${tailX - 1} ${bubbleY + bubbleHeight + 4} ${tailX + 4} ${bubbleY + bubbleHeight - 1}`}
-        fill={fill}
-        stroke={stroke}
-        strokeLinecap="round"
-        strokeWidth="0.8"
-      />
+      {!isDialogue ? (
+        <path
+          d={
+            bubbleBelowAnchor
+              ? `M ${tailX - 6} ${bubbleY + 1} Q ${tailX - 1} ${bubbleY - 4} ${tailX + 4} ${bubbleY + 1}`
+              : `M ${tailX - 6} ${bubbleY + bubbleHeight - 1} Q ${tailX - 1} ${bubbleY + bubbleHeight + 4} ${tailX + 4} ${bubbleY + bubbleHeight - 1}`
+          }
+          fill={fill}
+          stroke={stroke}
+          strokeLinecap="round"
+          strokeWidth="0.8"
+        />
+      ) : null}
+      {speakerLabel ? (
+        <text
+          fill={tone === "player" ? "rgba(150,116,66,0.96)" : "rgba(90,102,112,0.96)"}
+          fontSize="8.3"
+          fontWeight="700"
+          letterSpacing="1.1"
+          x={bubbleX + 12}
+          y={bubbleY + 14}
+        >
+          {speakerLabel.toUpperCase()}
+        </text>
+      ) : null}
       <text
         fill={textFill}
-        fontSize={tone === "player" ? "10.7" : "10.2"}
+        fontSize={isDialogue ? (tone === "player" ? "11.5" : "11.1") : tone === "player" ? "10.7" : "10.2"}
         fontWeight={tone === "player" ? "600" : "500"}
-        x={bubbleX + bubbleWidth / 2}
-        y={bubbleY + 15}
-        textAnchor="middle"
+        x={textX}
+        y={textY}
+        textAnchor={isDialogue ? "start" : "middle"}
       >
         {lines.map((line, index) => (
           <tspan
-            dy={index === 0 ? 0 : 11.6}
+            dy={index === 0 ? 0 : isDialogue ? 14.2 : 11.6}
             key={`${line}-${index}`}
-            x={bubbleX + bubbleWidth / 2}
+            x={textX}
           >
             {line}
           </tspan>
@@ -2007,43 +2363,63 @@ function renderNpcFace(appearance: NpcAppearance) {
 }
 
 function buildPlayerThought(game: StreetGameState) {
+  if (game.player.currentThought) {
+    return toFirstPersonText(game.player.currentThought);
+  }
+
+  if (game.player.objective?.text) {
+    return toFirstPersonText(game.player.objective.text);
+  }
+
   const activeJob = game.jobs.find((job) => job.id === game.player.activeJobId);
   const pumpProblem = game.problems.find((problem) => problem.id === "problem-pump");
   const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
   const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
 
   if (activeJob && !activeJob.completed) {
-    return "Don't blow this shift.";
+    return "I can't blow this shift.";
   }
 
   if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
-    return "Need a wrench first.";
+    return "I need a wrench first.";
   }
 
   if (pumpProblem?.discovered && pumpProblem.status === "active" && hasWrench) {
-    return "Go fix that pump.";
+    return "I should go fix that pump.";
   }
 
   if (cartProblem?.discovered && cartProblem.status === "active") {
-    return "That cart needs moving.";
+    return "I need to move that cart.";
   }
 
   if (game.player.energy < 38) {
-    return "Could use a proper sit-down.";
+    return "I could use a proper sit-down.";
+  }
+
+  if ((game.player.reputation.morrow_house ?? 0) < 2) {
+    return "I need somewhere to stay beyond tonight.";
+  }
+
+  if (game.player.knownNpcIds.length < 3) {
+    return "I need to meet a few people I could actually befriend.";
   }
 
   if (game.player.knownLocationIds.length < 4) {
-    return "Need to learn these lanes.";
+    return "I need to learn these lanes if I'm making a life here.";
   }
 
   if (game.player.money < 18) {
-    return "Need work before dark.";
+    return "I need steadier income if I'm going to stay here.";
   }
 
-  return "Someone here needs a hand.";
+  return "I think I could find a real friend here.";
 }
 
 function buildNpcThought(npc: NpcState, game: StreetGameState) {
+  if (npc.currentThought) {
+    return toFirstPersonText(npc.currentThought);
+  }
+
   const hour = game.clock.hour + game.clock.minute / 60;
   const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
   const yardJob = game.jobs.find((job) => job.id === "job-yard-shift");
@@ -2053,19 +2429,19 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
 
   switch (npc.id) {
     case "npc-mara":
-      if (pumpProblem?.status === "active") {
+      if (pumpProblem?.discovered && pumpProblem.status === "active") {
         return "That pump is making a mess.";
       }
-      if (pumpProblem?.status === "solved") {
+      if (pumpProblem?.discovered && pumpProblem.status === "solved") {
         return "At least the yard's holding.";
       }
-      return hour < 12 ? "Somebody's late on rent." : "House still has a memory.";
+      return hour < 12 ? "Somebody's late on rent." : "This house still remembers.";
     case "npc-ada":
       if (!teaJob?.accepted && hour < 12.25) {
-        return "Need another pair of hands.";
+        return "I need another pair of hands.";
       }
       if (teaJob?.accepted && !teaJob.completed) {
-        return "Keep the cups moving.";
+        return "I need to keep the cups moving.";
       }
       return "Noon rush is almost here.";
     case "npc-jo":
@@ -2075,21 +2451,62 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
       return "Everything breaks eventually.";
     case "npc-tomas":
       if (!yardJob?.accepted && hour < 13.5) {
-        return "Need one more back today.";
+        return "I need one more back today.";
       }
       if (yardJob?.accepted && !yardJob.completed) {
-        return "Move the load, not excuses.";
+        return "I need the load moved, not excuses.";
       }
-      return "Weather won't lift these crates.";
+      return "The weather won't lift these crates.";
     case "npc-nia":
       if (cartProblem?.discovered && cartProblem.status === "active") {
         return "That cart will jam the square.";
       }
       return npc.currentLocationId === "moss-pier"
-        ? "Watch the boats, not the gulls."
+        ? "I should watch the boats, not the gulls."
         : "One rumor here is real.";
     default:
-      return npc.summary.split(".")[0] ?? "Need to keep moving.";
+      return toFirstPersonText(npc.summary.split(".")[0] ?? "I need to keep moving.");
+  }
+}
+
+function buildConversationOverlay({
+  npc,
+  recentConversation,
+}: {
+  npc: NpcState;
+  recentConversation: StreetGameState["conversations"];
+}) {
+  const lastPlayerLine = [...recentConversation]
+    .reverse()
+    .find((entry) => entry.speaker === "player")?.text;
+  const lastNpcLine =
+    [...recentConversation]
+      .reverse()
+      .find((entry) => entry.speaker === "npc")?.text ??
+    npc.lastSpokenLine ??
+    conversationStarterLine(npc);
+
+  return {
+    npcId: npc.id,
+    npcText: lastNpcLine,
+    playerText: lastPlayerLine || "Can we talk a minute?",
+  };
+}
+
+function conversationStarterLine(npc: NpcState) {
+  switch (npc.id) {
+    case "npc-mara":
+      return "What do you need from this house?";
+    case "npc-ada":
+      return "You here for work or a cup?";
+    case "npc-jo":
+      return "You need a tool or an answer?";
+    case "npc-tomas":
+      return "You looking for a shift or just looking?";
+    case "npc-nia":
+      return "What are you trying to learn before the block notices?";
+    default:
+      return "What are you after?";
   }
 }
 
@@ -2110,8 +2527,13 @@ function thoughtBubbleOffset(characterId: string) {
   }
 }
 
-function wrapThoughtLines(text: string, maxChars: number) {
-  const words = text.trim().split(/\s+/);
+function wrapThoughtLines(text: string, maxChars: number, maxLines = 2) {
+  const normalized = text.trim();
+  if (!normalized) {
+    return [];
+  }
+
+  const words = normalized.split(/\s+/);
   const lines: string[] = [];
   let current = "";
 
@@ -2130,7 +2552,7 @@ function wrapThoughtLines(text: string, maxChars: number) {
     lines.push(current);
   }
 
-  return lines.slice(0, 2);
+  return lines.slice(0, maxLines);
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -2246,14 +2668,7 @@ function buildAnimatedNpcState({
     findRoute,
   });
   const phaseOffset = ((hashString(npc.id) + index * 17) % 997) / 997;
-  const cycleSeconds =
-    location.type === "square"
-      ? 18
-      : location.type === "workyard"
-        ? 16
-        : location.type === "pier"
-          ? 14
-          : 11.5;
+  const cycleSeconds = patrolCycleSeconds(location.type);
   const progress = positiveModulo(
     animationBeat / cycleSeconds + phaseOffset + game.clock.totalMinutes * 0.021,
     1,
@@ -2268,6 +2683,139 @@ function buildAnimatedNpcState({
     y: point.y * CELL,
     facing: lookAhead.x >= point.x ? 1 : -1,
     step: Math.sin(progress * Math.PI * 2 * Math.max(3, patrolPath.length - 1)),
+  };
+}
+
+function resolveCrowdPositions(
+  rawNpcs: AnimatedNpcState[],
+  playerPixel: Point,
+) {
+  const playerRadius = CELL * 0.34;
+  const npcRadius = CELL * 0.28;
+  const resolved = rawNpcs.map((entry) => ({
+    ...entry,
+    x: entry.x,
+    y: entry.y,
+    step: entry.step,
+    isYielding: false,
+  }));
+
+  for (const entry of resolved) {
+    const steered = steerAroundOccupant(
+      { x: entry.x, y: entry.y },
+      playerPixel,
+      playerRadius + npcRadius + 2,
+      CELL * 1.2,
+      hashString(entry.npc.id) % 2 === 0 ? 1 : -1,
+    );
+
+    entry.x = steered.x;
+    entry.y = steered.y;
+    if (steered.didYield) {
+      entry.isYielding = true;
+      entry.step *= 0.35;
+      entry.facing = steered.x >= playerPixel.x ? 1 : -1;
+    }
+  }
+
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    for (let leftIndex = 0; leftIndex < resolved.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < resolved.length; rightIndex += 1) {
+        const left = resolved[leftIndex];
+        const right = resolved[rightIndex];
+        const dx = right.x - left.x;
+        const dy = right.y - left.y;
+        const distance = Math.hypot(dx, dy) || 0.001;
+        const minimumGap = npcRadius * 2.05;
+
+        if (distance >= minimumGap) {
+          continue;
+        }
+
+        const push = (minimumGap - distance) / 2;
+        const nx = dx / distance;
+        const ny = dy / distance;
+        left.x -= nx * push;
+        left.y -= ny * push;
+        right.x += nx * push;
+        right.y += ny * push;
+        left.isYielding = true;
+        right.isYielding = true;
+        left.step *= 0.72;
+        right.step *= 0.72;
+      }
+    }
+  }
+
+  for (const [index, entry] of resolved.entries()) {
+    const clamped = clampNpcDisplacement(entry, rawNpcs[index]);
+    entry.x = clamped.x;
+    entry.y = clamped.y;
+    if (clamped.wasClamped) {
+      entry.isYielding = true;
+      entry.step *= 0.65;
+    }
+  }
+
+  return resolved;
+}
+
+function steerAroundOccupant(
+  point: Point,
+  obstacle: Point,
+  minimumGap: number,
+  influenceRadius: number,
+  tangentSign: 1 | -1,
+) {
+  const dx = point.x - obstacle.x;
+  const dy = point.y - obstacle.y;
+  const distance = Math.hypot(dx, dy) || 0.001;
+
+  if (distance >= influenceRadius) {
+    return {
+      x: point.x,
+      y: point.y,
+      didYield: false,
+    };
+  }
+
+  const awayX = dx / distance;
+  const awayY = dy / distance;
+  const tangentX = -awayY * tangentSign;
+  const tangentY = awayX * tangentSign;
+  const closeness = 1 - Math.min(distance / influenceRadius, 1);
+  const radialPush = Math.max(minimumGap - distance, 0) * 0.9;
+  const sidestep = closeness * CELL * 0.44;
+
+  return {
+    x: point.x + awayX * radialPush + tangentX * sidestep,
+    y: point.y + awayY * radialPush + tangentY * sidestep,
+    didYield: distance < influenceRadius * 0.86,
+  };
+}
+
+function clampNpcDisplacement(
+  point: Point,
+  original: Point,
+) {
+  const dx = point.x - original.x;
+  const dy = point.y - original.y;
+  const distance = Math.hypot(dx, dy);
+  const maximum = CELL * 0.62;
+
+  if (distance <= maximum || distance === 0) {
+    return {
+      x: point.x,
+      y: point.y,
+      wasClamped: false,
+    };
+  }
+
+  const scale = maximum / distance;
+  return {
+    x: original.x + dx * scale,
+    y: original.y + dy * scale,
+    wasClamped: true,
   };
 }
 
@@ -2380,6 +2928,30 @@ function buildNpcPatrolPath({
   return basePath;
 }
 
+function patrolCycleSeconds(locationType?: string) {
+  switch (locationType) {
+    case "square":
+      return 18;
+    case "workyard":
+      return 16;
+    case "pier":
+      return 14;
+    default:
+      return 11.5;
+  }
+}
+
+function loopPathDistance(path: Point[]) {
+  if (path.length <= 1) {
+    return 0;
+  }
+
+  return path.reduce((sum, point, index) => {
+    const next = path[(index + 1) % path.length];
+    return sum + distanceBetween(point, next);
+  }, 0);
+}
+
 function createRouteFinder(tiles: MapTile[]) {
   const walkable = new Set(
     tiles.filter((tile) => tile.walkable).map((tile) => `${tile.x},${tile.y}`),
@@ -2486,10 +3058,70 @@ function sampleLoopPath(path: Point[], progress: number) {
   return path[path.length - 1];
 }
 
+function samplePathPoint(path: Point[], progress: number) {
+  if (path.length === 0) {
+    return { x: 0, y: 0 };
+  }
+
+  if (path.length === 1) {
+    return path[0];
+  }
+
+  const segments = path.slice(0, -1).map((point, index) => ({
+    from: point,
+    to: path[index + 1],
+  }));
+  const totalLength = segments.reduce(
+    (sum, segment) => sum + distanceBetween(segment.from, segment.to),
+    0,
+  );
+  const target = totalLength * progress;
+  let covered = 0;
+
+  for (const segment of segments) {
+    const segmentLength = distanceBetween(segment.from, segment.to);
+
+    if (covered + segmentLength >= target) {
+      const localProgress =
+        segmentLength === 0 ? 0 : (target - covered) / segmentLength;
+      return interpolatePoint(segment.from, segment.to, localProgress);
+    }
+
+    covered += segmentLength;
+  }
+
+  return path[path.length - 1];
+}
+
 function interpolatePoint(from: Point, to: Point, progress: number) {
   return {
     x: from.x + (to.x - from.x) * progress,
     y: from.y + (to.y - from.y) * progress,
+  };
+}
+
+function easeInOutCubic(progress: number) {
+  return progress < 0.5
+    ? 4 * progress * progress * progress
+    : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+}
+
+function freezeConversationMarker(
+  marker: AnimatedNpcState,
+  playerPixel: Point,
+  mapWidth: number,
+  mapHeight: number,
+): AnimatedNpcState {
+  const standsRightOfPlayer = marker.x >= playerPixel.x;
+  const offsetX = standsRightOfPlayer ? CELL * 1.38 : -CELL * 1.38;
+
+  return {
+    ...marker,
+    facing: standsRightOfPlayer ? -1 : 1,
+    step: 0,
+    x: clamp(playerPixel.x + offsetX, CELL * 0.7, mapWidth - CELL * 0.7),
+    y: clamp(playerPixel.y + CELL * 0.08, CELL * 0.7, mapHeight - CELL * 0.7),
+    isYielding: false,
   };
 }
 

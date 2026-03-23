@@ -101,6 +101,11 @@ export function ActionCard({
           <div className="text-[0.9rem] leading-6 text-[color:var(--text-muted)]">
             {action.description}
           </div>
+          {action.matchesObjective ? (
+            <div className="text-[0.78rem] uppercase tracking-[0.16em] text-[rgba(228,191,123,0.92)]">
+              Fits Rowan&apos;s current direction
+            </div>
+          ) : null}
           {action.disabledReason ? (
             <div className="text-[0.82rem] uppercase tracking-[0.16em] text-[color:var(--accent-alert)]">
               {action.disabledReason}
@@ -235,5 +240,97 @@ export function SceneNoteCard({
     >
       {text}
     </div>
+  );
+}
+
+export function MovementPad({
+  busy,
+  onMove,
+}: {
+  busy: boolean;
+  onMove: (deltaX: number, deltaY: number) => void;
+}) {
+  return (
+    <div className="rounded-[20px] border border-[rgba(134,145,154,0.16)] bg-[rgba(16,22,27,0.72)] px-4 py-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="max-w-[20rem]">
+          <div className="text-[0.72rem] uppercase tracking-[0.18em] text-[color:var(--text-dim)]">
+            Move Rowan
+          </div>
+          <div className="mt-2 text-[0.92rem] leading-6 text-[color:var(--text-main)]">
+            Use WASD or click the pad to move one tile at a time.
+          </div>
+          <div className="mt-1 text-[0.82rem] leading-5 text-[color:var(--text-muted)]">
+            Arrow keys work too.
+          </div>
+        </div>
+
+        <div className="grid shrink-0 grid-cols-3 gap-1.5 pt-0.5">
+          <DirectionButton
+            busy={busy}
+            className="col-start-2"
+            keycap="W"
+            label="Up"
+            onClick={() => {
+              onMove(0, -1);
+            }}
+          />
+          <DirectionButton
+            busy={busy}
+            keycap="A"
+            label="Left"
+            onClick={() => {
+              onMove(-1, 0);
+            }}
+          />
+          <DirectionButton
+            busy={busy}
+            keycap="S"
+            label="Down"
+            onClick={() => {
+              onMove(0, 1);
+            }}
+          />
+          <DirectionButton
+            busy={busy}
+            keycap="D"
+            label="Right"
+            onClick={() => {
+              onMove(1, 0);
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DirectionButton({
+  busy,
+  className,
+  keycap,
+  label,
+  onClick,
+}: {
+  busy: boolean;
+  className?: string;
+  keycap: string;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`flex h-12 w-16 flex-col items-center justify-center rounded-[14px] border border-[rgba(134,145,154,0.24)] bg-[rgba(39,48,55,0.86)] px-2 text-[color:var(--text-main)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[rgba(50,60,67,0.92)] disabled:cursor-not-allowed disabled:opacity-55 ${className ?? ""}`}
+      disabled={busy}
+      onClick={onClick}
+      type="button"
+    >
+      <span className="text-[0.66rem] uppercase tracking-[0.16em] text-[color:var(--text-dim)]">
+        {label}
+      </span>
+      <span className="mt-0.5 text-[0.82rem] font-medium uppercase tracking-[0.14em]">
+        {keycap}
+      </span>
+    </button>
   );
 }

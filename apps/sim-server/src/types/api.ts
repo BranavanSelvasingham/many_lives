@@ -27,12 +27,29 @@ export interface ActCommand {
 export interface WaitCommand {
   type: "wait";
   minutes: number;
+  silent?: boolean;
 }
 
 export interface UpdatePolicyCommand {
   type: "update_policy";
   characterId?: string;
   policy?: Record<string, unknown>;
+}
+
+export interface SetObjectiveCommand {
+  type: "set_objective";
+  text: string;
+}
+
+export interface SpeakCommand {
+  type: "speak";
+  npcId: string;
+  text: string;
+}
+
+export interface AdvanceObjectiveCommand {
+  type: "advance_objective";
+  allowTimeSkip?: boolean;
 }
 
 export interface UpdatePolicyRequest {
@@ -44,4 +61,7 @@ export type GameCommand =
   | MoveCommand
   | ActCommand
   | WaitCommand
-  | UpdatePolicyCommand;
+  | UpdatePolicyCommand
+  | SetObjectiveCommand
+  | SpeakCommand
+  | AdvanceObjectiveCommand;

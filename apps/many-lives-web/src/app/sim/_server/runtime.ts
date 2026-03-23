@@ -1,10 +1,9 @@
-import { MockAIProvider } from "../../../../../sim-server/src/ai/mockProvider";
+import { createAIProvider } from "../../../../../sim-server/src/ai/provider";
 import { SimulationEngine } from "../../../../../sim-server/src/sim/engine";
 import type { StreetGameState } from "../../../../../sim-server/src/street-sim/types";
 import { MemoryGameStore } from "../../../../../sim-server/src/storage/memoryStore";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __manyLivesStreetRuntime:
     | {
         engine: SimulationEngine;
@@ -15,7 +14,7 @@ declare global {
 
 function createRuntime() {
   return {
-    engine: new SimulationEngine(new MockAIProvider()),
+    engine: new SimulationEngine(createAIProvider()),
     store: new MemoryGameStore<StreetGameState>(),
   };
 }

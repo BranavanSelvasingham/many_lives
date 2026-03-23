@@ -1,4 +1,11 @@
 import { addLabel, createCityMap, paintRect } from "./mapBuilder.js";
+import { getNpcNarrative } from "./npcNarratives.js";
+import {
+  CITY_NARRATIVE,
+  DISTRICT_NARRATIVE,
+  getLocationNarrative,
+  getMapLabelNarrative,
+} from "./placeNarratives.js";
 import type {
   FeedEntry,
   JobState,
@@ -14,6 +21,8 @@ const MAP_HEIGHT = 18;
 const CITY_NAME = "Brackenport";
 const DISTRICT_NAME = "South Quay";
 const SCENARIO_NAME = `${DISTRICT_NAME}, Day One`;
+const ROWAN_BACKSTORY =
+  "Rowan is new to Brackenport, with a bed at Morrow House for tonight, a few coins, and no real foothold yet. He is looking for a place to stay, steady income, and a few friends before the city decides what to make of him.";
 
 const NEIGHBORHOODS = {
   morrowCourt: "Morrow Court",
@@ -32,13 +41,13 @@ export function seedStreetGame(gameId: string): StreetGameState {
       id: "feed-1",
       time: SCENARIO_START,
       tone: "info",
-      text: `Late morning in ${DISTRICT_NAME}, on the river side of ${CITY_NAME}. You know your room at Morrow House, the yard behind it, and not much else yet. Rent does not care.`,
+      text: `Late morning in ${DISTRICT_NAME}, your first real day in ${CITY_NAME}. You have a bed at Morrow House for tonight, a few coins, and no real hold on the city yet.`,
     },
     {
       id: "feed-2",
       time: SCENARIO_START,
       tone: "memory",
-      text: `Mara said ${DISTRICT_NAME} explains itself a little more every time you stop where people are already struggling.`,
+      text: `Mara said ${DISTRICT_NAME} explains itself a little more every time you stop where people are already struggling instead of only asking where the money is.`,
     },
   ];
 
@@ -46,7 +55,9 @@ export function seedStreetGame(gameId: string): StreetGameState {
     id: gameId,
     scenarioName: SCENARIO_NAME,
     cityName: CITY_NAME,
+    cityNarrative: CITY_NARRATIVE,
     districtName: DISTRICT_NAME,
+    districtNarrative: DISTRICT_NARRATIVE,
     currentTime: SCENARIO_START,
     clock: {
       day: 1,
@@ -60,6 +71,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
     player: {
       id: "player",
       name: "Rowan",
+      backstory: ROWAN_BACKSTORY,
       x: 3,
       y: 5,
       currentLocationId: "boarding-house",
@@ -70,6 +82,22 @@ export function seedStreetGame(gameId: string): StreetGameState {
       knownLocationIds: ["boarding-house", "courtyard"],
       knownNpcIds: ["npc-mara"],
       activeJobId: undefined,
+      objective: {
+        id: "objective-settle-seed",
+        text: "Get settled in Brackenport: find a place to stay, steady income, and a few friends.",
+        createdAt: SCENARIO_START,
+        updatedAt: SCENARIO_START,
+        focus: "settle",
+        source: "seed",
+        routeKey: "settle-core",
+        trail: [],
+        completedTrail: [],
+        progress: {
+          completed: 0,
+          total: 0,
+          label: "Nothing tracked yet",
+        },
+      },
       reputation: {
         morrow_house: 1,
         south_quay: 0,
@@ -80,7 +108,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
           id: "memory-1",
           time: SCENARIO_START,
           kind: "place",
-          text: "You woke up in a rented room at Morrow House, still learning which lane leads where and which errands are really chances wearing work clothes.",
+          text: "You woke up at Morrow House with only tonight's bed certain, new enough to Brackenport that every lane still feels like a question and every face might matter.",
         },
       ],
     },
@@ -88,10 +116,15 @@ export function seedStreetGame(gameId: string): StreetGameState {
     jobs: buildJobs(),
     problems: buildProblems(),
     feed,
+    conversations: [],
+    conversationThreads: {},
+    activeConversation: undefined,
     currentScene: {
       locationId: "boarding-house",
       title: "",
       description: "",
+      context: "",
+      backstory: "",
       people: [],
       notes: [],
     },
@@ -104,6 +137,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
 function buildLocations(): LocationState[] {
   return [
     {
+      ...getLocationNarrative("boarding-house"),
       id: "boarding-house",
       name: "Morrow House",
       shortLabel: "MH",
@@ -116,13 +150,12 @@ function buildLocations(): LocationState[] {
       entryY: 5,
       labelX: 3,
       labelY: 2,
-      description:
-        "A narrow boarding house with warm stair rails, thin walls, and a keeper who notices who returns tired and who returns useful.",
       neighborhood: NEIGHBORHOODS.morrowCourt,
       openHour: 0,
       closeHour: 24,
     },
     {
+      ...getLocationNarrative("tea-house"),
       id: "tea-house",
       name: "Kettle & Lamp",
       shortLabel: "KL",
@@ -135,13 +168,12 @@ function buildLocations(): LocationState[] {
       entryY: 5,
       labelX: 12,
       labelY: 2,
-      description:
-        "A cramped tea room where gossip, shift work, and favors all pass over the same counter.",
       neighborhood: NEIGHBORHOODS.lanternRow,
       openHour: 7,
       closeHour: 18,
     },
     {
+      ...getLocationNarrative("repair-stall"),
       id: "repair-stall",
       name: "Mercer Repairs",
       shortLabel: "MR",
@@ -154,13 +186,12 @@ function buildLocations(): LocationState[] {
       entryY: 5,
       labelX: 18,
       labelY: 2,
-      description:
-        "A repair stall full of secondhand tools, bent brass, and fixes that hold because Mercer says they do.",
       neighborhood: NEIGHBORHOODS.cooperSteps,
       openHour: 9,
       closeHour: 18,
     },
     {
+      ...getLocationNarrative("courtyard"),
       id: "courtyard",
       name: "Morrow Yard",
       shortLabel: "MY",
@@ -173,13 +204,12 @@ function buildLocations(): LocationState[] {
       entryY: 11,
       labelX: 3,
       labelY: 10,
-      description:
-        "Buckets, laundry lines, cracked stone, and a hand pump everybody has been stepping around instead of fixing.",
       neighborhood: NEIGHBORHOODS.morrowCourt,
       openHour: 0,
       closeHour: 24,
     },
     {
+      ...getLocationNarrative("market-square"),
       id: "market-square",
       name: "Quay Square",
       shortLabel: "SQ",
@@ -192,13 +222,12 @@ function buildLocations(): LocationState[] {
       entryY: 8,
       labelX: 12,
       labelY: 8,
-      description:
-        "The center of the district: notices, carts, fishmongers, arguments, and half-heard chances crossing all day.",
       neighborhood: NEIGHBORHOODS.southQuay,
       openHour: 6,
       closeHour: 21,
     },
     {
+      ...getLocationNarrative("freight-yard"),
       id: "freight-yard",
       name: "North Crane Yard",
       shortLabel: "CYD",
@@ -211,13 +240,12 @@ function buildLocations(): LocationState[] {
       entryY: 9,
       labelX: 19,
       labelY: 8,
-      description:
-        "Crates, ropes, handcarts, and short tempers. If you want paid for your back, this is where backs get counted.",
       neighborhood: NEIGHBORHOODS.craneYard,
       openHour: 9,
       closeHour: 16,
     },
     {
+      ...getLocationNarrative("moss-pier"),
       id: "moss-pier",
       name: "Pilgrim Slip",
       shortLabel: "PS",
@@ -230,8 +258,6 @@ function buildLocations(): LocationState[] {
       entryY: 13,
       labelX: 19,
       labelY: 14,
-      description:
-        "Wet planks, rope burns, gull noise, and boats that smell like trade before they smell like fish.",
       neighborhood: NEIGHBORHOODS.pilgrimSteps,
       openHour: 6,
       closeHour: 20,
@@ -308,6 +334,7 @@ function buildMap() {
   });
 
   addLabel(map, {
+    ...getMapLabelNarrative("label-district-south-quay"),
     id: "label-district-south-quay",
     text: DISTRICT_NAME,
     x: 11.5,
@@ -315,39 +342,49 @@ function buildMap() {
     tone: "district",
   });
   addLabel(map, {
+    ...getMapLabelNarrative("label-street-copper-row"),
     id: "label-street-copper-row",
     text: NEIGHBORHOODS.lanternRow,
     x: 12,
     y: 6.4,
     tone: "street",
+    locationId: "tea-house",
   });
   addLabel(map, {
+    ...getMapLabelNarrative("label-street-fishbone"),
     id: "label-street-fishbone",
     text: "Cooper Lane",
     x: 8.4,
     y: 2.3,
     tone: "street",
+    locationId: "repair-stall",
   });
   addLabel(map, {
+    ...getMapLabelNarrative("label-street-gannet"),
     id: "label-street-gannet",
     text: NEIGHBORHOODS.morrowCourt,
     x: 3.3,
     y: 9.3,
     tone: "street",
+    locationId: "boarding-house",
   });
   addLabel(map, {
+    ...getMapLabelNarrative("label-street-moss"),
     id: "label-street-moss",
     text: NEIGHBORHOODS.pilgrimSteps,
     x: 19,
     y: 12.3,
     tone: "street",
+    locationId: "moss-pier",
   });
   addLabel(map, {
+    ...getMapLabelNarrative("label-landmark-riverside"),
     id: "label-landmark-riverside",
     text: `${CITY_NAME} Docks`,
     x: 19,
     y: 16.4,
     tone: "landmark",
+    locationId: "moss-pier",
   });
 
   map.footprints = [
@@ -589,16 +626,26 @@ function buildMap() {
 }
 
 function buildNpcs(): NpcState[] {
+  const mara = getNpcNarrative("npc-mara");
+  const ada = getNpcNarrative("npc-ada");
+  const jo = getNpcNarrative("npc-jo");
+  const tomas = getNpcNarrative("npc-tomas");
+  const nia = getNpcNarrative("npc-nia");
+
   return [
     {
       id: "npc-mara",
       name: "Mara",
       role: "boarding keeper",
-      summary:
-        "Knows everybody's rent, everybody's business, and which two are the same problem.",
+      summary: mara.backstory,
+      narrative: mara,
       currentLocationId: "boarding-house",
       trust: 1,
+      openness: 62,
       known: true,
+      mood: "watchful",
+      currentObjective: mara.objective,
+      currentConcern: mara.context,
       memory: [`Told you ${DISTRICT_NAME} only opens once you start helping.`],
       schedule: [
         { locationId: "boarding-house", fromHour: 0, toHour: 8 },
@@ -611,11 +658,15 @@ function buildNpcs(): NpcState[] {
       id: "npc-ada",
       name: "Ada",
       role: "tea house owner",
-      summary:
-        "Runs the Lamp hard, pays light, and remembers who can keep cups moving without dropping the room.",
+      summary: ada.backstory,
+      narrative: ada,
       currentLocationId: "tea-house",
       trust: 0,
+      openness: 50,
       known: false,
+      mood: "brisk",
+      currentObjective: ada.objective,
+      currentConcern: ada.context,
       memory: [],
       schedule: [{ locationId: "tea-house", fromHour: 7, toHour: 18 }],
     },
@@ -623,11 +674,15 @@ function buildNpcs(): NpcState[] {
       id: "npc-jo",
       name: "Jo",
       role: "repairer",
-      summary:
-        "Runs Mercer Repairs with blunt honesty. If a thing is bent, Jo says so before taking your coin.",
+      summary: jo.backstory,
+      narrative: jo,
       currentLocationId: "repair-stall",
       trust: 0,
+      openness: 44,
       known: false,
+      mood: "blunt",
+      currentObjective: jo.objective,
+      currentConcern: jo.context,
       memory: [],
       schedule: [{ locationId: "repair-stall", fromHour: 9, toHour: 18 }],
     },
@@ -635,11 +690,15 @@ function buildNpcs(): NpcState[] {
       id: "npc-tomas",
       name: "Tomas",
       role: "yard foreman",
-      summary:
-        "Pays for fast hands, steady backs, and no excuses about the weather.",
+      summary: tomas.backstory,
+      narrative: tomas,
       currentLocationId: "freight-yard",
       trust: 0,
+      openness: 34,
       known: false,
+      mood: "hard-edged",
+      currentObjective: tomas.objective,
+      currentConcern: tomas.context,
       memory: [],
       schedule: [{ locationId: "freight-yard", fromHour: 10, toHour: 15 }],
     },
@@ -647,11 +706,15 @@ function buildNpcs(): NpcState[] {
       id: "npc-nia",
       name: "Nia",
       role: "runner",
-      summary:
-        "Knows which notices matter and which can only afford to look important.",
+      summary: nia.backstory,
+      narrative: nia,
       currentLocationId: "market-square",
       trust: 0,
+      openness: 60,
       known: false,
+      mood: "alert",
+      currentObjective: nia.objective,
+      currentConcern: nia.context,
       memory: [],
       schedule: [
         { locationId: "market-square", fromHour: 12, toHour: 16 },
@@ -715,7 +778,7 @@ function buildProblems(): ProblemState[] {
       consequenceIfIgnored:
         "If nobody fixes it by evening, Morrow Yard floods and the house turns sour for the night.",
       benefitIfSolved:
-        "If you fix it, Mara stops seeing you as another lodger-shaped expense.",
+        "If you fix it, Mara stops seeing you as someone only passing through.",
     },
     {
       id: "problem-cart",

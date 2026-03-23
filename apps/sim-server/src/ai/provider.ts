@@ -1,10 +1,16 @@
 import type { Character } from "../domain/character.js";
 import type { EventRecord } from "../domain/event.js";
 import type { InboxMessageType, InboxPriority } from "../domain/inbox.js";
+import type { StreetGameState } from "../street-sim/types.js";
 import type { Task } from "../domain/task.js";
 import type { WorldState } from "../domain/world.js";
 import { MockAIProvider } from "./mockProvider.js";
 import { OpenAIProvider } from "./openaiProvider.js";
+import type {
+  StreetDialogueRequest,
+  StreetDialogueResult,
+} from "./streetDialogue.js";
+import type { StreetThoughtsResult } from "./streetThoughts.js";
 
 export interface AIContext {
   world: WorldState;
@@ -39,6 +45,10 @@ export interface AIProvider {
     },
   ): Promise<GeneratedInboxMessage>;
   proposeNextAction(context: AIContext): Promise<string[]>;
+  generateStreetThoughts(game: StreetGameState): Promise<StreetThoughtsResult>;
+  generateStreetReply(
+    input: StreetDialogueRequest,
+  ): Promise<StreetDialogueResult>;
 }
 
 export function createAIProvider(
@@ -47,7 +57,7 @@ export function createAIProvider(
   if (providerName === "openai") {
     return new OpenAIProvider({
       apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_MODEL,
+      model: process.env.OPENAI_MODEL ?? "gpt-5-nano",
     });
   }
 

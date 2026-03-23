@@ -92,6 +92,43 @@ Helpful endpoints:
 
 The web app reaches those routes through the Next.js proxy layer in [client.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/api/client.ts) and [gameApi.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/api/gameApi.ts).
 
+### Server-Side OpenAI Thoughts
+
+The street slice can optionally generate richer NPC/player thought bubbles on the server with OpenAI while keeping deterministic fallback behavior.
+
+- Set `AI_PROVIDER=openai`
+- Set `OPENAI_API_KEY` in server-only environment settings
+- Optionally set `OPENAI_MODEL=gpt-5-nano` (this is the intended low-cost default)
+
+Do not expose the key through any `NEXT_PUBLIC_*` variable. For Azure, put the key and provider settings in Web App application settings so they exist only at runtime on the server.
+
+You can confirm which provider the live app is using through `GET /sim/health`, which returns `aiProvider`.
+
+### Production Rate Limits
+
+The deployed Next `/sim` routes now apply production-only per-IP rate limits to mutating endpoints:
+
+- `POST /sim/game/new`
+- `POST /sim/game/:id/command`
+- `POST /sim/game/:id/tick`
+- `POST /sim/game/:id/policy`
+
+Local development is unaffected. The limiter only turns on when `NODE_ENV=production` unless you explicitly disable it with `SIM_RATE_LIMIT_DISABLED=true`.
+
+Default per-IP limits per 60-second window:
+
+- `SIM_RATE_LIMIT_GAME_NEW_MAX=12`
+- `SIM_RATE_LIMIT_COMMAND_MAX=90`
+- `SIM_RATE_LIMIT_TICK_MAX=45`
+- `SIM_RATE_LIMIT_POLICY_MAX=30`
+
+Optional tuning:
+
+- `SIM_RATE_LIMIT_WINDOW_MS`
+- `SIM_RATE_LIMIT_DISABLED`
+
+For Azure, set these as Web App application settings so they apply only on the deployed server.
+
 ## Current Prototype UI
 
 - Left rail: self triage and pressure read.

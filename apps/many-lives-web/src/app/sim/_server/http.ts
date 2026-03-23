@@ -6,6 +6,7 @@ import type {
   UpdatePolicyRequest,
 } from "../../../../../sim-server/src/types/api";
 import { STEP_MINUTES } from "../../../../../sim-server/src/sim/engine";
+import { projectStreetGameForPlayer } from "../../../../../sim-server/src/street-sim/playerView";
 import { getStreetRuntime } from "./runtime";
 
 export function json(data: unknown, init?: ResponseInit) {
@@ -26,8 +27,9 @@ export async function createGame(body?: CreateGameRequest) {
   const { engine, store } = getStreetRuntime();
   const gameId = store.createGameId();
   const game = await engine.createGame(gameId);
+  const savedGame = store.save(game);
   return json({
-    game: store.save(game),
+    game: projectStreetGameForPlayer(savedGame),
   });
 }
 
@@ -39,8 +41,9 @@ export async function tickGame(id: string, body?: TickGameRequest) {
   }
 
   const nextGame = await engine.tick(existing, normalizeTickCount(body));
+  const savedGame = store.save(nextGame);
   return json({
-    game: store.save(nextGame),
+    game: projectStreetGameForPlayer(savedGame),
   });
 }
 
@@ -52,8 +55,9 @@ export async function runCommand(id: string, body: GameCommand) {
   }
 
   const nextGame = await engine.runCommand(existing, body);
+  const savedGame = store.save(nextGame);
   return json({
-    game: store.save(nextGame),
+    game: projectStreetGameForPlayer(savedGame),
   });
 }
 
