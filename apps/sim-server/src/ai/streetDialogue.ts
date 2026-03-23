@@ -748,6 +748,48 @@ export function sanitizeThought(text: string): string {
   return words.slice(0, 84);
 }
 
+export function generatedReplyLooksInvalid(
+  text: string,
+  input: StreetDialogueRequest,
+): boolean {
+  const normalized = normalizeText(text);
+  if (!normalized) {
+    return true;
+  }
+
+  const npcName = input.game.npcs.find((npc) => npc.id === input.npcId)?.name;
+  const normalizedNpcName = npcName ? normalizeText(npcName) : "";
+
+  if (
+    /\b(i am|i'm|im)\s+rowan\b/.test(normalized) ||
+    /\bmy name is rowan\b/.test(normalized)
+  ) {
+    return true;
+  }
+
+  if (normalizedNpcName) {
+    const npcNamePattern = new RegExp(`\\b${escapeRegExp(normalizedNpcName)}\\b`, "i");
+    if (npcNamePattern.test(normalized)) {
+      return true;
+    }
+  }
+
+  const plannerTexts = collectPlannerReferenceTexts(input);
+  const soundsDirectiveLike = /^(talk|ask|tell|show|see|get|go|head|stay|keep|leave|swing|decide|finish|buy|fix|clear|make|take)\b/.test(
+    normalized,
+  );
+  if (
+    soundsDirectiveLike &&
+    plannerTexts.some(
+      (candidate) => overlapRatio(normalized, normalizeText(candidate)) >= 0.68,
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function normalizePlayerText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -1030,11 +1072,6 @@ function normalizeNpcSelfReference(text: string, npcName?: string) {
   const escapedName = escapeRegExp(npcName);
 
   return text
-    .replace(new RegExp(`\\b[Tt]alk to ${escapedName}\\b`, "g"), "Talk to me")
-    .replace(new RegExp(`\\b[Aa]sk ${escapedName}\\b`, "g"), "Ask me")
-    .replace(new RegExp(`\\b[Tt]ell ${escapedName}\\b`, "g"), "Tell me")
-    .replace(new RegExp(`\\b[Ss]how ${escapedName}\\b`, "g"), "Show me")
-    .replace(new RegExp(`\\b[Ss]ee ${escapedName}\\b`, "g"), "See me")
     .replace(new RegExp(`\\b${escapedName} is\\b`, "g"), "I am")
     .replace(new RegExp(`\\b${escapedName} was\\b`, "g"), "I was")
     .replace(new RegExp(`\\b${escapedName} has\\b`, "g"), "I have")
@@ -1064,6 +1101,42 @@ function normalizeNpcSelfReference(text: string, npcName?: string) {
 
 function escapeRegExp(text: string) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collectPlannerReferenceTexts(input: StreetDialogueRequest) {
+  const objective = input.game.player.objective;
+  const references = [
+    objective?.text,
+    ...(objective?.trail.map((step) => step.title) ?? []),
+    ...(objective?.trail.map((step) => step.detail ?? "") ?? []),
+    ...(objective?.completedTrail.map((step) => step.title) ?? []),
+  ];
+
+  const thread = input.game.conversationThreads?.[input.npcId];
+  if (thread) {
+    references.push(thread.decision, thread.objectiveText, thread.summary);
+  }
+
+  return references
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .map((value) => value.trim());
+}
+
+function overlapRatio(left: string, right: string) {
+  const leftWords = new Set(left.split(/\s+/).filter(Boolean));
+  const rightWords = new Set(right.split(/\s+/).filter(Boolean));
+  if (leftWords.size === 0 || rightWords.size === 0) {
+    return 0;
+  }
+
+  let overlap = 0;
+  for (const word of leftWords) {
+    if (rightWords.has(word)) {
+      overlap += 1;
+    }
+  }
+
+  return overlap / Math.min(leftWords.size, rightWords.size);
 }
 
 function pickFollowupThought(

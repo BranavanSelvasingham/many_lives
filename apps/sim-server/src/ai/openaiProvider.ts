@@ -13,6 +13,7 @@ import { buildProposeNextActionPrompt } from "./prompts/proposeNextAction.js";
 import { buildSummarizeStatePrompt } from "./prompts/summarizeState.js";
 import {
   buildDeterministicStreetReply,
+  generatedReplyLooksInvalid,
   sanitizeDialogueReply,
   streetDialogueCacheKey,
   type StreetDialogueRequest,
@@ -228,8 +229,13 @@ function normalizeStreetReply(
     return fallback;
   }
 
+  const candidateReply = parsed.reply ?? fallback.reply;
+  if (generatedReplyLooksInvalid(candidateReply, input)) {
+    return fallback;
+  }
+
   return {
-    reply: sanitizeDialogueReply(parsed.reply ?? fallback.reply, npcName),
+    reply: sanitizeDialogueReply(candidateReply, npcName),
     followupThought: sanitizeThought(
       parsed.followupThought ?? fallback.followupThought ?? "",
     ),
