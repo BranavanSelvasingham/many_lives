@@ -45,6 +45,14 @@ export function streetThoughtsCacheKey(game: StreetGameState): string {
     player: {
       backstory: game.player.backstory,
       currentThought: game.player.currentThought ?? null,
+      pendingObjectiveMove: game.player.pendingObjectiveMove
+        ? {
+            targetLocationId: game.player.pendingObjectiveMove.targetLocationId,
+            objectiveText: game.player.pendingObjectiveMove.objectiveText,
+            npcId: game.player.pendingObjectiveMove.npcId ?? null,
+            actionId: game.player.pendingObjectiveMove.actionId ?? null,
+          }
+        : null,
     },
     npcs: game.npcs.map((npc) => ({
       id: npc.id,
@@ -104,6 +112,18 @@ function buildPlayerThought(game: StreetGameState) {
     return "I can't blow this shift.";
   }
 
+  if (game.player.pendingObjectiveMove) {
+    return buildPendingMoveThought(game);
+  }
+
+  const immediateObjectiveThought = buildImmediateObjectiveThought(
+    game,
+    nextObjectiveText,
+  );
+  if (immediateObjectiveThought) {
+    return sanitizeThought(immediateObjectiveThought);
+  }
+
   if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
     return "I need a wrench first.";
   }
@@ -146,6 +166,97 @@ function buildPlayerThought(game: StreetGameState) {
   }
 
   return "I think I could find a real friend here.";
+}
+
+function buildPendingMoveThought(game: StreetGameState) {
+  const pendingMove = game.player.pendingObjectiveMove;
+  if (!pendingMove) {
+    return "I should decide where to go next.";
+  }
+
+  const targetLocation = game.locations.find(
+    (location) => location.id === pendingMove.targetLocationId,
+  );
+  const npc = pendingMove.npcId
+    ? game.npcs.find((entry) => entry.id === pendingMove.npcId)
+    : undefined;
+
+  if (targetLocation && npc) {
+    return sanitizeThought(
+      `${targetLocation.name} next. Maybe ${npc.name} has work for me.`,
+    );
+  }
+
+  if (targetLocation && pendingMove.actionId?.startsWith("accept:")) {
+    return sanitizeThought(
+      `${targetLocation.name} next. See if that work is still open.`,
+    );
+  }
+
+  if (targetLocation && pendingMove.actionId?.startsWith("work:")) {
+    return sanitizeThought(
+      `${targetLocation.name} next. Don't miss the shift.`,
+    );
+  }
+
+  if (targetLocation && pendingMove.actionId?.startsWith("solve:")) {
+    return sanitizeThought(
+      `${targetLocation.name} next. See if this is the moment to help.`,
+    );
+  }
+
+  if (targetLocation) {
+    return sanitizeThought(
+      `${targetLocation.name} next. See what it opens up.`,
+    );
+  }
+
+  return sanitizeThought(firstPersonThought(pendingMove.objectiveText));
+}
+
+function buildImmediateObjectiveThought(
+  game: StreetGameState,
+  nextObjectiveText: string,
+) {
+  const currentLocation = game.locations.find(
+    (location) => location.id === game.player.currentLocationId,
+  );
+  if (!currentLocation || !nextObjectiveText) {
+    return undefined;
+  }
+
+  const objectiveText = nextObjectiveText.toLowerCase();
+  const locationMentioned = objectiveText.includes(currentLocation.name.toLowerCase());
+  const knownPeopleHere = game.npcs.filter(
+    (npc) =>
+      npc.currentLocationId === currentLocation.id &&
+      game.player.knownNpcIds.includes(npc.id),
+  );
+  const mentionedPerson = knownPeopleHere.find((npc) =>
+    objectiveText.includes(npc.name.toLowerCase()),
+  );
+
+  if (!locationMentioned && !mentionedPerson) {
+    return undefined;
+  }
+
+  if (mentionedPerson && /\bwork|job|shift|income|paid\b/i.test(nextObjectiveText)) {
+    return `I'm at ${currentLocation.name} now. Time to ask ${mentionedPerson.name} for work.`;
+  }
+
+  if (mentionedPerson) {
+    return `I'm at ${currentLocation.name} now. Time to talk to ${mentionedPerson.name}.`;
+  }
+
+  if (/\bwork|job|shift|income|paid\b/i.test(nextObjectiveText)) {
+    return `I'm at ${currentLocation.name} now. Time to see if work opens.`;
+  }
+
+  if (/\bhelp|fix|solve|repair|problem\b/i.test(nextObjectiveText)) {
+    return `I'm at ${currentLocation.name} now. Time to see who needs help.`;
+  }
+
+  return `I'm at ${currentLocation.name} now. Time to see what this place opens up.`;
 }
 
 function buildPlanningThought(game: StreetGameState) {

@@ -24,6 +24,11 @@ interface BuildObjectiveOptions {
 
 type ObjectiveScores = Record<ObjectiveFocus, number>;
 
+interface ConversationObjectiveRoute {
+  text: string;
+  route: ObjectiveRoute;
+}
+
 const OBJECTIVE_TRAIL_LIMIT = 10;
 
 export function buildPlayerObjectiveState(
@@ -34,6 +39,8 @@ export function buildPlayerObjectiveState(
   const explicitText = normalizeObjectiveText(options.text ?? "");
   const explicitFocus = options.focus ?? (explicitText ? classifyObjective(explicitText) : undefined);
   const explicitSource = options.source ?? previous?.source ?? "dynamic";
+  const conversationRoute =
+    explicitSource === "manual" ? undefined : chooseConversationRoute(world);
 
   if (explicitText) {
     const route = buildRouteForObjectiveText(
@@ -43,6 +50,22 @@ export function buildPlayerObjectiveState(
       explicitSource,
     );
     return composeObjective(world, explicitText, route, previous);
+  }
+
+  if (conversationRoute && routeHasWork(conversationRoute.route)) {
+    if (
+      !previous ||
+      previous.source !== "manual" ||
+      (previous.focus === conversationRoute.route.focus &&
+        previous.routeKey === conversationRoute.route.key)
+    ) {
+      return composeObjective(
+        world,
+        conversationRoute.text,
+        conversationRoute.route,
+        previous,
+      );
+    }
   }
 
   if (previous) {
@@ -241,8 +264,12 @@ function chooseDynamicRoute(
   }
 
   const conversationRoute = chooseConversationRoute(world);
-  if (conversationRoute && !isAvoidedRoute(conversationRoute, avoid) && routeHasWork(conversationRoute)) {
-    return conversationRoute;
+  if (
+    conversationRoute &&
+    !isAvoidedRoute(conversationRoute.route, avoid) &&
+    routeHasWork(conversationRoute.route)
+  ) {
+    return conversationRoute.route;
   }
 
   const scores = scoreObjectiveFocus(world);
@@ -353,9 +380,14 @@ function buildSettleRoute(
   const teaJob = jobById(world, "job-tea-shift");
   const yardJob = jobById(world, "job-yard-shift");
   const home = findLocation(world, world.player.homeLocationId);
-  const trustedPeople = world.npcs.filter((npc) => npc.trust >= 2).length;
+  const familiarPeople = familiarNpcCount(world);
   const lead = chooseWorkLead(world, textHint);
+  const houseStanding = world.player.reputation.morrow_house ?? 0;
   const hasTalkedToMara = countPlayerConversationsWithNpc(world, "npc-mara") > 0;
+  const maraTopics = npcReplyTopics(world, "npc-mara");
+  const hasStayTerms = houseStanding >= 2 || hasAnyTopic(maraTopics, ["home", "stay"]);
+  const hasWorkLead = hasConfirmedWorkLead(world);
+  const hasCommittedIncome = hasCommittedOrCompletedJob(world);
 
   return {
     key: "settle-core",
@@ -363,47 +395,76 @@ function buildSettleRoute(
     source,
     steps: [
       makeStep({
-        id: "settle-room",
-        title: hasTalkedToMara
-          ? `Keep a room at ${home?.name ?? "Morrow House"} for tonight.`
-          : "Talk to Mara about keeping a room tonight.",
-        detail: hasTalkedToMara
-          ? "The room matters because it keeps Rowan from starting from zero again tomorrow."
-          : "Mara is the clearest person to ask about how staying works here.",
-        progress: hasTalkedToMara
-          ? `Standing ${world.player.reputation.morrow_house ?? 0}/2`
-          : "Still need the talk",
-        done: hasTalkedToMara || (world.player.reputation.morrow_house ?? 0) >= 2,
+        id: "settle-terms",
+        title: `Learn what it takes to stay at ${home?.name ?? "Morrow House"} beyond tonight.`,
+        detail: hasStayTerms
+          ? "Mara has already spelled out what keeps a room from turning temporary again."
+          : hasTalkedToMara
+            ? "Mara knows the answer, but Rowan still needs the real room terms rather than a broader first impression."
+            : "Mara is the clearest person to ask about what staying here actually depends on.",
+        progress: hasStayTerms
+          ? "Terms learned"
+          : hasTalkedToMara
+            ? "Still need the real terms"
+            : "Still need the talk",
+        done: hasStayTerms,
+      }),
+      makeStep({
+        id: "settle-standing",
+        title: `Make myself worth keeping at ${home?.name ?? "Morrow House"}.`,
+        detail:
+          houseStanding >= 2
+            ? "The house is starting to read Rowan as useful, not temporary."
+            : "Knowing the terms is not the same as earning your place under them.",
+        progress: `Standing ${houseStanding}/2`,
+        done: houseStanding >= 2,
+      }),
+      makeStep({
+        id: "settle-lead",
+        title:
+          lead === "yard"
+            ? "Put one honest work lead on the table at North Crane Yard."
+            : "Put one honest work lead on the table at Kettle & Lamp.",
+        detail:
+          lead === "yard"
+            ? "The yard is the clearest place left to turn effort into decent pay."
+            : "The tea room is the likeliest place to turn a conversation into work.",
+        progress:
+          hasWorkLead
+            ? "Lead confirmed"
+            : teaJob?.discovered || yardJob?.discovered
+              ? "Heard where to go"
+              : hasCommittedIncome
+                ? "Work in hand"
+                : "Still looking",
+        done: hasWorkLead,
       }),
       makeStep({
         id: "settle-income",
-        title:
-          lead === "yard"
-            ? "Get to North Crane Yard and ask Tomas for work."
-            : "Get to Kettle & Lamp and ask Ada for work.",
+        title: "Turn a work lead into steady income.",
         detail:
-          lead === "yard"
-            ? "North Crane Yard is the stronger lead for steady pay."
-            : "Kettle & Lamp is the likeliest honest lead in South Quay.",
+          hasCommittedIncome
+            ? "There is finally real work in the day instead of just hope and rumors."
+            : "A lead only matters once Rowan actually commits to it.",
         progress:
-          teaJob?.accepted || teaJob?.completed || yardJob?.accepted || yardJob?.completed
-            ? "Work in hand"
-            : teaJob?.discovered || yardJob?.discovered
-              ? "Lead found"
-              : "Still looking",
-        done:
-          world.player.activeJobId !== undefined ||
-          Boolean(teaJob?.accepted || teaJob?.completed || yardJob?.accepted || yardJob?.completed),
+          world.player.activeJobId !== undefined
+            ? "Committed"
+            : teaJob?.completed || yardJob?.completed
+              ? "Paid once"
+              : hasWorkLead
+                ? "Lead waiting"
+                : "Still looking",
+        done: hasCommittedIncome,
       }),
       makeStep({
         id: "settle-people",
-        title: "Make a few people feel like friends.",
+        title: "Make two people glad to see me again.",
         detail:
-          trustedPeople >= 2
-            ? "A couple of faces are starting to feel familiar enough to matter."
-            : "Rowan still needs more than names if the city is going to feel like home.",
-        progress: `${Math.min(world.player.knownNpcIds.length, 3)}/3 known`,
-        done: trustedPeople >= 2 || world.player.knownNpcIds.length >= 3,
+          familiarPeople >= 2
+            ? "A couple of faces are starting to feel like they might matter tomorrow too."
+            : "Rowan still needs more than names if the city is going to feel livable.",
+        progress: `${Math.min(familiarPeople, 2)}/2 real connections`,
+        done: familiarPeople >= 2,
       }),
     ],
   };
@@ -420,6 +481,8 @@ function buildWorkRoute(
   const leadNpc = lead === "yard" ? npcById(world, "npc-tomas") : npcById(world, "npc-ada");
   const leadLocation =
     lead === "yard" ? findLocation(world, "freight-yard") : findLocation(world, "tea-house");
+  const leadJob = lead === "yard" ? yardJob : teaJob;
+  const anyCompletedWork = world.jobs.some((job) => job.completed);
 
   return {
     key: lead === "yard" ? "work-yard" : "work-tea",
@@ -427,33 +490,21 @@ function buildWorkRoute(
     source,
     steps: [
       makeStep({
-        id: lead === "yard" ? "work-ask-yard" : "work-ask-tea",
+        id: lead === "yard" ? "work-lead-yard" : "work-lead-tea",
         title:
           lead === "yard"
-            ? `Get to ${leadLocation?.name ?? "North Crane Yard"} and ask ${leadNpc?.name ?? "Tomas"} for work.`
-            : `Get to ${leadLocation?.name ?? "Kettle & Lamp"} and ask ${leadNpc?.name ?? "Ada"} for work.`,
+            ? `Get a real work lead from ${leadNpc?.name ?? "Tomas"} at ${leadLocation?.name ?? "North Crane Yard"}.`
+            : `Get a real work lead from ${leadNpc?.name ?? "Ada"} at ${leadLocation?.name ?? "Kettle & Lamp"}.`,
         detail:
           lead === "yard"
-            ? "The yard is where the steadier money has been."
-            : "The tea room is the clearest place to turn a conversation into coin.",
-        progress:
-          lead === "yard"
-            ? yardJob?.accepted || yardJob?.completed
-              ? "Lead taken"
-              : yardJob?.discovered
-                ? "Lead found"
-                : "Still asking"
-            : teaJob?.accepted || teaJob?.completed
-              ? "Lead taken"
-              : teaJob?.discovered
-                ? "Lead found"
-                : "Still asking",
-        done:
-          lead === "yard"
-            ? countPlayerConversationsWithNpc(world, "npc-tomas") > 0 ||
-              Boolean(yardJob?.accepted || yardJob?.completed)
-            : countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
-              Boolean(teaJob?.accepted || teaJob?.completed),
+            ? "The yard only counts as a lead once Tomas puts actual work on the table."
+            : "The tea room only counts as a lead once Ada makes the offer real.",
+        progress: confirmedWorkLeadFor(world, lead)
+          ? "Lead confirmed"
+          : leadJob?.discovered
+            ? "Heard about it"
+            : "Still asking",
+        done: confirmedWorkLeadFor(world, lead),
       }),
       makeStep({
         id: "work-commit",
@@ -466,28 +517,37 @@ function buildWorkRoute(
             ? "The yard only stays open for work if Rowan moves in time."
             : "Ada likes speed more than speeches.",
         progress:
-          world.player.activeJobId !== undefined
+          leadJob?.accepted || world.player.activeJobId === leadJob?.id
             ? "Committed"
-            : lead === "yard"
-              ? yardJob?.discovered
-                ? "Waiting on Rowan"
-                : "Still looking"
-              : teaJob?.discovered
-                ? "Waiting on Rowan"
-                : "Still looking",
-        done:
-          world.player.activeJobId !== undefined ||
-          Boolean(teaJob?.accepted || teaJob?.completed || yardJob?.accepted || yardJob?.completed),
+            : leadJob?.completed
+              ? "Already worked"
+              : leadJob?.discovered
+                ? "Lead waiting"
+                : "Still asking",
+        done: Boolean(leadJob?.accepted || leadJob?.completed),
+      }),
+      makeStep({
+        id: "work-finish",
+        title:
+          lead === "yard"
+            ? "Finish the yard lift cleanly."
+            : "Finish the tea-house shift cleanly.",
+        detail:
+          lead === "yard"
+            ? "Following through matters as much as taking the lift."
+            : "Finishing the rush matters more than saying yes to it.",
+        progress: leadJob?.completed ? "Finished" : "Still ahead",
+        done: Boolean(leadJob?.completed),
       }),
       makeStep({
         id: "work-pay",
         title: "Turn the pay into breathing room.",
         detail:
-          world.player.money >= 20 || world.jobs.some((job) => job.completed)
+          world.player.money >= 20 || anyCompletedWork
             ? "The day is starting to look more like footing than scrambling."
             : "Work only matters if it buys more than the next hour.",
         progress: `$${world.player.money} on hand`,
-        done: world.player.money >= 20 || world.jobs.some((job) => job.completed),
+        done: world.player.money >= 20 || anyCompletedWork,
       }),
     ],
   };
@@ -701,7 +761,9 @@ function buildPeopleRoute(
   textHint = "",
 ): ObjectiveRoute {
   const target = nextUntalkedNpc(world) ?? world.npcs[0];
-  const trustedPeople = world.npcs.filter((npc) => npc.trust >= 2).length;
+  const familiarPeople = familiarNpcCount(world);
+  const trustedPeople = trustedNpcCount(world);
+
   return {
     key: `people-${target?.id ?? "locals"}`,
     focus: "people",
@@ -717,26 +779,29 @@ function buildPeopleRoute(
             ? "Rowan is looking for more than a name now."
             : "A real introduction makes the block feel less faceless.",
         progress: target ? `${countPlayerConversationsWithNpc(world, target.id)} chats` : "No target",
-        done: target ? countPlayerConversationsWithNpc(world, target.id) > 0 : world.player.knownNpcIds.length > 0,
+        done:
+          target
+            ? countPlayerConversationsWithNpc(world, target.id) > 0
+            : familiarPeople > 0,
       }),
       makeStep({
-        id: "people-learn",
-        title: "Learn who actually matters here.",
+        id: "people-open",
+        title: "Give somebody a reason to remember me well.",
         detail:
-          world.player.knownNpcIds.length >= 3
-            ? "Enough faces are starting to feel like the block has a pattern."
-            : "The city is easier to read once a few names stick.",
-        progress: `${world.player.knownNpcIds.length}/3 people`,
-        done: world.player.knownNpcIds.length >= 3,
+          familiarPeople > 0
+            ? "At least one conversation has started to feel warmer than surface-level."
+            : "A useful exchange should leave somebody a little more open than before.",
+        progress: `${Math.min(familiarPeople, 1)}/1 person opened up`,
+        done: familiarPeople >= 1,
       }),
       makeStep({
         id: "people-friend",
-        title: "Find one person I can come back to.",
+        title: "Come away with two people I can return to.",
         detail:
           trustedPeople >= 2
-            ? "At least a couple of people are starting to feel like they could matter."
-            : "Rowan still needs one person who feels like more than a surface conversation.",
-        progress: `${trustedPeople}/2 trusted`,
+            ? "A couple of people are starting to feel like real footholds."
+            : "Rowan still needs more than one good conversation if he's going to stop feeling dropped in.",
+        progress: `${Math.min(trustedPeople, 2)}/2 trusted`,
         done: trustedPeople >= 2,
       }),
     ],
@@ -799,7 +864,7 @@ function buildExploreRoute(
   };
 }
 
-function chooseConversationRoute(world: StreetGameState) {
+function chooseConversationRoute(world: StreetGameState): ConversationObjectiveRoute | undefined {
   const threads = Object.values(world.conversationThreads ?? {})
     .filter((thread) => thread.objectiveText)
     .sort(
@@ -808,14 +873,18 @@ function chooseConversationRoute(world: StreetGameState) {
     );
 
   for (const thread of threads) {
+    const text = normalizeObjectiveText(thread.objectiveText ?? "");
     const route = buildRouteForObjectiveText(
       world,
-      thread.objectiveText ?? "",
-      classifyObjective(thread.objectiveText ?? ""),
+      text,
+      classifyObjective(text),
       "conversation",
     );
     if (routeHasWork(route)) {
-      return route;
+      return {
+        text,
+        route,
+      };
     }
   }
 
@@ -825,30 +894,45 @@ function chooseConversationRoute(world: StreetGameState) {
 function chooseWorkLead(world: StreetGameState, textHint = "") {
   const teaJob = jobById(world, "job-tea-shift");
   const yardJob = jobById(world, "job-yard-shift");
+  const activeJob = world.jobs.find(
+    (job) =>
+      job.id === world.player.activeJobId &&
+      job.accepted &&
+      !job.completed &&
+      !job.missed,
+  );
   const hint = textHint.toLowerCase();
-  const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
-  const hasTalkedToTomas = countPlayerConversationsWithNpc(world, "npc-tomas") > 0;
   const hour = currentHour(world);
 
-  if (
-    hint.includes("ada") ||
-    hint.includes("tea") ||
-    hasTalkedToAda ||
-    (teaJob?.discovered && !teaJob.completed)
-  ) {
+  if (activeJob?.id === "job-tea-shift") {
     return "tea" as const;
   }
 
-  if (
-    hint.includes("tomas") ||
-    hint.includes("yard") ||
-    hasTalkedToTomas ||
-    (yardJob?.discovered && !yardJob.completed)
-  ) {
+  if (activeJob?.id === "job-yard-shift") {
     return "yard" as const;
   }
 
-  if (hour >= 12.5 && (yardJob?.discovered || hasTalkedToTomas)) {
+  if (hint.includes("ada") || hint.includes("tea")) {
+    return "tea" as const;
+  }
+
+  if (hint.includes("tomas") || hint.includes("yard")) {
+    return "yard" as const;
+  }
+
+  if (teaJob?.discovered && !teaJob.completed && !teaJob.missed) {
+    return "tea" as const;
+  }
+
+  if (yardJob?.discovered && !yardJob.completed && !yardJob.missed) {
+    return "yard" as const;
+  }
+
+  if (teaJob?.completed && !yardJob?.completed && !yardJob?.missed) {
+    return "yard" as const;
+  }
+
+  if (hour >= 13) {
     return "yard" as const;
   }
 
@@ -952,6 +1036,59 @@ function countPlayerConversationsWithNpc(world: StreetGameState, npcId: string) 
   ).length;
 }
 
+function npcReplyTopics(world: StreetGameState, npcId: string) {
+  const topics = new Set<string>();
+
+  for (const entry of world.conversations) {
+    if (entry.npcId !== npcId || entry.speaker !== "npc") {
+      continue;
+    }
+
+    for (const topic of detectTopics(entry.text)) {
+      topics.add(topic);
+    }
+  }
+
+  return topics;
+}
+
+function hasAnyTopic(topics: Set<string>, candidates: string[]) {
+  return candidates.some((candidate) => topics.has(candidate));
+}
+
+function familiarNpcCount(world: StreetGameState) {
+  return world.npcs.filter((npc) => npc.trust >= 1).length;
+}
+
+function trustedNpcCount(world: StreetGameState) {
+  return world.npcs.filter((npc) => npc.trust >= 2).length;
+}
+
+function hasDiscoveredWorkLead(world: StreetGameState) {
+  return world.jobs.some((job) => job.discovered || job.accepted || job.completed);
+}
+
+function confirmedWorkLeadFor(world: StreetGameState, lead: "tea" | "yard") {
+  const job = lead === "yard" ? jobById(world, "job-yard-shift") : jobById(world, "job-tea-shift");
+  const npcId = lead === "yard" ? "npc-tomas" : "npc-ada";
+  const topics = npcReplyTopics(world, npcId);
+  const requiredTopics = lead === "yard" ? ["work", "yard"] : ["work"];
+
+  return Boolean(
+    job?.accepted ||
+      job?.completed ||
+      (job?.discovered && hasAnyTopic(topics, requiredTopics)),
+  );
+}
+
+function hasCommittedOrCompletedJob(world: StreetGameState) {
+  return world.player.activeJobId !== undefined || world.jobs.some((job) => job.accepted || job.completed);
+}
+
+function hasConfirmedWorkLead(world: StreetGameState) {
+  return confirmedWorkLeadFor(world, "tea") || confirmedWorkLeadFor(world, "yard");
+}
+
 function normalizedIncludes(text: string, needle: string) {
   return text.toLowerCase().includes(needle.toLowerCase());
 }
@@ -960,7 +1097,7 @@ function detectTopics(text: string) {
   const normalized = text.toLowerCase();
   const topics = new Set<string>();
 
-  if (/\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b/.test(normalized)) {
+  if (/\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bpay\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(normalized)) {
     topics.add("work");
   }
 
@@ -1100,11 +1237,11 @@ function scoreForFocus(scores: ObjectiveScores, focus: ObjectiveFocus) {
   return scores[focus] ?? 0;
 }
 
-function classifyObjective(text: string): ObjectiveFocus {
+export function classifyObjective(text: string): ObjectiveFocus {
   const normalized = text.toLowerCase();
   const hasWorkNeed = /(work|job|money|coin|earn|pay|shift|income)/.test(normalized);
   const hasHomeNeed = /(room|stay|home|bed|rent|lodg|shelter)/.test(normalized);
-  const hasPeopleNeed = /(talk|meet|people|trust|introduce|ask|friend|friends|belong)/.test(
+  const hasPeopleNeed = /(talk|meet|people|trust|introduce|friend|friends|belong)/.test(
     normalized,
   );
 

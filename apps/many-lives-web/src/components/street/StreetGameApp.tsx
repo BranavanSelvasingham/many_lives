@@ -539,15 +539,18 @@ export function StreetGameApp() {
       0,
       POST_CONVERSATION_BREATH_MS - (now - lastConversationReplayCompletedAt),
     );
-    const nextDelay = Math.max(
-      userIdleRemaining,
-      AUTO_OBJECTIVE_COOLDOWN_MS - (now - lastAutoAdvanceAtRef.current),
-      hasPendingActiveConversationReplay && game.activeConversation
-        ? estimateConversationPlaybackMs(game.activeConversation.lines)
-        : 0,
-      postConversationBreathRemaining,
-      350,
-    );
+    const nextDelay =
+      isAutoConversationView && !hasPendingActiveConversationReplay
+        ? Math.max(postConversationBreathRemaining, 350)
+        : Math.max(
+            userIdleRemaining,
+            AUTO_OBJECTIVE_COOLDOWN_MS - (now - lastAutoAdvanceAtRef.current),
+            hasPendingActiveConversationReplay && game.activeConversation
+              ? estimateConversationPlaybackMs(game.activeConversation.lines)
+              : 0,
+            postConversationBreathRemaining,
+            350,
+          );
 
     const timer = window.setTimeout(() => {
       if (
@@ -866,17 +869,12 @@ export function StreetGameApp() {
     : Number.POSITIVE_INFINITY;
   const fallbackConversationNpcId =
     latestConversationAgeMinutes <= 35 ? latestConversation?.npcId : undefined;
-  const mapConversationNpcId = shouldShowConversationPanel
-    ? activeConversationNpc?.id
-    : sceneConversation?.npcId ?? fallbackConversationNpcId;
-  const mapConversationEntries = shouldShowConversationPanel
-    ? recentConversation
-    : mapConversationNpcId && sceneConversation?.npcId === mapConversationNpcId
-      ? sceneConversation.lines
-      : mapConversationNpcId
-        ? game.conversationThreads?.[mapConversationNpcId]?.lines ??
-          buildConversationThreadFallback(game, mapConversationNpcId).lines
-        : undefined;
+  const liveMapConversation =
+    sceneConversation && hasPendingActiveConversationReplay
+      ? sceneConversation
+      : null;
+  const mapConversationNpcId = liveMapConversation?.npcId;
+  const mapConversationEntries = liveMapConversation?.lines;
   const scenePanelConversationNpcId =
     shouldShowConversationPanel
       ? activeConversationNpc?.id
@@ -1259,7 +1257,6 @@ export function StreetGameApp() {
             busy={Boolean(busyLabel)}
             hasObjectiveChanges={hasObjectiveChanges}
             currentObjective={game.player.objective?.text}
-            objectivePlanItems={objectivePlanItems}
             objectiveDraft={objectiveDraft}
             objectiveSuggestions={objectiveSuggestions}
             onObjectiveChange={setObjectiveDraft}
@@ -1448,7 +1445,6 @@ function SceneItemsContent({
 
 function ObjectiveOverridePanel({
   currentObjective,
-  objectivePlanItems,
   objectiveDraft,
   objectiveSuggestions,
   hasObjectiveChanges,
@@ -1458,7 +1454,6 @@ function ObjectiveOverridePanel({
   onResetToCurrent,
 }: {
   currentObjective?: string;
-  objectivePlanItems: ObjectivePlanItem[];
   objectiveDraft: string;
   objectiveSuggestions: string[];
   hasObjectiveChanges: boolean;
@@ -1498,20 +1493,6 @@ function ObjectiveOverridePanel({
             </div>
             <div className="mt-3 text-[1rem] leading-7 text-[color:var(--text-main)]">
               {currentObjectiveText}
-            </div>
-          </div>
-
-          <div className="rounded-[22px] border border-[rgba(134,145,154,0.18)] bg-[rgba(16,22,27,0.72)] px-4 py-4">
-            <div className="text-[0.72rem] uppercase tracking-[0.18em] text-[color:var(--text-dim)]">
-              Rowan&apos;s Working Plan
-            </div>
-            <div className="mt-3 space-y-3">
-              {objectivePlanItems.map((item) => (
-                <ObjectivePlanRow
-                  item={item}
-                  key={item.id}
-                />
-              ))}
             </div>
           </div>
 
@@ -2499,41 +2480,6 @@ function MindSnapshotCard({
           {meta}
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ObjectivePlanRow({
-  item,
-}: {
-  item: ObjectivePlanItem;
-}) {
-  return (
-    <div className="flex items-start gap-3 rounded-[18px] border border-[rgba(134,145,154,0.14)] bg-[rgba(24,31,36,0.72)] px-4 py-3">
-      <div
-        className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[0.7rem] font-medium ${
-          item.done
-            ? "border-[rgba(205,174,115,0.4)] bg-[rgba(205,174,115,0.16)] text-[rgba(228,191,123,0.96)]"
-            : "border-[rgba(134,145,154,0.24)] bg-[rgba(41,50,57,0.74)] text-[color:var(--text-dim)]"
-        }`}
-      >
-        {item.done ? "OK" : ""}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="text-[0.94rem] font-medium text-[color:var(--text-main)]">
-            {item.title}
-          </div>
-          {item.progress ? (
-            <div className="text-[0.7rem] uppercase tracking-[0.14em] text-[color:var(--text-dim)]">
-              {item.progress}
-            </div>
-          ) : null}
-        </div>
-        <div className="mt-1 text-[0.88rem] leading-6 text-[color:var(--text-muted)]">
-          {item.detail}
-        </div>
-      </div>
     </div>
   );
 }

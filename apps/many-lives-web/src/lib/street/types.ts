@@ -208,6 +208,15 @@ export interface PlayerObjective {
   progress: ObjectiveProgressState;
 }
 
+export interface PendingObjectiveMove {
+  targetLocationId: string;
+  objectiveText: string;
+  rationale: string;
+  npcId?: string;
+  actionId?: string;
+  preparedAt: string;
+}
+
 export interface PlayerState {
   id: string;
   name: string;
@@ -223,6 +232,7 @@ export interface PlayerState {
   knownNpcIds: string[];
   activeJobId?: string;
   objective?: PlayerObjective;
+  pendingObjectiveMove?: PendingObjectiveMove;
   currentThought?: string;
   reputation: Record<string, number>;
   memories: MemoryEntry[];

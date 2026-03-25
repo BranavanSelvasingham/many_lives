@@ -7,6 +7,7 @@ import type {
 import { normalizeStreetVoice } from "./streetVoice.js";
 import { getNpcNarrative } from "../street-sim/npcNarratives.js";
 import { getMapLabelNarrative } from "../street-sim/placeNarratives.js";
+import { buildRowanCognition } from "../sim/rowanCognition.js";
 
 export interface StreetDialogueRequest {
   game: StreetGameState;
@@ -89,6 +90,7 @@ export interface StreetConversationContext {
     currentThought?: string;
     money: number;
     energy: number;
+    cognition: ReturnType<typeof buildRowanCognition>;
     memories: Array<{
       id: string;
       kind: MemoryEntry["kind"];
@@ -163,6 +165,7 @@ export function buildStreetConversationContext(
   const location = currentConversationLocation(input.game, npc, thread.locationId);
   const nearbyPlaces = buildNearbyPlaces(input.game, location);
   const nearbyLandmarks = buildNearbyLandmarks(input.game, location, nearbyPlaces);
+  const cognition = buildRowanCognition(input.game);
 
   return {
     city: {
@@ -211,6 +214,7 @@ export function buildStreetConversationContext(
       currentThought: input.game.player.currentThought,
       money: input.game.player.money,
       energy: input.game.player.energy,
+      cognition,
       memories: selectRelevantMemories(input.game, location, npc),
     },
     npc: npc
@@ -798,7 +802,7 @@ function detectTopics(text: string): Set<string> {
   const normalized = normalizePlayerText(text);
   const topics = new Set<string>();
 
-  if (/\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b/.test(normalized)) {
+  if (/\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(normalized)) {
     topics.add("work");
     topics.add("money");
   }
