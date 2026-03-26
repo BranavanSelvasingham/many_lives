@@ -844,6 +844,7 @@ export function StreetGameApp() {
           )}.`
         : undefined;
   const headerPreview = buildNarrativePreview(game.player.backstory, 160);
+  const currentThoughtPreview = buildNarrativePreview(currentThought, 76);
   const currentSummaryPreview = buildNarrativePreview(currentSummary, 220);
   const activeCommitmentSummary = activeJob
     ? activeJobDeferredUntilLabel
@@ -1070,12 +1071,13 @@ export function StreetGameApp() {
                 Current Thought
               </div>
               <div className="mt-3 max-w-[34ch] text-[1.16rem] leading-7 font-medium text-[color:var(--text-main)] sm:text-[1.24rem]">
-                {currentThought}
+                {currentThoughtPreview}
               </div>
               <div className="mt-3 max-w-[92ch] text-[0.92rem] leading-6 text-[color:var(--text-muted)]">
                 {currentSummaryPreview}
               </div>
-              {currentSummaryPreview !== currentSummary ? (
+              {currentThoughtPreview !== currentThought ||
+              currentSummaryPreview !== currentSummary ? (
                 <details className="group mt-3 rounded-[20px] border border-[rgba(205,174,115,0.16)] bg-[rgba(20,28,33,0.28)]">
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-[0.72rem] uppercase tracking-[0.18em] text-[rgba(228,191,123,0.92)] [&::-webkit-details-marker]:hidden">
                     <span>Full Read</span>
@@ -1083,8 +1085,27 @@ export function StreetGameApp() {
                       Expand
                     </span>
                   </summary>
-                  <div className="border-t border-[rgba(205,174,115,0.12)] px-4 py-4 text-[0.93rem] leading-7 text-[color:var(--text-muted)]">
-                    {currentSummary}
+                  <div className="border-t border-[rgba(205,174,115,0.12)] px-4 py-4">
+                    {currentThoughtPreview !== currentThought ? (
+                      <div className="mb-4">
+                        <div className="text-[0.68rem] uppercase tracking-[0.16em] text-[rgba(228,191,123,0.82)]">
+                          Full Thought
+                        </div>
+                        <div className="mt-2 text-[1rem] leading-7 font-medium text-[color:var(--text-main)]">
+                          {currentThought}
+                        </div>
+                      </div>
+                    ) : null}
+                    {currentSummaryPreview !== currentSummary ? (
+                      <div>
+                        <div className="text-[0.68rem] uppercase tracking-[0.16em] text-[rgba(228,191,123,0.82)]">
+                          Full Read
+                        </div>
+                        <div className="mt-2 text-[0.93rem] leading-7 text-[color:var(--text-muted)]">
+                          {currentSummary}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 </details>
               ) : null}

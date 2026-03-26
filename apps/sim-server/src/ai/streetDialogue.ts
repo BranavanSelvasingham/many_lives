@@ -748,8 +748,24 @@ export function sanitizeThought(text: string): string {
     return "Keep moving.";
   }
 
-  const words = cleaned.split(" ").slice(0, 12).join(" ");
-  return words.slice(0, 84);
+  const words = cleaned.split(" ").filter(Boolean);
+  const limitedWords = words.slice(0, 12);
+  const wordLimited = limitedWords.join(" ");
+  const hitWordLimit = limitedWords.length < words.length;
+
+  if (wordLimited.length <= 84 && !hitWordLimit) {
+    return wordLimited;
+  }
+
+  const charLimited = wordLimited.slice(0, 84).trimEnd();
+  const lastSpace = charLimited.lastIndexOf(" ");
+  const base =
+    lastSpace > Math.floor(charLimited.length * 0.55)
+      ? charLimited.slice(0, lastSpace)
+      : charLimited;
+  const trimmedBase = base.replace(/[.,!?;:]+$/, "").trimEnd();
+
+  return `${trimmedBase || charLimited.replace(/[.,!?;:]+$/, "").trimEnd()}...`;
 }
 
 export function generatedReplyLooksInvalid(
