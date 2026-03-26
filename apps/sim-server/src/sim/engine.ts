@@ -95,6 +95,7 @@ export class SimulationEngine {
         break;
       case "wait":
         advanceWorld(nextWorld, command.minutes);
+        thoughtRefreshMode = "deterministic";
         if (!command.silent) {
           addFeed(
             nextWorld,
@@ -2182,6 +2183,21 @@ function buildSummary(world: StreetGameState): string {
             world,
             activeJob.deferredUntilMinutes,
           )}.`
+        : world.player.currentLocationId === activeJob.locationId &&
+            currentHour(world) >= activeJob.startHour &&
+            currentHour(world) < activeJob.endHour
+          ? ` The shift window is open right now at ${
+              findLocation(world, activeJob.locationId)?.name ?? "the job site"
+            }, so that comes first.`
+          : currentHour(world) < activeJob.startHour
+            ? ` I've already committed to ${activeJob.title.toLowerCase()} at ${
+                findLocation(world, activeJob.locationId)?.name ?? "the job site"
+              }, and it starts around ${formatHour(activeJob.startHour)}.`
+            : currentHour(world) >= activeJob.startHour &&
+                currentHour(world) < activeJob.endHour
+              ? ` I've already committed to ${activeJob.title.toLowerCase()} at ${
+                  findLocation(world, activeJob.locationId)?.name ?? "the job site"
+                }, and the window is open now.`
         : ` I've already committed to ${activeJob.title.toLowerCase()} at ${
             findLocation(world, activeJob.locationId)?.name ?? "the job site"
           }, so that comes first until it resolves.`

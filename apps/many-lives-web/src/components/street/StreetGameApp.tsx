@@ -76,6 +76,22 @@ type ObjectivePlanItem = {
   progress?: string;
   done: boolean;
 };
+type CharacterProfileSection = {
+  label: string;
+  value: string;
+};
+type CharacterProfile = {
+  id: string;
+  name: string;
+  role: string;
+  summary: string;
+  locationLabel: string;
+  statusLabel: string;
+  tagLabel?: string;
+  known?: boolean;
+  isPlayer?: boolean;
+  sections: CharacterProfileSection[];
+};
 
 function objectiveTrailStepToPlanItem(item: ObjectiveTrailItem): ObjectivePlanItem {
   return {
@@ -94,6 +110,7 @@ export function StreetGameApp() {
   const [optimisticPlayerPosition, setOptimisticPlayerPosition] =
     useState<Point | null>(null);
   const [objectiveDraft, setObjectiveDraft] = useState("");
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string>("player");
   const [conversationNpcId, setConversationNpcId] = useState<string | null>(
     null,
   );
@@ -511,6 +528,23 @@ export function StreetGameApp() {
       );
     }
   }, [applyGameUpdate, conversationNpcId, nextRequestId, runWithBusy]);
+  const handleAdvanceTime = useCallback(async (
+    minutes: number,
+    label: string,
+  ) => {
+    const activeGame = gameRef.current;
+    if (!activeGame || busyLabelRef.current || minutes <= 0) {
+      return;
+    }
+
+    lastUserInputAtRef.current = Date.now();
+
+    await runWithBusy(label, async () => {
+      const requestId = nextRequestId();
+      const nextGame = await waitInStreetGame(activeGame.id, minutes);
+      applyGameUpdate(nextGame, requestId);
+    });
+  }, [applyGameUpdate, nextRequestId, runWithBusy]);
   const handleConversationReplayComplete = useCallback((signature: string) => {
     playedConversationReplaySignaturesRef.current.add(signature);
     setLastConversationReplayCompletedAt(Date.now());
@@ -781,6 +815,34 @@ export function StreetGameApp() {
     activeJob.deferredUntilMinutes > liveClock.totalMinutes
       ? formatClock(isoForTotalMinutes(activeJob.deferredUntilMinutes))
       : undefined;
+  const activeJobStartTotalMinutes = activeJob
+    ? totalMinutesForDayHour(liveClock.day, activeJob.startHour)
+    : undefined;
+  const upcomingCommitmentMinutes =
+    activeJob?.deferredUntilMinutes !== undefined &&
+    activeJob.deferredUntilMinutes > liveClock.totalMinutes
+      ? activeJob.deferredUntilMinutes
+      : activeJobStartTotalMinutes !== undefined &&
+          activeJobStartTotalMinutes > liveClock.totalMinutes
+        ? activeJobStartTotalMinutes
+        : undefined;
+  const clockAdvanceOptions = buildClockAdvanceOptions({
+    currentTotalMinutes: liveClock.totalMinutes,
+    upcomingCommitmentMinutes,
+  });
+  const upcomingCommitmentLabel =
+    activeJob?.deferredUntilMinutes !== undefined &&
+    activeJob.deferredUntilMinutes > liveClock.totalMinutes
+      ? `Deferred until about ${formatClock(
+          isoForTotalMinutes(activeJob.deferredUntilMinutes),
+        )}.`
+      : activeJob &&
+          activeJobStartTotalMinutes !== undefined &&
+          activeJobStartTotalMinutes > liveClock.totalMinutes
+        ? `${activeJob.title} starts at ${formatClock(
+            isoForTotalMinutes(activeJobStartTotalMinutes),
+          )}.`
+        : undefined;
   const headerPreview = buildNarrativePreview(game.player.backstory, 160);
   const currentSummaryPreview = buildNarrativePreview(currentSummary, 220);
   const activeCommitmentSummary = activeJob
@@ -842,6 +904,16 @@ export function StreetGameApp() {
     .filter((item) => item.id !== primaryTool?.id)
     .slice(0, 2)
     .map((item) => item.name);
+  const characterProfiles = buildCharacterProfiles({
+    game,
+    locationById,
+    currentThought,
+    currentSummary,
+    activeCommitmentSummary,
+  });
+  const selectedCharacter =
+    characterProfiles.find((profile) => profile.id === selectedCharacterId) ??
+    characterProfiles[0];
   const talkOptions = game.availableActions
     .map((action) => {
       const npcId = extractTalkNpcId(action.id);
@@ -974,7 +1046,13 @@ export function StreetGameApp() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <StatPill label="Day" value={String(liveClock.day)} />
-              <StatPill label="Time" value={formatClock(liveCurrentTime)} />
+              <TimeStatCard
+                busy={Boolean(busyLabel)}
+                nextBeatLabel={upcomingCommitmentLabel}
+                onAdvance={handleAdvanceTime}
+                options={clockAdvanceOptions}
+                value={formatClock(liveCurrentTime)}
+              />
               <StatPill label="Money" value={`$${game.player.money}`} />
               <StatPill label="Energy" value={String(game.player.energy)} />
             </div>
@@ -1279,6 +1357,12 @@ export function StreetGameApp() {
             subtitle="A compact read of what Rowan is actively trying to solve and what he has already managed to pull off."
           />
 
+          <CharacterCardsPanel
+            characters={characterProfiles}
+            onSelect={setSelectedCharacterId}
+            selectedCharacterId={selectedCharacter?.id}
+          />
+
           <Panel
             title="Working Memory"
             subtitle="What's sticking, and what I'm actually using to decide."
@@ -1443,6 +1527,220 @@ function SceneItemsContent({
   );
 }
 
+function CharacterCardsPanel({
+  characters,
+  selectedCharacterId,
+  onSelect,
+}: {
+  characters: CharacterProfile[];
+  selectedCharacterId?: string;
+  onSelect: (characterId: string) => void;
+}) {
+  const selectedCharacter =
+    characters.find((profile) => profile.id === selectedCharacterId) ??
+    characters[0];
+
+  return (
+    <Panel
+      title="Characters"
+      subtitle="A quick read on who Rowan knows, what seems to drive them, and what is sticking about each person."
+      contentClassName="space-y-5"
+    >
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {characters.map((character) => {
+          const selected = character.id === selectedCharacter?.id;
+
+          return (
+            <button
+              className={`rounded-[24px] border px-4 py-4 text-left transition sm:px-5 ${
+                selected
+                  ? "border-[rgba(205,174,115,0.34)] bg-[rgba(205,174,115,0.08)] shadow-[0_18px_36px_rgba(0,0,0,0.14)]"
+                  : "border-[rgba(134,145,154,0.2)] bg-[rgba(30,39,46,0.74)] hover:bg-[rgba(37,47,54,0.84)]"
+              }`}
+              key={character.id}
+              onClick={() => {
+                onSelect(character.id);
+              }}
+              type="button"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <CharacterPortrait
+                    characterId={character.id}
+                    isPlayer={character.isPlayer}
+                    known={character.known ?? true}
+                    name={character.name}
+                    size="card"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-[1rem] font-medium text-[color:var(--text-main)]">
+                      {character.name}
+                    </div>
+                    <div className="mt-1 text-[0.78rem] uppercase tracking-[0.16em] text-[color:var(--text-dim)]">
+                      {character.role}
+                    </div>
+                  </div>
+                </div>
+                {character.tagLabel ? (
+                  <div className="rounded-full border border-[rgba(134,145,154,0.18)] bg-[rgba(41,50,57,0.72)] px-2.5 py-1 text-[0.62rem] uppercase tracking-[0.14em] text-[color:var(--text-main)]">
+                    {character.tagLabel}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mt-3 text-[0.9rem] leading-6 text-[color:var(--text-muted)]">
+                {character.summary}
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-[0.72rem] uppercase tracking-[0.14em] text-[color:var(--text-dim)]">
+                <span>{character.locationLabel}</span>
+                <span className="text-[rgba(134,145,154,0.5)]">•</span>
+                <span>{character.statusLabel}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {selectedCharacter ? (
+        <div className="rounded-[26px] border border-[rgba(205,174,115,0.2)] bg-[linear-gradient(180deg,rgba(48,41,31,0.2)_0%,rgba(23,31,36,0.86)_100%)] px-5 py-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-4">
+              <CharacterPortrait
+                characterId={selectedCharacter.id}
+                isPlayer={selectedCharacter.isPlayer}
+                known={selectedCharacter.known ?? true}
+                name={selectedCharacter.name}
+                size="detail"
+              />
+              <div>
+                <div className="text-[0.72rem] uppercase tracking-[0.18em] text-[rgba(228,191,123,0.92)]">
+                  Selected Character
+                </div>
+                <div className="mt-2 text-[1.2rem] font-medium text-[color:var(--text-main)]">
+                  {selectedCharacter.name}
+                </div>
+                <div className="mt-1 text-[0.82rem] uppercase tracking-[0.16em] text-[color:var(--text-dim)]">
+                  {selectedCharacter.role}
+                </div>
+              </div>
+            </div>
+            <div className="rounded-full border border-[rgba(134,145,154,0.18)] bg-[rgba(41,50,57,0.72)] px-3 py-1.5 text-[0.68rem] uppercase tracking-[0.16em] text-[color:var(--text-main)]">
+              {selectedCharacter.statusLabel}
+            </div>
+          </div>
+
+          <div className="mt-4 text-[0.95rem] leading-7 text-[color:var(--text-main)]">
+            {selectedCharacter.summary}
+          </div>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-2">
+            {selectedCharacter.sections.map((section) => (
+              <div
+                className="rounded-[22px] border border-[rgba(134,145,154,0.16)] bg-[rgba(18,25,30,0.66)] px-4 py-4"
+                key={`${selectedCharacter.id}-${section.label}`}
+              >
+                <div className="text-[0.72rem] uppercase tracking-[0.18em] text-[color:var(--text-dim)]">
+                  {section.label}
+                </div>
+                <div className="mt-3 text-[0.92rem] leading-7 text-[color:var(--text-main)]">
+                  {section.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </Panel>
+  );
+}
+
+type PortraitAppearance = {
+  coat: string;
+  accent: string;
+  hair: string;
+  face: string;
+  cheek: string;
+  eye: string;
+  outline: string;
+  hairStyle: "bun" | "scarf" | "cap" | "beard-cap" | "ponytail" | "cropped";
+  faceStyle: "soft" | "wry" | "steady" | "stern" | "bright" | "guarded";
+  accessory?: "apron" | "shawl" | "satchel" | "vest" | "scarf";
+};
+
+function CharacterPortrait({
+  characterId,
+  name,
+  known,
+  isPlayer = false,
+  size,
+}: {
+  characterId: string;
+  name: string;
+  known: boolean;
+  isPlayer?: boolean;
+  size: "card" | "detail";
+}) {
+  const sizeClasses =
+    size === "detail" ? "h-[84px] w-[84px]" : "h-14 w-14";
+  const appearance = isPlayer
+    ? playerPortraitAppearance()
+    : portraitAppearanceForCharacter(characterId, known);
+
+  return (
+    <div
+      className={`shrink-0 overflow-hidden rounded-[20px] border border-[rgba(134,145,154,0.22)] bg-[radial-gradient(circle_at_50%_28%,rgba(205,174,115,0.14)_0%,rgba(34,43,50,0.94)_70%)] shadow-[0_14px_28px_rgba(0,0,0,0.2)] ${sizeClasses}`}
+      title={name}
+    >
+      <svg
+        aria-hidden="true"
+        className="h-full w-full"
+        viewBox="0 0 64 64"
+      >
+        <defs>
+          <linearGradient id={`portrait-bg-${characterId}`} x1="0%" x2="100%" y1="0%" y2="100%">
+            <stop offset="0%" stopColor="rgba(63,78,88,0.96)" />
+            <stop offset="100%" stopColor="rgba(26,34,40,0.98)" />
+          </linearGradient>
+        </defs>
+        <rect
+          fill={`url(#portrait-bg-${characterId})`}
+          height="64"
+          rx="18"
+          width="64"
+          x="0"
+          y="0"
+        />
+        <circle cx="32" cy="21" fill="rgba(228,191,123,0.1)" r="20" />
+        <path
+          d="M 17 56 Q 20 39 32 39 Q 44 39 47 56 L 47 64 L 17 64 Z"
+          fill={appearance.coat}
+          stroke={appearance.outline}
+          strokeWidth="1.4"
+        />
+        <path
+          d="M 24 40 Q 32 34 40 40 L 37 56 L 27 56 Z"
+          fill={appearance.accent}
+          opacity="0.92"
+        />
+        {renderPortraitAccessory(appearance)}
+        <circle
+          cx="32"
+          cy="24"
+          fill={appearance.face}
+          r="11.4"
+          stroke={appearance.outline}
+          strokeWidth="1.45"
+        />
+        <circle cx="27.3" cy="27.1" fill={appearance.cheek} r="1.9" />
+        <circle cx="36.7" cy="27.1" fill={appearance.cheek} r="1.9" />
+        {renderPortraitHair(appearance)}
+        {renderPortraitFace(appearance)}
+      </svg>
+    </div>
+  );
+}
+
 function ObjectiveOverridePanel({
   currentObjective,
   objectiveDraft,
@@ -1555,6 +1853,67 @@ function ObjectiveOverridePanel({
         </div>
       </details>
     </Panel>
+  );
+}
+
+function TimeStatCard({
+  value,
+  options,
+  nextBeatLabel,
+  busy,
+  onAdvance,
+}: {
+  value: string;
+  options: ClockAdvanceOption[];
+  nextBeatLabel?: string;
+  busy: boolean;
+  onAdvance: (minutes: number, label: string) => void;
+}) {
+  return (
+    <details className="group rounded-[22px] border border-[rgba(134,145,154,0.2)] bg-[linear-gradient(180deg,rgba(43,53,60,0.82)_0%,rgba(34,43,50,0.74)_100%)]">
+      <summary className="flex min-h-[88px] cursor-pointer list-none items-start justify-between gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <div className="min-w-0">
+          <div className="text-[0.72rem] uppercase tracking-[0.2em] text-[color:var(--text-dim)]">
+            Time
+          </div>
+          <div className="mt-3 text-[1.06rem] leading-5 font-medium text-[color:var(--text-main)] sm:text-[1.12rem]">
+            {value}
+          </div>
+          <div className="mt-2 text-[0.76rem] leading-5 text-[color:var(--text-dim)]">
+            Forward only
+          </div>
+        </div>
+        <span className="rounded-full border border-[rgba(134,145,154,0.18)] bg-[rgba(42,52,59,0.5)] px-2.5 py-1 text-[0.64rem] uppercase tracking-[0.16em] text-[color:var(--text-main)]">
+          Advance
+        </span>
+      </summary>
+
+      <div className="space-y-3 border-t border-[rgba(134,145,154,0.14)] px-4 py-3">
+        <div className="text-[0.82rem] leading-6 text-[color:var(--text-muted)]">
+          {nextBeatLabel ??
+            "Move time forward when Rowan is waiting on the next useful beat."}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {options.map((option) => (
+            <button
+              className={`inline-flex min-h-[36px] items-center justify-center rounded-full border px-3 py-1.5 text-[0.7rem] uppercase tracking-[0.16em] transition disabled:cursor-not-allowed disabled:opacity-55 ${
+                option.kind === "target"
+                  ? "border-[rgba(205,174,115,0.32)] bg-[rgba(205,174,115,0.1)] text-[color:var(--text-main)] hover:bg-[rgba(205,174,115,0.16)]"
+                  : "border-[rgba(134,145,154,0.22)] bg-[rgba(41,50,57,0.74)] text-[color:var(--text-main)] hover:bg-[rgba(51,61,68,0.82)]"
+              }`}
+              disabled={busy}
+              key={option.key}
+              onClick={() => {
+                void onAdvance(option.minutes, option.busyLabel);
+              }}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -2194,6 +2553,491 @@ function buildKnownPersonDetail(person: StreetGameState["npcs"][number]) {
   return `${roleLine} I remember that ${person.name} ${lowercaseFirst(trimPeriod(person.summary))}.`;
 }
 
+function buildCharacterProfiles({
+  game,
+  locationById,
+  currentThought,
+  currentSummary,
+  activeCommitmentSummary,
+}: {
+  game: StreetGameState;
+  locationById: Map<string, StreetGameState["locations"][number]>;
+  currentThought: string;
+  currentSummary: string;
+  activeCommitmentSummary?: string;
+}): CharacterProfile[] {
+  const playerLocation =
+    (game.player.currentLocationId
+      ? locationById.get(game.player.currentLocationId)
+      : undefined) ?? game.locations[0];
+  const playerSections: CharacterProfileSection[] = [
+    {
+      label: "Backstory",
+      value: game.player.backstory,
+    },
+    {
+      label: "Current Objective",
+      value:
+        game.player.objective?.text ??
+        "Rowan is still moving by feel without one fixed objective yet.",
+    },
+    {
+      label: "Current Thought",
+      value: currentThought,
+    },
+    {
+      label: "What This Means Right Now",
+      value: activeCommitmentSummary
+        ? `${currentSummary} ${activeCommitmentSummary}`
+        : currentSummary,
+    },
+  ];
+
+  const profiles: CharacterProfile[] = [
+    {
+      id: "player",
+      name: game.player.name,
+      role: "new arrival",
+      summary: buildNarrativePreview(game.player.backstory, 170),
+      locationLabel: `At ${playerLocation?.name ?? "the street"}`,
+      statusLabel:
+        game.player.objective?.progress?.label ??
+        `${game.player.knownNpcIds.length} people known`,
+      tagLabel: "You",
+      known: true,
+      isPlayer: true,
+      sections: playerSections,
+    },
+  ];
+
+  for (const npc of game.npcs) {
+    const location =
+      locationById.get(npc.currentLocationId)?.name ?? "Somewhere in South Quay";
+    const visibleNow = npc.currentLocationId === game.player.currentLocationId;
+    const statusLabel = visibleNow
+      ? "Here now"
+      : npc.known
+        ? "Known"
+        : "Still distant";
+    const narrativeBackstory =
+      npc.narrative.backstory || npc.summary || `${npc.name} is still mostly a first impression.`;
+    const objectiveRead =
+      npc.currentObjective ||
+      npc.narrative.objective ||
+      "You do not yet have a clear read on what they are trying to get done.";
+    const concernRead =
+      npc.currentConcern ||
+      npc.narrative.context ||
+      "They still feel hard to read beyond the surface.";
+    const memoryRead =
+      npc.memory[0] ||
+      npc.lastSpokenLine ||
+      npc.currentThought ||
+      `Nothing specific has stuck about ${npc.name} yet beyond the first impression.`;
+
+    profiles.push({
+      id: npc.id,
+      name: npc.name,
+      role: npc.role,
+      summary: buildNarrativePreview(
+        npc.summary || `${npc.name} is still more role than person in Rowan's head.`,
+        170,
+      ),
+      locationLabel: `At ${location}`,
+      statusLabel,
+      tagLabel: visibleNow ? "In scene" : npc.known ? "Known" : "Stranger",
+      known: npc.known || visibleNow,
+      sections: [
+        {
+          label: "Backstory",
+          value: narrativeBackstory,
+        },
+        {
+          label: "Objective",
+          value: objectiveRead,
+        },
+        {
+          label: "Current Concern",
+          value: concernRead,
+        },
+        {
+          label: "What Sticks",
+          value: memoryRead,
+        },
+      ],
+    });
+  }
+
+  return profiles;
+}
+
+function playerPortraitAppearance(): PortraitAppearance {
+  return {
+    coat: "rgba(191,152,93,0.98)",
+    accent: "rgba(235,214,175,0.9)",
+    hair: "rgba(122,91,55,0.98)",
+    face: "rgba(245,235,219,0.98)",
+    cheek: "rgba(223,179,160,0.35)",
+    eye: "rgba(41,33,27,0.94)",
+    outline: "rgba(250,239,219,0.7)",
+    hairStyle: "cap",
+    faceStyle: "steady",
+    accessory: "satchel",
+  };
+}
+
+function portraitAppearanceForCharacter(
+  characterId: string,
+  known: boolean,
+): PortraitAppearance {
+  const muted = !known;
+
+  switch (characterId) {
+    case "npc-mara":
+      return {
+        coat: muted ? "rgba(111,103,90,0.95)" : "rgba(131,112,88,0.98)",
+        accent: muted ? "rgba(183,174,162,0.78)" : "rgba(219,206,183,0.92)",
+        hair: muted ? "rgba(95,94,88,0.96)" : "rgba(124,121,111,0.98)",
+        face: "rgba(191,132,102,0.98)",
+        cheek: "rgba(223,170,150,0.34)",
+        eye: "rgba(66,45,31,0.92)",
+        outline: "rgba(19,24,28,0.9)",
+        hairStyle: "bun",
+        faceStyle: "soft",
+        accessory: "apron",
+      };
+    case "npc-ada":
+      return {
+        coat: muted ? "rgba(98,111,112,0.95)" : "rgba(86,119,118,0.98)",
+        accent: muted ? "rgba(177,166,155,0.8)" : "rgba(220,191,160,0.92)",
+        hair: muted ? "rgba(88,79,71,0.94)" : "rgba(109,71,48,0.98)",
+        face: "rgba(228,187,153,0.98)",
+        cheek: "rgba(231,189,169,0.28)",
+        eye: "rgba(60,41,28,0.92)",
+        outline: "rgba(19,24,28,0.9)",
+        hairStyle: "scarf",
+        faceStyle: "wry",
+        accessory: "shawl",
+      };
+    case "npc-jo":
+      return {
+        coat: muted ? "rgba(95,104,109,0.96)" : "rgba(89,103,113,0.98)",
+        accent: muted ? "rgba(148,158,165,0.78)" : "rgba(178,190,198,0.88)",
+        hair: muted ? "rgba(72,78,83,0.95)" : "rgba(59,64,67,0.98)",
+        face: "rgba(159,108,84,0.98)",
+        cheek: "rgba(196,141,121,0.22)",
+        eye: "rgba(40,33,28,0.92)",
+        outline: "rgba(19,24,28,0.9)",
+        hairStyle: "cap",
+        faceStyle: "steady",
+        accessory: "satchel",
+      };
+    case "npc-tomas":
+      return {
+        coat: muted ? "rgba(106,100,84,0.95)" : "rgba(119,104,74,0.98)",
+        accent: muted ? "rgba(160,155,141,0.76)" : "rgba(190,176,133,0.9)",
+        hair: muted ? "rgba(56,52,46,0.96)" : "rgba(41,36,32,0.98)",
+        face: "rgba(104,69,49,0.99)",
+        cheek: "rgba(163,108,86,0.18)",
+        eye: "rgba(22,18,14,0.94)",
+        outline: "rgba(19,24,28,0.9)",
+        hairStyle: "beard-cap",
+        faceStyle: "stern",
+        accessory: "vest",
+      };
+    case "npc-nia":
+      return {
+        coat: muted ? "rgba(90,107,99,0.95)" : "rgba(79,131,112,0.98)",
+        accent: muted ? "rgba(167,180,166,0.78)" : "rgba(192,218,175,0.9)",
+        hair: muted ? "rgba(72,58,45,0.95)" : "rgba(98,69,46,0.98)",
+        face: "rgba(207,146,108,0.99)",
+        cheek: "rgba(233,180,146,0.28)",
+        eye: "rgba(56,35,22,0.92)",
+        outline: "rgba(19,24,28,0.9)",
+        hairStyle: "ponytail",
+        faceStyle: "bright",
+        accessory: "scarf",
+      };
+    default:
+      return {
+        coat: muted ? "rgba(100,104,108,0.96)" : "rgba(110,100,82,0.98)",
+        accent: muted ? "rgba(164,170,176,0.84)" : "rgba(196,178,143,0.9)",
+        hair: muted ? "rgba(82,88,94,0.95)" : "rgba(67,57,45,0.98)",
+        face: "rgba(205,158,121,0.98)",
+        cheek: "rgba(222,176,159,0.3)",
+        eye: "rgba(49,39,30,0.92)",
+        outline: "rgba(19,24,28,0.9)",
+        hairStyle: "cropped",
+        faceStyle: "guarded",
+      };
+  }
+}
+
+function renderPortraitAccessory(appearance: PortraitAppearance) {
+  switch (appearance.accessory) {
+    case "apron":
+      return (
+        <path
+          d="M 28 38 L 36 38 L 35 55 L 29 55 Z"
+          fill="rgba(233,222,202,0.78)"
+        />
+      );
+    case "shawl":
+      return (
+        <path
+          d="M 21 38 Q 32 31 43 38 L 39 41 Q 32 39.5 25 41 Z"
+          fill="rgba(208,183,147,0.88)"
+          opacity="0.9"
+        />
+      );
+    case "satchel":
+      return (
+        <>
+          <path
+            d="M 38 35 Q 34 40 34 55"
+            fill="none"
+            stroke="rgba(67,51,36,0.86)"
+            strokeLinecap="round"
+            strokeWidth="1.2"
+          />
+          <rect
+            x="32"
+            y="45"
+            width="5"
+            height="5"
+            rx="1.4"
+            fill="rgba(106,78,54,0.95)"
+          />
+        </>
+      );
+    case "vest":
+      return (
+        <path
+          d="M 24 38 L 29 38 L 30 56 L 25 56 Z M 35 38 L 40 38 L 39 56 L 34 56 Z"
+          fill="rgba(78,58,39,0.64)"
+        />
+      );
+    case "scarf":
+      return (
+        <>
+          <path
+            d="M 23 38 Q 32 34 41 38 Q 37 41 32 41 Q 27 41 23 38 Z"
+            fill="rgba(222,193,152,0.9)"
+          />
+          <path
+            d="M 38 41 L 42 47"
+            fill="none"
+            stroke="rgba(222,193,152,0.9)"
+            strokeLinecap="round"
+            strokeWidth="1.5"
+          />
+        </>
+      );
+    default:
+      return null;
+  }
+}
+
+function renderPortraitHair(appearance: PortraitAppearance) {
+  switch (appearance.hairStyle) {
+    case "bun":
+      return (
+        <>
+          <circle cx="41" cy="14.5" fill={appearance.hair} r="3.3" />
+          <path
+            d="M 21 20 Q 24 12 32 12 Q 41 12 43 20 Q 37 16 32 16 Q 26 16 21 20 Z"
+            fill={appearance.hair}
+          />
+        </>
+      );
+    case "scarf":
+      return (
+        <>
+          <path
+            d="M 19 18 Q 32 8 45 18 L 41 23 Q 32 20 23 23 Z"
+            fill="rgba(205,148,95,0.98)"
+          />
+          <path
+            d="M 41 21 Q 47 27 43 35"
+            fill="none"
+            stroke="rgba(205,148,95,0.98)"
+            strokeLinecap="round"
+            strokeWidth="2"
+          />
+        </>
+      );
+    case "cap":
+      return (
+        <>
+          <path
+            d="M 19 20 Q 25 11 41 18 Q 38 23 22 22 Z"
+            fill={appearance.hair}
+          />
+          <path
+            d="M 40 20 Q 46 21 42 24"
+            fill="none"
+            stroke={appearance.hair}
+            strokeLinecap="round"
+            strokeWidth="1.8"
+          />
+        </>
+      );
+    case "beard-cap":
+      return (
+        <>
+          <path
+            d="M 18 19 Q 24 10 41 18 Q 38 22 22 22 Z"
+            fill={appearance.hair}
+          />
+          <path
+            d="M 25 31 Q 32 37 39 31 Q 38 37 32 38 Q 26 37 25 31 Z"
+            fill={appearance.hair}
+          />
+        </>
+      );
+    case "ponytail":
+      return (
+        <>
+          <path
+            d="M 20 20 Q 24 11 32 12 Q 41 12 43 19 Q 36 16 32 16 Q 27 16 20 20 Z"
+            fill={appearance.hair}
+          />
+          <path
+            d="M 42 18 Q 48 18 44 28"
+            fill="none"
+            stroke={appearance.hair}
+            strokeLinecap="round"
+            strokeWidth="2"
+          />
+        </>
+      );
+    default:
+      return (
+        <path
+          d="M 20 20 Q 25 11 32 12 Q 40 12 44 20 Q 37 16 32 16 Q 27 16 20 20 Z"
+          fill={appearance.hair}
+        />
+      );
+  }
+}
+
+function renderPortraitFace(appearance: PortraitAppearance) {
+  switch (appearance.faceStyle) {
+    case "soft":
+      return (
+        <>
+          <circle cx="28" cy="24" fill={appearance.eye} r="1.1" />
+          <circle cx="36" cy="24" fill={appearance.eye} r="1.1" />
+          <path
+            d="M 27 31 Q 32 34 37 31"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1.1"
+          />
+        </>
+      );
+    case "wry":
+      return (
+        <>
+          <path
+            d="M 25 22 L 30 21"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1"
+          />
+          <path
+            d="M 34 21 L 39 22"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1"
+          />
+          <ellipse cx="28" cy="24.5" fill={appearance.eye} rx="1.2" ry="1.4" />
+          <ellipse cx="36" cy="24.5" fill={appearance.eye} rx="1.2" ry="1.4" />
+          <path
+            d="M 27 31 Q 33 33 38 29"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1.15"
+          />
+        </>
+      );
+    case "steady":
+      return (
+        <>
+          <circle cx="28" cy="24.5" fill={appearance.eye} r="1.1" />
+          <circle cx="36" cy="24.5" fill={appearance.eye} r="1.1" />
+          <path
+            d="M 27 31 Q 32 30 37 31"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1"
+          />
+        </>
+      );
+    case "stern":
+      return (
+        <>
+          <path
+            d="M 24 21 L 30 19.5"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1.2"
+          />
+          <path
+            d="M 34 19.5 L 40 21"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1.2"
+          />
+          <circle cx="28" cy="24" fill={appearance.eye} r="1.15" />
+          <circle cx="36" cy="24" fill={appearance.eye} r="1.15" />
+          <path
+            d="M 27 31 Q 32 29.5 37 31"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1"
+          />
+        </>
+      );
+    case "bright":
+      return (
+        <>
+          <circle cx="28" cy="24" fill={appearance.eye} r="1.15" />
+          <circle cx="36" cy="24" fill={appearance.eye} r="1.15" />
+          <path
+            d="M 26.5 30.5 Q 32 35 37.5 30.5"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1.15"
+          />
+        </>
+      );
+    default:
+      return (
+        <>
+          <circle cx="28" cy="24.5" fill={appearance.eye} r="1.05" />
+          <circle cx="36" cy="24.5" fill={appearance.eye} r="1.05" />
+          <path
+            d="M 27 31 Q 32 31.5 37 31"
+            fill="none"
+            stroke={appearance.eye}
+            strokeLinecap="round"
+            strokeWidth="1"
+          />
+        </>
+      );
+  }
+}
+
 function buildJobMemoryDetail(
   job: StreetGameState["jobs"][number],
   locationName?: string,
@@ -2451,6 +3295,77 @@ function formatJobWindow(day: number, startHour: number, endHour: number) {
   const start = formatClock(isoForTotalMinutes(dayOffsetMinutes + startHour * 60));
   const end = formatClock(isoForTotalMinutes(dayOffsetMinutes + endHour * 60));
   return `${start} to ${end}`;
+}
+
+type ClockAdvanceOption = {
+  key: string;
+  minutes: number;
+  label: string;
+  busyLabel: string;
+  kind: "increment" | "target";
+};
+
+function totalMinutesForDayHour(day: number, hour: number) {
+  return Math.max(0, day - 1) * 24 * 60 + hour * 60;
+}
+
+function buildClockAdvanceOptions({
+  currentTotalMinutes,
+  upcomingCommitmentMinutes,
+}: {
+  currentTotalMinutes: number;
+  upcomingCommitmentMinutes?: number;
+}): ClockAdvanceOption[] {
+  const options: ClockAdvanceOption[] = [
+    {
+      key: "increment-5",
+      minutes: 5,
+      label: "+5m",
+      busyLabel: "Letting five quiet minutes pass...",
+      kind: "increment",
+    },
+    {
+      key: "increment-15",
+      minutes: 15,
+      label: "+15m",
+      busyLabel: "Letting fifteen quiet minutes pass...",
+      kind: "increment",
+    },
+    {
+      key: "increment-30",
+      minutes: 30,
+      label: "+30m",
+      busyLabel: "Letting half an hour pass...",
+      kind: "increment",
+    },
+  ];
+
+  if (
+    upcomingCommitmentMinutes !== undefined &&
+    upcomingCommitmentMinutes > currentTotalMinutes
+  ) {
+    const minutesUntilCommitment =
+      upcomingCommitmentMinutes - currentTotalMinutes;
+    options.unshift({
+      key: `target-${upcomingCommitmentMinutes}`,
+      minutes: minutesUntilCommitment,
+      label: `To ${formatClock(isoForTotalMinutes(upcomingCommitmentMinutes))}`,
+      busyLabel: `Waiting until ${formatClock(
+        isoForTotalMinutes(upcomingCommitmentMinutes),
+      )}...`,
+      kind: "target",
+    });
+  }
+
+  const seenMinutes = new Set<number>();
+  return options.filter((option) => {
+    if (option.minutes <= 0 || seenMinutes.has(option.minutes)) {
+      return false;
+    }
+
+    seenMinutes.add(option.minutes);
+    return true;
+  });
 }
 
 function MindSnapshotCard({

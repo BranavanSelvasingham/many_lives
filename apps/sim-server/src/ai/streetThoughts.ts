@@ -108,12 +108,12 @@ function buildPlayerThought(game: StreetGameState) {
   const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
   const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
 
-  if (activeJob && !activeJob.completed) {
-    return "I can't blow this shift.";
-  }
-
   if (game.player.pendingObjectiveMove) {
     return buildPendingMoveThought(game);
+  }
+
+  if (activeJob && !activeJob.completed && !activeJob.missed) {
+    return buildActiveCommitmentThought(game, activeJob);
   }
 
   const immediateObjectiveThought = buildImmediateObjectiveThought(
@@ -166,6 +166,62 @@ function buildPlayerThought(game: StreetGameState) {
   }
 
   return "I think I could find a real friend here.";
+}
+
+function buildActiveCommitmentThought(
+  game: StreetGameState,
+  job: StreetGameState["jobs"][number],
+) {
+  const location = game.locations.find((entry) => entry.id === job.locationId);
+  const currentTotalMinutes = game.clock.totalMinutes;
+  const startTotalMinutes = totalMinutesForDayHour(game.clock.day, job.startHour);
+  const endTotalMinutes = totalMinutesForDayHour(game.clock.day, job.endHour);
+  const onSite = game.player.currentLocationId === job.locationId;
+
+  if (
+    job.deferredUntilMinutes !== undefined &&
+    job.deferredUntilMinutes > currentTotalMinutes
+  ) {
+    return sanitizeThought(
+      `I'm giving ${job.title.toLowerCase()} room until ${formatClockForThought(
+        job.deferredUntilMinutes,
+      )}.`,
+    );
+  }
+
+  if (currentTotalMinutes < startTotalMinutes) {
+    return sanitizeThought(
+      onSite
+        ? `${location?.name ?? "The shift"} opens at ${formatClockForThought(
+            startTotalMinutes,
+          )}. I should be ready.`
+        : `${location?.name ?? "The shift"} opens at ${formatClockForThought(
+            startTotalMinutes,
+          )}. I should get there in time.`,
+    );
+  }
+
+  if (currentTotalMinutes < endTotalMinutes) {
+    if (onSite && game.player.energy >= 28) {
+      return sanitizeThought(
+        `It's time. ${job.title} is open now.`,
+      );
+    }
+
+    if (onSite) {
+      return sanitizeThought(
+        `${job.title} is open now, but I need to hold myself together.`,
+      );
+    }
+
+    return sanitizeThought(
+      `${job.title} is open now. I need to get to ${location?.name ?? "the job site"}.`,
+    );
+  }
+
+  return sanitizeThought(
+    `That shift slipped. I need the next useful opening.`,
+  );
 }
 
 function buildPendingMoveThought(game: StreetGameState) {
@@ -568,6 +624,17 @@ export function sanitizeThought(text: string) {
 
   const words = cleaned.split(" ").slice(0, 12).join(" ");
   return words.slice(0, 84);
+}
+
+function totalMinutesForDayHour(day: number, hour: number) {
+  return Math.max(0, day - 1) * 24 * 60 + hour * 60;
+}
+
+function formatClockForThought(totalMinutes: number) {
+  const minuteOfDay = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
+  const hour = Math.floor(minuteOfDay / 60);
+  const minute = minuteOfDay % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function firstPersonThought(text: string) {

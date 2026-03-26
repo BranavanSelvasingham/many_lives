@@ -7,6 +7,25 @@ export function buildGenerateStreetThoughtsPrompt(
 ): string {
   const locationById = new Map(game.locations.map((location) => [location.id, location]));
   const activeJob = game.jobs.find((job) => job.id === game.player.activeJobId);
+  const activeJobTiming = activeJob
+    ? {
+        title: activeJob.title,
+        location: locationById.get(activeJob.locationId)?.name ?? activeJob.locationId,
+        accepted: activeJob.accepted,
+        completed: activeJob.completed,
+        missed: activeJob.missed,
+        startHour: activeJob.startHour,
+        endHour: activeJob.endHour,
+        windowState:
+          game.clock.hour < activeJob.startHour
+            ? "before_start"
+            : game.clock.hour >= activeJob.endHour
+              ? "after_end"
+              : "open_now",
+        onSite: game.player.currentLocationId === activeJob.locationId,
+        deferredUntilMinutes: activeJob.deferredUntilMinutes ?? null,
+      }
+    : null;
   const currentLocation = locationById.get(game.player.currentLocationId ?? "");
   const pendingObjectiveMove = game.player.pendingObjectiveMove
     ? {
@@ -52,11 +71,13 @@ export function buildGenerateStreetThoughtsPrompt(
     "- Rowan's thought should often become a short plan that uses known places, buildings, and people to decide where to go next.",
     "- If Rowan has already decided on his next stop, make the thought reflect that pause before he sets off.",
     "- When Rowan is still learning the district, make the thought point toward exploring the next building or NPC that can sharpen the plan.",
+    "- If Rowan has a live commitment or shift and the hour changes, his thought should react immediately to whether it is not open yet, open now, or slipping away.",
     "- Keep Rowan's inner voice respectful and emotionally normal. He can be uncertain or intent, but not creepy, possessive, or target-fixated about people.",
     "- Prefer natural lines like 'I should talk to Mara about a room' over compressed shorthand like 'eyes on Mara for a bed'.",
     ...buildStreetVoicePromptLines(),
     `Time: ${game.clock.label}, day ${game.clock.day}, ${String(game.clock.hour).padStart(2, "0")}:${String(game.clock.minute).padStart(2, "0")}`,
     `Player: ${game.player.name} at ${currentLocation?.name ?? "the street"}, backstory ${game.player.backstory}, money ${game.player.money}, energy ${game.player.energy}, objective ${objective?.text ?? "none"}, active job ${activeJob?.title ?? "none"}`,
+    `Active job timing: ${JSON.stringify(activeJobTiming)}`,
     `Pending move: ${JSON.stringify(pendingObjectiveMove)}`,
     `Objective state: ${JSON.stringify(
       objective
