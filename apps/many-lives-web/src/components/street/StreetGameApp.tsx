@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 
-import { DistrictMap } from "@/components/street/DistrictMap";
+import { PhaserDistrictMap } from "@/components/street/PhaserDistrictMap";
 import {
   ObjectiveTrail,
   type ObjectiveTrailItem,
@@ -1211,7 +1211,7 @@ export function StreetGameApp() {
           >
             <div className="space-y-5">
               <div className="relative">
-                <DistrictMap
+                <PhaserDistrictMap
                   activeConversationEntries={mapConversationEntries}
                   activeConversationNpcId={mapConversationNpcId}
                   busy={Boolean(busyLabel)}

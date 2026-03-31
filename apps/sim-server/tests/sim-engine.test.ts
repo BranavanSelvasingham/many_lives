@@ -9,8 +9,8 @@ describe("SimulationEngine street slice", () => {
 
     world = await engine.runCommand(world, {
       type: "move_to",
-      x: 12,
-      y: 5,
+      x: 6,
+      y: 4,
     });
     world = await engine.runCommand(world, {
       type: "act",
@@ -20,7 +20,9 @@ describe("SimulationEngine street slice", () => {
       type: "act",
       actionId: "accept:job-tea-shift",
     });
-    world = await engine.tick(world, 1);
+    while (world.clock.hour + world.clock.minute / 60 < 12) {
+      world = await engine.tick(world, 1);
+    }
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "work:job-tea-shift",
@@ -45,8 +47,8 @@ describe("SimulationEngine street slice", () => {
     });
     world = await engine.runCommand(world, {
       type: "move_to",
-      x: 18,
-      y: 5,
+      x: 16,
+      y: 9,
     });
     world = await engine.runCommand(world, {
       type: "act",
@@ -55,7 +57,7 @@ describe("SimulationEngine street slice", () => {
     world = await engine.runCommand(world, {
       type: "move_to",
       x: 3,
-      y: 11,
+      y: 13,
     });
     world = await engine.runCommand(world, {
       type: "act",
@@ -69,5 +71,26 @@ describe("SimulationEngine street slice", () => {
       true,
     );
     expect(world.player.reputation.morrow_house).toBeGreaterThan(1);
+  });
+
+  it("blocks movement to walkable tiles that are not actually reachable", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-unreachable-move");
+
+    const island = world.map.tiles.find((tile) => tile.x === 0 && tile.y === 0);
+    expect(island).toBeDefined();
+    if (!island) {
+      return;
+    }
+
+    island.walkable = true;
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 0,
+      y: 0,
+    });
+
+    expect(world.player.x).toBe(3);
+    expect(world.player.y).toBe(9);
   });
 });

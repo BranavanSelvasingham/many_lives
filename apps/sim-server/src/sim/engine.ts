@@ -12,6 +12,7 @@ import type {
   FeedEntry,
   JobState,
   LocationState,
+  MapTile,
   MemoryEntry,
   NpcState,
   ObjectiveFocus,
@@ -42,6 +43,11 @@ type ConversationResolution = {
 };
 
 type ThoughtRefreshMode = "full" | "deterministic";
+
+type GridPoint = {
+  x: number;
+  y: number;
+};
 
 export class SimulationEngine {
   constructor(private readonly aiProvider: AIProvider) {}
@@ -187,8 +193,10 @@ function advanceWorld(world: StreetGameState, minutes: number): void {
 }
 
 function movePlayer(world: StreetGameState, x: number, y: number): void {
+  const targetX = clamp(x, 0, world.map.width - 1);
+  const targetY = clamp(y, 0, world.map.height - 1);
   const targetTile = world.map.tiles.find(
-    (tile) => tile.x === clamp(x, 0, world.map.width - 1) && tile.y === clamp(y, 0, world.map.height - 1),
+    (tile) => tile.x === targetX && tile.y === targetY,
   );
 
   if (!targetTile || !targetTile.walkable) {
@@ -196,8 +204,22 @@ function movePlayer(world: StreetGameState, x: number, y: number): void {
     return;
   }
 
-  const distance =
-    Math.abs(world.player.x - targetTile.x) + Math.abs(world.player.y - targetTile.y);
+  const startPoint = {
+    x: world.player.x,
+    y: world.player.y,
+  };
+  const targetPoint = {
+    x: targetTile.x,
+    y: targetTile.y,
+  };
+  const route = findWalkableRoute(world.map.tiles, startPoint, targetPoint);
+
+  if (!route.reached) {
+    addFeed(world, "info", "That route is blocked or not worth taking.");
+    return;
+  }
+
+  const distance = Math.max(route.path.length - 1, 0);
 
   if (distance === 0) {
     addFeed(world, "info", "You are already standing there.");
@@ -224,6 +246,80 @@ function movePlayer(world: StreetGameState, x: number, y: number): void {
   } else {
     addFeed(world, "info", "You walked the lane and kept watching the district unfold.");
   }
+}
+
+function findWalkableRoute(
+  tiles: MapTile[],
+  start: GridPoint,
+  end: GridPoint,
+) {
+  const roundedStart = {
+    x: Math.round(start.x),
+    y: Math.round(start.y),
+  };
+  const roundedEnd = {
+    x: Math.round(end.x),
+    y: Math.round(end.y),
+  };
+  const walkable = new Set(
+    tiles.filter((tile) => tile.walkable).map((tile) => `${tile.x},${tile.y}`),
+  );
+  const startKey = `${roundedStart.x},${roundedStart.y}`;
+  const endKey = `${roundedEnd.x},${roundedEnd.y}`;
+  const queue: GridPoint[] = [roundedStart];
+  const visited = new Set([startKey]);
+  const parentByKey = new Map<string, string>();
+  let foundKey = startKey;
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const currentKey = `${current.x},${current.y}`;
+
+    if (currentKey === endKey) {
+      foundKey = currentKey;
+      break;
+    }
+
+    for (const [dx, dy] of [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ]) {
+      const nextX = current.x + dx;
+      const nextY = current.y + dy;
+      const nextKey = `${nextX},${nextY}`;
+
+      if (!walkable.has(nextKey) || visited.has(nextKey)) {
+        continue;
+      }
+
+      visited.add(nextKey);
+      parentByKey.set(nextKey, currentKey);
+      queue.push({ x: nextX, y: nextY });
+    }
+  }
+
+  if (foundKey !== endKey) {
+    return {
+      path: [roundedStart],
+      reached: false,
+    };
+  }
+
+  const path: GridPoint[] = [];
+  let currentKey: string | undefined = foundKey;
+
+  while (currentKey) {
+    const [x, y] = currentKey.split(",").map(Number);
+    path.unshift({ x, y });
+    currentKey = parentByKey.get(currentKey);
+  }
+
+  return {
+    path,
+    reached: true,
+  };
 }
 
 async function performAction(
@@ -2870,6 +2966,8 @@ function applyConversationRevelations(
   npc: NpcState,
   topics: Set<string>,
 ) {
+  const firstConversationWithNpc = countPlayerConversationsWithNpc(world, npc.id) <= 1;
+
   switch (npc.id) {
     case "npc-mara":
       if (topics.has("pump")) {
@@ -2885,7 +2983,7 @@ function applyConversationRevelations(
       }
       break;
     case "npc-ada":
-      if (topics.has("work")) {
+      if (topics.has("work") || firstConversationWithNpc) {
         discoverJob(world, "job-tea-shift");
         if (jobById(world, "job-tea-shift")?.completed) {
           discoverJob(world, "job-yard-shift");
@@ -2908,7 +3006,7 @@ function applyConversationRevelations(
       );
       break;
     case "npc-tomas":
-      if (topics.has("work") || topics.has("yard")) {
+      if (topics.has("work") || topics.has("yard") || firstConversationWithNpc) {
         discoverJob(world, "job-yard-shift");
       }
       rememberIfNew(
