@@ -380,7 +380,7 @@ export function buildDeterministicStreetReply(
       };
     case "npc-ada":
       if (topics.has("work") || topics.has("money")) {
-        if (!teaJob?.accepted && !teaJob?.completed) {
+        if (!teaJob?.accepted && !teaJob?.completed && !teaJob?.missed) {
           return {
             reply: chooseConversationLine(
               [
@@ -403,7 +403,7 @@ export function buildDeterministicStreetReply(
           };
         }
 
-        if (teaJob?.completed && !yardJob?.discovered) {
+        if (teaJob?.completed && !yardJob?.discovered && !yardJob?.missed) {
           return {
             reply: chooseConversationLine(
               [
@@ -551,7 +551,7 @@ export function buildDeterministicStreetReply(
       };
     case "npc-tomas":
       if (topics.has("work") || topics.has("money") || topics.has("yard")) {
-        if (!yardJob?.accepted && !yardJob?.completed) {
+        if (!yardJob?.accepted && !yardJob?.completed && !yardJob?.missed) {
           return {
             reply: chooseConversationLine(
               [

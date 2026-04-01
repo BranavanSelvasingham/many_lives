@@ -792,6 +792,7 @@ async function speakToNpc(
 
   const { npc, location } = target;
   const text = normalizeSpeechText(rawText);
+  const objective = currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
   if (!text) {
     addFeed(world, "info", "Say something Rowan can actually put into words.");
     return;
@@ -799,17 +800,21 @@ async function speakToNpc(
 
   primeNpcConversation(world, npc);
   const turn = await performConversationTurn(world, npc, location.id, text, aiProvider);
-
-  if (turn.trustDelta > 0) {
-    rememberIfNew(
-      world,
-      "person",
-      `${npc.name} gave you a more open answer once you spoke plainly.`,
-    );
-  }
-
-  setActiveConversation(world, npc, { locationId: location.id });
   addFeed(world, "info", `${npc.name}: ${turn.npcReply}`);
+  const resolution = deriveConversationResolution(
+    world,
+    npc,
+    objective,
+    turn.npcReply,
+    turn.topics,
+  );
+  const outcome = applyConversationResolution(world, npc, location, objective, resolution, {
+    closingReply: turn.npcReply,
+    trustOpened: turn.trustDelta > 0,
+  });
+  if (outcome.feedTone && outcome.feedText) {
+    addFeed(world, outcome.feedTone, outcome.feedText);
+  }
 }
 
 async function conductAutonomousConversation(
@@ -880,34 +885,12 @@ async function conductAutonomousConversation(
     );
   }
 
-  if (trustOpened) {
-    rememberIfNew(
-      world,
-      "person",
-      `${npc.name} opened up a little once Rowan stayed direct and local.`,
-    );
-  }
-
-  if (resolution.memoryKind && resolution.memoryText) {
-    rememberIfNew(world, resolution.memoryKind, resolution.memoryText);
-  }
-
-  rememberNpcIfNew(
-    npc,
-    buildNpcConversationImpression(world, npc, objective, resolution),
-  );
-  setActiveConversation(world, npc, {
-    decision: resolution.decision,
-    locationId: location.id,
-    objectiveText: resolution.objectiveText,
+  const outcome = applyConversationResolution(world, npc, location, objective, resolution, {
+    closingReply,
+    trustOpened,
   });
-
-  if (resolution.decision) {
-    addFeed(
-      world,
-      "info",
-      `After talking with ${npc.name}, Rowan leaves with a clear next move: ${resolution.decision}`,
-    );
+  if (outcome.feedTone && outcome.feedText) {
+    addFeed(world, outcome.feedTone, outcome.feedText);
     return;
   }
 
@@ -943,14 +926,16 @@ async function performConversationTurn(
     locationId,
   });
 
-  const topics = detectConversationTopics(text);
-  applyConversationRevelations(world, npc, topics);
-  const trustDelta = updateNpcTrustFromSpeech(npc, text, topics);
+  const playerTopics = detectConversationTopics(text);
+  const trustDelta = updateNpcTrustFromSpeech(npc, text, playerTopics);
   const reply = await aiProvider.generateStreetReply({
     game: world,
     npcId: npc.id,
     playerText: text,
   });
+  const replyTopics = detectConversationTopics(reply.reply);
+  const topics = new Set<string>([...playerTopics, ...replyTopics]);
+  applyConversationRevelations(world, npc, topics);
 
   npc.lastSpokenLine = reply.reply;
   npc.lastInteractionAt = isoFor(world.clock.totalMinutes);
@@ -971,6 +956,96 @@ async function performConversationTurn(
     trustDelta,
     topics,
   };
+}
+
+function applyConversationResolution(
+  world: StreetGameState,
+  npc: NpcState,
+  location: LocationState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  resolution: ConversationResolution,
+  options: {
+    closingReply: string;
+    trustOpened: boolean;
+  },
+) {
+  if (options.trustOpened) {
+    rememberIfNew(
+      world,
+      "person",
+      `${npc.name} gave you a more open answer once you stayed plain and local.`,
+    );
+  }
+
+  if (resolution.memoryKind && resolution.memoryText) {
+    rememberIfNew(world, resolution.memoryKind, resolution.memoryText);
+  }
+
+  const summary = buildConversationThreadSummary(
+    world,
+    npc,
+    location,
+    resolution,
+    options.closingReply,
+  );
+  rememberNpcIfNew(
+    npc,
+    buildNpcConversationImpression(world, npc, objective, resolution),
+  );
+  setActiveConversation(world, npc, {
+    decision: resolution.decision,
+    locationId: location.id,
+    objectiveText: resolution.objectiveText,
+    summary,
+  });
+
+  const objectiveUpdated =
+    Boolean(resolution.objectiveText) &&
+    normalizeObjectiveText(resolution.objectiveText ?? "") !==
+      normalizeObjectiveText(world.player.objective?.text ?? "");
+  if (objectiveUpdated && resolution.objectiveText) {
+    rememberIfNew(
+      world,
+      "self",
+      `At ${location.name} in the ${world.clock.label.toLowerCase()}, talking with ${npc.name} clarified the next step: ${resolution.objectiveText}`,
+    );
+    return {
+      feedText: `Rowan updates the journal after talking with ${npc.name}: ${resolution.objectiveText}`,
+      feedTone: "memory" as const,
+    };
+  }
+
+  if (resolution.decision) {
+    return {
+      feedText: `After talking with ${npc.name}, Rowan leaves with a clear next move: ${resolution.decision}`,
+      feedTone: "info" as const,
+    };
+  }
+
+  return {
+    feedText: undefined,
+    feedTone: undefined,
+  };
+}
+
+function buildConversationThreadSummary(
+  world: StreetGameState,
+  npc: NpcState,
+  location: LocationState,
+  resolution: ConversationResolution,
+  closingReply: string,
+) {
+  const moment = `${location.name} in the ${world.clock.label.toLowerCase()}`;
+  if (resolution.objectiveText) {
+    return `${npc.name} helped narrow Rowan's day down at ${moment}: ${resolution.objectiveText}`;
+  }
+
+  if (resolution.decision) {
+    return `${npc.name} pointed Rowan toward the next move at ${moment}: ${resolution.decision}`;
+  }
+
+  const trimmedReply = closingReply.replace(/\s+/g, " ").trim();
+  return `${npc.name} at ${moment}: ${trimmedReply}`;
 }
 
 function handleCommittedJob(
@@ -2514,6 +2589,7 @@ function setActiveConversation(
     decision?: string;
     locationId?: string;
     objectiveText?: string;
+    summary?: string;
   } = {},
 ) {
   const thread = ensureConversationThread(world, npc.id, options.locationId);
@@ -2536,7 +2612,7 @@ function setActiveConversation(
 
   thread.decision = options.decision;
   thread.objectiveText = options.objectiveText;
-  thread.summary = options.decision ?? options.objectiveText ?? thread.summary;
+  thread.summary = options.summary ?? options.decision ?? options.objectiveText ?? thread.summary;
   thread.updatedAt = isoFor(world.clock.totalMinutes);
   thread.locationId = options.locationId ?? thread.locationId;
   world.conversationThreads[npc.id] = thread;
@@ -2703,6 +2779,7 @@ function deriveConversationResolution(
       decision: `talk to ${nextNpc.name} next and keep the rounds going.`,
       memoryKind: "person",
       memoryText: `${npc.name} gave the block a clearer shape, but you're still not done making the rounds.`,
+      objectiveText: `Talk to ${nextNpc.name} next and keep the rounds going.`,
     };
   }
 
@@ -2742,7 +2819,7 @@ function deriveConversationResolution(
         };
       }
 
-      if (teaJob?.discovered && !teaJob.accepted && !teaJob.completed) {
+      if (teaJob?.discovered && !teaJob.accepted && !teaJob.completed && !teaJob.missed) {
         return {
           decision: "get to Kettle & Lamp before the rush hardens and ask Ada for work.",
           memoryKind: "job",
@@ -2755,7 +2832,7 @@ function deriveConversationResolution(
       }
       break;
     case "npc-ada":
-      if (teaJob?.discovered && !teaJob.accepted && !teaJob.completed) {
+      if (teaJob?.discovered && !teaJob.accepted && !teaJob.completed && !teaJob.missed) {
         return {
           decision: "stay with Ada and take the tea-house shift if the room still needs the hands.",
           memoryKind: "job",
@@ -2767,7 +2844,7 @@ function deriveConversationResolution(
         };
       }
 
-      if (yardJob?.discovered && !yardJob.accepted && !yardJob.completed) {
+      if (yardJob?.discovered && !yardJob.accepted && !yardJob.completed && !yardJob.missed) {
         return {
           decision: "head to North Crane Yard and see if Tomas still needs another back.",
           memoryKind: "job",
@@ -2815,7 +2892,7 @@ function deriveConversationResolution(
       }
       break;
     case "npc-tomas":
-      if (yardJob?.discovered && !yardJob.accepted && !yardJob.completed) {
+      if (yardJob?.discovered && !yardJob.accepted && !yardJob.completed && !yardJob.missed) {
         return {
           decision: "stay near the yard and take the lift if the pay and timing still stand.",
           memoryKind: "job",

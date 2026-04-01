@@ -97,6 +97,19 @@ type Point = {
   y: number;
 };
 
+type WalkableRuntimePoint = {
+  kind: TileKind;
+  locationId?: string;
+  tile: Point;
+  tileCenter: Point;
+  world: Point;
+};
+
+type WalkablePointSearchOptions = {
+  preferredKinds?: TileKind[];
+  preferredLocationId?: string;
+};
+
 type ViewportSize = {
   height: number;
   width: number;
@@ -168,6 +181,7 @@ type RuntimeIndices = {
   propsByLocation: Map<string, MapProp[]>;
   routeFinder: (start: Point, end: Point) => Point[];
   visualScene: VisualScene | null;
+  walkableRuntimePoints: WalkableRuntimePoint[];
 };
 
 type AnimatedNpcState = {
@@ -200,6 +214,37 @@ type CharacterRig = {
   rightLeg: PhaserType.GameObjects.Container;
   shadow: PhaserType.GameObjects.Ellipse;
   torso: PhaserType.GameObjects.Ellipse;
+};
+
+type CharacterMotionStyle = {
+  armLift: number;
+  armSwing: number;
+  bodyBob: number;
+  headBob: number;
+  headTilt: number;
+  idleWave: number;
+  legLift: number;
+  legSwing: number;
+  shadowPulse: number;
+  squash: number;
+  stepPower: number;
+  torsoLean: number;
+  torsoLift: number;
+};
+
+type NpcPersonalityProfile = {
+  badge: string;
+  chatSubtitle: string;
+  labelBackground: string;
+  labelColor: string;
+  listLine: string;
+  motion: CharacterMotionStyle;
+  pace: number;
+  scale: number;
+  signature: string;
+  stepStrength: number;
+  sway: number;
+  swayRate: number;
 };
 
 type ArchitecturalPalette = {
@@ -1187,6 +1232,175 @@ function characterAppearanceForNpc(npc: NpcState): CharacterAppearance {
   };
 }
 
+const DEFAULT_CHARACTER_MOTION_STYLE: CharacterMotionStyle = {
+  armLift: 1,
+  armSwing: 1,
+  bodyBob: 1,
+  headBob: 1,
+  headTilt: 1,
+  idleWave: 1,
+  legLift: 1,
+  legSwing: 1,
+  shadowPulse: 1,
+  squash: 1,
+  stepPower: 1,
+  torsoLean: 0,
+  torsoLift: 1,
+};
+
+function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
+  switch (npc.id) {
+    case "npc-mara":
+      return {
+        badge: "Hearth-Eyed Keeper",
+        chatSubtitle: "Keeps the house steady with one look and two quiet steps.",
+        labelBackground: "rgba(54, 41, 29, 0.92)",
+        labelColor: "#f3dec0",
+        listLine: "Grounded, observant, and warmer than she lets on at first glance.",
+        motion: {
+          ...DEFAULT_CHARACTER_MOTION_STYLE,
+          armSwing: 0.76,
+          bodyBob: 0.82,
+          headTilt: 0.74,
+          idleWave: 1.08,
+          stepPower: 0.8,
+          torsoLean: 0.05,
+          torsoLift: 0.82,
+        },
+        pace: 0.88,
+        scale: 1.03,
+        signature: "She moves like she already knows who needs help before they ask.",
+        stepStrength: 0.72,
+        sway: 0.02,
+        swayRate: 0.72,
+      };
+    case "npc-ada":
+      return {
+        badge: "Clockwork Hostess",
+        chatSubtitle: "Every gesture is quick, practiced, and somehow still welcoming.",
+        labelBackground: "rgba(28, 63, 61, 0.92)",
+        labelColor: "#d9f2ef",
+        listLine: "Brisk and bright, always half a beat ahead of the room around her.",
+        motion: {
+          ...DEFAULT_CHARACTER_MOTION_STYLE,
+          armSwing: 1.08,
+          bodyBob: 0.92,
+          headTilt: 0.86,
+          idleWave: 0.88,
+          stepPower: 1,
+          torsoLean: 0.18,
+          torsoLift: 0.96,
+        },
+        pace: 1.15,
+        scale: 1,
+        signature: "She cuts through the street like she has six tasks balanced in one hand.",
+        stepStrength: 0.96,
+        sway: 0.014,
+        swayRate: 1.22,
+      };
+    case "npc-jo":
+      return {
+        badge: "Grease-Stained Fixer",
+        chatSubtitle: "Loose shoulders, sharp eyes, and the kind of stillness that means thinking.",
+        labelBackground: "rgba(32, 39, 45, 0.92)",
+        labelColor: "#dde5ec",
+        listLine: "A little slouched, a little guarded, but impossible to mistake for anyone else.",
+        motion: {
+          ...DEFAULT_CHARACTER_MOTION_STYLE,
+          armLift: 0.84,
+          armSwing: 0.7,
+          bodyBob: 0.74,
+          headBob: 0.84,
+          headTilt: 0.62,
+          idleWave: 1.26,
+          legLift: 0.88,
+          legSwing: 0.82,
+          stepPower: 0.86,
+          torsoLean: -0.12,
+          torsoLift: 0.72,
+        },
+        pace: 0.95,
+        scale: 0.99,
+        signature: "He walks like a person who trusts tools more than noise.",
+        stepStrength: 0.8,
+        sway: 0.026,
+        swayRate: 0.96,
+      };
+    case "npc-tomas":
+      return {
+        badge: "Dock-Bell Foreman",
+        chatSubtitle: "Heavy-footed, planted, and all blunt edges until you earn the softer read.",
+        labelBackground: "rgba(67, 46, 26, 0.94)",
+        labelColor: "#f0d8b0",
+        listLine: "Broad, deliberate, and built from the same timber as the yard he runs.",
+        motion: {
+          ...DEFAULT_CHARACTER_MOTION_STYLE,
+          armLift: 0.72,
+          armSwing: 0.62,
+          bodyBob: 0.7,
+          headBob: 0.76,
+          headTilt: 0.54,
+          idleWave: 0.8,
+          legLift: 0.82,
+          legSwing: 0.72,
+          shadowPulse: 1.18,
+          squash: 0.84,
+          stepPower: 0.9,
+          torsoLean: 0.08,
+          torsoLift: 0.62,
+        },
+        pace: 0.84,
+        scale: 1.08,
+        signature: "Even at rest, he reads like a warning nailed to a post.",
+        stepStrength: 0.9,
+        sway: 0.012,
+        swayRate: 0.8,
+      };
+    case "npc-nia":
+      return {
+        badge: "Street-Swift Spark",
+        chatSubtitle: "Every stop looks temporary, like she might launch into a sprint mid-sentence.",
+        labelBackground: "rgba(34, 68, 49, 0.92)",
+        labelColor: "#e3f6d4",
+        listLine: "Quick, spring-loaded, and already halfway into the next idea.",
+        motion: {
+          ...DEFAULT_CHARACTER_MOTION_STYLE,
+          armSwing: 1.16,
+          bodyBob: 1.24,
+          headBob: 1.22,
+          headTilt: 1.08,
+          idleWave: 1.42,
+          legLift: 1.08,
+          legSwing: 1.18,
+          stepPower: 1.14,
+          torsoLean: 0.14,
+          torsoLift: 1.08,
+        },
+        pace: 1.28,
+        scale: 0.98,
+        signature: "She crosses the square like the air itself is hurrying her along.",
+        stepStrength: 1.12,
+        sway: 0.032,
+        swayRate: 1.78,
+      };
+    default:
+      return {
+        badge: "Neighborhood Regular",
+        chatSubtitle: "A familiar shape in the district, easy to place even before you know the details.",
+        labelBackground: "rgba(34, 43, 49, 0.92)",
+        labelColor: "#e1e8ed",
+        listLine: "Distinct enough to notice, still holding most of their story close.",
+        motion: DEFAULT_CHARACTER_MOTION_STYLE,
+        pace: 1,
+        scale: 1,
+        signature: "They carry themselves like they belong to these lanes.",
+        stepStrength: 0.86,
+        sway: 0.018,
+        swayRate: 1,
+      };
+  }
+}
+
 function createCharacterAvatar(
   scene: PhaserType.Scene,
   appearance: CharacterAppearance,
@@ -1363,35 +1577,57 @@ function poseCharacterRig(
   {
     facing,
     now,
+    style = DEFAULT_CHARACTER_MOTION_STYLE,
     stride,
   }: {
     facing: 1 | -1;
     now: number;
+    style?: CharacterMotionStyle;
     stride: number;
   },
 ) {
-  const swing = clamp(stride, -1, 1);
-  const bob = Math.abs(swing) * 2.1 + Math.sin(now / 240) * 0.22;
-  const armSwing = swing * 0.52;
-  const legSwing = swing * 0.36;
-  const squashX = 1 + Math.abs(swing) * 0.03;
-  const squashY = 1 - Math.abs(swing) * 0.035;
+  const swing = clamp(stride * style.stepPower, -1, 1);
+  const bob =
+    Math.abs(swing) * 2.1 * style.bodyBob + Math.sin(now / 240) * 0.22 * style.idleWave;
+  const armSwing = swing * 0.52 * style.armSwing;
+  const legSwing = swing * 0.36 * style.legSwing;
+  const squashX = 1 + Math.abs(swing) * 0.03 * style.squash;
+  const squashY = 1 - Math.abs(swing) * 0.035 * style.squash;
+  const lean = swing * 0.08 * style.torsoLean;
 
   rig.avatar.setScale(facing * squashX, squashY);
   rig.avatar.setY(-bob);
-  rig.torso.setY(2.5 - Math.abs(swing) * 0.45);
-  rig.accent.setY(5.5 - Math.abs(swing) * 0.45);
-  rig.head.setY(-10.5 - Math.abs(swing) * 0.8 + Math.sin(now / 200) * 0.35);
-  rig.head.setRotation(swing * 0.06);
-  rig.shadow.setScale(1 - Math.abs(swing) * 0.1, 1 - Math.abs(swing) * 0.03);
-  rig.leftArm.setRotation(armSwing);
-  rig.rightArm.setRotation(-armSwing);
-  rig.leftArm.setY(-1.5 + Math.max(0, swing) * 0.6);
-  rig.rightArm.setY(-1.5 + Math.max(0, -swing) * 0.6);
-  rig.leftLeg.setRotation(-legSwing);
-  rig.rightLeg.setRotation(legSwing);
-  rig.leftLeg.setY(8.5 + Math.max(0, -swing) * 0.4);
-  rig.rightLeg.setY(8.5 + Math.max(0, swing) * 0.4);
+  rig.torso.setY(2.5 - Math.abs(swing) * 0.45 * style.torsoLift);
+  rig.torso.setRotation(lean);
+  rig.accent.setY(5.5 - Math.abs(swing) * 0.45 * style.torsoLift);
+  rig.accent.setRotation(lean * 0.65);
+  rig.head.setX(Math.sin(now / 340) * 0.3 * style.idleWave);
+  rig.head.setY(
+    -10.5 -
+      Math.abs(swing) * 0.8 * style.headBob +
+      Math.sin(now / 200) * 0.35 * style.idleWave,
+  );
+  rig.head.setRotation(swing * 0.06 * style.headTilt + lean * 0.35);
+  rig.shadow.setScale(
+    1 - Math.abs(swing) * 0.1 * style.shadowPulse,
+    1 - Math.abs(swing) * 0.03 * style.shadowPulse,
+  );
+  rig.leftArm.setRotation(armSwing + lean * 0.6);
+  rig.rightArm.setRotation(-armSwing + lean * 0.6);
+  rig.leftArm.setY(
+    -1.5 +
+      Math.max(0, swing) * 0.6 * style.armLift +
+      Math.sin(now / 310) * 0.08 * style.idleWave,
+  );
+  rig.rightArm.setY(
+    -1.5 +
+      Math.max(0, -swing) * 0.6 * style.armLift -
+      Math.sin(now / 310) * 0.08 * style.idleWave,
+  );
+  rig.leftLeg.setRotation(-legSwing - lean * 0.2);
+  rig.rightLeg.setRotation(legSwing - lean * 0.2);
+  rig.leftLeg.setY(8.5 + Math.max(0, -swing) * 0.4 * style.legLift);
+  rig.rightLeg.setY(8.5 + Math.max(0, swing) * 0.4 * style.legLift);
 }
 
 function createRuntimeObjects(
@@ -4388,27 +4624,41 @@ function buildSkyOverlayHtml(runtimeState: RuntimeState) {
     return "";
   }
 
-  const { height: viewportHeight, width: viewportWidth } = runtimeState.snapshot.viewport;
+  const sceneViewport = getSceneViewport(
+    runtimeState.snapshot.viewport,
+    getWorldBounds(runtimeState.snapshot),
+  );
 
   const bands = visualScene.skyLayers.map((layer) => {
-    const left = (layer.rect.x / visualScene.width) * viewportWidth;
-    const top = (layer.rect.y / visualScene.height) * viewportHeight;
-    const width = Math.max((layer.rect.width / visualScene.width) * viewportWidth, viewportWidth * 0.35);
-    const height = Math.max((layer.rect.height / visualScene.height) * viewportHeight, 56);
-    const trackWidth = width + 260 * Math.max(layer.scale, 0.6);
-    const speedPxPerSecond = Math.max((layer.speed * viewportWidth) / visualScene.width, 8);
-    const duration = Math.max((trackWidth * 0.5) / speedPxPerSecond, 26);
+    const left = sceneViewport.x;
+    const top =
+      sceneViewport.y + (layer.rect.y / Math.max(visualScene.height, 1)) * sceneViewport.height;
+    const authoredWidth = Math.max(
+      (layer.rect.width / Math.max(visualScene.width, 1)) * sceneViewport.width,
+      sceneViewport.width * 0.26,
+    );
+    const width = sceneViewport.width;
+    const height = Math.max(
+      (layer.rect.height / Math.max(visualScene.height, 1)) * sceneViewport.height,
+      56,
+    );
+    const trackWidth = width + authoredWidth + 260 * Math.max(layer.scale, 0.6);
+    const speedPxPerSecond = Math.max((layer.speed * sceneViewport.width) / visualScene.width, 8);
+    const duration = Math.max(trackWidth / speedPxPerSecond, 26);
+    const phaseOffset =
+      positiveModulo((layer.rect.x / Math.max(visualScene.width, 1)) * trackWidth, trackWidth);
+    const phaseDelay = -(phaseOffset / speedPxPerSecond);
     const cloudSvg = buildCloudSvgMarkup(layer, trackWidth, height);
     const weatherOpacity = weatherLayerOpacity(layer.weather, layer.opacity);
     const weatherTop = Math.max(top + height * 0.18, 0);
     const weatherHeight =
       layer.weather === "mist"
-        ? Math.min(viewportHeight - weatherTop, height + 96)
-        : Math.max(viewportHeight - weatherTop, height);
+        ? Math.min(sceneViewport.y + sceneViewport.height - weatherTop, height + 96)
+        : Math.max(sceneViewport.y + sceneViewport.height - weatherTop, height);
 
     return `
       <div class="ml-weather-band" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;width:${width.toFixed(1)}px;height:${height.toFixed(1)}px;opacity:${Math.max(0.16, Math.min(layer.opacity, 1)).toFixed(3)};">
-        <div class="ml-weather-cloud-marquee" style="width:${(trackWidth * 2).toFixed(1)}px;animation-duration:${duration.toFixed(2)}s;">
+        <div class="ml-weather-cloud-marquee" style="width:${(trackWidth * 2).toFixed(1)}px;animation-duration:${duration.toFixed(2)}s;animation-delay:${phaseDelay.toFixed(2)}s;">
           <svg viewBox="0 0 ${(trackWidth * 2).toFixed(1)} ${height.toFixed(1)}" preserveAspectRatio="none">
             ${cloudSvg}
             <g transform="translate(${trackWidth.toFixed(1)} 0)">${cloudSvg}</g>
@@ -4418,11 +4668,11 @@ function buildSkyOverlayHtml(runtimeState: RuntimeState) {
       ${
         layer.weather === "none"
           ? ""
-          : `<div class="ml-weather-veil ml-weather-veil--${escapeHtml(layer.weather)}" style="top:${weatherTop.toFixed(1)}px;left:0px;width:${viewportWidth}px;height:${weatherHeight.toFixed(1)}px;opacity:${weatherOpacity.toFixed(3)};animation-duration:${Math.max(duration * 0.7, 16).toFixed(2)}s;"></div>`
+          : `<div class="ml-weather-veil ml-weather-veil--${escapeHtml(layer.weather)}" style="top:${weatherTop.toFixed(1)}px;left:${left.toFixed(1)}px;width:${width.toFixed(1)}px;height:${weatherHeight.toFixed(1)}px;opacity:${weatherOpacity.toFixed(3)};animation-duration:${Math.max(duration * 0.7, 16).toFixed(2)}s;"></div>`
       }
       ${
         layer.weather === "storm"
-          ? `<div class="ml-weather-flash" style="top:${Math.max(top - 8, 0).toFixed(1)}px;left:0px;width:${viewportWidth}px;height:${Math.min(height + 22, viewportHeight)}px;"></div>`
+          ? `<div class="ml-weather-flash" style="top:${Math.max(top - 8, sceneViewport.y).toFixed(1)}px;left:${left.toFixed(1)}px;width:${width.toFixed(1)}px;height:${Math.min(height + 22, sceneViewport.height)}px;"></div>`
           : ""
       }
     `;
@@ -4465,6 +4715,62 @@ function resetConversationReplayState(
   runtimeState.conversationReplay.streamingEntryId = null;
 }
 
+function mergeConversationReplayState(
+  runtimeState: RuntimeState,
+  {
+    npcId,
+    replayEntryIds,
+    replaySignature,
+    visibleEntries,
+  }: {
+    npcId: string;
+    replayEntryIds: string[];
+    replaySignature: string | null;
+    visibleEntries: ConversationEntry[];
+  },
+) {
+  const replay = runtimeState.conversationReplay;
+  const visibleEntryIdSet = new Set(visibleEntries.map((entry) => entry.id));
+  replay.activeNpcId = npcId;
+  replay.appliedSignature = replaySignature;
+  replay.revealedEntryIds = replay.revealedEntryIds.filter((entryId) =>
+    visibleEntryIdSet.has(entryId),
+  );
+  replay.streamQueue = replay.streamQueue.filter(
+    (entryId) =>
+      visibleEntryIdSet.has(entryId) && entryId !== replay.streamingEntryId,
+  );
+
+  if (
+    replay.streamingEntryId &&
+    !visibleEntryIdSet.has(replay.streamingEntryId)
+  ) {
+    replay.streamingEntryId = null;
+    replay.streamedWordCount = 0;
+  }
+
+  const knownEntryIds = new Set(replay.revealedEntryIds);
+  replay.streamQueue.forEach((entryId) => {
+    knownEntryIds.add(entryId);
+  });
+  if (replay.streamingEntryId) {
+    knownEntryIds.add(replay.streamingEntryId);
+  }
+
+  const nextQueuedEntryIds = replayEntryIds.filter(
+    (entryId) => !knownEntryIds.has(entryId),
+  );
+  if (nextQueuedEntryIds.length > 0) {
+    replay.streamQueue = [...replay.streamQueue, ...nextQueuedEntryIds];
+  }
+
+  replay.isReplaying =
+    Boolean(replay.streamingEntryId) || replay.streamQueue.length > 0;
+  if (!replay.isReplaying) {
+    replay.streamPauseActor = null;
+  }
+}
+
 function syncConversationReplayState(runtimeState: RuntimeState) {
   const game = runtimeState.snapshot.game;
   const selectedNpc = getSelectedNpc(runtimeState);
@@ -4498,7 +4804,7 @@ function syncConversationReplayState(runtimeState: RuntimeState) {
       visibleEntries,
     });
   } else if (replaySignature && replaySignature !== replay.appliedSignature) {
-    resetConversationReplayState(runtimeState, {
+    mergeConversationReplayState(runtimeState, {
       npcId: selectedNpc.id,
       replayEntryIds,
       replaySignature,
@@ -4729,20 +5035,32 @@ function updateNpcMarkers(
       continue;
     }
 
+    const personality = npcPersonalityProfile(animatedNpc.npc);
     const highlight = animatedNpc.npc.id === runtimeState.ui.selectedNpcId;
     marker.container
       .setPosition(animatedNpc.x, animatedNpc.y)
-      .setScale(highlight ? 1.06 : animatedNpc.isYielding ? 0.96 : 1)
+      .setScale(
+        highlight
+          ? personality.scale + 0.08
+          : animatedNpc.isYielding
+            ? Math.max(personality.scale - 0.04, 0.92)
+            : personality.scale,
+      )
       .setVisible(true);
     marker.label.setVisible(showActorLabels);
     poseCharacterRig(marker.rig, {
       facing: animatedNpc.facing,
       now,
+      style: personality.motion,
       stride: animatedNpc.isYielding ? animatedNpc.step * 0.42 : animatedNpc.step,
     });
     marker.label
-      .setColor(highlight ? "#f7e0b4" : "#eef5f7")
-      .setBackgroundColor(highlight ? "rgba(58, 40, 18, 0.94)" : "rgba(8, 14, 19, 0.9)");
+      .setColor(highlight ? "#fff1d2" : animatedNpc.npc.known ? personality.labelColor : "#eef5f7")
+      .setBackgroundColor(
+        highlight
+          ? colorToCssRgba(blendColor(marker.appearance.accent, 0x1a1f25, 0.36), 0.96)
+          : personality.labelBackground,
+      );
     marker.rig.torso.setFillStyle(
       highlight
         ? blendColor(marker.appearance.coat, 0xf1d09f, 0.22)
@@ -4904,8 +5222,18 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           conversationDecision:
             selectedActiveConversation?.decision ??
             selectedConversationThread?.decision,
+          conversationLocationId:
+            selectedActiveConversation?.locationId ??
+            selectedConversationThread?.locationId,
           conversationLines,
+          conversationObjectiveText:
+            selectedActiveConversation?.objectiveText ??
+            selectedConversationThread?.objectiveText,
           conversationReplay: runtimeState.conversationReplay,
+          conversationSummary: selectedConversationThread?.summary,
+          conversationUpdatedAt:
+            selectedActiveConversation?.updatedAt ??
+            selectedConversationThread?.updatedAt,
           currentObjectiveText,
           currentSummary,
           currentThought,
@@ -5515,6 +5843,13 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         line-height: 1.4;
         color: rgba(215, 224, 228, 0.66);
       }
+      .ml-chat-context {
+        margin-top: 6px;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(205, 174, 115, 0.76);
+      }
       .ml-live-pill {
         display: inline-flex;
         align-items: center;
@@ -5636,6 +5971,16 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         background: rgba(205, 174, 115, 0.08);
         padding: 12px 14px;
       }
+      .ml-chat-summary {
+        margin-top: 12px;
+        border-radius: 18px;
+        border: 1px solid rgba(138, 151, 161, 0.14);
+        background: rgba(27, 36, 42, 0.76);
+        padding: 12px 14px;
+        font-size: 12px;
+        line-height: 1.6;
+        color: rgba(224, 232, 236, 0.78);
+      }
       .ml-chat-outcome-title {
         font-size: 10px;
         letter-spacing: 0.16em;
@@ -5669,10 +6014,10 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       }
       @keyframes mlCloudDrift {
         0% {
-          transform: translate3d(0, 0, 0);
+          transform: translate3d(-50%, 0, 0);
         }
         100% {
-          transform: translate3d(-50%, 0, 0);
+          transform: translate3d(0, 0, 0);
         }
       }
       @keyframes mlWeatherFall {
@@ -6214,8 +6559,12 @@ function buildTabButton(
 function buildPeopleTabHtml(
   options: {
     conversationDecision?: string;
+    conversationLocationId?: string;
     conversationLines: ConversationEntry[];
+    conversationObjectiveText?: string;
     conversationReplay: ConversationReplayState;
+    conversationSummary?: string;
+    conversationUpdatedAt?: string;
     currentObjectiveText: string;
     currentSummary: string;
     currentThought: string;
@@ -6228,8 +6577,12 @@ function buildPeopleTabHtml(
 ) {
   const {
     conversationDecision,
+    conversationLocationId,
     conversationLines,
+    conversationObjectiveText,
     conversationReplay,
+    conversationSummary,
+    conversationUpdatedAt,
     currentObjectiveText,
     currentSummary,
     currentThought,
@@ -6239,6 +6592,7 @@ function buildPeopleTabHtml(
     talkableNpcIds,
     tools,
   } = options;
+  const selectedPersonality = selectedNpc ? npcPersonalityProfile(selectedNpc) : null;
 
   return `
     <div class="ml-focus-grid">
@@ -6260,8 +6614,9 @@ function buildPeopleTabHtml(
           <div class="ml-kicker">People In Reach</div>
           <div class="ml-people-grid" style="margin-top: 12px;">
             ${npcs
-              .map(
-                (npc) => `
+              .map((npc) => {
+                const personality = npcPersonalityProfile(npc);
+                return `
                 <button
                   class="ml-person ${selectedNpc?.id === npc.id ? "is-active" : ""}"
                   data-select-npc="${escapeHtml(npc.id)}"
@@ -6269,11 +6624,14 @@ function buildPeopleTabHtml(
                 >
                   <div class="ml-person-name">${escapeHtml(npc.name)}</div>
                   <div class="ml-person-meta">${escapeHtml(
-                    `${npc.role} • ${npc.known ? "known" : "unfamiliar"}`,
+                    `${personality.badge} • ${npc.known ? "known" : "unfamiliar"}`,
+                  )}</div>
+                  <div class="ml-row-copy" style="margin-top: 8px;">${escapeHtml(
+                    personality.listLine,
                   )}</div>
                 </button>
-              `,
-              )
+              `;
+              })
               .join("")}
           </div>
         </div>
@@ -6288,7 +6646,11 @@ function buildPeopleTabHtml(
                 selectedNpc.name,
               )}</div>
               <div class="ml-row-copy" style="margin-top: 6px;">${escapeHtml(
-                `${selectedNpc.role} • mood: ${selectedNpc.mood} • trust ${selectedNpc.trust}`,
+                `${selectedPersonality?.badge ?? selectedNpc.role} • mood: ${selectedNpc.mood} • trust ${selectedNpc.trust}`,
+              )}</div>
+              <div class="ml-row-copy" style="margin-top: 10px;">${escapeHtml(
+                selectedPersonality?.signature ??
+                  "They already feel like they belong to this block.",
               )}</div>
               <div class="ml-row-copy" style="margin-top: 10px;">${escapeHtml(
                 selectedNpc.summary,
@@ -6302,6 +6664,10 @@ function buildPeopleTabHtml(
               ${buildConversationPanelHtml({
                 conversationDecision,
                 conversationLines,
+                conversationLocationId,
+                conversationObjectiveText,
+                conversationSummary,
+                conversationUpdatedAt,
                 npc: selectedNpc,
                 replay: conversationReplay,
                 snapshot,
@@ -6324,6 +6690,10 @@ function buildPeopleTabHtml(
 function buildConversationPanelHtml(options: {
   conversationDecision?: string;
   conversationLines: ConversationEntry[];
+  conversationLocationId?: string;
+  conversationObjectiveText?: string;
+  conversationSummary?: string;
+  conversationUpdatedAt?: string;
   npc: NpcState;
   replay: ConversationReplayState;
   snapshot: StreetAppSnapshot;
@@ -6332,12 +6702,28 @@ function buildConversationPanelHtml(options: {
   const {
     conversationDecision,
     conversationLines,
+    conversationLocationId,
+    conversationObjectiveText,
+    conversationSummary,
+    conversationUpdatedAt,
     npc,
     replay,
     snapshot,
     talkableNpcIds,
   } = options;
+  const personality = npcPersonalityProfile(npc);
   const npcInitials = initialsForName(npc.name);
+  const conversationLocation = conversationLocationId
+    ? snapshot.game?.locations.find((location) => location.id === conversationLocationId)
+    : undefined;
+  const conversationTimestamp =
+    conversationUpdatedAt ?? conversationLines[conversationLines.length - 1]?.time;
+  const conversationContext = [
+    conversationLocation?.name,
+    conversationTimestamp ? formatClock(conversationTimestamp) : null,
+  ]
+    .filter(Boolean)
+    .join(" • ");
   const revealedEntryIdSet = new Set(replay.revealedEntryIds);
   const visibleConversationEntries = conversationLines
     .slice(-6)
@@ -6359,6 +6745,10 @@ function buildConversationPanelHtml(options: {
     Boolean(replay.streamingEntryId) ||
     replay.streamQueue.length > 0 ||
     replay.isReplaying;
+  const journalNoteVisible =
+    conversationObjectiveText &&
+    conversationObjectiveText !== conversationDecision &&
+    !isTranscriptInMotion;
 
   return `
     <div class="ml-chat-shell">
@@ -6367,8 +6757,13 @@ function buildConversationPanelHtml(options: {
         <div class="ml-chat-head-copy">
           <div class="ml-chat-title">${escapeHtml(npc.name)}</div>
           <div class="ml-chat-subtitle">${escapeHtml(
-            `${npc.role}. ${npc.currentConcern}`,
+            `${personality.badge}. ${personality.chatSubtitle}`,
           )}</div>
+          ${
+            conversationContext
+              ? `<div class="ml-chat-context">${escapeHtml(conversationContext)}</div>`
+              : ""
+          }
           ${
             isTranscriptInMotion
               ? `<div class="ml-live-pill"><span class="ml-live-pill-dot"></span>Live Conversation</div>`
@@ -6377,11 +6772,28 @@ function buildConversationPanelHtml(options: {
         </div>
       </div>
       ${
+        conversationSummary && !isTranscriptInMotion
+          ? `
+          <div class="ml-chat-summary">${escapeHtml(conversationSummary)}</div>
+        `
+          : ""
+      }
+      ${
         conversationDecision && !isTranscriptInMotion
           ? `
           <div class="ml-chat-outcome">
             <div class="ml-chat-outcome-title">Conversation Outcome</div>
             <div class="ml-chat-outcome-copy">${escapeHtml(conversationDecision)}</div>
+          </div>
+        `
+          : ""
+      }
+      ${
+        journalNoteVisible
+          ? `
+          <div class="ml-chat-outcome">
+            <div class="ml-chat-outcome-title">Journal Note</div>
+            <div class="ml-chat-outcome-copy">${escapeHtml(conversationObjectiveText)}</div>
           </div>
         `
           : ""
@@ -7527,6 +7939,7 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
       propsByLocation: new Map(),
       routeFinder: (start, end) => [start, end],
       visualScene: null,
+      walkableRuntimePoints: [],
     };
   }
 
@@ -7548,7 +7961,35 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
     propsByLocation: groupPropsByLocation(game.map.props),
     routeFinder: createRouteFinder(game.map.tiles),
     visualScene,
+    walkableRuntimePoints: buildWalkableRuntimePoints(game, visualScene),
   };
+}
+
+function buildWalkableRuntimePoints(
+  game: StreetGameState,
+  visualScene: VisualScene | null,
+): WalkableRuntimePoint[] {
+  return game.map.tiles
+    .filter((tile) => tile.walkable)
+    .map((tile) => {
+      const tileCenter = {
+        x: tile.x + 0.5,
+        y: tile.y + 0.5,
+      };
+
+      return {
+        kind: tile.kind,
+        locationId: tile.locationId,
+        tile: {
+          x: tile.x,
+          y: tile.y,
+        },
+        tileCenter,
+        world: visualScene
+          ? projectVisualScenePoint(visualScene, tileCenter)
+          : mapPointToWorld(tileCenter),
+      };
+    });
 }
 
 function collectAnimatedSurfaceTiles(
@@ -7972,6 +8413,11 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
     findRoute: runtimeState.indices.routeFinder,
     location: currentLocation,
     props: runtimeState.indices.propsByLocation.get(currentLocation.id) ?? [],
+    visualHints:
+      runtimeState.indices.visualScene?.locationAnchors[currentLocation.id]?.npcStands?.filter(
+        Boolean,
+      ) ?? [],
+    walkableRuntimePoints: runtimeState.indices.walkableRuntimePoints,
   });
 
   if (patrolDistance <= 0) {
@@ -8032,34 +8478,7 @@ function buildAnimatedNpcState({
     };
   }
 
-  const authoredNpcStands =
-    indices.visualScene?.locationAnchors[location.id]?.npcStands?.filter(Boolean) ?? [];
-  if (authoredNpcStands.length > 0) {
-    const phaseOffset = ((hashString(npc.id) + index * 17) % 997) / 997;
-    const cycleSeconds = patrolCycleSeconds(location.type);
-    const progress = positiveModulo(
-      animationBeat / cycleSeconds + phaseOffset + game.clock.totalMinutes * 0.021,
-      1,
-    );
-    const point = sampleLoopPath(authoredNpcStands, progress);
-    const lookAhead = sampleLoopPath(
-      authoredNpcStands,
-      positiveModulo(progress + 0.03, 1),
-    );
-
-    return {
-      facing: lookAhead.x >= point.x ? 1 : -1,
-      known: npc.known,
-      npc,
-      step:
-        authoredNpcStands.length > 1
-          ? Math.sin(progress * Math.PI * 2 * authoredNpcStands.length)
-          : Math.sin(animationBeat * 1.35 + phaseOffset * Math.PI * 2) * 0.12,
-      x: point.x,
-      y: point.y,
-    };
-  }
-
+  const personality = npcPersonalityProfile(npc);
   const currentHour = game.clock.hour + game.clock.minute / 60;
   const nextLocation = nextScheduledLocation(npc, currentHour, indices.locationsById);
   const patrolPath = getCachedPatrolPath(indices, {
@@ -8068,22 +8487,52 @@ function buildAnimatedNpcState({
     location,
     nextLocation,
     props: indices.propsByLocation.get(location.id) ?? [],
+    visualHints:
+      indices.visualScene?.locationAnchors[location.id]?.npcStands?.filter(Boolean) ?? [],
+    walkableRuntimePoints: indices.walkableRuntimePoints,
   });
   const phaseOffset = ((hashString(npc.id) + index * 17) % 997) / 997;
   const cycleSeconds = patrolCycleSeconds(location.type);
   const progress = positiveModulo(
-    animationBeat / cycleSeconds + phaseOffset + game.clock.totalMinutes * 0.021,
+    (animationBeat * personality.pace) / cycleSeconds +
+      phaseOffset +
+      game.clock.totalMinutes * 0.021 * personality.pace,
     1,
   );
   const point = sampleLoopPath(patrolPath, progress);
-  const lookAhead = sampleLoopPath(patrolPath, positiveModulo(progress + 0.018, 1));
+  const lookAhead = sampleLoopPath(
+    patrolPath,
+    positiveModulo(progress + 0.018 * personality.pace, 1),
+  );
+  const routeNormal = perpendicularNormal(point, lookAhead);
+  const swayWave =
+    Math.sin(animationBeat * personality.swayRate + phaseOffset * Math.PI * 2) *
+    personality.sway;
+  const styledPoint =
+    Math.abs(routeNormal.x) > 0.001 || Math.abs(routeNormal.y) > 0.001
+      ? {
+          x: point.x + routeNormal.x * swayWave,
+          y: point.y + routeNormal.y * swayWave,
+        }
+      : point;
 
   return {
-    facing: lookAhead.x >= point.x ? 1 : -1,
+    facing: lookAhead.x >= styledPoint.x ? 1 : -1,
     known: npc.known,
     npc,
-    step: Math.sin(progress * Math.PI * 2 * Math.max(3, patrolPath.length - 1)),
-    ...projectRuntimePoint(indices, point),
+    step:
+      Math.sin(
+        progress *
+          Math.PI *
+          2 *
+          Math.max(3, patrolPath.length - 1) *
+          personality.pace,
+      ) *
+        personality.stepStrength +
+      Math.sin(animationBeat * 0.8 + phaseOffset * Math.PI * 2) *
+        0.08 *
+        personality.motion.idleWave,
+    ...projectRuntimePoint(indices, styledPoint),
   };
 }
 
@@ -8149,7 +8598,43 @@ function resolveCrowdPositions(
     }
   }
 
+  for (const [index, entry] of resolved.entries()) {
+    const clamped = clampNpcDisplacement(entry, rawNpcs[index]);
+    entry.x = clamped.x;
+    entry.y = clamped.y;
+
+    if (clamped.wasClamped) {
+      entry.isYielding = true;
+      entry.step *= 0.68;
+    }
+  }
+
   return resolved;
+}
+
+function clampNpcDisplacement(
+  point: Point,
+  original: Point,
+) {
+  const dx = point.x - original.x;
+  const dy = point.y - original.y;
+  const distance = Math.hypot(dx, dy);
+  const maximum = CELL * 0.48;
+
+  if (distance <= maximum || distance === 0) {
+    return {
+      wasClamped: false,
+      x: point.x,
+      y: point.y,
+    };
+  }
+
+  const scale = maximum / distance;
+  return {
+    wasClamped: true,
+    x: original.x + dx * scale,
+    y: original.y + dy * scale,
+  };
 }
 
 function drawAmbientOverlay(
@@ -8225,14 +8710,16 @@ function drawDynamicOverlay(
   if (selectedNpc) {
     const selectedMarker = runtimeState.objects?.npcMarkers.get(selectedNpc.id);
     if (selectedMarker) {
+      const personality = npcPersonalityProfile(selectedNpc);
+      const ringColor = blendColor(selectedMarker.appearance.accent, 0xfff2cf, 0.22);
       const ringRadius = CELL * (0.78 + pulse * 0.08);
-      layer.fillStyle(0xf1d09f, 0.05 * pulse);
+      layer.fillStyle(ringColor, 0.06 * pulse);
       layer.fillCircle(
         selectedMarker.container.x,
         selectedMarker.container.y - 2,
         CELL * 0.72,
       );
-      layer.lineStyle(2.5, 0xf1d09f, 0.32);
+      layer.lineStyle(2.5, ringColor, 0.34 + personality.motion.idleWave * 0.02);
       layer.strokeCircle(
         selectedMarker.container.x,
         selectedMarker.container.y - 2,
@@ -11923,7 +12410,7 @@ function buildConversationReplaySignature(
   activeConversation: NonNullable<StreetGameState["activeConversation"]>,
 ) {
   const lineIds = activeConversation.lines.map((entry) => entry.id).join("|");
-  return `${activeConversation.threadId}:${activeConversation.updatedAt}:${lineIds}`;
+  return `${activeConversation.threadId}:${lineIds}`;
 }
 
 function initialsForName(name: string) {
@@ -12148,6 +12635,8 @@ function getCachedPatrolPath(
     location: LocationState;
     nextLocation?: LocationState;
     props: MapProp[];
+    visualHints?: Point[];
+    walkableRuntimePoints: WalkableRuntimePoint[];
   },
 ) {
   const key = patrolCacheKey(
@@ -12188,16 +12677,29 @@ function buildNpcPatrolPath({
   location,
   nextLocation,
   props,
+  visualHints,
+  walkableRuntimePoints,
 }: {
   door?: MapDoor;
   findRoute: (start: Point, end: Point) => Point[];
   location: LocationState;
   nextLocation?: LocationState;
   props: MapProp[];
+  visualHints?: Point[];
+  walkableRuntimePoints: WalkableRuntimePoint[];
 }) {
   const entryPoint = door
     ? { x: door.x + door.width / 2, y: door.y + door.height / 2 }
     : { x: location.entryX + 0.5, y: location.entryY + 0.5 };
+  const preferredKinds = preferredWalkableKindsForLocation(location.type);
+  const entryWalkablePoint = findNearestWalkablePointByTileHint(
+    walkableRuntimePoints,
+    entryPoint,
+    {
+      preferredKinds,
+      preferredLocationId: location.id,
+    },
+  );
   const centerPoint = {
     x: location.x + location.width / 2,
     y: location.y + location.height / 2,
@@ -12257,20 +12759,258 @@ function buildNpcPatrolPath({
       break;
   }
 
-  if (nextLocation && nextLocation.id !== location.id) {
-    const routeOut = findRoute(
-      { x: location.entryX, y: location.entryY },
-      { x: nextLocation.entryX, y: nextLocation.entryY },
-    )
-      .slice(1, location.type === "square" ? 7 : 6)
-      .map((point) => ({ x: point.x + 0.5, y: point.y + 0.5 }));
+  const routedVisualLoop = stitchWalkableTilePath(
+    findRoute,
+    [
+      entryWalkablePoint?.tile,
+      ...(visualHints ?? []).map(
+        (point) =>
+          findNearestWalkablePointByWorldHint(walkableRuntimePoints, point, {
+            preferredKinds,
+            preferredLocationId: location.id,
+          })?.tile,
+      ),
+    ].filter(isPresent),
+    {
+      closed: true,
+    },
+  ).map(tilePointToCenter);
 
-    if (routeOut.length > 1) {
-      return [...basePath, ...routeOut, ...[...routeOut].reverse().slice(1)];
+  const routedBaseLoop = stitchWalkableTilePath(
+    findRoute,
+    [
+      entryWalkablePoint?.tile,
+      ...basePath.map(
+        (point) =>
+          findNearestWalkablePointByTileHint(walkableRuntimePoints, point, {
+            preferredKinds,
+            preferredLocationId: location.id,
+          })?.tile,
+      ),
+    ].filter(isPresent),
+    {
+      closed: true,
+    },
+  ).map(tilePointToCenter);
+
+  const loopPath =
+    routedVisualLoop.length > 1
+      ? routedVisualLoop
+      : routedBaseLoop.length > 0
+        ? routedBaseLoop
+        : [entryWalkablePoint ? tilePointToCenter(entryWalkablePoint.tile) : entryPoint];
+
+  if (nextLocation && nextLocation.id !== location.id) {
+    const nextEntryWalkablePoint = findNearestWalkablePointByTileHint(
+      walkableRuntimePoints,
+      {
+        x: nextLocation.entryX + 0.5,
+        y: nextLocation.entryY + 0.5,
+      },
+      {
+        preferredKinds: preferredWalkableKindsForLocation(nextLocation.type),
+        preferredLocationId: nextLocation.id,
+      },
+    );
+
+    if (entryWalkablePoint && nextEntryWalkablePoint) {
+      const fullRouteOut = findRoute(
+        entryWalkablePoint.tile,
+        nextEntryWalkablePoint.tile,
+      );
+
+      if (routeReachesDestination(fullRouteOut, nextEntryWalkablePoint.tile)) {
+        const routeOut = fullRouteOut
+          .slice(1, location.type === "square" ? 8 : 7)
+          .map(tilePointToCenter);
+
+        if (routeOut.length > 1) {
+          return dedupePointSequence([
+            ...loopPath,
+            ...routeOut,
+            ...[...routeOut].reverse().slice(1),
+          ]);
+        }
+      }
     }
   }
 
-  return basePath;
+  return loopPath;
+}
+
+function preferredWalkableKindsForLocation(locationType?: string): TileKind[] {
+  switch (locationType) {
+    case "square":
+      return ["plaza", "lane", "stoop"];
+    case "workyard":
+      return ["workyard", "lane", "stoop"];
+    case "courtyard":
+      return ["courtyard", "stoop", "lane"];
+    case "pier":
+      return ["dock", "lane"];
+    default:
+      return ["stoop", "lane", "plaza"];
+  }
+}
+
+function findNearestWalkablePointByTileHint(
+  walkableRuntimePoints: WalkableRuntimePoint[],
+  point: Point,
+  options: WalkablePointSearchOptions = {},
+) {
+  let bestPoint: WalkableRuntimePoint | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const candidate of walkableRuntimePoints) {
+    const score =
+      distanceBetween(candidate.tileCenter, point) +
+      walkableSearchPenalty(candidate, options);
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestPoint = candidate;
+    }
+  }
+
+  return bestPoint;
+}
+
+function findNearestWalkablePointByWorldHint(
+  walkableRuntimePoints: WalkableRuntimePoint[],
+  point: Point,
+  options: WalkablePointSearchOptions = {},
+) {
+  let bestPoint: WalkableRuntimePoint | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const candidate of walkableRuntimePoints) {
+    const score =
+      distanceBetween(candidate.world, point) / CELL +
+      walkableSearchPenalty(candidate, options);
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestPoint = candidate;
+    }
+  }
+
+  return bestPoint;
+}
+
+function walkableSearchPenalty(
+  point: Pick<WalkableRuntimePoint, "kind" | "locationId">,
+  options: WalkablePointSearchOptions,
+) {
+  let penalty = 0;
+
+  if (
+    options.preferredLocationId &&
+    point.locationId !== options.preferredLocationId
+  ) {
+    penalty += 1.35;
+  }
+
+  if (
+    options.preferredKinds &&
+    options.preferredKinds.length > 0 &&
+    !options.preferredKinds.includes(point.kind)
+  ) {
+    penalty += 0.85;
+  }
+
+  return penalty;
+}
+
+function stitchWalkableTilePath(
+  routeFinder: (start: Point, end: Point) => Point[],
+  waypoints: Point[],
+  options: {
+    closed?: boolean;
+  } = {},
+) {
+  const roundedWaypoints = dedupeGridPointSequence(
+    waypoints.map((point) => ({
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+    })),
+  );
+
+  if (roundedWaypoints.length === 0) {
+    return [];
+  }
+
+  const targets = options.closed
+    ? [...roundedWaypoints, roundedWaypoints[0]]
+    : roundedWaypoints;
+  const path: Point[] = [targets[0]];
+
+  for (let index = 1; index < targets.length; index += 1) {
+    const from = path[path.length - 1];
+    const to = targets[index];
+
+    if (sameGridPoint(from, to)) {
+      continue;
+    }
+
+    const route = routeFinder(from, to);
+    const segment = routeReachesDestination(route, to)
+      ? options.closed && index === targets.length - 1
+        ? route.slice(1, -1)
+        : route.slice(1)
+      : [to];
+
+    for (const point of segment) {
+      pushDistinctGridPoint(path, point);
+    }
+  }
+
+  if (options.closed) {
+    pushDistinctGridPoint(path, roundedWaypoints[0]);
+  }
+
+  return path;
+}
+
+function dedupeGridPointSequence(points: Point[]) {
+  const deduped: Point[] = [];
+
+  for (const point of points) {
+    pushDistinctGridPoint(deduped, point);
+  }
+
+  return deduped;
+}
+
+function pushDistinctGridPoint(points: Point[], point: Point) {
+  if (points.length === 0 || !sameGridPoint(points[points.length - 1], point)) {
+    points.push(point);
+  }
+}
+
+function sameGridPoint(left: Point, right: Point) {
+  return left.x === right.x && left.y === right.y;
+}
+
+function tilePointToCenter(point: Point) {
+  return {
+    x: point.x + 0.5,
+    y: point.y + 0.5,
+  };
+}
+
+function dedupePointSequence(points: Point[]) {
+  const deduped: Point[] = [];
+
+  for (const point of points) {
+    if (
+      deduped.length === 0 ||
+      distanceBetween(deduped[deduped.length - 1], point) > 0.001
+    ) {
+      deduped.push(point);
+    }
+  }
+
+  return deduped;
 }
 
 function patrolCycleSeconds(locationType?: string) {
@@ -12438,6 +13178,28 @@ function distanceBetween(from: Point, to: Point) {
   return Math.hypot(to.x - from.x, to.y - from.y);
 }
 
+function perpendicularNormal(from: Point, to: Point) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy);
+
+  if (distance <= 0.0001) {
+    return { x: 0, y: 0 };
+  }
+
+  return {
+    x: -dy / distance,
+    y: dx / distance,
+  };
+}
+
+function colorToCssRgba(color: number, alpha: number) {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8) & 0xff;
+  const b = color & 0xff;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function easeInOutCubic(progress: number) {
   return progress < 0.5
     ? 4 * progress * progress * progress
@@ -12482,12 +13244,14 @@ function focusPanelMeta(
   selectedNpc: NpcState | null,
   game: StreetGameState,
 ) {
+  const selectedPersonality = selectedNpc ? npcPersonalityProfile(selectedNpc) : null;
+
   switch (focusPanel) {
     case "people":
       return {
         kicker: selectedNpc ? "Character Card" : "People In Reach",
         subtitle: selectedNpc
-          ? `${selectedNpc.role} • mood ${selectedNpc.mood} • trust ${selectedNpc.trust}`
+          ? `${selectedPersonality?.badge ?? selectedNpc.role} • mood ${selectedNpc.mood} • trust ${selectedNpc.trust}`
           : `People Rowan can read or approach in ${game.currentScene.title}.`,
         title: selectedNpc?.name ?? "Locals",
       };
