@@ -1050,8 +1050,8 @@ async function createRuntime(options: {
     },
     parent: options.mount,
     render: {
-      antialias: false,
-      pixelArt: true,
+      antialias: true,
+      pixelArt: false,
     },
     scale: {
       autoCenter: Phaser.Scale.NO_CENTER,
@@ -1716,7 +1716,7 @@ function renderStaticScene(
     sceneViewport.height,
   );
   camera.setZoom(sceneZoom);
-  camera.setRoundPixels(true);
+  camera.setRoundPixels(false);
 
   terrainLayer.clear();
   structureLayer.clear();
