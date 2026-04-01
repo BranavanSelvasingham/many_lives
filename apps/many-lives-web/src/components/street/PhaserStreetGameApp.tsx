@@ -70,7 +70,7 @@ const CAMERA_USER_ZOOM_DEFAULT = 1;
 const CAMERA_USER_ZOOM_LERP = 0.16;
 const CAMERA_USER_ZOOM_MAX = 1.16;
 const CAMERA_USER_ZOOM_MIN = 0.76;
-const MAX_RUNTIME_RENDER_SCALE = 2;
+const MAX_RUNTIME_RENDER_SCALE = 4;
 const CAMERA_WHEEL_ZOOM_STEP = 0.08;
 const MOVEMENT_FLUSH_DELAY_MS = 45;
 const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 320;
@@ -1788,6 +1788,10 @@ function renderDynamicScene(
       marker.container.setVisible(false);
     }
     return;
+  }
+
+  if (syncRuntimeRenderScale(objects, runtimeState)) {
+    renderStaticScene(objects, runtimeState);
   }
 
   objects.playerContainer.setVisible(true);
@@ -7771,12 +7775,15 @@ function getSceneZoom(
   return Math.min(widthFit, heightFit);
 }
 
-function getRuntimeRenderScale() {
+function getRuntimeRenderScale(cameraZoomFactor = CAMERA_USER_ZOOM_DEFAULT) {
   if (typeof window === "undefined") {
     return 1;
   }
 
-  return Math.min(Math.max(window.devicePixelRatio || 1, 1), MAX_RUNTIME_RENDER_SCALE);
+  return Math.min(
+    Math.max((window.devicePixelRatio || 1) * Math.max(cameraZoomFactor, 1), 1),
+    MAX_RUNTIME_RENDER_SCALE,
+  );
 }
 
 function getRuntimeViewportSize(runtimeState: RuntimeState): ViewportSize {
@@ -7784,6 +7791,22 @@ function getRuntimeViewportSize(runtimeState: RuntimeState): ViewportSize {
     height: Math.max(Math.round(runtimeState.snapshot.viewport.height * runtimeState.renderScale), 1),
     width: Math.max(Math.round(runtimeState.snapshot.viewport.width * runtimeState.renderScale), 1),
   };
+}
+
+function syncRuntimeRenderScale(
+  objects: RuntimeObjects,
+  runtimeState: RuntimeState,
+) {
+  const nextRenderScale = getRuntimeRenderScale(runtimeState.cameraZoomFactor);
+  if (Math.abs(nextRenderScale - runtimeState.renderScale) < 0.01) {
+    return false;
+  }
+
+  runtimeState.renderScale = nextRenderScale;
+  const nextViewport = getRuntimeViewportSize(runtimeState);
+  objects.scene.scale.resize(nextViewport.width, nextViewport.height);
+  objects.scene.scale.setZoom(1 / nextRenderScale);
+  return true;
 }
 
 function createInitialPlayerMotion(snapshot: StreetAppSnapshot): PlayerMotionState {
