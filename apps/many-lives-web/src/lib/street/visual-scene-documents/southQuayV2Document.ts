@@ -305,6 +305,7 @@ const SOUTH_QUAY_V2_DOCUMENT = {
     labels: { id: "labels", kind: "objects" },
     props: { id: "props", kind: "objects" },
     structures: { id: "structures", kind: "objects" },
+    weather: { id: "weather", kind: "objects" },
   },
   locationAnchors: SOUTH_QUAY_V2_LOCATION_ANCHORS,
   npcAnchors: SOUTH_QUAY_V2_NPC_ANCHORS,
@@ -416,6 +417,7 @@ const SOUTH_QUAY_V2_DOCUMENT = {
     x: 184,
     y: 120,
   },
+  skyLayers: [],
   surfaceZones: [
     {
       emphasis: "medium",

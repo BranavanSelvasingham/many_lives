@@ -1,8 +1,10 @@
 "use client";
 
+import { useCallback } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 
+import { SOUTH_QUAY_V2_DOCUMENT } from "@/lib/street/visual-scene-documents/southQuayV2Document";
 import {
   buildVisualSceneModuleSource,
   clearVisualSceneRuntimeOverride,
@@ -14,6 +16,7 @@ import {
   serializeVisualSceneDocument,
   type VisualFringeZoneEdge,
   type VisualFringeZoneKind,
+  type VisualSceneCloudKind,
   type VisualLandmarkModuleKind,
   type VisualPoint,
   type VisualPropClusterKind,
@@ -22,6 +25,8 @@ import {
   type VisualSceneDocument,
   type VisualSceneId,
   type VisualSceneLandmarkStyle,
+  type VisualSceneLocationAnchors,
+  type VisualSceneWeatherKind,
   type VisualSurfaceMaterialKind,
   type VisualTerrainKind,
   type VisualSceneWaterTag,
@@ -84,6 +89,20 @@ const WATER_TAGS: VisualSceneWaterTag[] = [
   "moored_boat",
 ];
 
+const CLOUD_KINDS: VisualSceneCloudKind[] = [
+  "wispy",
+  "harbor-bank",
+  "storm-front",
+];
+
+const WEATHER_KINDS: VisualSceneWeatherKind[] = [
+  "none",
+  "mist",
+  "drizzle",
+  "rain",
+  "storm",
+];
+
 const LANDMARK_STYLES: VisualSceneLandmarkStyle[] = [
   "boarding-house",
   "cafe",
@@ -102,6 +121,7 @@ const PRESET_KINDS = [
   "boarding_frontage",
   "workshop_frontage",
   "square_kit",
+  "dockyard_kit",
   "yard_service_kit",
   "harbor_edge_kit",
 ] as const;
@@ -130,6 +150,7 @@ type VisibleGroups = {
   props: boolean;
   surfaceZones: boolean;
   water: boolean;
+  weather: boolean;
 };
 
 type BuilderSelection =
@@ -140,6 +161,7 @@ type BuilderSelection =
   | { kind: "propCluster"; index: number }
   | { kind: "prop"; index: number }
   | { kind: "waterRegion"; index: number }
+  | { kind: "skyLayer"; index: number }
   | { kind: "label"; index: number }
   | { kind: "playerSpawn" }
   | { kind: "npcAnchor"; id: string }
@@ -175,6 +197,7 @@ type BuilderListItem = {
 };
 
 type AddState = {
+  cloudKind: VisualSceneCloudKind;
   fringeEdge: VisualFringeZoneEdge;
   fringeKind: VisualFringeZoneKind;
   moduleKind: VisualLandmarkModuleKind;
@@ -182,12 +205,21 @@ type AddState = {
   propKind: (typeof PROP_KINDS)[number];
   surfaceKind: VisualSurfaceZoneKind;
   waterTag: VisualSceneWaterTag;
+  weatherKind: VisualSceneWeatherKind;
 };
 
 type BuilderPresetKind = (typeof PRESET_KINDS)[number];
+type ReadyBuildingInventoryItem = {
+  description: string;
+  label: string;
+  preset: BuilderPresetKind;
+  selection: Extract<BuilderSelection, { kind: "landmark" }> | null;
+  style: VisualSceneLandmarkStyle;
+  targetLocationId: string;
+};
 
 type BuilderImportMode = "json" | "module";
-type BuilderCanvasMode = "buildings" | "ground" | "roads" | "details";
+type BuilderCanvasMode = "buildings" | "ground" | "roads" | "details" | "weather";
 type GroundToolMode = "brush" | "select";
 type RoadToolMode = "brush" | "select";
 type TerrainDisplayMode = "mask" | "render";
@@ -225,6 +257,95 @@ const SURFACE_KIND_LABELS: Record<VisualSurfaceZoneKind, string> = {
   west_lane: "West lane",
 };
 
+const LANDMARK_STYLE_LABELS: Record<VisualSceneLandmarkStyle, string> = {
+  "boarding-house": "boarding house",
+  cafe: "cafe / restaurant",
+  courtyard: "courtyard",
+  dock: "dock",
+  square: "square",
+  workshop: "workshop",
+  yard: "yard",
+};
+
+const PRESET_DEFAULT_LOCATION_BY_KIND: Record<BuilderPresetKind, string> = {
+  boarding_frontage: "boarding-house",
+  dockyard_kit: "freight-yard",
+  eatery_frontage: "tea-house",
+  harbor_edge_kit: "moss-pier",
+  square_kit: "market-square",
+  workshop_frontage: "repair-stall",
+  yard_service_kit: "courtyard",
+};
+
+const PRESET_STYLE_BY_KIND: Record<BuilderPresetKind, VisualSceneLandmarkStyle> = {
+  boarding_frontage: "boarding-house",
+  dockyard_kit: "yard",
+  eatery_frontage: "cafe",
+  harbor_edge_kit: "dock",
+  square_kit: "square",
+  workshop_frontage: "workshop",
+  yard_service_kit: "yard",
+};
+
+const PRESET_LABELS: Record<BuilderPresetKind, string> = {
+  boarding_frontage: "Boarding House",
+  dockyard_kit: "Dock Yard / Maintenance Yard",
+  eatery_frontage: "Cafe / Restaurant",
+  harbor_edge_kit: "Harbor Edge",
+  square_kit: "Town Market Square",
+  workshop_frontage: "Workshop",
+  yard_service_kit: "Service Courtyard",
+};
+
+function titleCaseSlug(value: string) {
+  return value
+    .split("-")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getLandmarkDisplayLabel(landmark: VisualScene["landmarks"][number]) {
+  if (landmark.style === "cafe") {
+    return "Cafe / Restaurant";
+  }
+  if (landmark.locationId === "market-square") {
+    return "Town Market Square";
+  }
+  if (landmark.locationId === "freight-yard") {
+    return "Dock Yard / Maintenance Yard";
+  }
+  return titleCaseSlug(landmark.locationId);
+}
+
+function getLandmarkDisplaySubtitle(landmark: VisualScene["landmarks"][number]) {
+  const styleLabel = LANDMARK_STYLE_LABELS[landmark.style] ?? landmark.style;
+  return landmark.style === "cafe"
+    ? `${landmark.locationId} • ${styleLabel}`
+    : `${styleLabel} • ${landmark.locationId}`;
+}
+
+function getReadyBuildingDescription(preset: BuilderPresetKind) {
+  switch (preset) {
+    case "eatery_frontage":
+      return "Fully assembled frontage with awning, terrace, and cafe sign.";
+    case "boarding_frontage":
+      return "Ready boarding-house frontage with stoop, windows, and top sign.";
+    case "workshop_frontage":
+      return "Ready workshop frontage with shutters and service bay.";
+    case "square_kit":
+      return "Town market square kit with plaza massing and public-space edges.";
+    case "dockyard_kit":
+      return "Dock yard / maintenance yard with gatehouse frontage, cargo storage, and service-bay character.";
+    case "yard_service_kit":
+      return "Service courtyard kit for the interior work yard.";
+    case "harbor_edge_kit":
+      return "Ready dock edge with quay wall, apron, and harbor frontage.";
+    default:
+      return "Fully assembled place kit ready to focus and edit.";
+  }
+}
+
 const TERRAIN_CELL_SIZE = 48;
 const SURFACE_DRAFT_CELL_SIZE = 48;
 const BUILDER_STORAGE_KEY = `many-lives.visual-scene-builder.${BUILDER_SCENE_ID}`;
@@ -240,6 +361,50 @@ const SURFACE_MATERIAL_LABELS: Record<VisualSurfaceMaterialKind, string> = {
 
 function cloneScene(scene: VisualScene) {
   return cloneVisualSceneDocument(scene);
+}
+
+function clonePointValue(point: VisualPoint): VisualPoint {
+  return { ...point };
+}
+
+function cloneRectValue(rect: VisualRect): VisualRect {
+  return { ...rect };
+}
+
+function cloneLocationAnchorsValue(
+  anchors: VisualSceneLocationAnchors,
+): VisualSceneLocationAnchors {
+  return {
+    door: clonePointValue(anchors.door),
+    frontage: clonePointValue(anchors.frontage),
+    highlight: cloneRectValue(anchors.highlight),
+    label: clonePointValue(anchors.label),
+    npcStands: anchors.npcStands?.map(clonePointValue),
+  };
+}
+
+function translatePointValue(point: VisualPoint, deltaX: number, deltaY: number) {
+  point.x += deltaX;
+  point.y += deltaY;
+}
+
+function translateRectValue(rect: VisualRect, deltaX: number, deltaY: number) {
+  rect.x += deltaX;
+  rect.y += deltaY;
+}
+
+function getSourceReadyBuildingBundle(locationId: string) {
+  const landmark = SOUTH_QUAY_V2_DOCUMENT.landmarks.find((item) => item.locationId === locationId);
+  if (!landmark) {
+    return null;
+  }
+
+  return {
+    anchors: SOUTH_QUAY_V2_DOCUMENT.locationAnchors[locationId] ?? null,
+    landmark,
+    modules: SOUTH_QUAY_V2_DOCUMENT.landmarkModules.filter((item) => item.locationId === locationId),
+    propClusters: SOUTH_QUAY_V2_DOCUMENT.propClusters.filter((item) => item.locationId === locationId),
+  };
 }
 
 function selectionId(selection: BuilderSelection) {
@@ -313,6 +478,8 @@ function getSelectionRect(scene: VisualScene, selection: BuilderSelection): Visu
       return scene.propClusters[selection.index]?.rect ?? null;
     case "waterRegion":
       return scene.waterRegions[selection.index]?.rect ?? null;
+    case "skyLayer":
+      return scene.skyLayers[selection.index]?.rect ?? null;
     case "locationAnchorHighlight":
       return scene.locationAnchors[selection.locationId]?.highlight ?? null;
     default:
@@ -399,6 +566,17 @@ function describeSelection(scene: VisualScene, selection: BuilderSelection) {
           }
         : null;
     }
+    case "skyLayer": {
+      const item = scene.skyLayers[selection.index];
+      return item
+        ? {
+            mode: "rect" as const,
+            rect: item.rect,
+            subtitle: `${item.cloudKind} • ${item.weather}`,
+            title: item.id,
+          }
+        : null;
+    }
     case "label": {
       const item = scene.labels[selection.index];
       return item
@@ -424,23 +602,32 @@ function describeSelection(scene: VisualScene, selection: BuilderSelection) {
         subtitle: "npc anchor",
         title: selection.id,
       };
-    case "locationAnchorHighlight":
+    case "locationAnchorHighlight": {
+      const anchor = scene.locationAnchors[selection.locationId];
+      if (!anchor) {
+        return null;
+      }
       return {
         mode: "rect" as const,
-        rect: scene.locationAnchors[selection.locationId].highlight,
+        rect: anchor.highlight,
         subtitle: "location highlight",
         title: `${selection.locationId} highlight`,
       };
-    case "locationAnchorPoint":
+    }
+    case "locationAnchorPoint": {
+      const anchor = scene.locationAnchors[selection.locationId];
+      if (!anchor) {
+        return null;
+      }
       return {
         mode: "point" as const,
-        point: scene.locationAnchors[selection.locationId][selection.pointKey],
+        point: anchor[selection.pointKey],
         subtitle: `${selection.locationId} • ${selection.pointKey}`,
         title: `${selection.locationId} ${selection.pointKey}`,
       };
+    }
     case "locationAnchorNpcStand": {
-      const point =
-        scene.locationAnchors[selection.locationId].npcStands?.[selection.index] ?? null;
+      const point = scene.locationAnchors[selection.locationId]?.npcStands?.[selection.index] ?? null;
       if (!point) {
         return null;
       }
@@ -460,10 +647,10 @@ function buildListItems(scene: VisualScene): BuilderListItem[] {
   return [
     ...scene.landmarks.map((item, index) => ({
       id: selectionId({ kind: "landmark", index }),
-      label: item.locationId,
+      label: getLandmarkDisplayLabel(item),
       selection: { kind: "landmark", index } as BuilderSelection,
       section: "Landmarks",
-      subtitle: item.style,
+      subtitle: `${getLandmarkDisplaySubtitle(item)} • ${countBuildingShapeSelections(scene, item.locationId)} shapes`,
     })),
     ...scene.surfaceZones.map((item, index) => ({
       id: selectionId({ kind: "surfaceZone", index }),
@@ -506,6 +693,13 @@ function buildListItems(scene: VisualScene): BuilderListItem[] {
       selection: { kind: "waterRegion", index } as BuilderSelection,
       section: "Water",
       subtitle: item.tag,
+    })),
+    ...scene.skyLayers.map((item, index) => ({
+      id: selectionId({ kind: "skyLayer", index }),
+      label: item.id,
+      selection: { kind: "skyLayer", index } as BuilderSelection,
+      section: "Weather",
+      subtitle: `${item.cloudKind} • ${item.weather}`,
     })),
     ...scene.labels.map((item, index) => ({
       id: selectionId({ kind: "label", index }),
@@ -602,6 +796,50 @@ function buildListItems(scene: VisualScene): BuilderListItem[] {
   ];
 }
 
+function getBuildingShapeSelections(scene: VisualScene, locationId: string): BuilderSelection[] {
+  const selections: BuilderSelection[] = [];
+  const landmarkIndex = scene.landmarks.findIndex((item) => item.locationId === locationId);
+
+  if (landmarkIndex >= 0) {
+    selections.push({ kind: "landmark", index: landmarkIndex });
+  }
+
+  scene.landmarkModules.forEach((item, index) => {
+    if (item.locationId === locationId) {
+      selections.push({ kind: "landmarkModule", index });
+    }
+  });
+
+  return selections;
+}
+
+function countBuildingShapeSelections(scene: VisualScene, locationId: string) {
+  return getBuildingShapeSelections(scene, locationId).length;
+}
+
+function translateLocationAnchorsInPlace(
+  anchors: VisualSceneLocationAnchors | undefined,
+  deltaX: number,
+  deltaY: number,
+) {
+  if (!anchors) {
+    return;
+  }
+
+  anchors.door.x += deltaX;
+  anchors.door.y += deltaY;
+  anchors.frontage.x += deltaX;
+  anchors.frontage.y += deltaY;
+  anchors.label.x += deltaX;
+  anchors.label.y += deltaY;
+  anchors.highlight.x += deltaX;
+  anchors.highlight.y += deltaY;
+  anchors.npcStands?.forEach((point) => {
+    point.x += deltaX;
+    point.y += deltaY;
+  });
+}
+
 function updateSelectionPosition(
   draft: VisualScene,
   selection: BuilderSelection,
@@ -611,6 +849,14 @@ function updateSelectionPosition(
   switch (selection.kind) {
     case "landmark":
       if (draft.landmarks[selection.index]) {
+        const landmark = draft.landmarks[selection.index];
+        const deltaX = x - landmark.rect.x;
+        const deltaY = y - landmark.rect.y;
+        translateLocationAnchorsInPlace(
+          draft.locationAnchors[landmark.locationId],
+          deltaX,
+          deltaY,
+        );
         draft.landmarks[selection.index].rect.x = x;
         draft.landmarks[selection.index].rect.y = y;
       }
@@ -651,6 +897,12 @@ function updateSelectionPosition(
         draft.waterRegions[selection.index].rect.y = y;
       }
       return;
+    case "skyLayer":
+      if (draft.skyLayers[selection.index]) {
+        draft.skyLayers[selection.index].rect.x = x;
+        draft.skyLayers[selection.index].rect.y = y;
+      }
+      return;
     case "label":
       if (draft.labels[selection.index]) {
         draft.labels[selection.index].x = x;
@@ -664,17 +916,25 @@ function updateSelectionPosition(
       draft.npcAnchors[selection.id] = { x, y };
       return;
     case "locationAnchorHighlight":
-      draft.locationAnchors[selection.locationId].highlight.x = x;
-      draft.locationAnchors[selection.locationId].highlight.y = y;
+      if (draft.locationAnchors[selection.locationId]) {
+        draft.locationAnchors[selection.locationId].highlight.x = x;
+        draft.locationAnchors[selection.locationId].highlight.y = y;
+      }
       return;
     case "locationAnchorPoint":
-      draft.locationAnchors[selection.locationId][selection.pointKey] = { x, y };
+      if (draft.locationAnchors[selection.locationId]) {
+        draft.locationAnchors[selection.locationId][selection.pointKey] = { x, y };
+      }
       return;
     case "locationAnchorNpcStand": {
-      const stands = draft.locationAnchors[selection.locationId].npcStands ?? [];
+      const anchor = draft.locationAnchors[selection.locationId];
+      if (!anchor) {
+        return;
+      }
+      const stands = anchor.npcStands ?? [];
       if (stands[selection.index]) {
         stands[selection.index] = { x, y };
-        draft.locationAnchors[selection.locationId].npcStands = stands;
+        anchor.npcStands = stands;
       }
       return;
     }
@@ -766,6 +1026,127 @@ function normalizeRectFromPoints(start: VisualPoint, current: VisualPoint): Visu
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function sampleRectPoints(rect: VisualRect, columns = 3, rows = 3) {
+  const points: VisualPoint[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      points.push({
+        x: rect.x + ((column + 0.5) / columns) * rect.width,
+        y: rect.y + ((row + 0.5) / rows) * rect.height,
+      });
+    }
+  }
+  return points;
+}
+
+function rectWithinScene(scene: VisualScene, rect: VisualRect) {
+  return (
+    rect.x >= 0 &&
+    rect.y >= 0 &&
+    rect.x + rect.width <= scene.width &&
+    rect.y + rect.height <= scene.height
+  );
+}
+
+function rectFitsLand(scene: VisualScene, rect: VisualRect) {
+  if (!scene.terrainDraft) {
+    return true;
+  }
+  return sampleRectPoints(rect).every((point) => getTerrainKindAtPoint(scene, point) === "land");
+}
+
+function rectAvoidsLandmarks(
+  scene: VisualScene,
+  rect: VisualRect,
+  ignoreLocationId?: string,
+) {
+  return scene.landmarks.every((landmark) => {
+    if (landmark.locationId === ignoreLocationId) {
+      return true;
+    }
+    return !rectsOverlap(expandedRect(landmark.rect, 28), rect);
+  });
+}
+
+function rectPlacementAllowed(
+  scene: VisualScene,
+  rect: VisualRect,
+  ignoreLocationId?: string,
+) {
+  return rectWithinScene(scene, rect) && rectFitsLand(scene, rect) && rectAvoidsLandmarks(scene, rect, ignoreLocationId);
+}
+
+function buildPlacementRect(
+  scene: VisualScene,
+  templateRect: VisualRect,
+  x: number,
+  y: number,
+): VisualRect {
+  return {
+    height: templateRect.height,
+    radius: templateRect.radius,
+    width: templateRect.width,
+    x: clamp(Math.round(x / 4) * 4, 0, Math.max(0, scene.width - templateRect.width)),
+    y: clamp(Math.round(y / 4) * 4, 0, Math.max(0, scene.height - templateRect.height)),
+  };
+}
+
+function findSmartPlacementRect(
+  scene: VisualScene,
+  templateRect: VisualRect,
+  preferredViewBox: VisualRect,
+  ignoreLocationId?: string,
+) {
+  const step = 24;
+  const margin = 24;
+  const minX = clamp(
+    Math.floor((preferredViewBox.x + margin) / step) * step,
+    0,
+    Math.max(0, scene.width - templateRect.width),
+  );
+  const maxX = clamp(
+    Math.ceil((preferredViewBox.x + preferredViewBox.width - templateRect.width - margin) / step) * step,
+    0,
+    Math.max(0, scene.width - templateRect.width),
+  );
+  const minY = clamp(
+    Math.floor((preferredViewBox.y + margin) / step) * step,
+    0,
+    Math.max(0, scene.height - templateRect.height),
+  );
+  const maxY = clamp(
+    Math.ceil((preferredViewBox.y + preferredViewBox.height - templateRect.height - margin) / step) * step,
+    0,
+    Math.max(0, scene.height - templateRect.height),
+  );
+  const preferredRect = buildPlacementRect(
+    scene,
+    templateRect,
+    preferredViewBox.x + preferredViewBox.width / 2 - templateRect.width / 2,
+    preferredViewBox.y + preferredViewBox.height * 0.16,
+  );
+  let bestRect: VisualRect | null = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let y = minY; y <= maxY; y += step) {
+    for (let x = minX; x <= maxX; x += step) {
+      const candidate = buildPlacementRect(scene, templateRect, x, y);
+      if (!rectPlacementAllowed(scene, candidate, ignoreLocationId)) {
+        continue;
+      }
+      const score =
+        Math.abs(candidate.x - preferredRect.x) +
+        Math.abs(candidate.y - preferredRect.y) * 1.35;
+      if (score < bestScore) {
+        bestRect = candidate;
+        bestScore = score;
+      }
+    }
+  }
+
+  return bestRect ?? preferredRect;
 }
 
 function terrainCellKey(col: number, row: number) {
@@ -1587,40 +1968,165 @@ function renderFringeZonePreview(zone: VisualScene["fringeZones"][number], index
 }
 
 function renderLandmarkPreview(landmark: VisualScene["landmarks"][number], index: number) {
+  const isDockyard = landmark.locationId === "freight-yard";
+  const isTownSquare = landmark.locationId === "market-square" || landmark.style === "square";
+  if (landmark.style === "courtyard") {
+    return null;
+  }
   const roofFill =
     landmark.style === "cafe"
-      ? "#9a7a5c"
+      ? "#b08c66"
       : landmark.style === "boarding-house"
-        ? "#7f8c92"
+        ? "#89949c"
         : landmark.style === "workshop"
           ? "#5a6670"
           : landmark.style === "dock"
             ? "#8d6d47"
-            : landmark.style === "yard" || landmark.style === "courtyard"
-              ? "#7c8b63"
+            : landmark.style === "yard"
+              ? "#6d675d"
               : "#d6c7a9";
   const bodyFill =
     landmark.style === "cafe"
-      ? "#efe3c8"
+      ? "#f0e4cd"
       : landmark.style === "boarding-house"
-        ? "#d8c2ae"
+        ? "#d8c7b6"
         : landmark.style === "workshop"
           ? "#9e8667"
           : landmark.style === "dock"
             ? "#866444"
-            : landmark.style === "yard" || landmark.style === "courtyard"
-              ? "#72825f"
+            : landmark.style === "yard"
+              ? "#7b776d"
               : "#ddd1b8";
   const lowerBand =
     landmark.style === "cafe"
-      ? "#7f5d3e"
+      ? "#815d3f"
       : landmark.style === "boarding-house"
-        ? "#9f725e"
+        ? "#a67961"
         : landmark.style === "workshop"
           ? "#6e5b46"
           : landmark.style === "dock"
             ? "#76563b"
+            : landmark.style === "yard"
+              ? "#4d4a45"
             : "#a99c7d";
+  const roofHeight =
+    landmark.style === "cafe"
+      ? Math.max(24, Math.min(42, landmark.rect.height * 0.18))
+      : Math.max(28, Math.min(56, landmark.rect.height * 0.24));
+  const lowerBandHeight =
+    landmark.style === "cafe"
+      ? Math.max(26, landmark.rect.height * 0.16)
+      : Math.max(40, landmark.rect.height * 0.22);
+  const boardingSignWidth =
+    landmark.style === "boarding-house" ? Math.min(228, landmark.rect.width - 112) : 0;
+  const boardingSignX = landmark.rect.x + (landmark.rect.width - boardingSignWidth) / 2;
+  const dockyardCargoWidth = isDockyard ? Math.max(78, landmark.rect.width * 0.28) : 0;
+  const dockyardCargoHeight = isDockyard ? Math.max(104, landmark.rect.height * 0.5) : 0;
+  const dockyardCargoX = landmark.rect.x + landmark.rect.width - dockyardCargoWidth - 38;
+  const dockyardCargoY =
+    landmark.rect.y + landmark.rect.height - lowerBandHeight - dockyardCargoHeight - 18;
+
+  if (isTownSquare) {
+    const inset = 22;
+    const innerRect = {
+      x: landmark.rect.x + inset,
+      y: landmark.rect.y + inset,
+      width: landmark.rect.width - inset * 2,
+      height: landmark.rect.height - inset * 2,
+    };
+    const centerX = landmark.rect.x + landmark.rect.width / 2;
+    const centerY = landmark.rect.y + landmark.rect.height / 2;
+    const crossWidth = Math.max(54, landmark.rect.width * 0.16);
+    const crossHeight = Math.max(54, landmark.rect.height * 0.16);
+    const civicRadius = Math.min(landmark.rect.width, landmark.rect.height) * 0.18;
+
+    return (
+      <g key={`landmark-preview-${landmark.id}-${index}`}>
+        <rect
+          fill="#d7c7a6"
+          height={landmark.rect.height}
+          rx={landmark.rect.radius ?? 30}
+          ry={landmark.rect.radius ?? 30}
+          stroke="rgba(244, 234, 211, 0.28)"
+          strokeWidth="4"
+          width={landmark.rect.width}
+          x={landmark.rect.x}
+          y={landmark.rect.y}
+        />
+        <rect
+          fill="#ccb993"
+          height={innerRect.height}
+          rx="24"
+          ry="24"
+          stroke="rgba(154, 128, 92, 0.18)"
+          strokeDasharray="8 10"
+          strokeWidth="3"
+          width={innerRect.width}
+          x={innerRect.x}
+          y={innerRect.y}
+        />
+        <rect
+          fill="#e7dcc3"
+          height={innerRect.height - 62}
+          rx="22"
+          ry="22"
+          width={crossWidth}
+          x={centerX - crossWidth / 2}
+          y={innerRect.y + 31}
+        />
+        <rect
+          fill="#e7dcc3"
+          height={crossHeight}
+          rx="22"
+          ry="22"
+          width={innerRect.width - 62}
+          x={innerRect.x + 31}
+          y={centerY - crossHeight / 2}
+        />
+        <circle cx={centerX} cy={centerY} fill="#b8a17a" r={civicRadius + 26} />
+        <circle cx={centerX} cy={centerY} fill="#e9dfcc" r={civicRadius + 16} />
+        <circle cx={centerX} cy={centerY} fill="#a9b3b9" r={civicRadius} />
+        <circle cx={centerX} cy={centerY} fill="#d8ecf5" r={civicRadius * 0.58} />
+        <circle cx={centerX} cy={centerY - civicRadius * 0.16} fill="rgba(255,255,255,0.36)" r={civicRadius * 0.24} />
+        <rect
+          fill="#9c8760"
+          height="16"
+          rx="8"
+          ry="8"
+          width={innerRect.width - 84}
+          x={innerRect.x + 42}
+          y={innerRect.y + 26}
+        />
+        <rect
+          fill="#9c8760"
+          height="16"
+          rx="8"
+          ry="8"
+          width={innerRect.width - 84}
+          x={innerRect.x + 42}
+          y={innerRect.y + innerRect.height - 42}
+        />
+        <rect
+          fill="#9c8760"
+          height={innerRect.height - 84}
+          rx="8"
+          ry="8"
+          width="16"
+          x={innerRect.x + 26}
+          y={innerRect.y + 42}
+        />
+        <rect
+          fill="#9c8760"
+          height={innerRect.height - 84}
+          rx="8"
+          ry="8"
+          width="16"
+          x={innerRect.x + innerRect.width - 42}
+          y={innerRect.y + 42}
+        />
+      </g>
+    );
+  }
 
   return (
     <g key={`landmark-preview-${landmark.id}-${index}`}>
@@ -1637,21 +2143,312 @@ function renderLandmarkPreview(landmark: VisualScene["landmarks"][number], index
       />
       <rect
         fill={roofFill}
-        height={Math.max(28, Math.min(56, landmark.rect.height * 0.24))}
+        height={roofHeight}
         rx={landmark.rect.radius ?? 18}
         ry={landmark.rect.radius ?? 18}
         width={landmark.rect.width}
         x={landmark.rect.x}
         y={landmark.rect.y}
       />
+      {landmark.style === "cafe" ? (
+        <>
+          <rect
+            fill="rgba(255, 248, 233, 0.52)"
+            height="10"
+            rx="5"
+            ry="5"
+            width={landmark.rect.width - 84}
+            x={landmark.rect.x + 42}
+            y={landmark.rect.y + roofHeight + 12}
+          />
+          <rect
+            fill="#f6eddc"
+            height={Math.max(54, landmark.rect.height - roofHeight - lowerBandHeight - 28)}
+            rx={Math.max(16, (landmark.rect.radius ?? 20) - 4)}
+            ry={Math.max(16, (landmark.rect.radius ?? 20) - 4)}
+            stroke="rgba(167, 134, 97, 0.18)"
+            strokeWidth="3"
+            width={landmark.rect.width - 34}
+            x={landmark.rect.x + 17}
+            y={landmark.rect.y + roofHeight + 18}
+          />
+          <rect
+            fill="rgba(121, 88, 58, 0.12)"
+            height="14"
+            rx="7"
+            ry="7"
+            width={landmark.rect.width - 64}
+            x={landmark.rect.x + 32}
+            y={landmark.rect.y + landmark.rect.height - lowerBandHeight - 22}
+          />
+        </>
+      ) : null}
+      {landmark.style === "boarding-house" ? (
+        <>
+          <rect
+            fill="#4d5961"
+            height="34"
+            rx="12"
+            ry="12"
+            stroke="#d5bd88"
+            strokeWidth="3"
+            width={boardingSignWidth}
+            x={boardingSignX}
+            y={landmark.rect.y + 12}
+          />
+          <rect
+            fill="rgba(255, 255, 255, 0.1)"
+            height="7"
+            rx="3.5"
+            ry="3.5"
+            width={boardingSignWidth - 28}
+            x={boardingSignX + 14}
+            y={landmark.rect.y + 18}
+          />
+          <text
+            fill="#f4ead2"
+            fontFamily="Georgia, serif"
+            fontSize="14"
+            fontWeight="700"
+            letterSpacing="1.7"
+            textAnchor="middle"
+            x={landmark.rect.x + landmark.rect.width / 2}
+            y={landmark.rect.y + 35}
+          >
+            BOARDING HOUSE
+          </text>
+          <rect
+            fill="#e3d7c9"
+            height={Math.max(86, landmark.rect.height * 0.34)}
+            rx="16"
+            ry="16"
+            stroke="rgba(122, 97, 78, 0.12)"
+            strokeWidth="3"
+            width={landmark.rect.width - 28}
+            x={landmark.rect.x + 14}
+            y={landmark.rect.y + roofHeight + 10}
+          />
+          <rect
+            fill="#cfb9a5"
+            height={Math.max(72, landmark.rect.height * 0.26)}
+            rx="14"
+            ry="14"
+            stroke="rgba(117, 86, 66, 0.12)"
+            strokeWidth="3"
+            width={landmark.rect.width - 40}
+            x={landmark.rect.x + 20}
+            y={landmark.rect.y + landmark.rect.height - lowerBandHeight - Math.max(92, landmark.rect.height * 0.28)}
+          />
+        </>
+      ) : null}
+      {isDockyard ? (
+        <>
+          <rect
+            fill="#8a8376"
+            height={Math.max(64, landmark.rect.height * 0.28)}
+            rx="14"
+            ry="14"
+            stroke="rgba(41, 38, 34, 0.16)"
+            strokeWidth="3"
+            width={landmark.rect.width - 34}
+            x={landmark.rect.x + 17}
+            y={landmark.rect.y + roofHeight + 18}
+          />
+          <rect
+            fill="rgba(216, 204, 178, 0.2)"
+            height="10"
+            rx="5"
+            ry="5"
+            width={landmark.rect.width - 90}
+            x={landmark.rect.x + 45}
+            y={landmark.rect.y + roofHeight + 28}
+          />
+          <rect
+            fill="#5a564f"
+            height={Math.max(74, landmark.rect.height * 0.32)}
+            rx="16"
+            ry="16"
+            stroke="rgba(232, 216, 187, 0.1)"
+            strokeWidth="3"
+            width={landmark.rect.width - 44}
+            x={landmark.rect.x + 22}
+            y={landmark.rect.y + landmark.rect.height - lowerBandHeight - Math.max(96, landmark.rect.height * 0.34)}
+          />
+          <rect
+            fill="#c6923d"
+            height="10"
+            rx="5"
+            ry="5"
+            width={landmark.rect.width - 70}
+            x={landmark.rect.x + 35}
+            y={landmark.rect.y + landmark.rect.height - lowerBandHeight - 26}
+          />
+        </>
+      ) : null}
       <rect
         fill={lowerBand}
-        height={Math.max(40, landmark.rect.height * 0.22)}
+        height={lowerBandHeight}
         rx="0"
         width={landmark.rect.width - 18}
         x={landmark.rect.x + 9}
-        y={landmark.rect.y + landmark.rect.height - Math.max(40, landmark.rect.height * 0.22) - 10}
+        y={landmark.rect.y + landmark.rect.height - lowerBandHeight - 10}
       />
+      {landmark.style === "cafe" ? (
+        <rect
+          fill="#6a4d35"
+          height="12"
+          rx="6"
+          ry="6"
+          width={landmark.rect.width - 54}
+          x={landmark.rect.x + 27}
+          y={landmark.rect.y + landmark.rect.height - 24}
+        />
+      ) : null}
+      {isDockyard ? (
+        <>
+          <ellipse
+            cx={dockyardCargoX + dockyardCargoWidth / 2}
+            cy={dockyardCargoY + dockyardCargoHeight - 2}
+            fill="rgba(12, 14, 15, 0.18)"
+            rx={dockyardCargoWidth * 0.52}
+            ry={Math.max(9, dockyardCargoHeight * 0.08)}
+          />
+          <rect
+            fill="#65513b"
+            height={Math.max(10, dockyardCargoHeight * 0.1)}
+            rx="4"
+            ry="4"
+            width={dockyardCargoWidth * 0.84}
+            x={dockyardCargoX + dockyardCargoWidth * 0.08}
+            y={dockyardCargoY + dockyardCargoHeight - Math.max(16, dockyardCargoHeight * 0.14)}
+          />
+          <rect
+            fill="#4e5961"
+            height={dockyardCargoHeight * 0.54}
+            rx="10"
+            ry="10"
+            stroke="rgba(240, 229, 203, 0.14)"
+            strokeWidth="3"
+            width={dockyardCargoWidth * 0.38}
+            x={dockyardCargoX + dockyardCargoWidth * 0.54}
+            y={dockyardCargoY + dockyardCargoHeight * 0.18}
+          />
+          <rect
+            fill="rgba(255, 255, 255, 0.1)"
+            height="8"
+            rx="4"
+            ry="4"
+            width={dockyardCargoWidth * 0.24}
+            x={dockyardCargoX + dockyardCargoWidth * 0.61}
+            y={dockyardCargoY + dockyardCargoHeight * 0.24}
+          />
+          <line
+            stroke="rgba(38, 42, 45, 0.44)"
+            strokeWidth="3"
+            x1={dockyardCargoX + dockyardCargoWidth * 0.64}
+            x2={dockyardCargoX + dockyardCargoWidth * 0.64}
+            y1={dockyardCargoY + dockyardCargoHeight * 0.22}
+            y2={dockyardCargoY + dockyardCargoHeight * 0.68}
+          />
+          <line
+            stroke="rgba(38, 42, 45, 0.44)"
+            strokeWidth="3"
+            x1={dockyardCargoX + dockyardCargoWidth * 0.79}
+            x2={dockyardCargoX + dockyardCargoWidth * 0.79}
+            y1={dockyardCargoY + dockyardCargoHeight * 0.22}
+            y2={dockyardCargoY + dockyardCargoHeight * 0.68}
+          />
+          <rect
+            fill="#866448"
+            height={dockyardCargoHeight * 0.24}
+            rx="9"
+            ry="9"
+            stroke="rgba(238, 220, 183, 0.12)"
+            strokeWidth="3"
+            width={dockyardCargoWidth * 0.44}
+            x={dockyardCargoX + dockyardCargoWidth * 0.04}
+            y={dockyardCargoY + dockyardCargoHeight * 0.52}
+          />
+          <rect
+            fill="rgba(232, 205, 162, 0.16)"
+            height="7"
+            rx="3.5"
+            ry="3.5"
+            width={dockyardCargoWidth * 0.3}
+            x={dockyardCargoX + dockyardCargoWidth * 0.1}
+            y={dockyardCargoY + dockyardCargoHeight * 0.58}
+          />
+          <line
+            stroke="rgba(88, 60, 37, 0.4)"
+            strokeWidth="2.5"
+            x1={dockyardCargoX + dockyardCargoWidth * 0.14}
+            x2={dockyardCargoX + dockyardCargoWidth * 0.14}
+            y1={dockyardCargoY + dockyardCargoHeight * 0.54}
+            y2={dockyardCargoY + dockyardCargoHeight * 0.74}
+          />
+          <line
+            stroke="rgba(88, 60, 37, 0.4)"
+            strokeWidth="2.5"
+            x1={dockyardCargoX + dockyardCargoWidth * 0.31}
+            x2={dockyardCargoX + dockyardCargoWidth * 0.31}
+            y1={dockyardCargoY + dockyardCargoHeight * 0.54}
+            y2={dockyardCargoY + dockyardCargoHeight * 0.74}
+          />
+          <rect
+            fill="#a17d53"
+            height={dockyardCargoHeight * 0.18}
+            rx="8"
+            ry="8"
+            stroke="rgba(248, 233, 200, 0.1)"
+            strokeWidth="3"
+            width={dockyardCargoWidth * 0.28}
+            x={dockyardCargoX + dockyardCargoWidth * 0.18}
+            y={dockyardCargoY + dockyardCargoHeight * 0.24}
+          />
+          <rect
+            fill="#d1ab58"
+            height="8"
+            rx="4"
+            ry="4"
+            width={dockyardCargoWidth * 0.16}
+            x={dockyardCargoX + dockyardCargoWidth * 0.22}
+            y={dockyardCargoY + dockyardCargoHeight * 0.31}
+          />
+          {Array.from({ length: 5 }).map((_, stripeIndex) => {
+            const stripeWidth = (landmark.rect.width - 110) / 5;
+            return (
+              <rect
+                fill={stripeIndex % 2 === 0 ? "#d9a240" : "#2d2e30"}
+                height="8"
+                key={`yard-stripe-${landmark.id}-${stripeIndex}`}
+                rx="4"
+                ry="4"
+                width={stripeWidth}
+                x={landmark.rect.x + 55 + stripeIndex * stripeWidth}
+                y={landmark.rect.y + landmark.rect.height - 18}
+              />
+            );
+          })}
+          <rect
+            fill="#4c4841"
+            height={landmark.rect.height - 26}
+            rx="6"
+            ry="6"
+            width="10"
+            x={landmark.rect.x + 22}
+            y={landmark.rect.y + 12}
+          />
+          <rect
+            fill="#4c4841"
+            height={landmark.rect.height - 26}
+            rx="6"
+            ry="6"
+            width="10"
+            x={landmark.rect.x + landmark.rect.width - 32}
+            y={landmark.rect.y + 12}
+          />
+        </>
+      ) : null}
     </g>
   );
 }
@@ -1663,6 +2460,57 @@ function renderLandmarkModulePreview(
   const rect = module.rect;
 
   if (module.kind === "awning") {
+    if (module.variant === "green-cream") {
+      const stripeCount = Math.max(6, module.count ?? Math.floor(rect.width / 42));
+      const stripeWidth = rect.width / stripeCount;
+      const stripeHeight = Math.max(16, rect.height - 10);
+
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#8b6543"
+            height="8"
+            rx="4"
+            ry="4"
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          {Array.from({ length: stripeCount }).map((_, stripeIndex) => {
+            const colors = ["#4d8f68", "#f4eddc", "#cd8450", "#f4eddc"];
+            const fill = colors[stripeIndex % colors.length];
+            const stripeX = rect.x + stripeIndex * stripeWidth;
+            return (
+              <g key={`awning-${module.id}-${stripeIndex}`}>
+                <rect
+                  fill={fill}
+                  height={stripeHeight}
+                  width={stripeWidth + 1}
+                  x={stripeX}
+                  y={rect.y + 6}
+                />
+                <circle
+                  cx={stripeX + stripeWidth / 2}
+                  cy={rect.y + rect.height - 2}
+                  fill={fill}
+                  r={Math.min(10, stripeWidth * 0.42)}
+                />
+              </g>
+            );
+          })}
+          <rect
+            fill="rgba(255, 255, 255, 0.18)"
+            height="4"
+            rx="2"
+            ry="2"
+            width={rect.width - 24}
+            x={rect.x + 12}
+            y={rect.y + 12}
+          />
+        </g>
+      );
+    }
+
     const stripeCount = Math.max(4, module.count ?? Math.floor(rect.width / 38));
     return (
       <g key={`module-preview-${module.id}-${index}`}>
@@ -1688,6 +2536,119 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "window_row") {
+    if (module.variant === "boarding-upper" || module.variant === "boarding-lower") {
+      const count = Math.max(3, module.count ?? (module.variant === "boarding-upper" ? 5 : 4));
+      const gap = module.variant === "boarding-upper" ? 16 : 18;
+      const windowWidth = Math.max(28, (rect.width - gap * (count + 1)) / count);
+      const windowHeight = Math.max(42, rect.height * (module.variant === "boarding-upper" ? 0.78 : 0.72));
+
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          {Array.from({ length: count }).map((_, windowIndex) => {
+            const windowX = rect.x + gap + windowIndex * (windowWidth + gap);
+            const windowY = rect.y + (rect.height - windowHeight) / 2;
+            return (
+              <g key={`window-${module.id}-${windowIndex}`}>
+                <rect
+                  fill="#f2e7cf"
+                  height={windowHeight}
+                  rx="10"
+                  ry="10"
+                  stroke="#c29b78"
+                  strokeWidth="3"
+                  width={windowWidth}
+                  x={windowX}
+                  y={windowY}
+                />
+                <rect
+                  fill="rgba(255, 255, 255, 0.26)"
+                  height="10"
+                  rx="5"
+                  ry="5"
+                  width={windowWidth - 10}
+                  x={windowX + 5}
+                  y={windowY + 7}
+                />
+                <line
+                  stroke="rgba(151, 117, 87, 0.4)"
+                  strokeWidth="2.5"
+                  x1={windowX + windowWidth / 2}
+                  x2={windowX + windowWidth / 2}
+                  y1={windowY + 8}
+                  y2={windowY + windowHeight - 8}
+                />
+                <line
+                  stroke="rgba(151, 117, 87, 0.34)"
+                  strokeWidth="2.5"
+                  x1={windowX + 6}
+                  x2={windowX + windowWidth - 6}
+                  y1={windowY + windowHeight / 2}
+                  y2={windowY + windowHeight / 2}
+                />
+              </g>
+            );
+          })}
+        </g>
+      );
+    }
+
+    if (module.variant === "cafe-large") {
+      const count = Math.max(2, module.count ?? 2);
+      const gap = 22;
+      const windowWidth = Math.max(72, (rect.width - gap * (count + 1)) / count);
+      const windowHeight = Math.max(42, rect.height * 0.66);
+
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          {Array.from({ length: count }).map((_, windowIndex) => {
+            const windowX = rect.x + gap + windowIndex * (windowWidth + gap);
+            const windowY = rect.y + (rect.height - windowHeight) / 2;
+            return (
+              <g key={`window-${module.id}-${windowIndex}`}>
+                <rect
+                  fill="#f7eed7"
+                  height={windowHeight}
+                  rx="16"
+                  ry="16"
+                  stroke="#c6a47d"
+                  strokeWidth="4"
+                  width={windowWidth}
+                  x={windowX}
+                  y={windowY}
+                />
+                <rect
+                  fill="#efe0bd"
+                  height={windowHeight - 18}
+                  rx="12"
+                  ry="12"
+                  width={windowWidth - 18}
+                  x={windowX + 9}
+                  y={windowY + 9}
+                />
+                <rect
+                  fill="rgba(255, 255, 255, 0.32)"
+                  height="12"
+                  rx="6"
+                  ry="6"
+                  width={windowWidth - 24}
+                  x={windowX + 12}
+                  y={windowY + 10}
+                />
+                <line
+                  stroke="rgba(155, 113, 77, 0.45)"
+                  strokeWidth="3"
+                  x1={windowX + windowWidth / 2}
+                  x2={windowX + windowWidth / 2}
+                  y1={windowY + 10}
+                  y2={windowY + windowHeight - 10}
+                />
+              </g>
+            );
+          })}
+        </g>
+      );
+    }
+
     const count = Math.max(2, module.count ?? 4);
     const gap = 14;
     const windowWidth = Math.max(20, (rect.width - gap * (count + 1)) / count);
@@ -1713,6 +2674,146 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "entry" || module.kind === "service_bay") {
+    if (module.variant === "yard-gate") {
+      const slatCount = 6;
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#44484b"
+            height={rect.height}
+            rx={rect.radius ?? 12}
+            ry={rect.radius ?? 12}
+            stroke="rgba(219, 204, 175, 0.12)"
+            strokeWidth="3"
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="#737b80"
+            height={rect.height - 18}
+            rx={Math.max(10, (rect.radius ?? 12) - 2)}
+            ry={Math.max(10, (rect.radius ?? 12) - 2)}
+            width={rect.width - 16}
+            x={rect.x + 8}
+            y={rect.y + 8}
+          />
+          {Array.from({ length: slatCount }).map((_, slatIndex) => {
+            const y = rect.y + 18 + slatIndex * ((rect.height - 38) / (slatCount - 1));
+            return (
+              <line
+                key={`yard-gate-slat-${module.id}-${slatIndex}`}
+                stroke="rgba(52, 57, 61, 0.52)"
+                strokeWidth="4"
+                x1={rect.x + 18}
+                x2={rect.x + rect.width - 18}
+                y1={y}
+                y2={y}
+              />
+            );
+          })}
+          {Array.from({ length: 6 }).map((_, stripeIndex) => {
+            const stripeWidth = (rect.width - 26) / 6;
+            return (
+              <rect
+                fill={stripeIndex % 2 === 0 ? "#d9a240" : "#2d2e30"}
+                height="8"
+                key={`yard-gate-stripe-${module.id}-${stripeIndex}`}
+                rx="4"
+                ry="4"
+                width={stripeWidth}
+                x={rect.x + 13 + stripeIndex * stripeWidth}
+                y={rect.y + rect.height - 12}
+              />
+            );
+          })}
+        </g>
+      );
+    }
+
+    if (module.variant === "house-door") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#8c6548"
+            height={rect.height}
+            rx={rect.radius ?? 14}
+            ry={rect.radius ?? 14}
+            stroke="rgba(247, 239, 219, 0.16)"
+            strokeWidth="3"
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="#a57a58"
+            height={rect.height - 14}
+            rx={Math.max(10, (rect.radius ?? 14) - 2)}
+            ry={Math.max(10, (rect.radius ?? 14) - 2)}
+            width={rect.width - 12}
+            x={rect.x + 6}
+            y={rect.y + 6}
+          />
+          <rect
+            fill="#f0dfbc"
+            height="18"
+            rx="6"
+            ry="6"
+            width={rect.width - 24}
+            x={rect.x + 12}
+            y={rect.y + 12}
+          />
+          <rect
+            fill="rgba(98, 68, 46, 0.22)"
+            height={rect.height - 46}
+            rx="5"
+            ry="5"
+            width="6"
+            x={rect.x + rect.width / 2 - 3}
+            y={rect.y + 34}
+          />
+          <circle cx={rect.x + rect.width - 16} cy={rect.y + rect.height / 2 + 10} fill="#5d412b" r="4" />
+        </g>
+      );
+    }
+
+    if (module.variant === "arched") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#845f3f"
+            height={rect.height}
+            rx={rect.radius ?? 18}
+            ry={rect.radius ?? 18}
+            stroke="rgba(247, 239, 219, 0.2)"
+            strokeWidth="3"
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="#f1dfbd"
+            height={rect.height - 34}
+            rx={Math.max(12, (rect.radius ?? 18) - 4)}
+            ry={Math.max(12, (rect.radius ?? 18) - 4)}
+            width={rect.width - 24}
+            x={rect.x + 12}
+            y={rect.y + 14}
+          />
+          <rect
+            fill="rgba(255, 255, 255, 0.22)"
+            height="10"
+            rx="5"
+            ry="5"
+            width={rect.width - 34}
+            x={rect.x + 17}
+            y={rect.y + 22}
+          />
+          <circle cx={rect.x + rect.width - 20} cy={rect.y + rect.height / 2} fill="#6b4a2f" r="4" />
+        </g>
+      );
+    }
+
     return (
       <rect
         fill={module.kind === "entry" ? "#7a593c" : "#434c52"}
@@ -1730,6 +2831,84 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "sign") {
+    if (module.variant === "yard") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#394246"
+            height={rect.height}
+            rx={rect.radius ?? 10}
+            ry={rect.radius ?? 10}
+            stroke="#cfa14c"
+            strokeWidth="3"
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(255, 255, 255, 0.08)"
+            height="6"
+            rx="3"
+            ry="3"
+            width={rect.width - 24}
+            x={rect.x + 12}
+            y={rect.y + 5}
+          />
+          <text
+            fill="#f0dfb8"
+            fontFamily="Arial Black, Impact, sans-serif"
+            fontSize={Math.max(12, rect.height * 0.44)}
+            fontWeight="700"
+            letterSpacing="2.2"
+            textAnchor="middle"
+            x={rect.x + rect.width / 2}
+            y={rect.y + rect.height / 2 + Math.max(5, rect.height * 0.15)}
+          >
+            DOCK YARD
+          </text>
+        </g>
+      );
+    }
+
+    if (module.variant === "cafe") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#3f5549"
+            height={rect.height}
+            rx={rect.radius ?? 12}
+            ry={rect.radius ?? 12}
+            stroke="#d4bb86"
+            strokeWidth="3"
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(255, 255, 255, 0.08)"
+            height="8"
+            rx="4"
+            ry="4"
+            width={rect.width - 28}
+            x={rect.x + 14}
+            y={rect.y + 6}
+          />
+          <text
+            fill="#f7edd2"
+            fontFamily="Georgia, serif"
+            fontSize={Math.max(16, rect.height * 0.55)}
+            fontWeight="700"
+            letterSpacing="4"
+            textAnchor="middle"
+            x={rect.x + rect.width / 2}
+            y={rect.y + rect.height / 2 + Math.max(6, rect.height * 0.16)}
+          >
+            CAFE
+          </text>
+        </g>
+      );
+    }
+
     return (
       <rect
         fill="#334842"
@@ -1747,6 +2926,260 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "terrace_rail" || module.kind === "trim" || module.kind === "wall_band") {
+    if (module.kind === "wall_band" && module.variant === "yard-gatehouse") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#70695f"
+            height={rect.height}
+            rx={rect.radius ?? 8}
+            ry={rect.radius ?? 8}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          {Array.from({ length: 6 }).map((_, ribIndex) => {
+            const x = rect.x + 20 + ribIndex * ((rect.width - 40) / 5);
+            return (
+              <rect
+                fill="rgba(53, 50, 46, 0.22)"
+                height={rect.height - 18}
+                key={`yard-rib-${module.id}-${ribIndex}`}
+                rx="4"
+                ry="4"
+                width="8"
+                x={x}
+                y={rect.y + 10}
+              />
+            );
+          })}
+          <rect
+            fill="#a29a8d"
+            height="12"
+            rx="6"
+            ry="6"
+            width={rect.width - 26}
+            x={rect.x + 13}
+            y={rect.y + 12}
+          />
+        </g>
+      );
+    }
+
+    if (module.kind === "trim" && module.variant === "yard-band") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          {Array.from({ length: 10 }).map((_, stripeIndex) => {
+            const stripeWidth = rect.width / 10;
+            return (
+              <rect
+                fill={stripeIndex % 2 === 0 ? "#d8a347" : "#2b2d2f"}
+                height={rect.height}
+                key={`yard-band-${module.id}-${stripeIndex}`}
+                rx={rect.radius ?? 8}
+                ry={rect.radius ?? 8}
+                width={stripeWidth + 1}
+                x={rect.x + stripeIndex * stripeWidth}
+                y={rect.y}
+              />
+            );
+          })}
+        </g>
+      );
+    }
+
+    if (module.kind === "wall_band" && module.variant === "boarding-upper") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#e5d7c8"
+            height={rect.height}
+            rx={rect.radius ?? 8}
+            ry={rect.radius ?? 8}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(255, 255, 255, 0.28)"
+            height="10"
+            rx="5"
+            ry="5"
+            width={rect.width - 24}
+            x={rect.x + 12}
+            y={rect.y + 10}
+          />
+        </g>
+      );
+    }
+
+    if (module.kind === "wall_band" && module.variant === "boarding-lower") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#d4baa4"
+            height={rect.height}
+            rx={rect.radius ?? 8}
+            ry={rect.radius ?? 8}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(108, 77, 57, 0.12)"
+            height="12"
+            rx="6"
+            ry="6"
+            width={rect.width - 20}
+            x={rect.x + 10}
+            y={rect.y + rect.height - 18}
+          />
+        </g>
+      );
+    }
+
+    if (module.kind === "trim" && module.variant === "house-band") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#c69a79"
+            height={rect.height}
+            rx={rect.radius ?? 8}
+            ry={rect.radius ?? 8}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(255, 246, 232, 0.28)"
+            height="4"
+            rx="2"
+            ry="2"
+            width={rect.width - 20}
+            x={rect.x + 10}
+            y={rect.y + 4}
+          />
+        </g>
+      );
+    }
+
+    if (module.kind === "wall_band" && module.variant === "cafe-ivory") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#f5e8cf"
+            height={rect.height}
+            rx={rect.radius ?? 8}
+            ry={rect.radius ?? 8}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(255, 255, 255, 0.28)"
+            height="12"
+            rx="6"
+            ry="6"
+            width={rect.width - 36}
+            x={rect.x + 18}
+            y={rect.y + 12}
+          />
+          <rect
+            fill="rgba(130, 93, 59, 0.08)"
+            height="16"
+            rx="8"
+            ry="8"
+            width={rect.width - 28}
+            x={rect.x + 14}
+            y={rect.y + rect.height - 24}
+          />
+        </g>
+      );
+    }
+
+    if (module.kind === "wall_band" && module.variant === "walnut") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#b59069"
+            height={rect.height}
+            rx={rect.radius ?? 8}
+            ry={rect.radius ?? 8}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="#ead8b7"
+            height={rect.height - 34}
+            rx="14"
+            ry="14"
+            width={rect.width - 28}
+            x={rect.x + 14}
+            y={rect.y + 12}
+          />
+          <rect
+            fill="rgba(108, 76, 48, 0.2)"
+            height="12"
+            rx="6"
+            ry="6"
+            width={rect.width - 18}
+            x={rect.x + 9}
+            y={rect.y + rect.height - 18}
+          />
+        </g>
+      );
+    }
+
+    if (module.kind === "trim" && module.variant === "warm-trim") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#b2875d"
+            height={rect.height}
+            rx={rect.radius ?? 8}
+            ry={rect.radius ?? 8}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(255, 244, 226, 0.32)"
+            height="4"
+            rx="2"
+            ry="2"
+            width={rect.width - 24}
+            x={rect.x + 12}
+            y={rect.y + 4}
+          />
+        </g>
+      );
+    }
+
+    if (module.kind === "terrace_rail" && module.variant === "cafe") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect fill="#7e5e41" height="8" rx="4" ry="4" width={rect.width} x={rect.x} y={rect.y + 4} />
+          <rect fill="#a37b56" height="6" rx="3" ry="3" width={rect.width - 20} x={rect.x + 10} y={rect.y + 12} />
+          {Array.from({ length: 6 }).map((_, postIndex) => {
+            const postX = rect.x + 20 + (postIndex * (rect.width - 40)) / 5;
+            return (
+              <rect
+                fill="#6a4c32"
+                height={rect.height - 6}
+                key={`terrace-post-${module.id}-${postIndex}`}
+                rx="2"
+                ry="2"
+                width="5"
+                x={postX}
+                y={rect.y + 2}
+              />
+            );
+          })}
+        </g>
+      );
+    }
+
     return (
       <rect
         fill={module.kind === "terrace_rail" ? "#856448" : "#c29a72"}
@@ -1762,6 +3195,91 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "roof_cap") {
+    if (module.variant === "timber") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#61584d"
+            height={rect.height}
+            rx={rect.radius ?? 12}
+            ry={rect.radius ?? 12}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="#464038"
+            height="10"
+            rx="5"
+            ry="5"
+            width={rect.width - 18}
+            x={rect.x + 9}
+            y={rect.y + rect.height - 12}
+          />
+          <rect fill="#4a4640" height="24" rx="4" ry="4" width="10" x={rect.x + 16} y={rect.y + rect.height - 4} />
+          <rect fill="#4a4640" height="24" rx="4" ry="4" width="10" x={rect.x + rect.width - 26} y={rect.y + rect.height - 4} />
+          <line
+            stroke="#3c3833"
+            strokeWidth="4"
+            x1={rect.x + 24}
+            x2={rect.x + rect.width - 24}
+            y1={rect.y + rect.height - 8}
+            y2={rect.y + rect.height - 8}
+          />
+        </g>
+      );
+    }
+
+    if (module.variant === "slate") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#7a858d"
+            height={rect.height}
+            rx={rect.radius ?? 14}
+            ry={rect.radius ?? 14}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(223, 232, 236, 0.2)"
+            height="7"
+            rx="3.5"
+            ry="3.5"
+            width={rect.width - 28}
+            x={rect.x + 14}
+            y={rect.y + 6}
+          />
+        </g>
+      );
+    }
+
+    if (module.variant === "verdigris") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#74847f"
+            height={rect.height}
+            rx={rect.radius ?? 14}
+            ry={rect.radius ?? 14}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="rgba(217, 231, 224, 0.22)"
+            height="8"
+            rx="4"
+            ry="4"
+            width={rect.width - 36}
+            x={rect.x + 18}
+            y={rect.y + 6}
+          />
+        </g>
+      );
+    }
+
     return (
       <rect
         fill="#708089"
@@ -1777,6 +3295,31 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "stoop") {
+    if (module.variant === "boarding") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#b59d83"
+            height={rect.height}
+            rx={rect.radius ?? 10}
+            ry={rect.radius ?? 10}
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect
+            fill="#9a826b"
+            height={Math.max(8, rect.height * 0.45)}
+            rx="6"
+            ry="6"
+            width={rect.width - 18}
+            x={rect.x + 9}
+            y={rect.y + rect.height - Math.max(8, rect.height * 0.45)}
+          />
+        </g>
+      );
+    }
+
     return (
       <rect
         fill="#b8ab8d"
@@ -1792,6 +3335,43 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "shutters") {
+    if (module.variant === "yard") {
+      const count = Math.max(3, module.count ?? 3);
+      const gap = 12;
+      const shutterWidth = Math.max(18, (rect.width - gap * (count + 1)) / count);
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          {Array.from({ length: count }).map((_, shutterIndex) => {
+            const x = rect.x + gap + shutterIndex * (shutterWidth + gap);
+            return (
+              <g key={`shutter-${module.id}-${shutterIndex}`}>
+                <rect
+                  fill="#5a6267"
+                  height={rect.height}
+                  rx="6"
+                  ry="6"
+                  width={shutterWidth}
+                  x={x}
+                  y={rect.y}
+                />
+                {Array.from({ length: 3 }).map((_, slatIndex) => (
+                  <line
+                    key={`yard-shutter-slat-${module.id}-${shutterIndex}-${slatIndex}`}
+                    stroke="rgba(210, 219, 224, 0.28)"
+                    strokeWidth="2"
+                    x1={x + 4}
+                    x2={x + shutterWidth - 4}
+                    y1={rect.y + 8 + slatIndex * 8}
+                    y2={rect.y + 8 + slatIndex * 8}
+                  />
+                ))}
+              </g>
+            );
+          })}
+        </g>
+      );
+    }
+
     const count = Math.max(2, module.count ?? 3);
     const gap = 10;
     const shutterWidth = Math.max(14, (rect.width - gap * (count + 1)) / count);
@@ -1814,6 +3394,24 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "downspout") {
+    if (module.variant === "slate") {
+      return (
+        <g key={`module-preview-${module.id}-${index}`}>
+          <rect
+            fill="#66737b"
+            height={rect.height}
+            rx="4"
+            ry="4"
+            width={rect.width}
+            x={rect.x}
+            y={rect.y}
+          />
+          <rect fill="#8a979f" height="12" rx="3" ry="3" width={rect.width + 6} x={rect.x - 3} y={rect.y + 18} />
+          <rect fill="#8a979f" height="12" rx="3" ry="3" width={rect.width + 6} x={rect.x - 3} y={rect.y + rect.height - 34} />
+        </g>
+      );
+    }
+
     return (
       <rect
         fill="#5d686f"
@@ -1924,9 +3522,11 @@ function renderPropClusterPreview(
         if (cluster.kind === "square_bench_pair") {
           return (
             <g key={`cluster-point-${cluster.id}-${pointIndex}`}>
-              <rect fill="#7c5d3f" height="12" rx="4" ry="4" width="46" x={point.x - 23} y={point.y - 8} />
-              <line stroke="#5c4530" strokeWidth="3" x1={point.x - 16} x2={point.x - 16} y1={point.y + 2} y2={point.y + 14} />
-              <line stroke="#5c4530" strokeWidth="3" x1={point.x + 16} x2={point.x + 16} y1={point.y + 2} y2={point.y + 14} />
+              <rect fill="rgba(39, 33, 26, 0.12)" height="10" rx="5" ry="5" width="56" x={point.x - 28} y={point.y + 8} />
+              <rect fill="#8b6848" height="12" rx="5" ry="5" width="50" x={point.x - 25} y={point.y - 8} />
+              <rect fill="#c9aa7d" height="4" rx="2" ry="2" width="42" x={point.x - 21} y={point.y - 5} />
+              <line stroke="#5c4530" strokeWidth="3" x1={point.x - 18} x2={point.x - 18} y1={point.y + 2} y2={point.y + 15} />
+              <line stroke="#5c4530" strokeWidth="3" x1={point.x + 18} x2={point.x + 18} y1={point.y + 2} y2={point.y + 15} />
             </g>
           );
         }
@@ -1934,8 +3534,10 @@ function renderPropClusterPreview(
         if (cluster.kind === "square_planter_pair") {
           return (
             <g key={`cluster-point-${cluster.id}-${pointIndex}`}>
-              <rect fill="#75573d" height="16" rx="5" ry="5" width="22" x={point.x - 11} y={point.y - 6} />
-              <circle cx={point.x} cy={point.y - 10} fill="#5f7b52" r="12" />
+              <rect fill="#7a5c40" height="18" rx="6" ry="6" width="24" x={point.x - 12} y={point.y - 5} />
+              <circle cx={point.x} cy={point.y - 12} fill="#658153" r="13" />
+              <circle cx={point.x - 7} cy={point.y - 15} fill="#7c9a67" r="7" />
+              <circle cx={point.x + 8} cy={point.y - 14} fill="#789561" r="6" />
             </g>
           );
         }
@@ -1973,8 +3575,11 @@ function getScenePreviewDepth(canvasMode: BuilderCanvasMode) {
     case "buildings":
       return 2;
     case "details":
-    default:
       return 3;
+    case "weather":
+      return 4;
+    default:
+      return 4;
   }
 }
 
@@ -2012,6 +3617,8 @@ function selectionVisibleInCanvasMode(
         selection.kind === "locationAnchorPoint" ||
         selection.kind === "locationAnchorNpcStand"
       );
+    case "weather":
+      return selection.kind === "skyLayer";
     default:
       return false;
   }
@@ -2063,6 +3670,11 @@ function defaultSelectionForCanvasMode(
         return { kind: "label", index: 0 };
       }
       return { kind: "playerSpawn" };
+    case "weather":
+      if (scene.skyLayers.length > 0) {
+        return { kind: "skyLayer", index: 0 };
+      }
+      return null;
     default:
       return null;
   }
@@ -2100,6 +3712,8 @@ function selectionsForCanvasMode(
         { kind: "playerSpawn" },
         ...Object.keys(scene.npcAnchors).map((id) => ({ kind: "npcAnchor", id }) as BuilderSelection),
       ];
+    case "weather":
+      return scene.skyLayers.map((_, index) => ({ kind: "skyLayer", index }) as BuilderSelection);
     default:
       return [];
   }
@@ -2169,9 +3783,70 @@ function getSelectionLocationId(scene: VisualScene, selection: BuilderSelection)
   }
 }
 
+function isAnchorSelection(selection: BuilderSelection) {
+  return (
+    selection.kind === "playerSpawn" ||
+    selection.kind === "npcAnchor" ||
+    selection.kind === "locationAnchorHighlight" ||
+    selection.kind === "locationAnchorPoint" ||
+    selection.kind === "locationAnchorNpcStand"
+  );
+}
+
+function groupedSelectionsForMode(
+  scene: VisualScene,
+  selection: BuilderSelection,
+  mode: BuilderCanvasMode,
+): BuilderSelection[] {
+  if (mode !== "buildings") {
+    return [selection];
+  }
+
+  const locationId = getSelectionLocationId(scene, selection);
+  if (!locationId) {
+    return [selection];
+  }
+
+  const grouped = getBuildingShapeSelections(scene, locationId);
+  return grouped.length > 0 ? grouped : [selection];
+}
+
+function getLocationRenderRect(scene: VisualScene, locationId: string): VisualRect | null {
+  const rects = [
+    ...scene.landmarks
+      .filter((item) => item.locationId === locationId)
+      .map((item) => item.rect),
+    ...scene.landmarkModules
+      .filter((item) => item.locationId === locationId)
+      .map((item) => item.rect),
+  ];
+
+  if (rects.length === 0) {
+    return null;
+  }
+
+  const minX = Math.min(...rects.map((rect) => rect.x));
+  const minY = Math.min(...rects.map((rect) => rect.y));
+  const maxX = Math.max(...rects.map((rect) => rect.x + rect.width));
+  const maxY = Math.max(...rects.map((rect) => rect.y + rect.height));
+  const landmark = scene.landmarks.find((item) => item.locationId === locationId);
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY,
+    radius: landmark?.rect.radius,
+  };
+}
+
 function getFocusRect(scene: VisualScene, selection: BuilderSelection): VisualRect | null {
   const locationId = getSelectionLocationId(scene, selection);
   if (locationId) {
+    const renderRect = getLocationRenderRect(scene, locationId);
+    if (renderRect) {
+      return expandedRect(renderRect, 54);
+    }
     const anchor = scene.locationAnchors[locationId];
     if (anchor) {
       return expandedRect(anchor.highlight, 54);
@@ -2291,17 +3966,8 @@ function applyPresetToScene(
   preset: BuilderPresetKind,
   selection: BuilderSelection,
 ) {
-  const defaultLocationByPreset: Record<BuilderPresetKind, string> = {
-    boarding_frontage: "boarding-house",
-    eatery_frontage: "tea-house",
-    harbor_edge_kit: "moss-pier",
-    square_kit: "market-square",
-    workshop_frontage: "repair-stall",
-    yard_service_kit: "courtyard",
-  };
-
   const targetLocationId =
-    getSelectionLocationId(draft, selection) ?? defaultLocationByPreset[preset];
+    getSelectionLocationId(draft, selection) ?? PRESET_DEFAULT_LOCATION_BY_KIND[preset];
   const landmark = draft.landmarks.find((item) => item.locationId === targetLocationId);
   if (!landmark) {
     return;
@@ -2519,6 +4185,33 @@ function applyPresetToScene(
         { kind: "lamp", x: rect.x + rect.width - 44, y: rect.y + rect.height - 44 },
       );
       return;
+    case "dockyard_kit":
+      pushModule("roof_cap", rect.x + 18, rect.y + 10, rect.width - 36, 34, {
+        radius: 12,
+        variant: "timber",
+      });
+      pushModule("wall_band", rect.x + 20, rect.y + 52, rect.width - 40, 84, {
+        radius: 16,
+        variant: "yard-gatehouse",
+      });
+      pushModule("service_bay", rect.x + 36, rect.y + 146, rect.width - 72, 86, {
+        radius: 12,
+        variant: "yard-gate",
+      });
+      pushModule("shutters", rect.x + 44, rect.y + 74, rect.width - 88, 34, {
+        count: 3,
+        radius: 8,
+        variant: "yard",
+      });
+      pushModule("sign", rect.x + 76, rect.y + 24, rect.width - 152, 30, {
+        radius: 10,
+        variant: "yard",
+      });
+      pushModule("trim", rect.x + 24, rect.y + 114, rect.width - 48, 18, {
+        radius: 8,
+        variant: "yard-band",
+      });
+      return;
     case "yard_service_kit":
       pushSurface("courtyard_ground", expandedRect(rect, 16), "medium");
       pushCluster(
@@ -2604,6 +4297,7 @@ function applyPresetToScene(
 export function VisualSceneBuilder() {
   const baseScene = getVisualSceneDocument(BUILDER_SCENE_ID);
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const stageShellRef = useRef<HTMLElement | null>(null);
   const didApplyQueryLayerRef = useRef(false);
   const [scene, setScene] = useState(() => cloneScene(baseScene!));
   const [selected, setSelected] = useState<BuilderSelection>({ kind: "landmark", index: 0 });
@@ -2644,8 +4338,10 @@ export function VisualSceneBuilder() {
     props: true,
     surfaceZones: false,
     water: false,
+    weather: false,
   });
   const [addState, setAddState] = useState<AddState>({
+    cloudKind: "wispy",
     fringeEdge: "north",
     fringeKind: "neighbor_facade",
     moduleKind: "awning",
@@ -2653,7 +4349,55 @@ export function VisualSceneBuilder() {
     propKind: "lamp",
     surfaceKind: "main_street",
     waterTag: "water_surface",
+    weatherKind: "none",
   });
+
+  const prepareSceneForGameSync = useCallback(
+    (sourceScene: VisualSceneDocument) => {
+      const nextScene = cloneScene(sourceScene);
+      if (!baseScene) {
+        return {
+          repairedLocationIds: [] as string[],
+          scene: nextScene,
+        };
+      }
+
+      const repairedLocationIds: string[] = [];
+
+      for (const landmark of baseScene.landmarks) {
+        const locationId = landmark.locationId;
+        let repaired = false;
+
+        if (
+          baseScene.locationAnchors[locationId] &&
+          !(locationId in nextScene.locationAnchors)
+        ) {
+          nextScene.locationAnchors[locationId] = cloneLocationAnchorsValue(
+            baseScene.locationAnchors[locationId],
+          );
+          repaired = true;
+        }
+
+        if (!nextScene.landmarks.some((item) => item.locationId === locationId)) {
+          nextScene.landmarks.push({
+            ...landmark,
+            rect: cloneRectValue(landmark.rect),
+          });
+          repaired = true;
+        }
+
+        if (repaired) {
+          repairedLocationIds.push(locationId);
+        }
+      }
+
+      return {
+        repairedLocationIds,
+        scene: nextScene,
+      };
+    },
+    [baseScene],
+  );
 
   useEffect(() => {
     if (!baseScene || typeof window === "undefined") {
@@ -2682,12 +4426,19 @@ export function VisualSceneBuilder() {
     }
 
     try {
+      const { repairedLocationIds, scene: gameSyncedScene } =
+        prepareSceneForGameSync(scene);
       window.localStorage.setItem(BUILDER_STORAGE_KEY, buildExportText(scene));
-      setPersistenceStatus("Saved locally in this browser");
+      saveVisualSceneRuntimeOverride(gameSyncedScene);
+      setPersistenceStatus(
+        repairedLocationIds.length > 0
+          ? `Saved locally and synced to the game with ${repairedLocationIds.join(", ")} restored`
+          : "Saved locally and synced to the game",
+      );
     } catch {
       setPersistenceStatus("Could not save local builder draft");
     }
-  }, [baseScene, hasHydratedDraft, scene]);
+  }, [baseScene, hasHydratedDraft, prepareSceneForGameSync, scene]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2720,7 +4471,8 @@ export function VisualSceneBuilder() {
       requestedLayer === "ground" ||
       requestedLayer === "roads" ||
       requestedLayer === "buildings" ||
-      requestedLayer === "details"
+      requestedLayer === "details" ||
+      requestedLayer === "weather"
     ) {
       didApplyQueryLayerRef.current = true;
       setCanvasMode(requestedLayer);
@@ -2770,6 +4522,10 @@ export function VisualSceneBuilder() {
     !scenePreviewActive ||
     (canvasMode === "ground" && groundToolMode === "select") ||
     (canvasMode === "roads" && roadToolMode === "select");
+  const selectedIsAnchor = isAnchorSelection(selected);
+  const anchorFocusRect = selectedVisibleInMode ? getFocusRect(scene, selected) : null;
+  const anchorFocusLocationId =
+    selectedVisibleInMode && selectedIsAnchor ? getSelectionLocationId(scene, selected) : null;
   const showSurfaceZoneOverlays =
     visibleGroups.surfaceZones &&
     (sceneDebugOverlayVisible || (scenePreviewActive && canvasMode === "roads"));
@@ -2793,13 +4549,17 @@ export function VisualSceneBuilder() {
     (sceneDebugOverlayVisible || (scenePreviewActive && canvasMode === "details"));
   const showAnchorOverlays =
     visibleGroups.anchors &&
+    selectedIsAnchor &&
     (sceneDebugOverlayVisible || (scenePreviewActive && canvasMode === "details"));
+  const showWeatherOverlays =
+    visibleGroups.weather &&
+    (sceneDebugOverlayVisible || (scenePreviewActive && canvasMode === "weather"));
   const warnings = collectVisualSceneWarnings(scene);
   const visibleWarnings = warnings.slice(0, 3);
   const landmarkSelections = scene.landmarks.map((landmark, index) => ({
-    label: landmark.locationId,
+    label: getLandmarkDisplayLabel(landmark),
     selection: { kind: "landmark", index } as BuilderSelection,
-    subtitle: landmark.style.replaceAll("-", " "),
+    subtitle: `${countBuildingShapeSelections(scene, landmark.locationId)} shapes • ${getLandmarkDisplaySubtitle(landmark)}`,
   }));
   const roadSelections = scene.surfaceZones
     .map((zone, index) => ({ index, zone }))
@@ -2846,6 +4606,11 @@ export function VisualSceneBuilder() {
       subtitle: label.tone,
     })),
   ];
+  const weatherSelections = scene.skyLayers.map((layer, index) => ({
+    label: layer.id,
+    selection: { kind: "skyLayer", index } as BuilderSelection,
+    subtitle: `${layer.cloudKind} • ${layer.weather}`,
+  }));
   const layerItems =
     canvasMode === "buildings"
       ? landmarkSelections
@@ -2853,7 +4618,9 @@ export function VisualSceneBuilder() {
         ? roadSelections
         : canvasMode === "ground"
           ? groundSelections
-          : detailSelections;
+          : canvasMode === "details"
+            ? detailSelections
+            : weatherSelections;
   const showLayerItems =
     canvasMode === "ground"
       ? groundToolMode === "select"
@@ -2872,6 +4639,8 @@ export function VisualSceneBuilder() {
   const selectedProp = selected.kind === "prop" ? scene.props[selected.index] ?? null : null;
   const selectedWater =
     selected.kind === "waterRegion" ? scene.waterRegions[selected.index] ?? null : null;
+  const selectedSkyLayer =
+    selected.kind === "skyLayer" ? scene.skyLayers[selected.index] ?? null : null;
   const selectedLabel = selected.kind === "label" ? scene.labels[selected.index] ?? null : null;
   const bottomDockTitle =
     canvasMode === "ground"
@@ -2880,7 +4649,9 @@ export function VisualSceneBuilder() {
         ? "1. Roads + Terrain Tools"
         : canvasMode === "buildings"
           ? "2. Building Tools"
-          : "3. Detail Tools";
+          : canvasMode === "details"
+            ? "3. Detail Tools"
+            : "4. Clouds + Weather";
   const bottomDockCopy =
     canvasMode === "ground"
       ? "Shape the shoreline and landmass first, then build upward."
@@ -2888,7 +4659,9 @@ export function VisualSceneBuilder() {
         ? "Paint the town surface directly on top of the land layer."
         : canvasMode === "buildings"
           ? "Work on landmark placement and stamp quick kits without losing the canvas."
-          : "Use the lower dock for finishing moves while the right rail handles the selected item.";
+          : canvasMode === "details"
+            ? "Use the lower dock for finishing moves while the right rail handles the selected item."
+            : "Author moving sky bands and the weather they trigger before it reaches the live game.";
   const selectedSelections = builderItems
     .filter((item) => selectedIds.includes(item.id))
     .map((item) => item.selection);
@@ -2900,14 +4673,22 @@ export function VisualSceneBuilder() {
     setSelectedIds([selectionId(selection)]);
   }
 
+  function setSelectionGroupWithPrimary(
+    primary: BuilderSelection,
+    selections: BuilderSelection[],
+  ) {
+    const nextSelections = selections.length > 0 ? selections : [primary];
+    setSelected(primary);
+    setSelectedIds(Array.from(new Set(nextSelections.map((selection) => selectionId(selection)))));
+  }
+
   function setSelectionGroup(selections: BuilderSelection[]) {
     if (selections.length === 0) {
       setSelectedIds([]);
       return;
     }
 
-    setSelected(selections[0]);
-    setSelectedIds(selections.map((selection) => selectionId(selection)));
+    setSelectionGroupWithPrimary(selections[0], selections);
   }
 
   function selectionIntersectsRect(selection: BuilderSelection, rect: VisualRect) {
@@ -2977,6 +4758,7 @@ export function VisualSceneBuilder() {
         props: false,
         surfaceZones: false,
         water: false,
+        weather: false,
       });
       return;
     }
@@ -2991,6 +4773,7 @@ export function VisualSceneBuilder() {
         props: false,
         surfaceZones: true,
         water: false,
+        weather: false,
       });
       return;
     }
@@ -3005,12 +4788,28 @@ export function VisualSceneBuilder() {
         props: false,
         surfaceZones: true,
         water: true,
+        weather: false,
+      });
+      return;
+    }
+
+    if (mode === "weather") {
+      setVisibleGroups({
+        anchors: false,
+        fringe: false,
+        labels: false,
+        landmarks: true,
+        modules: false,
+        props: false,
+        surfaceZones: false,
+        water: false,
+        weather: true,
       });
       return;
     }
 
     setVisibleGroups({
-      anchors: true,
+      anchors: false,
       fringe: false,
       labels: true,
       landmarks: true,
@@ -3018,17 +4817,26 @@ export function VisualSceneBuilder() {
       props: true,
       surfaceZones: false,
       water: false,
+      weather: false,
     });
   }
 
-  function adjustStageZoom(delta: number) {
-    setStageZoom((previous) => Math.max(0.25, Math.min(2.5, Number((previous + delta).toFixed(2)))));
-  }
-
   function selectForEditing(selection: BuilderSelection, mode?: BuilderCanvasMode) {
-    setPrimarySelection(selection);
+    const nextMode = mode ?? canvasMode;
+    const groupedSelections = groupedSelectionsForMode(scene, selection, nextMode);
+    if (groupedSelections.length > 1) {
+      setSelectionGroupWithPrimary(selection, groupedSelections);
+    } else {
+      setPrimarySelection(selection);
+    }
     if (mode) {
       applyCanvasMode(mode);
+    }
+    if (nextMode === "details" && isAnchorSelection(selection)) {
+      setVisibleGroups((previous) => ({
+        ...previous,
+        anchors: true,
+      }));
     }
   }
 
@@ -3191,15 +4999,20 @@ export function VisualSceneBuilder() {
     }
 
     const selectionKey = selectionId(selection);
+    const groupedSelections = groupedSelectionsForMode(scene, selection, canvasMode);
     const selectionsToDrag =
       selectedIds.includes(selectionKey) && selectedSelections.length > 0
         ? selectedSelections.filter((item) => selectionVisibleInCanvasMode(scene, item, canvasMode))
-        : [selection];
+        : groupedSelections.filter((item) => selectionVisibleInCanvasMode(scene, item, canvasMode));
 
     if (selectedIds.includes(selectionKey)) {
       setSelected(selection);
     } else {
-      setPrimarySelection(selection);
+      if (groupedSelections.length > 1) {
+        setSelectionGroupWithPrimary(selection, groupedSelections);
+      } else {
+        setPrimarySelection(selection);
+      }
     }
 
     setDragState({
@@ -3432,6 +5245,16 @@ export function VisualSceneBuilder() {
           if (field === "tag") item.tag = value as VisualSceneWaterTag;
           return;
         }
+        case "skyLayer": {
+          const item = draft.skyLayers[selected.index];
+          if (!item) {
+            return;
+          }
+          if (field === "id") item.id = value;
+          if (field === "cloudKind") item.cloudKind = value as VisualSceneCloudKind;
+          if (field === "weather") item.weather = value as VisualSceneWeatherKind;
+          return;
+        }
         case "label": {
           const item = draft.labels[selected.index];
           if (!item) {
@@ -3478,6 +5301,17 @@ export function VisualSceneBuilder() {
             return;
           }
           if (field === "intensity") item.intensity = numeric;
+          return;
+        }
+        case "skyLayer": {
+          const item = draft.skyLayers[selected.index];
+          if (!item) {
+            return;
+          }
+          if (field === "opacity") item.opacity = numeric;
+          if (field === "speed") item.speed = numeric;
+          if (field === "density") item.density = numeric;
+          if (field === "scale") item.scale = numeric;
           return;
         }
         default:
@@ -3533,9 +5367,15 @@ export function VisualSceneBuilder() {
   }
 
   function applySceneToGame() {
-    const didApply = saveVisualSceneRuntimeOverride(scene);
+    const { repairedLocationIds, scene: gameSyncedScene } =
+      prepareSceneForGameSync(scene);
+    const didApply = saveVisualSceneRuntimeOverride(gameSyncedScene);
     setGameApplyLabel(
-      didApply ? "Applied to local game" : "Could not apply to local game",
+      didApply
+        ? repairedLocationIds.length > 0
+          ? "Applied to local game with required places restored"
+          : "Applied to local game"
+        : "Could not apply to local game",
     );
     window.setTimeout(() => setGameApplyLabel(null), 1600);
   }
@@ -3659,6 +5499,19 @@ export function VisualSceneBuilder() {
           setPrimarySelection({ kind: "waterRegion", index: draft.waterRegions.length - 1 });
           return;
         }
+        case "skyLayer": {
+          const source = draft.skyLayers[selected.index];
+          if (!source) {
+            return;
+          }
+          draft.skyLayers.push({
+            ...source,
+            id: `${source.id}-copy-${draft.skyLayers.length + 1}`,
+            rect: { ...source.rect, x: source.rect.x + 18, y: source.rect.y + 18 },
+          });
+          setPrimarySelection({ kind: "skyLayer", index: draft.skyLayers.length - 1 });
+          return;
+        }
         case "label": {
           const source = draft.labels[selected.index];
           if (!source) {
@@ -3729,6 +5582,14 @@ export function VisualSceneBuilder() {
           };
         }
         break;
+      case "skyLayer":
+        if (draft.skyLayers.length > 0) {
+          return {
+            kind: "skyLayer",
+            index: Math.max(0, Math.min(previous.index, draft.skyLayers.length - 1)),
+          };
+        }
+        break;
       case "label":
         if (draft.labels.length > 0) {
           return { kind: "label", index: Math.max(0, Math.min(previous.index, draft.labels.length - 1)) };
@@ -3784,8 +5645,23 @@ export function VisualSceneBuilder() {
       indexesForKind("waterRegion").forEach((index) => {
         draft.waterRegions.splice(index, 1);
       });
+      indexesForKind("skyLayer").forEach((index) => {
+        draft.skyLayers.splice(index, 1);
+      });
       indexesForKind("label").forEach((index) => {
         draft.labels.splice(index, 1);
+      });
+
+      const locationAnchorIdsToDelete = [
+        ...(groupedSelections.get("locationAnchorHighlight") ?? []),
+        ...(groupedSelections.get("locationAnchorPoint") ?? []),
+        ...(groupedSelections.get("locationAnchorNpcStand") ?? []),
+      ]
+        .flatMap((selection) => ("locationId" in selection ? [selection.locationId] : []))
+        .filter((locationId, index, array) => array.indexOf(locationId) === index);
+
+      locationAnchorIdsToDelete.forEach((locationId) => {
+        delete draft.locationAnchors[locationId];
       });
 
       const nextSelection =
@@ -3795,7 +5671,59 @@ export function VisualSceneBuilder() {
     });
   }
 
-  function addPrimitive(type: "surface" | "fringe" | "module" | "cluster" | "prop" | "water" | "label") {
+  function clearDetailLayer() {
+    const detailCount = scene.propClusters.length + scene.props.length + scene.labels.length;
+    const fallbackSelection: BuilderSelection =
+      scene.landmarks.length > 0 ? { kind: "landmark", index: 0 } : { kind: "playerSpawn" };
+    if (detailCount === 0) {
+      setSelected(fallbackSelection);
+      setSelectedIds([selectionId(fallbackSelection)]);
+      setFocusMode(false);
+      setCanvasMode("buildings");
+      setVisibleGroups({
+        anchors: false,
+        fringe: false,
+        labels: false,
+        landmarks: true,
+        modules: true,
+        props: false,
+        surfaceZones: false,
+        water: false,
+        weather: false,
+      });
+      setPersistenceStatus("Additional details layer is already clear; NPCs stay in place");
+      return;
+    }
+
+    mutateScene((draft) => {
+      draft.propClusters = [];
+      draft.props = [];
+      draft.labels = [];
+    });
+
+    setCanvasMode("buildings");
+    setVisibleGroups({
+      anchors: false,
+      fringe: false,
+      labels: false,
+      landmarks: true,
+      modules: true,
+      props: false,
+      surfaceZones: false,
+      water: false,
+      weather: false,
+    });
+    setSelected(fallbackSelection);
+    setSelectedIds([selectionId(fallbackSelection)]);
+    setFocusMode(false);
+    setPersistenceStatus(
+      `Cleared ${detailCount} additional detail items and kept NPC anchors hidden`,
+    );
+  }
+
+  function addPrimitive(
+    type: "surface" | "fringe" | "module" | "cluster" | "prop" | "water" | "sky" | "label",
+  ) {
     mutateScene((draft) => {
       const rect = createDefaultRect(draft);
       const point = createDefaultPoint(draft);
@@ -3879,6 +5807,27 @@ export function VisualSceneBuilder() {
           tag: addState.waterTag,
         });
         setPrimarySelection({ kind: "waterRegion", index: draft.waterRegions.length - 1 });
+        return;
+      }
+
+      if (type === "sky") {
+        draft.skyLayers.push({
+          cloudKind: addState.cloudKind,
+          density: 4,
+          id: `builder-sky-${draft.skyLayers.length + 1}`,
+          opacity: 0.48,
+          rect: {
+            x: 0,
+            y: Math.round(draft.height * 0.05),
+            width: draft.width,
+            height: Math.max(120, Math.round(draft.height * 0.16)),
+            radius: 20,
+          },
+          scale: 1,
+          speed: 22,
+          weather: addState.weatherKind,
+        });
+        setPrimarySelection({ kind: "skyLayer", index: draft.skyLayers.length - 1 });
         return;
       }
 
@@ -4029,6 +5978,179 @@ export function VisualSceneBuilder() {
     );
   }
 
+  function renderSkyLayerPreview(
+    layer: VisualScene["skyLayers"][number],
+    index: number,
+  ) {
+    const beat = previewTimeMs / 1000;
+    const cloudCount = Math.max(
+      4,
+      Math.round((layer.rect.width / 240) * Math.max(layer.density, 1.2)),
+    );
+    const spacing = Math.max(layer.rect.width / cloudCount, 140);
+    const drift = ((beat * layer.speed * 4) % (spacing * 2)) - spacing;
+    const palette =
+      layer.cloudKind === "storm-front"
+        ? {
+            body: "rgba(115, 127, 143, 0.92)",
+            edge: "rgba(197, 208, 220, 0.2)",
+            haze: "rgba(96, 108, 120, 0.24)",
+          }
+        : layer.cloudKind === "harbor-bank"
+          ? {
+              body: "rgba(222, 232, 236, 0.86)",
+              edge: "rgba(255, 255, 255, 0.24)",
+              haze: "rgba(210, 224, 230, 0.18)",
+            }
+          : {
+              body: "rgba(240, 245, 247, 0.78)",
+              edge: "rgba(255, 255, 255, 0.28)",
+              haze: "rgba(228, 236, 241, 0.14)",
+            };
+    const fallLength =
+      layer.weather === "storm"
+        ? Math.min(scene.height - layer.rect.y, 360)
+        : layer.weather === "rain"
+          ? Math.min(scene.height - layer.rect.y, 280)
+          : layer.weather === "drizzle"
+            ? Math.min(scene.height - layer.rect.y, 180)
+            : Math.min(scene.height - layer.rect.y, layer.rect.height + 80);
+    const rainCount = Math.max(
+      10,
+      Math.round((layer.rect.width / 38) * (layer.weather === "storm" ? 1.6 : layer.weather === "rain" ? 1.15 : 0.7)),
+    );
+
+    return (
+      <g key={`sky-layer-preview-${layer.id}-${index}`}>
+        {layer.weather === "mist" ? (
+          <>
+            <rect
+              fill="rgba(238, 244, 246, 0.18)"
+              height={layer.rect.height + 70}
+              rx={layer.rect.radius ?? 20}
+              ry={layer.rect.radius ?? 20}
+              width={layer.rect.width}
+              x={layer.rect.x}
+              y={layer.rect.y}
+            />
+            <rect
+              fill="rgba(214, 226, 230, 0.12)"
+              height={layer.rect.height + 110}
+              width={layer.rect.width}
+              x={layer.rect.x}
+              y={layer.rect.y + 18}
+            />
+          </>
+        ) : null}
+        {layer.weather === "drizzle" || layer.weather === "rain" || layer.weather === "storm"
+          ? Array.from({ length: rainCount }).map((_, rainIndex) => {
+              const x =
+                layer.rect.x +
+                ((rainIndex / rainCount) * layer.rect.width + (beat * layer.speed * 3) % 28);
+              const y =
+                layer.rect.y +
+                18 +
+                ((rainIndex * 17) % Math.max(layer.rect.height - 14, 24));
+              const slant = layer.weather === "storm" ? 18 : layer.weather === "rain" ? 14 : 10;
+              const drop = layer.weather === "storm" ? 42 : layer.weather === "rain" ? 32 : 24;
+              return (
+                <line
+                  key={`sky-rain-${layer.id}-${rainIndex}`}
+                  stroke={
+                    layer.weather === "storm"
+                      ? "rgba(212, 226, 236, 0.3)"
+                      : "rgba(226, 236, 242, 0.24)"
+                  }
+                  strokeLinecap="round"
+                  strokeWidth={layer.weather === "storm" ? 2.6 : 1.8}
+                  x1={x}
+                  x2={x - slant}
+                  y1={y}
+                  y2={Math.min(y + drop + fallLength * 0.2, scene.height)}
+                />
+              );
+            })
+          : null}
+        <rect
+          fill={palette.haze}
+          height={layer.rect.height}
+          rx={layer.rect.radius ?? 18}
+          ry={layer.rect.radius ?? 18}
+          width={layer.rect.width}
+          x={layer.rect.x}
+          y={layer.rect.y}
+        />
+        {Array.from({ length: cloudCount + 3 }).map((_, cloudIndex) => {
+          const baseX = layer.rect.x + cloudIndex * spacing + drift;
+          const wrappedX =
+            ((baseX - layer.rect.x) % (layer.rect.width + spacing) + (layer.rect.width + spacing)) %
+              (layer.rect.width + spacing) +
+            layer.rect.x -
+            spacing;
+          const baseY =
+            layer.rect.y +
+            layer.rect.height * (0.18 + ((cloudIndex % 4) * 0.12)) +
+            Math.sin(beat * 0.45 + cloudIndex * 0.9) * 6;
+          const cloudScale =
+            layer.scale *
+            (layer.cloudKind === "storm-front" ? 1.28 : layer.cloudKind === "harbor-bank" ? 1.12 : 0.94) *
+            (0.92 + (cloudIndex % 3) * 0.11);
+          const cloudWidth = 118 * cloudScale;
+          const cloudHeight = 36 * cloudScale;
+          const alpha = Math.max(0.12, layer.opacity * (0.7 + (cloudIndex % 2) * 0.12));
+
+          return (
+            <g key={`sky-cloud-${layer.id}-${cloudIndex}`} opacity={alpha}>
+              <ellipse
+                cx={wrappedX + cloudWidth * 0.52}
+                cy={baseY + cloudHeight * 0.66}
+                fill="rgba(0,0,0,0.08)"
+                rx={cloudWidth * 0.46}
+                ry={cloudHeight * 0.24}
+              />
+              <ellipse
+                cx={wrappedX + cloudWidth * 0.28}
+                cy={baseY + cloudHeight * 0.58}
+                fill={palette.body}
+                rx={cloudWidth * 0.24}
+                ry={cloudHeight * 0.42}
+                stroke={palette.edge}
+                strokeWidth="1.2"
+              />
+              <ellipse
+                cx={wrappedX + cloudWidth * 0.52}
+                cy={baseY + cloudHeight * 0.42}
+                fill={palette.body}
+                rx={cloudWidth * 0.31}
+                ry={cloudHeight * 0.48}
+                stroke={palette.edge}
+                strokeWidth="1.2"
+              />
+              <ellipse
+                cx={wrappedX + cloudWidth * 0.78}
+                cy={baseY + cloudHeight * 0.6}
+                fill={palette.body}
+                rx={cloudWidth * 0.26}
+                ry={cloudHeight * 0.38}
+                stroke={palette.edge}
+                strokeWidth="1.2"
+              />
+              <rect
+                fill={palette.body}
+                height={cloudHeight * 0.46}
+                rx={cloudHeight * 0.22}
+                ry={cloudHeight * 0.22}
+                width={cloudWidth * 0.66}
+                x={wrappedX + cloudWidth * 0.18}
+                y={baseY + cloudHeight * 0.5}
+              />
+            </g>
+          );
+        })}
+      </g>
+    );
+  }
+
   function renderBuiltScenePreview(depth: number) {
     const legacySurfaceZonesToRender =
       !surfacePreviewGrid
@@ -4091,9 +6213,594 @@ export function VisualSceneBuilder() {
                 {label.text}
               </text>
             ))}
+            {(visibleGroups.weather || depth >= 4)
+              ? scene.skyLayers.map((layer, index) =>
+                  renderSkyLayerPreview(layer, index),
+                )
+              : null}
           </>
         ) : null}
       </>
+    );
+  }
+
+  function inventoryColorForSection(section: string) {
+    switch (section) {
+      case "Landmarks":
+        return "#c6b284";
+      case "Modules":
+        return "#9e8f80";
+      case "Surface Zones":
+        return "#718c96";
+      case "Fringe":
+        return "#6d6878";
+      case "Water":
+        return "#5b8699";
+      case "Weather":
+        return "#b8c4d6";
+      case "Prop Clusters":
+        return "#7d9568";
+      case "Props":
+        return "#8fb4b6";
+      case "Labels":
+        return "#d9c79f";
+      case "Anchors":
+        return "#c2ad88";
+      default:
+        return "#8fa0aa";
+    }
+  }
+
+  function preferredCanvasModeForSelection(selection: BuilderSelection): BuilderCanvasMode {
+    switch (selection.kind) {
+      case "landmark":
+      case "landmarkModule":
+        return "buildings";
+      case "surfaceZone": {
+        const zone = scene.surfaceZones[selection.index];
+        if (zone && ROAD_SURFACE_KINDS.has(zone.kind)) {
+          return "roads";
+        }
+        return "ground";
+      }
+      case "fringeZone":
+      case "waterRegion":
+        return "ground";
+      case "skyLayer":
+        return "weather";
+      default:
+        return "details";
+    }
+  }
+
+  function renderLandmarkInventoryVisual(style: VisualSceneLandmarkStyle) {
+    const isCafe = style === "cafe";
+    const roofColor =
+      style === "cafe"
+        ? "#4f745f"
+        : style === "boarding-house"
+          ? "#6f7d86"
+          : style === "workshop"
+            ? "#59656e"
+            : style === "dock"
+              ? "#846545"
+              : "#7a8866";
+    const bodyColor =
+      style === "cafe"
+        ? "#e7dcc2"
+        : style === "boarding-house"
+          ? "#d4c0aa"
+          : style === "workshop"
+            ? "#9a8568"
+            : style === "dock"
+              ? "#7f6145"
+              : "#73825f";
+    const trimColor = isCafe ? "#7d5a3b" : "#8d7a62";
+
+    return (
+      <svg viewBox="0 0 72 44">
+        <rect
+          fill="rgba(9, 14, 18, 0.76)"
+          height="40"
+          rx="10"
+          ry="10"
+          stroke="rgba(203, 214, 220, 0.1)"
+          strokeWidth="1.2"
+          width="68"
+          x="2"
+          y="2"
+        />
+        <ellipse cx="36" cy="33" fill="rgba(0,0,0,0.22)" rx="20" ry="3.2" />
+        <rect
+          fill={bodyColor}
+          height="20"
+          rx="5"
+          ry="5"
+          width="42"
+          x="15"
+          y="12"
+        />
+        <rect
+          fill={roofColor}
+          height="8"
+          rx="4"
+          ry="4"
+          width="46"
+          x="13"
+          y="8"
+        />
+        {isCafe ? (
+          <>
+            <rect fill={trimColor} height="3" rx="1.5" ry="1.5" width="38" x="17" y="18" />
+            {Array.from({ length: 6 }).map((_, index) => (
+              <rect
+                fill={index % 2 === 0 ? "#f2ebdd" : "#4ea273"}
+                height="4"
+                key={`inventory-cafe-stripe-${index}`}
+                width="6.4"
+                x={17 + index * 6.35}
+                y="21"
+              />
+            ))}
+            <rect fill={trimColor} height="11" rx="2" ry="2" width="8" x="32" y="20" />
+            <rect fill="#efdeba" height="5" rx="1" ry="1" width="3.8" x="34.1" y="22" />
+            <rect fill="#f4e9c9" height="6" rx="2" ry="2" width="9" x="20" y="21" />
+            <rect fill="#f4e9c9" height="6" rx="2" ry="2" width="9" x="43" y="21" />
+            <rect fill="#2f4a3f" height="5" rx="1.6" ry="1.6" width="18" x="27" y="10.4" />
+            <text
+              fill="#f7edd3"
+              fontFamily="SFMono-Regular, Menlo, monospace"
+              fontSize="3.6"
+              fontWeight="700"
+              letterSpacing="0.5"
+              textAnchor="middle"
+              x="36"
+              y="14.2"
+            >
+              CAFE
+            </text>
+            <circle cx="20" cy="31.4" fill="#8f6a4a" r="2.4" />
+            <circle cx="52" cy="31.4" fill="#8f6a4a" r="2.4" />
+            <line stroke="#8f6a4a" strokeWidth="1.2" x1="20" x2="20" y1="31.4" y2="35.8" />
+            <line stroke="#8f6a4a" strokeWidth="1.2" x1="52" x2="52" y1="31.4" y2="35.8" />
+          </>
+        ) : (
+          <>
+            <rect fill={trimColor} height="3.5" rx="1.8" ry="1.8" width="34" x="19" y="18" />
+            <rect fill="#6f533d" height="10" rx="2" ry="2" width="8" x="32" y="21" />
+            <rect fill="#ecd9b3" height="5" rx="1.8" ry="1.8" width="8" x="20.5" y="22" />
+            <rect fill="#ecd9b3" height="5" rx="1.8" ry="1.8" width="8" x="43.5" y="22" />
+          </>
+        )}
+      </svg>
+    );
+  }
+
+  function renderReadyBuildingSceneVisual(item: ReadyBuildingInventoryItem) {
+    const currentLandmark =
+      item.selection && item.selection.kind === "landmark"
+        ? scene.landmarks[item.selection.index] ?? null
+        : null;
+    const sourceBundle = getSourceReadyBuildingBundle(item.targetLocationId);
+    const landmark = currentLandmark ?? sourceBundle?.landmark ?? null;
+    const modules =
+      currentLandmark !== null
+        ? scene.landmarkModules.filter((entry) => entry.locationId === currentLandmark.locationId)
+        : sourceBundle?.modules ?? [];
+
+    if (!landmark) {
+      return renderLandmarkInventoryVisual(item.style);
+    }
+
+    const previewWidth = 320;
+    const previewHeight = 180;
+    const padding = 22;
+    const minX = Math.min(landmark.rect.x, ...modules.map((entry) => entry.rect.x));
+    const minY = Math.min(landmark.rect.y, ...modules.map((entry) => entry.rect.y));
+    const maxX = Math.max(
+      landmark.rect.x + landmark.rect.width,
+      ...modules.map((entry) => entry.rect.x + entry.rect.width),
+    );
+    const maxY = Math.max(
+      landmark.rect.y + landmark.rect.height,
+      ...modules.map((entry) => entry.rect.y + entry.rect.height),
+    );
+    const boundsWidth = Math.max(1, maxX - minX);
+    const boundsHeight = Math.max(1, maxY - minY);
+    const scale = Math.min(
+      (previewWidth - padding * 2) / boundsWidth,
+      (previewHeight - padding * 2) / boundsHeight,
+    );
+    const translateX = (previewWidth - boundsWidth * scale) / 2 - minX * scale;
+    const translateY = (previewHeight - boundsHeight * scale) / 2 - minY * scale;
+
+    return (
+      <svg viewBox={`0 0 ${previewWidth} ${previewHeight}`}>
+        <g transform={`translate(${translateX} ${translateY}) scale(${scale})`}>
+          {renderLandmarkPreview(landmark, 0)}
+          {modules.map((module, index) => renderLandmarkModulePreview(module, index))}
+        </g>
+      </svg>
+    );
+  }
+
+  function renderInventoryVisual(item: BuilderListItem) {
+    if (item.selection.kind === "landmark") {
+      const landmark = scene.landmarks[item.selection.index];
+      if (landmark) {
+        return renderLandmarkInventoryVisual(landmark.style);
+      }
+    }
+
+    const selection = describeSelection(scene, item.selection);
+    const color = inventoryColorForSection(item.section);
+
+    if (!selection) {
+      return <span className="builder-inventory-empty">?</span>;
+    }
+
+    if (selection.mode === "rect") {
+      const previewWidth = 66;
+      const previewHeight = 38;
+      const scale = Math.min(
+        previewWidth / Math.max(selection.rect.width, 1),
+        previewHeight / Math.max(selection.rect.height, 1),
+        1,
+      );
+      const rectWidth = Math.max(10, Math.round(selection.rect.width * scale));
+      const rectHeight = Math.max(8, Math.round(selection.rect.height * scale));
+      const rectX = (72 - rectWidth) / 2;
+      const rectY = (44 - rectHeight) / 2;
+      const radius = Math.max(
+        2,
+        Math.min(10, Math.round((selection.rect.radius ?? 12) * scale)),
+      );
+
+      return (
+        <svg viewBox="0 0 72 44">
+          <rect
+            fill="rgba(9, 14, 18, 0.76)"
+            height="40"
+            rx="10"
+            ry="10"
+            stroke="rgba(203, 214, 220, 0.1)"
+            strokeWidth="1.2"
+            width="68"
+            x="2"
+            y="2"
+          />
+          <rect
+            fill={color}
+            fillOpacity="0.26"
+            height={rectHeight}
+            rx={radius}
+            ry={radius}
+            stroke={color}
+            strokeOpacity="0.9"
+            strokeWidth="1.6"
+            width={rectWidth}
+            x={rectX}
+            y={rectY}
+          />
+        </svg>
+      );
+    }
+
+    return (
+      <svg viewBox="0 0 72 44">
+        <rect
+          fill="rgba(9, 14, 18, 0.76)"
+          height="40"
+          rx="10"
+          ry="10"
+          stroke="rgba(203, 214, 220, 0.1)"
+          strokeWidth="1.2"
+          width="68"
+          x="2"
+          y="2"
+        />
+        <circle
+          cx="36"
+          cy="22"
+          fill={color}
+          r="8"
+          stroke="rgba(9, 14, 18, 0.9)"
+          strokeWidth="2"
+        />
+        <circle cx="36" cy="22" fill="#f4d08e" r="3.2" />
+      </svg>
+    );
+  }
+
+  function selectionIsCafeLandmark(selection: BuilderSelection) {
+    if (selection.kind !== "landmark") {
+      return false;
+    }
+    const landmark = scene.landmarks[selection.index];
+    return landmark?.style === "cafe";
+  }
+
+  const readyBuildingItems: ReadyBuildingInventoryItem[] = PRESET_KINDS.map((preset) => {
+    const targetLocationId = PRESET_DEFAULT_LOCATION_BY_KIND[preset];
+    const landmarkIndex = scene.landmarks.findIndex((item) => item.locationId === targetLocationId);
+    return {
+      description: getReadyBuildingDescription(preset),
+      label: PRESET_LABELS[preset],
+      preset,
+      selection:
+        landmarkIndex >= 0
+          ? ({ kind: "landmark", index: landmarkIndex } as Extract<
+              BuilderSelection,
+              { kind: "landmark" }
+            >)
+          : null,
+      style: PRESET_STYLE_BY_KIND[preset],
+      targetLocationId,
+    };
+  });
+  const sceneInventoryItems = builderItems.filter((item) => item.selection.kind !== "landmark");
+
+  function renderInventoryCard(item: BuilderListItem) {
+    const isCafeItem = selectionIsCafeLandmark(item.selection);
+    const isActive = selectedIds.includes(item.id);
+
+    return (
+      <button
+        className={`builder-inventory-card ${isActive ? "is-active" : ""} ${isCafeItem ? "is-cafe" : ""}`}
+        key={`inventory-${item.id}`}
+        onClick={() => {
+          const targetMode = preferredCanvasModeForSelection(item.selection);
+          selectForEditing(item.selection, targetMode);
+          setFocusMode(true);
+        }}
+        type="button"
+      >
+        <div className="builder-inventory-visual">{renderInventoryVisual(item)}</div>
+        <div className="builder-list-section-label">{item.section}</div>
+        <div className="builder-list-title">{item.label}</div>
+        <div className="builder-list-subtitle">{item.subtitle}</div>
+      </button>
+    );
+  }
+
+  function focusBuildingSelection(selection: BuilderSelection) {
+    setCanvasMode("buildings");
+    setVisibleGroups({
+      anchors: false,
+      fringe: false,
+      labels: false,
+      landmarks: true,
+      modules: true,
+      props: false,
+      surfaceZones: false,
+      water: false,
+      weather: false,
+    });
+    const groupedSelections = groupedSelectionsForMode(scene, selection, "buildings");
+    if (groupedSelections.length > 1) {
+      setSelectionGroupWithPrimary(selection, groupedSelections);
+    } else {
+      setPrimarySelection(selection);
+    }
+    setFocusMode(true);
+  }
+
+  function scrollStageIntoView() {
+    if (!stageShellRef.current) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      stageShellRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+
+  function syncReadyBuildingBundle(
+    draft: VisualScene,
+    preset: BuilderPresetKind,
+    targetRect: VisualRect,
+  ) {
+    const targetLocationId = PRESET_DEFAULT_LOCATION_BY_KIND[preset];
+    const sourceBundle = getSourceReadyBuildingBundle(targetLocationId);
+    if (!sourceBundle) {
+      return null;
+    }
+
+    let landmarkIndex = draft.landmarks.findIndex((item) => item.locationId === targetLocationId);
+    if (landmarkIndex < 0) {
+      const existingLandmarkIds = new Set(draft.landmarks.map((item) => item.id));
+      const landmarkId = existingLandmarkIds.has(sourceBundle.landmark.id)
+        ? nextSceneId(sourceBundle.landmark.id, existingLandmarkIds)
+        : sourceBundle.landmark.id;
+      draft.landmarks.push({
+        ...sourceBundle.landmark,
+        id: landmarkId,
+        rect: cloneRectValue(targetRect),
+      });
+      landmarkIndex = draft.landmarks.length - 1;
+    } else {
+      draft.landmarks[landmarkIndex] = {
+        ...draft.landmarks[landmarkIndex],
+        accentColor: sourceBundle.landmark.accentColor,
+        rect: cloneRectValue(targetRect),
+        style: sourceBundle.landmark.style,
+      };
+    }
+
+    const deltaX = targetRect.x - sourceBundle.landmark.rect.x;
+    const deltaY = targetRect.y - sourceBundle.landmark.rect.y;
+
+    draft.locationAnchors[targetLocationId] = sourceBundle.anchors
+      ? (() => {
+          const nextAnchors = cloneLocationAnchorsValue(sourceBundle.anchors);
+          translatePointValue(nextAnchors.door, deltaX, deltaY);
+          translatePointValue(nextAnchors.frontage, deltaX, deltaY);
+          translatePointValue(nextAnchors.label, deltaX, deltaY);
+          translateRectValue(nextAnchors.highlight, deltaX, deltaY);
+          nextAnchors.npcStands?.forEach((point) => translatePointValue(point, deltaX, deltaY));
+          return nextAnchors;
+        })()
+      : draft.locationAnchors[targetLocationId];
+
+    draft.landmarkModules = [
+      ...draft.landmarkModules.filter((item) => item.locationId !== targetLocationId),
+      ...sourceBundle.modules.map((item) => ({
+        ...item,
+        rect: {
+          ...item.rect,
+          x: item.rect.x + deltaX,
+          y: item.rect.y + deltaY,
+        },
+      })),
+    ];
+
+    draft.propClusters = [
+      ...draft.propClusters.filter((item) => item.locationId !== targetLocationId),
+      ...sourceBundle.propClusters.map((item) => ({
+        ...item,
+        points: item.points?.map((point) => ({
+          x: point.x + deltaX,
+          y: point.y + deltaY,
+        })),
+        rect: {
+          ...item.rect,
+          x: item.rect.x + deltaX,
+          y: item.rect.y + deltaY,
+        },
+      })),
+    ];
+
+    return { kind: "landmark", index: landmarkIndex } as const;
+  }
+
+  function readyBuildingNeedsBundleSync(item: ReadyBuildingInventoryItem) {
+    if (!item.selection || item.selection.kind !== "landmark") {
+      return false;
+    }
+    const sourceBundle = getSourceReadyBuildingBundle(item.targetLocationId);
+    if (!sourceBundle) {
+      return false;
+    }
+
+    const currentModuleCount = scene.landmarkModules.filter(
+      (entry) => entry.locationId === item.targetLocationId,
+    ).length;
+    const currentClusterCount = scene.propClusters.filter(
+      (entry) => entry.locationId === item.targetLocationId,
+    ).length;
+
+    return (
+      currentModuleCount < sourceBundle.modules.length ||
+      currentClusterCount < sourceBundle.propClusters.length
+    );
+  }
+
+  function placeReadyBuilding(preset: BuilderPresetKind) {
+    const sourceBundle = getSourceReadyBuildingBundle(PRESET_DEFAULT_LOCATION_BY_KIND[preset]);
+    if (!sourceBundle) {
+      setPersistenceStatus(`Could not place ${PRESET_LABELS[preset]}.`);
+      return;
+    }
+
+    let nextSelection: BuilderSelection | null = null;
+
+    mutateScene((draft) => {
+      const placementRect = findSmartPlacementRect(scene, sourceBundle.landmark.rect, stageViewBox);
+      nextSelection = syncReadyBuildingBundle(draft, preset, placementRect);
+    });
+
+    if (!nextSelection) {
+      setPersistenceStatus(`Could not place ${PRESET_LABELS[preset]}.`);
+      return;
+    }
+
+    focusBuildingSelection(nextSelection);
+    setPersistenceStatus(`${PRESET_LABELS[preset]} added to scene`);
+  }
+
+  function repositionReadyBuilding(
+    preset: BuilderPresetKind,
+    selection: Extract<BuilderSelection, { kind: "landmark" }>,
+  ) {
+    const landmark = scene.landmarks[selection.index];
+    if (!landmark) {
+      return;
+    }
+
+    const targetRect = findSmartPlacementRect(scene, landmark.rect, stageViewBox, landmark.locationId);
+    if (targetRect.x === landmark.rect.x && targetRect.y === landmark.rect.y) {
+      focusBuildingSelection(selection);
+      setPersistenceStatus(`${PRESET_LABELS[preset]} is already lined up in the current work area`);
+      return;
+    }
+
+    mutateScene((draft) => {
+      syncReadyBuildingBundle(draft, preset, targetRect);
+    });
+
+    focusBuildingSelection(selection);
+    setPersistenceStatus(`${PRESET_LABELS[preset]} moved into the current work area`);
+  }
+
+  function handleReadyBuildingSelect(item: ReadyBuildingInventoryItem) {
+    scrollStageIntoView();
+
+    const landmarkSelection = item.selection;
+
+    if (landmarkSelection) {
+      if (readyBuildingNeedsBundleSync(item)) {
+        mutateScene((draft) => {
+          const currentLandmark = draft.landmarks[landmarkSelection.index];
+          if (!currentLandmark) {
+            return;
+          }
+          syncReadyBuildingBundle(draft, item.preset, cloneRectValue(currentLandmark.rect));
+        });
+        focusBuildingSelection(landmarkSelection);
+        setPersistenceStatus(`${item.label} rebuilt from the authored source bundle`);
+        return;
+      }
+      if (
+        selectionId(selected) === selectionId(landmarkSelection)
+      ) {
+        repositionReadyBuilding(item.preset, landmarkSelection);
+        return;
+      }
+      focusBuildingSelection(landmarkSelection);
+      return;
+    }
+    placeReadyBuilding(item.preset);
+  }
+
+  function renderReadyBuildingCard(item: ReadyBuildingInventoryItem) {
+    const isCafeItem = item.style === "cafe";
+    const isActive = item.selection ? selectedIds.includes(selectionId(item.selection)) : false;
+    const badgeLabel = item.selection
+      ? isActive
+        ? "Click to Re-place"
+        : "Click to Focus"
+      : "Click to Place";
+
+    return (
+      <button
+        className={`builder-inventory-card builder-building-card ${isActive ? "is-active" : ""} ${
+          isCafeItem ? "is-cafe" : ""
+        } ${item.selection ? "" : "is-unplaced"}`}
+        key={`ready-building-${item.preset}`}
+        onClick={() => handleReadyBuildingSelect(item)}
+        type="button"
+      >
+        <div className="builder-inventory-visual is-building">
+          {renderReadyBuildingSceneVisual(item)}
+        </div>
+        <div className="builder-inventory-badge">{badgeLabel}</div>
+        <div className="builder-list-section-label">Ready Place</div>
+        <div className="builder-list-title">{item.label}</div>
+        <div className="builder-list-subtitle">{item.description}</div>
+      </button>
     );
   }
 
@@ -4142,6 +6849,13 @@ export function VisualSceneBuilder() {
             >
               3. Additional Details
             </button>
+            <button
+              className={canvasMode === "weather" ? "is-active" : ""}
+              onClick={() => applyCanvasMode("weather")}
+              type="button"
+            >
+              4. Clouds + Weather
+            </button>
           </div>
           <div className="builder-copy">
             {canvasMode === "buildings"
@@ -4150,7 +6864,9 @@ export function VisualSceneBuilder() {
                 ? "View land/water first, then paint roads, paving, grass, bushes, and trees on top."
                 : canvasMode === "ground"
                   ? "Start with the base map: land, shoreline, quay edges, and water bands."
-                  : "View the full stack with furniture, labels, anchors, and other finishing details."}
+                  : canvasMode === "details"
+                    ? "View the full stack with furniture, labels, and other finishing details. Anchor guides only surface when you edit them."
+                    : "Author screen-wide clouds and the weather they trigger so the builder stays the source of truth."}
           </div>
           <div className="builder-copy">
             The edit controls for this layer live in the tool dock below the canvas so the stage stays central while you work.
@@ -4160,7 +6876,7 @@ export function VisualSceneBuilder() {
             layerItems.map((item) => (
               <button
                 className={`builder-list-item ${
-                  selectionId(selected) === selectionId(item.selection) ? "is-active" : ""
+                  selectedIds.includes(selectionId(item.selection)) ? "is-active" : ""
                 }`}
                 key={selectionId(item.selection)}
                 onClick={() => {
@@ -4197,6 +6913,7 @@ export function VisualSceneBuilder() {
                   ["props", "Props + clusters"],
                   ["labels", "Labels"],
                   ["anchors", "Anchors"],
+                  ["weather", "Clouds + weather"],
                 ] as const
               ).map(([key, label]) => (
                 <label className="builder-toggle" key={key}>
@@ -4353,34 +7070,52 @@ export function VisualSceneBuilder() {
                 </button>
               </div>
               <div className="builder-palette-row">
+                <select
+                  onChange={(event) =>
+                    setAddState((previous) => ({
+                      ...previous,
+                      cloudKind: event.target.value as VisualSceneCloudKind,
+                    }))
+                  }
+                  value={addState.cloudKind}
+                >
+                  {CLOUD_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {kind}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  onChange={(event) =>
+                    setAddState((previous) => ({
+                      ...previous,
+                      weatherKind: event.target.value as VisualSceneWeatherKind,
+                    }))
+                  }
+                  value={addState.weatherKind}
+                >
+                  {WEATHER_KINDS.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {kind}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={() => addPrimitive("sky")} type="button">
+                  Add Sky Layer
+                </button>
+              </div>
+              <div className="builder-palette-row">
                 <button onClick={() => addPrimitive("label")} type="button">
                   Add Label
                 </button>
               </div>
             </div>
 
-            <div className="builder-subsection builder-list-section">
-              <div className="builder-section-title">Scene Inventory</div>
-              <div className="builder-list">
-                {builderItems.map((item) => (
-                  <button
-                    className={`builder-list-item ${selectionId(selected) === item.id ? "is-active" : ""}`}
-                    key={item.id}
-                    onClick={() => setPrimarySelection(item.selection)}
-                    type="button"
-                  >
-                    <div className="builder-list-section-label">{item.section}</div>
-                    <div className="builder-list-title">{item.label}</div>
-                    <div className="builder-list-subtitle">{item.subtitle}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
           </div>
         </details>
       </aside>
 
-      <main className="builder-stage-shell">
+      <main className="builder-stage-shell" ref={stageShellRef}>
         <div className="builder-stage-header">
           <div>
             <div className="builder-kicker">Scene</div>
@@ -4419,16 +7154,29 @@ export function VisualSceneBuilder() {
           </div>
         </div>
         <div className="builder-stage-card">
-          <svg
-            className="builder-stage"
-            onPointerCancel={endDrag}
-            onPointerLeave={endDrag}
-            onPointerDown={handleStagePointerDown}
-            onPointerMove={handleStagePointerMove}
-            onPointerUp={endDrag}
-            ref={svgRef}
-            viewBox={`${stageViewBox.x} ${stageViewBox.y} ${stageViewBox.width} ${stageViewBox.height}`}
-          >
+          <div className="builder-stage-frame">
+            <label className="builder-stage-zoom" htmlFor="builder-stage-zoom">
+              <span>Zoom {Math.round(stageZoom * 100)}%</span>
+              <input
+                id="builder-stage-zoom"
+                max="2.5"
+                min="0.25"
+                onChange={(event) => setStageZoom(Number(event.target.value))}
+                step="0.01"
+                type="range"
+                value={stageZoom}
+              />
+            </label>
+            <svg
+              className="builder-stage"
+              onPointerCancel={endDrag}
+              onPointerLeave={endDrag}
+              onPointerDown={handleStagePointerDown}
+              onPointerMove={handleStagePointerMove}
+              onPointerUp={endDrag}
+              ref={svgRef}
+              viewBox={`${stageViewBox.x} ${stageViewBox.y} ${stageViewBox.width} ${stageViewBox.height}`}
+            >
             <rect fill="#0f181d" height={scene.height} width={scene.width} x="0" y="0" />
             {scenePreviewActive ? (
               <>
@@ -4568,6 +7316,22 @@ export function VisualSceneBuilder() {
                 )
               : null}
 
+            {showWeatherOverlays
+              ? scene.skyLayers.map((layer, index) =>
+                  canvasMode === "weather" &&
+                  (!focusMode ||
+                    scenePreviewActive ||
+                    selectionInFocus(scene, { kind: "skyLayer", index }, focusRect, focusLocationId))
+                    ? renderRect(
+                        { kind: "skyLayer", index },
+                        layer.rect,
+                        "#bdc8d8",
+                        `${layer.cloudKind} • ${layer.weather}`,
+                      )
+                    : null,
+                )
+              : null}
+
             {showLandmarkOverlays
               ? scene.landmarks.map((landmark, index) =>
                   (canvasMode === "buildings" || canvasMode === "details") &&
@@ -4665,9 +7429,12 @@ export function VisualSceneBuilder() {
 
             {showAnchorOverlays
               ? canvasMode === "details" &&
-                (!focusMode ||
-                  scenePreviewActive ||
-                  selectionInFocus(scene, { kind: "playerSpawn" }, focusRect, focusLocationId))
+                selectionInFocus(
+                  scene,
+                  { kind: "playerSpawn" },
+                  anchorFocusRect,
+                  anchorFocusLocationId,
+                )
                     ? renderRect(
                         { kind: "playerSpawn" },
                         {
@@ -4685,9 +7452,12 @@ export function VisualSceneBuilder() {
 
             {showAnchorOverlays
               ? canvasMode === "details" &&
-                (!focusMode ||
-                  scenePreviewActive ||
-                  selectionInFocus(scene, { kind: "playerSpawn" }, focusRect, focusLocationId))
+                selectionInFocus(
+                  scene,
+                  { kind: "playerSpawn" },
+                  anchorFocusRect,
+                  anchorFocusLocationId,
+                )
                 ? renderPoint(
                     { kind: "playerSpawn" },
                     scene.playerSpawn,
@@ -4700,14 +7470,12 @@ export function VisualSceneBuilder() {
             {showAnchorOverlays
               ? Object.entries(scene.npcAnchors).map(([id, point]) =>
                   canvasMode === "details" &&
-                  (!focusMode ||
-                    scenePreviewActive ||
-                    selectionInFocus(
-                      scene,
-                      { id, kind: "npcAnchor" },
-                      focusRect,
-                      focusLocationId,
-                    ))
+                  selectionInFocus(
+                    scene,
+                    { id, kind: "npcAnchor" },
+                    anchorFocusRect,
+                    anchorFocusLocationId,
+                  )
                     ? renderPoint({ id, kind: "npcAnchor" }, point, "#c79a75", id)
                     : null,
                 )
@@ -4716,14 +7484,12 @@ export function VisualSceneBuilder() {
             {showAnchorOverlays
               ? Object.entries(scene.locationAnchors).map(([locationId, anchor]) =>
                   canvasMode === "details" &&
-                  (!focusMode ||
-                    scenePreviewActive ||
-                    selectionInFocus(
-                      scene,
-                      { kind: "locationAnchorHighlight", locationId },
-                      focusRect,
-                      focusLocationId,
-                    ))
+                  selectionInFocus(
+                    scene,
+                    { kind: "locationAnchorHighlight", locationId },
+                    anchorFocusRect,
+                    anchorFocusLocationId,
+                  )
                     ? renderRect(
                         { kind: "locationAnchorHighlight", locationId },
                         anchor.highlight,
@@ -4737,14 +7503,12 @@ export function VisualSceneBuilder() {
             {showAnchorOverlays
               ? Object.entries(scene.locationAnchors).flatMap(([locationId, anchor]) => [
                   canvasMode === "details" &&
-                  (!focusMode ||
-                    scenePreviewActive ||
-                    selectionInFocus(
-                      scene,
-                      { kind: "locationAnchorPoint", locationId, pointKey: "door" },
-                      focusRect,
-                      focusLocationId,
-                    ))
+                  selectionInFocus(
+                    scene,
+                    { kind: "locationAnchorPoint", locationId, pointKey: "door" },
+                    anchorFocusRect,
+                    anchorFocusLocationId,
+                  )
                     ? renderPoint(
                         { kind: "locationAnchorPoint", locationId, pointKey: "door" },
                         anchor.door,
@@ -4753,14 +7517,12 @@ export function VisualSceneBuilder() {
                       )
                     : null,
                   canvasMode === "details" &&
-                  (!focusMode ||
-                    scenePreviewActive ||
-                    selectionInFocus(
-                      scene,
-                      { kind: "locationAnchorPoint", locationId, pointKey: "frontage" },
-                      focusRect,
-                      focusLocationId,
-                    ))
+                  selectionInFocus(
+                    scene,
+                    { kind: "locationAnchorPoint", locationId, pointKey: "frontage" },
+                    anchorFocusRect,
+                    anchorFocusLocationId,
+                  )
                     ? renderPoint(
                         { kind: "locationAnchorPoint", locationId, pointKey: "frontage" },
                         anchor.frontage,
@@ -4769,14 +7531,12 @@ export function VisualSceneBuilder() {
                       )
                     : null,
                   canvasMode === "details" &&
-                  (!focusMode ||
-                    scenePreviewActive ||
-                    selectionInFocus(
-                      scene,
-                      { kind: "locationAnchorPoint", locationId, pointKey: "label" },
-                      focusRect,
-                      focusLocationId,
-                    ))
+                  selectionInFocus(
+                    scene,
+                    { kind: "locationAnchorPoint", locationId, pointKey: "label" },
+                    anchorFocusRect,
+                    anchorFocusLocationId,
+                  )
                     ? renderPoint(
                         { kind: "locationAnchorPoint", locationId, pointKey: "label" },
                         anchor.label,
@@ -4786,18 +7546,16 @@ export function VisualSceneBuilder() {
                     : null,
                   ...(anchor.npcStands ?? []).map((point, index) =>
                     canvasMode === "details" &&
-                    (!focusMode ||
-                      scenePreviewActive ||
-                      selectionInFocus(
-                        scene,
-                        {
-                          kind: "locationAnchorNpcStand",
-                          locationId,
-                          index,
-                        },
-                        focusRect,
-                        focusLocationId,
-                      ))
+                    selectionInFocus(
+                      scene,
+                      {
+                        kind: "locationAnchorNpcStand",
+                        locationId,
+                        index,
+                      },
+                      anchorFocusRect,
+                      anchorFocusLocationId,
+                    )
                       ? renderPoint(
                           {
                             kind: "locationAnchorNpcStand",
@@ -4827,7 +7585,8 @@ export function VisualSceneBuilder() {
                 y={marqueeRect.y}
               />
             ) : null}
-          </svg>
+            </svg>
+          </div>
         </div>
         <div className="builder-bottom-dock">
           <div className="builder-bottom-dock-header">
@@ -4981,7 +7740,7 @@ export function VisualSceneBuilder() {
                 <div className="builder-chip-row">
                   {PRESET_KINDS.map((preset) => (
                     <button key={`dock-preset-${preset}`} onClick={() => applyPreset(preset)} type="button">
-                      {preset.replaceAll("_", " ")}
+                      {PRESET_LABELS[preset]}
                     </button>
                   ))}
                 </div>
@@ -5005,8 +7764,61 @@ export function VisualSceneBuilder() {
                   </button>
                 </div>
               </div>
+              <div className="builder-bottom-dock-group">
+                <div className="builder-section-title">Restart</div>
+                <div className="builder-stage-actions">
+                  <button className="is-danger" onClick={clearDetailLayer} type="button">
+                    Clear Details Layer
+                  </button>
+                </div>
+                <div className="builder-list-subtitle">
+                  Removes props, clusters, and labels while keeping NPCs, anchors, spawn, and the structural map.
+                </div>
+              </div>
             </div>
           ) : null}
+
+          <div className="builder-bottom-inventory">
+            <div className="builder-bottom-inventory-header">
+              <div>
+                <div className="builder-section-title">Scene Inventory</div>
+                <div className="builder-list-subtitle">
+                  Assembled place kits first, then the rest of the authored scene pieces.
+                </div>
+              </div>
+              <div className="builder-list-subtitle">
+                {readyBuildingItems.length} ready kits • {sceneInventoryItems.length} scene pieces
+              </div>
+            </div>
+            <div className="builder-inventory-section">
+              <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
+                <div>
+                  <div className="builder-section-title">Ready Places</div>
+                  <div className="builder-list-subtitle">
+                    Persistent place kits for buildings, squares, yards, and the harbor edge.
+                  </div>
+                </div>
+                <div className="builder-list-subtitle">{readyBuildingItems.length} kits</div>
+              </div>
+              <div className="builder-building-grid">
+                {readyBuildingItems.map((item) => renderReadyBuildingCard(item))}
+              </div>
+            </div>
+            <div className="builder-inventory-section builder-inventory-section-divider">
+              <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
+                <div>
+                  <div className="builder-section-title">Scene Pieces</div>
+                  <div className="builder-list-subtitle">
+                    Zones, props, labels, and supporting authored details.
+                  </div>
+                </div>
+                <div className="builder-list-subtitle">{sceneInventoryItems.length} items</div>
+              </div>
+              <div className="builder-inventory-grid">
+                {sceneInventoryItems.map((item) => renderInventoryCard(item))}
+              </div>
+            </div>
+          </div>
 
           <div className="builder-bottom-dock-grid builder-bottom-dock-grid-secondary">
             <div className="builder-bottom-dock-group">
@@ -5034,32 +7846,6 @@ export function VisualSceneBuilder() {
             </div>
 
             <div className="builder-bottom-dock-group">
-              <div className="builder-section-title">Zoom</div>
-              <label className="builder-range builder-range-inline">
-                <span>Selection zoom {Math.round(stageZoom * 100)}%</span>
-                <input
-                  max="2.5"
-                  min="0.25"
-                  onChange={(event) => setStageZoom(Number(event.target.value))}
-                  step="0.01"
-                  type="range"
-                  value={stageZoom}
-                />
-              </label>
-              <div className="builder-stage-actions">
-                <button onClick={() => adjustStageZoom(-0.2)} type="button">
-                  Zoom Out
-                </button>
-                <button onClick={() => setStageZoom(0.72)} type="button">
-                  Reset Zoom
-                </button>
-                <button onClick={() => adjustStageZoom(0.2)} type="button">
-                  Zoom In
-                </button>
-              </div>
-            </div>
-
-            <div className="builder-bottom-dock-group builder-bottom-dock-group-wide">
               <div className={`builder-warning ${warnings.length === 0 ? "is-success" : ""}`}>
                 <div className="builder-warning-title">
                   {warnings.length === 0
@@ -5501,6 +8287,80 @@ export function VisualSceneBuilder() {
                   </label>
                 </div>
               ) : null}
+              {selectedSkyLayer ? (
+                <div className="builder-fields builder-fields-single">
+                  <label>
+                    <span>Sky Id</span>
+                    <input
+                      onChange={(event) => updateStringField("id", event.target.value)}
+                      type="text"
+                      value={selectedSkyLayer.id}
+                    />
+                  </label>
+                  <label>
+                    <span>Cloud Kind</span>
+                    <select
+                      onChange={(event) => updateStringField("cloudKind", event.target.value)}
+                      value={selectedSkyLayer.cloudKind}
+                    >
+                      {CLOUD_KINDS.map((kind) => (
+                        <option key={kind} value={kind}>
+                          {kind}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Triggered Weather</span>
+                    <select
+                      onChange={(event) => updateStringField("weather", event.target.value)}
+                      value={selectedSkyLayer.weather}
+                    >
+                      {WEATHER_KINDS.map((kind) => (
+                        <option key={kind} value={kind}>
+                          {kind}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Opacity</span>
+                    <input
+                      onChange={(event) => updateExtendedNumberField("opacity", event.target.value)}
+                      step="0.05"
+                      type="number"
+                      value={selectedSkyLayer.opacity}
+                    />
+                  </label>
+                  <label>
+                    <span>Speed</span>
+                    <input
+                      onChange={(event) => updateExtendedNumberField("speed", event.target.value)}
+                      step="1"
+                      type="number"
+                      value={selectedSkyLayer.speed}
+                    />
+                  </label>
+                  <label>
+                    <span>Density</span>
+                    <input
+                      onChange={(event) => updateExtendedNumberField("density", event.target.value)}
+                      step="0.5"
+                      type="number"
+                      value={selectedSkyLayer.density}
+                    />
+                  </label>
+                  <label>
+                    <span>Scale</span>
+                    <input
+                      onChange={(event) => updateExtendedNumberField("scale", event.target.value)}
+                      step="0.05"
+                      type="number"
+                      value={selectedSkyLayer.scale}
+                    />
+                  </label>
+                </div>
+              ) : null}
               {selectedLabel ? (
                 <div className="builder-fields builder-fields-single">
                   <label>
@@ -5705,6 +8565,13 @@ export function VisualSceneBuilder() {
           justify-content: center;
         }
 
+        .builder-stage-frame {
+          position: relative;
+          width: min(100%, 1120px);
+          min-width: 0;
+          flex: 0 0 auto;
+        }
+
         .builder-bottom-dock {
           display: flex;
           flex-direction: column;
@@ -5747,14 +8614,196 @@ export function VisualSceneBuilder() {
           grid-column: span 2;
         }
 
+        .builder-bottom-inventory {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          border-radius: 18px;
+          border: 1px solid rgba(124, 141, 146, 0.14);
+          background:
+            radial-gradient(circle at top right, rgba(158, 177, 188, 0.07), transparent 45%),
+            rgba(10, 16, 20, 0.74);
+          padding: 12px;
+        }
+
+        .builder-bottom-inventory-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .builder-bottom-inventory-header-tight {
+          gap: 8px;
+        }
+
+        .builder-inventory-section {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .builder-inventory-section-divider {
+          padding-top: 4px;
+          border-top: 1px solid rgba(122, 138, 145, 0.14);
+        }
+
+        .builder-building-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: 12px;
+        }
+
+        .builder-inventory-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+          gap: 10px;
+          max-height: 268px;
+          overflow: auto;
+          padding-right: 4px;
+        }
+
+        .builder-inventory-card {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          text-align: left;
+          text-transform: none;
+          letter-spacing: normal;
+          font-size: 13px;
+          border-radius: 14px;
+          padding: 10px;
+          background: rgba(18, 25, 30, 0.9);
+          border: 1px solid rgba(122, 138, 145, 0.18);
+        }
+
+        .builder-inventory-card:hover {
+          border-color: rgba(206, 170, 113, 0.5);
+          background: rgba(33, 43, 49, 0.95);
+        }
+
+        .builder-inventory-card.is-active {
+          border-color: rgba(214, 176, 112, 0.64);
+          background: rgba(50, 62, 68, 0.96);
+        }
+
+        .builder-inventory-card.is-cafe {
+          border-color: rgba(214, 176, 112, 0.48);
+          background:
+            radial-gradient(circle at top right, rgba(212, 171, 103, 0.14), transparent 56%),
+            rgba(24, 32, 37, 0.94);
+        }
+
+        .builder-building-card {
+          min-height: 238px;
+          padding: 14px;
+          gap: 8px;
+          background:
+            linear-gradient(180deg, rgba(25, 34, 40, 0.96), rgba(15, 22, 27, 0.98)),
+            rgba(18, 25, 30, 0.94);
+        }
+
+        .builder-building-card.is-cafe {
+          grid-column: span 2;
+          border-color: rgba(221, 182, 111, 0.58);
+          background:
+            radial-gradient(circle at top right, rgba(212, 171, 103, 0.18), transparent 54%),
+            linear-gradient(180deg, rgba(34, 42, 36, 0.98), rgba(18, 25, 30, 0.98));
+        }
+
+        .builder-building-card.is-unplaced {
+          border-style: dashed;
+          border-color: rgba(136, 152, 160, 0.34);
+        }
+
+        .builder-inventory-visual {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          height: 52px;
+          border-radius: 10px;
+          border: 1px solid rgba(122, 138, 145, 0.18);
+          background:
+            linear-gradient(180deg, rgba(18, 26, 31, 0.92), rgba(12, 18, 22, 0.9)),
+            rgba(11, 17, 20, 0.9);
+          overflow: hidden;
+        }
+
+        .builder-inventory-visual.is-building {
+          height: 122px;
+          border-color: rgba(158, 177, 188, 0.24);
+          background:
+            radial-gradient(circle at top center, rgba(104, 131, 120, 0.2), transparent 52%),
+            linear-gradient(180deg, rgba(20, 30, 35, 0.94), rgba(10, 16, 20, 0.94));
+        }
+
+        .builder-building-card.is-cafe .builder-inventory-visual.is-building {
+          height: 152px;
+        }
+
+        .builder-inventory-visual svg {
+          width: 100%;
+          height: 100%;
+          display: block;
+        }
+
+        .builder-inventory-empty {
+          color: rgba(215, 226, 232, 0.7);
+          font-size: 22px;
+          line-height: 1;
+        }
+
+        .builder-inventory-badge {
+          margin-top: 2px;
+          align-self: flex-start;
+          padding: 3px 7px;
+          border-radius: 999px;
+          border: 1px solid rgba(214, 176, 112, 0.46);
+          color: rgba(249, 229, 189, 0.92);
+          background: rgba(52, 41, 27, 0.74);
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          font-size: 9px;
+          line-height: 1.2;
+        }
+
         .builder-stage {
-          width: min(100%, 1120px);
+          width: 100%;
           min-width: 0;
           height: auto;
           border-radius: 22px;
           background: #0e171c;
           touch-action: none;
           flex: 0 0 auto;
+        }
+
+        .builder-stage-zoom {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          z-index: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          width: min(240px, calc(100% - 28px));
+          padding: 10px 12px;
+          border-radius: 16px;
+          border: 1px solid rgba(138, 154, 162, 0.22);
+          background: rgba(11, 17, 21, 0.82);
+          backdrop-filter: blur(14px);
+          box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+        }
+
+        .builder-stage-zoom span {
+          font-size: 11px;
+          line-height: 1.2;
+          letter-spacing: 0.14em;
+          text-transform: uppercase;
+          color: rgba(223, 229, 232, 0.78);
+        }
+
+        .builder-stage-zoom input {
+          width: 100%;
         }
 
         .builder-focus-preview {
@@ -6097,6 +9146,16 @@ export function VisualSceneBuilder() {
 
           .builder-bottom-dock-group-wide {
             grid-column: span 1;
+          }
+
+          .builder-building-card.is-cafe {
+            grid-column: span 1;
+          }
+
+          .builder-stage-zoom {
+            top: 12px;
+            right: 12px;
+            width: min(220px, calc(100% - 24px));
           }
         }
       `}</style>

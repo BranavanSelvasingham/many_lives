@@ -27,9 +27,21 @@ export type VisualSceneLayer =
       y: number;
     }
   | {
-      id: "structures" | "props" | "labels";
+      id: "structures" | "props" | "labels" | "weather";
       kind: "objects";
     };
+
+export type VisualSceneCloudKind =
+  | "harbor-bank"
+  | "storm-front"
+  | "wispy";
+
+export type VisualSceneWeatherKind =
+  | "drizzle"
+  | "mist"
+  | "none"
+  | "rain"
+  | "storm";
 
 export type VisualSceneWaterTag =
   | "moored_boat"
@@ -203,6 +215,17 @@ export type VisualSceneProjection = {
   rowCenters: number[];
 };
 
+export type VisualSceneSkyLayer = {
+  cloudKind: VisualSceneCloudKind;
+  density: number;
+  id: string;
+  opacity: number;
+  rect: VisualRect;
+  scale: number;
+  speed: number;
+  weather: VisualSceneWeatherKind;
+};
+
 export type VisualScene = {
   backgroundColor: string;
   fringeZones: VisualFringeZone[];
@@ -220,6 +243,7 @@ export type VisualScene = {
     labels: VisualSceneLayer;
     props: VisualSceneLayer;
     structures: VisualSceneLayer;
+    weather: VisualSceneLayer;
   };
   locationAnchors: Record<string, VisualSceneLocationAnchors>;
   npcAnchors: Record<string, VisualPoint>;
@@ -235,6 +259,7 @@ export type VisualScene = {
     x: number;
     y: number;
   };
+  skyLayers: VisualSceneSkyLayer[];
   surfaceZones: VisualSurfaceZone[];
   surfaceDraft?: VisualSceneSurfaceDraft;
   terrainDraft?: VisualSceneTerrainDraft;
@@ -434,6 +459,7 @@ const SOUTH_QUAY_V1: VisualScene = {
     labels: { id: "labels", kind: "objects" },
     props: { id: "props", kind: "objects" },
     structures: { id: "structures", kind: "objects" },
+    weather: { id: "weather", kind: "objects" },
   },
   locationAnchors: SOUTH_QUAY_V1_LOCATION_ANCHORS,
   npcAnchors: SOUTH_QUAY_V1_NPC_ANCHORS,
@@ -493,6 +519,7 @@ const SOUTH_QUAY_V1: VisualScene = {
     x: 184,
     y: 120,
   },
+  skyLayers: [],
   surfaceZones: [],
   waterRegions: [
     {
@@ -569,7 +596,11 @@ function assertSceneDocumentShape(scene: VisualSceneDocument) {
     throw new Error("Scene document is missing an id.");
   }
 
-  if (!Array.isArray(scene.landmarks) || !Array.isArray(scene.surfaceZones)) {
+  if (
+    !Array.isArray(scene.landmarks) ||
+    !Array.isArray(scene.surfaceZones) ||
+    !Array.isArray(scene.skyLayers)
+  ) {
     throw new Error("Scene document is missing required scene arrays.");
   }
 

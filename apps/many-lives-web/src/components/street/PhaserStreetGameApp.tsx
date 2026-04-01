@@ -39,14 +39,17 @@ import type {
 } from "@/lib/street/types";
 import {
   getVisualScene,
+  getVisualSceneDocument,
   getVisualSceneRuntimeRevision,
   projectVisualScenePoint,
   resolveVisualSceneTargetTile,
   validateVisualSceneAgainstGame,
   VISUAL_SCENE_RUNTIME_OVERRIDE_EVENT,
+  type VisualSceneCloudKind,
   type VisualRect,
   type VisualScene,
   type VisualSurfaceMaterialKind,
+  type VisualSceneWeatherKind,
 } from "@/lib/street/visualScenes";
 
 const CELL = 40;
@@ -67,6 +70,7 @@ const CAMERA_USER_ZOOM_DEFAULT = 1;
 const CAMERA_USER_ZOOM_LERP = 0.16;
 const CAMERA_USER_ZOOM_MAX = 1.16;
 const CAMERA_USER_ZOOM_MIN = 0.76;
+const MAX_RUNTIME_RENDER_SCALE = 2;
 const CAMERA_WHEEL_ZOOM_STEP = 0.08;
 const MOVEMENT_FLUSH_DELAY_MS = 45;
 const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 320;
@@ -101,6 +105,16 @@ type ViewportSize = {
 type SceneViewport = ViewportSize & {
   x: number;
   y: number;
+};
+
+type OverlayLayoutMetrics = {
+  dockWidth: number;
+  focusHeight: number;
+  focusWidth: number;
+  overlayInset: number;
+  railMaxHeight: number;
+  railWidth: number;
+  sceneGap: number;
 };
 
 type StreetAppSnapshot = {
@@ -225,9 +239,11 @@ type RuntimeObjects = {
   overlayLayer: PhaserType.GameObjects.Graphics;
   playerContainer: PhaserType.GameObjects.Container;
   playerAppearance: CharacterAppearance;
+  playerName: PhaserType.GameObjects.Text;
   playerPulse: PhaserType.GameObjects.Arc;
   playerRig: CharacterRig;
   scene: PhaserType.Scene;
+  structureDetailLayer: PhaserType.GameObjects.Graphics;
   structureLayer: PhaserType.GameObjects.Graphics;
   terrainLayer: PhaserType.GameObjects.Graphics;
 };
@@ -293,6 +309,7 @@ type RuntimeState = {
   objects: RuntimeObjects | null;
   playerEntranceGameId: string | null;
   playerMotion: PlayerMotionState;
+  renderScale: number;
   snapshot: StreetAppSnapshot;
   ui: UiState;
 };
@@ -704,7 +721,7 @@ export function PhaserStreetGameApp() {
   );
 
   return (
-    <main className="h-screen overflow-hidden bg-[#08141a] text-white">
+    <main className="h-screen overflow-hidden bg-black text-white">
       <div ref={hostRef} className="h-full w-full overflow-hidden">
         {viewport.width > 0 && viewport.height > 0 ? (
           <PhaserStreetExperience
@@ -835,6 +852,7 @@ async function createRuntime(options: {
   options.mount.style.position = "relative";
   options.mount.appendChild(overlayDom);
   const runtimeNow = getRuntimeNow();
+  const renderScale = getRuntimeRenderScale();
   const runtimeState: RuntimeState = {
     cameraGesture: null,
     cameraOffset: { x: 0, y: 0 },
@@ -856,6 +874,7 @@ async function createRuntime(options: {
     objects: null,
     playerEntranceGameId: null,
     playerMotion: createInitialPlayerMotion(initialSnapshot),
+    renderScale,
     snapshot: initialSnapshot,
     ui: {
       activeTab: "actions",
@@ -991,7 +1010,10 @@ async function createRuntime(options: {
             return;
           }
 
-          const sceneViewport = getSceneViewport(runtimeState.snapshot.viewport);
+          const sceneViewport = getSceneViewport(
+            getRuntimeViewportSize(runtimeState),
+            getWorldBounds(runtimeState.snapshot),
+          );
           if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
             return;
           }
@@ -1014,7 +1036,7 @@ async function createRuntime(options: {
   };
 
   const game = new Phaser.Game({
-    backgroundColor: "#08141a",
+    backgroundColor: "#000000",
     dom: {
       createContainer: true,
     },
@@ -1033,9 +1055,10 @@ async function createRuntime(options: {
     },
     scale: {
       autoCenter: Phaser.Scale.NO_CENTER,
-      height: initialSnapshot.viewport.height,
+      height: Math.max(Math.round(initialSnapshot.viewport.height * renderScale), 1),
       mode: Phaser.Scale.NONE,
-      width: initialSnapshot.viewport.width,
+      width: Math.max(Math.round(initialSnapshot.viewport.width * renderScale), 1),
+      zoom: 1 / renderScale,
     },
     scene: sceneConfig,
     type: Phaser.AUTO,
@@ -1378,6 +1401,7 @@ function createRuntimeObjects(
 ): RuntimeObjects {
   const terrainLayer = scene.add.graphics().setDepth(10);
   const structureLayer = scene.add.graphics().setDepth(20);
+  const structureDetailLayer = scene.add.graphics().setDepth(22);
   const ambientLayer = scene.add.graphics().setDepth(25);
   const overlayLayer = scene.add.graphics().setDepth(30);
 
@@ -1412,9 +1436,11 @@ function createRuntimeObjects(
     overlayLayer,
     playerAppearance,
     playerContainer,
+    playerName,
     playerPulse,
     playerRig,
     scene,
+    structureDetailLayer,
     structureLayer,
     terrainLayer,
   };
@@ -1676,12 +1702,12 @@ function renderStaticScene(
   objects: RuntimeObjects,
   runtimeState: RuntimeState,
 ) {
-  const { ambientLayer, scene, structureLayer, terrainLayer } = objects;
+  const { ambientLayer, scene, structureDetailLayer, structureLayer, terrainLayer } = objects;
   const world = getWorldBounds(runtimeState.snapshot);
-  const sceneViewport = getSceneViewport(runtimeState.snapshot.viewport);
+  const sceneViewport = getSceneViewport(getRuntimeViewportSize(runtimeState), world);
   const sceneZoom = getTargetSceneZoom(runtimeState, sceneViewport, world);
   const camera = scene.cameras.main;
-  camera.setBackgroundColor("#08141a");
+  camera.setBackgroundColor("#000000");
   camera.setBounds(0, 0, world.width, world.height);
   camera.setViewport(
     sceneViewport.x,
@@ -1694,6 +1720,7 @@ function renderStaticScene(
 
   terrainLayer.clear();
   structureLayer.clear();
+  structureDetailLayer.clear();
   ambientLayer.clear();
 
   for (const label of objects.mapLabels) {
@@ -1752,6 +1779,7 @@ function renderDynamicScene(
   const game = runtimeState.snapshot.game;
   const now = getRuntimeNow();
   const world = getWorldBounds(runtimeState.snapshot);
+  const usingAuthoredVisualScene = runtimeState.indices.visualScene !== null;
 
   if (!game) {
     objects.overlayLayer.clear();
@@ -1770,7 +1798,9 @@ function renderDynamicScene(
   const playerAnimation = getPlayerAnimationState(runtimeState.playerMotion, now);
 
   objects.playerContainer.setPosition(playerPixel.x, playerPixel.y);
+  objects.playerName.setVisible(!usingAuthoredVisualScene);
   objects.playerPulse
+    .setVisible(!usingAuthoredVisualScene)
     .setScale(1 + Math.sin(now / 220) * 0.06)
     .setAlpha(runtimeState.snapshot.busyLabel ? 0.2 : 0.12);
   poseCharacterRig(objects.playerRig, {
@@ -1797,7 +1827,7 @@ function renderDynamicScene(
   updateCamera(
     objects.scene.cameras.main,
     runtimeState,
-    getSceneViewport(runtimeState.snapshot.viewport),
+    getSceneViewport(getRuntimeViewportSize(runtimeState), world),
     playerPixel,
     world,
     now,
@@ -1814,9 +1844,9 @@ function renderAuthoredVisualScene(
     drawSurfaceZones(objects.terrainLayer, visualScene);
     drawV2LandmarkGroundArt(objects.terrainLayer, visualScene);
     drawHarborEdge(objects.terrainLayer, visualScene);
-    drawLandmarkModules(objects.structureLayer, visualScene);
-    drawV2LandmarkStructureArt(objects.structureLayer, visualScene);
-    drawPropClusters(objects.structureLayer, visualScene);
+    drawV2LandmarkStructureArt(objects, visualScene);
+    drawLandmarkModules(objects, visualScene);
+    drawPropClusters(objects.structureDetailLayer, visualScene);
     void runtimeState;
     return;
   }
@@ -1849,105 +1879,72 @@ function renderAuthoredVisualScene(
   void runtimeState;
 }
 
-function getAuthoredLandmark(
-  visualScene: VisualScene,
-  locationId: string,
+function addLandmarkTextNode(
+  objects: RuntimeObjects,
+  config: {
+    color: string;
+    fontFamily: string;
+    fontSize: number;
+    fontStyle?: string;
+    text: string;
+    x: number;
+    y: number;
+  },
 ) {
-  return (
-    visualScene.landmarks.find((landmark) => landmark.locationId === locationId) ?? null
-  );
+  const label = objects.scene.add
+    .text(config.x, config.y, config.text, {
+      color: config.color,
+      fontFamily: config.fontFamily,
+      fontSize: `${Math.max(10, Math.round(config.fontSize))}px`,
+      fontStyle: config.fontStyle ?? "700",
+    })
+    .setDepth(23)
+    .setOrigin(0.5, 0.5);
+  objects.assetStructureNodes.push(label);
 }
 
 function drawV2LandmarkGroundArt(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const teaHouse = getAuthoredLandmark(visualScene, "tea-house");
-  if (teaHouse) {
-    const terrace = {
-      x: teaHouse.rect.x + 26,
-      y: teaHouse.rect.y + teaHouse.rect.height - 54,
-      width: teaHouse.rect.width - 52,
-      height: 42,
-    };
-    layer.fillStyle(0xdccbae, 0.96);
-    layer.fillRoundedRect(terrace.x, terrace.y, terrace.width, terrace.height, 12);
-    layer.lineStyle(1, 0xbca989, 0.34);
-    for (let x = terrace.x + 16; x < terrace.x + terrace.width - 16; x += 28) {
-      layer.lineBetween(x, terrace.y + 8, x, terrace.y + terrace.height - 8);
-    }
-    layer.fillStyle(0xa38b6b, 0.12);
-    layer.fillRoundedRect(
-      terrace.x + 8,
-      terrace.y + terrace.height - 12,
-      terrace.width - 16,
-      8,
-      4,
-    );
-  }
-
-  const boardingHouse = getAuthoredLandmark(visualScene, "boarding-house");
-  if (boardingHouse) {
-    const frontage = {
-      x: boardingHouse.rect.x + 18,
-      y: boardingHouse.rect.y + boardingHouse.rect.height - 48,
-      width: boardingHouse.rect.width - 36,
-      height: 60,
-    };
-    layer.fillStyle(0xc9ba9e, 0.78);
-    layer.fillRoundedRect(frontage.x, frontage.y, frontage.width, frontage.height, 14);
-    layer.lineStyle(1, 0xb09d81, 0.28);
-    for (let y = frontage.y + 14; y < frontage.y + frontage.height - 10; y += 16) {
-      layer.lineBetween(frontage.x + 12, y, frontage.x + frontage.width - 12, y);
-    }
-  }
-
-  const quaySquare = getAuthoredLandmark(visualScene, "market-square");
-  if (quaySquare) {
-    const outer = {
-      x: quaySquare.rect.x + 22,
-      y: quaySquare.rect.y + 22,
-      width: quaySquare.rect.width - 44,
-      height: quaySquare.rect.height - 44,
-      radius: 24,
-    };
-    const inner = {
-      x: outer.x + 42,
-      y: outer.y + 38,
-      width: outer.width - 84,
-      height: outer.height - 76,
-      radius: 18,
-    };
-
-    layer.lineStyle(2, 0xf3e6ca, 0.48);
-    layer.strokeRoundedRect(outer.x, outer.y, outer.width, outer.height, outer.radius);
-    layer.fillStyle(0xe5d8bf, 0.42);
-    layer.fillRoundedRect(inner.x, inner.y, inner.width, inner.height, inner.radius);
-    layer.lineStyle(1, 0xc7b899, 0.28);
-    layer.lineBetween(outer.x + 34, outer.y + 34, outer.x + outer.width - 34, outer.y + outer.height - 34);
-    layer.lineBetween(outer.x + outer.width - 34, outer.y + 34, outer.x + 34, outer.y + outer.height - 34);
-    layer.lineBetween(outer.x + outer.width / 2, outer.y + 22, outer.x + outer.width / 2, outer.y + outer.height - 22);
-    layer.lineBetween(outer.x + 22, outer.y + outer.height / 2, outer.x + outer.width - 22, outer.y + outer.height / 2);
-  }
+  void layer;
+  void visualScene;
 }
 
 function drawV2LandmarkStructureArt(
-  layer: PhaserType.GameObjects.Graphics,
+  objects: RuntimeObjects,
   visualScene: VisualScene,
 ) {
-  const teaHouse = getAuthoredLandmark(visualScene, "tea-house");
-  if (teaHouse) {
-    drawTeaHouseHeroArt(layer, teaHouse.rect);
-  }
+  const layer = objects.structureLayer;
+  for (const landmark of visualScene.landmarks) {
+    if (landmark.locationId === "market-square" || landmark.style === "square") {
+      drawQuaySquareHeroArt(layer, landmark.rect);
+      continue;
+    }
 
-  const boardingHouse = getAuthoredLandmark(visualScene, "boarding-house");
-  if (boardingHouse) {
-    drawBoardingHouseHeroArt(layer, boardingHouse.rect);
-  }
+    if (landmark.style === "courtyard") {
+      continue;
+    }
 
-  const quaySquare = getAuthoredLandmark(visualScene, "market-square");
-  if (quaySquare) {
-    drawQuaySquareHeroArt(layer, quaySquare.rect);
+    if (landmark.style === "cafe") {
+      drawTeaHouseHeroArt(layer, landmark.rect);
+      continue;
+    }
+
+    if (landmark.style === "boarding-house") {
+      drawBoardingHouseHeroArt(layer, landmark.rect);
+      addLandmarkTextNode(objects, {
+        color: "#f4ead2",
+        fontFamily: "Georgia, serif",
+        fontSize: 14,
+        text: "BOARDING HOUSE",
+        x: landmark.rect.x + landmark.rect.width / 2,
+        y: landmark.rect.y + 27,
+      });
+      continue;
+    }
+
+    drawV2GenericLandmarkArt(layer, landmark);
   }
 }
 
@@ -1955,184 +1952,352 @@ function drawTeaHouseHeroArt(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
 ) {
-  layer.fillStyle(0x000000, 0.1);
-  layer.fillRoundedRect(rect.x + 26, rect.y + rect.height - 22, rect.width - 52, 18, 10);
-  layer.fillStyle(0xeedfc2, 0.98);
-  layer.fillRoundedRect(rect.x + 12, rect.y + 40, rect.width - 24, rect.height - 60, 24);
-  layer.fillStyle(0xc89263, 0.76);
-  layer.fillRoundedRect(rect.x + 24, rect.y + 78, rect.width - 48, 18, 10);
-
-  const upperWindowY = rect.y + 56;
-  for (let index = 0; index < 4; index += 1) {
-    const windowX = rect.x + 42 + index * 74;
-    layer.fillStyle(0xf7edcc, 0.95);
-    layer.fillRoundedRect(windowX, upperWindowY, 46, 30, 8);
-    layer.fillStyle(0x93724f, 0.22);
-    layer.fillRoundedRect(windowX + 4, upperWindowY + 4, 38, 22, 6);
-    layer.fillStyle(0x7f6a52, 0.76);
-    layer.fillRect(windowX + 20, upperWindowY + 3, 3, 24);
-  }
-
-  layer.fillStyle(0x5e4635, 0.18);
-  layer.fillRoundedRect(rect.x + 30, rect.y + 120, rect.width - 60, 34, 12);
-  layer.fillStyle(0x6d4c34, 1);
-  layer.fillRoundedRect(rect.x + rect.width / 2 - 36, rect.y + 138, 72, 92, 16);
-  layer.fillStyle(0xf2dfb2, 0.3);
-  layer.fillRoundedRect(rect.x + rect.width / 2 - 20, rect.y + 154, 40, 34, 10);
-
-  const diningWindows = [
-    rect.x + 44,
-    rect.x + 114,
-    rect.x + rect.width - 158,
-    rect.x + rect.width - 88,
-  ];
-  for (const windowX of diningWindows) {
-    layer.fillStyle(0xf8e8b9, 0.96);
-    layer.fillRoundedRect(windowX, rect.y + 148, 44, 54, 10);
-    layer.fillStyle(0x7b5b40, 0.28);
-    layer.fillRoundedRect(windowX + 4, rect.y + 154, 36, 44, 8);
-  }
-
-  layer.fillStyle(0x7e5d43, 0.94);
-  layer.fillRoundedRect(rect.x + 30, rect.y + 236, rect.width - 60, 14, 6);
-  for (let x = rect.x + 52; x < rect.x + rect.width - 52; x += 28) {
-    layer.fillRoundedRect(x, rect.y + 228, 4, 28, 2);
-  }
-
-  drawWallLantern(layer, rect.x + 28, rect.y + 168, 1.05);
-  drawWallLantern(layer, rect.x + rect.width - 28, rect.y + 168, 1.05);
+  const roofHeight = Math.max(24, Math.min(42, rect.height * 0.18));
+  const lowerBandHeight = Math.max(26, rect.height * 0.16);
+  layer.fillStyle(0xf0e4cd, 1);
+  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.lineStyle(4, 0xf4ead3, 0.35);
+  layer.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.fillStyle(0xb08c66, 1);
+  layer.fillRoundedRect(rect.x, rect.y, rect.width, roofHeight, rect.radius ?? 18);
+  layer.fillStyle(0xffffff, 0.52);
+  layer.fillRoundedRect(rect.x + 42, rect.y + roofHeight + 12, rect.width - 84, 10, 5);
+  layer.fillStyle(0xf6eddc, 1);
+  layer.fillRoundedRect(
+    rect.x + 17,
+    rect.y + roofHeight + 18,
+    rect.width - 34,
+    Math.max(54, rect.height - roofHeight - lowerBandHeight - 28),
+    Math.max(16, (rect.radius ?? 20) - 4),
+  );
+  layer.lineStyle(3, 0xa78661, 0.18);
+  layer.strokeRoundedRect(
+    rect.x + 17,
+    rect.y + roofHeight + 18,
+    rect.width - 34,
+    Math.max(54, rect.height - roofHeight - lowerBandHeight - 28),
+    Math.max(16, (rect.radius ?? 20) - 4),
+  );
+  layer.fillStyle(0x79583a, 0.12);
+  layer.fillRoundedRect(
+    rect.x + 32,
+    rect.y + rect.height - lowerBandHeight - 22,
+    rect.width - 64,
+    14,
+    7,
+  );
+  layer.fillStyle(0x815d3f, 1);
+  layer.fillRect(rect.x + 9, rect.y + rect.height - lowerBandHeight - 10, rect.width - 18, lowerBandHeight);
+  layer.fillStyle(0x6a4d35, 1);
+  layer.fillRoundedRect(rect.x + 27, rect.y + rect.height - 24, rect.width - 54, 12, 6);
 }
 
 function drawBoardingHouseHeroArt(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
 ) {
-  layer.fillStyle(0x000000, 0.08);
-  layer.fillRoundedRect(rect.x + 22, rect.y + rect.height - 18, rect.width - 44, 16, 8);
-  layer.fillStyle(0x5f6d74, 1);
-  layer.fillRoundedRect(rect.x + 8, rect.y + 6, rect.width - 16, 38, 20);
-  layer.fillStyle(0xdbcab2, 0.96);
-  layer.fillRoundedRect(rect.x + 18, rect.y + 42, rect.width - 36, rect.height - 70, 24);
-  layer.fillStyle(0xc38e75, 0.72);
-  layer.fillRoundedRect(rect.x + 28, rect.y + 122, rect.width - 56, 24, 10);
-
-  const upperWindows = [
-    rect.x + 48,
-    rect.x + 116,
-    rect.x + 184,
-    rect.x + 252,
-    rect.x + 320,
-  ];
-  for (const windowX of upperWindows) {
-    drawBoardingWindow(layer, windowX, rect.y + 72, 40, 56);
-  }
-
-  const lowerWindows = [
-    rect.x + 72,
-    rect.x + 148,
-    rect.x + 224,
-    rect.x + 300,
-  ];
-  for (const windowX of lowerWindows) {
-    drawBoardingWindow(layer, windowX, rect.y + 162, 42, 50);
-  }
-
-  layer.fillStyle(0x7b5a42, 1);
-  layer.fillRoundedRect(rect.x + rect.width / 2 - 34, rect.y + 214, 68, 92, 14);
-  layer.fillStyle(0xf5deb1, 0.22);
-  layer.fillRoundedRect(rect.x + rect.width / 2 - 18, rect.y + 230, 36, 30, 8);
-  layer.fillStyle(0x9a8267, 0.96);
-  layer.fillRoundedRect(rect.x + rect.width / 2 - 58, rect.y + rect.height - 28, 116, 18, 8);
-
-  layer.lineStyle(3, 0x7c6b5d, 0.82);
-  layer.lineBetween(rect.x + rect.width / 2 - 52, rect.y + rect.height - 16, rect.x + rect.width / 2 - 80, rect.y + rect.height + 18);
-  layer.lineBetween(rect.x + rect.width / 2 + 52, rect.y + rect.height - 16, rect.x + rect.width / 2 + 80, rect.y + rect.height + 18);
-  layer.lineStyle(2, 0xcdb898, 0.42);
-  layer.lineBetween(rect.x + rect.width / 2 - 64, rect.y + rect.height - 8, rect.x + rect.width / 2 + 64, rect.y + rect.height - 8);
-
-  layer.fillStyle(0x6a7175, 0.96);
-  layer.fillRoundedRect(rect.x + rect.width - 42, rect.y + 58, 8, 186, 4);
-  drawWallLantern(layer, rect.x + rect.width / 2 - 72, rect.y + 214, 0.92);
-  drawWallLantern(layer, rect.x + rect.width / 2 + 72, rect.y + 214, 0.92);
+  const roofHeight = Math.max(28, Math.min(56, rect.height * 0.24));
+  const lowerBandHeight = Math.max(40, rect.height * 0.22);
+  const signWidth = Math.min(228, rect.width - 112);
+  const signX = rect.x + (rect.width - signWidth) / 2;
+  layer.fillStyle(0xd8c7b6, 1);
+  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.lineStyle(4, 0xf4ead3, 0.35);
+  layer.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.fillStyle(0x89949c, 1);
+  layer.fillRoundedRect(rect.x, rect.y, rect.width, roofHeight, rect.radius ?? 18);
+  layer.fillStyle(0x4d5961, 1);
+  layer.fillRoundedRect(signX, rect.y + 12, signWidth, 34, 12);
+  layer.lineStyle(3, 0xd5bd88, 1);
+  layer.strokeRoundedRect(signX, rect.y + 12, signWidth, 34, 12);
+  layer.fillStyle(0xffffff, 0.1);
+  layer.fillRoundedRect(signX + 14, rect.y + 18, signWidth - 28, 7, 3.5);
+  layer.fillStyle(0xe3d7c9, 1);
+  layer.fillRoundedRect(rect.x + 14, rect.y + roofHeight + 10, rect.width - 28, Math.max(86, rect.height * 0.34), 16);
+  layer.lineStyle(3, 0x7a614e, 0.12);
+  layer.strokeRoundedRect(rect.x + 14, rect.y + roofHeight + 10, rect.width - 28, Math.max(86, rect.height * 0.34), 16);
+  layer.fillStyle(0xcfb9a5, 1);
+  layer.fillRoundedRect(
+    rect.x + 20,
+    rect.y + rect.height - lowerBandHeight - Math.max(92, rect.height * 0.28),
+    rect.width - 40,
+    Math.max(72, rect.height * 0.26),
+    14,
+  );
+  layer.lineStyle(3, 0x755642, 0.12);
+  layer.strokeRoundedRect(
+    rect.x + 20,
+    rect.y + rect.height - lowerBandHeight - Math.max(92, rect.height * 0.28),
+    rect.width - 40,
+    Math.max(72, rect.height * 0.26),
+    14,
+  );
+  layer.fillStyle(0xa67961, 1);
+  layer.fillRect(rect.x + 9, rect.y + rect.height - lowerBandHeight - 10, rect.width - 18, lowerBandHeight);
 }
 
 function drawQuaySquareHeroArt(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
 ) {
-  const centerX = rect.x + rect.width / 2;
-  const centerY = rect.y + rect.height / 2 + 8;
-  const outer = {
-    x: rect.x + 26,
-    y: rect.y + 24,
-    width: rect.width - 52,
-    height: rect.height - 48,
+  const inset = 22;
+  const innerRect = {
+    x: rect.x + inset,
+    y: rect.y + inset,
+    width: rect.width - inset * 2,
+    height: rect.height - inset * 2,
   };
-
-  layer.lineStyle(2, 0xf0e1c0, 0.44);
-  layer.strokeRoundedRect(outer.x, outer.y, outer.width, outer.height, 22);
-  layer.lineStyle(1, 0xc9b999, 0.22);
-  for (let x = outer.x + 28; x < outer.x + outer.width - 28; x += 44) {
-    layer.lineBetween(x, outer.y + 12, x, outer.y + outer.height - 12);
-  }
-  for (let y = outer.y + 24; y < outer.y + outer.height - 18; y += 34) {
-    layer.lineBetween(outer.x + 14, y, outer.x + outer.width - 14, y);
-  }
-
-  layer.fillStyle(0x000000, 0.08);
-  layer.fillEllipse(centerX, centerY + 30, 110, 26);
-  layer.fillStyle(0x9ca39f, 1);
-  layer.fillEllipse(centerX, centerY + 10, 88, 36);
-  layer.fillStyle(0xd7d9d3, 0.96);
-  layer.fillEllipse(centerX, centerY + 4, 72, 24);
-  layer.fillStyle(0x89938f, 1);
-  layer.fillRoundedRect(centerX - 14, centerY - 34, 28, 56, 10);
-  layer.fillStyle(0xcfdde2, 0.84);
-  layer.fillEllipse(centerX, centerY - 14, 26, 16);
-
-  const plinths = [
-    { x: rect.x + 88, y: rect.y + 96 },
-    { x: rect.x + rect.width - 88, y: rect.y + 96 },
-    { x: rect.x + 88, y: rect.y + rect.height - 96 },
-    { x: rect.x + rect.width - 88, y: rect.y + rect.height - 96 },
-  ];
-  for (const plinth of plinths) {
-    layer.fillStyle(0xc8b897, 0.4);
-    layer.fillRoundedRect(plinth.x - 18, plinth.y - 12, 36, 24, 8);
-  }
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+  const crossWidth = Math.max(54, rect.width * 0.16);
+  const crossHeight = Math.max(54, rect.height * 0.16);
+  const civicRadius = Math.min(rect.width, rect.height) * 0.18;
+  layer.fillStyle(0xd7c7a6, 1);
+  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 30);
+  layer.lineStyle(4, 0xf4ead3, 0.28);
+  layer.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 30);
+  layer.fillStyle(0xccb993, 1);
+  layer.fillRoundedRect(innerRect.x, innerRect.y, innerRect.width, innerRect.height, 24);
+  layer.lineStyle(3, 0x9a805c, 0.18);
+  layer.strokeRoundedRect(innerRect.x, innerRect.y, innerRect.width, innerRect.height, 24);
+  layer.fillStyle(0xe7dcc3, 1);
+  layer.fillRoundedRect(centerX - crossWidth / 2, innerRect.y + 31, crossWidth, innerRect.height - 62, 22);
+  layer.fillRoundedRect(innerRect.x + 31, centerY - crossHeight / 2, innerRect.width - 62, crossHeight, 22);
+  layer.fillStyle(0xb8a17a, 1);
+  layer.fillCircle(centerX, centerY, civicRadius + 26);
+  layer.fillStyle(0xe9dfcc, 1);
+  layer.fillCircle(centerX, centerY, civicRadius + 16);
+  layer.fillStyle(0xa9b3b9, 1);
+  layer.fillCircle(centerX, centerY, civicRadius);
+  layer.fillStyle(0xd8ecf5, 1);
+  layer.fillCircle(centerX, centerY, civicRadius * 0.58);
+  layer.fillStyle(0xffffff, 0.36);
+  layer.fillCircle(centerX, centerY - civicRadius * 0.16, civicRadius * 0.24);
+  layer.fillStyle(0x9c8760, 1);
+  layer.fillRoundedRect(innerRect.x + 42, innerRect.y + 26, innerRect.width - 84, 16, 8);
+  layer.fillRoundedRect(innerRect.x + 42, innerRect.y + innerRect.height - 42, innerRect.width - 84, 16, 8);
+  layer.fillRoundedRect(innerRect.x + 26, innerRect.y + 42, 16, innerRect.height - 84, 8);
+  layer.fillRoundedRect(innerRect.x + innerRect.width - 42, innerRect.y + 42, 16, innerRect.height - 84, 8);
 }
 
-function drawBoardingWindow(
+function drawV2GenericLandmarkArt(
   layer: PhaserType.GameObjects.Graphics,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
+  landmark: VisualScene["landmarks"][number],
 ) {
-  layer.fillStyle(0xf4e3b8, 0.95);
-  layer.fillRoundedRect(x, y, width, height, 8);
-  layer.fillStyle(0x87664a, 0.26);
-  layer.fillRoundedRect(x + 4, y + 5, width - 8, height - 10, 6);
-  layer.fillStyle(0x6a7580, 0.28);
-  layer.fillRect(x + width / 2 - 1.5, y + 4, 3, height - 8);
-  layer.fillRect(x + 4, y + height / 2 - 1.5, width - 8, 3);
-}
+  const roofFill =
+    landmark.style === "workshop"
+      ? 0x5a6670
+      : landmark.style === "dock"
+        ? 0x8d6d47
+        : landmark.style === "yard"
+          ? 0x6d675d
+          : landmark.style === "courtyard"
+            ? 0x7c8b63
+            : 0xd6c7a9;
+  const bodyFill =
+    landmark.style === "workshop"
+      ? 0x9e8667
+      : landmark.style === "dock"
+        ? 0x866444
+        : landmark.style === "yard"
+          ? 0x7b776d
+          : landmark.style === "courtyard"
+            ? 0x72825f
+            : 0xddd1b8;
+  const lowerBand =
+    landmark.style === "workshop"
+      ? 0x6e5b46
+      : landmark.style === "dock"
+        ? 0x76563b
+        : landmark.style === "yard"
+          ? 0x4d4a45
+          : 0xa99c7d;
+  const roofHeight = Math.max(28, Math.min(56, landmark.rect.height * 0.24));
+  const lowerBandHeight = Math.max(40, landmark.rect.height * 0.22);
+  const isDockyard = landmark.locationId === "freight-yard";
+  const dockyardCargoWidth = isDockyard ? Math.max(78, landmark.rect.width * 0.28) : 0;
+  const dockyardCargoHeight = isDockyard ? Math.max(104, landmark.rect.height * 0.5) : 0;
+  const dockyardCargoX = landmark.rect.x + landmark.rect.width - dockyardCargoWidth - 38;
+  const dockyardCargoY =
+    landmark.rect.y + landmark.rect.height - lowerBandHeight - dockyardCargoHeight - 18;
 
-function drawWallLantern(
-  layer: PhaserType.GameObjects.Graphics,
-  x: number,
-  y: number,
-  scale: number,
-) {
-  layer.fillStyle(0x11181d, 0.18);
-  layer.fillEllipse(x, y + 14 * scale, 14 * scale, 5 * scale);
-  layer.fillStyle(0x4f5e65, 1);
-  layer.fillRoundedRect(x - 2 * scale, y - 8 * scale, 4 * scale, 20 * scale, 2);
-  layer.fillRoundedRect(x - 6 * scale, y - 8 * scale, 12 * scale, 4 * scale, 2);
-  layer.fillStyle(0xf3dfa6, 0.96);
-  layer.fillRoundedRect(x - 5 * scale, y - 20 * scale, 10 * scale, 12 * scale, 4);
-  layer.fillStyle(0xf3dfa6, 0.14);
-  layer.fillCircle(x, y - 14 * scale, 10 * scale);
+  layer.fillStyle(bodyFill, 1);
+  layer.fillRoundedRect(
+    landmark.rect.x,
+    landmark.rect.y,
+    landmark.rect.width,
+    landmark.rect.height,
+    landmark.rect.radius ?? 20,
+  );
+  layer.lineStyle(4, 0xf4ead3, 0.35);
+  layer.strokeRoundedRect(
+    landmark.rect.x,
+    landmark.rect.y,
+    landmark.rect.width,
+    landmark.rect.height,
+    landmark.rect.radius ?? 20,
+  );
+  layer.fillStyle(roofFill, 1);
+  layer.fillRoundedRect(
+    landmark.rect.x,
+    landmark.rect.y,
+    landmark.rect.width,
+    roofHeight,
+    landmark.rect.radius ?? 18,
+  );
+
+  if (isDockyard) {
+    layer.fillStyle(0x8a8376, 1);
+    layer.fillRoundedRect(landmark.rect.x + 17, landmark.rect.y + roofHeight + 18, landmark.rect.width - 34, Math.max(64, landmark.rect.height * 0.28), 14);
+    layer.lineStyle(3, 0x292622, 0.16);
+    layer.strokeRoundedRect(landmark.rect.x + 17, landmark.rect.y + roofHeight + 18, landmark.rect.width - 34, Math.max(64, landmark.rect.height * 0.28), 14);
+    layer.fillStyle(0xd8ccb2, 0.2);
+    layer.fillRoundedRect(landmark.rect.x + 45, landmark.rect.y + roofHeight + 28, landmark.rect.width - 90, 10, 5);
+    layer.fillStyle(0x5a564f, 1);
+    layer.fillRoundedRect(landmark.rect.x + 22, landmark.rect.y + landmark.rect.height - lowerBandHeight - Math.max(96, landmark.rect.height * 0.34), landmark.rect.width - 44, Math.max(74, landmark.rect.height * 0.32), 16);
+    layer.lineStyle(3, 0xe8d8bb, 0.1);
+    layer.strokeRoundedRect(landmark.rect.x + 22, landmark.rect.y + landmark.rect.height - lowerBandHeight - Math.max(96, landmark.rect.height * 0.34), landmark.rect.width - 44, Math.max(74, landmark.rect.height * 0.32), 16);
+    layer.fillStyle(0xc6923d, 1);
+    layer.fillRoundedRect(landmark.rect.x + 35, landmark.rect.y + landmark.rect.height - lowerBandHeight - 26, landmark.rect.width - 70, 10, 5);
+  }
+
+  layer.fillStyle(lowerBand, 1);
+  layer.fillRect(
+    landmark.rect.x + 9,
+    landmark.rect.y + landmark.rect.height - lowerBandHeight - 10,
+    landmark.rect.width - 18,
+    lowerBandHeight,
+  );
+
+  if (isDockyard) {
+    layer.fillStyle(0x0c0e0f, 0.18);
+    layer.fillEllipse(
+      dockyardCargoX + dockyardCargoWidth / 2,
+      dockyardCargoY + dockyardCargoHeight - 2,
+      dockyardCargoWidth * 1.04,
+      Math.max(18, dockyardCargoHeight * 0.16),
+    );
+    layer.fillStyle(0x65513b, 1);
+    layer.fillRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.08,
+      dockyardCargoY + dockyardCargoHeight - Math.max(16, dockyardCargoHeight * 0.14),
+      dockyardCargoWidth * 0.84,
+      Math.max(10, dockyardCargoHeight * 0.1),
+      4,
+    );
+    layer.fillStyle(0x4e5961, 1);
+    layer.fillRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.54,
+      dockyardCargoY + dockyardCargoHeight * 0.18,
+      dockyardCargoWidth * 0.38,
+      dockyardCargoHeight * 0.54,
+      10,
+    );
+    layer.lineStyle(3, 0xf0e5cb, 0.14);
+    layer.strokeRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.54,
+      dockyardCargoY + dockyardCargoHeight * 0.18,
+      dockyardCargoWidth * 0.38,
+      dockyardCargoHeight * 0.54,
+      10,
+    );
+    layer.fillStyle(0xffffff, 0.1);
+    layer.fillRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.61,
+      dockyardCargoY + dockyardCargoHeight * 0.24,
+      dockyardCargoWidth * 0.24,
+      8,
+      4,
+    );
+    layer.lineStyle(3, 0x262a2d, 0.44);
+    layer.lineBetween(
+      dockyardCargoX + dockyardCargoWidth * 0.64,
+      dockyardCargoY + dockyardCargoHeight * 0.22,
+      dockyardCargoX + dockyardCargoWidth * 0.64,
+      dockyardCargoY + dockyardCargoHeight * 0.68,
+    );
+    layer.lineBetween(
+      dockyardCargoX + dockyardCargoWidth * 0.79,
+      dockyardCargoY + dockyardCargoHeight * 0.22,
+      dockyardCargoX + dockyardCargoWidth * 0.79,
+      dockyardCargoY + dockyardCargoHeight * 0.68,
+    );
+    layer.fillStyle(0x866448, 1);
+    layer.fillRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.04,
+      dockyardCargoY + dockyardCargoHeight * 0.52,
+      dockyardCargoWidth * 0.44,
+      dockyardCargoHeight * 0.24,
+      9,
+    );
+    layer.lineStyle(3, 0xeedcb7, 0.12);
+    layer.strokeRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.04,
+      dockyardCargoY + dockyardCargoHeight * 0.52,
+      dockyardCargoWidth * 0.44,
+      dockyardCargoHeight * 0.24,
+      9,
+    );
+    layer.fillStyle(0xe8cda2, 0.16);
+    layer.fillRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.1,
+      dockyardCargoY + dockyardCargoHeight * 0.58,
+      dockyardCargoWidth * 0.3,
+      7,
+      3.5,
+    );
+    layer.lineStyle(2.5, 0x583c25, 0.4);
+    layer.lineBetween(
+      dockyardCargoX + dockyardCargoWidth * 0.14,
+      dockyardCargoY + dockyardCargoHeight * 0.54,
+      dockyardCargoX + dockyardCargoWidth * 0.14,
+      dockyardCargoY + dockyardCargoHeight * 0.74,
+    );
+    layer.lineBetween(
+      dockyardCargoX + dockyardCargoWidth * 0.31,
+      dockyardCargoY + dockyardCargoHeight * 0.54,
+      dockyardCargoX + dockyardCargoWidth * 0.31,
+      dockyardCargoY + dockyardCargoHeight * 0.74,
+    );
+    layer.fillStyle(0xa17d53, 1);
+    layer.fillRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.18,
+      dockyardCargoY + dockyardCargoHeight * 0.24,
+      dockyardCargoWidth * 0.28,
+      dockyardCargoHeight * 0.18,
+      8,
+    );
+    layer.lineStyle(3, 0xf8e9c8, 0.1);
+    layer.strokeRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.18,
+      dockyardCargoY + dockyardCargoHeight * 0.24,
+      dockyardCargoWidth * 0.28,
+      dockyardCargoHeight * 0.18,
+      8,
+    );
+    layer.fillStyle(0xd1ab58, 1);
+    layer.fillRoundedRect(
+      dockyardCargoX + dockyardCargoWidth * 0.22,
+      dockyardCargoY + dockyardCargoHeight * 0.31,
+      dockyardCargoWidth * 0.16,
+      8,
+      4,
+    );
+    const stripeWidth = (landmark.rect.width - 110) / 5;
+    for (let stripeIndex = 0; stripeIndex < 5; stripeIndex += 1) {
+      layer.fillStyle(stripeIndex % 2 === 0 ? 0xd9a240 : 0x2d2e30, 1);
+      layer.fillRoundedRect(
+        landmark.rect.x + 55 + stripeIndex * stripeWidth,
+        landmark.rect.y + landmark.rect.height - 18,
+        stripeWidth,
+        8,
+        4,
+      );
+    }
+    layer.fillStyle(0x4c4841, 1);
+    layer.fillRoundedRect(landmark.rect.x + 22, landmark.rect.y + 12, 10, landmark.rect.height - 26, 6);
+    layer.fillRoundedRect(landmark.rect.x + landmark.rect.width - 32, landmark.rect.y + 12, 10, landmark.rect.height - 26, 6);
+  }
 }
 
 function drawSurfaceZones(
@@ -2381,6 +2546,12 @@ function drawWaveStroke(
   thickness: number,
   color: number,
   alpha: number,
+  travelFade?: {
+    direction?: 1 | -1;
+    packetLength: number;
+    softness?: number;
+    speed: number;
+  },
 ) {
   if (width <= 4) {
     return;
@@ -2393,7 +2564,9 @@ function drawWaveStroke(
     Math.sin(previousX * 0.024 + beat * 1.6 + phaseOffset) * amplitude +
     Math.sin(previousX * 0.011 + beat * 0.72 + phaseOffset * 0.7) * amplitude * 0.48;
 
-  layer.lineStyle(thickness, color, alpha);
+  if (!travelFade) {
+    layer.lineStyle(thickness, color, alpha);
+  }
 
   for (let offset = sampleStep; offset <= width; offset += sampleStep) {
     const nextX = Math.min(x + offset, x + width);
@@ -2401,7 +2574,40 @@ function drawWaveStroke(
       y +
       Math.sin(nextX * 0.024 + beat * 1.6 + phaseOffset) * amplitude +
       Math.sin(nextX * 0.011 + beat * 0.72 + phaseOffset * 0.7) * amplitude * 0.48;
-    layer.lineBetween(previousX, previousY, nextX, nextY);
+    if (travelFade) {
+      const segmentProgress = ((previousX + nextX) * 0.5 - x) / width;
+      const packetRatio = Math.min(
+        Math.max(travelFade.packetLength / Math.max(width, 1), 0.08),
+        0.72,
+      );
+      const cycleSpan = 1 + packetRatio * 2;
+      const direction = travelFade.direction ?? 1;
+      const front =
+        positiveModulo(beat * travelFade.speed + phaseOffset * 0.061, cycleSpan) - packetRatio;
+      const softness = Math.max(travelFade.softness ?? 1.75, 0.45);
+      let segmentAlpha = 0;
+
+      if (direction >= 0) {
+        const tail = front - packetRatio;
+        if (segmentProgress >= tail && segmentProgress <= front) {
+          const progress = (segmentProgress - tail) / packetRatio;
+          segmentAlpha = Math.pow(progress, softness);
+        }
+      } else {
+        const tail = front + packetRatio;
+        if (segmentProgress >= front && segmentProgress <= tail) {
+          const progress = 1 - (segmentProgress - front) / packetRatio;
+          segmentAlpha = Math.pow(progress, softness);
+        }
+      }
+
+      if (segmentAlpha > 0.002) {
+        layer.lineStyle(thickness, color, alpha * segmentAlpha);
+        layer.lineBetween(previousX, previousY, nextX, nextY);
+      }
+    } else {
+      layer.lineBetween(previousX, previousY, nextX, nextY);
+    }
     previousX = nextX;
     previousY = nextY;
   }
@@ -2860,9 +3066,10 @@ function drawHarborEdge(
 }
 
 function drawLandmarkModules(
-  layer: PhaserType.GameObjects.Graphics,
+  objects: RuntimeObjects,
   visualScene: VisualScene,
 ) {
+  const layer = objects.structureDetailLayer;
   for (const landmarkModule of visualScene.landmarkModules) {
     switch (landmarkModule.kind) {
       case "roof_cap":
@@ -2903,6 +3110,40 @@ function drawLandmarkModules(
         break;
       default:
         break;
+    }
+  }
+
+  for (const landmarkModule of visualScene.landmarkModules) {
+    if (landmarkModule.kind !== "sign") {
+      continue;
+    }
+
+    if (landmarkModule.variant === "cafe") {
+      addLandmarkTextNode(objects, {
+        color: "#f7edd2",
+        fontFamily: "Georgia, serif",
+        fontSize: Math.max(16, landmarkModule.rect.height * 0.55),
+        text: "CAFE",
+        x: landmarkModule.rect.x + landmarkModule.rect.width / 2,
+        y:
+          landmarkModule.rect.y +
+          landmarkModule.rect.height / 2 +
+          Math.max(4, landmarkModule.rect.height * 0.12),
+      });
+    }
+
+    if (landmarkModule.variant === "yard") {
+      addLandmarkTextNode(objects, {
+        color: "#f0dfb8",
+        fontFamily: "Arial Black, Impact, sans-serif",
+        fontSize: Math.max(12, landmarkModule.rect.height * 0.44),
+        text: "DOCK YARD",
+        x: landmarkModule.rect.x + landmarkModule.rect.width / 2,
+        y:
+          landmarkModule.rect.y +
+          landmarkModule.rect.height / 2 +
+          Math.max(4, landmarkModule.rect.height * 0.12),
+      });
     }
   }
 }
@@ -3817,28 +4058,118 @@ function drawAnimatedVisualWater(
   now: number,
 ) {
   const beat = now / 1000;
+  const animatedWaterRegions =
+    visualScene.waterRegions.filter((region) => region.tag === "water_surface").length > 0
+      ? visualScene.waterRegions
+          .filter((region) => region.tag === "water_surface")
+          .map((region) => ({
+            crestColor: region.crestColor,
+            intensity: region.intensity,
+            rect: region.rect,
+          }))
+      : visualScene.surfaceZones
+          .filter((zone) => zone.kind === "deep_water")
+          .map((zone) => ({
+            crestColor: 0xd8f4fb,
+            intensity: 0.78,
+            rect: zone.rect,
+          }));
+
+  for (const waterRegion of animatedWaterRegions) {
+    const { rect } = waterRegion;
+    const swellColor = blendColor(waterRegion.crestColor, 0x2a5f76, 0.52);
+    const highlightColor = blendColor(waterRegion.crestColor, 0xffffff, 0.28);
+
+    for (let row = 18; row < rect.height - 8; row += 28) {
+      const rowPhase = row * 0.034;
+      drawWaveStroke(
+        layer,
+        rect.x + 12,
+        rect.y + row,
+        Math.max(rect.width - 24, 0),
+        beat,
+        rowPhase,
+        5.6,
+        4.4,
+        swellColor,
+        0.055 + waterRegion.intensity * 0.03,
+      );
+      drawWaveStroke(
+        layer,
+        rect.x + 18,
+        rect.y + row - 5,
+        Math.max(rect.width - 36, 0),
+        beat,
+        rowPhase + 0.85,
+        3.2,
+        2.2,
+        highlightColor,
+        0.085 + waterRegion.intensity * 0.05,
+        {
+          packetLength: Math.max(Math.min(rect.width * 0.22, 108), 52),
+          softness: 1.9,
+          speed: 0.14,
+        },
+      );
+    }
+
+    for (let row = 14; row < rect.height - 10; row += 20) {
+      for (let x = rect.x + 20; x < rect.x + rect.width - 28; x += 76) {
+        const localWave = beat * 1.5 + row * 0.08 + x * 0.014;
+        const drift = Math.sin(localWave) * 8;
+        const chopWidth = 24 + ((Math.sin(localWave * 0.72) + 1) * 14);
+        const chopY = rect.y + row + Math.sin(localWave * 1.18) * 3.4;
+        layer.lineStyle(1.8, waterRegion.crestColor, 0.08 + waterRegion.intensity * 0.05);
+        layer.lineBetween(
+          x + drift,
+          chopY,
+          Math.min(x + drift + chopWidth, rect.x + rect.width - 16),
+          chopY - 1.6,
+        );
+      }
+
+      for (let x = rect.x + 34; x < rect.x + rect.width - 22; x += 116) {
+        const shimmerPhase = beat * 1.22 + row * 0.05 + x * 0.009;
+        layer.fillStyle(
+          blendColor(waterRegion.crestColor, 0xffffff, 0.38),
+          0.035 + ((Math.sin(shimmerPhase) + 1) * 0.018),
+        );
+        layer.fillEllipse(
+          x + Math.sin(shimmerPhase * 0.8) * 5,
+          rect.y + row + 6 + Math.cos(shimmerPhase) * 3,
+          18,
+          3.2,
+        );
+      }
+    }
+  }
 
   for (const waterRegion of visualScene.waterRegions) {
     const { rect } = waterRegion;
-    if (waterRegion.tag === "water_surface") {
-      for (let row = 0; row < rect.height; row += 24) {
-        const drift = Math.sin(beat * 1.1 + row * 0.06) * 12;
-        layer.lineStyle(2.6, waterRegion.crestColor, 0.12 + waterRegion.intensity * 0.08);
-        layer.lineBetween(
-          rect.x + 18 + drift,
-          rect.y + 16 + row,
-          rect.x + rect.width - 18 + drift * 0.2,
-          rect.y + 10 + row,
-        );
-      }
-      continue;
-    }
-
     if (waterRegion.tag === "shore_foam") {
+      drawWaveStroke(
+        layer,
+        rect.x + 10,
+        rect.y + rect.height / 2,
+        Math.max(rect.width - 20, 0),
+        beat,
+        rect.y * 0.01,
+        1.8,
+        1.8,
+        waterRegion.crestColor,
+        0.08 + waterRegion.intensity * 0.05,
+        {
+          packetLength: Math.max(Math.min(rect.width * 0.18, 84), 34),
+          softness: 2,
+          speed: 0.22,
+        },
+      );
       for (let x = rect.x; x < rect.x + rect.width; x += 22) {
         const lift = Math.sin(beat * 2.3 + x * 0.04) * 4;
         layer.fillStyle(waterRegion.crestColor, 0.12 + waterRegion.intensity * 0.08);
         layer.fillEllipse(x, rect.y + rect.height / 2 + lift, 20, 5);
+        layer.fillStyle(0xffffff, 0.045 + waterRegion.intensity * 0.03);
+        layer.fillEllipse(x + 4, rect.y + rect.height / 2 + lift - 1, 12, 2.8);
       }
     }
   }
@@ -3872,6 +4203,11 @@ function drawAnimatedVisualWater(
         2.2,
         0xd4eef5,
         0.12,
+        {
+          packetLength: Math.max(Math.min(segment.width * 0.28, 88), 34),
+          softness: 1.85,
+          speed: 0.18,
+        },
       );
       drawWaveStroke(
         layer,
@@ -3884,6 +4220,11 @@ function drawAnimatedVisualWater(
         1.7,
         0xc6e5ee,
         0.08,
+        {
+          packetLength: Math.max(Math.min(segment.width * 0.22, 72), 28),
+          softness: 2.1,
+          speed: 0.24,
+        },
       );
     }
 
@@ -3964,6 +4305,126 @@ function renderOverlay(
   root.style.boxSizing = "border-box";
   root.innerHTML = buildOverlayHtml(runtimeState);
   restoreOverlayRenderState(root, overlayState);
+}
+
+function cloudSvgPalette(kind: VisualSceneCloudKind) {
+  switch (kind) {
+    case "storm-front":
+      return {
+        body: "rgba(115, 127, 143, 0.92)",
+        edge: "rgba(197, 208, 220, 0.18)",
+      };
+    case "harbor-bank":
+      return {
+        body: "rgba(226, 234, 238, 0.88)",
+        edge: "rgba(255, 255, 255, 0.18)",
+      };
+    case "wispy":
+    default:
+      return {
+        body: "rgba(241, 246, 248, 0.82)",
+        edge: "rgba(255, 255, 255, 0.18)",
+      };
+  }
+}
+
+function buildCloudSvgMarkup(
+  layer: VisualScene["skyLayers"][number],
+  width: number,
+  height: number,
+) {
+  const palette = cloudSvgPalette(layer.cloudKind);
+  const cloudCount = Math.max(6, Math.round((width / 180) * Math.max(layer.density, 1.1)));
+  const segments: string[] = [];
+
+  for (let index = 0; index < cloudCount; index += 1) {
+    const progress = index / cloudCount;
+    const cloudScale =
+      layer.scale *
+      (layer.cloudKind === "storm-front" ? 1.34 : layer.cloudKind === "harbor-bank" ? 1.12 : 0.94) *
+      (0.9 + (index % 3) * 0.12);
+    const cloudWidth = 128 * cloudScale;
+    const cloudHeight = 38 * cloudScale;
+    const x = progress * width;
+    const y = height * (0.2 + (index % 4) * 0.12);
+    const opacity = Math.max(0.18, Math.min(layer.opacity * (0.72 + (index % 2) * 0.14), 1));
+
+    segments.push(
+      `<g opacity="${opacity.toFixed(3)}">` +
+        `<ellipse cx="${(x + cloudWidth * 0.52).toFixed(1)}" cy="${(y + cloudHeight * 0.74).toFixed(1)}" rx="${(cloudWidth * 0.44).toFixed(1)}" ry="${(cloudHeight * 0.2).toFixed(1)}" fill="rgba(0,0,0,0.08)" />` +
+        `<ellipse cx="${(x + cloudWidth * 0.3).toFixed(1)}" cy="${(y + cloudHeight * 0.58).toFixed(1)}" rx="${(cloudWidth * 0.22).toFixed(1)}" ry="${(cloudHeight * 0.42).toFixed(1)}" fill="${palette.body}" stroke="${palette.edge}" stroke-width="1.1" />` +
+        `<ellipse cx="${(x + cloudWidth * 0.54).toFixed(1)}" cy="${(y + cloudHeight * 0.42).toFixed(1)}" rx="${(cloudWidth * 0.31).toFixed(1)}" ry="${(cloudHeight * 0.5).toFixed(1)}" fill="${palette.body}" stroke="${palette.edge}" stroke-width="1.1" />` +
+        `<ellipse cx="${(x + cloudWidth * 0.78).toFixed(1)}" cy="${(y + cloudHeight * 0.6).toFixed(1)}" rx="${(cloudWidth * 0.24).toFixed(1)}" ry="${(cloudHeight * 0.36).toFixed(1)}" fill="${palette.body}" stroke="${palette.edge}" stroke-width="1.1" />` +
+        `<rect x="${(x + cloudWidth * 0.18).toFixed(1)}" y="${(y + cloudHeight * 0.5).toFixed(1)}" width="${(cloudWidth * 0.66).toFixed(1)}" height="${(cloudHeight * 0.46).toFixed(1)}" rx="${(cloudHeight * 0.2).toFixed(1)}" ry="${(cloudHeight * 0.2).toFixed(1)}" fill="${palette.body}" />` +
+      `</g>`,
+    );
+  }
+
+  return segments.join("");
+}
+
+function weatherLayerOpacity(kind: VisualSceneWeatherKind, baseOpacity: number) {
+  switch (kind) {
+    case "mist":
+      return Math.min(baseOpacity * 0.74, 0.48);
+    case "drizzle":
+      return Math.min(baseOpacity * 0.64, 0.34);
+    case "rain":
+      return Math.min(baseOpacity * 0.76, 0.46);
+    case "storm":
+      return Math.min(baseOpacity * 0.92, 0.6);
+    default:
+      return 0;
+  }
+}
+
+function buildSkyOverlayHtml(runtimeState: RuntimeState) {
+  const visualScene = runtimeState.indices.visualScene;
+  if (!visualScene || visualScene.skyLayers.length === 0) {
+    return "";
+  }
+
+  const { height: viewportHeight, width: viewportWidth } = runtimeState.snapshot.viewport;
+
+  const bands = visualScene.skyLayers.map((layer) => {
+    const left = (layer.rect.x / visualScene.width) * viewportWidth;
+    const top = (layer.rect.y / visualScene.height) * viewportHeight;
+    const width = Math.max((layer.rect.width / visualScene.width) * viewportWidth, viewportWidth * 0.35);
+    const height = Math.max((layer.rect.height / visualScene.height) * viewportHeight, 56);
+    const trackWidth = width + 260 * Math.max(layer.scale, 0.6);
+    const speedPxPerSecond = Math.max((layer.speed * viewportWidth) / visualScene.width, 8);
+    const duration = Math.max((trackWidth * 0.5) / speedPxPerSecond, 26);
+    const cloudSvg = buildCloudSvgMarkup(layer, trackWidth, height);
+    const weatherOpacity = weatherLayerOpacity(layer.weather, layer.opacity);
+    const weatherTop = Math.max(top + height * 0.18, 0);
+    const weatherHeight =
+      layer.weather === "mist"
+        ? Math.min(viewportHeight - weatherTop, height + 96)
+        : Math.max(viewportHeight - weatherTop, height);
+
+    return `
+      <div class="ml-weather-band" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;width:${width.toFixed(1)}px;height:${height.toFixed(1)}px;opacity:${Math.max(0.16, Math.min(layer.opacity, 1)).toFixed(3)};">
+        <div class="ml-weather-cloud-marquee" style="width:${(trackWidth * 2).toFixed(1)}px;animation-duration:${duration.toFixed(2)}s;">
+          <svg viewBox="0 0 ${(trackWidth * 2).toFixed(1)} ${height.toFixed(1)}" preserveAspectRatio="none">
+            ${cloudSvg}
+            <g transform="translate(${trackWidth.toFixed(1)} 0)">${cloudSvg}</g>
+          </svg>
+        </div>
+      </div>
+      ${
+        layer.weather === "none"
+          ? ""
+          : `<div class="ml-weather-veil ml-weather-veil--${escapeHtml(layer.weather)}" style="top:${weatherTop.toFixed(1)}px;left:0px;width:${viewportWidth}px;height:${weatherHeight.toFixed(1)}px;opacity:${weatherOpacity.toFixed(3)};animation-duration:${Math.max(duration * 0.7, 16).toFixed(2)}s;"></div>`
+      }
+      ${
+        layer.weather === "storm"
+          ? `<div class="ml-weather-flash" style="top:${Math.max(top - 8, 0).toFixed(1)}px;left:0px;width:${viewportWidth}px;height:${Math.min(height + 22, viewportHeight)}px;"></div>`
+          : ""
+      }
+    `;
+  });
+
+  return `<div class="ml-sky-overlay">${bands.join("")}</div>`;
 }
 
 function clearConversationReplayTimer(runtimeState: RuntimeState) {
@@ -4253,6 +4714,7 @@ function updateNpcMarkers(
   animatedNpcs: AnimatedNpcState[],
   now: number,
 ) {
+  const showActorLabels = runtimeState.indices.visualScene === null;
   for (const marker of objects.npcMarkers.values()) {
     marker.container.setVisible(false);
   }
@@ -4268,6 +4730,7 @@ function updateNpcMarkers(
       .setPosition(animatedNpc.x, animatedNpc.y)
       .setScale(highlight ? 1.06 : animatedNpc.isYielding ? 0.96 : 1)
       .setVisible(true);
+    marker.label.setVisible(showActorLabels);
     poseCharacterRig(marker.rig, {
       facing: animatedNpc.facing,
       now,
@@ -4472,30 +4935,14 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
               primaryTool,
             })
           : "";
-  const overlayInset = width <= 720 ? 12 : width <= 1080 ? 16 : 20;
-  const railWidth =
-    width <= 720
-      ? width - overlayInset * 2
-      : width <= 1080
-        ? Math.min(width - overlayInset * 2, 380)
-        : clamp(width * 0.31, 380, 460);
-  const dockWidth =
-    width <= 720
-      ? width - overlayInset * 2
-      : width <= 1080
-        ? Math.min(width - overlayInset * 2, 360)
-        : clamp(width * 0.28, 340, 460);
-  const focusWidth =
-    width <= 720
-      ? width - overlayInset * 2
-      : width <= 1080
-        ? Math.min(width - overlayInset * 2, 940)
-        : clamp(width * 0.62, 820, 1120);
-  const focusHeight =
-    width <= 720
-      ? height - overlayInset * 2
-      : clamp(height * 0.7, 540, 780);
-  const railMaxHeight = Math.max(280, height - overlayInset * 2);
+  const {
+    dockWidth,
+    focusHeight,
+    focusWidth,
+    overlayInset,
+    railMaxHeight,
+    railWidth,
+  } = getOverlayLayoutMetrics(snapshot.viewport);
   const feedPreview = recentFeed.slice(0, 2);
   const objectivePreview = objectivePlanItems.slice(0, width <= 1080 ? 2 : 3);
   const quickActions = actions.slice(0, width <= 1080 ? 3 : 4);
@@ -4504,6 +4951,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const clockLabel = formatClock(game.currentTime);
   const todoCounterLabel =
     game.player.objective?.progress?.label ?? `${objectivePlanItems.length} live threads`;
+  const skyOverlayHtml = buildSkyOverlayHtml(runtimeState);
 
   return `
     <style>
@@ -4522,6 +4970,92 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         --ml-focus-width: ${Math.round(focusWidth)}px;
         --ml-focus-height: ${Math.round(focusHeight)}px;
         --ml-rail-max-height: ${Math.round(railMaxHeight)}px;
+      }
+      .ml-sky-overlay {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .ml-weather-band {
+        position: absolute;
+        overflow: hidden;
+        filter: saturate(1.04);
+      }
+      .ml-weather-cloud-marquee {
+        height: 100%;
+        will-change: transform;
+        animation-name: mlCloudDrift;
+        animation-iteration-count: infinite;
+        animation-timing-function: linear;
+      }
+      .ml-weather-cloud-marquee svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+      }
+      .ml-weather-veil {
+        position: absolute;
+        pointer-events: none;
+        z-index: 1;
+        will-change: background-position, transform, opacity;
+      }
+      .ml-weather-veil--mist {
+        background:
+          radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.26), transparent 36%),
+          radial-gradient(circle at 68% 8%, rgba(224, 236, 243, 0.18), transparent 34%),
+          linear-gradient(180deg, rgba(229, 238, 242, 0.2), rgba(229, 238, 242, 0));
+        filter: blur(18px);
+        animation: mlMistDrift 34s ease-in-out infinite alternate;
+      }
+      .ml-weather-veil--drizzle {
+        background:
+          repeating-linear-gradient(
+            100deg,
+            rgba(215, 230, 242, 0) 0 14px,
+            rgba(215, 230, 242, 0.68) 14px 16px,
+            rgba(215, 230, 242, 0) 16px 30px
+          );
+        background-size: 180px 180px;
+        animation: mlWeatherFall linear infinite;
+      }
+      .ml-weather-veil--rain {
+        background:
+          repeating-linear-gradient(
+            103deg,
+            rgba(214, 226, 238, 0) 0 12px,
+            rgba(214, 226, 238, 0.9) 12px 15px,
+            rgba(214, 226, 238, 0) 15px 24px
+          );
+        background-size: 160px 210px;
+        animation: mlWeatherFall linear infinite;
+      }
+      .ml-weather-veil--storm {
+        background:
+          linear-gradient(180deg, rgba(33, 42, 51, 0.22), rgba(14, 18, 24, 0)),
+          repeating-linear-gradient(
+            103deg,
+            rgba(210, 222, 235, 0) 0 10px,
+            rgba(210, 222, 235, 0.88) 10px 14px,
+            rgba(210, 222, 235, 0) 14px 22px
+          );
+        background-size: 100% 100%, 148px 220px;
+        animation: mlWeatherFall linear infinite;
+      }
+      .ml-weather-flash {
+        position: absolute;
+        pointer-events: none;
+        z-index: 1;
+        background: linear-gradient(
+          180deg,
+          rgba(248, 252, 255, 0),
+          rgba(248, 252, 255, 0.18),
+          rgba(248, 252, 255, 0)
+        );
+        mix-blend-mode: screen;
+        animation: mlStormFlash 9.5s steps(1, end) infinite;
       }
       .ml-right-stack,
       .ml-dock {
@@ -5129,6 +5663,52 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           transform: translateY(-1px);
         }
       }
+      @keyframes mlCloudDrift {
+        0% {
+          transform: translate3d(0, 0, 0);
+        }
+        100% {
+          transform: translate3d(-50%, 0, 0);
+        }
+      }
+      @keyframes mlWeatherFall {
+        0% {
+          background-position: 0 0, 0 0;
+        }
+        100% {
+          background-position: 0 320px, 0 0;
+        }
+      }
+      @keyframes mlMistDrift {
+        0% {
+          opacity: 0.58;
+          transform: translate3d(-1.5%, 0, 0);
+        }
+        100% {
+          opacity: 0.9;
+          transform: translate3d(1.5%, 1.4%, 0);
+        }
+      }
+      @keyframes mlStormFlash {
+        0%, 86%, 100% {
+          opacity: 0;
+        }
+        87% {
+          opacity: 0.06;
+        }
+        88% {
+          opacity: 0.24;
+        }
+        89% {
+          opacity: 0.04;
+        }
+        90% {
+          opacity: 0.14;
+        }
+        91% {
+          opacity: 0;
+        }
+      }
       .ml-command-section {
         display: flex;
         flex-direction: column;
@@ -5323,6 +5903,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       }
     </style>
     <div class="ml-root">
+      ${skyOverlayHtml}
       <div class="ml-time-pill">
         <span class="ml-time-chip">Day ${escapeHtml(String(game.clock.day))}</span>
         <span class="ml-time-chip is-core">
@@ -6900,6 +7481,35 @@ function syncUiState(runtimeState: RuntimeState) {
   }
 }
 
+function getPlayableVisualScene(game: StreetGameState | null) {
+  if (!game) {
+    return null;
+  }
+
+  const sceneId = game.visualSceneId ?? null;
+  const visualScene = getVisualScene(sceneId);
+  if (!visualScene) {
+    return null;
+  }
+
+  try {
+    validateVisualSceneAgainstGame(visualScene, game);
+    return visualScene;
+  } catch (error) {
+    const fallbackScene = getVisualSceneDocument(sceneId);
+    if (fallbackScene && fallbackScene !== visualScene) {
+      validateVisualSceneAgainstGame(fallbackScene, game);
+      console.warn(
+        `[many-lives] Falling back to file visual scene for ${sceneId} because the runtime override is invalid.`,
+        error,
+      );
+      return fallbackScene;
+    }
+
+    throw error;
+  }
+}
+
 function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
   const game = snapshot.game;
   if (!game) {
@@ -6916,10 +7526,7 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
     };
   }
 
-  const visualScene = getVisualScene(game.visualSceneId ?? null);
-  if (visualScene) {
-    validateVisualSceneAgainstGame(visualScene, game);
-  }
+  const visualScene = getPlayableVisualScene(game);
 
   return {
     animatedSurfaceTiles: visualScene ? [] : collectAnimatedSurfaceTiles(game.map),
@@ -6988,7 +7595,7 @@ function getWorldBounds(snapshot: StreetAppSnapshot) {
     };
   }
 
-  const visualScene = getVisualScene(snapshot.game.visualSceneId ?? null);
+  const visualScene = getPlayableVisualScene(snapshot.game);
   if (visualScene) {
     return {
       height: visualScene.height,
@@ -7082,12 +7689,76 @@ function worldGridToWorldOrigin(x: number, y: number) {
   };
 }
 
-function getSceneViewport(viewport: ViewportSize): SceneViewport {
+function getOverlayLayoutMetrics(viewport: ViewportSize): OverlayLayoutMetrics {
+  const { height, width } = viewport;
+  const overlayInset = width <= 720 ? 12 : width <= 1080 ? 16 : 20;
+  const railWidth =
+    width <= 720
+      ? width - overlayInset * 2
+      : width <= 1080
+        ? Math.min(width - overlayInset * 2, 380)
+        : clamp(width * 0.31, 380, 460);
+  const dockWidth =
+    width <= 720
+      ? width - overlayInset * 2
+      : width <= 1080
+        ? Math.min(width - overlayInset * 2, 360)
+        : clamp(width * 0.28, 340, 460);
+  const focusWidth =
+    width <= 720
+      ? width - overlayInset * 2
+      : width <= 1080
+        ? Math.min(width - overlayInset * 2, 940)
+        : clamp(width * 0.62, 820, 1120);
+  const focusHeight =
+    width <= 720 ? height - overlayInset * 2 : clamp(height * 0.7, 540, 780);
+  const railMaxHeight = Math.max(280, height - overlayInset * 2);
+  const sceneGap = width <= 720 ? 0 : overlayInset;
+
   return {
-    height: viewport.height,
-    width: viewport.width,
-    x: 0,
-    y: 0,
+    dockWidth,
+    focusHeight,
+    focusWidth,
+    overlayInset,
+    railMaxHeight,
+    railWidth,
+    sceneGap,
+  };
+}
+
+function getSceneViewport(
+  viewport: ViewportSize,
+  world: { height: number; width: number },
+): SceneViewport {
+  if (viewport.width <= 720) {
+    return {
+      height: viewport.height,
+      width: viewport.width,
+      x: 0,
+      y: 0,
+    };
+  }
+
+  const { overlayInset, railWidth, sceneGap } = getOverlayLayoutMetrics(viewport);
+  const frameX = overlayInset;
+  const frameY = overlayInset;
+  const frameWidth = Math.max(
+    viewport.width - overlayInset * 2 - railWidth - sceneGap,
+    1,
+  );
+  const frameHeight = Math.max(viewport.height - overlayInset * 2, 1);
+  const worldAspect = Math.max(world.width, 1) / Math.max(world.height, 1);
+  const frameAspect = frameWidth / frameHeight;
+  const sceneWidth =
+    frameAspect > worldAspect ? frameHeight * worldAspect : frameWidth;
+  const sceneHeight =
+    frameAspect > worldAspect ? frameHeight : frameWidth / Math.max(worldAspect, 0.001);
+
+  return {
+    height: sceneHeight,
+    width: sceneWidth,
+    x: frameX + (frameWidth - sceneWidth) / 2,
+    y: frameY + (frameHeight - sceneHeight) / 2,
   };
 }
 
@@ -7097,12 +7768,22 @@ function getSceneZoom(
 ) {
   const widthFit = viewport.width / Math.max(world.width, 1);
   const heightFit = viewport.height / Math.max(world.height, 1);
-  const coverZoom = Math.max(widthFit, heightFit);
-  const boost =
-    viewport.width <= 720 ? 1.02 : viewport.width <= 1080 ? 1.01 : 0.99;
-  const minZoom = viewport.width <= 720 ? 0.92 : 0.88;
-  const maxZoom = viewport.width <= 720 ? 1.18 : 1.04;
-  return clamp(coverZoom * boost, minZoom, maxZoom);
+  return Math.min(widthFit, heightFit);
+}
+
+function getRuntimeRenderScale() {
+  if (typeof window === "undefined") {
+    return 1;
+  }
+
+  return Math.min(Math.max(window.devicePixelRatio || 1, 1), MAX_RUNTIME_RENDER_SCALE);
+}
+
+function getRuntimeViewportSize(runtimeState: RuntimeState): ViewportSize {
+  return {
+    height: Math.max(Math.round(runtimeState.snapshot.viewport.height * runtimeState.renderScale), 1),
+    width: Math.max(Math.round(runtimeState.snapshot.viewport.width * runtimeState.renderScale), 1),
+  };
 }
 
 function createInitialPlayerMotion(snapshot: StreetAppSnapshot): PlayerMotionState {
@@ -7483,6 +8164,11 @@ function drawDynamicOverlay(
     return;
   }
 
+  if (runtimeState.indices.visualScene) {
+    drawAnimatedCitySurface(layer, runtimeState.indices, now);
+    return;
+  }
+
   const currentFootprint = game.player.currentLocationId
     ? getRuntimeLocationHighlightRect(
         runtimeState.indices,
@@ -7663,7 +8349,10 @@ function beginCameraGesture(
     return;
   }
 
-  const sceneViewport = getSceneViewport(runtimeState.snapshot.viewport);
+  const sceneViewport = getSceneViewport(
+    getRuntimeViewportSize(runtimeState),
+    getWorldBounds(runtimeState.snapshot),
+  );
   if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
     return;
   }
@@ -7697,7 +8386,11 @@ function updateCameraGesture(
   }
 
   gesture.dragging = true;
-  runtimeState.cameraOffset = clampCameraOffset(runtimeState.snapshot.viewport, {
+  const sceneViewport = getSceneViewport(
+    getRuntimeViewportSize(runtimeState),
+    getWorldBounds(runtimeState.snapshot),
+  );
+  runtimeState.cameraOffset = clampCameraOffset(sceneViewport, {
     x: gesture.originOffset.x + deltaX,
     y: gesture.originOffset.y + deltaY,
   });
@@ -7726,7 +8419,10 @@ function finishCameraGesture(
     return;
   }
 
-  const sceneViewport = getSceneViewport(runtimeState.snapshot.viewport);
+  const sceneViewport = getSceneViewport(
+    getRuntimeViewportSize(runtimeState),
+    getWorldBounds(runtimeState.snapshot),
+  );
   if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
     return;
   }
@@ -7807,7 +8503,7 @@ function getTargetSceneZoom(
 
 function relaxCameraOffset(
   runtimeState: RuntimeState,
-  viewport: ViewportSize,
+  viewport: SceneViewport,
   now: number,
 ) {
   runtimeState.cameraOffset = clampCameraOffset(viewport, runtimeState.cameraOffset);
@@ -9509,29 +10205,8 @@ function drawLocationLabels(
 ) {
   const objects: PhaserType.GameObjects.GameObject[] = [];
   if (visualScene) {
-    for (const location of game.locations) {
-      const anchor = visualScene.locationAnchors[location.id];
-      if (!anchor) {
-        continue;
-      }
-
-      objects.push(
-        createWorldLabelPlate(scene, anchor.label.x, anchor.label.y, location.name, {
-          accentColor: landmarkAccentColor(location.id),
-          depth: 38,
-          tone: "location",
-        }),
-      );
-    }
-
     for (const label of visualScene.labels) {
-      objects.push(
-        createWorldLabelPlate(scene, label.x, label.y, label.text, {
-          accentColor: label.tone === "district" ? 0xf1d4a1 : 0x8ca7b4,
-          depth: label.tone === "district" ? 36 : 34,
-          tone: label.tone,
-        }),
-      );
+      objects.push(createAuthoredSceneLabel(scene, label));
     }
 
     return objects;
@@ -9568,6 +10243,31 @@ function drawLocationLabels(
   }
 
   return objects;
+}
+
+function createAuthoredSceneLabel(
+  scene: PhaserType.Scene,
+  label: VisualScene["labels"][number],
+) {
+  return scene.add
+    .text(label.x, label.y, label.text, {
+      color:
+        label.tone === "landmark"
+          ? "#324742"
+          : label.tone === "district"
+            ? "rgba(47, 63, 67, 0.72)"
+            : "rgba(70, 76, 79, 0.68)",
+      fontFamily: '"Iowan Old Style", "Palatino Linotype", serif',
+      fontSize:
+        label.tone === "landmark"
+          ? "24px"
+          : label.tone === "district"
+            ? "28px"
+            : "18px",
+      fontStyle: label.tone === "landmark" ? "700" : "600",
+    })
+    .setDepth(label.tone === "district" ? 36 : 34)
+    .setOrigin(0.5, 0.5);
 }
 
 function createWorldLabelPlate(
