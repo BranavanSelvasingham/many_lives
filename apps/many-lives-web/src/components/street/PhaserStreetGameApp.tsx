@@ -74,7 +74,8 @@ const CAMERA_USER_ZOOM_DEFAULT = 1;
 const CAMERA_USER_ZOOM_LERP = 0.16;
 const CAMERA_USER_ZOOM_MAX = 1.16;
 const CAMERA_USER_ZOOM_MIN = 0.76;
-const MAX_RUNTIME_RENDER_SCALE = 4;
+const MAX_RUNTIME_RENDER_SCALE = 6;
+const RUNTIME_RENDER_CLARITY_BOOST = 1.35;
 const CAMERA_WHEEL_ZOOM_STEP = 0.08;
 const MOVEMENT_FLUSH_DELAY_MS = 45;
 const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 320;
@@ -1956,7 +1957,7 @@ function renderStaticScene(
     sceneViewport.height,
   );
   camera.setZoom(sceneZoom);
-  camera.setRoundPixels(false);
+  camera.setRoundPixels(runtimeState.indices.visualScene !== null);
 
   terrainLayer.clear();
   structureLayer.clear();
@@ -4637,16 +4638,18 @@ function drawAnimatedSkyWeather(
 
   for (const skyLayer of visualScene.skyLayers) {
     const skyRect = getNormalizedSkyLayerRect(visualScene.height, skyLayer.rect);
-    const coverageWidth = Math.max(skyRect.width, visualScene.width * 0.3);
+    const bandX = clamp(skyRect.x, 0, Math.max(visualScene.width - 1, 0));
+    const bandWidth = Math.max(1, Math.min(skyRect.width, visualScene.width - bandX));
+    const coverageWidth = Math.max(bandWidth, visualScene.width * 0.16);
     const cloudCount = Math.max(
       4,
       Math.round((coverageWidth / 240) * Math.max(skyLayer.density, 1.2)),
     );
     const spacing = Math.max(
-      (coverageWidth + visualScene.width * 0.14) / Math.max(cloudCount, 1),
+      (coverageWidth + bandWidth * 0.14) / Math.max(cloudCount, 1),
       140,
     );
-    const travelSpan = visualScene.width + spacing * 3;
+    const travelSpan = bandWidth + spacing * 3;
     const phaseOffset = getSkyLayerPhaseOffset(skyRect.x, visualScene.width, travelSpan);
     const drift = positiveModulo(beat * skyLayer.speed * 4 + phaseOffset, travelSpan);
     const palette = skyLayerPalette(skyLayer.cloudKind);
@@ -4668,9 +4671,9 @@ function drawAnimatedSkyWeather(
       if (mistHeight > 0.5) {
         layer.fillStyle(palette.mist, palette.mistAlpha);
         layer.fillRoundedRect(
-          0,
+          bandX,
           skyRect.y,
-          visualScene.width,
+          bandWidth,
           mistHeight,
           skyRect.radius ?? 20,
         );
@@ -4682,7 +4685,7 @@ function drawAnimatedSkyWeather(
       );
       if (mistAccentHeight > 0.5) {
         layer.fillStyle(palette.mistAccent, palette.mistAccentAlpha);
-        layer.fillRect(0, mistAccentY, visualScene.width, mistAccentHeight);
+        layer.fillRect(bandX, mistAccentY, bandWidth, mistAccentHeight);
       }
     }
 
@@ -4694,7 +4697,7 @@ function drawAnimatedSkyWeather(
       const rainCount = Math.max(
         10,
         Math.round(
-          (visualScene.width / 38) *
+          (bandWidth / 38) *
             (skyLayer.weather === "storm"
               ? 1.6
               : skyLayer.weather === "rain"
@@ -4724,7 +4727,7 @@ function drawAnimatedSkyWeather(
       layer.lineStyle(rainWidth, rainColor, rainAlpha);
       for (let rainIndex = 0; rainIndex < rainCount; rainIndex += 1) {
         const x =
-          ((rainIndex / rainCount) * visualScene.width + rainLead) % visualScene.width;
+          bandX + (((rainIndex / rainCount) * bandWidth + rainLead) % bandWidth);
         const y =
           skyRect.y +
           18 +
@@ -4735,7 +4738,7 @@ function drawAnimatedSkyWeather(
         layer.lineBetween(
           x,
           y,
-          x - rainSlant,
+          Math.max(x - rainSlant, bandX),
           Math.min(y + rainDrop + fallLength * 0.2, visualScene.height),
         );
       }
@@ -4748,9 +4751,9 @@ function drawAnimatedSkyWeather(
     );
     layer.fillStyle(palette.haze, hazeAlpha);
     layer.fillRoundedRect(
-      0,
+      bandX,
       skyRect.y,
-      visualScene.width,
+      bandWidth,
       skyRect.height,
       skyRect.radius ?? 18,
     );
@@ -4767,7 +4770,8 @@ function drawAnimatedSkyWeather(
         (0.92 + (cloudIndex % 3) * 0.11);
       const cloudWidth = 118 * cloudScale;
       const cloudHeight = 36 * cloudScale;
-      if (wrappedX + cloudWidth < -18 || wrappedX > visualScene.width + 18) {
+      const cloudX = bandX + wrappedX;
+      if (cloudX < bandX || cloudX + cloudWidth > bandX + bandWidth) {
         continue;
       }
       const baseY =
@@ -4784,7 +4788,7 @@ function drawAnimatedSkyWeather(
 
       layer.fillStyle(0x000000, 0.08 * cloudAlpha);
       layer.fillEllipse(
-        wrappedX + cloudWidth * 0.52,
+        cloudX + cloudWidth * 0.52,
         baseY + cloudHeight * 0.66,
         cloudWidth * 0.92,
         cloudHeight * 0.48,
@@ -4793,43 +4797,43 @@ function drawAnimatedSkyWeather(
       layer.fillStyle(palette.body, cloudAlpha);
       layer.lineStyle(1.2, palette.edge, cloudAlpha * 0.34);
       layer.fillEllipse(
-        wrappedX + cloudWidth * 0.28,
+        cloudX + cloudWidth * 0.28,
         baseY + cloudHeight * 0.58,
         cloudWidth * 0.48,
         cloudHeight * 0.84,
       );
       layer.strokeEllipse(
-        wrappedX + cloudWidth * 0.28,
+        cloudX + cloudWidth * 0.28,
         baseY + cloudHeight * 0.58,
         cloudWidth * 0.48,
         cloudHeight * 0.84,
       );
       layer.fillEllipse(
-        wrappedX + cloudWidth * 0.52,
+        cloudX + cloudWidth * 0.52,
         baseY + cloudHeight * 0.42,
         cloudWidth * 0.62,
         cloudHeight * 0.96,
       );
       layer.strokeEllipse(
-        wrappedX + cloudWidth * 0.52,
+        cloudX + cloudWidth * 0.52,
         baseY + cloudHeight * 0.42,
         cloudWidth * 0.62,
         cloudHeight * 0.96,
       );
       layer.fillEllipse(
-        wrappedX + cloudWidth * 0.78,
+        cloudX + cloudWidth * 0.78,
         baseY + cloudHeight * 0.6,
         cloudWidth * 0.52,
         cloudHeight * 0.76,
       );
       layer.strokeEllipse(
-        wrappedX + cloudWidth * 0.78,
+        cloudX + cloudWidth * 0.78,
         baseY + cloudHeight * 0.6,
         cloudWidth * 0.52,
         cloudHeight * 0.76,
       );
       layer.fillRoundedRect(
-        wrappedX + cloudWidth * 0.18,
+        cloudX + cloudWidth * 0.18,
         baseY + cloudHeight * 0.5,
         cloudWidth * 0.66,
         cloudHeight * 0.46,
@@ -4857,7 +4861,7 @@ function drawAnimatedSkyWeather(
         );
         if (flashHeight > 0.5) {
           layer.fillStyle(0xf8fcff, flashAlpha * weatherOpacity);
-          layer.fillRect(0, flashY, visualScene.width, flashHeight);
+          layer.fillRect(bandX, flashY, bandWidth, flashHeight);
         }
       }
     }
@@ -8269,8 +8273,10 @@ function getRuntimeRenderScale(cameraZoomFactor = CAMERA_USER_ZOOM_DEFAULT) {
     return 1;
   }
 
+  const deviceRatio = window.devicePixelRatio || 1;
+  const zoomFactor = Math.max(cameraZoomFactor, 1);
   return Math.min(
-    Math.max((window.devicePixelRatio || 1) * Math.max(cameraZoomFactor, 1), 1),
+    Math.max(deviceRatio * zoomFactor * RUNTIME_RENDER_CLARITY_BOOST, 1),
     MAX_RUNTIME_RENDER_SCALE,
   );
 }

@@ -6,6 +6,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { SOUTH_QUAY_V2_DOCUMENT } from "@/lib/street/visual-scene-documents/southQuayV2Document";
 import {
+  clampSkyLayerTop,
+  getNormalizedSkyLayerRect,
+  getSkyLayerPhaseOffset,
+} from "@/lib/street/skyLayers";
+import {
   buildVisualSceneModuleSource,
   clearVisualSceneRuntimeOverride,
   cloneVisualSceneDocument,
@@ -218,6 +223,18 @@ type ReadyBuildingInventoryItem = {
   targetLocationId: string;
 };
 
+type CloudInventoryPreset = {
+  cloudKind: VisualSceneCloudKind;
+  density: number;
+  description: string;
+  id: string;
+  label: string;
+  opacity: number;
+  scale: number;
+  speed: number;
+  weather: VisualSceneWeatherKind;
+};
+
 type BuilderImportMode = "json" | "module";
 type BuilderCanvasMode = "buildings" | "ground" | "roads" | "details" | "weather";
 type GroundToolMode = "brush" | "select";
@@ -227,6 +244,64 @@ type PaintState = {
   layer: "surface" | "terrain";
   pointerId: number;
 };
+
+const CLOUD_INVENTORY_PRESETS: CloudInventoryPreset[] = [
+  {
+    cloudKind: "wispy",
+    density: 3.2,
+    description: "Thin high clouds for a cleaner harbor sky with no weather.",
+    id: "wispy-clear",
+    label: "High Wisps",
+    opacity: 0.38,
+    scale: 0.92,
+    speed: 18,
+    weather: "none",
+  },
+  {
+    cloudKind: "harbor-bank",
+    density: 4.2,
+    description: "Soft broad clouds that drift over the quay without bringing weather.",
+    id: "harbor-bank-clear",
+    label: "Harbor Bank",
+    opacity: 0.5,
+    scale: 1.08,
+    speed: 14,
+    weather: "none",
+  },
+  {
+    cloudKind: "harbor-bank",
+    density: 4.8,
+    description: "Low marine cloud that rolls in with sea mist.",
+    id: "sea-mist",
+    label: "Sea Mist",
+    opacity: 0.34,
+    scale: 1.1,
+    speed: 11,
+    weather: "mist",
+  },
+  {
+    cloudKind: "harbor-bank",
+    density: 5.1,
+    description: "A heavier cloud bank that starts a steady dockside rain.",
+    id: "rain-bank",
+    label: "Rain Bank",
+    opacity: 0.48,
+    scale: 1.14,
+    speed: 17,
+    weather: "rain",
+  },
+  {
+    cloudKind: "storm-front",
+    density: 5.8,
+    description: "Dark industrial weather with a stronger storm trigger.",
+    id: "storm-front",
+    label: "Storm Front",
+    opacity: 0.58,
+    scale: 1.28,
+    speed: 22,
+    weather: "storm",
+  },
+];
 
 const ROAD_SURFACE_KINDS = new Set<VisualSurfaceZoneKind>([
   "north_promenade",
@@ -479,7 +554,9 @@ function getSelectionRect(scene: VisualScene, selection: BuilderSelection): Visu
     case "waterRegion":
       return scene.waterRegions[selection.index]?.rect ?? null;
     case "skyLayer":
-      return scene.skyLayers[selection.index]?.rect ?? null;
+      return scene.skyLayers[selection.index]
+        ? getNormalizedSkyLayerRect(scene.height, scene.skyLayers[selection.index].rect)
+        : null;
     case "locationAnchorHighlight":
       return scene.locationAnchors[selection.locationId]?.highlight ?? null;
     default:
@@ -571,7 +648,7 @@ function describeSelection(scene: VisualScene, selection: BuilderSelection) {
       return item
         ? {
             mode: "rect" as const,
-            rect: item.rect,
+            rect: getNormalizedSkyLayerRect(scene.height, item.rect),
             subtitle: `${item.cloudKind} • ${item.weather}`,
             title: item.id,
           }
@@ -900,7 +977,7 @@ function updateSelectionPosition(
     case "skyLayer":
       if (draft.skyLayers[selection.index]) {
         draft.skyLayers[selection.index].rect.x = x;
-        draft.skyLayers[selection.index].rect.y = y;
+        draft.skyLayers[selection.index].rect.y = clampSkyLayerTop(draft.height, y);
       }
       return;
     case "label":
@@ -5499,7 +5576,7 @@ export function VisualSceneBuilder() {
           setPrimarySelection({ kind: "waterRegion", index: draft.waterRegions.length - 1 });
           return;
         }
-        case "skyLayer": {
+    case "skyLayer": {
           const source = draft.skyLayers[selected.index];
           if (!source) {
             return;
@@ -5507,7 +5584,7 @@ export function VisualSceneBuilder() {
           draft.skyLayers.push({
             ...source,
             id: `${source.id}-copy-${draft.skyLayers.length + 1}`,
-            rect: { ...source.rect, x: source.rect.x + 18, y: source.rect.y + 18 },
+            rect: { ...source.rect, x: source.rect.x + 18, y: clampSkyLayerTop(draft.height, source.rect.y) },
           });
           setPrimarySelection({ kind: "skyLayer", index: draft.skyLayers.length - 1 });
           return;
@@ -5811,6 +5888,7 @@ export function VisualSceneBuilder() {
       }
 
       if (type === "sky") {
+        const defaultWidth = Math.max(220, Math.round(draft.width * 0.42));
         draft.skyLayers.push({
           cloudKind: addState.cloudKind,
           density: 4,
@@ -5819,7 +5897,7 @@ export function VisualSceneBuilder() {
           rect: {
             x: 0,
             y: Math.round(draft.height * 0.05),
-            width: draft.width,
+            width: defaultWidth,
             height: Math.max(120, Math.round(draft.height * 0.16)),
             radius: 20,
           },
@@ -5983,12 +6061,20 @@ export function VisualSceneBuilder() {
     index: number,
   ) {
     const beat = previewTimeMs / 1000;
+    const skyRect = getNormalizedSkyLayerRect(scene.height, layer.rect);
+    const bandX = Math.max(0, Math.min(skyRect.x, scene.width - 1));
+    const bandWidth = Math.max(1, Math.min(skyRect.width, scene.width - bandX));
+    const coverageWidth = Math.max(bandWidth, scene.width * 0.16);
     const cloudCount = Math.max(
       4,
-      Math.round((layer.rect.width / 240) * Math.max(layer.density, 1.2)),
+      Math.round((coverageWidth / 240) * Math.max(layer.density, 1.2)),
     );
-    const spacing = Math.max(layer.rect.width / cloudCount, 140);
-    const drift = ((beat * layer.speed * 4) % (spacing * 2)) - spacing;
+    const spacing = Math.max((coverageWidth + bandWidth * 0.14) / cloudCount, 140);
+    const travelSpan = bandWidth + spacing * 3;
+    const phaseOffset = getSkyLayerPhaseOffset(skyRect.x, scene.width, travelSpan);
+    const drift =
+      (((beat * layer.speed * 4 + phaseOffset) % travelSpan) + travelSpan) % travelSpan;
+    const clipPathId = `sky-layer-clip-${layer.id}-${index}`;
     const palette =
       layer.cloudKind === "storm-front"
         ? {
@@ -6009,144 +6095,155 @@ export function VisualSceneBuilder() {
             };
     const fallLength =
       layer.weather === "storm"
-        ? Math.min(scene.height - layer.rect.y, 360)
+        ? Math.min(scene.height - skyRect.y, 360)
         : layer.weather === "rain"
-          ? Math.min(scene.height - layer.rect.y, 280)
+          ? Math.min(scene.height - skyRect.y, 280)
           : layer.weather === "drizzle"
-            ? Math.min(scene.height - layer.rect.y, 180)
-            : Math.min(scene.height - layer.rect.y, layer.rect.height + 80);
+          ? Math.min(scene.height - skyRect.y, 180)
+          : Math.min(scene.height - skyRect.y, skyRect.height + 80);
     const rainCount = Math.max(
       10,
-      Math.round((layer.rect.width / 38) * (layer.weather === "storm" ? 1.6 : layer.weather === "rain" ? 1.15 : 0.7)),
+      Math.round((bandWidth / 38) * (layer.weather === "storm" ? 1.6 : layer.weather === "rain" ? 1.15 : 0.7)),
     );
 
     return (
       <g key={`sky-layer-preview-${layer.id}-${index}`}>
-        {layer.weather === "mist" ? (
-          <>
+        <defs>
+          <clipPath id={clipPathId}>
             <rect
-              fill="rgba(238, 244, 246, 0.18)"
-              height={layer.rect.height + 70}
-              rx={layer.rect.radius ?? 20}
-              ry={layer.rect.radius ?? 20}
-              width={layer.rect.width}
-              x={layer.rect.x}
-              y={layer.rect.y}
+              height={Math.max(skyRect.height, 1)}
+              rx={skyRect.radius ?? 20}
+              ry={skyRect.radius ?? 20}
+              width={bandWidth}
+              x={bandX}
+              y={skyRect.y}
             />
-            <rect
-              fill="rgba(214, 226, 230, 0.12)"
-              height={layer.rect.height + 110}
-              width={layer.rect.width}
-              x={layer.rect.x}
-              y={layer.rect.y + 18}
-            />
-          </>
-        ) : null}
-        {layer.weather === "drizzle" || layer.weather === "rain" || layer.weather === "storm"
-          ? Array.from({ length: rainCount }).map((_, rainIndex) => {
-              const x =
-                layer.rect.x +
-                ((rainIndex / rainCount) * layer.rect.width + (beat * layer.speed * 3) % 28);
-              const y =
-                layer.rect.y +
-                18 +
-                ((rainIndex * 17) % Math.max(layer.rect.height - 14, 24));
-              const slant = layer.weather === "storm" ? 18 : layer.weather === "rain" ? 14 : 10;
-              const drop = layer.weather === "storm" ? 42 : layer.weather === "rain" ? 32 : 24;
-              return (
-                <line
-                  key={`sky-rain-${layer.id}-${rainIndex}`}
-                  stroke={
-                    layer.weather === "storm"
-                      ? "rgba(212, 226, 236, 0.3)"
-                      : "rgba(226, 236, 242, 0.24)"
-                  }
-                  strokeLinecap="round"
-                  strokeWidth={layer.weather === "storm" ? 2.6 : 1.8}
-                  x1={x}
-                  x2={x - slant}
-                  y1={y}
-                  y2={Math.min(y + drop + fallLength * 0.2, scene.height)}
-                />
-              );
-            })
-          : null}
-        <rect
-          fill={palette.haze}
-          height={layer.rect.height}
-          rx={layer.rect.radius ?? 18}
-          ry={layer.rect.radius ?? 18}
-          width={layer.rect.width}
-          x={layer.rect.x}
-          y={layer.rect.y}
-        />
-        {Array.from({ length: cloudCount + 3 }).map((_, cloudIndex) => {
-          const baseX = layer.rect.x + cloudIndex * spacing + drift;
-          const wrappedX =
-            ((baseX - layer.rect.x) % (layer.rect.width + spacing) + (layer.rect.width + spacing)) %
-              (layer.rect.width + spacing) +
-            layer.rect.x -
-            spacing;
-          const baseY =
-            layer.rect.y +
-            layer.rect.height * (0.18 + ((cloudIndex % 4) * 0.12)) +
-            Math.sin(beat * 0.45 + cloudIndex * 0.9) * 6;
-          const cloudScale =
-            layer.scale *
-            (layer.cloudKind === "storm-front" ? 1.28 : layer.cloudKind === "harbor-bank" ? 1.12 : 0.94) *
-            (0.92 + (cloudIndex % 3) * 0.11);
-          const cloudWidth = 118 * cloudScale;
-          const cloudHeight = 36 * cloudScale;
-          const alpha = Math.max(0.12, layer.opacity * (0.7 + (cloudIndex % 2) * 0.12));
-
-          return (
-            <g key={`sky-cloud-${layer.id}-${cloudIndex}`} opacity={alpha}>
-              <ellipse
-                cx={wrappedX + cloudWidth * 0.52}
-                cy={baseY + cloudHeight * 0.66}
-                fill="rgba(0,0,0,0.08)"
-                rx={cloudWidth * 0.46}
-                ry={cloudHeight * 0.24}
-              />
-              <ellipse
-                cx={wrappedX + cloudWidth * 0.28}
-                cy={baseY + cloudHeight * 0.58}
-                fill={palette.body}
-                rx={cloudWidth * 0.24}
-                ry={cloudHeight * 0.42}
-                stroke={palette.edge}
-                strokeWidth="1.2"
-              />
-              <ellipse
-                cx={wrappedX + cloudWidth * 0.52}
-                cy={baseY + cloudHeight * 0.42}
-                fill={palette.body}
-                rx={cloudWidth * 0.31}
-                ry={cloudHeight * 0.48}
-                stroke={palette.edge}
-                strokeWidth="1.2"
-              />
-              <ellipse
-                cx={wrappedX + cloudWidth * 0.78}
-                cy={baseY + cloudHeight * 0.6}
-                fill={palette.body}
-                rx={cloudWidth * 0.26}
-                ry={cloudHeight * 0.38}
-                stroke={palette.edge}
-                strokeWidth="1.2"
+          </clipPath>
+        </defs>
+        <g clipPath={`url(#${clipPathId})`}>
+          {layer.weather === "mist" ? (
+            <>
+              <rect
+                fill="rgba(238, 244, 246, 0.18)"
+                height={skyRect.height + 70}
+                rx={skyRect.radius ?? 20}
+                ry={skyRect.radius ?? 20}
+                width={bandWidth}
+                x={bandX}
+                y={skyRect.y}
               />
               <rect
-                fill={palette.body}
-                height={cloudHeight * 0.46}
-                rx={cloudHeight * 0.22}
-                ry={cloudHeight * 0.22}
-                width={cloudWidth * 0.66}
-                x={wrappedX + cloudWidth * 0.18}
-                y={baseY + cloudHeight * 0.5}
+                fill="rgba(214, 226, 230, 0.12)"
+                height={skyRect.height + 110}
+                width={bandWidth}
+                x={bandX}
+                y={skyRect.y + 18}
               />
-            </g>
-          );
-        })}
+            </>
+          ) : null}
+          {layer.weather === "drizzle" || layer.weather === "rain" || layer.weather === "storm"
+            ? Array.from({ length: rainCount }).map((_, rainIndex) => {
+                const x =
+                  bandX +
+                  (((rainIndex / rainCount) * bandWidth + (beat * layer.speed * 3) % 28) %
+                    bandWidth);
+                const y =
+                  skyRect.y +
+                  18 +
+                  ((rainIndex * 17) % Math.max(skyRect.height - 14, 24));
+                const slant = layer.weather === "storm" ? 18 : layer.weather === "rain" ? 14 : 10;
+                const drop = layer.weather === "storm" ? 42 : layer.weather === "rain" ? 32 : 24;
+                return (
+                  <line
+                    key={`sky-rain-${layer.id}-${rainIndex}`}
+                    stroke={
+                      layer.weather === "storm"
+                        ? "rgba(212, 226, 236, 0.3)"
+                        : "rgba(226, 236, 242, 0.24)"
+                    }
+                    strokeLinecap="round"
+                    strokeWidth={layer.weather === "storm" ? 2.6 : 1.8}
+                    x1={x}
+                    x2={x - slant}
+                    y1={y}
+                    y2={Math.min(y + drop + fallLength * 0.2, scene.height)}
+                  />
+                );
+              })
+            : null}
+          <rect
+            fill={palette.haze}
+            height={skyRect.height}
+            rx={skyRect.radius ?? 18}
+            ry={skyRect.radius ?? 18}
+            width={bandWidth}
+            x={bandX}
+            y={skyRect.y}
+          />
+          {Array.from({ length: cloudCount + 3 }).map((_, cloudIndex) => {
+            const wrappedX = ((cloudIndex * spacing + drift) % travelSpan) - spacing;
+            const baseY =
+              skyRect.y +
+              skyRect.height * (0.18 + ((cloudIndex % 4) * 0.12)) +
+              Math.sin(beat * 0.45 + cloudIndex * 0.9) * 6;
+            const cloudScale =
+              layer.scale *
+              (layer.cloudKind === "storm-front" ? 1.28 : layer.cloudKind === "harbor-bank" ? 1.12 : 0.94) *
+              (0.92 + (cloudIndex % 3) * 0.11);
+            const cloudWidth = 118 * cloudScale;
+            const cloudHeight = 36 * cloudScale;
+            const cloudX = bandX + wrappedX;
+            const alpha = Math.max(0.12, layer.opacity * (0.7 + (cloudIndex % 2) * 0.12));
+
+            return (
+              <g key={`sky-cloud-${layer.id}-${cloudIndex}`} opacity={alpha}>
+                <ellipse
+                  cx={cloudX + cloudWidth * 0.52}
+                  cy={baseY + cloudHeight * 0.66}
+                  fill="rgba(0,0,0,0.08)"
+                  rx={cloudWidth * 0.46}
+                  ry={cloudHeight * 0.24}
+                />
+                <ellipse
+                  cx={cloudX + cloudWidth * 0.28}
+                  cy={baseY + cloudHeight * 0.58}
+                  fill={palette.body}
+                  rx={cloudWidth * 0.24}
+                  ry={cloudHeight * 0.42}
+                  stroke={palette.edge}
+                  strokeWidth="1.2"
+                />
+                <ellipse
+                  cx={cloudX + cloudWidth * 0.52}
+                  cy={baseY + cloudHeight * 0.42}
+                  fill={palette.body}
+                  rx={cloudWidth * 0.31}
+                  ry={cloudHeight * 0.48}
+                  stroke={palette.edge}
+                  strokeWidth="1.2"
+                />
+                <ellipse
+                  cx={cloudX + cloudWidth * 0.78}
+                  cy={baseY + cloudHeight * 0.6}
+                  fill={palette.body}
+                  rx={cloudWidth * 0.26}
+                  ry={cloudHeight * 0.38}
+                  stroke={palette.edge}
+                  strokeWidth="1.2"
+                />
+                <rect
+                  fill={palette.body}
+                  height={cloudHeight * 0.46}
+                  rx={cloudHeight * 0.22}
+                  ry={cloudHeight * 0.22}
+                  width={cloudWidth * 0.66}
+                  x={cloudX + cloudWidth * 0.18}
+                  y={baseY + cloudHeight * 0.5}
+                />
+              </g>
+            );
+          })}
+        </g>
       </g>
     );
   }
@@ -6424,11 +6521,164 @@ export function VisualSceneBuilder() {
     );
   }
 
+  function renderCloudInventoryVisual(
+    cloud: Pick<
+      CloudInventoryPreset,
+      "cloudKind" | "density" | "opacity" | "scale" | "weather"
+    >,
+    keyStem: string,
+  ) {
+    const previewWidth = 160;
+    const previewHeight = 76;
+    const cloudCount = Math.max(4, Math.round(cloud.density * 1.15));
+    const palette =
+      cloud.cloudKind === "storm-front"
+        ? {
+            body: "rgba(115, 127, 143, 0.92)",
+            edge: "rgba(197, 208, 220, 0.22)",
+            haze: "rgba(82, 95, 108, 0.22)",
+            skyBottom: "#23303a",
+            skyTop: "#3a4653",
+          }
+        : cloud.cloudKind === "harbor-bank"
+          ? {
+              body: "rgba(225, 234, 238, 0.88)",
+              edge: "rgba(255, 255, 255, 0.22)",
+              haze: "rgba(198, 215, 222, 0.18)",
+              skyBottom: "#5c7383",
+              skyTop: "#7d96a5",
+            }
+          : {
+              body: "rgba(241, 246, 248, 0.82)",
+              edge: "rgba(255, 255, 255, 0.24)",
+              haze: "rgba(214, 226, 233, 0.14)",
+              skyBottom: "#6f8797",
+              skyTop: "#8ca5b1",
+            };
+    const gradientId = `builder-cloud-grad-${keyStem}`;
+
+    return (
+      <svg viewBox={`0 0 ${previewWidth} ${previewHeight}`}>
+        <defs>
+          <linearGradient id={gradientId} x1="0%" x2="0%" y1="0%" y2="100%">
+            <stop offset="0%" stopColor={palette.skyTop} />
+            <stop offset="100%" stopColor={palette.skyBottom} />
+          </linearGradient>
+        </defs>
+        <rect fill={`url(#${gradientId})`} height={previewHeight} rx="12" ry="12" width={previewWidth} />
+        <rect fill={palette.haze} height="30" rx="12" ry="12" width={previewWidth} y="8" />
+        {cloud.weather === "mist" ? (
+          <>
+            <rect fill="rgba(237, 244, 247, 0.18)" height="34" width={previewWidth} y="20" />
+            <rect fill="rgba(224, 234, 238, 0.12)" height="24" width={previewWidth} y="34" />
+          </>
+        ) : null}
+        {cloud.weather === "drizzle" || cloud.weather === "rain" || cloud.weather === "storm"
+          ? Array.from({
+              length:
+                cloud.weather === "storm" ? 18 : cloud.weather === "rain" ? 15 : 12,
+            }).map((_, index) => {
+              const x = (index / 18) * previewWidth + ((index * 7) % 10);
+              const y = 22 + ((index * 11) % 18);
+              const slant = cloud.weather === "storm" ? 9 : cloud.weather === "rain" ? 7 : 5;
+              const drop = cloud.weather === "storm" ? 18 : cloud.weather === "rain" ? 14 : 10;
+              return (
+                <line
+                  key={`cloud-rain-${keyStem}-${index}`}
+                  stroke={
+                    cloud.weather === "storm"
+                      ? "rgba(222, 232, 238, 0.3)"
+                      : "rgba(228, 236, 242, 0.22)"
+                  }
+                  strokeLinecap="round"
+                  strokeWidth={cloud.weather === "storm" ? 1.8 : 1.2}
+                  x1={x}
+                  x2={x - slant}
+                  y1={y}
+                  y2={y + drop}
+                />
+              );
+            })
+          : null}
+        {Array.from({ length: cloudCount }).map((_, index) => {
+          const progress = index / Math.max(cloudCount - 1, 1);
+          const cloudScale =
+            cloud.scale *
+            (cloud.cloudKind === "storm-front"
+              ? 1.28
+              : cloud.cloudKind === "harbor-bank"
+                ? 1.1
+                : 0.92) *
+            (0.92 + (index % 3) * 0.1);
+          const cloudWidth = 34 * cloudScale;
+          const cloudHeight = 12 * cloudScale;
+          const x = progress * (previewWidth - 24);
+          const y = 14 + (index % 3) * 8;
+          const alpha = Math.max(0.18, Math.min(cloud.opacity * (0.72 + (index % 2) * 0.12), 1));
+          return (
+            <g key={`cloud-shape-${keyStem}-${index}`} opacity={alpha}>
+              <ellipse
+                cx={x + cloudWidth * 0.52}
+                cy={y + cloudHeight * 0.66}
+                fill="rgba(0,0,0,0.08)"
+                rx={cloudWidth * 0.44}
+                ry={cloudHeight * 0.22}
+              />
+              <ellipse
+                cx={x + cloudWidth * 0.28}
+                cy={y + cloudHeight * 0.56}
+                fill={palette.body}
+                rx={cloudWidth * 0.24}
+                ry={cloudHeight * 0.4}
+                stroke={palette.edge}
+                strokeWidth="0.7"
+              />
+              <ellipse
+                cx={x + cloudWidth * 0.52}
+                cy={y + cloudHeight * 0.42}
+                fill={palette.body}
+                rx={cloudWidth * 0.3}
+                ry={cloudHeight * 0.46}
+                stroke={palette.edge}
+                strokeWidth="0.7"
+              />
+              <ellipse
+                cx={x + cloudWidth * 0.78}
+                cy={y + cloudHeight * 0.6}
+                fill={palette.body}
+                rx={cloudWidth * 0.25}
+                ry={cloudHeight * 0.34}
+                stroke={palette.edge}
+                strokeWidth="0.7"
+              />
+              <rect
+                fill={palette.body}
+                height={cloudHeight * 0.4}
+                rx={cloudHeight * 0.18}
+                ry={cloudHeight * 0.18}
+                width={cloudWidth * 0.66}
+                x={x + cloudWidth * 0.18}
+                y={y + cloudHeight * 0.5}
+              />
+            </g>
+          );
+        })}
+      </svg>
+    );
+  }
+
   function renderInventoryVisual(item: BuilderListItem) {
     if (item.selection.kind === "landmark") {
       const landmark = scene.landmarks[item.selection.index];
       if (landmark) {
         return renderLandmarkInventoryVisual(landmark.style);
+      }
+    }
+
+    if (item.selection.kind === "skyLayer") {
+      const skyLayer = scene.skyLayers[item.selection.index];
+      if (skyLayer) {
+        return renderCloudInventoryVisual(skyLayer, skyLayer.id);
       }
     }
 
@@ -6520,6 +6770,34 @@ export function VisualSceneBuilder() {
     return landmark?.style === "cafe";
   }
 
+  function addCloudInventoryPreset(preset: CloudInventoryPreset) {
+    mutateScene((draft) => {
+      const defaultWidth = Math.max(220, Math.round(draft.width * 0.42));
+      const maxX = Math.max(draft.width - defaultWidth, 0);
+      const xSeed = (draft.skyLayers.length * 176) % Math.max(maxX + 1, 1);
+      draft.skyLayers.push({
+        cloudKind: preset.cloudKind,
+        density: preset.density,
+        id: `${preset.id}-${draft.skyLayers.length + 1}`,
+        opacity: preset.opacity,
+        rect: {
+          x: Math.round(xSeed),
+          y: Math.round(draft.height * 0.05),
+          width: defaultWidth,
+          height: Math.max(120, Math.round(draft.height * 0.16)),
+          radius: 20,
+        },
+        scale: preset.scale,
+        speed: preset.speed,
+        weather: preset.weather,
+      });
+      setPrimarySelection({ kind: "skyLayer", index: draft.skyLayers.length - 1 });
+    });
+    setPersistenceStatus(
+      `${preset.label} added. Drag and resize it in weather mode to set the cloud band position and width.`,
+    );
+  }
+
   const readyBuildingItems: ReadyBuildingInventoryItem[] = PRESET_KINDS.map((preset) => {
     const targetLocationId = PRESET_DEFAULT_LOCATION_BY_KIND[preset];
     const landmarkIndex = scene.landmarks.findIndex((item) => item.locationId === targetLocationId);
@@ -6538,6 +6816,10 @@ export function VisualSceneBuilder() {
       targetLocationId,
     };
   });
+  const placedSkyLayerItems = builderItems.filter(
+    (item): item is BuilderListItem & { selection: Extract<BuilderSelection, { kind: "skyLayer" }> } =>
+      item.selection.kind === "skyLayer",
+  );
   const sceneInventoryItems = builderItems.filter((item) => item.selection.kind !== "landmark");
 
   function renderInventoryCard(item: BuilderListItem) {
@@ -6804,6 +7086,58 @@ export function VisualSceneBuilder() {
     );
   }
 
+  function renderCloudPresetCard(preset: CloudInventoryPreset) {
+    const matchesSelectedSky =
+      selectedSkyLayer?.cloudKind === preset.cloudKind &&
+      selectedSkyLayer?.weather === preset.weather;
+    return (
+      <button
+        className={`builder-inventory-card builder-weather-card ${matchesSelectedSky ? "is-active" : ""}`}
+        key={`cloud-preset-${preset.id}`}
+        onClick={() => addCloudInventoryPreset(preset)}
+        type="button"
+      >
+        <div className="builder-inventory-visual builder-inventory-visual-weather">
+          {renderCloudInventoryVisual(preset, preset.id)}
+        </div>
+        <div className="builder-inventory-badge">Add Cloud Band</div>
+        <div className="builder-list-row">
+          <strong>{preset.label}</strong>
+        </div>
+        <div className="builder-list-subtitle">{preset.description}</div>
+      </button>
+    );
+  }
+
+  function renderPlacedSkyLayerCard(
+    item: BuilderListItem & { selection: Extract<BuilderSelection, { kind: "skyLayer" }> },
+  ) {
+    const layer = scene.skyLayers[item.selection.index];
+    if (!layer) {
+      return null;
+    }
+    const isActive = selectedIds.includes(item.id);
+    return (
+      <button
+        className={`builder-inventory-card builder-weather-card ${isActive ? "is-active" : ""}`}
+        key={`placed-sky-${item.id}`}
+        onClick={() => selectForEditing(item.selection, "weather")}
+        type="button"
+      >
+        <div className="builder-inventory-visual builder-inventory-visual-weather">
+          {renderCloudInventoryVisual(layer, layer.id)}
+        </div>
+        <div className="builder-inventory-badge">Placed Band</div>
+        <div className="builder-list-row">
+          <strong>{item.label}</strong>
+        </div>
+        <div className="builder-list-subtitle">
+          {layer.cloudKind} • {layer.weather} • speed {Math.round(layer.speed)}
+        </div>
+      </button>
+    );
+  }
+
   return (
     <div className="builder-shell">
       <aside className="builder-panel builder-panel-left">
@@ -6866,7 +7200,7 @@ export function VisualSceneBuilder() {
                   ? "Start with the base map: land, shoreline, quay edges, and water bands."
                   : canvasMode === "details"
                     ? "View the full stack with furniture, labels, and other finishing details. Anchor guides only surface when you edit them."
-                    : "Author screen-wide clouds and the weather they trigger so the builder stays the source of truth."}
+                    : "Author cloud bands with explicit position + width so the builder stays the source of truth."}
           </div>
           <div className="builder-copy">
             The edit controls for this layer live in the tool dock below the canvas so the stage stays central while you work.
@@ -7783,41 +8117,80 @@ export function VisualSceneBuilder() {
               <div>
                 <div className="builder-section-title">Scene Inventory</div>
                 <div className="builder-list-subtitle">
-                  Assembled place kits first, then the rest of the authored scene pieces.
+                  {canvasMode === "weather"
+                    ? "Choose a cloud preset, then drag the placed band to set its loop position."
+                    : "Assembled place kits first, then the rest of the authored scene pieces."}
                 </div>
               </div>
               <div className="builder-list-subtitle">
-                {readyBuildingItems.length} ready kits • {sceneInventoryItems.length} scene pieces
+                {canvasMode === "weather"
+                  ? `${CLOUD_INVENTORY_PRESETS.length} cloud presets • ${placedSkyLayerItems.length} placed bands`
+                  : `${readyBuildingItems.length} ready kits • ${sceneInventoryItems.length} scene pieces`}
               </div>
             </div>
-            <div className="builder-inventory-section">
-              <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
-                <div>
-                  <div className="builder-section-title">Ready Places</div>
-                  <div className="builder-list-subtitle">
-                    Persistent place kits for buildings, squares, yards, and the harbor edge.
+            {canvasMode === "weather" ? (
+              <>
+                <div className="builder-inventory-section">
+                  <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
+                    <div>
+                      <div className="builder-section-title">Cloud Library</div>
+                      <div className="builder-list-subtitle">
+                        One click adds a cloud band with its linked weather, ready to reposition.
+                      </div>
+                    </div>
+                    <div className="builder-list-subtitle">{CLOUD_INVENTORY_PRESETS.length} presets</div>
+                  </div>
+                  <div className="builder-building-grid builder-weather-grid">
+                    {CLOUD_INVENTORY_PRESETS.map((preset) => renderCloudPresetCard(preset))}
                   </div>
                 </div>
-                <div className="builder-list-subtitle">{readyBuildingItems.length} kits</div>
-              </div>
-              <div className="builder-building-grid">
-                {readyBuildingItems.map((item) => renderReadyBuildingCard(item))}
-              </div>
-            </div>
-            <div className="builder-inventory-section builder-inventory-section-divider">
-              <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
-                <div>
-                  <div className="builder-section-title">Scene Pieces</div>
-                  <div className="builder-list-subtitle">
-                    Zones, props, labels, and supporting authored details.
+                <div className="builder-inventory-section builder-inventory-section-divider">
+                  <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
+                    <div>
+                      <div className="builder-section-title">Placed Sky Bands</div>
+                      <div className="builder-list-subtitle">
+                        These are the authored cloud bands already driving the live sky.
+                      </div>
+                    </div>
+                    <div className="builder-list-subtitle">{placedSkyLayerItems.length} bands</div>
+                  </div>
+                  <div className="builder-building-grid builder-weather-grid">
+                    {placedSkyLayerItems.map((item) => renderPlacedSkyLayerCard(item))}
                   </div>
                 </div>
-                <div className="builder-list-subtitle">{sceneInventoryItems.length} items</div>
-              </div>
-              <div className="builder-inventory-grid">
-                {sceneInventoryItems.map((item) => renderInventoryCard(item))}
-              </div>
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="builder-inventory-section">
+                  <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
+                    <div>
+                      <div className="builder-section-title">Ready Places</div>
+                      <div className="builder-list-subtitle">
+                        Persistent place kits for buildings, squares, yards, and the harbor edge.
+                      </div>
+                    </div>
+                    <div className="builder-list-subtitle">{readyBuildingItems.length} kits</div>
+                  </div>
+                  <div className="builder-building-grid">
+                    {readyBuildingItems.map((item) => renderReadyBuildingCard(item))}
+                  </div>
+                </div>
+                <div className="builder-inventory-section builder-inventory-section-divider">
+                  <div className="builder-bottom-inventory-header builder-bottom-inventory-header-tight">
+                    <div>
+                      <div className="builder-section-title">Scene Pieces</div>
+                      <div className="builder-list-subtitle">
+                        Zones, props, labels, and supporting authored details.
+                      </div>
+                    </div>
+                    <div className="builder-list-subtitle">{sceneInventoryItems.length} items</div>
+                  </div>
+                  <div className="builder-inventory-grid">
+                    {sceneInventoryItems.map((item) => renderInventoryCard(item))}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="builder-bottom-dock-grid builder-bottom-dock-grid-secondary">
@@ -8654,6 +9027,10 @@ export function VisualSceneBuilder() {
           gap: 12px;
         }
 
+        .builder-weather-grid {
+          grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        }
+
         .builder-inventory-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -8716,6 +9093,15 @@ export function VisualSceneBuilder() {
           border-color: rgba(136, 152, 160, 0.34);
         }
 
+        .builder-weather-card {
+          min-height: 196px;
+          padding: 12px;
+          gap: 8px;
+          background:
+            linear-gradient(180deg, rgba(22, 31, 37, 0.96), rgba(12, 18, 22, 0.96)),
+            rgba(18, 25, 30, 0.94);
+        }
+
         .builder-inventory-visual {
           display: flex;
           align-items: center;
@@ -8739,6 +9125,14 @@ export function VisualSceneBuilder() {
 
         .builder-building-card.is-cafe .builder-inventory-visual.is-building {
           height: 152px;
+        }
+
+        .builder-inventory-visual-weather {
+          height: 88px;
+          border-color: rgba(158, 177, 188, 0.22);
+          background:
+            linear-gradient(180deg, rgba(31, 44, 55, 0.92), rgba(17, 25, 31, 0.96)),
+            rgba(13, 19, 22, 0.94);
         }
 
         .builder-inventory-visual svg {
