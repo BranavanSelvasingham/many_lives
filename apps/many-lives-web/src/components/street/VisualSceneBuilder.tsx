@@ -1026,12 +1026,46 @@ function updateSelectionRectField(
   field: keyof VisualRect,
   value: number,
 ) {
-  const rect = getSelectionRect(draft, selection);
+  let rect: VisualRect | null = null;
+  switch (selection.kind) {
+    case "landmark":
+      rect = draft.landmarks[selection.index]?.rect ?? null;
+      break;
+    case "surfaceZone":
+      rect = draft.surfaceZones[selection.index]?.rect ?? null;
+      break;
+    case "fringeZone":
+      rect = draft.fringeZones[selection.index]?.rect ?? null;
+      break;
+    case "landmarkModule":
+      rect = draft.landmarkModules[selection.index]?.rect ?? null;
+      break;
+    case "propCluster":
+      rect = draft.propClusters[selection.index]?.rect ?? null;
+      break;
+    case "waterRegion":
+      rect = draft.waterRegions[selection.index]?.rect ?? null;
+      break;
+    case "skyLayer":
+      rect = draft.skyLayers[selection.index]?.rect ?? null;
+      break;
+    case "locationAnchorHighlight":
+      rect = draft.locationAnchors[selection.locationId]?.highlight ?? null;
+      break;
+    default:
+      rect = null;
+      break;
+  }
+
   if (!rect) {
     return;
   }
   if (field === "radius") {
     rect.radius = value;
+    return;
+  }
+  if (selection.kind === "skyLayer" && field === "y") {
+    rect.y = clampSkyLayerTop(draft.height, value);
     return;
   }
   rect[field] = value as never;
