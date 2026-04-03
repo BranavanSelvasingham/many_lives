@@ -23,6 +23,10 @@ import {
   formatClock,
   toFirstPersonText,
 } from "@/components/street/streetFormatting";
+import {
+  getNormalizedSkyLayerRect,
+  getSkyLayerPhaseOffset,
+} from "@/lib/street/skyLayers";
 import type {
   CityMap,
   ConversationEntry,
@@ -4547,60 +4551,62 @@ function renderOverlay(
   restoreOverlayRenderState(root, overlayState);
 }
 
-function cloudSvgPalette(kind: VisualSceneCloudKind) {
+type SkyLayerPalette = {
+  body: number;
+  edge: number;
+  haze: number;
+  hazeAlpha: number;
+  mist: number;
+  mistAlpha: number;
+  mistAccent: number;
+  mistAccentAlpha: number;
+  rain: number;
+  stormRain: number;
+};
+
+function skyLayerPalette(kind: VisualSceneCloudKind): SkyLayerPalette {
   switch (kind) {
     case "storm-front":
       return {
-        body: "rgba(115, 127, 143, 0.92)",
-        edge: "rgba(197, 208, 220, 0.18)",
+        body: 0x737f8f,
+        edge: 0xc5d0dc,
+        haze: 0x606c78,
+        hazeAlpha: 0.24,
+        mist: 0xdbe8ee,
+        mistAlpha: 0.2,
+        mistAccent: 0xbecfd8,
+        mistAccentAlpha: 0.14,
+        rain: 0xd4e2ec,
+        stormRain: 0xd0deeb,
       };
     case "harbor-bank":
       return {
-        body: "rgba(226, 234, 238, 0.88)",
-        edge: "rgba(255, 255, 255, 0.18)",
+        body: 0xdee8ec,
+        edge: 0xffffff,
+        haze: 0xd2e0e6,
+        hazeAlpha: 0.18,
+        mist: 0xeef4f6,
+        mistAlpha: 0.18,
+        mistAccent: 0xd6e2e6,
+        mistAccentAlpha: 0.12,
+        rain: 0xe2ecf2,
+        stormRain: 0xd6e4ee,
       };
     case "wispy":
     default:
       return {
-        body: "rgba(241, 246, 248, 0.82)",
-        edge: "rgba(255, 255, 255, 0.18)",
+        body: 0xf0f5f7,
+        edge: 0xffffff,
+        haze: 0xe4ecf1,
+        hazeAlpha: 0.14,
+        mist: 0xf1f6f7,
+        mistAlpha: 0.16,
+        mistAccent: 0xdfeaf0,
+        mistAccentAlpha: 0.11,
+        rain: 0xe6eff4,
+        stormRain: 0xd8e5ef,
       };
   }
-}
-
-function buildCloudSvgMarkup(
-  layer: VisualScene["skyLayers"][number],
-  width: number,
-  height: number,
-) {
-  const palette = cloudSvgPalette(layer.cloudKind);
-  const cloudCount = Math.max(6, Math.round((width / 180) * Math.max(layer.density, 1.1)));
-  const segments: string[] = [];
-
-  for (let index = 0; index < cloudCount; index += 1) {
-    const progress = index / cloudCount;
-    const cloudScale =
-      layer.scale *
-      (layer.cloudKind === "storm-front" ? 1.34 : layer.cloudKind === "harbor-bank" ? 1.12 : 0.94) *
-      (0.9 + (index % 3) * 0.12);
-    const cloudWidth = 128 * cloudScale;
-    const cloudHeight = 38 * cloudScale;
-    const x = progress * width;
-    const y = height * (0.2 + (index % 4) * 0.12);
-    const opacity = Math.max(0.18, Math.min(layer.opacity * (0.72 + (index % 2) * 0.14), 1));
-
-    segments.push(
-      `<g opacity="${opacity.toFixed(3)}">` +
-        `<ellipse cx="${(x + cloudWidth * 0.52).toFixed(1)}" cy="${(y + cloudHeight * 0.74).toFixed(1)}" rx="${(cloudWidth * 0.44).toFixed(1)}" ry="${(cloudHeight * 0.2).toFixed(1)}" fill="rgba(0,0,0,0.08)" />` +
-        `<ellipse cx="${(x + cloudWidth * 0.3).toFixed(1)}" cy="${(y + cloudHeight * 0.58).toFixed(1)}" rx="${(cloudWidth * 0.22).toFixed(1)}" ry="${(cloudHeight * 0.42).toFixed(1)}" fill="${palette.body}" stroke="${palette.edge}" stroke-width="1.1" />` +
-        `<ellipse cx="${(x + cloudWidth * 0.54).toFixed(1)}" cy="${(y + cloudHeight * 0.42).toFixed(1)}" rx="${(cloudWidth * 0.31).toFixed(1)}" ry="${(cloudHeight * 0.5).toFixed(1)}" fill="${palette.body}" stroke="${palette.edge}" stroke-width="1.1" />` +
-        `<ellipse cx="${(x + cloudWidth * 0.78).toFixed(1)}" cy="${(y + cloudHeight * 0.6).toFixed(1)}" rx="${(cloudWidth * 0.24).toFixed(1)}" ry="${(cloudHeight * 0.36).toFixed(1)}" fill="${palette.body}" stroke="${palette.edge}" stroke-width="1.1" />` +
-        `<rect x="${(x + cloudWidth * 0.18).toFixed(1)}" y="${(y + cloudHeight * 0.5).toFixed(1)}" width="${(cloudWidth * 0.66).toFixed(1)}" height="${(cloudHeight * 0.46).toFixed(1)}" rx="${(cloudHeight * 0.2).toFixed(1)}" ry="${(cloudHeight * 0.2).toFixed(1)}" fill="${palette.body}" />` +
-      `</g>`,
-    );
-  }
-
-  return segments.join("");
 }
 
 function weatherLayerOpacity(kind: VisualSceneWeatherKind, baseOpacity: number) {
@@ -4618,67 +4624,244 @@ function weatherLayerOpacity(kind: VisualSceneWeatherKind, baseOpacity: number) 
   }
 }
 
-function buildSkyOverlayHtml(runtimeState: RuntimeState) {
-  const visualScene = runtimeState.indices.visualScene;
-  if (!visualScene || visualScene.skyLayers.length === 0) {
-    return "";
+function drawAnimatedSkyWeather(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+  now: number,
+) {
+  if (visualScene.skyLayers.length === 0) {
+    return;
   }
 
-  const sceneViewport = getSceneViewport(
-    runtimeState.snapshot.viewport,
-    getWorldBounds(runtimeState.snapshot),
-  );
+  const beat = now / 1000;
 
-  const bands = visualScene.skyLayers.map((layer) => {
-    const left = sceneViewport.x;
-    const top =
-      sceneViewport.y + (layer.rect.y / Math.max(visualScene.height, 1)) * sceneViewport.height;
-    const authoredWidth = Math.max(
-      (layer.rect.width / Math.max(visualScene.width, 1)) * sceneViewport.width,
-      sceneViewport.width * 0.26,
+  for (const skyLayer of visualScene.skyLayers) {
+    const skyRect = getNormalizedSkyLayerRect(visualScene.height, skyLayer.rect);
+    const coverageWidth = Math.max(skyRect.width, visualScene.width * 0.3);
+    const cloudCount = Math.max(
+      4,
+      Math.round((coverageWidth / 240) * Math.max(skyLayer.density, 1.2)),
     );
-    const width = sceneViewport.width;
-    const height = Math.max(
-      (layer.rect.height / Math.max(visualScene.height, 1)) * sceneViewport.height,
-      56,
+    const spacing = Math.max(
+      (coverageWidth + visualScene.width * 0.14) / Math.max(cloudCount, 1),
+      140,
     );
-    const trackWidth = width + authoredWidth + 260 * Math.max(layer.scale, 0.6);
-    const speedPxPerSecond = Math.max((layer.speed * sceneViewport.width) / visualScene.width, 8);
-    const duration = Math.max(trackWidth / speedPxPerSecond, 26);
-    const phaseOffset =
-      positiveModulo((layer.rect.x / Math.max(visualScene.width, 1)) * trackWidth, trackWidth);
-    const phaseDelay = -(phaseOffset / speedPxPerSecond);
-    const cloudSvg = buildCloudSvgMarkup(layer, trackWidth, height);
-    const weatherOpacity = weatherLayerOpacity(layer.weather, layer.opacity);
-    const weatherTop = Math.max(top + height * 0.18, 0);
-    const weatherHeight =
-      layer.weather === "mist"
-        ? Math.min(sceneViewport.y + sceneViewport.height - weatherTop, height + 96)
-        : Math.max(sceneViewport.y + sceneViewport.height - weatherTop, height);
+    const travelSpan = visualScene.width + spacing * 3;
+    const phaseOffset = getSkyLayerPhaseOffset(skyRect.x, visualScene.width, travelSpan);
+    const drift = positiveModulo(beat * skyLayer.speed * 4 + phaseOffset, travelSpan);
+    const palette = skyLayerPalette(skyLayer.cloudKind);
+    const weatherOpacity = weatherLayerOpacity(skyLayer.weather, skyLayer.opacity);
+    const fallLength =
+      skyLayer.weather === "storm"
+        ? Math.min(visualScene.height - skyRect.y, 360)
+        : skyLayer.weather === "rain"
+          ? Math.min(visualScene.height - skyRect.y, 280)
+          : skyLayer.weather === "drizzle"
+            ? Math.min(visualScene.height - skyRect.y, 180)
+            : Math.min(visualScene.height - skyRect.y, skyRect.height + 80);
 
-    return `
-      <div class="ml-weather-band" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px;width:${width.toFixed(1)}px;height:${height.toFixed(1)}px;opacity:${Math.max(0.16, Math.min(layer.opacity, 1)).toFixed(3)};">
-        <div class="ml-weather-cloud-marquee" style="width:${(trackWidth * 2).toFixed(1)}px;animation-duration:${duration.toFixed(2)}s;animation-delay:${phaseDelay.toFixed(2)}s;">
-          <svg viewBox="0 0 ${(trackWidth * 2).toFixed(1)} ${height.toFixed(1)}" preserveAspectRatio="none">
-            ${cloudSvg}
-            <g transform="translate(${trackWidth.toFixed(1)} 0)">${cloudSvg}</g>
-          </svg>
-        </div>
-      </div>
-      ${
-        layer.weather === "none"
-          ? ""
-          : `<div class="ml-weather-veil ml-weather-veil--${escapeHtml(layer.weather)}" style="top:${weatherTop.toFixed(1)}px;left:${left.toFixed(1)}px;width:${width.toFixed(1)}px;height:${weatherHeight.toFixed(1)}px;opacity:${weatherOpacity.toFixed(3)};animation-duration:${Math.max(duration * 0.7, 16).toFixed(2)}s;"></div>`
+    if (skyLayer.weather === "mist") {
+      const mistHeight = Math.max(
+        0,
+        Math.min(skyRect.height + 70, visualScene.height - skyRect.y),
+      );
+      if (mistHeight > 0.5) {
+        layer.fillStyle(palette.mist, palette.mistAlpha);
+        layer.fillRoundedRect(
+          0,
+          skyRect.y,
+          visualScene.width,
+          mistHeight,
+          skyRect.radius ?? 20,
+        );
       }
-      ${
-        layer.weather === "storm"
-          ? `<div class="ml-weather-flash" style="top:${Math.max(top - 8, sceneViewport.y).toFixed(1)}px;left:${left.toFixed(1)}px;width:${width.toFixed(1)}px;height:${Math.min(height + 22, sceneViewport.height)}px;"></div>`
-          : ""
+      const mistAccentY = Math.min(skyRect.y + 18, visualScene.height);
+      const mistAccentHeight = Math.max(
+        0,
+        Math.min(skyRect.height + 110, visualScene.height - mistAccentY),
+      );
+      if (mistAccentHeight > 0.5) {
+        layer.fillStyle(palette.mistAccent, palette.mistAccentAlpha);
+        layer.fillRect(0, mistAccentY, visualScene.width, mistAccentHeight);
       }
-    `;
-  });
+    }
 
-  return `<div class="ml-sky-overlay">${bands.join("")}</div>`;
+    if (
+      skyLayer.weather === "drizzle" ||
+      skyLayer.weather === "rain" ||
+      skyLayer.weather === "storm"
+    ) {
+      const rainCount = Math.max(
+        10,
+        Math.round(
+          (visualScene.width / 38) *
+            (skyLayer.weather === "storm"
+              ? 1.6
+              : skyLayer.weather === "rain"
+                ? 1.15
+                : 0.7),
+        ),
+      );
+      const rainLead = positiveModulo(beat * skyLayer.speed * 3, 28);
+      const rainSlant =
+        skyLayer.weather === "storm"
+          ? 18
+          : skyLayer.weather === "rain"
+            ? 14
+            : 10;
+      const rainDrop =
+        skyLayer.weather === "storm"
+          ? 42
+          : skyLayer.weather === "rain"
+            ? 32
+            : 24;
+      const rainWidth = skyLayer.weather === "storm" ? 2.6 : 1.8;
+      const rainColor = skyLayer.weather === "storm" ? palette.stormRain : palette.rain;
+      const rainAlpha =
+        (skyLayer.weather === "storm" ? 0.3 : 0.24) *
+        clamp(weatherOpacity * (skyLayer.weather === "storm" ? 1.18 : 1.34), 0.24, 1);
+
+      layer.lineStyle(rainWidth, rainColor, rainAlpha);
+      for (let rainIndex = 0; rainIndex < rainCount; rainIndex += 1) {
+        const x =
+          ((rainIndex / rainCount) * visualScene.width + rainLead) % visualScene.width;
+        const y =
+          skyRect.y +
+          18 +
+          ((rainIndex * 17) % Math.max(skyRect.height - 14, 24));
+        if (y > visualScene.height) {
+          continue;
+        }
+        layer.lineBetween(
+          x,
+          y,
+          x - rainSlant,
+          Math.min(y + rainDrop + fallLength * 0.2, visualScene.height),
+        );
+      }
+    }
+
+    const hazeAlpha = clamp(
+      palette.hazeAlpha * (0.74 + skyLayer.opacity * 0.42),
+      0.08,
+      0.4,
+    );
+    layer.fillStyle(palette.haze, hazeAlpha);
+    layer.fillRoundedRect(
+      0,
+      skyRect.y,
+      visualScene.width,
+      skyRect.height,
+      skyRect.radius ?? 18,
+    );
+
+    for (let cloudIndex = 0; cloudIndex < cloudCount + 3; cloudIndex += 1) {
+      const wrappedX = positiveModulo(cloudIndex * spacing + drift, travelSpan) - spacing;
+      const cloudScale =
+        skyLayer.scale *
+        (skyLayer.cloudKind === "storm-front"
+          ? 1.28
+          : skyLayer.cloudKind === "harbor-bank"
+            ? 1.12
+            : 0.94) *
+        (0.92 + (cloudIndex % 3) * 0.11);
+      const cloudWidth = 118 * cloudScale;
+      const cloudHeight = 36 * cloudScale;
+      if (wrappedX + cloudWidth < -18 || wrappedX > visualScene.width + 18) {
+        continue;
+      }
+      const baseY =
+        skyRect.y +
+        skyRect.height * (0.18 + (cloudIndex % 4) * 0.12) +
+        Math.sin(beat * 0.45 + cloudIndex * 0.9) * 6;
+      if (baseY > visualScene.height || baseY + cloudHeight < -6) {
+        continue;
+      }
+      const cloudAlpha = Math.max(
+        0.12,
+        Math.min(skyLayer.opacity * (0.7 + (cloudIndex % 2) * 0.12), 1),
+      );
+
+      layer.fillStyle(0x000000, 0.08 * cloudAlpha);
+      layer.fillEllipse(
+        wrappedX + cloudWidth * 0.52,
+        baseY + cloudHeight * 0.66,
+        cloudWidth * 0.92,
+        cloudHeight * 0.48,
+      );
+
+      layer.fillStyle(palette.body, cloudAlpha);
+      layer.lineStyle(1.2, palette.edge, cloudAlpha * 0.34);
+      layer.fillEllipse(
+        wrappedX + cloudWidth * 0.28,
+        baseY + cloudHeight * 0.58,
+        cloudWidth * 0.48,
+        cloudHeight * 0.84,
+      );
+      layer.strokeEllipse(
+        wrappedX + cloudWidth * 0.28,
+        baseY + cloudHeight * 0.58,
+        cloudWidth * 0.48,
+        cloudHeight * 0.84,
+      );
+      layer.fillEllipse(
+        wrappedX + cloudWidth * 0.52,
+        baseY + cloudHeight * 0.42,
+        cloudWidth * 0.62,
+        cloudHeight * 0.96,
+      );
+      layer.strokeEllipse(
+        wrappedX + cloudWidth * 0.52,
+        baseY + cloudHeight * 0.42,
+        cloudWidth * 0.62,
+        cloudHeight * 0.96,
+      );
+      layer.fillEllipse(
+        wrappedX + cloudWidth * 0.78,
+        baseY + cloudHeight * 0.6,
+        cloudWidth * 0.52,
+        cloudHeight * 0.76,
+      );
+      layer.strokeEllipse(
+        wrappedX + cloudWidth * 0.78,
+        baseY + cloudHeight * 0.6,
+        cloudWidth * 0.52,
+        cloudHeight * 0.76,
+      );
+      layer.fillRoundedRect(
+        wrappedX + cloudWidth * 0.18,
+        baseY + cloudHeight * 0.5,
+        cloudWidth * 0.66,
+        cloudHeight * 0.46,
+        cloudHeight * 0.22,
+      );
+    }
+
+    if (skyLayer.weather === "storm") {
+      const flashCycle = positiveModulo(beat / 9.5, 1);
+      const flashAlpha =
+        flashCycle >= 0.87 && flashCycle < 0.88
+          ? 0.06
+          : flashCycle >= 0.88 && flashCycle < 0.89
+            ? 0.24
+            : flashCycle >= 0.89 && flashCycle < 0.9
+              ? 0.04
+              : flashCycle >= 0.9 && flashCycle < 0.91
+                ? 0.14
+                : 0;
+      if (flashAlpha > 0) {
+        const flashY = Math.max(skyRect.y - 8, 0);
+        const flashHeight = Math.max(
+          0,
+          Math.min(skyRect.height + 22, visualScene.height - flashY),
+        );
+        if (flashHeight > 0.5) {
+          layer.fillStyle(0xf8fcff, flashAlpha * weatherOpacity);
+          layer.fillRect(0, flashY, visualScene.width, flashHeight);
+        }
+      }
+    }
+  }
 }
 
 function clearConversationReplayTimer(runtimeState: RuntimeState) {
@@ -5283,8 +5466,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const clockLabel = formatClock(game.currentTime);
   const todoCounterLabel =
     game.player.objective?.progress?.label ?? `${objectivePlanItems.length} live threads`;
-  const skyOverlayHtml = buildSkyOverlayHtml(runtimeState);
-
   return `
     <style>
       .ml-root {
@@ -5302,92 +5483,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         --ml-focus-width: ${Math.round(focusWidth)}px;
         --ml-focus-height: ${Math.round(focusHeight)}px;
         --ml-rail-max-height: ${Math.round(railMaxHeight)}px;
-      }
-      .ml-sky-overlay {
-        position: absolute;
-        inset: 0;
-        z-index: 1;
-        overflow: hidden;
-        pointer-events: none;
-      }
-      .ml-weather-band {
-        position: absolute;
-        overflow: hidden;
-        filter: saturate(1.04);
-      }
-      .ml-weather-cloud-marquee {
-        height: 100%;
-        will-change: transform;
-        animation-name: mlCloudDrift;
-        animation-iteration-count: infinite;
-        animation-timing-function: linear;
-      }
-      .ml-weather-cloud-marquee svg {
-        display: block;
-        width: 100%;
-        height: 100%;
-        overflow: visible;
-      }
-      .ml-weather-veil {
-        position: absolute;
-        pointer-events: none;
-        z-index: 1;
-        will-change: background-position, transform, opacity;
-      }
-      .ml-weather-veil--mist {
-        background:
-          radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.26), transparent 36%),
-          radial-gradient(circle at 68% 8%, rgba(224, 236, 243, 0.18), transparent 34%),
-          linear-gradient(180deg, rgba(229, 238, 242, 0.2), rgba(229, 238, 242, 0));
-        filter: blur(18px);
-        animation: mlMistDrift 34s ease-in-out infinite alternate;
-      }
-      .ml-weather-veil--drizzle {
-        background:
-          repeating-linear-gradient(
-            100deg,
-            rgba(215, 230, 242, 0) 0 14px,
-            rgba(215, 230, 242, 0.68) 14px 16px,
-            rgba(215, 230, 242, 0) 16px 30px
-          );
-        background-size: 180px 180px;
-        animation: mlWeatherFall linear infinite;
-      }
-      .ml-weather-veil--rain {
-        background:
-          repeating-linear-gradient(
-            103deg,
-            rgba(214, 226, 238, 0) 0 12px,
-            rgba(214, 226, 238, 0.9) 12px 15px,
-            rgba(214, 226, 238, 0) 15px 24px
-          );
-        background-size: 160px 210px;
-        animation: mlWeatherFall linear infinite;
-      }
-      .ml-weather-veil--storm {
-        background:
-          linear-gradient(180deg, rgba(33, 42, 51, 0.22), rgba(14, 18, 24, 0)),
-          repeating-linear-gradient(
-            103deg,
-            rgba(210, 222, 235, 0) 0 10px,
-            rgba(210, 222, 235, 0.88) 10px 14px,
-            rgba(210, 222, 235, 0) 14px 22px
-          );
-        background-size: 100% 100%, 148px 220px;
-        animation: mlWeatherFall linear infinite;
-      }
-      .ml-weather-flash {
-        position: absolute;
-        pointer-events: none;
-        z-index: 1;
-        background: linear-gradient(
-          180deg,
-          rgba(248, 252, 255, 0),
-          rgba(248, 252, 255, 0.18),
-          rgba(248, 252, 255, 0)
-        );
-        mix-blend-mode: screen;
-        animation: mlStormFlash 9.5s steps(1, end) infinite;
       }
       .ml-right-stack,
       .ml-dock {
@@ -6012,52 +6107,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           transform: translateY(-1px);
         }
       }
-      @keyframes mlCloudDrift {
-        0% {
-          transform: translate3d(-50%, 0, 0);
-        }
-        100% {
-          transform: translate3d(0, 0, 0);
-        }
-      }
-      @keyframes mlWeatherFall {
-        0% {
-          background-position: 0 0, 0 0;
-        }
-        100% {
-          background-position: 0 320px, 0 0;
-        }
-      }
-      @keyframes mlMistDrift {
-        0% {
-          opacity: 0.58;
-          transform: translate3d(-1.5%, 0, 0);
-        }
-        100% {
-          opacity: 0.9;
-          transform: translate3d(1.5%, 1.4%, 0);
-        }
-      }
-      @keyframes mlStormFlash {
-        0%, 86%, 100% {
-          opacity: 0;
-        }
-        87% {
-          opacity: 0.06;
-        }
-        88% {
-          opacity: 0.24;
-        }
-        89% {
-          opacity: 0.04;
-        }
-        90% {
-          opacity: 0.14;
-        }
-        91% {
-          opacity: 0;
-        }
-      }
       .ml-command-section {
         display: flex;
         flex-direction: column;
@@ -6252,7 +6301,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       }
     </style>
     <div class="ml-root">
-      ${skyOverlayHtml}
       <div class="ml-time-pill">
         <span class="ml-time-chip">Day ${escapeHtml(String(game.clock.day))}</span>
         <span class="ml-time-chip is-core">
@@ -8674,6 +8722,7 @@ function drawDynamicOverlay(
 
   if (runtimeState.indices.visualScene) {
     drawAnimatedCitySurface(layer, runtimeState.indices, now);
+    drawAnimatedSkyWeather(layer, runtimeState.indices.visualScene, now);
     return;
   }
 
