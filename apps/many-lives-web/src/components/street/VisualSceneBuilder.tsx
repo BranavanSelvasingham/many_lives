@@ -21,9 +21,11 @@ import {
   serializeVisualSceneDocument,
   type VisualFringeZoneEdge,
   type VisualFringeZoneKind,
+  type VisualLandmarkModule,
   type VisualSceneCloudKind,
   type VisualLandmarkModuleKind,
   type VisualPoint,
+  type VisualPropCluster,
   type VisualPropClusterKind,
   type VisualRect,
   type VisualScene,
@@ -39,6 +41,7 @@ import {
 } from "@/lib/street/visualScenes";
 
 const BUILDER_SCENE_ID: VisualSceneId = "south-quay-v2";
+const SOURCE_READY_SCENE: VisualSceneDocument = SOUTH_QUAY_V2_DOCUMENT;
 
 const SURFACE_ZONE_KINDS: VisualSurfaceZoneKind[] = [
   "north_promenade",
@@ -469,16 +472,20 @@ function translateRectValue(rect: VisualRect, deltaX: number, deltaY: number) {
 }
 
 function getSourceReadyBuildingBundle(locationId: string) {
-  const landmark = SOUTH_QUAY_V2_DOCUMENT.landmarks.find((item) => item.locationId === locationId);
+  const landmark = SOURCE_READY_SCENE.landmarks.find((item) => item.locationId === locationId);
   if (!landmark) {
     return null;
   }
 
   return {
-    anchors: SOUTH_QUAY_V2_DOCUMENT.locationAnchors[locationId] ?? null,
+    anchors: SOURCE_READY_SCENE.locationAnchors[locationId] ?? null,
     landmark,
-    modules: SOUTH_QUAY_V2_DOCUMENT.landmarkModules.filter((item) => item.locationId === locationId),
-    propClusters: SOUTH_QUAY_V2_DOCUMENT.propClusters.filter((item) => item.locationId === locationId),
+    modules: SOURCE_READY_SCENE.landmarkModules.filter(
+      (item): item is VisualLandmarkModule => item.locationId === locationId,
+    ),
+    propClusters: SOURCE_READY_SCENE.propClusters.filter(
+      (item): item is VisualPropCluster => item.locationId === locationId,
+    ),
   };
 }
 
