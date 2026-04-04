@@ -2569,75 +2569,202 @@ function renderLandmarkModulePreview(
   index: number,
 ) {
   const rect = module.rect;
-
-  if (module.kind === "awning") {
-    if (module.variant === "green-cream") {
-      const stripeCount = Math.max(6, module.count ?? Math.floor(rect.width / 42));
-      const stripeWidth = rect.width / stripeCount;
-      const stripeHeight = Math.max(16, rect.height - 10);
-
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#8b6543"
-            height="8"
-            rx="4"
-            ry="4"
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          {Array.from({ length: stripeCount }).map((_, stripeIndex) => {
-            const colors = ["#4d8f68", "#f4eddc", "#cd8450", "#f4eddc"];
-            const fill = colors[stripeIndex % colors.length];
-            const stripeX = rect.x + stripeIndex * stripeWidth;
-            return (
-              <g key={`awning-${module.id}-${stripeIndex}`}>
-                <rect
-                  fill={fill}
-                  height={stripeHeight}
-                  width={stripeWidth + 1}
-                  x={stripeX}
-                  y={rect.y + 6}
-                />
-                <circle
-                  cx={stripeX + stripeWidth / 2}
-                  cy={rect.y + rect.height - 2}
-                  fill={fill}
-                  r={Math.min(10, stripeWidth * 0.42)}
-                />
-              </g>
-            );
-          })}
-          <rect
-            fill="rgba(255, 255, 255, 0.18)"
-            height="4"
-            rx="2"
-            ry="2"
-            width={rect.width - 24}
-            x={rect.x + 12}
-            y={rect.y + 12}
-          />
-        </g>
-      );
-    }
-
-    const stripeCount = Math.max(4, module.count ?? Math.floor(rect.width / 38));
+  if (module.kind === "roof_cap") {
+    const fill =
+      module.variant === "verdigris"
+        ? "#567365"
+        : module.variant === "iron"
+          ? "#53616b"
+          : module.variant === "timber"
+            ? "#80614a"
+            : "#5d6870";
     return (
       <g key={`module-preview-${module.id}-${index}`}>
-        {Array.from({ length: stripeCount }).map((_, stripeIndex) => {
-          const stripeWidth = rect.width / stripeCount;
-          const colors =
-            module.locationId === "tea-house"
-              ? ["#4c9a70", "#f2efe2", "#d27d3d", "#f2efe2"]
-              : ["#6d7f8d", "#f2efe2"];
+        <rect
+          fill={fill}
+          height={rect.height}
+          rx={rect.radius ?? 12}
+          ry={rect.radius ?? 12}
+          width={rect.width}
+          x={rect.x}
+          y={rect.y}
+        />
+        {Array.from({
+          length: Math.max(0, Math.floor((rect.width - 28) / 30)),
+        }).map((_, ribIndex) => {
+          const x = rect.x + 14 + ribIndex * 30;
+          return (
+            <line
+              key={`roof-rib-${module.id}-${ribIndex}`}
+              stroke="rgba(189, 166, 118, 0.18)"
+              strokeWidth="2"
+              x1={x}
+              x2={x}
+              y1={rect.y + 8}
+              y2={rect.y + rect.height - 8}
+            />
+          );
+        })}
+      </g>
+    );
+  }
+
+  if (module.kind === "wall_band") {
+    const palette =
+      module.variant === "cafe-ivory"
+        ? { accent: "#c79268", base: "#e7ddbf" }
+        : module.variant === "walnut"
+          ? { accent: "#6f5039", base: "#8c684a" }
+          : module.variant === "boarding-upper"
+            ? { accent: "#b3765e", base: "#d0c2ab" }
+            : module.variant === "boarding-lower"
+              ? { accent: "#a26d58", base: "#c3b49b" }
+              : module.variant === "workshop-stone"
+                ? { accent: "#be8660", base: "#697883" }
+                : module.variant === "yard-gatehouse"
+                  ? { accent: "#70563f", base: "#8e785e" }
+                  : { accent: "#aa7f61", base: "#d0c2ab" };
+    return (
+      <g key={`module-preview-${module.id}-${index}`}>
+        <rect
+          fill={palette.base}
+          height={rect.height}
+          rx={rect.radius ?? 16}
+          ry={rect.radius ?? 16}
+          width={rect.width}
+          x={rect.x}
+          y={rect.y}
+        />
+        <rect
+          fill={palette.accent}
+          height={Math.max(18, rect.height * 0.32)}
+          width={Math.max(rect.width - 20, 0)}
+          x={rect.x + 10}
+          y={rect.y + rect.height * 0.45}
+        />
+      </g>
+    );
+  }
+
+  if (module.kind === "awning") {
+    const stripeCount = 8;
+    const stripeWidth = rect.width / stripeCount;
+    return (
+      <g key={`module-preview-${module.id}-${index}`}>
+        {Array.from({ length: stripeCount }).map((_, stripeIndex) => (
+          <rect
+            fill={stripeIndex % 2 === 0 ? "#42a474" : "#f3efe1"}
+            height={rect.height}
+            key={`awning-${module.id}-${stripeIndex}`}
+            width={stripeWidth + 0.5}
+            x={rect.x + stripeIndex * stripeWidth}
+            y={rect.y}
+          />
+        ))}
+        <rect
+          fill="rgba(107, 80, 55, 0.34)"
+          height="6"
+          width={rect.width}
+          x={rect.x}
+          y={rect.y + rect.height - 6}
+        />
+      </g>
+    );
+  }
+
+  if (module.kind === "entry") {
+    const fill =
+      module.variant === "house-door"
+        ? "#71533f"
+        : module.variant === "arched"
+          ? "#6d4d39"
+          : "#3e4d53";
+    return (
+      <g key={`module-preview-${module.id}-${index}`}>
+        <rect
+          fill={fill}
+          height={rect.height}
+          rx={rect.radius ?? 10}
+          ry={rect.radius ?? 10}
+          width={rect.width}
+          x={rect.x}
+          y={rect.y}
+        />
+        <rect
+          fill="rgba(240, 222, 178, 0.12)"
+          height={Math.max(rect.height * 0.36, 0)}
+          rx="6"
+          ry="6"
+          width={Math.max(rect.width - 16, 0)}
+          x={rect.x + 8}
+          y={rect.y + 10}
+        />
+      </g>
+    );
+  }
+
+  if (module.kind === "window_row") {
+    const count = module.count ?? 3;
+    const gap = 14;
+    const unitWidth = Math.max((rect.width - gap * (count - 1)) / count, 18);
+    const windowHeight = module.variant === "cafe-large" ? rect.height : rect.height - 10;
+
+    return (
+      <g key={`module-preview-${module.id}-${index}`}>
+        {Array.from({ length: count }).map((_, windowIndex) => {
+          const x = rect.x + windowIndex * (unitWidth + gap);
+          return (
+            <g key={`window-${module.id}-${windowIndex}`}>
+              <rect
+                fill="rgba(240, 224, 180, 0.92)"
+                height={windowHeight}
+                rx="8"
+                ry="8"
+                width={unitWidth}
+                x={x}
+                y={rect.y + 4}
+              />
+              <rect
+                fill="rgba(93, 69, 55, 0.22)"
+                height={Math.max(windowHeight - 14, 0)}
+                rx="6"
+                ry="6"
+                width={Math.max(unitWidth - 8, 0)}
+                x={x + 4}
+                y={rect.y + 8}
+              />
+            </g>
+          );
+        })}
+      </g>
+    );
+  }
+
+  if (module.kind === "terrace_rail") {
+    return (
+      <g key={`module-preview-${module.id}-${index}`}>
+        <rect
+          fill="#7a5b42"
+          height="8"
+          rx="4"
+          ry="4"
+          width={rect.width}
+          x={rect.x}
+          y={rect.y + rect.height / 2 - 4}
+        />
+        {Array.from({
+          length: Math.max(0, Math.floor((rect.width - 24) / 26)),
+        }).map((_, postIndex) => {
+          const x = rect.x + 12 + postIndex * 26;
           return (
             <rect
-              fill={colors[stripeIndex % colors.length]}
+              fill="#7a5b42"
               height={rect.height}
-              key={`awning-${module.id}-${stripeIndex}`}
-              width={stripeWidth + 1}
-              x={rect.x + stripeIndex * stripeWidth}
+              key={`terrace-post-${module.id}-${postIndex}`}
+              rx="2"
+              ry="2"
+              width="4"
+              x={x}
               y={rect.y}
             />
           );
@@ -2646,364 +2773,119 @@ function renderLandmarkModulePreview(
     );
   }
 
-  if (module.kind === "window_row") {
-    if (module.variant === "boarding-upper" || module.variant === "boarding-lower") {
-      const count = Math.max(3, module.count ?? (module.variant === "boarding-upper" ? 5 : 4));
-      const gap = module.variant === "boarding-upper" ? 16 : 18;
-      const windowWidth = Math.max(28, (rect.width - gap * (count + 1)) / count);
-      const windowHeight = Math.max(42, rect.height * (module.variant === "boarding-upper" ? 0.78 : 0.72));
-
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          {Array.from({ length: count }).map((_, windowIndex) => {
-            const windowX = rect.x + gap + windowIndex * (windowWidth + gap);
-            const windowY = rect.y + (rect.height - windowHeight) / 2;
-            return (
-              <g key={`window-${module.id}-${windowIndex}`}>
-                <rect
-                  fill="#f2e7cf"
-                  height={windowHeight}
-                  rx="10"
-                  ry="10"
-                  stroke="#c29b78"
-                  strokeWidth="3"
-                  width={windowWidth}
-                  x={windowX}
-                  y={windowY}
-                />
-                <rect
-                  fill="rgba(255, 255, 255, 0.26)"
-                  height="10"
-                  rx="5"
-                  ry="5"
-                  width={windowWidth - 10}
-                  x={windowX + 5}
-                  y={windowY + 7}
-                />
-                <line
-                  stroke="rgba(151, 117, 87, 0.4)"
-                  strokeWidth="2.5"
-                  x1={windowX + windowWidth / 2}
-                  x2={windowX + windowWidth / 2}
-                  y1={windowY + 8}
-                  y2={windowY + windowHeight - 8}
-                />
-                <line
-                  stroke="rgba(151, 117, 87, 0.34)"
-                  strokeWidth="2.5"
-                  x1={windowX + 6}
-                  x2={windowX + windowWidth - 6}
-                  y1={windowY + windowHeight / 2}
-                  y2={windowY + windowHeight / 2}
-                />
-              </g>
-            );
-          })}
-        </g>
-      );
-    }
-
-    if (module.variant === "cafe-large") {
-      const count = Math.max(2, module.count ?? 2);
-      const gap = 22;
-      const windowWidth = Math.max(72, (rect.width - gap * (count + 1)) / count);
-      const windowHeight = Math.max(42, rect.height * 0.66);
-
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          {Array.from({ length: count }).map((_, windowIndex) => {
-            const windowX = rect.x + gap + windowIndex * (windowWidth + gap);
-            const windowY = rect.y + (rect.height - windowHeight) / 2;
-            return (
-              <g key={`window-${module.id}-${windowIndex}`}>
-                <rect
-                  fill="#f7eed7"
-                  height={windowHeight}
-                  rx="16"
-                  ry="16"
-                  stroke="#c6a47d"
-                  strokeWidth="4"
-                  width={windowWidth}
-                  x={windowX}
-                  y={windowY}
-                />
-                <rect
-                  fill="#efe0bd"
-                  height={windowHeight - 18}
-                  rx="12"
-                  ry="12"
-                  width={windowWidth - 18}
-                  x={windowX + 9}
-                  y={windowY + 9}
-                />
-                <rect
-                  fill="rgba(255, 255, 255, 0.32)"
-                  height="12"
-                  rx="6"
-                  ry="6"
-                  width={windowWidth - 24}
-                  x={windowX + 12}
-                  y={windowY + 10}
-                />
-                <line
-                  stroke="rgba(155, 113, 77, 0.45)"
-                  strokeWidth="3"
-                  x1={windowX + windowWidth / 2}
-                  x2={windowX + windowWidth / 2}
-                  y1={windowY + 10}
-                  y2={windowY + windowHeight - 10}
-                />
-              </g>
-            );
-          })}
-        </g>
-      );
-    }
-
-    const count = Math.max(2, module.count ?? 4);
-    const gap = 14;
-    const windowWidth = Math.max(20, (rect.width - gap * (count + 1)) / count);
-    const windowHeight = Math.max(18, rect.height * 0.6);
+  if (module.kind === "shutters") {
+    const count = module.count ?? 2;
+    const gap = 12;
+    const shutterWidth = Math.max((rect.width - gap * (count - 1)) / count, 14);
     return (
       <g key={`module-preview-${module.id}-${index}`}>
-        {Array.from({ length: count }).map((_, windowIndex) => (
-          <rect
-            fill="#f6ebc7"
-            height={windowHeight}
-            key={`window-${module.id}-${windowIndex}`}
-            rx="10"
-            ry="10"
-            stroke="rgba(112, 82, 52, 0.16)"
-            strokeWidth="2"
-            width={windowWidth}
-            x={rect.x + gap + windowIndex * (windowWidth + gap)}
-            y={rect.y + (rect.height - windowHeight) / 2}
-          />
-        ))}
+        {Array.from({ length: count }).map((_, shutterIndex) => {
+          const x = rect.x + shutterIndex * (shutterWidth + gap);
+          return (
+            <g key={`shutter-${module.id}-${shutterIndex}`}>
+              <rect
+                fill="rgba(195, 203, 199, 0.95)"
+                height={rect.height}
+                rx="6"
+                ry="6"
+                width={shutterWidth}
+                x={x}
+                y={rect.y}
+              />
+              <rect
+                fill="rgba(98, 115, 124, 0.18)"
+                height="6"
+                width={Math.max(shutterWidth - 8, 0)}
+                x={x + 4}
+                y={rect.y + 8}
+              />
+            </g>
+          );
+        })}
       </g>
     );
   }
 
-  if (module.kind === "entry" || module.kind === "service_bay") {
-    if (module.variant === "yard-gate") {
-      const slatCount = 6;
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#44484b"
-            height={rect.height}
-            rx={rect.radius ?? 12}
-            ry={rect.radius ?? 12}
-            stroke="rgba(219, 204, 175, 0.12)"
-            strokeWidth="3"
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="#737b80"
-            height={rect.height - 18}
-            rx={Math.max(10, (rect.radius ?? 12) - 2)}
-            ry={Math.max(10, (rect.radius ?? 12) - 2)}
-            width={rect.width - 16}
-            x={rect.x + 8}
-            y={rect.y + 8}
-          />
-          {Array.from({ length: slatCount }).map((_, slatIndex) => {
-            const y = rect.y + 18 + slatIndex * ((rect.height - 38) / (slatCount - 1));
-            return (
-              <line
-                key={`yard-gate-slat-${module.id}-${slatIndex}`}
-                stroke="rgba(52, 57, 61, 0.52)"
-                strokeWidth="4"
-                x1={rect.x + 18}
-                x2={rect.x + rect.width - 18}
-                y1={y}
-                y2={y}
-              />
-            );
-          })}
-          {Array.from({ length: 6 }).map((_, stripeIndex) => {
-            const stripeWidth = (rect.width - 26) / 6;
-            return (
-              <rect
-                fill={stripeIndex % 2 === 0 ? "#d9a240" : "#2d2e30"}
-                height="8"
-                key={`yard-gate-stripe-${module.id}-${stripeIndex}`}
-                rx="4"
-                ry="4"
-                width={stripeWidth}
-                x={rect.x + 13 + stripeIndex * stripeWidth}
-                y={rect.y + rect.height - 12}
-              />
-            );
-          })}
-        </g>
-      );
-    }
-
-    if (module.variant === "house-door") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#8c6548"
-            height={rect.height}
-            rx={rect.radius ?? 14}
-            ry={rect.radius ?? 14}
-            stroke="rgba(247, 239, 219, 0.16)"
-            strokeWidth="3"
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="#a57a58"
-            height={rect.height - 14}
-            rx={Math.max(10, (rect.radius ?? 14) - 2)}
-            ry={Math.max(10, (rect.radius ?? 14) - 2)}
-            width={rect.width - 12}
-            x={rect.x + 6}
-            y={rect.y + 6}
-          />
-          <rect
-            fill="#f0dfbc"
-            height="18"
-            rx="6"
-            ry="6"
-            width={rect.width - 24}
-            x={rect.x + 12}
-            y={rect.y + 12}
-          />
-          <rect
-            fill="rgba(98, 68, 46, 0.22)"
-            height={rect.height - 46}
-            rx="5"
-            ry="5"
-            width="6"
-            x={rect.x + rect.width / 2 - 3}
-            y={rect.y + 34}
-          />
-          <circle cx={rect.x + rect.width - 16} cy={rect.y + rect.height / 2 + 10} fill="#5d412b" r="4" />
-        </g>
-      );
-    }
-
-    if (module.variant === "arched") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#845f3f"
-            height={rect.height}
-            rx={rect.radius ?? 18}
-            ry={rect.radius ?? 18}
-            stroke="rgba(247, 239, 219, 0.2)"
-            strokeWidth="3"
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="#f1dfbd"
-            height={rect.height - 34}
-            rx={Math.max(12, (rect.radius ?? 18) - 4)}
-            ry={Math.max(12, (rect.radius ?? 18) - 4)}
-            width={rect.width - 24}
-            x={rect.x + 12}
-            y={rect.y + 14}
-          />
-          <rect
-            fill="rgba(255, 255, 255, 0.22)"
-            height="10"
-            rx="5"
-            ry="5"
-            width={rect.width - 34}
-            x={rect.x + 17}
-            y={rect.y + 22}
-          />
-          <circle cx={rect.x + rect.width - 20} cy={rect.y + rect.height / 2} fill="#6b4a2f" r="4" />
-        </g>
-      );
-    }
-
+  if (module.kind === "stoop") {
     return (
-      <rect
-        fill={module.kind === "entry" ? "#7a593c" : "#434c52"}
-        height={rect.height}
-        key={`module-preview-${module.id}-${index}`}
-        rx={rect.radius ?? 14}
-        ry={rect.radius ?? 14}
-        stroke="rgba(247, 239, 219, 0.22)"
-        strokeWidth="3"
-        width={rect.width}
-        x={rect.x}
-        y={rect.y}
-      />
+      <g key={`module-preview-${module.id}-${index}`}>
+        <rect
+          fill="#9d8a6d"
+          height={rect.height}
+          rx={rect.radius ?? 8}
+          ry={rect.radius ?? 8}
+          width={rect.width}
+          x={rect.x}
+          y={rect.y}
+        />
+        <rect
+          fill="rgba(134, 111, 87, 0.9)"
+          height="8"
+          rx="4"
+          ry="4"
+          width={Math.max(rect.width - 20, 0)}
+          x={rect.x + 10}
+          y={rect.y + 8}
+        />
+      </g>
+    );
+  }
+
+  if (module.kind === "service_bay") {
+    return (
+      <g key={`module-preview-${module.id}-${index}`}>
+        <rect
+          fill={module.variant === "yard-gate" ? "#6f5844" : "#35474f"}
+          height={rect.height}
+          rx={rect.radius ?? 10}
+          ry={rect.radius ?? 10}
+          width={rect.width}
+          x={rect.x}
+          y={rect.y}
+        />
+        {Array.from({
+          length: Math.max(0, Math.floor((rect.width - 24) / 26)),
+        }).map((_, lineIndex) => {
+          const x = rect.x + 12 + lineIndex * 26;
+          return (
+            <line
+              key={`service-bay-line-${module.id}-${lineIndex}`}
+              stroke="rgba(198, 168, 115, 0.22)"
+              strokeWidth="2"
+              x1={x}
+              x2={x}
+              y1={rect.y + 10}
+              y2={rect.y + rect.height - 10}
+            />
+          );
+        })}
+      </g>
     );
   }
 
   if (module.kind === "sign") {
-    if (module.variant === "yard") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#394246"
-            height={rect.height}
-            rx={rect.radius ?? 10}
-            ry={rect.radius ?? 10}
-            stroke="#cfa14c"
-            strokeWidth="3"
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(255, 255, 255, 0.08)"
-            height="6"
-            rx="3"
-            ry="3"
-            width={rect.width - 24}
-            x={rect.x + 12}
-            y={rect.y + 5}
-          />
-          <text
-            fill="#f0dfb8"
-            fontFamily="Arial Black, Impact, sans-serif"
-            fontSize={Math.max(12, rect.height * 0.44)}
-            fontWeight="700"
-            letterSpacing="2.2"
-            textAnchor="middle"
-            x={rect.x + rect.width / 2}
-            y={rect.y + rect.height / 2 + Math.max(5, rect.height * 0.15)}
-          >
-            DOCK YARD
-          </text>
-        </g>
-      );
-    }
-
-    if (module.variant === "cafe") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#3f5549"
-            height={rect.height}
-            rx={rect.radius ?? 12}
-            ry={rect.radius ?? 12}
-            stroke="#d4bb86"
-            strokeWidth="3"
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(255, 255, 255, 0.08)"
-            height="8"
-            rx="4"
-            ry="4"
-            width={rect.width - 28}
-            x={rect.x + 14}
-            y={rect.y + 6}
-          />
+    const fill =
+      module.variant === "cafe"
+        ? "#384a3f"
+        : module.variant === "workshop"
+          ? "#3e4648"
+          : module.variant === "yard"
+            ? "#564638"
+            : "#2f4240";
+    return (
+      <g key={`module-preview-${module.id}-${index}`}>
+        <rect
+          fill={fill}
+          height={rect.height}
+          rx={rect.radius ?? 10}
+          ry={rect.radius ?? 10}
+          stroke="rgba(215, 188, 121, 0.84)"
+          strokeWidth="2"
+          width={rect.width}
+          x={rect.x}
+          y={rect.y}
+        />
+        {module.variant === "cafe" ? (
           <text
             fill="#f7edd2"
             fontFamily="Georgia, serif"
@@ -3012,524 +2894,60 @@ function renderLandmarkModulePreview(
             letterSpacing="4"
             textAnchor="middle"
             x={rect.x + rect.width / 2}
-            y={rect.y + rect.height / 2 + Math.max(6, rect.height * 0.16)}
+            y={rect.y + rect.height / 2 + Math.max(4, rect.height * 0.12)}
           >
             CAFE
           </text>
-        </g>
-      );
-    }
-
-    return (
-      <rect
-        fill="#334842"
-        height={rect.height}
-        key={`module-preview-${module.id}-${index}`}
-        rx={rect.radius ?? 12}
-        ry={rect.radius ?? 12}
-        stroke="#ccb47a"
-        strokeWidth="3"
-        width={rect.width}
-        x={rect.x}
-        y={rect.y}
-      />
-    );
-  }
-
-  if (module.kind === "terrace_rail" || module.kind === "trim" || module.kind === "wall_band") {
-    if (module.kind === "wall_band" && module.variant === "yard-gatehouse") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#70695f"
-            height={rect.height}
-            rx={rect.radius ?? 8}
-            ry={rect.radius ?? 8}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          {Array.from({ length: 6 }).map((_, ribIndex) => {
-            const x = rect.x + 20 + ribIndex * ((rect.width - 40) / 5);
-            return (
-              <rect
-                fill="rgba(53, 50, 46, 0.22)"
-                height={rect.height - 18}
-                key={`yard-rib-${module.id}-${ribIndex}`}
-                rx="4"
-                ry="4"
-                width="8"
-                x={x}
-                y={rect.y + 10}
-              />
-            );
-          })}
-          <rect
-            fill="#a29a8d"
-            height="12"
-            rx="6"
-            ry="6"
-            width={rect.width - 26}
-            x={rect.x + 13}
-            y={rect.y + 12}
-          />
-        </g>
-      );
-    }
-
-    if (module.kind === "trim" && module.variant === "yard-band") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          {Array.from({ length: 10 }).map((_, stripeIndex) => {
-            const stripeWidth = rect.width / 10;
-            return (
-              <rect
-                fill={stripeIndex % 2 === 0 ? "#d8a347" : "#2b2d2f"}
-                height={rect.height}
-                key={`yard-band-${module.id}-${stripeIndex}`}
-                rx={rect.radius ?? 8}
-                ry={rect.radius ?? 8}
-                width={stripeWidth + 1}
-                x={rect.x + stripeIndex * stripeWidth}
-                y={rect.y}
-              />
-            );
-          })}
-        </g>
-      );
-    }
-
-    if (module.kind === "wall_band" && module.variant === "boarding-upper") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#e5d7c8"
-            height={rect.height}
-            rx={rect.radius ?? 8}
-            ry={rect.radius ?? 8}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(255, 255, 255, 0.28)"
-            height="10"
-            rx="5"
-            ry="5"
-            width={rect.width - 24}
-            x={rect.x + 12}
-            y={rect.y + 10}
-          />
-        </g>
-      );
-    }
-
-    if (module.kind === "wall_band" && module.variant === "boarding-lower") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#d4baa4"
-            height={rect.height}
-            rx={rect.radius ?? 8}
-            ry={rect.radius ?? 8}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(108, 77, 57, 0.12)"
-            height="12"
-            rx="6"
-            ry="6"
-            width={rect.width - 20}
-            x={rect.x + 10}
-            y={rect.y + rect.height - 18}
-          />
-        </g>
-      );
-    }
-
-    if (module.kind === "trim" && module.variant === "house-band") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#c69a79"
-            height={rect.height}
-            rx={rect.radius ?? 8}
-            ry={rect.radius ?? 8}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(255, 246, 232, 0.28)"
-            height="4"
-            rx="2"
-            ry="2"
-            width={rect.width - 20}
-            x={rect.x + 10}
-            y={rect.y + 4}
-          />
-        </g>
-      );
-    }
-
-    if (module.kind === "wall_band" && module.variant === "cafe-ivory") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#f5e8cf"
-            height={rect.height}
-            rx={rect.radius ?? 8}
-            ry={rect.radius ?? 8}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(255, 255, 255, 0.28)"
-            height="12"
-            rx="6"
-            ry="6"
-            width={rect.width - 36}
-            x={rect.x + 18}
-            y={rect.y + 12}
-          />
-          <rect
-            fill="rgba(130, 93, 59, 0.08)"
-            height="16"
-            rx="8"
-            ry="8"
-            width={rect.width - 28}
-            x={rect.x + 14}
-            y={rect.y + rect.height - 24}
-          />
-        </g>
-      );
-    }
-
-    if (module.kind === "wall_band" && module.variant === "walnut") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#b59069"
-            height={rect.height}
-            rx={rect.radius ?? 8}
-            ry={rect.radius ?? 8}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="#ead8b7"
-            height={rect.height - 34}
-            rx="14"
-            ry="14"
-            width={rect.width - 28}
-            x={rect.x + 14}
-            y={rect.y + 12}
-          />
-          <rect
-            fill="rgba(108, 76, 48, 0.2)"
-            height="12"
-            rx="6"
-            ry="6"
-            width={rect.width - 18}
-            x={rect.x + 9}
-            y={rect.y + rect.height - 18}
-          />
-        </g>
-      );
-    }
-
-    if (module.kind === "trim" && module.variant === "warm-trim") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#b2875d"
-            height={rect.height}
-            rx={rect.radius ?? 8}
-            ry={rect.radius ?? 8}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(255, 244, 226, 0.32)"
-            height="4"
-            rx="2"
-            ry="2"
-            width={rect.width - 24}
-            x={rect.x + 12}
-            y={rect.y + 4}
-          />
-        </g>
-      );
-    }
-
-    if (module.kind === "terrace_rail" && module.variant === "cafe") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect fill="#7e5e41" height="8" rx="4" ry="4" width={rect.width} x={rect.x} y={rect.y + 4} />
-          <rect fill="#a37b56" height="6" rx="3" ry="3" width={rect.width - 20} x={rect.x + 10} y={rect.y + 12} />
-          {Array.from({ length: 6 }).map((_, postIndex) => {
-            const postX = rect.x + 20 + (postIndex * (rect.width - 40)) / 5;
-            return (
-              <rect
-                fill="#6a4c32"
-                height={rect.height - 6}
-                key={`terrace-post-${module.id}-${postIndex}`}
-                rx="2"
-                ry="2"
-                width="5"
-                x={postX}
-                y={rect.y + 2}
-              />
-            );
-          })}
-        </g>
-      );
-    }
-
-    return (
-      <rect
-        fill={module.kind === "terrace_rail" ? "#856448" : "#c29a72"}
-        height={rect.height}
-        key={`module-preview-${module.id}-${index}`}
-        rx={rect.radius ?? 8}
-        ry={rect.radius ?? 8}
-        width={rect.width}
-        x={rect.x}
-        y={rect.y}
-      />
-    );
-  }
-
-  if (module.kind === "roof_cap") {
-    if (module.variant === "timber") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#61584d"
-            height={rect.height}
-            rx={rect.radius ?? 12}
-            ry={rect.radius ?? 12}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="#464038"
-            height="10"
-            rx="5"
-            ry="5"
-            width={rect.width - 18}
-            x={rect.x + 9}
-            y={rect.y + rect.height - 12}
-          />
-          <rect fill="#4a4640" height="24" rx="4" ry="4" width="10" x={rect.x + 16} y={rect.y + rect.height - 4} />
-          <rect fill="#4a4640" height="24" rx="4" ry="4" width="10" x={rect.x + rect.width - 26} y={rect.y + rect.height - 4} />
-          <line
-            stroke="#3c3833"
-            strokeWidth="4"
-            x1={rect.x + 24}
-            x2={rect.x + rect.width - 24}
-            y1={rect.y + rect.height - 8}
-            y2={rect.y + rect.height - 8}
-          />
-        </g>
-      );
-    }
-
-    if (module.variant === "slate") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#7a858d"
-            height={rect.height}
-            rx={rect.radius ?? 14}
-            ry={rect.radius ?? 14}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(223, 232, 236, 0.2)"
-            height="7"
-            rx="3.5"
-            ry="3.5"
-            width={rect.width - 28}
-            x={rect.x + 14}
-            y={rect.y + 6}
-          />
-        </g>
-      );
-    }
-
-    if (module.variant === "verdigris") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#74847f"
-            height={rect.height}
-            rx={rect.radius ?? 14}
-            ry={rect.radius ?? 14}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="rgba(217, 231, 224, 0.22)"
-            height="8"
-            rx="4"
-            ry="4"
-            width={rect.width - 36}
-            x={rect.x + 18}
-            y={rect.y + 6}
-          />
-        </g>
-      );
-    }
-
-    return (
-      <rect
-        fill="#708089"
-        height={rect.height}
-        key={`module-preview-${module.id}-${index}`}
-        rx={rect.radius ?? 14}
-        ry={rect.radius ?? 14}
-        width={rect.width}
-        x={rect.x}
-        y={rect.y}
-      />
-    );
-  }
-
-  if (module.kind === "stoop") {
-    if (module.variant === "boarding") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#b59d83"
-            height={rect.height}
-            rx={rect.radius ?? 10}
-            ry={rect.radius ?? 10}
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect
-            fill="#9a826b"
-            height={Math.max(8, rect.height * 0.45)}
-            rx="6"
-            ry="6"
-            width={rect.width - 18}
-            x={rect.x + 9}
-            y={rect.y + rect.height - Math.max(8, rect.height * 0.45)}
-          />
-        </g>
-      );
-    }
-
-    return (
-      <rect
-        fill="#b8ab8d"
-        height={rect.height}
-        key={`module-preview-${module.id}-${index}`}
-        rx={rect.radius ?? 10}
-        ry={rect.radius ?? 10}
-        width={rect.width}
-        x={rect.x}
-        y={rect.y}
-      />
-    );
-  }
-
-  if (module.kind === "shutters") {
-    if (module.variant === "yard") {
-      const count = Math.max(3, module.count ?? 3);
-      const gap = 12;
-      const shutterWidth = Math.max(18, (rect.width - gap * (count + 1)) / count);
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          {Array.from({ length: count }).map((_, shutterIndex) => {
-            const x = rect.x + gap + shutterIndex * (shutterWidth + gap);
-            return (
-              <g key={`shutter-${module.id}-${shutterIndex}`}>
-                <rect
-                  fill="#5a6267"
-                  height={rect.height}
-                  rx="6"
-                  ry="6"
-                  width={shutterWidth}
-                  x={x}
-                  y={rect.y}
-                />
-                {Array.from({ length: 3 }).map((_, slatIndex) => (
-                  <line
-                    key={`yard-shutter-slat-${module.id}-${shutterIndex}-${slatIndex}`}
-                    stroke="rgba(210, 219, 224, 0.28)"
-                    strokeWidth="2"
-                    x1={x + 4}
-                    x2={x + shutterWidth - 4}
-                    y1={rect.y + 8 + slatIndex * 8}
-                    y2={rect.y + 8 + slatIndex * 8}
-                  />
-                ))}
-              </g>
-            );
-          })}
-        </g>
-      );
-    }
-
-    const count = Math.max(2, module.count ?? 3);
-    const gap = 10;
-    const shutterWidth = Math.max(14, (rect.width - gap * (count + 1)) / count);
-    return (
-      <g key={`module-preview-${module.id}-${index}`}>
-        {Array.from({ length: count }).map((_, shutterIndex) => (
-          <rect
-            fill="#d9e2df"
-            height={rect.height}
-            key={`shutter-${module.id}-${shutterIndex}`}
-            rx="6"
-            ry="6"
-            width={shutterWidth}
-            x={rect.x + gap + shutterIndex * (shutterWidth + gap)}
-            y={rect.y}
-          />
-        ))}
+        ) : null}
+        {module.variant === "yard" ? (
+          <text
+            fill="#f0dfb8"
+            fontFamily="Arial Black, Impact, sans-serif"
+            fontSize={Math.max(12, rect.height * 0.44)}
+            fontWeight="700"
+            letterSpacing="2.2"
+            textAnchor="middle"
+            x={rect.x + rect.width / 2}
+            y={rect.y + rect.height / 2 + Math.max(4, rect.height * 0.12)}
+          >
+            DOCK YARD
+          </text>
+        ) : null}
       </g>
     );
   }
 
-  if (module.kind === "downspout") {
-    if (module.variant === "slate") {
-      return (
-        <g key={`module-preview-${module.id}-${index}`}>
-          <rect
-            fill="#66737b"
-            height={rect.height}
-            rx="4"
-            ry="4"
-            width={rect.width}
-            x={rect.x}
-            y={rect.y}
-          />
-          <rect fill="#8a979f" height="12" rx="3" ry="3" width={rect.width + 6} x={rect.x - 3} y={rect.y + 18} />
-          <rect fill="#8a979f" height="12" rx="3" ry="3" width={rect.width + 6} x={rect.x - 3} y={rect.y + rect.height - 34} />
-        </g>
-      );
-    }
-
+  if (module.kind === "trim") {
+    const fill =
+      module.variant === "warm-trim"
+        ? "#deb88f"
+        : module.variant === "industrial-band"
+          ? "#bc8d63"
+          : module.variant === "yard-band"
+            ? "#c89d74"
+            : "#d0b48c";
     return (
       <rect
-        fill="#5d686f"
+        fill={fill}
         height={rect.height}
         key={`module-preview-${module.id}-${index}`}
-        rx="4"
-        ry="4"
+        rx={rect.radius ?? 6}
+        ry={rect.radius ?? 6}
+        width={rect.width}
+        x={rect.x}
+        y={rect.y}
+      />
+    );
+  }
+
+  if (module.kind === "downspout") {
+    return (
+      <rect
+        fill="rgba(83, 98, 106, 0.94)"
+        height={rect.height}
+        key={`module-preview-${module.id}-${index}`}
+        rx={rect.radius ?? 4}
+        ry={rect.radius ?? 4}
         width={rect.width}
         x={rect.x}
         y={rect.y}
@@ -4436,6 +3854,9 @@ export function VisualSceneBuilder() {
   const [moduleCopiedLabel, setModuleCopiedLabel] = useState<string | null>(null);
   const [copiedLabel, setCopiedLabel] = useState<string | null>(null);
   const [gameApplyLabel, setGameApplyLabel] = useState<string | null>(null);
+  const [coreSaveStatusLabel, setCoreSaveStatusLabel] = useState<string | null>(null);
+  const [isSavingCoreScene, setIsSavingCoreScene] = useState(false);
+  const [runtimeMirrorRevision, setRuntimeMirrorRevision] = useState(0);
   const [persistenceStatus, setPersistenceStatus] = useState<string | null>(null);
   const [hasHydratedDraft, setHasHydratedDraft] = useState(false);
   const [showGrid, setShowGrid] = useState(true);
@@ -4520,9 +3941,11 @@ export function VisualSceneBuilder() {
       if (stored) {
         const parsed = parseVisualSceneDocument(stored, baseScene!);
         setScene(parsed);
-        setPersistenceStatus("Loaded local builder draft");
+        setPersistenceStatus(
+          "Loaded local builder draft (core file stays unchanged until saved)",
+        );
       } else {
-        setPersistenceStatus("Using file scene");
+        setPersistenceStatus("Using file scene (current core source)");
       }
     } catch {
       setPersistenceStatus("Could not load saved builder draft");
@@ -4543,8 +3966,8 @@ export function VisualSceneBuilder() {
       saveVisualSceneRuntimeOverride(gameSyncedScene);
       setPersistenceStatus(
         repairedLocationIds.length > 0
-          ? `Saved locally and synced to the game with ${repairedLocationIds.join(", ")} restored`
-          : "Saved locally and synced to the game",
+          ? `Saved local draft + runtime preview (${repairedLocationIds.join(", ")} restored). Save As Core Map to make this canonical.`
+          : "Saved local draft + runtime preview. Save As Core Map to make this canonical.",
       );
     } catch {
       setPersistenceStatus("Could not save local builder draft");
@@ -5477,6 +4900,46 @@ export function VisualSceneBuilder() {
     window.setTimeout(() => setCopiedLabel(null), 1400);
   }
 
+  async function saveSceneAsCoreMap() {
+    if (isSavingCoreScene) {
+      return;
+    }
+
+    setIsSavingCoreScene(true);
+    try {
+      const { repairedLocationIds, scene: gameSyncedScene } =
+        prepareSceneForGameSync(scene);
+      const response = await fetch("/api/builder/visual-scene/core", {
+        body: JSON.stringify({ scene: gameSyncedScene }),
+        headers: {
+          "Content-Type": "application/json",
+        },
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { message?: string }
+        | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "Could not save core map file.");
+      }
+
+      setPersistenceStatus("Saved core source file from builder scene");
+      setCoreSaveStatusLabel(
+        repairedLocationIds.length > 0
+          ? `Core map saved (${repairedLocationIds.join(", ")} restored).`
+          : "Core map saved.",
+      );
+    } catch (error) {
+      setCoreSaveStatusLabel(
+        error instanceof Error ? error.message : "Could not save core map file.",
+      );
+    } finally {
+      setIsSavingCoreScene(false);
+      window.setTimeout(() => setCoreSaveStatusLabel(null), 2400);
+    }
+  }
+
   function applySceneToGame() {
     const { repairedLocationIds, scene: gameSyncedScene } =
       prepareSceneForGameSync(scene);
@@ -5501,7 +4964,7 @@ export function VisualSceneBuilder() {
 
   function resetSceneToFile() {
     setScene(cloneScene(baseScene!));
-    setPersistenceStatus("Reset to file scene");
+    setPersistenceStatus("Reset to core file scene");
   }
 
   async function copyModuleExport() {
@@ -7481,6 +6944,34 @@ export function VisualSceneBuilder() {
 
           </div>
         </details>
+
+        <details className="builder-section builder-details">
+          <summary className="builder-details-summary">
+            <div>
+              <div className="builder-section-title">Game Renderer Mirror</div>
+              <div className="builder-list-subtitle">
+                This iframe uses the actual game renderer so builder edits can be verified against runtime visuals.
+              </div>
+            </div>
+            <span className="builder-details-badge">Open</span>
+          </summary>
+          <div className="builder-details-body">
+            <div className="builder-stage-actions">
+              <button
+                onClick={() => setRuntimeMirrorRevision((current) => current + 1)}
+                type="button"
+              >
+                Refresh Mirror
+              </button>
+            </div>
+            <iframe
+              className="builder-runtime-mirror"
+              loading="lazy"
+              src={`/?builder-preview=1&from-builder=1&r=${runtimeMirrorRevision}`}
+              title="Many Lives game renderer mirror"
+            />
+          </div>
+        </details>
       </aside>
 
       <main className="builder-stage-shell" ref={stageShellRef}>
@@ -7490,6 +6981,9 @@ export function VisualSceneBuilder() {
             <div className="builder-stage-title">{scene.id}</div>
             {persistenceStatus ? (
               <div className="builder-stage-status">{persistenceStatus}</div>
+            ) : null}
+            {coreSaveStatusLabel ? (
+              <div className="builder-stage-status">{coreSaveStatusLabel}</div>
             ) : null}
           </div>
           <div className="builder-stage-actions">
@@ -7506,6 +7000,9 @@ export function VisualSceneBuilder() {
               type="button"
             >
               Edit Layer
+            </button>
+            <button disabled={isSavingCoreScene} onClick={saveSceneAsCoreMap} type="button">
+              {isSavingCoreScene ? "Saving Core Map..." : "Save As Core Map"}
             </button>
             <button onClick={applySceneToGame} type="button">
               {gameApplyLabel ?? "Apply To Game"}
@@ -8840,7 +8337,7 @@ export function VisualSceneBuilder() {
             <div className="builder-subsection">
               <div className="builder-section-title">Export</div>
               <div className="builder-copy">
-                Export the exact scene document the game consumes, or copy a ready-to-paste module for the dedicated scene file.
+                Export the exact scene document the game consumes, or copy a ready-to-paste module for the dedicated scene file. Use Save As Core Map in the stage toolbar to write directly to the core source file.
               </div>
               <textarea
                 className="builder-export"
@@ -9436,6 +8933,11 @@ export function VisualSceneBuilder() {
           background: rgba(41, 52, 58, 0.96);
         }
 
+        button:disabled {
+          cursor: not-allowed;
+          opacity: 0.58;
+        }
+
         .is-danger {
           color: #f3c0b7;
         }
@@ -9552,6 +9054,14 @@ export function VisualSceneBuilder() {
           font-family: "SFMono-Regular", "Menlo", monospace;
           font-size: 12px;
           line-height: 1.45;
+        }
+
+        .builder-runtime-mirror {
+          width: 100%;
+          min-height: 360px;
+          border-radius: 16px;
+          border: 1px solid rgba(124, 141, 146, 0.24);
+          background: #000;
         }
 
         @media (max-width: 1220px) {

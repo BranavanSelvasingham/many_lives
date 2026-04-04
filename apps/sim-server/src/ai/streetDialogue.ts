@@ -739,7 +739,28 @@ export function sanitizeDialogueReply(text: string, npcName?: string): string {
     return "I don't have much to add.";
   }
 
-  return cleaned.slice(0, 220);
+  const maxChars = 320;
+  if (cleaned.length <= maxChars) {
+    return cleaned;
+  }
+
+  const withinLimit = cleaned.slice(0, maxChars).trimEnd();
+  const sentenceEndings = [...withinLimit.matchAll(/[.!?](?=\s|$)/g)];
+  const lastSentenceEnding = sentenceEndings.at(-1)?.index;
+  if (
+    typeof lastSentenceEnding === "number" &&
+    lastSentenceEnding >= Math.floor(maxChars * 0.55)
+  ) {
+    return withinLimit.slice(0, lastSentenceEnding + 1).trimEnd();
+  }
+
+  const lastSpace = withinLimit.lastIndexOf(" ");
+  const base =
+    lastSpace > Math.floor(maxChars * 0.7)
+      ? withinLimit.slice(0, lastSpace)
+      : withinLimit;
+  const trimmedBase = base.replace(/[.,!?;:]+$/, "").trimEnd();
+  return `${trimmedBase || withinLimit}...`;
 }
 
 export function sanitizeThought(text: string): string {

@@ -22,7 +22,7 @@ const CITY_NAME = "Brackenport";
 const DISTRICT_NAME = "South Quay";
 const SCENARIO_NAME = `${DISTRICT_NAME}, Day One`;
 const ROWAN_BACKSTORY =
-  "Rowan is new to Brackenport, with a bed at Morrow House for tonight, a few coins, and no real foothold yet. He is looking for a place to stay, steady income, and a few friends before the city decides what to make of him.";
+  "Rowan is new to Brackenport, with a bed at Morrow House for tonight and a few coins to get started. He is trying to turn that first foothold into a steady place to stay, reliable income, and a few real friends.";
 
 const NEIGHBORHOODS = {
   morrowCourt: "Morrow Court",
@@ -85,7 +85,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
       activeJobId: undefined,
       objective: {
         id: "objective-settle-seed",
-        text: "Get settled in Brackenport: find a place to stay, steady income, and a few friends.",
+        text: "Get settled in Brackenport: lock in a room, steady income, and a few real friends.",
         createdAt: SCENARIO_START,
         updatedAt: SCENARIO_START,
         focus: "settle",

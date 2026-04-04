@@ -3,11 +3,17 @@ import type {
   AIProvider,
   EscalationSuggestion,
   GeneratedInboxMessage,
+  StreetAutonomousLineRequest,
+  StreetAutonomousLineResult,
+  StreetConversationInterpretationRequest,
+  StreetConversationInterpretationResult,
 } from "./provider.js";
 import { buildClassifyEscalationPrompt } from "./prompts/classifyEscalation.js";
+import { buildGenerateStreetAutonomousLinePrompt } from "./prompts/generateStreetAutonomousLine.js";
 import { buildGenerateStreetThoughtsPrompt } from "./prompts/generateStreetThoughts.js";
 import { buildGenerateStreetReplyPrompt } from "./prompts/generateStreetReply.js";
 import { buildGenerateInboxMessagePrompt } from "./prompts/generateInboxMessage.js";
+import { buildInterpretStreetConversationPrompt } from "./prompts/interpretStreetConversation.js";
 import { buildProposeNextActionPrompt } from "./prompts/proposeNextAction.js";
 import { buildSummarizeStatePrompt } from "./prompts/summarizeState.js";
 import {
@@ -175,6 +181,41 @@ export class MockAIProvider implements AIProvider {
   ): Promise<StreetDialogueResult> {
     buildGenerateStreetReplyPrompt(input);
     return buildDeterministicStreetReply(input);
+  }
+
+  async generateStreetAutonomousLine(
+    input: StreetAutonomousLineRequest,
+  ): Promise<StreetAutonomousLineResult> {
+    buildGenerateStreetAutonomousLinePrompt(input);
+    return {
+      speech:
+        input.purpose === "followup"
+          ? "What does that change for me right now?"
+          : "I'm Rowan. I'm trying to get my feet under me here. What matters most right now?",
+    };
+  }
+
+  async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ): Promise<StreetConversationInterpretationResult> {
+    buildInterpretStreetConversationPrompt(input);
+    const npc = input.game.npcs.find((entry) => entry.id === input.npcId);
+    const location = input.game.player.currentLocationId
+      ? input.game.locations.find(
+          (entry) => entry.id === input.game.player.currentLocationId,
+        )
+      : undefined;
+
+    return {
+      npcImpression: npc
+        ? `${npc.name} is still deciding how much Rowan will follow through.`
+        : undefined,
+      summary: npc
+        ? `${npc.name} and Rowan clarified the thread at ${
+            location?.name ?? "South Quay"
+          }, but the next move still needs a sharper read.`
+        : undefined,
+    };
   }
 }
 

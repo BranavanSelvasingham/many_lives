@@ -15,14 +15,14 @@ export const CITY_NARRATIVE: SettingNarrativeProfile = {
   context:
     "Brackenport runs on tide tables, dock credit, and whoever can prove they are useful before the day closes in.",
   backstory:
-    "It grew rich off river trade and warehouse money, then learned to keep the polished parts uphill while the working wards along the water carried the strain, the weather, and the hurry.",
+    "It grew rich on river trade and warehouse money; over time, the polished districts rose uphill while the working wards along the water built a culture of practical cooperation that still keeps the city moving.",
 };
 
 export const DISTRICT_NARRATIVE: SettingNarrativeProfile = {
   context:
     "South Quay is where Brackenport's errands turn visible. Work, gossip, rent pressure, repairs, and dock spillover all meet in a tight quay-side square before the rest of the city pretends not to notice them.",
   backstory:
-    "It began as service lanes for the docks and cheap rooms for transient hands, then thickened into a waterfront quarter of stone lanes, cramped courts, and a public square where favors travel almost as reliably as wages.",
+    "It began as service lanes for the docks and cheap rooms for transient hands, then grew into a tight waterfront quarter where work leads, favors, and second chances travel almost as reliably as wages.",
 };
 
 const DEFAULT_LOCATION_NARRATIVE: LocationNarrativeProfile = {
@@ -41,7 +41,7 @@ const LOCATION_NARRATIVES: Record<string, LocationNarrativeProfile> = {
     context:
       "Morrow House is where people in South Quay try to turn a temporary bed into something steadier than the day's luck.",
     backstory:
-      "It started as overflow rooms for dock hands and carters, then became the kind of boarding house that survives by remembering who pays late, who helps out, and who keeps the place from tilting into chaos.",
+      "It started as overflow rooms for dock hands and carters, then became a boarding house that stays steady by remembering who pays on time, who helps out, and who keeps the place running for everyone.",
   },
   "tea-house": {
     description:

@@ -2,7 +2,10 @@ import type { AIProvider } from "../ai/provider.js";
 import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
 import { getNpcNarrative } from "../street-sim/npcNarratives.js";
-import { buildPlayerObjectiveState, classifyObjective } from "./objectiveState.js";
+import {
+  buildPlayerObjectiveState,
+  classifyObjective,
+} from "./objectiveState.js";
 import { buildRowanCognition } from "./rowanCognition.js";
 import type {
   ActionOption,
@@ -39,7 +42,9 @@ type ConversationResolution = {
   decision?: string;
   memoryKind?: MemoryEntry["kind"];
   memoryText?: string;
+  npcImpression?: string;
   objectiveText?: string;
+  summary?: string;
 };
 
 type ThoughtRefreshMode = "full" | "deterministic";
@@ -61,7 +66,10 @@ export class SimulationEngine {
     return refreshWorld(world, this.aiProvider, { thoughtRefreshMode: "full" });
   }
 
-  async tick(world: StreetGameState, tickCount: number): Promise<StreetGameState> {
+  async tick(
+    world: StreetGameState,
+    tickCount: number,
+  ): Promise<StreetGameState> {
     const nextWorld = cloneWorld(world);
 
     for (let index = 0; index < tickCount; index += 1) {
@@ -73,7 +81,9 @@ export class SimulationEngine {
       );
     }
 
-    return refreshWorld(nextWorld, this.aiProvider, { thoughtRefreshMode: "full" });
+    return refreshWorld(nextWorld, this.aiProvider, {
+      thoughtRefreshMode: "full",
+    });
   }
 
   async runCommand(
@@ -121,7 +131,12 @@ export class SimulationEngine {
         setObjective(nextWorld, command.text);
         break;
       case "speak":
-        await speakToNpc(nextWorld, command.npcId, command.text, this.aiProvider);
+        await speakToNpc(
+          nextWorld,
+          command.npcId,
+          command.text,
+          this.aiProvider,
+        );
         break;
       case "advance_objective":
         thoughtRefreshMode =
@@ -244,15 +259,15 @@ function movePlayer(world: StreetGameState, x: number, y: number): void {
   } else if (location) {
     addFeed(world, "info", `You made your way to ${location.name}.`);
   } else {
-    addFeed(world, "info", "You walked the lane and kept watching the district unfold.");
+    addFeed(
+      world,
+      "info",
+      "You walked the lane and kept watching the district unfold.",
+    );
   }
 }
 
-function findWalkableRoute(
-  tiles: MapTile[],
-  start: GridPoint,
-  end: GridPoint,
-) {
+function findWalkableRoute(tiles: MapTile[], start: GridPoint, end: GridPoint) {
   const roundedStart = {
     x: Math.round(start.x),
     y: Math.round(start.y),
@@ -424,7 +439,11 @@ function setObjective(world: StreetGameState, text: string): void {
 
   if (!normalized) {
     if (!previous) {
-      addFeed(world, "info", "Rowan is already moving without a fixed direction.");
+      addFeed(
+        world,
+        "info",
+        "Rowan is already moving without a fixed direction.",
+      );
       return;
     }
 
@@ -443,7 +462,11 @@ function setObjective(world: StreetGameState, text: string): void {
   }
 
   if (previous?.toLowerCase() === normalized.toLowerCase()) {
-    addFeed(world, "info", `You are still steering Rowan toward: ${normalized}`);
+    addFeed(
+      world,
+      "info",
+      `You are still steering Rowan toward: ${normalized}`,
+    );
     return;
   }
 
@@ -468,7 +491,13 @@ function currentObjectiveDirective(world: StreetGameState) {
   }
 
   const nextStep = objective.trail.find((step) => !step.done);
-  const text = nextStep?.title ?? objective.text;
+  const nextStepText = nextStep?.title ?? objective.text;
+  const text =
+    objective.source === "conversation" &&
+    normalizeObjectiveText(objective.text) !==
+      normalizeObjectiveText(nextStepText)
+      ? objective.text
+      : nextStepText;
 
   return {
     text,
@@ -524,16 +553,12 @@ async function advanceObjective(
     return;
   }
 
-  const objectiveClauseText = objectiveClause(objective.text);
   const targetLocation =
     plan.targetLocationId !== undefined
       ? findLocation(world, plan.targetLocationId)
       : undefined;
 
-  if (
-    targetLocation &&
-    world.player.currentLocationId !== targetLocation.id
-  ) {
+  if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
     if (
       !pendingObjectiveMoveMatches(
         world,
@@ -555,11 +580,25 @@ async function advanceObjective(
     addFeed(
       world,
       "info",
-      `Rowan heads to ${targetLocation.name} to ${objectiveClauseText}.`,
+      `Rowan heads to ${targetLocation.name} to ${planMovementPurpose(world, plan, objective)}.`,
     );
     movePlayer(world, targetLocation.entryX, targetLocation.entryY);
     syncNpcInnerState(world);
-    world.player.currentThought = arrivalThought(world, plan, targetLocation.id);
+    if (plan.npcId && plan.speech) {
+      await conductAutonomousConversation(
+        world,
+        plan.npcId,
+        plan.speech,
+        objective,
+        aiProvider,
+      );
+      return;
+    }
+    world.player.currentThought = arrivalThought(
+      world,
+      plan,
+      targetLocation.id,
+    );
     return "deterministic";
   }
 
@@ -602,10 +641,7 @@ async function advanceObjective(
   );
 }
 
-function resolveConversationTarget(
-  world: StreetGameState,
-  npcId: string,
-) {
+function resolveConversationTarget(world: StreetGameState, npcId: string) {
   const npc = world.npcs.find((entry) => entry.id === npcId);
   if (!npc) {
     return undefined;
@@ -773,10 +809,22 @@ async function talkToNpc(
 
   const { npc, location } = target;
   primeNpcConversation(world, npc);
-  const objective = currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
-  const opener = buildAutonomousSpeech(world, npc, objective);
+  const objective =
+    currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
+  const opener = await generateAutonomousSpeech(
+    world,
+    npc,
+    objective,
+    aiProvider,
+  );
 
-  await conductAutonomousConversation(world, npc.id, opener, objective, aiProvider);
+  await conductAutonomousConversation(
+    world,
+    npc.id,
+    opener,
+    objective,
+    aiProvider,
+  );
 }
 
 async function speakToNpc(
@@ -792,26 +840,41 @@ async function speakToNpc(
 
   const { npc, location } = target;
   const text = normalizeSpeechText(rawText);
-  const objective = currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
+  const objective =
+    currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
   if (!text) {
     addFeed(world, "info", "Say something Rowan can actually put into words.");
     return;
   }
 
   primeNpcConversation(world, npc);
-  const turn = await performConversationTurn(world, npc, location.id, text, aiProvider);
+  const turn = await performConversationTurn(
+    world,
+    npc,
+    location.id,
+    text,
+    aiProvider,
+  );
   addFeed(world, "info", `${npc.name}: ${turn.npcReply}`);
-  const resolution = deriveConversationResolution(
+  const resolution = await resolveConversationResolution(
     world,
     npc,
     objective,
     turn.npcReply,
     turn.topics,
+    aiProvider,
   );
-  const outcome = applyConversationResolution(world, npc, location, objective, resolution, {
-    closingReply: turn.npcReply,
-    trustOpened: turn.trustDelta > 0,
-  });
+  const outcome = applyConversationResolution(
+    world,
+    npc,
+    location,
+    objective,
+    resolution,
+    {
+      closingReply: turn.npcReply,
+      trustOpened: turn.trustDelta > 0,
+    },
+  );
   if (outcome.feedTone && outcome.feedText) {
     addFeed(world, outcome.feedTone, outcome.feedText);
   }
@@ -845,12 +908,13 @@ async function conductAutonomousConversation(
   let trustOpened = firstTurn.trustDelta > 0;
   let closingReply = firstTurn.npcReply;
   const discussedTopics = new Set(firstTurn.topics);
-  let resolution = deriveConversationResolution(
+  let resolution = await resolveConversationResolution(
     world,
     npc,
     objective,
     closingReply,
     discussedTopics,
+    aiProvider,
   );
   const followup = shouldAskAutonomousFollowup(
     world,
@@ -860,7 +924,13 @@ async function conductAutonomousConversation(
     discussedTopics,
     resolution,
   )
-    ? buildAutonomousContinuation(world, npc, objective, closingReply)
+    ? await generateAutonomousContinuation(
+        world,
+        npc,
+        objective,
+        closingReply,
+        aiProvider,
+      )
     : undefined;
   if (followup) {
     const secondTurn = await performConversationTurn(
@@ -876,19 +946,27 @@ async function conductAutonomousConversation(
       discussedTopics.add(topic);
     });
 
-    resolution = deriveConversationResolution(
+    resolution = await resolveConversationResolution(
       world,
       npc,
       objective,
       closingReply,
       discussedTopics,
+      aiProvider,
     );
   }
 
-  const outcome = applyConversationResolution(world, npc, location, objective, resolution, {
-    closingReply,
-    trustOpened,
-  });
+  const outcome = applyConversationResolution(
+    world,
+    npc,
+    location,
+    objective,
+    resolution,
+    {
+      closingReply,
+      trustOpened,
+    },
+  );
   if (outcome.feedTone && outcome.feedText) {
     addFeed(world, outcome.feedTone, outcome.feedText);
     return;
@@ -990,13 +1068,14 @@ function applyConversationResolution(
   );
   rememberNpcIfNew(
     npc,
-    buildNpcConversationImpression(world, npc, objective, resolution),
+    resolution.npcImpression ??
+      buildNpcConversationImpression(world, npc, objective, resolution),
   );
   setActiveConversation(world, npc, {
     decision: resolution.decision,
     locationId: location.id,
     objectiveText: resolution.objectiveText,
-    summary,
+    summary: resolution.summary ?? summary,
   });
 
   const objectiveUpdated =
@@ -1089,7 +1168,12 @@ function handleCommittedJob(
         jobTravelPlan,
       )
     ) {
-      queuePendingObjectiveMove(world, objectiveText, jobTravelPlan, location.id);
+      queuePendingObjectiveMove(
+        world,
+        objectiveText,
+        jobTravelPlan,
+        location.id,
+      );
       addFeed(
         world,
         "info",
@@ -1123,7 +1207,10 @@ function handleCommittedJob(
     return true;
   }
 
-  if (world.player.energy < 28 && world.player.currentLocationId !== world.player.homeLocationId) {
+  if (
+    world.player.energy < 28 &&
+    world.player.currentLocationId !== world.player.homeLocationId
+  ) {
     const home = findLocation(world, world.player.homeLocationId);
     if (home) {
       addFeed(
@@ -1139,11 +1226,15 @@ function handleCommittedJob(
   return false;
 }
 
-function chooseObjectivePlan(world: StreetGameState): ObjectivePlan | undefined {
+function chooseObjectivePlan(
+  world: StreetGameState,
+): ObjectivePlan | undefined {
   const objective = currentObjectiveDirective(world);
   if (!objective) {
     return undefined;
   }
+
+  const planningText = objectivePlanningText(world, objective);
 
   const candidates: ObjectivePlan[] = [];
   const currentLocationId = world.player.currentLocationId;
@@ -1172,7 +1263,7 @@ function chooseObjectivePlan(world: StreetGameState): ObjectivePlan | undefined 
       const score = scoreAutoActionForObjective(
         preview,
         action,
-        objective.text,
+        planningText,
         objective.focus,
       );
       if (score <= 0) {
@@ -1234,7 +1325,10 @@ function chooseObjectivePlan(world: StreetGameState): ObjectivePlan | undefined 
     }
   }
 
-  if (objective.focus === "rest" && world.player.currentLocationId !== world.player.homeLocationId) {
+  if (
+    objective.focus === "rest" &&
+    world.player.currentLocationId !== world.player.homeLocationId
+  ) {
     const home = findLocation(world, world.player.homeLocationId);
     if (home) {
       candidates.push({
@@ -1249,10 +1343,126 @@ function chooseObjectivePlan(world: StreetGameState): ObjectivePlan | undefined 
   return candidates[0];
 }
 
-function previewWorldAtLocation(
+function objectivePlanningText(
   world: StreetGameState,
-  locationId: string,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
 ) {
+  const parts = [objective.text];
+  const latestThread = latestObjectiveConversationThread(world);
+  if (latestThread) {
+    if (latestThread.objectiveText) {
+      parts.push(latestThread.objectiveText);
+    }
+    if (latestThread.decision) {
+      parts.push(latestThread.decision);
+    }
+    if (latestThread.summary) {
+      parts.push(latestThread.summary);
+    }
+  }
+
+  return [
+    ...new Set(
+      parts.map((part) => normalizeObjectiveText(part)).filter(Boolean),
+    ),
+  ].join(" ");
+}
+
+function planMovementPurpose(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+) {
+  if (plan.npcId) {
+    const npc = npcById(world, plan.npcId);
+    if (npc) {
+      return `talk to ${npc.name}`;
+    }
+  }
+
+  if (plan.actionId) {
+    const [kind, targetId] = plan.actionId.split(":");
+
+    if ((kind === "accept" || kind === "work") && targetId) {
+      const job = jobById(world, targetId);
+      if (job) {
+        return kind === "accept"
+          ? `take ${job.title.toLowerCase()}`
+          : `work ${job.title.toLowerCase()}`;
+      }
+    }
+
+    if ((kind === "inspect" || kind === "solve") && targetId) {
+      const problem = problemById(world, targetId);
+      if (problem) {
+        return kind === "inspect"
+          ? `inspect ${problem.title.toLowerCase()}`
+          : `solve ${problem.title.toLowerCase()}`;
+      }
+    }
+
+    if (kind === "buy") {
+      return "pick up the tool he needs";
+    }
+
+    if (kind === "rest") {
+      return "get off his feet for an hour";
+    }
+  }
+
+  if (plan.rationale) {
+    return objectiveClause(plan.rationale);
+  }
+
+  return objectiveClause(objective.text);
+}
+
+function latestObjectiveConversationThread(world: StreetGameState) {
+  const threads = Object.values(world.conversationThreads ?? {}).filter(
+    (thread) => thread.objectiveText || thread.decision || thread.summary,
+  );
+  threads.sort((left, right) =>
+    compareConversationThreadRecency(world, left, right),
+  );
+  return threads[0];
+}
+
+function compareConversationThreadRecency(
+  world: StreetGameState,
+  left: {
+    npcId: string;
+    updatedAt: string;
+    lines: { id: string }[];
+  },
+  right: {
+    npcId: string;
+    updatedAt: string;
+    lines: { id: string }[];
+  },
+) {
+  const activeNpcId = world.activeConversation?.npcId;
+  const leftIsActive = left.npcId === activeNpcId;
+  const rightIsActive = right.npcId === activeNpcId;
+  if (leftIsActive !== rightIsActive) {
+    return Number(rightIsActive) - Number(leftIsActive);
+  }
+
+  const leftOrder = latestConversationLineOrder(left.lines);
+  const rightOrder = latestConversationLineOrder(right.lines);
+  if (leftOrder !== rightOrder) {
+    return rightOrder - leftOrder;
+  }
+
+  return Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || "");
+}
+
+function latestConversationLineOrder(lines: { id: string }[]) {
+  const latestId = lines.at(-1)?.id ?? "";
+  const match = /conversation-(\d+)-/.exec(latestId);
+  return match ? Number(match[1]) : 0;
+}
+
+function previewWorldAtLocation(world: StreetGameState, locationId: string) {
   const preview = cloneWorld(world);
   const location = findLocation(preview, locationId);
   if (!location) {
@@ -1271,7 +1481,10 @@ function canAutoPlanAction(
   action: ActionOption,
   preview: StreetGameState,
 ) {
-  if (action.kind === "inspect" && locationId !== world.player.currentLocationId) {
+  if (
+    action.kind === "inspect" &&
+    locationId !== world.player.currentLocationId
+  ) {
     return false;
   }
 
@@ -1327,7 +1540,10 @@ function knownLeadLocationIds(world: StreetGameState) {
   return [...leadLocationIds];
 }
 
-function nearestKnownLocationDistance(world: StreetGameState, locationId: string) {
+function nearestKnownLocationDistance(
+  world: StreetGameState,
+  locationId: string,
+) {
   const knownLocationIds = world.player.knownLocationIds;
   if (knownLocationIds.length === 0) {
     return distanceToLocation(world, locationId);
@@ -1340,17 +1556,18 @@ function nearestKnownLocationDistance(world: StreetGameState, locationId: string
   );
 }
 
-function locationDistance(world: StreetGameState, fromLocationId: string, toLocationId: string) {
+function locationDistance(
+  world: StreetGameState,
+  fromLocationId: string,
+  toLocationId: string,
+) {
   const from = findLocation(world, fromLocationId);
   const to = findLocation(world, toLocationId);
   if (!from || !to) {
     return Number.POSITIVE_INFINITY;
   }
 
-  return (
-    Math.abs(from.entryX - to.entryX) +
-    Math.abs(from.entryY - to.entryY)
-  );
+  return Math.abs(from.entryX - to.entryX) + Math.abs(from.entryY - to.entryY);
 }
 
 function distanceToLocation(world: StreetGameState, locationId: string) {
@@ -1371,7 +1588,8 @@ function scoreAutoActionForObjective(
   objectiveText: string,
   objectiveFocus: ObjectiveFocus,
 ) {
-  let score = scoreActionForObjective(action, objectiveText, objectiveFocus) * 2;
+  let score =
+    scoreActionForObjective(action, objectiveText, objectiveFocus) * 2;
   const targetId = extractActionTargetId(action.id);
   const targetJob =
     (action.kind === "accept_job" || action.kind === "work_job") && targetId
@@ -1423,7 +1641,12 @@ function scoreAutoActionForObjective(
   }
 
   if (action.kind === "talk" && targetId) {
-    score += scoreNpcForObjective(world, targetId, objectiveText, objectiveFocus);
+    score += scoreNpcForObjective(
+      world,
+      targetId,
+      objectiveText,
+      objectiveFocus,
+    );
   }
 
   if (world.player.activeJobId && targetId === world.player.activeJobId) {
@@ -1440,6 +1663,13 @@ function scoreNpcForObjective(
   objectiveFocus: ObjectiveFocus,
 ) {
   const normalized = objectiveText.toLowerCase();
+  const pointsToAda =
+    /(ada|kettle|tea[- ]house|counter|apron|tray|booths?|tables?|rush)/.test(
+      normalized,
+    );
+  const pointsToTomas = /(tomas|north crane|crane yard|gloves|bays?)/.test(
+    normalized,
+  );
   const npc = npcById(world, npcId);
   if (!npc) {
     return 0;
@@ -1449,8 +1679,18 @@ function scoreNpcForObjective(
   const playerConversationCount = countPlayerConversationsWithNpc(world, npcId);
   const uniqueNpcConversations = countUniqueNpcConversations(world);
   const minutesSinceConversation = minutesSinceLastNpcConversation(world, npc);
+  const allowImmediateFollowup = shouldAllowImmediateNpcFollowup(
+    world,
+    npc,
+    objectiveText,
+    playerConversationCount,
+  );
 
-  if (playerConversationCount > 0 && minutesSinceConversation < 10) {
+  if (
+    playerConversationCount > 0 &&
+    minutesSinceConversation < 10 &&
+    !allowImmediateFollowup
+  ) {
     return -40;
   }
 
@@ -1510,14 +1750,20 @@ function scoreNpcForObjective(
   }
 
   if (minutesSinceConversation < 20) {
-    score -= 18;
+    score -= allowImmediateFollowup ? 4 : 18;
   } else if (minutesSinceConversation < 60) {
     score -= 8;
-  } else if (minutesSinceConversation >= 180 && Number.isFinite(minutesSinceConversation)) {
+  } else if (
+    minutesSinceConversation >= 180 &&
+    Number.isFinite(minutesSinceConversation)
+  ) {
     score += 5;
   }
 
-  if (normalized.includes("pump") && (npcId === "npc-mara" || npcId === "npc-jo")) {
+  if (
+    normalized.includes("pump") &&
+    (npcId === "npc-mara" || npcId === "npc-jo")
+  ) {
     score += 14;
   }
 
@@ -1529,15 +1775,118 @@ function scoreNpcForObjective(
     score += 16;
   }
 
-  if (normalized.includes("work") && npcId === "npc-ada") {
+  if ((normalized.includes("work") || pointsToAda) && npcId === "npc-ada") {
     score += 10;
   }
 
-  if (normalized.includes("yard") && npcId === "npc-tomas") {
+  if ((normalized.includes("yard") || pointsToTomas) && npcId === "npc-tomas") {
     score += 12;
   }
 
   return score;
+}
+
+function shouldAllowImmediateNpcFollowup(
+  world: StreetGameState,
+  npc: NpcState,
+  objectiveText: string,
+  playerConversationCount: number,
+) {
+  if (playerConversationCount < 1 || playerConversationCount > 2) {
+    return false;
+  }
+
+  const latestThread = latestObjectiveConversationThread(world);
+  if (!latestThread || latestThread.npcId !== npc.id) {
+    return false;
+  }
+
+  const cueText = [
+    objectiveText,
+    latestThread.objectiveText ?? "",
+    latestThread.decision ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return cueText.includes(npc.name.toLowerCase());
+}
+
+async function generateAutonomousSpeech(
+  world: StreetGameState,
+  npc: NpcState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  aiProvider: AIProvider,
+) {
+  const generated = await aiProvider.generateStreetAutonomousLine({
+    game: world,
+    npcId: npc.id,
+    objective,
+    purpose: "opener",
+  });
+  const normalized = normalizeSpeechText(generated.speech ?? "");
+  if (normalized) {
+    return normalized;
+  }
+
+  return buildAutonomousSpeech(world, npc, objective);
+}
+
+async function generateAutonomousContinuation(
+  world: StreetGameState,
+  npc: NpcState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  lastNpcReply: string,
+  aiProvider: AIProvider,
+) {
+  const generated = await aiProvider.generateStreetAutonomousLine({
+    game: world,
+    lastNpcReply,
+    npcId: npc.id,
+    objective,
+    purpose: "followup",
+  });
+  const normalized = normalizeSpeechText(generated.speech ?? "");
+  if (normalized) {
+    return normalized;
+  }
+
+  return buildAutonomousContinuation(world, npc, objective, lastNpcReply);
+}
+
+async function resolveConversationResolution(
+  world: StreetGameState,
+  npc: NpcState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  closingReply: string,
+  discussedTopics: Set<string>,
+  aiProvider: AIProvider,
+) {
+  const heuristic = deriveConversationResolution(
+    world,
+    npc,
+    objective,
+    closingReply,
+    discussedTopics,
+  );
+  const interpreted = await aiProvider.interpretStreetConversation({
+    closingReply,
+    discussedTopics: [...discussedTopics],
+    game: world,
+    npcId: npc.id,
+    objective,
+  });
+
+  return {
+    decision: interpreted.decision ?? heuristic.decision,
+    memoryKind: interpreted.memoryText
+      ? (interpreted.memoryKind ?? heuristic.memoryKind)
+      : heuristic.memoryKind,
+    memoryText: interpreted.memoryText ?? heuristic.memoryText,
+    npcImpression: interpreted.npcImpression ?? heuristic.npcImpression,
+    objectiveText: interpreted.objectiveText ?? heuristic.objectiveText,
+    summary: interpreted.summary ?? heuristic.summary,
+  };
 }
 
 function buildAutonomousSpeech(
@@ -1546,15 +1895,22 @@ function buildAutonomousSpeech(
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
 ) {
   const text = objective.text.toLowerCase();
-  const playerConversationCount = countPlayerConversationsWithNpc(world, npc.id);
+  const playerConversationCount = countPlayerConversationsWithNpc(
+    world,
+    npc.id,
+  );
   const cognition = buildRowanCognition(world);
   const primaryNeed = cognition.primaryNeed?.key;
-  const teaLeadKnown = cognition.beliefs.some((belief) => belief.id === "belief-ada-work");
-  const yardLeadKnown = cognition.beliefs.some((belief) => belief.id === "belief-tomas-work");
+  const teaLeadKnown = cognition.beliefs.some(
+    (belief) => belief.id === "belief-ada-work",
+  );
+  const yardLeadKnown = cognition.beliefs.some(
+    (belief) => belief.id === "belief-tomas-work",
+  );
   const lastNpcReply = [...world.conversations]
     .reverse()
-    .find((entry) => entry.npcId === npc.id && entry.speaker === "npc")?.text
-    .toLowerCase();
+    .find((entry) => entry.npcId === npc.id && entry.speaker === "npc")
+    ?.text.toLowerCase();
 
   if (playerConversationCount > 0) {
     const followup = buildAutonomousFollowup(
@@ -1707,7 +2063,7 @@ function buildAutonomousFollowup(
     }
 
     if (npcId === "npc-mara") {
-        return "Who on this block actually follows through when work opens up?";
+      return "Who on this block actually follows through when work opens up?";
     }
   }
 
@@ -1764,7 +2120,11 @@ function acceptJob(world: StreetGameState, jobId: string): void {
   }
 
   if (!job.discovered) {
-    addFeed(world, "info", "You cannot commit to work you have not actually found yet.");
+    addFeed(
+      world,
+      "info",
+      "You cannot commit to work you have not actually found yet.",
+    );
     return;
   }
 
@@ -1775,7 +2135,11 @@ function acceptJob(world: StreetGameState, jobId: string): void {
   }
 
   if (!location || location.id !== job.locationId) {
-    addFeed(world, "info", "You need to be at the job site before you can commit to the work.");
+    addFeed(
+      world,
+      "info",
+      "You need to be at the job site before you can commit to the work.",
+    );
     return;
   }
 
@@ -1788,7 +2152,11 @@ function acceptJob(world: StreetGameState, jobId: string): void {
   job.deferredUntilMinutes = undefined;
   world.player.activeJobId = job.id;
   addFeed(world, "job", `You took ${job.title.toLowerCase()}.`);
-  remember(world, "job", `You committed to ${job.title.toLowerCase()} at ${findLocation(world, job.locationId)?.name}.`);
+  remember(
+    world,
+    "job",
+    `You committed to ${job.title.toLowerCase()} at ${findLocation(world, job.locationId)?.name}.`,
+  );
 }
 
 function deferJob(world: StreetGameState, jobId: string): void {
@@ -1804,10 +2172,17 @@ function deferJob(world: StreetGameState, jobId: string): void {
 
   const dayStartMinutes = (world.clock.day - 1) * 24 * 60;
   const lastUsefulMinute = dayStartMinutes + job.endHour * 60 - 15;
-  const deferredUntil = Math.min(world.clock.totalMinutes + 60, lastUsefulMinute);
+  const deferredUntil = Math.min(
+    world.clock.totalMinutes + 60,
+    lastUsefulMinute,
+  );
 
   if (deferredUntil <= world.clock.totalMinutes + 5) {
-    addFeed(world, "info", `There is not enough room left to safely defer ${job.title.toLowerCase()}.`);
+    addFeed(
+      world,
+      "info",
+      `There is not enough room left to safely defer ${job.title.toLowerCase()}.`,
+    );
     return;
   }
 
@@ -1832,7 +2207,11 @@ function abandonJob(world: StreetGameState, jobId: string): void {
   }
 
   if (!job.accepted || world.player.activeJobId !== job.id) {
-    addFeed(world, "info", "There is no live commitment here to walk away from.");
+    addFeed(
+      world,
+      "info",
+      "There is no live commitment here to walk away from.",
+    );
     return;
   }
 
@@ -1855,7 +2234,11 @@ function resumeJob(world: StreetGameState, jobId: string): void {
   }
 
   if (!job.accepted || world.player.activeJobId !== job.id) {
-    addFeed(world, "info", "There is no paused commitment here to pick back up.");
+    addFeed(
+      world,
+      "info",
+      "There is no paused commitment here to pick back up.",
+    );
     return;
   }
 
@@ -1865,7 +2248,11 @@ function resumeJob(world: StreetGameState, jobId: string): void {
   }
 
   job.deferredUntilMinutes = undefined;
-  addFeed(world, "info", `You pull ${job.title.toLowerCase()} back to the front of Rowan's day.`);
+  addFeed(
+    world,
+    "info",
+    `You pull ${job.title.toLowerCase()} back to the front of Rowan's day.`,
+  );
   remember(
     world,
     "self",
@@ -1896,7 +2283,11 @@ function workJob(world: StreetGameState, jobId: string): void {
   }
 
   if (currentHour(world) < job.startHour || currentHour(world) >= job.endHour) {
-    addFeed(world, "info", "The shift window is wrong. Either you are early, or the work has moved on.");
+    addFeed(
+      world,
+      "info",
+      "The shift window is wrong. Either you are early, or the work has moved on.",
+    );
     return;
   }
 
@@ -1933,7 +2324,11 @@ function workJob(world: StreetGameState, jobId: string): void {
     );
   }
 
-  remember(world, "job", `You finished ${job.title.toLowerCase()} and took your pay while the block was still moving.`);
+  remember(
+    world,
+    "job",
+    `You finished ${job.title.toLowerCase()} and took your pay while the block was still moving.`,
+  );
 }
 
 function buyItem(world: StreetGameState, itemId: string): void {
@@ -1961,10 +2356,15 @@ function buyItem(world: StreetGameState, itemId: string): void {
   world.player.inventory.push({
     id: "item-wrench",
     name: "Old wrench",
-    description: "Heavy, scarred, and still solid enough to turn a stubborn fitting.",
+    description:
+      "Heavy, scarred, and still solid enough to turn a stubborn fitting.",
   });
   addFeed(world, "info", "You bought an old wrench from Jo for $8.");
-  remember(world, "self", "You spent scarce money on a tool because South Quay keeps rewarding people who can fix what others step around.");
+  remember(
+    world,
+    "self",
+    "You spent scarce money on a tool because South Quay keeps rewarding people who can fix what others step around.",
+  );
 }
 
 function solveProblem(world: StreetGameState, problemId: string): void {
@@ -1985,7 +2385,11 @@ function solveProblem(world: StreetGameState, problemId: string): void {
   }
 
   if (problem.requiredItemId && !hasItem(world, problem.requiredItemId)) {
-    addFeed(world, "info", `You need the right tool before ${problem.title.toLowerCase()} becomes solvable.`);
+    addFeed(
+      world,
+      "info",
+      `You need the right tool before ${problem.title.toLowerCase()} becomes solvable.`,
+    );
     return;
   }
 
@@ -2000,7 +2404,11 @@ function solveProblem(world: StreetGameState, problemId: string): void {
       "problem",
       `You tightened the pump in Morrow Yard, slowed the leak, and Mara pressed $${problem.rewardMoney} into your hand before the stones flooded again.`,
     );
-    remember(world, "problem", "Morrow House started to remember you as someone who fixes shared trouble instead of adding to it.");
+    remember(
+      world,
+      "problem",
+      "Morrow House started to remember you as someone who fixes shared trouble instead of adding to it.",
+    );
     return;
   }
 
@@ -2015,32 +2423,52 @@ function solveProblem(world: StreetGameState, problemId: string): void {
       "problem",
       `You got the jammed handcart rolling again and the square paid you $${problem.rewardMoney} to stop being in everybody's way.`,
     );
-    remember(world, "problem", "You learned that even small street problems become reputation if you solve them before they spread.");
+    remember(
+      world,
+      "problem",
+      "You learned that even small street problems become reputation if you solve them before they spread.",
+    );
   }
 }
 
 function inspectLead(world: StreetGameState, targetId: string): void {
   if (targetId === "problem-pump") {
     discoverProblem(world, "problem-pump");
-    addFeed(world, "problem", "Up close, the pump in Morrow Yard is one wrench-turn away from either a fix or a worse leak.");
+    addFeed(
+      world,
+      "problem",
+      "Up close, the pump in Morrow Yard is one wrench-turn away from either a fix or a worse leak.",
+    );
   }
 
   if (targetId === "problem-cart") {
     discoverProblem(world, "problem-cart");
-    addFeed(world, "problem", "The split wheel on the handcart is already starting to snag foot traffic through the square.");
+    addFeed(
+      world,
+      "problem",
+      "The split wheel on the handcart is already starting to snag foot traffic through the square.",
+    );
   }
 }
 
 function restAtHome(world: StreetGameState): void {
   const location = currentLocation(world);
   if (!location || location.id !== world.player.homeLocationId) {
-    addFeed(world, "info", "You need somewhere that is actually yours for an hour before rest does any good.");
+    addFeed(
+      world,
+      "info",
+      "You need somewhere that is actually yours for an hour before rest does any good.",
+    );
     return;
   }
 
   const pumpSolved = problemById(world, "problem-pump")?.status === "solved";
   advanceWorld(world, 60);
-  world.player.energy = clamp(world.player.energy + (pumpSolved ? 24 : 16), 12, 100);
+  world.player.energy = clamp(
+    world.player.energy + (pumpSolved ? 24 : 16),
+    12,
+    100,
+  );
   addFeed(
     world,
     "memory",
@@ -2070,7 +2498,11 @@ function resolvePassiveState(world: StreetGameState): void {
   }
 
   const cartProblem = problemById(world, "problem-cart");
-  if (cartProblem && cartProblem.status === "hidden" && currentHour(world) >= 12) {
+  if (
+    cartProblem &&
+    cartProblem.status === "hidden" &&
+    currentHour(world) >= 12
+  ) {
     cartProblem.status = "active";
   }
 
@@ -2096,8 +2528,9 @@ function updateNpcLocations(world: StreetGameState): void {
   for (const npc of world.npcs) {
     const hour = currentHour(world);
     const stop =
-      npc.schedule.find((entry) => hour >= entry.fromHour && hour < entry.toHour) ??
-      npc.schedule[npc.schedule.length - 1];
+      npc.schedule.find(
+        (entry) => hour >= entry.fromHour && hour < entry.toHour,
+      ) ?? npc.schedule[npc.schedule.length - 1];
 
     if (stop) {
       npc.currentLocationId = stop.locationId;
@@ -2163,7 +2596,13 @@ function buildScene(world: StreetGameState) {
     });
   }
 
-  for (const job of world.jobs.filter((entry) => entry.locationId === location?.id && entry.discovered && !entry.completed && !entry.missed)) {
+  for (const job of world.jobs.filter(
+    (entry) =>
+      entry.locationId === location?.id &&
+      entry.discovered &&
+      !entry.completed &&
+      !entry.missed,
+  )) {
     notes.push({
       id: `note-job-${job.id}`,
       text: `${job.title} pays $${job.pay} between ${formatHour(job.startHour)} and ${formatHour(job.endHour)}.`,
@@ -2171,7 +2610,12 @@ function buildScene(world: StreetGameState) {
     });
   }
 
-  for (const problem of world.problems.filter((entry) => entry.locationId === location?.id && entry.discovered && entry.status === "active")) {
+  for (const problem of world.problems.filter(
+    (entry) =>
+      entry.locationId === location?.id &&
+      entry.discovered &&
+      entry.status === "active",
+  )) {
     notes.push({
       id: `note-problem-${problem.id}`,
       text: problem.summary,
@@ -2208,7 +2652,9 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
   const actions: ActionOption[] = [];
 
   if (location) {
-    for (const npc of world.npcs.filter((entry) => entry.currentLocationId === location.id)) {
+    for (const npc of world.npcs.filter(
+      (entry) => entry.currentLocationId === location.id,
+    )) {
       actions.push({
         id: `talk:${npc.id}`,
         label: `Talk to ${npc.name}`,
@@ -2219,7 +2665,13 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     }
   }
 
-  for (const job of world.jobs.filter((entry) => entry.locationId === location?.id && entry.discovered && !entry.completed && !entry.missed)) {
+  for (const job of world.jobs.filter(
+    (entry) =>
+      entry.locationId === location?.id &&
+      entry.discovered &&
+      !entry.completed &&
+      !entry.missed,
+  )) {
     if (!job.accepted) {
       actions.push({
         id: `accept:${job.id}`,
@@ -2228,7 +2680,10 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
         kind: "accept_job",
         emphasis: "medium",
         disabled: currentHour(world) >= job.endHour,
-        disabledReason: currentHour(world) >= job.endHour ? "The shift window is gone." : undefined,
+        disabledReason:
+          currentHour(world) >= job.endHour
+            ? "The shift window is gone."
+            : undefined,
       });
     } else {
       actions.push({
@@ -2253,12 +2708,15 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     }
   }
 
-  for (const problem of world.problems.filter((entry) => entry.locationId === location?.id)) {
+  for (const problem of world.problems.filter(
+    (entry) => entry.locationId === location?.id,
+  )) {
     if (!problem.discovered && problem.status === "active") {
       actions.push({
         id: `inspect:${problem.id}`,
         label: `Inspect ${problem.title.toLowerCase()}`,
-        description: "Take a closer look before deciding whether it is yours to fix.",
+        description:
+          "Take a closer look before deciding whether it is yours to fix.",
         kind: "inspect",
         emphasis: "low",
       });
@@ -2290,11 +2748,15 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     actions.push({
       id: "buy:item-wrench",
       label: "Buy old wrench",
-      description: "A solid tool for $8. Heavy, ugly, and exactly as useful as that sounds.",
+      description:
+        "A solid tool for $8. Heavy, ugly, and exactly as useful as that sounds.",
       kind: "buy",
       emphasis: "medium",
       disabled: world.player.money < 8,
-      disabledReason: world.player.money < 8 ? "You only have enough money to be thoughtful, not equipped." : undefined,
+      disabledReason:
+        world.player.money < 8
+          ? "You only have enough money to be thoughtful, not equipped."
+          : undefined,
     });
   }
 
@@ -2302,7 +2764,8 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     actions.push({
       id: "rest:home",
       label: "Rest for an hour",
-      description: "Get off your feet and let the block keep moving without you for a bit.",
+      description:
+        "Get off your feet and let the block keep moving without you for a bit.",
       kind: "rest",
       emphasis: "low",
     });
@@ -2326,7 +2789,9 @@ function buildGoals(world: StreetGameState): string[] {
 function buildSummary(world: StreetGameState): string {
   const location = currentLocation(world);
   const completedJobs = world.jobs.filter((job) => job.completed).length;
-  const solvedProblems = world.problems.filter((problem) => problem.status === "solved").length;
+  const solvedProblems = world.problems.filter(
+    (problem) => problem.status === "solved",
+  ).length;
   const knownPlaces = world.player.knownLocationIds.length;
   const objective = world.player.objective;
   const nextObjectiveStep = objective?.trail.find((step) => !step.done);
@@ -2362,16 +2827,19 @@ function buildSummary(world: StreetGameState): string {
             }, so that comes first.`
           : currentHour(world) < activeJob.startHour
             ? ` I've already committed to ${activeJob.title.toLowerCase()} at ${
-                findLocation(world, activeJob.locationId)?.name ?? "the job site"
+                findLocation(world, activeJob.locationId)?.name ??
+                "the job site"
               }, and it starts around ${formatHour(activeJob.startHour)}.`
             : currentHour(world) >= activeJob.startHour &&
                 currentHour(world) < activeJob.endHour
               ? ` I've already committed to ${activeJob.title.toLowerCase()} at ${
-                  findLocation(world, activeJob.locationId)?.name ?? "the job site"
+                  findLocation(world, activeJob.locationId)?.name ??
+                  "the job site"
                 }, and the window is open now.`
-        : ` I've already committed to ${activeJob.title.toLowerCase()} at ${
-            findLocation(world, activeJob.locationId)?.name ?? "the job site"
-          }, so that comes first until it resolves.`
+              : ` I've already committed to ${activeJob.title.toLowerCase()} at ${
+                  findLocation(world, activeJob.locationId)?.name ??
+                  "the job site"
+                }, so that comes first until it resolves.`
       : "";
 
   return `${world.clock.label}, day ${world.clock.day}. I'm new to ${
@@ -2397,29 +2865,35 @@ function syncNpcInnerState(world: StreetGameState) {
     switch (npc.id) {
       case "npc-mara":
         npc.currentObjective = narrative.objective;
-        npc.currentConcern = pumpProblem?.discovered && pumpProblem.status === "active"
-          ? "That pump is turning house trouble public."
-          : hour < 12
-            ? "Keep the house from slipping into rent talk."
-            : "Decide whether this newcomer means strain, help, or maybe a future here.";
+        npc.currentConcern =
+          pumpProblem?.discovered && pumpProblem.status === "active"
+            ? "That pump is turning house trouble public."
+            : hour < 12
+              ? "Keep the house from slipping into rent talk."
+              : "Decide whether this newcomer means strain, help, or maybe a future here.";
         npc.mood =
-          pumpProblem?.discovered && pumpProblem.status === "active" ? "watchful" : "measured";
+          pumpProblem?.discovered && pumpProblem.status === "active"
+            ? "watchful"
+            : "measured";
         npc.openness = clamp(npc.openness || 58, 36, 92);
         break;
       case "npc-ada":
         npc.currentObjective = narrative.objective;
-        npc.currentConcern = teaJob?.accepted && !teaJob.completed
-          ? "The room needs speed, not apologies."
-          : hour < 12.5
-            ? narrative.context
-            : "Keep the room from falling behind the cups.";
+        npc.currentConcern =
+          teaJob?.accepted && !teaJob.completed
+            ? "The room needs speed, not apologies."
+            : hour < 12.5
+              ? narrative.context
+              : "Keep the room from falling behind the cups.";
         npc.mood = teaJob?.accepted && !teaJob.completed ? "brisk" : "pressed";
         npc.openness = clamp(npc.openness || 50, 30, 88);
         break;
       case "npc-jo":
         npc.currentObjective = narrative.objective;
         npc.currentConcern =
-          pumpProblem?.discovered && pumpProblem.status === "active" && !playerHasWrench
+          pumpProblem?.discovered &&
+          pumpProblem.status === "active" &&
+          !playerHasWrench
             ? "That wrench should leave the bench before dusk."
             : narrative.context;
         npc.mood = "blunt";
@@ -2427,21 +2901,23 @@ function syncNpcInnerState(world: StreetGameState) {
         break;
       case "npc-tomas":
         npc.currentObjective = narrative.objective;
-        npc.currentConcern = yardJob?.accepted && !yardJob.completed
-          ? "That lift needs finishing clean."
-          : hour < 14
-            ? narrative.context
-            : "Keep the yard from slowing to somebody else's pace.";
+        npc.currentConcern =
+          yardJob?.accepted && !yardJob.completed
+            ? "That lift needs finishing clean."
+            : hour < 14
+              ? narrative.context
+              : "Keep the yard from slowing to somebody else's pace.";
         npc.mood = "hard-edged";
         npc.openness = clamp(npc.openness || 34, 18, 74);
         break;
       case "npc-nia":
         npc.currentObjective = narrative.objective;
-        npc.currentConcern = cartProblem?.status === "active"
-          ? "That jam in Quay Square is about to become everybody's problem."
-          : npc.currentLocationId === "moss-pier"
-            ? "Watch what comes off the boats before the story gets retold."
-            : narrative.context;
+        npc.currentConcern =
+          cartProblem?.status === "active"
+            ? "That jam in Quay Square is about to become everybody's problem."
+            : npc.currentLocationId === "moss-pier"
+              ? "Watch what comes off the boats before the story gets retold."
+              : narrative.context;
         npc.mood = "alert";
         npc.openness = clamp(npc.openness || 60, 34, 94);
         break;
@@ -2549,7 +3025,10 @@ function recordConversation(
   world.conversationThreads[entry.npcId] = thread;
 }
 
-function countPlayerConversationsWithNpc(world: StreetGameState, npcId: string) {
+function countPlayerConversationsWithNpc(
+  world: StreetGameState,
+  npcId: string,
+) {
   return world.conversations.filter(
     (entry) => entry.npcId === npcId && entry.speaker === "player",
   ).length;
@@ -2563,7 +3042,10 @@ function countUniqueNpcConversations(world: StreetGameState) {
   ).size;
 }
 
-function minutesSinceLastNpcConversation(world: StreetGameState, npc: NpcState) {
+function minutesSinceLastNpcConversation(
+  world: StreetGameState,
+  npc: NpcState,
+) {
   const lastInteraction = npc.lastInteractionAt;
   if (!lastInteraction) {
     return Number.POSITIVE_INFINITY;
@@ -2612,7 +3094,11 @@ function setActiveConversation(
 
   thread.decision = options.decision;
   thread.objectiveText = options.objectiveText;
-  thread.summary = options.summary ?? options.decision ?? options.objectiveText ?? thread.summary;
+  thread.summary =
+    options.summary ??
+    options.decision ??
+    options.objectiveText ??
+    thread.summary;
   thread.updatedAt = isoFor(world.clock.totalMinutes);
   thread.locationId = options.locationId ?? thread.locationId;
   world.conversationThreads[npc.id] = thread;
@@ -2771,7 +3257,9 @@ function deriveConversationResolution(
     );
   const shouldSharpenObjective = !socialLoopObjective;
   const normalizedObjective = objective.text.toLowerCase();
-  const objectiveAboutPump = /\bpump\b|\bleak\b|\bwrench\b/.test(normalizedObjective);
+  const objectiveAboutPump = /\bpump\b|\bleak\b|\bwrench\b/.test(
+    normalizedObjective,
+  );
   const discussedPump = discussedTopics.has("pump") || objectiveAboutPump;
 
   if (socialLoopObjective && nextNpc) {
@@ -2792,7 +3280,8 @@ function deriveConversationResolution(
         !hasWrench
       ) {
         return {
-          decision: "get to Mercer Repairs for a wrench, then come back to the pump.",
+          decision:
+            "get to Mercer Repairs for a wrench, then come back to the pump.",
           memoryKind: "problem",
           memoryText:
             "Talking with Mara made it plain that fixing the pump is the fastest way to stop looking like you're only passing through.",
@@ -2809,7 +3298,8 @@ function deriveConversationResolution(
         hasWrench
       ) {
         return {
-          decision: "go straight back to Morrow Yard and put the wrench to the pump.",
+          decision:
+            "go straight back to Morrow Yard and put the wrench to the pump.",
           memoryKind: "problem",
           memoryText:
             "Mara keeps turning talk back toward the shared trouble that's already making the house tense.",
@@ -2819,9 +3309,15 @@ function deriveConversationResolution(
         };
       }
 
-      if (teaJob?.discovered && !teaJob.accepted && !teaJob.completed && !teaJob.missed) {
+      if (
+        teaJob?.discovered &&
+        !teaJob.accepted &&
+        !teaJob.completed &&
+        !teaJob.missed
+      ) {
         return {
-          decision: "get to Kettle & Lamp before the rush hardens and ask Ada for work.",
+          decision:
+            "get to Kettle & Lamp before the rush hardens and ask Ada for work.",
           memoryKind: "job",
           memoryText:
             "Mara reads usefulness in who follows through, not who sounds hungry.",
@@ -2832,9 +3328,15 @@ function deriveConversationResolution(
       }
       break;
     case "npc-ada":
-      if (teaJob?.discovered && !teaJob.accepted && !teaJob.completed && !teaJob.missed) {
+      if (
+        teaJob?.discovered &&
+        !teaJob.accepted &&
+        !teaJob.completed &&
+        !teaJob.missed
+      ) {
         return {
-          decision: "stay with Ada and take the tea-house shift if the room still needs the hands.",
+          decision:
+            "stay with Ada and take the tea-house shift if the room still needs the hands.",
           memoryKind: "job",
           memoryText:
             "Ada made the noon shift sound simple, but only if you can keep up once the room gets hot.",
@@ -2844,9 +3346,15 @@ function deriveConversationResolution(
         };
       }
 
-      if (yardJob?.discovered && !yardJob.accepted && !yardJob.completed && !yardJob.missed) {
+      if (
+        yardJob?.discovered &&
+        !yardJob.accepted &&
+        !yardJob.completed &&
+        !yardJob.missed
+      ) {
         return {
-          decision: "head to North Crane Yard and see if Tomas still needs another back.",
+          decision:
+            "head to North Crane Yard and see if Tomas still needs another back.",
           memoryKind: "job",
           memoryText:
             "Ada points you onward only after deciding you won't embarrass the chance in front of her.",
@@ -2864,7 +3372,8 @@ function deriveConversationResolution(
         pumpProblem.status === "active"
       ) {
         return {
-          decision: "decide whether Jo's wrench is worth the eight coins, then take it where it matters.",
+          decision:
+            "decide whether Jo's wrench is worth the eight coins, then take it where it matters.",
           memoryKind: "self",
           memoryText:
             "Jo made the wrench feel less like a purchase and more like a decision about whether you'll actually use it.",
@@ -2881,7 +3390,8 @@ function deriveConversationResolution(
         pumpProblem.status === "active"
       ) {
         return {
-          decision: "leave the stall and go use the wrench before the pump gets worse.",
+          decision:
+            "leave the stall and go use the wrench before the pump gets worse.",
           memoryKind: "problem",
           memoryText:
             "Jo stripped the problem down to the part that still needs your hands, not more talk.",
@@ -2892,9 +3402,15 @@ function deriveConversationResolution(
       }
       break;
     case "npc-tomas":
-      if (yardJob?.discovered && !yardJob.accepted && !yardJob.completed && !yardJob.missed) {
+      if (
+        yardJob?.discovered &&
+        !yardJob.accepted &&
+        !yardJob.completed &&
+        !yardJob.missed
+      ) {
         return {
-          decision: "stay near the yard and take the lift if the pay and timing still stand.",
+          decision:
+            "stay near the yard and take the lift if the pay and timing still stand.",
           memoryKind: "job",
           memoryText:
             "Tomas only hears the point of a conversation once it starts sounding like labor.",
@@ -2907,7 +3423,8 @@ function deriveConversationResolution(
     case "npc-nia":
       if (cartProblem?.discovered && cartProblem.status === "active") {
         return {
-          decision: "swing through Quay Square and clear the cart before the foot traffic swells.",
+          decision:
+            "swing through Quay Square and clear the cart before the foot traffic swells.",
           memoryKind: "problem",
           memoryText:
             "Nia keeps seeing the small jams that become the whole block's problem if nobody moves first.",
@@ -2926,13 +3443,17 @@ function deriveConversationResolution(
       decision: `keep moving and talk to ${nextNpc.name} before the next opening goes stale.`,
       memoryKind: "person",
       memoryText: `${npc.name} helped narrow the district down to the next useful face.`,
+      objectiveText: shouldSharpenObjective
+        ? buildNextNpcObjectiveText(nextNpc.id)
+        : undefined,
     };
   }
 
   return {
     decision: `keep moving with ${closingReply.toLowerCase()}`,
     memoryKind: "self",
-    memoryText: "The conversation gave you a clearer feel for where to lean next, even if it didn't hand you the whole answer.",
+    memoryText:
+      "The conversation gave you a clearer feel for where to lean next, even if it didn't hand you the whole answer.",
   };
 }
 
@@ -2946,13 +3467,31 @@ function rememberNpcIfNew(npc: NpcState, text: string) {
   npc.memory = npc.memory.slice(0, 6);
 }
 
+function buildNextNpcObjectiveText(npcId: string) {
+  switch (npcId) {
+    case "npc-mara":
+      return "Show Mara how I'll pull my weight this week so the room stays mine.";
+    case "npc-ada":
+      return "See if Ada has room for one steady pair of hands at Kettle & Lamp.";
+    case "npc-jo":
+      return "Find out what tool or repair Jo says matters before I spend coin.";
+    case "npc-tomas":
+      return "See if Tomas still needs another back at North Crane Yard.";
+    case "npc-nia":
+      return "Ask Nia where the block is about to snag before the square feels it.";
+    default:
+      return undefined;
+  }
+}
+
 function buildNpcConversationImpression(
   world: StreetGameState,
   npc: NpcState,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   resolution: ConversationResolution,
 ) {
-  const nextMove = resolution.objectiveText ?? resolution.decision ?? objective.text;
+  const nextMove =
+    resolution.objectiveText ?? resolution.decision ?? objective.text;
   switch (npc.id) {
     case "npc-mara":
       return `Rowan sounded willing to ${objectiveClause(nextMove)}.`;
@@ -2995,7 +3534,11 @@ function detectConversationTopics(text: string) {
   const normalized = text.toLowerCase();
   const topics = new Set<string>();
 
-  if (/\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(normalized)) {
+  if (
+    /\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(
+      normalized,
+    )
+  ) {
     topics.add("work");
   }
 
@@ -3043,7 +3586,8 @@ function applyConversationRevelations(
   npc: NpcState,
   topics: Set<string>,
 ) {
-  const firstConversationWithNpc = countPlayerConversationsWithNpc(world, npc.id) <= 1;
+  const firstConversationWithNpc =
+    countPlayerConversationsWithNpc(world, npc.id) <= 1;
 
   switch (npc.id) {
     case "npc-mara":
@@ -3083,7 +3627,11 @@ function applyConversationRevelations(
       );
       break;
     case "npc-tomas":
-      if (topics.has("work") || topics.has("yard") || firstConversationWithNpc) {
+      if (
+        topics.has("work") ||
+        topics.has("yard") ||
+        firstConversationWithNpc
+      ) {
         discoverJob(world, "job-yard-shift");
       }
       rememberIfNew(
@@ -3120,7 +3668,8 @@ function updateNpcTrustFromSpeech(
   }
 
   if (
-    (npc.id === "npc-mara" && (topics.has("help") || topics.has("pump") || topics.has("home"))) ||
+    (npc.id === "npc-mara" &&
+      (topics.has("help") || topics.has("pump") || topics.has("home"))) ||
     (npc.id === "npc-ada" && topics.has("work")) ||
     (npc.id === "npc-jo" && (topics.has("tool") || topics.has("pump"))) ||
     (npc.id === "npc-tomas" && (topics.has("work") || topics.has("yard"))) ||
@@ -3176,7 +3725,11 @@ function rememberIfNew(
   kind: MemoryEntry["kind"],
   text: string,
 ) {
-  if (world.player.memories.some((entry) => entry.kind === kind && entry.text === text)) {
+  if (
+    world.player.memories.some(
+      (entry) => entry.kind === kind && entry.text === text,
+    )
+  ) {
     return;
   }
 
@@ -3211,7 +3764,8 @@ function trimConversations(world: StreetGameState) {
         updatedAt: thread.updatedAt,
         locationId: thread.locationId ?? world.activeConversation.locationId,
         decision: thread.decision ?? world.activeConversation.decision,
-        objectiveText: thread.objectiveText ?? world.activeConversation.objectiveText,
+        objectiveText:
+          thread.objectiveText ?? world.activeConversation.objectiveText,
         lines: thread.lines.slice(-6),
       };
     }
@@ -3327,7 +3881,11 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
-function jobGoalLine(money: number, completedJobs: number, activeJobId?: string) {
+function jobGoalLine(
+  money: number,
+  completedJobs: number,
+  activeJobId?: string,
+) {
   if (completedJobs >= 2 || money >= 30) {
     return "You've started proving you can build some real income here.";
   }
@@ -3412,7 +3970,11 @@ function prioritizeActionsForObjective(
   }
 
   const scored = actions.map((action, index) => {
-    const score = scoreActionForObjective(action, objective.text, objective.focus);
+    const score = scoreActionForObjective(
+      action,
+      objective.text,
+      objective.focus,
+    );
 
     return {
       action: {
@@ -3429,8 +3991,14 @@ function prioritizeActionsForObjective(
       return right.score - left.score;
     }
 
-    if (emphasisWeight(right.action.emphasis) !== emphasisWeight(left.action.emphasis)) {
-      return emphasisWeight(right.action.emphasis) - emphasisWeight(left.action.emphasis);
+    if (
+      emphasisWeight(right.action.emphasis) !==
+      emphasisWeight(left.action.emphasis)
+    ) {
+      return (
+        emphasisWeight(right.action.emphasis) -
+        emphasisWeight(left.action.emphasis)
+      );
     }
 
     return left.index - right.index;
@@ -3445,6 +4013,10 @@ function scoreActionForObjective(
   focus: ObjectiveFocus,
 ) {
   const normalized = text.toLowerCase();
+  const hasWorkCue =
+    /(work|job|money|coin|earn|pay|shift|income|kettle & lamp|tea[- ]house|ada|north crane|tomas|counter|apron|tray|booths?|tables?|rush|gloves|bays?)/.test(
+      normalized,
+    );
   let score = 0;
 
   switch (focus) {
@@ -3492,7 +4064,7 @@ function scoreActionForObjective(
       break;
   }
 
-  if (/(work|job|money|coin|earn|pay|shift|income)/.test(normalized)) {
+  if (hasWorkCue) {
     if (action.kind === "accept_job" || action.kind === "work_job") {
       score += 4;
     }
@@ -3522,13 +4094,19 @@ function scoreActionForObjective(
     }
   }
 
-  if (/(talk|meet|people|trust|introduce|ask|friend|friends)/.test(normalized)) {
+  if (
+    /(talk|meet|people|trust|introduce|ask|friend|friends)/.test(normalized)
+  ) {
     if (action.kind === "talk") {
       score += 4;
     }
   }
 
-  if (/(room|stay|home|bed|shelter|belong|new here|new in|settle|get settled|footing|friend|friends|trust)/.test(normalized)) {
+  if (
+    /(room|stay|home|bed|shelter|belong|new here|new in|settle|get settled|footing|friend|friends|trust)/.test(
+      normalized,
+    )
+  ) {
     if (
       action.kind === "talk" ||
       action.kind === "accept_job" ||
@@ -3551,11 +4129,24 @@ function scoreActionForObjective(
     score += 5;
   }
 
-  if (normalized.includes("tea") && action.id.includes("job-tea-shift")) {
+  if (
+    (normalized.includes("tea") ||
+      normalized.includes("kettle") ||
+      normalized.includes("ada") ||
+      normalized.includes("counter")) &&
+    action.id.includes("job-tea-shift")
+  ) {
     score += 5;
   }
 
-  if (normalized.includes("yard") && action.id.includes("job-yard-shift")) {
+  if (
+    (normalized.includes("yard") ||
+      normalized.includes("north crane") ||
+      normalized.includes("tomas") ||
+      normalized.includes("gloves") ||
+      normalized.includes("bay")) &&
+    action.id.includes("job-yard-shift")
+  ) {
     score += 5;
   }
 
@@ -3574,7 +4165,22 @@ function emphasisWeight(emphasis: ActionOption["emphasis"]) {
 }
 
 function normalizeObjectiveText(text: string) {
-  return text.replace(/\s+/g, " ").trim().slice(0, 80);
+  const cleaned = text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^"+|"+$/g, "");
+  const maxChars = 120;
+  if (cleaned.length <= maxChars) {
+    return cleaned;
+  }
+
+  const withinLimit = cleaned.slice(0, maxChars).trimEnd();
+  const lastSpace = withinLimit.lastIndexOf(" ");
+  const base =
+    lastSpace > Math.floor(maxChars * 0.7)
+      ? withinLimit.slice(0, lastSpace)
+      : withinLimit;
+  return `${base.replace(/["'.,!?;:]+$/g, "").trimEnd()}...`;
 }
 
 function objectiveClause(text: string) {
@@ -3585,9 +4191,7 @@ function objectiveClause(text: string) {
 
   const normalized = `${trimmed.charAt(0).toLowerCase()}${trimmed.slice(1)}`;
 
-  return /[.!?]$/.test(normalized)
-    ? normalized.slice(0, -1)
-    : normalized;
+  return /[.!?]$/.test(normalized) ? normalized.slice(0, -1) : normalized;
 }
 
 function describeDistrictSense(knownPlaces: number) {

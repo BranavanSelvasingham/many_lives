@@ -396,26 +396,26 @@ function buildSettleRoute(
     steps: [
       makeStep({
         id: "settle-terms",
-        title: `Learn what it takes to stay at ${home?.name ?? "Morrow House"} beyond tonight.`,
+        title: `Lock in my stay at ${home?.name ?? "Morrow House"}.`,
         detail: hasStayTerms
-          ? "Mara has already spelled out what keeps a room from turning temporary again."
+          ? "Mara has already laid out what keeps this room mine."
           : hasTalkedToMara
-            ? "Mara knows the answer, but Rowan still needs the real room terms rather than a broader first impression."
-            : "Mara is the clearest person to ask about what staying here actually depends on.",
+            ? "Mara can help, but Rowan still needs the exact room terms."
+            : "Mara can walk Rowan through exactly what it takes to keep a room here.",
         progress: hasStayTerms
-          ? "Terms learned"
+          ? "Terms clear"
           : hasTalkedToMara
-            ? "Still need the real terms"
-            : "Still need the talk",
+            ? "Need exact terms"
+            : "Talk to Mara",
         done: hasStayTerms,
       }),
       makeStep({
         id: "settle-standing",
-        title: `Make myself worth keeping at ${home?.name ?? "Morrow House"}.`,
+        title: `Build standing at ${home?.name ?? "Morrow House"} so the room stays mine.`,
         detail:
           houseStanding >= 2
-            ? "The house is starting to read Rowan as useful, not temporary."
-            : "Knowing the terms is not the same as earning your place under them.",
+            ? "Morrow House is starting to see Rowan as dependable."
+            : "Now that Rowan knows the terms, he needs to show up and follow through.",
         progress: `Standing ${houseStanding}/2`,
         done: houseStanding >= 2,
       }),
@@ -423,46 +423,46 @@ function buildSettleRoute(
         id: "settle-lead",
         title:
           lead === "yard"
-            ? "Put one honest work lead on the table at North Crane Yard."
-            : "Put one honest work lead on the table at Kettle & Lamp.",
+            ? "Line up one solid work lead at North Crane Yard."
+            : "Line up one solid work lead at Kettle & Lamp.",
         detail:
           lead === "yard"
-            ? "The yard is the clearest place left to turn effort into decent pay."
-            : "The tea room is the likeliest place to turn a conversation into work.",
+            ? "The yard is a reliable place to turn effort into decent pay."
+            : "The tea room is a strong place to turn conversation into work.",
         progress:
           hasWorkLead
-            ? "Lead confirmed"
+            ? "Lead locked"
             : teaJob?.discovered || yardJob?.discovered
-              ? "Heard where to go"
+              ? "Lead spotted"
               : hasCommittedIncome
                 ? "Work in hand"
-                : "Still looking",
+                : "Looking",
         done: hasWorkLead,
       }),
       makeStep({
         id: "settle-income",
-        title: "Turn a work lead into steady income.",
+        title: "Turn that lead into steady pay.",
         detail:
           hasCommittedIncome
-            ? "There is finally real work in the day instead of just hope and rumors."
-            : "A lead only matters once Rowan actually commits to it.",
+            ? "Real work is finally taking shape."
+            : "A lead matters once Rowan commits and follows through.",
         progress:
           world.player.activeJobId !== undefined
-            ? "Committed"
+            ? "Working"
             : teaJob?.completed || yardJob?.completed
               ? "Paid once"
               : hasWorkLead
-                ? "Lead waiting"
-                : "Still looking",
+                ? "Ready to commit"
+                : "Looking",
         done: hasCommittedIncome,
       }),
       makeStep({
         id: "settle-people",
-        title: "Make two people glad to see me again.",
+        title: "Build two real connections.",
         detail:
           familiarPeople >= 2
-            ? "A couple of faces are starting to feel like they might matter tomorrow too."
-            : "Rowan still needs more than names if the city is going to feel livable.",
+            ? "A couple of faces now feel like real allies."
+            : "Rowan needs a few real connections to make this place feel like home.",
         progress: `${Math.min(familiarPeople, 2)}/2 real connections`,
         done: familiarPeople >= 2,
       }),
@@ -867,10 +867,7 @@ function buildExploreRoute(
 function chooseConversationRoute(world: StreetGameState): ConversationObjectiveRoute | undefined {
   const threads = Object.values(world.conversationThreads ?? {})
     .filter((thread) => thread.objectiveText)
-    .sort(
-      (left, right) =>
-        Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""),
-    );
+    .sort((left, right) => compareConversationThreads(world, left, right));
 
   for (const thread of threads) {
     const text = normalizeObjectiveText(thread.objectiveText ?? "");
@@ -889,6 +886,33 @@ function chooseConversationRoute(world: StreetGameState): ConversationObjectiveR
   }
 
   return undefined;
+}
+
+function compareConversationThreads(
+  world: StreetGameState,
+  left: { npcId: string; updatedAt: string; lines: { id: string }[] },
+  right: { npcId: string; updatedAt: string; lines: { id: string }[] },
+) {
+  const activeNpcId = world.activeConversation?.npcId;
+  const leftIsActive = left.npcId === activeNpcId;
+  const rightIsActive = right.npcId === activeNpcId;
+  if (leftIsActive !== rightIsActive) {
+    return Number(rightIsActive) - Number(leftIsActive);
+  }
+
+  const leftOrder = latestConversationLineOrder(left.lines);
+  const rightOrder = latestConversationLineOrder(right.lines);
+  if (leftOrder !== rightOrder) {
+    return rightOrder - leftOrder;
+  }
+
+  return Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || "");
+}
+
+function latestConversationLineOrder(lines: { id: string }[]) {
+  const latestId = lines.at(-1)?.id ?? "";
+  const match = /conversation-(\d+)-/.exec(latestId);
+  return match ? Number(match[1]) : 0;
 }
 
 function chooseWorkLead(world: StreetGameState, textHint = "") {
@@ -913,6 +937,10 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
   }
 
   if (hint.includes("ada") || hint.includes("tea")) {
+    return "tea" as const;
+  }
+
+  if (hint.includes("cook") || hint.includes("counter") || hint.includes("tables")) {
     return "tea" as const;
   }
 
@@ -1239,9 +1267,14 @@ function scoreForFocus(scores: ObjectiveScores, focus: ObjectiveFocus) {
 
 export function classifyObjective(text: string): ObjectiveFocus {
   const normalized = text.toLowerCase();
-  const hasWorkNeed = /(work|job|money|coin|earn|pay|shift|income)/.test(normalized);
-  const hasHomeNeed = /(room|stay|home|bed|rent|lodg|shelter)/.test(normalized);
+  const hasWorkNeed = /(work|job|money|coin|earn|pay|shift|income|kettle & lamp|tea[- ]house|north crane|counter|apron|tray|booths?|tables?|rush|gloves|bays?)/.test(
+    normalized,
+  );
+  const hasHomeNeed = /(room|stay|home|house|bed|rent|lodg|shelter|tenant)/.test(normalized);
   const hasPeopleNeed = /(talk|meet|people|trust|introduce|friend|friends|belong)/.test(
+    normalized,
+  );
+  const hasStabilityNeed = /(\bstanding\b|\breliable\b|\bdependable\b|follow through|follow-through|pull (my|your|their) weight|steady tenant)/.test(
     normalized,
   );
 
@@ -1249,6 +1282,7 @@ export function classifyObjective(text: string): ObjectiveFocus {
     /\b(new in|new here|new to|footing|settle|belong|start over|make a life)\b/.test(
       normalized,
     ) ||
+    hasStabilityNeed ||
     (hasWorkNeed && (hasHomeNeed || hasPeopleNeed)) ||
     (hasHomeNeed && hasPeopleNeed)
   ) {
@@ -1283,7 +1317,19 @@ export function classifyObjective(text: string): ObjectiveFocus {
 }
 
 function normalizeObjectiveText(text: string) {
-  return text.replace(/\s+/g, " ").trim().slice(0, 120);
+  const cleaned = text.replace(/\s+/g, " ").trim().replace(/^"+|"+$/g, "");
+  const maxChars = 140;
+  if (cleaned.length <= maxChars) {
+    return cleaned;
+  }
+
+  const withinLimit = cleaned.slice(0, maxChars).trimEnd();
+  const lastSpace = withinLimit.lastIndexOf(" ");
+  const base =
+    lastSpace > Math.floor(maxChars * 0.7)
+      ? withinLimit.slice(0, lastSpace)
+      : withinLimit;
+  return `${base.replace(/["'.,!?;:]+$/g, "").trimEnd()}...`;
 }
 
 function routeHeadline(route: ObjectiveRoute) {

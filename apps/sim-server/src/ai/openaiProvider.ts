@@ -3,12 +3,18 @@ import type {
   AIProvider,
   EscalationSuggestion,
   GeneratedInboxMessage,
+  StreetAutonomousLineRequest,
+  StreetAutonomousLineResult,
+  StreetConversationInterpretationRequest,
+  StreetConversationInterpretationResult,
 } from "./provider.js";
 import { MockAIProvider } from "./mockProvider.js";
 import { buildClassifyEscalationPrompt } from "./prompts/classifyEscalation.js";
+import { buildGenerateStreetAutonomousLinePrompt } from "./prompts/generateStreetAutonomousLine.js";
 import { buildGenerateStreetReplyPrompt } from "./prompts/generateStreetReply.js";
 import { buildGenerateStreetThoughtsPrompt } from "./prompts/generateStreetThoughts.js";
 import { buildGenerateInboxMessagePrompt } from "./prompts/generateInboxMessage.js";
+import { buildInterpretStreetConversationPrompt } from "./prompts/interpretStreetConversation.js";
 import { buildProposeNextActionPrompt } from "./prompts/proposeNextAction.js";
 import { buildSummarizeStatePrompt } from "./prompts/summarizeState.js";
 import {
@@ -123,12 +129,34 @@ export class OpenAIProvider implements AIProvider {
 
     const prompt = buildGenerateStreetReplyPrompt(input);
     const result = await this.callOrFallback(async () => {
-      const output = await this.createTextResponse(prompt, 180);
+      const output = await this.createTextResponse(prompt, 260);
       return normalizeStreetReply(output, input);
     }, () => this.fallback.generateStreetReply(input));
 
     this.streetReplyCache.set(cacheKey, result);
     return result;
+  }
+
+  async generateStreetAutonomousLine(
+    input: StreetAutonomousLineRequest,
+  ): Promise<StreetAutonomousLineResult> {
+    const prompt = buildGenerateStreetAutonomousLinePrompt(input);
+
+    return this.callOrFallback(async () => {
+      const output = await this.createTextResponse(prompt, 120);
+      return normalizeStreetAutonomousLine(output, input);
+    }, () => this.fallback.generateStreetAutonomousLine(input));
+  }
+
+  async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ): Promise<StreetConversationInterpretationResult> {
+    const prompt = buildInterpretStreetConversationPrompt(input);
+
+    return this.callOrFallback(async () => {
+      const output = await this.createTextResponse(prompt, 220);
+      return normalizeStreetConversationInterpretation(output);
+    }, () => this.fallback.interpretStreetConversation(input));
   }
 
   private async callOrFallback<T>(
@@ -242,6 +270,38 @@ function normalizeStreetReply(
   };
 }
 
+function normalizeStreetAutonomousLine(
+  rawText: string,
+  input: StreetAutonomousLineRequest,
+): StreetAutonomousLineResult {
+  const fallbackSpeech =
+    input.purpose === "followup"
+      ? "What does that change for me right now?"
+      : "I'm Rowan. I'm trying to get my feet under me here. What matters most right now?";
+  const parsed = safeParseAutonomousLineJson(rawText);
+  return {
+    speech: sanitizeStreetSpeech(parsed?.speech ?? fallbackSpeech),
+  };
+}
+
+function normalizeStreetConversationInterpretation(
+  rawText: string,
+): StreetConversationInterpretationResult {
+  const parsed = safeParseConversationInterpretationJson(rawText);
+  if (!parsed) {
+    return {};
+  }
+
+  return {
+    decision: sanitizeOptionalNarrativeField(parsed.decision),
+    memoryKind: isMemoryKind(parsed.memoryKind) ? parsed.memoryKind : undefined,
+    memoryText: sanitizeOptionalNarrativeField(parsed.memoryText),
+    npcImpression: sanitizeOptionalNarrativeField(parsed.npcImpression),
+    objectiveText: sanitizeOptionalNarrativeField(parsed.objectiveText),
+    summary: sanitizeOptionalNarrativeField(parsed.summary),
+  };
+}
+
 function safeParseThoughtsJson(rawText: string): {
   playerThought?: string;
   npcThoughts?: Record<string, string>;
@@ -260,6 +320,73 @@ function safeParseThoughtsJson(rawText: string): {
   } catch {
     return null;
   }
+}
+
+function safeParseAutonomousLineJson(rawText: string): {
+  speech?: string;
+} | null {
+  const trimmed = rawText.trim();
+  const withoutFence = trimmed
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/, "");
+
+  try {
+    return JSON.parse(withoutFence) as {
+      speech?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function safeParseConversationInterpretationJson(rawText: string): {
+  decision?: string;
+  memoryKind?: string;
+  memoryText?: string;
+  npcImpression?: string;
+  objectiveText?: string;
+  summary?: string;
+} | null {
+  const trimmed = rawText.trim();
+  const withoutFence = trimmed
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/, "");
+
+  try {
+    return JSON.parse(withoutFence) as {
+      decision?: string;
+      memoryKind?: string;
+      memoryText?: string;
+      npcImpression?: string;
+      objectiveText?: string;
+      summary?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeStreetSpeech(text: string) {
+  return text.replace(/\s+/g, " ").trim().replace(/^"+|"+$/g, "").slice(0, 240);
+}
+
+function sanitizeOptionalNarrativeField(text?: string) {
+  const normalized = text?.replace(/\s+/g, " ").trim();
+  return normalized ? normalized.slice(0, 280) : undefined;
+}
+
+function isMemoryKind(
+  value?: string,
+): value is StreetConversationInterpretationResult["memoryKind"] {
+  return (
+    value === "place" ||
+    value === "person" ||
+    value === "job" ||
+    value === "problem" ||
+    value === "self"
+  );
 }
 
 function safeParseStreetReplyJson(rawText: string): {

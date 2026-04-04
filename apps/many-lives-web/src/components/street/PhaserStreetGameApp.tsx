@@ -9186,8 +9186,10 @@ function buildConversationPanelHtml(options: {
   const railThreadNote = buildNarrativePreview(
     joinNarrativeFragments([
       conversationDecision,
-      journalNoteVisible ? conversationObjectiveText : null,
-      !conversationDecision && !journalNoteVisible ? conversationSummary : null,
+      journalNoteVisible ? conversationObjectiveText : undefined,
+      !conversationDecision && !journalNoteVisible
+        ? conversationSummary
+        : undefined,
     ]),
     188,
   );

@@ -1,7 +1,7 @@
 export const STREET_VOICE_THEME_NAME = "working-port realism";
 
 export const STREET_VOICE_THEME_SUMMARY =
-  "Brackenport sounds like a contemporary working waterfront: plainspoken, practical, local, natural, a little tired, and only lightly funny when people have room for it.";
+  "Brackenport sounds like a contemporary working waterfront: plainspoken, practical, local, resilient, and quietly hopeful even under pressure.";
 
 export function buildStreetVoicePromptLines() {
   return [
@@ -9,6 +9,8 @@ export function buildStreetVoicePromptLines() {
     "- All South Quay NPCs should sound like they grew up in the same port city, even when their jobs and temperaments differ.",
     "- Favor short, concrete, contemporary wording over ornate or literary phrasing.",
     "- Keep lines practical, direct, and grounded in work, rent, time pressure, weather, favors, and the block immediately around them.",
+    "- Keep the emotional tone constructive: people can be blunt, but they should still sound like they believe something useful can be done next.",
+    "- Avoid fatalistic or gloomy phrasing when a practical next step exists.",
     "- Keep the pace a little unhurried: one clear point at a time, with natural spoken pauses instead of rapid-fire exposition.",
     "- Aim for clear, normal, humane phrasing. Eloquent here means well-phrased and natural, not theatrical or ornate.",
     "- Do not use archaic, Dickensian, theatrical, faux-classic, or proverb-like phrasing.",

@@ -1,7 +1,11 @@
 import type { Character } from "../domain/character.js";
 import type { EventRecord } from "../domain/event.js";
 import type { InboxMessageType, InboxPriority } from "../domain/inbox.js";
-import type { StreetGameState } from "../street-sim/types.js";
+import type {
+  MemoryEntry,
+  ObjectiveFocus,
+  StreetGameState,
+} from "../street-sim/types.js";
 import type { Task } from "../domain/task.js";
 import type { WorldState } from "../domain/world.js";
 import { MockAIProvider } from "./mockProvider.js";
@@ -34,6 +38,43 @@ export interface GeneratedInboxMessage {
   requiresResponse: boolean;
 }
 
+export interface StreetAutonomousLineRequest {
+  game: StreetGameState;
+  lastNpcReply?: string;
+  npcId: string;
+  objective: {
+    focus: ObjectiveFocus;
+    routeKey: string;
+    text: string;
+  };
+  purpose: "opener" | "followup";
+}
+
+export interface StreetAutonomousLineResult {
+  speech: string;
+}
+
+export interface StreetConversationInterpretationRequest {
+  closingReply: string;
+  discussedTopics: string[];
+  game: StreetGameState;
+  npcId: string;
+  objective: {
+    focus: ObjectiveFocus;
+    routeKey: string;
+    text: string;
+  };
+}
+
+export interface StreetConversationInterpretationResult {
+  decision?: string;
+  memoryKind?: MemoryEntry["kind"];
+  memoryText?: string;
+  npcImpression?: string;
+  objectiveText?: string;
+  summary?: string;
+}
+
 export interface AIProvider {
   readonly name: string;
   summarizeState(world: WorldState): Promise<string>;
@@ -49,15 +90,21 @@ export interface AIProvider {
   generateStreetReply(
     input: StreetDialogueRequest,
   ): Promise<StreetDialogueResult>;
+  generateStreetAutonomousLine(
+    input: StreetAutonomousLineRequest,
+  ): Promise<StreetAutonomousLineResult>;
+  interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ): Promise<StreetConversationInterpretationResult>;
 }
 
 export function createAIProvider(
-  providerName = process.env.AI_PROVIDER ?? "mock",
+  providerName = process.env.AI_PROVIDER ?? (process.env.OPENAI_API_KEY ? "openai" : "mock"),
 ): AIProvider {
   if (providerName === "openai") {
     return new OpenAIProvider({
       apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_MODEL ?? "gpt-5-nano",
+      model: process.env.OPENAI_MODEL ?? "gpt-5-mini",
     });
   }
 

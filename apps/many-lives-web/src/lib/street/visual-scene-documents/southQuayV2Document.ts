@@ -1,505 +1,3486 @@
-import type {
-  VisualLandmarkModuleKind,
-  VisualPoint,
-  VisualRect,
-  VisualSceneDocument,
-  VisualSceneLandmark,
-  VisualSceneLocationAnchors,
-} from "@/lib/street/visualScenes";
-
-const SOUTH_QUAY_COLUMNS = [
-  126, 182, 240, 298, 364, 432, 500, 568, 636, 704, 776, 848, 920, 992, 1064,
-  1140, 1216, 1292, 1368, 1444, 1520, 1596, 1672, 1748,
-];
-
-const SOUTH_QUAY_ROWS = [
-  116, 166, 218, 270, 330, 392, 456, 520, 586, 654, 722, 790, 860, 930, 1002,
-  1074, 1146, 1218,
-];
-
-const SOUTH_QUAY_WIDTH = 1872;
-const SOUTH_QUAY_HEIGHT = 1320;
-const SOUTH_QUAY_REFERENCE_SRC =
-  "/assets/visual-scenes/south-quay-v1/reference-citymap.png";
-
-function box(
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius?: number,
-): VisualRect {
-  return radius === undefined ? { x, y, width, height } : { x, y, width, height, radius };
-}
-
-function point(x: number, y: number): VisualPoint {
-  return { x, y };
-}
-
-function moduleRect(
-  bounds: VisualRect,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius?: number,
-) {
-  return box(bounds.x + x, bounds.y + y, width, height, radius);
-}
-
-const SOUTH_QUAY_V2_LANDMARK_RECTS = {
-  "boarding-house": box(156, 428, 376, 304, 28),
-  courtyard: box(146, 858, 360, 246, 26),
-  "freight-yard": box(1270, 664, 300, 252, 24),
-  "market-square": box(640, 562, 430, 352, 30),
-  "moss-pier": box(1018, 1012, 650, 210, 16),
-  "repair-stall": box(1188, 366, 282, 226, 24),
-  "tea-house": box(248, 96, 384, 252, 26),
-} as const;
-
-const SOUTH_QUAY_V2_LANDMARKS: VisualSceneLandmark[] = [
-  {
-    accentColor: 0xd7bc79,
-    id: "landmark-v2-tea-house",
-    locationId: "tea-house",
-    rect: SOUTH_QUAY_V2_LANDMARK_RECTS["tea-house"],
-    style: "cafe",
-  },
-  {
-    accentColor: 0xa8c0cc,
-    id: "landmark-v2-boarding-house",
-    locationId: "boarding-house",
-    rect: SOUTH_QUAY_V2_LANDMARK_RECTS["boarding-house"],
-    style: "boarding-house",
-  },
-  {
-    accentColor: 0xd79c65,
-    id: "landmark-v2-repair-stall",
-    locationId: "repair-stall",
-    rect: SOUTH_QUAY_V2_LANDMARK_RECTS["repair-stall"],
-    style: "workshop",
-  },
-  {
-    accentColor: 0xe3d4b3,
-    id: "landmark-v2-market-square",
-    locationId: "market-square",
-    rect: SOUTH_QUAY_V2_LANDMARK_RECTS["market-square"],
-    style: "square",
-  },
-  {
-    accentColor: 0xc78c59,
-    id: "landmark-v2-freight-yard",
-    locationId: "freight-yard",
-    rect: SOUTH_QUAY_V2_LANDMARK_RECTS["freight-yard"],
-    style: "yard",
-  },
-  {
-    accentColor: 0xd0a170,
-    id: "landmark-v2-moss-pier",
-    locationId: "moss-pier",
-    rect: SOUTH_QUAY_V2_LANDMARK_RECTS["moss-pier"],
-    style: "dock",
-  },
-  {
-    accentColor: 0xa7be96,
-    id: "landmark-v2-courtyard",
-    locationId: "courtyard",
-    rect: SOUTH_QUAY_V2_LANDMARK_RECTS.courtyard,
-    style: "courtyard",
-  },
-];
-
-const SOUTH_QUAY_V2_LOCATION_ANCHORS: Record<string, VisualSceneLocationAnchors> = {
-  "boarding-house": {
-    door: point(344, 744),
-    frontage: point(344, 724),
-    highlight: box(151, 423, 386, 314, 28),
-    label: point(344, 456),
-    npcStands: [point(292, 788), point(404, 786)],
-  },
-  courtyard: {
-    door: point(332, 904),
-    frontage: point(332, 916),
-    highlight: box(141, 853, 370, 256, 26),
-    label: point(338, 1008),
-    npcStands: [point(286, 962), point(382, 966)],
-  },
-  "freight-yard": {
-    door: point(1286, 828),
-    frontage: point(1254, 842),
-    highlight: box(1265, 659, 310, 262, 24),
-    label: point(1420, 800),
-    npcStands: [point(1346, 860), point(1496, 888)],
-  },
-  "market-square": {
-    door: point(856, 744),
-    frontage: point(856, 744),
-    highlight: box(635, 557, 440, 362, 30),
-    label: point(856, 738),
-    npcStands: [point(768, 742), point(944, 742), point(856, 806)],
-  },
-  "moss-pier": {
-    door: point(1306, 1012),
-    frontage: point(1306, 1070),
-    highlight: box(1013, 1007, 660, 220, 16),
-    label: point(1354, 1078),
-    npcStands: [point(1448, 1080), point(1542, 1096)],
-  },
-  "repair-stall": {
-    door: point(1328, 608),
-    frontage: point(1320, 594),
-    highlight: box(1183, 361, 292, 236, 24),
-    label: point(1328, 392),
-    npcStands: [point(1306, 634), point(1360, 628)],
-  },
-  "tea-house": {
-    door: point(440, 354),
-    frontage: point(440, 340),
-    highlight: box(243, 91, 394, 262, 26),
-    label: point(440, 118),
-    npcStands: [point(388, 356), point(440, 352), point(494, 356)],
-  },
-};
-
-const SOUTH_QUAY_V2_NPC_ANCHORS: Record<string, VisualPoint> = {
-  "npc-ada": point(440, 352),
-  "npc-jo": point(1238, 674),
-  "npc-mara": point(292, 788),
-  "npc-nia": point(1448, 1080),
-  "npc-tomas": point(1496, 888),
-};
-
-function buildModules(
-  locationId: string,
-  bounds: VisualRect,
-  modules: Array<{
-    count?: number;
-    height: number;
-    kind: VisualLandmarkModuleKind;
-    radius?: number;
-    text?: string;
-    variant?: string;
-    width: number;
-    x: number;
-    y: number;
-  }>,
-) {
-  return modules.map((module, index) => ({
-    count: module.count,
-    id: `${locationId}-${module.kind}-${index + 1}`,
-    kind: module.kind,
-    locationId,
-    rect: moduleRect(
-      bounds,
-      module.x,
-      module.y,
-      module.width,
-      module.height,
-      module.radius,
-    ),
-    text: module.text,
-    variant: module.variant,
-  }));
-}
+import type { VisualSceneDocument } from "@/lib/street/visualScenes";
 
 const SOUTH_QUAY_V2_DOCUMENT = {
-  backgroundColor: "#111d23",
-  fringeZones: [
+  "backgroundColor": "#111d23",
+  "fringeZones": [],
+  "id": "south-quay-v2",
+  "labels": [],
+  "landmarkModules": [
     {
-      edge: "north",
-      id: "v2-north-facade-west",
-      kind: "neighbor_facade",
-      rect: box(116, 76, 528, 124, 18),
+      "id": "tea-house-roof_cap-1",
+      "kind": "roof_cap",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1180,
+        "y": 336,
+        "width": 328,
+        "height": 34,
+        "radius": 16
+      },
+      "variant": "verdigris"
     },
     {
-      edge: "north",
-      id: "v2-north-facade-east",
-      kind: "neighbor_facade",
-      rect: box(706, 80, 836, 118, 18),
+      "id": "tea-house-wall_band-2",
+      "kind": "wall_band",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1152,
+        "y": 360,
+        "width": 384,
+        "height": 102,
+        "radius": 24
+      },
+      "variant": "cafe-ivory"
     },
     {
-      edge: "west",
-      id: "v2-west-alley",
-      kind: "alley_mouth",
-      rect: box(88, 210, 126, 786, 24),
+      "id": "tea-house-awning-3",
+      "kind": "awning",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1184,
+        "y": 440,
+        "width": 316,
+        "height": 42
+      },
+      "variant": "green-cream"
     },
     {
-      edge: "east",
-      id: "v2-east-side-street",
-      kind: "side_street",
-      rect: box(1544, 164, 208, 886, 20),
+      "id": "tea-house-wall_band-4",
+      "kind": "wall_band",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1172,
+        "y": 480,
+        "width": 340,
+        "height": 96,
+        "radius": 18
+      },
+      "variant": "walnut"
     },
     {
-      edge: "south",
-      id: "v2-south-quay-west",
-      kind: "quay_continuation",
-      rect: box(118, 1090, 830, 150, 16),
+      "count": 2,
+      "id": "tea-house-window_row-5",
+      "kind": "window_row",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1168,
+        "y": 488,
+        "width": 348,
+        "height": 66,
+        "radius": 12
+      },
+      "variant": "cafe-large"
     },
     {
-      edge: "south",
-      id: "v2-south-quay-east",
-      kind: "quay_continuation",
-      rect: box(948, 1028, 830, 210, 16),
+      "id": "tea-house-entry-6",
+      "kind": "entry",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1308,
+        "y": 484,
+        "width": 68,
+        "height": 90,
+        "radius": 14
+      },
+      "variant": "arched"
     },
+    {
+      "id": "tea-house-terrace_rail-7",
+      "kind": "terrace_rail",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1184,
+        "y": 556,
+        "width": 316,
+        "height": 24,
+        "radius": 8
+      },
+      "variant": "cafe"
+    },
+    {
+      "id": "tea-house-sign-8",
+      "kind": "sign",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1232,
+        "y": 360,
+        "width": 220,
+        "height": 34,
+        "radius": 12
+      },
+      "variant": "cafe"
+    },
+    {
+      "id": "tea-house-trim-9",
+      "kind": "trim",
+      "locationId": "tea-house",
+      "rect": {
+        "x": 1168,
+        "y": 412,
+        "width": 348,
+        "height": 18,
+        "radius": 8
+      },
+      "variant": "warm-trim"
+    },
+    {
+      "id": "boarding-house-roof_cap-1",
+      "kind": "roof_cap",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 36,
+        "y": 292,
+        "width": 376,
+        "height": 36,
+        "radius": 20
+      },
+      "variant": "slate"
+    },
+    {
+      "id": "boarding-house-wall_band-2",
+      "kind": "wall_band",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 48,
+        "y": 336,
+        "width": 348,
+        "height": 126,
+        "radius": 20
+      },
+      "variant": "boarding-upper"
+    },
+    {
+      "id": "boarding-house-wall_band-3",
+      "kind": "wall_band",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 56,
+        "y": 464,
+        "width": 336,
+        "height": 90,
+        "radius": 18
+      },
+      "variant": "boarding-lower"
+    },
+    {
+      "count": 5,
+      "id": "boarding-house-window_row-4",
+      "kind": "window_row",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 72,
+        "y": 352,
+        "width": 300,
+        "height": 64,
+        "radius": 10
+      },
+      "variant": "boarding-upper"
+    },
+    {
+      "count": 4,
+      "id": "boarding-house-window_row-5",
+      "kind": "window_row",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 84,
+        "y": 436,
+        "width": 280,
+        "height": 58,
+        "radius": 10
+      },
+      "variant": "boarding-lower"
+    },
+    {
+      "id": "boarding-house-entry-6",
+      "kind": "entry",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 192,
+        "y": 496,
+        "width": 60,
+        "height": 86,
+        "radius": 12
+      },
+      "variant": "house-door"
+    },
+    {
+      "id": "boarding-house-stoop-7",
+      "kind": "stoop",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 176,
+        "y": 568,
+        "width": 92,
+        "height": 28,
+        "radius": 10
+      },
+      "variant": "boarding"
+    },
+    {
+      "id": "boarding-house-downspout-8",
+      "kind": "downspout",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 376,
+        "y": 352,
+        "width": 10,
+        "height": 176,
+        "radius": 4
+      },
+      "variant": "slate"
+    },
+    {
+      "id": "boarding-house-trim-9",
+      "kind": "trim",
+      "locationId": "boarding-house",
+      "rect": {
+        "x": 56,
+        "y": 420,
+        "width": 336,
+        "height": 18,
+        "radius": 8
+      },
+      "variant": "house-band"
+    },
+    {
+      "id": "freight-yard-roof_cap-1",
+      "kind": "roof_cap",
+      "locationId": "freight-yard",
+      "rect": {
+        "x": 568,
+        "y": 720,
+        "width": 264,
+        "height": 34,
+        "radius": 12
+      },
+      "variant": "timber"
+    },
+    {
+      "id": "freight-yard-wall_band-2",
+      "kind": "wall_band",
+      "locationId": "freight-yard",
+      "rect": {
+        "x": 568,
+        "y": 764,
+        "width": 260,
+        "height": 84,
+        "radius": 16
+      },
+      "variant": "yard-gatehouse"
+    },
+    {
+      "id": "freight-yard-service_bay-3",
+      "kind": "service_bay",
+      "locationId": "freight-yard",
+      "rect": {
+        "x": 584,
+        "y": 856,
+        "width": 228,
+        "height": 86,
+        "radius": 12
+      },
+      "variant": "yard-gate"
+    },
+    {
+      "count": 3,
+      "id": "freight-yard-shutters-4",
+      "kind": "shutters",
+      "locationId": "freight-yard",
+      "rect": {
+        "x": 592,
+        "y": 784,
+        "width": 212,
+        "height": 34,
+        "radius": 8
+      },
+      "variant": "yard"
+    },
+    {
+      "id": "freight-yard-sign-5",
+      "kind": "sign",
+      "locationId": "freight-yard",
+      "rect": {
+        "x": 624,
+        "y": 736,
+        "width": 148,
+        "height": 30,
+        "radius": 10
+      },
+      "variant": "yard"
+    },
+    {
+      "id": "freight-yard-trim-6",
+      "kind": "trim",
+      "locationId": "freight-yard",
+      "rect": {
+        "x": 572,
+        "y": 824,
+        "width": 252,
+        "height": 18,
+        "radius": 8
+      },
+      "variant": "yard-band"
+    }
   ],
-  id: "south-quay-v2",
-  labels: [
-    { text: "South Quay", tone: "district", x: 1010, y: 164 },
-    { text: "Harbor Walk", tone: "street", x: 1108, y: 968 },
-    { text: "Morrow Court", tone: "street", x: 300, y: 742 },
-    { text: "Lantern Row", tone: "street", x: 810, y: 498 },
-    { text: "Cooper Lane", tone: "street", x: 1198, y: 474 },
-    { text: "Brackenport Docks", tone: "landmark", x: 1440, y: 1186 },
-  ],
-  landmarkModules: [
-    ...buildModules("tea-house", SOUTH_QUAY_V2_LANDMARK_RECTS["tea-house"], [
-      { height: 34, kind: "roof_cap", radius: 16, variant: "verdigris", width: 328, x: 28, y: 4 },
-      { height: 102, kind: "wall_band", radius: 24, variant: "cafe-ivory", width: 384, x: 0, y: 28 },
-      { height: 42, kind: "awning", variant: "green-cream", width: 316, x: 34, y: 106 },
-      { height: 96, kind: "wall_band", radius: 18, variant: "walnut", width: 340, x: 22, y: 146 },
-      { count: 2, height: 66, kind: "window_row", radius: 12, variant: "cafe-large", width: 348, x: 18, y: 154 },
-      { height: 90, kind: "entry", radius: 14, variant: "arched", width: 68, x: 158, y: 150 },
-      { height: 24, kind: "terrace_rail", radius: 8, variant: "cafe", width: 316, x: 34, y: 224 },
-      { height: 34, kind: "sign", radius: 12, variant: "cafe", width: 220, x: 82, y: 28 },
-      { height: 18, kind: "trim", radius: 8, variant: "warm-trim", width: 348, x: 18, y: 78 },
-    ]),
-    ...buildModules("boarding-house", SOUTH_QUAY_V2_LANDMARK_RECTS["boarding-house"], [
-      { height: 36, kind: "roof_cap", radius: 20, variant: "slate", width: 376, x: 0, y: 0 },
-      { height: 126, kind: "wall_band", radius: 20, variant: "boarding-upper", width: 348, x: 14, y: 44 },
-      { height: 90, kind: "wall_band", radius: 18, variant: "boarding-lower", width: 336, x: 20, y: 172 },
-      { count: 5, height: 64, kind: "window_row", radius: 10, variant: "boarding-upper", width: 300, x: 38, y: 60 },
-      { count: 4, height: 58, kind: "window_row", radius: 10, variant: "boarding-lower", width: 280, x: 48, y: 144 },
-      { height: 86, kind: "entry", radius: 12, variant: "house-door", width: 60, x: 158, y: 202 },
-      { height: 28, kind: "stoop", radius: 10, variant: "boarding", width: 92, x: 142, y: 274 },
-      { height: 176, kind: "downspout", radius: 4, variant: "slate", width: 10, x: 342, y: 58 },
-      { height: 18, kind: "trim", radius: 8, variant: "house-band", width: 336, x: 20, y: 128 },
-    ]),
-    ...buildModules("repair-stall", SOUTH_QUAY_V2_LANDMARK_RECTS["repair-stall"], [
-      { height: 38, kind: "roof_cap", radius: 20, variant: "iron", width: 282, x: 0, y: 0 },
-      { height: 96, kind: "wall_band", radius: 18, variant: "workshop-stone", width: 262, x: 10, y: 44 },
-      { height: 92, kind: "service_bay", radius: 14, variant: "workshop-bay", width: 234, x: 24, y: 146 },
-      { count: 3, height: 36, kind: "shutters", radius: 8, variant: "workshop", width: 198, x: 42, y: 74 },
-      { count: 2, height: 42, kind: "window_row", radius: 8, variant: "workshop-sidelights", width: 214, x: 34, y: 184 },
-      { height: 32, kind: "sign", radius: 10, variant: "workshop", width: 150, x: 66, y: 24 },
-      { height: 20, kind: "trim", radius: 8, variant: "industrial-band", width: 246, x: 18, y: 116 },
-    ]),
-    ...buildModules("freight-yard", SOUTH_QUAY_V2_LANDMARK_RECTS["freight-yard"], [
-      { height: 34, kind: "roof_cap", radius: 12, variant: "timber", width: 264, x: 18, y: 10 },
-      { height: 84, kind: "wall_band", radius: 16, variant: "yard-gatehouse", width: 260, x: 20, y: 52 },
-      { height: 86, kind: "service_bay", radius: 12, variant: "yard-gate", width: 228, x: 36, y: 146 },
-      { count: 3, height: 34, kind: "shutters", radius: 8, variant: "yard", width: 212, x: 44, y: 74 },
-      { height: 30, kind: "sign", radius: 10, variant: "yard", width: 148, x: 76, y: 24 },
-      { height: 18, kind: "trim", radius: 8, variant: "yard-band", width: 252, x: 24, y: 114 },
-    ]),
-  ],
-  landmarks: SOUTH_QUAY_V2_LANDMARKS,
-  layers: {
-    ground: {
-      height: SOUTH_QUAY_HEIGHT,
-      id: "ground",
-      kind: "solid",
-      width: SOUTH_QUAY_WIDTH,
-      x: 0,
-      y: 0,
+  "landmarks": [
+    {
+      "accentColor": 14138489,
+      "id": "landmark-v2-tea-house",
+      "locationId": "tea-house",
+      "rect": {
+        "height": 252,
+        "radius": 26,
+        "width": 382,
+        "x": 1152,
+        "y": 332
+      },
+      "style": "cafe"
     },
-    labels: { id: "labels", kind: "objects" },
-    props: { id: "props", kind: "objects" },
-    structures: { id: "structures", kind: "objects" },
-    weather: { id: "weather", kind: "objects" },
+    {
+      "accentColor": 11059404,
+      "id": "landmark-v2-boarding-house",
+      "locationId": "boarding-house",
+      "rect": {
+        "height": 304,
+        "radius": 28,
+        "width": 376,
+        "x": 36,
+        "y": 292
+      },
+      "style": "boarding-house"
+    },
+    {
+      "accentColor": 13077593,
+      "id": "landmark-v2-freight-yard",
+      "locationId": "freight-yard",
+      "rect": {
+        "height": 252,
+        "radius": 24,
+        "width": 300,
+        "x": 548,
+        "y": 712
+      },
+      "style": "yard"
+    },
+    {
+      "accentColor": 13672816,
+      "id": "landmark-v2-moss-pier",
+      "locationId": "moss-pier",
+      "rect": {
+        "height": 180,
+        "radius": 16,
+        "width": 450,
+        "x": 688,
+        "y": 1060
+      },
+      "style": "dock"
+    },
+    {
+      "accentColor": 14931123,
+      "id": "landmark-v2-market-square",
+      "locationId": "market-square",
+      "rect": {
+        "height": 180,
+        "radius": 30,
+        "width": 300,
+        "x": 668,
+        "y": 364
+      },
+      "style": "square"
+    },
+    {
+      "accentColor": 14130277,
+      "id": "landmark-v2-repair-stall",
+      "locationId": "repair-stall",
+      "rect": {
+        "x": 1188,
+        "y": 366,
+        "width": 282,
+        "height": 226,
+        "radius": 24
+      },
+      "style": "workshop"
+    },
+    {
+      "accentColor": 10993302,
+      "id": "landmark-v2-courtyard",
+      "locationId": "courtyard",
+      "rect": {
+        "x": 146,
+        "y": 858,
+        "width": 360,
+        "height": 246,
+        "radius": 26
+      },
+      "style": "courtyard"
+    }
+  ],
+  "layers": {
+    "ground": {
+      "height": 1320,
+      "id": "ground",
+      "kind": "solid",
+      "width": 1872,
+      "x": 0,
+      "y": 0
+    },
+    "labels": {
+      "id": "labels",
+      "kind": "objects"
+    },
+    "props": {
+      "id": "props",
+      "kind": "objects"
+    },
+    "structures": {
+      "id": "structures",
+      "kind": "objects"
+    },
+    "weather": {
+      "id": "weather",
+      "kind": "objects"
+    }
   },
-  locationAnchors: SOUTH_QUAY_V2_LOCATION_ANCHORS,
-  npcAnchors: SOUTH_QUAY_V2_NPC_ANCHORS,
-  playerSpawn: point(286, 778),
-  projection: {
-    columnCenters: SOUTH_QUAY_COLUMNS,
-    rowCenters: SOUTH_QUAY_ROWS,
+  "locationAnchors": {
+    "tea-house": {
+      "door": {
+        "x": 440,
+        "y": 354
+      },
+      "frontage": {
+        "x": 440,
+        "y": 340
+      },
+      "highlight": {
+        "x": 243,
+        "y": 91,
+        "width": 394,
+        "height": 262,
+        "radius": 26
+      },
+      "label": {
+        "x": 440,
+        "y": 118
+      },
+      "npcStands": [
+        {
+          "x": 388,
+          "y": 356
+        },
+        {
+          "x": 440,
+          "y": 352
+        },
+        {
+          "x": 494,
+          "y": 356
+        }
+      ]
+    },
+    "boarding-house": {
+      "door": {
+        "x": 344,
+        "y": 744
+      },
+      "frontage": {
+        "x": 344,
+        "y": 724
+      },
+      "highlight": {
+        "x": 151,
+        "y": 423,
+        "width": 386,
+        "height": 314,
+        "radius": 28
+      },
+      "label": {
+        "x": 344,
+        "y": 456
+      },
+      "npcStands": [
+        {
+          "x": 292,
+          "y": 788
+        },
+        {
+          "x": 404,
+          "y": 786
+        }
+      ]
+    },
+    "repair-stall": {
+      "door": {
+        "x": 1328,
+        "y": 608
+      },
+      "frontage": {
+        "x": 1320,
+        "y": 594
+      },
+      "highlight": {
+        "x": 1183,
+        "y": 361,
+        "width": 292,
+        "height": 236,
+        "radius": 24
+      },
+      "label": {
+        "x": 1328,
+        "y": 392
+      },
+      "npcStands": [
+        {
+          "x": 1306,
+          "y": 634
+        },
+        {
+          "x": 1360,
+          "y": 628
+        }
+      ]
+    },
+    "market-square": {
+      "door": {
+        "x": 856,
+        "y": 744
+      },
+      "frontage": {
+        "x": 856,
+        "y": 744
+      },
+      "highlight": {
+        "x": 635,
+        "y": 557,
+        "width": 440,
+        "height": 362,
+        "radius": 30
+      },
+      "label": {
+        "x": 856,
+        "y": 738
+      },
+      "npcStands": [
+        {
+          "x": 768,
+          "y": 742
+        },
+        {
+          "x": 944,
+          "y": 742
+        },
+        {
+          "x": 856,
+          "y": 806
+        }
+      ]
+    },
+    "freight-yard": {
+      "door": {
+        "x": 1286,
+        "y": 828
+      },
+      "frontage": {
+        "x": 1254,
+        "y": 842
+      },
+      "highlight": {
+        "x": 1265,
+        "y": 659,
+        "width": 310,
+        "height": 262,
+        "radius": 24
+      },
+      "label": {
+        "x": 1420,
+        "y": 800
+      },
+      "npcStands": [
+        {
+          "x": 1346,
+          "y": 860
+        },
+        {
+          "x": 1496,
+          "y": 888
+        }
+      ]
+    },
+    "moss-pier": {
+      "door": {
+        "x": 1306,
+        "y": 1012
+      },
+      "frontage": {
+        "x": 1306,
+        "y": 1070
+      },
+      "highlight": {
+        "x": 1013,
+        "y": 1007,
+        "width": 660,
+        "height": 220,
+        "radius": 16
+      },
+      "label": {
+        "x": 1354,
+        "y": 1078
+      },
+      "npcStands": [
+        {
+          "x": 1448,
+          "y": 1080
+        },
+        {
+          "x": 1542,
+          "y": 1096
+        }
+      ]
+    },
+    "courtyard": {
+      "door": {
+        "x": 332,
+        "y": 904
+      },
+      "frontage": {
+        "x": 332,
+        "y": 916
+      },
+      "highlight": {
+        "x": 141,
+        "y": 853,
+        "width": 370,
+        "height": 256,
+        "radius": 26
+      },
+      "label": {
+        "x": 338,
+        "y": 1008
+      },
+      "npcStands": [
+        {
+          "x": 286,
+          "y": 962
+        },
+        {
+          "x": 382,
+          "y": 966
+        }
+      ]
+    }
   },
-  propClusters: [
-    {
-      id: "v2-cafe-terrace",
-      kind: "cafe_terrace",
-      locationId: "tea-house",
-      points: [point(364, 418), point(452, 414), point(536, 418)],
-      rect: box(328, 394, 248, 64, 14),
+  "npcAnchors": {
+    "npc-ada": {
+      "x": 440,
+      "y": 352
     },
-    {
-      id: "v2-square-benches-north",
-      kind: "square_bench_pair",
-      locationId: "market-square",
-      points: [point(768, 676), point(1004, 676)],
-      rect: box(736, 640, 304, 72, 10),
+    "npc-jo": {
+      "x": 1240,
+      "y": 676
     },
-    {
-      id: "v2-square-benches-south",
-      kind: "square_bench_pair",
-      locationId: "market-square",
-      points: [point(768, 828), point(1004, 828)],
-      rect: box(736, 792, 304, 72, 10),
+    "npc-mara": {
+      "x": 292,
+      "y": 788
     },
-    {
-      id: "v2-square-planters-west",
-      kind: "square_planter_pair",
-      locationId: "market-square",
-      points: [point(708, 666), point(708, 824)],
-      rect: box(676, 648, 64, 200, 10),
+    "npc-nia": {
+      "x": 1408,
+      "y": 952
     },
-    {
-      id: "v2-square-planters-east",
-      kind: "square_planter_pair",
-      locationId: "market-square",
-      points: [point(1072, 666), point(1072, 824)],
-      rect: box(1040, 648, 64, 200, 10),
-    },
-    {
-      id: "v2-workshop-stock",
-      kind: "workshop_stock",
-      locationId: "repair-stall",
-      points: [point(1148, 680), point(1188, 688), point(1330, 678)],
-      rect: box(1128, 650, 244, 76, 10),
-    },
-    {
-      id: "v2-yard-service",
-      kind: "yard_service",
-      locationId: "courtyard",
-      points: [point(256, 964), point(350, 954), point(452, 978)],
-      rect: box(184, 894, 286, 132, 14),
-    },
-    {
-      id: "v2-harbor-mooring",
-      kind: "harbor_mooring",
-      locationId: "moss-pier",
-      points: [
-        point(1130, 1094),
-        point(1260, 1118),
-        point(1450, 1128),
-        point(1588, 1108),
-      ],
-      rect: box(1060, 1048, 566, 126, 12),
-    },
-  ],
-  props: [
-    { kind: "lamp", scale: 1, x: 262, y: 292 },
-    { kind: "lamp", scale: 1, x: 644, y: 292 },
-    { kind: "lamp", scale: 1, x: 808, y: 352 },
-    { kind: "lamp", scale: 1, x: 1036, y: 352 },
-    { kind: "lamp", scale: 1, x: 1216, y: 352 },
-    { kind: "lamp", scale: 1, x: 1400, y: 352 },
-    { kind: "lamp", scale: 1, x: 716, y: 666 },
-    { kind: "lamp", scale: 1, x: 1056, y: 666 },
-    { kind: "lamp", scale: 1, x: 716, y: 846 },
-    { kind: "lamp", scale: 1, x: 1056, y: 846 },
-    { kind: "lamp", scale: 1, x: 580, y: 962 },
-    { kind: "lamp", scale: 1, x: 1212, y: 964 },
-    {
-      bobAmount: 5,
-      kind: "boat",
-      rotation: -0.14,
-      scale: 1.06,
-      waterRegionId: "harbor-main-v2",
-      x: 1288,
-      y: 1176,
-    },
-    {
-      bobAmount: 6,
-      kind: "boat",
-      rotation: 0.08,
-      scale: 1.12,
-      waterRegionId: "harbor-main-v2",
-      x: 1506,
-      y: 1200,
-    },
-  ],
-  referencePlate: {
-    alpha: 0,
-    height: 1024,
-    src: SOUTH_QUAY_REFERENCE_SRC,
-    width: 1536,
-    x: 184,
-    y: 120,
+    "npc-tomas": {
+      "x": 1496,
+      "y": 888
+    }
   },
-  skyLayers: [],
-  surfaceZones: [
+  "playerSpawn": {
+    "x": 304,
+    "y": 740
+  },
+  "projection": {
+    "columnCenters": [
+      126,
+      182,
+      240,
+      298,
+      364,
+      432,
+      500,
+      568,
+      636,
+      704,
+      776,
+      848,
+      920,
+      992,
+      1064,
+      1140,
+      1216,
+      1292,
+      1368,
+      1444,
+      1520,
+      1596,
+      1672,
+      1748
+    ],
+    "rowCenters": [
+      116,
+      166,
+      218,
+      270,
+      330,
+      392,
+      456,
+      520,
+      586,
+      654,
+      722,
+      790,
+      860,
+      930,
+      1002,
+      1074,
+      1146,
+      1218
+    ]
+  },
+  "propClusters": [],
+  "props": [],
+  "referencePlate": {
+    "alpha": 0,
+    "height": 1024,
+    "src": "/assets/visual-scenes/south-quay-v1/reference-citymap.png",
+    "width": 1536,
+    "x": 184,
+    "y": 120
+  },
+  "skyLayers": [
     {
-      emphasis: "medium",
-      id: "v2-north-promenade",
-      kind: "north_promenade",
-      rect: box(168, 174, 1380, 228, 18),
-    },
-    {
-      emphasis: "medium",
-      id: "v2-main-street",
-      kind: "main_street",
-      rect: box(144, 414, 1428, 256, 16),
-    },
-    {
-      emphasis: "high",
-      id: "v2-west-lane",
-      kind: "west_lane",
-      rect: box(148, 652, 436, 188, 16),
-    },
-    {
-      emphasis: "medium",
-      id: "v2-service-lane",
-      kind: "service_lane",
-      rect: box(1092, 410, 480, 286, 16),
-    },
-    {
-      emphasis: "high",
-      id: "v2-square-border",
-      kind: "square_border",
-      rect: box(650, 542, 480, 384, 30),
-    },
-    {
-      emphasis: "high",
-      id: "v2-square-center",
-      kind: "square_center",
-      rect: box(714, 606, 352, 256, 24),
-    },
-    {
-      emphasis: "medium",
-      id: "v2-courtyard-ground",
-      kind: "courtyard_ground",
-      rect: box(166, 842, 342, 252, 22),
-    },
-    {
-      emphasis: "medium",
-      id: "v2-dock-apron",
-      kind: "dock_apron",
-      rect: box(828, 922, 770, 118, 14),
-    },
-    {
-      emphasis: "high",
-      id: "v2-quay-wall",
-      kind: "quay_wall",
-      rect: box(1006, 1028, 692, 62, 8),
-    },
-    {
-      emphasis: "high",
-      id: "v2-deep-water",
-      kind: "deep_water",
-      rect: box(956, 1088, 824, 232),
-    },
+      "cloudKind": "harbor-bank",
+      "density": 4.8,
+      "id": "sea-mist-1",
+      "opacity": 0.34,
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1870,
+        "height": 211,
+        "radius": 0
+      },
+      "scale": 1.1,
+      "speed": 11,
+      "weather": "mist"
+    }
   ],
-  waterRegions: [
-    {
-      baseColor: 0x2a6c8a,
-      crestColor: 0xd8f7ff,
-      id: "harbor-main-v2",
-      intensity: 1,
-      rect: box(958, 1088, 824, 232),
-      tag: "water_surface",
-    },
-    {
-      baseColor: 0xebf7fb,
-      crestColor: 0xffffff,
-      id: "harbor-foam-v2",
-      intensity: 0.95,
-      rect: box(986, 1076, 756, 24),
-      tag: "shore_foam",
-    },
-  ],
-  width: SOUTH_QUAY_WIDTH,
-  height: SOUTH_QUAY_HEIGHT,
+  "surfaceZones": [],
+  "waterRegions": [],
+  "width": 1872,
+  "height": 1320,
+  "terrainDraft": {
+    "baseKind": "land",
+    "cellSize": 48,
+    "overrides": [
+      {
+        "col": 15,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 16,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 17,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 18,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 19,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 20,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 21,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 22,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 23,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 24,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 25,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 26,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 27,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 28,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 29,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 30,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 31,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 32,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 33,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 34,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 35,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 36,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 0
+      },
+      {
+        "col": 15,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 16,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 17,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 18,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 19,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 20,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 21,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 22,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 23,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 24,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 25,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 26,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 27,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 28,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 29,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 30,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 31,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 32,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 33,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 34,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 35,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 36,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 1
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 2
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 2
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 3
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 3
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 4
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 4
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 5
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 5
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 6
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 6
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 7
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 7
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 8
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 8
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 9
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 9
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 10
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 10
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 11
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 11
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 12
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 12
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 13
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 13
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 14
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 14
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 15
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 15
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 16
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 16
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 17
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 17
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 18
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 18
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 19
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 19
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 20
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 20
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 21
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 21
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 22
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 22
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 23
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 23
+      },
+      {
+        "col": 0,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 1,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 2,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 3,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 4,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 5,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 6,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 7,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 8,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 9,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 10,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 11,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 12,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 13,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 24,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 25,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 26,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 27,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 28,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 29,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 30,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 31,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 32,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 33,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 34,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 35,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 36,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 24
+      },
+      {
+        "col": 0,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 1,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 2,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 3,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 4,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 5,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 6,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 7,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 8,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 9,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 10,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 11,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 12,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 13,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 24,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 25,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 26,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 27,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 28,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 29,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 30,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 31,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 32,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 33,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 34,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 35,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 36,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 25
+      },
+      {
+        "col": 0,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 1,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 2,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 3,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 4,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 5,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 6,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 7,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 8,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 9,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 10,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 11,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 12,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 13,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 14,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 15,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 16,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 17,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 18,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 19,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 20,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 21,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 22,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 23,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 24,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 25,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 26,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 27,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 28,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 29,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 30,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 31,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 32,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 33,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 34,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 35,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 36,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 26
+      },
+      {
+        "col": 0,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 1,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 2,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 3,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 4,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 5,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 6,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 7,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 8,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 9,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 10,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 11,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 12,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 13,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 14,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 15,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 16,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 17,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 18,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 19,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 20,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 21,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 22,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 23,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 24,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 25,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 26,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 27,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 28,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 29,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 30,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 31,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 32,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 33,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 34,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 35,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 36,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 37,
+        "kind": "water",
+        "row": 27
+      },
+      {
+        "col": 38,
+        "kind": "water",
+        "row": 27
+      }
+    ]
+  },
+  "surfaceDraft": {
+    "baseKind": "tiled_stone_road",
+    "cellSize": 48,
+    "overrides": [
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 0
+      },
+      {
+        "col": 13,
+        "kind": "grass",
+        "row": 0
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 1
+      },
+      {
+        "col": 13,
+        "kind": "trees",
+        "row": 1
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 2
+      },
+      {
+        "col": 13,
+        "kind": "grass",
+        "row": 2
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 3
+      },
+      {
+        "col": 13,
+        "kind": "grass",
+        "row": 3
+      },
+      {
+        "col": 14,
+        "kind": "trees",
+        "row": 3
+      },
+      {
+        "col": 16,
+        "kind": "grass",
+        "row": 3
+      },
+      {
+        "col": 17,
+        "kind": "trees",
+        "row": 3
+      },
+      {
+        "col": 19,
+        "kind": "grass",
+        "row": 3
+      },
+      {
+        "col": 20,
+        "kind": "trees",
+        "row": 3
+      },
+      {
+        "col": 21,
+        "kind": "grass",
+        "row": 3
+      },
+      {
+        "col": 22,
+        "kind": "bushes",
+        "row": 3
+      },
+      {
+        "col": 23,
+        "kind": "bushes",
+        "row": 3
+      },
+      {
+        "col": 24,
+        "kind": "trees",
+        "row": 3
+      },
+      {
+        "col": 25,
+        "kind": "grass",
+        "row": 3
+      },
+      {
+        "col": 26,
+        "kind": "bushes",
+        "row": 3
+      },
+      {
+        "col": 27,
+        "kind": "trees",
+        "row": 3
+      },
+      {
+        "col": 28,
+        "kind": "bushes",
+        "row": 3
+      },
+      {
+        "col": 29,
+        "kind": "grass",
+        "row": 3
+      },
+      {
+        "col": 30,
+        "kind": "trees",
+        "row": 3
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 3
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 3
+      },
+      {
+        "col": 0,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 1,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 2,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 3,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 4,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 5,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 6,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 7,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 8,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 9,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 11,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 12,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 13,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 14,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 15,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 16,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 17,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 18,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 19,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 20,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 21,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 22,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 24,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 25,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 26,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 27,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 28,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 29,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 30,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 31,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 4
+      },
+      {
+        "col": 34,
+        "kind": "trees",
+        "row": 4
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 4
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 5
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 5
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 5
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 5
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 5
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 6
+      },
+      {
+        "col": 12,
+        "kind": "trees",
+        "row": 6
+      },
+      {
+        "col": 13,
+        "kind": "bushes",
+        "row": 6
+      },
+      {
+        "col": 14,
+        "kind": "bushes",
+        "row": 6
+      },
+      {
+        "col": 15,
+        "kind": "trees",
+        "row": 6
+      },
+      {
+        "col": 18,
+        "kind": "bushes",
+        "row": 6
+      },
+      {
+        "col": 19,
+        "kind": "trees",
+        "row": 6
+      },
+      {
+        "col": 20,
+        "kind": "bushes",
+        "row": 6
+      },
+      {
+        "col": 21,
+        "kind": "bushes",
+        "row": 6
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 6
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 6
+      },
+      {
+        "col": 34,
+        "kind": "trees",
+        "row": 6
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 6
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 7
+      },
+      {
+        "col": 12,
+        "kind": "bushes",
+        "row": 7
+      },
+      {
+        "col": 21,
+        "kind": "trees",
+        "row": 7
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 7
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 7
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 7
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 7
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 8
+      },
+      {
+        "col": 12,
+        "kind": "trees",
+        "row": 8
+      },
+      {
+        "col": 21,
+        "kind": "trees",
+        "row": 8
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 8
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 8
+      },
+      {
+        "col": 34,
+        "kind": "trees",
+        "row": 8
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 8
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 9
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 9
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 9
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 9
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 9
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 10
+      },
+      {
+        "col": 12,
+        "kind": "trees",
+        "row": 10
+      },
+      {
+        "col": 21,
+        "kind": "trees",
+        "row": 10
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 10
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 10
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 11
+      },
+      {
+        "col": 12,
+        "kind": "trees",
+        "row": 11
+      },
+      {
+        "col": 21,
+        "kind": "trees",
+        "row": 11
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 11
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 11
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 12
+      },
+      {
+        "col": 12,
+        "kind": "trees",
+        "row": 12
+      },
+      {
+        "col": 13,
+        "kind": "bushes",
+        "row": 12
+      },
+      {
+        "col": 14,
+        "kind": "bushes",
+        "row": 12
+      },
+      {
+        "col": 15,
+        "kind": "bushes",
+        "row": 12
+      },
+      {
+        "col": 18,
+        "kind": "bushes",
+        "row": 12
+      },
+      {
+        "col": 19,
+        "kind": "bushes",
+        "row": 12
+      },
+      {
+        "col": 20,
+        "kind": "bushes",
+        "row": 12
+      },
+      {
+        "col": 21,
+        "kind": "trees",
+        "row": 12
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 12
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 12
+      },
+      {
+        "col": 34,
+        "kind": "trees",
+        "row": 12
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 12
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 13
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 13
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 13
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 13
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 13
+      },
+      {
+        "col": 0,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 1,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 2,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 3,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 4,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 5,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 6,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 7,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 8,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 9,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 11,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 12,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 13,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 14,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 15,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 16,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 17,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 18,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 19,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 20,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 21,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 22,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 24,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 25,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 26,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 27,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 28,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 29,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 30,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 31,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 32,
+        "kind": "paved_asphalt",
+        "row": 14
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 14
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 14
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 15
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 15
+      },
+      {
+        "col": 24,
+        "kind": "bushes",
+        "row": 15
+      },
+      {
+        "col": 25,
+        "kind": "bushes",
+        "row": 15
+      },
+      {
+        "col": 26,
+        "kind": "bushes",
+        "row": 15
+      },
+      {
+        "col": 34,
+        "kind": "trees",
+        "row": 15
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 15
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 16
+      },
+      {
+        "col": 1,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 2,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 3,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 4,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 5,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 16
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 16
+      },
+      {
+        "col": 8,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 16
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 16
+      },
+      {
+        "col": 24,
+        "kind": "trees",
+        "row": 16
+      },
+      {
+        "col": 25,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 16
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 16
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 1,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 2,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 3,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 4,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 5,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 8,
+        "kind": "bushes",
+        "row": 17
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 17
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 17
+      },
+      {
+        "col": 24,
+        "kind": "trees",
+        "row": 17
+      },
+      {
+        "col": 25,
+        "kind": "bushes",
+        "row": 17
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 17
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 17
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 1,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 2,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 3,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 4,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 5,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 8,
+        "kind": "bushes",
+        "row": 18
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 18
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 18
+      },
+      {
+        "col": 34,
+        "kind": "trees",
+        "row": 18
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 18
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 1,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 2,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 3,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 4,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 5,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 8,
+        "kind": "bushes",
+        "row": 19
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 19
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 19
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 19
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 19
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 1,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 2,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 3,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 4,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 5,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 8,
+        "kind": "bushes",
+        "row": 20
+      },
+      {
+        "col": 10,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 11,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 12,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 13,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 14,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 15,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 16,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 17,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 18,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 19,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 20,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 21,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 22,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 23,
+        "kind": "paved_asphalt",
+        "row": 20
+      },
+      {
+        "col": 34,
+        "kind": "trees",
+        "row": 20
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 20
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 1,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 2,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 3,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 4,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 5,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 21
+      },
+      {
+        "col": 8,
+        "kind": "bushes",
+        "row": 21
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 1,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 2,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 3,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 4,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 5,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 8,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 9,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 10,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 11,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 12,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 13,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 24,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 25,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 26,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 27,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 28,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 29,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 30,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 31,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 32,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 33,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 34,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 35,
+        "kind": "bushes",
+        "row": 22
+      },
+      {
+        "col": 36,
+        "kind": "grass",
+        "row": 22
+      },
+      {
+        "col": 0,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 1,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 2,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 3,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 4,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 5,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 6,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 7,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 8,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 9,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 10,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 11,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 12,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 13,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 24,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 25,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 26,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 27,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 28,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 29,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 30,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 31,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 32,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 33,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 34,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 35,
+        "kind": "grass",
+        "row": 23
+      },
+      {
+        "col": 36,
+        "kind": "grass",
+        "row": 23
+      }
+    ]
+  }
 } satisfies VisualSceneDocument;
 
 export { SOUTH_QUAY_V2_DOCUMENT };

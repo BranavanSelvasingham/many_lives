@@ -28,9 +28,9 @@ describe("SimulationEngine street slice", () => {
       actionId: "work:job-tea-shift",
     });
 
-    expect(world.jobs.find((job) => job.id === "job-tea-shift")?.completed).toBe(
-      true,
-    );
+    expect(
+      world.jobs.find((job) => job.id === "job-tea-shift")?.completed,
+    ).toBe(true);
     expect(world.player.money).toBeGreaterThan(12);
     expect(
       world.jobs.find((job) => job.id === "job-yard-shift")?.discovered,
@@ -64,12 +64,12 @@ describe("SimulationEngine street slice", () => {
       actionId: "solve:problem-pump",
     });
 
-    expect(world.problems.find((problem) => problem.id === "problem-pump")?.status).toBe(
-      "solved",
-    );
-    expect(world.player.inventory.some((item) => item.id === "item-wrench")).toBe(
-      true,
-    );
+    expect(
+      world.problems.find((problem) => problem.id === "problem-pump")?.status,
+    ).toBe("solved");
+    expect(
+      world.player.inventory.some((item) => item.id === "item-wrench"),
+    ).toBe(true);
     expect(world.player.reputation.morrow_house).toBeGreaterThan(1);
   });
 
@@ -92,5 +92,36 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.player.x).toBe(3);
     expect(world.player.y).toBe(9);
+  });
+
+  it("lets objective pursuit arrive and open the planned conversation in one beat", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-objective-conversation");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 8,
+      y: 9,
+    });
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Talk to Mara about staying at Morrow House.",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.currentLocationId).toBe("boarding-house");
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(
+      world.activeConversation?.lines.some(
+        (entry) => entry.speaker === "player",
+      ),
+    ).toBe(true);
   });
 });
