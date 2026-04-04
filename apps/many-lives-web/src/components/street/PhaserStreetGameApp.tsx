@@ -46,7 +46,6 @@ import {
   getVisualSceneDocument,
   getVisualSceneRuntimeRevision,
   projectVisualScenePoint,
-  resolveVisualSceneTargetTile,
   validateVisualSceneAgainstGame,
   VISUAL_SCENE_RUNTIME_OVERRIDE_EVENT,
   type VisualSceneCloudKind,
@@ -74,6 +73,8 @@ const CAMERA_USER_ZOOM_DEFAULT = 1;
 const CAMERA_USER_ZOOM_LERP = 0.16;
 const CAMERA_USER_ZOOM_MAX = 1.16;
 const CAMERA_USER_ZOOM_MIN = 0.76;
+const COMPACT_LAYOUT_MAX_WIDTH = 960;
+const COMPACT_PORTRAIT_COVER_ZOOM_BOOST = 1.12;
 const MAX_RUNTIME_RENDER_SCALE = 6;
 const RUNTIME_RENDER_CLARITY_BOOST = 1.35;
 const CAMERA_WHEEL_ZOOM_STEP = 0.08;
@@ -126,6 +127,7 @@ type SceneViewport = ViewportSize & {
 };
 
 type OverlayLayoutMetrics = {
+  dockFocusWidth: number;
   dockWidth: number;
   focusHeight: number;
   focusWidth: number;
@@ -141,8 +143,14 @@ type StreetAppSnapshot = {
   game: StreetGameState | null;
   loadingLabel: string;
   optimisticPlayerPosition?: Point;
+  waypointNonce: number;
+  waypointTarget?: Point;
   visualSceneRefreshNonce: number;
   viewport: ViewportSize;
+};
+
+type MoveToOptions = {
+  showWaypoint?: boolean;
 };
 
 type PhaserStreetExperienceProps = {
@@ -150,7 +158,7 @@ type PhaserStreetExperienceProps = {
   onAdvanceObjective: () => void;
   onAdvanceTime: (minutes: number, label: string) => void;
   onMoveBy: (deltaX: number, deltaY: number) => void;
-  onMoveTo: (x: number, y: number) => void;
+  onMoveTo: (x: number, y: number, options?: MoveToOptions) => boolean;
   onReload: () => void;
   onSetObjective: (text: string) => void;
   onSpeak: (npcId: string, text: string) => void;
@@ -287,11 +295,15 @@ type RuntimeObjects = {
   npcMarkers: Map<string, NpcMarkerObjects>;
   overlayDom: HTMLDivElement;
   overlayLayer: PhaserType.GameObjects.Graphics;
+  playerBeacon: PhaserType.GameObjects.Arc;
+  playerBeaconTail: PhaserType.GameObjects.Rectangle;
   playerContainer: PhaserType.GameObjects.Container;
   playerAppearance: CharacterAppearance;
   playerName: PhaserType.GameObjects.Text;
   playerPulse: PhaserType.GameObjects.Arc;
+  playerReticle: PhaserType.GameObjects.Ellipse;
   playerRig: CharacterRig;
+  playerTitle: PhaserType.GameObjects.Text;
   scene: PhaserType.Scene;
   structureDetailLayer: PhaserType.GameObjects.Graphics;
   structureLayer: PhaserType.GameObjects.Graphics;
@@ -303,7 +315,10 @@ type FocusPanel = "journal" | "mind" | "people";
 type UiState = {
   activeTab: "actions" | "journal" | "mind" | "people";
   focusPanel: FocusPanel | null;
+  pendingConversationNpcId: string | null;
+  railExpanded: boolean;
   selectedNpcId: string | null;
+  supportExpanded: boolean;
 };
 
 type ObjectivePlanItem = {
@@ -349,6 +364,7 @@ type ConversationReplayState = {
 };
 
 type RuntimeState = {
+  autoStartedConversationKey: string | null;
   cameraGesture: CameraGestureState | null;
   cameraOffset: Point;
   cameraZoomFactor: number;
@@ -362,6 +378,9 @@ type RuntimeState = {
   renderScale: number;
   snapshot: StreetAppSnapshot;
   ui: UiState;
+  waypointAppliedNonce: number;
+  waypointPlacedAt: number;
+  waypointTarget: Point | null;
 };
 
 type RuntimeHandle = {
@@ -381,6 +400,31 @@ const TILE_COLORS: Record<TileKind, number> = {
   workyard: 0xa89276,
 };
 
+const PUBLIC_TRAVEL_TILE_KINDS: TileKind[] = ["lane", "plaza", "stoop", "dock"];
+const PLAYER_ENTRANCE_TILE_KINDS: TileKind[] = ["lane", "plaza", "dock"];
+
+const ROUTE_NEIGHBOR_OFFSETS: Point[] = [
+  { x: 1, y: 0 },
+  { x: -1, y: 0 },
+  { x: 0, y: 1 },
+  { x: 0, y: -1 },
+];
+
+const ROUTE_CLEARANCE_OFFSETS: Array<
+  Point & {
+    weight: number;
+  }
+> = [
+  { x: -1, y: -1, weight: 0.34 },
+  { x: 0, y: -1, weight: 0.68 },
+  { x: 1, y: -1, weight: 0.34 },
+  { x: -1, y: 0, weight: 0.7 },
+  { x: 1, y: 0, weight: 0.7 },
+  { x: -1, y: 1, weight: 0.34 },
+  { x: 0, y: 1, weight: 0.68 },
+  { x: 1, y: 1, weight: 0.34 },
+];
+
 function visualSceneTextureKey(sceneId: string) {
   return `visual-scene-${sceneId}-reference`;
 }
@@ -394,8 +438,11 @@ export function PhaserStreetGameApp() {
   const [sceneOverrideVersion, setSceneOverrideVersion] = useState(0);
   const [optimisticPlayerPosition, setOptimisticPlayerPosition] =
     useState<Point | null>(null);
+  const [waypointNonce, setWaypointNonce] = useState(0);
+  const [waypointTarget, setWaypointTarget] = useState<Point | null>(null);
   const gameRef = useRef<StreetGameState | null>(null);
   const optimisticPlayerRef = useRef<Point | null>(null);
+  const waypointTargetRef = useRef<Point | null>(null);
   const movementTargetRef = useRef<Point | null>(null);
   const movementFlushTimerRef = useRef<number | null>(null);
   const routeFinderRef = useRef<((start: Point, end: Point) => Point[]) | null>(
@@ -416,8 +463,17 @@ export function PhaserStreetGameApp() {
   }, [optimisticPlayerPosition]);
 
   useEffect(() => {
+    waypointTargetRef.current = waypointTarget;
+  }, [waypointTarget]);
+
+  useEffect(() => {
     busyLabelRef.current = busyLabel;
   }, [busyLabel]);
+
+  const publishWaypoint = useCallback((target: Point | null) => {
+    setWaypointTarget(target);
+    setWaypointNonce((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (!game) {
@@ -426,13 +482,15 @@ export function PhaserStreetGameApp() {
       return;
     }
 
-    const mapKey = `${game.map.width}:${game.map.height}:${game.map.tiles.length}`;
+    const mapKey = createMapKey(game);
     if (routeFinderMapKeyRef.current === mapKey && routeFinderRef.current) {
       return;
     }
 
     routeFinderMapKeyRef.current = mapKey;
-    routeFinderRef.current = createRouteFinder(game.map.tiles);
+    routeFinderRef.current = createRouteFinder(
+      buildNavigationTiles(game, getPlayableVisualScene(game)),
+    );
   }, [game]);
 
   const nextRequestId = useCallback(() => {
@@ -471,6 +529,7 @@ export function PhaserStreetGameApp() {
     try {
       const nextGame = await createStreetGame();
       setOptimisticPlayerPosition(null);
+      publishWaypoint(null);
       applyGameUpdate(nextGame, requestId);
     } catch (loadError) {
       setError(
@@ -481,7 +540,7 @@ export function PhaserStreetGameApp() {
     } finally {
       setBusyLabel(null);
     }
-  }, [applyGameUpdate, nextRequestId]);
+  }, [applyGameUpdate, nextRequestId, publishWaypoint]);
 
   useEffect(() => {
     void loadGame();
@@ -523,7 +582,11 @@ export function PhaserStreetGameApp() {
     const requestId = nextRequestId();
 
     try {
-      const nextGame = await moveStreetPlayer(activeGame.id, target.x, target.y);
+      const nextGame = await moveStreetPlayer(
+        activeGame.id,
+        target.x,
+        target.y,
+      );
       applyGameUpdate(nextGame, requestId);
 
       if (!movementTargetRef.current) {
@@ -532,6 +595,7 @@ export function PhaserStreetGameApp() {
     } catch (moveError) {
       movementTargetRef.current = null;
       setOptimisticPlayerPosition(null);
+      publishWaypoint(null);
       setError(
         moveError instanceof Error
           ? moveError.message
@@ -544,7 +608,7 @@ export function PhaserStreetGameApp() {
         void flushMovementQueue();
       }
     }
-  }, [applyGameUpdate, nextRequestId]);
+  }, [applyGameUpdate, nextRequestId, publishWaypoint]);
 
   const scheduleMovementFlush = useCallback(() => {
     if (movementFlushTimerRef.current) {
@@ -558,31 +622,34 @@ export function PhaserStreetGameApp() {
   }, [flushMovementQueue]);
 
   const handleMoveTo = useCallback(
-    (x: number, y: number) => {
+    (x: number, y: number, options?: MoveToOptions) => {
       const activeGame = gameRef.current;
       if (!activeGame || busyLabelRef.current) {
-        return;
+        return false;
       }
 
+      const visualScene = getPlayableVisualScene(activeGame);
       const nextTile = findWalkableTile(
         activeGame,
         clamp(x, 0, activeGame.map.width - 1),
         clamp(y, 0, activeGame.map.height - 1),
+        visualScene,
       );
 
       if (!nextTile) {
-        return;
+        return false;
       }
 
-      const currentVisualPosition =
-        optimisticPlayerRef.current ?? {
-          x: activeGame.player.x,
-          y: activeGame.player.y,
-        };
-      const mapKey = `${activeGame.map.width}:${activeGame.map.height}:${activeGame.map.tiles.length}`;
+      const currentVisualPosition = optimisticPlayerRef.current ?? {
+        x: activeGame.player.x,
+        y: activeGame.player.y,
+      };
+      const mapKey = createMapKey(activeGame);
       if (routeFinderMapKeyRef.current !== mapKey || !routeFinderRef.current) {
         routeFinderMapKeyRef.current = mapKey;
-        routeFinderRef.current = createRouteFinder(activeGame.map.tiles);
+        routeFinderRef.current = createRouteFinder(
+          buildNavigationTiles(activeGame, visualScene),
+        );
       }
       const candidateRoute = routeFinderRef.current(
         currentVisualPosition,
@@ -591,14 +658,14 @@ export function PhaserStreetGameApp() {
 
       if (!routeReachesDestination(candidateRoute, nextTile)) {
         setError("Rowan cannot find a clean route there.");
-        return;
+        return false;
       }
 
       if (
         currentVisualPosition.x === nextTile.x &&
         currentVisualPosition.y === nextTile.y
       ) {
-        return;
+        return false;
       }
 
       setError(null);
@@ -606,13 +673,19 @@ export function PhaserStreetGameApp() {
         x: nextTile.x,
         y: nextTile.y,
       });
+      if (options?.showWaypoint) {
+        publishWaypoint({ x: nextTile.x, y: nextTile.y });
+      } else if (waypointTargetRef.current) {
+        publishWaypoint(null);
+      }
       movementTargetRef.current = {
         x: nextTile.x,
         y: nextTile.y,
       };
       scheduleMovementFlush();
+      return true;
     },
-    [scheduleMovementFlush],
+    [publishWaypoint, scheduleMovementFlush],
   );
 
   const handleMoveBy = useCallback(
@@ -764,10 +837,21 @@ export function PhaserStreetGameApp() {
       game,
       loadingLabel: busyLabel ?? "Preparing the district...",
       optimisticPlayerPosition: optimisticPlayerPosition ?? undefined,
+      waypointNonce,
+      waypointTarget: waypointTarget ?? undefined,
       visualSceneRefreshNonce: sceneOverrideVersion,
       viewport,
     }),
-    [busyLabel, error, game, optimisticPlayerPosition, sceneOverrideVersion, viewport],
+    [
+      busyLabel,
+      error,
+      game,
+      optimisticPlayerPosition,
+      sceneOverrideVersion,
+      viewport,
+      waypointNonce,
+      waypointTarget,
+    ],
   );
 
   return (
@@ -903,7 +987,9 @@ async function createRuntime(options: {
   options.mount.appendChild(overlayDom);
   const runtimeNow = getRuntimeNow();
   const renderScale = getRuntimeRenderScale();
+  const initialIndices = createRuntimeIndices(initialSnapshot);
   const runtimeState: RuntimeState = {
+    autoStartedConversationKey: null,
     cameraGesture: null,
     cameraOffset: { x: 0, y: 0 },
     cameraZoomFactor: CAMERA_USER_ZOOM_DEFAULT,
@@ -918,19 +1004,29 @@ async function createRuntime(options: {
       streamingEntryId: null,
       timerId: null,
     },
-    indices: createRuntimeIndices(initialSnapshot),
+    indices: initialIndices,
     lastCameraInteractionAt: runtimeNow,
     mapKey: createMapKey(initialSnapshot.game),
     objects: null,
-    playerEntranceGameId: null,
-    playerMotion: createInitialPlayerMotion(initialSnapshot),
+    playerEntranceGameId: initialSnapshot.game?.id ?? null,
+    playerMotion: createInitialPlayerMotion(
+      initialSnapshot,
+      initialIndices,
+      runtimeNow,
+    ),
     renderScale,
     snapshot: initialSnapshot,
     ui: {
       activeTab: "actions",
       focusPanel: null,
+      pendingConversationNpcId: null,
+      railExpanded: initialSnapshot.viewport.width > 720,
       selectedNpcId: pickDefaultSelectedNpcId(initialSnapshot.game),
+      supportExpanded: false,
     },
+    waypointAppliedNonce: initialSnapshot.waypointNonce,
+    waypointPlacedAt: runtimeNow,
+    waypointTarget: initialSnapshot.waypointTarget ?? null,
   };
 
   const sceneConfig = {
@@ -959,7 +1055,11 @@ async function createRuntime(options: {
     },
 
     create(this: PhaserType.Scene) {
-      const objects = createRuntimeObjects(this, runtimeState.snapshot, overlayDom);
+      const objects = createRuntimeObjects(
+        this,
+        runtimeState.snapshot,
+        overlayDom,
+      );
       runtimeState.objects = objects;
 
       bindOverlayEvents(objects.overlayDom, runtimeState, options.callbacksRef);
@@ -972,61 +1072,81 @@ async function createRuntime(options: {
       const keyboard = this.input.keyboard;
       if (keyboard) {
         keyboard.on("keydown-W", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(0, -1);
         });
         keyboard.on("keydown-S", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(0, 1);
         });
         keyboard.on("keydown-A", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(-1, 0);
         });
         keyboard.on("keydown-D", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(1, 0);
         });
         keyboard.on("keydown-UP", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(0, -1);
         });
         keyboard.on("keydown-DOWN", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(0, 1);
         });
         keyboard.on("keydown-LEFT", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(-1, 0);
         });
         keyboard.on("keydown-RIGHT", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           options.callbacksRef.current.onMoveBy(1, 0);
         });
         keyboard.on("keydown-MINUS", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           adjustCameraZoom(runtimeState, -CAMERA_WHEEL_ZOOM_STEP);
         });
         keyboard.on("keydown-EQUALS", () => {
-          if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+          if (
+            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
+          ) {
             return;
           }
           adjustCameraZoom(runtimeState, CAMERA_WHEEL_ZOOM_STEP);
@@ -1052,6 +1172,8 @@ async function createRuntime(options: {
           _gameObjects: PhaserType.GameObjects.GameObject[],
           _deltaX: number,
           deltaY: number,
+          _deltaZ: number,
+          event: WheelEvent,
         ) => {
           if (
             !runtimeState.snapshot.game ||
@@ -1059,10 +1181,22 @@ async function createRuntime(options: {
           ) {
             return;
           }
+          if (
+            isOverlayEventTarget(
+              runtimeState.objects?.overlayDom ?? null,
+              event.target,
+            )
+          ) {
+            return;
+          }
+          if (isCompactViewport(runtimeState.snapshot.viewport)) {
+            return;
+          }
 
           const sceneViewport = getSceneViewport(
             getRuntimeViewportSize(runtimeState),
             getWorldBounds(runtimeState.snapshot),
+            runtimeState.snapshot.viewport,
           );
           if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
             return;
@@ -1105,9 +1239,15 @@ async function createRuntime(options: {
     },
     scale: {
       autoCenter: Phaser.Scale.NO_CENTER,
-      height: Math.max(Math.round(initialSnapshot.viewport.height * renderScale), 1),
+      height: Math.max(
+        Math.round(initialSnapshot.viewport.height * renderScale),
+        1,
+      ),
       mode: Phaser.Scale.NONE,
-      width: Math.max(Math.round(initialSnapshot.viewport.width * renderScale), 1),
+      width: Math.max(
+        Math.round(initialSnapshot.viewport.width * renderScale),
+        1,
+      ),
       zoom: 1 / renderScale,
     },
     scene: sceneConfig,
@@ -1137,6 +1277,8 @@ async function createRuntime(options: {
 
       syncUiState(runtimeState);
       syncPlayerMotion(runtimeState);
+      syncWaypointState(runtimeState);
+      maybeAutostartConversation(runtimeState, options.callbacksRef);
 
       if (runtimeState.objects) {
         drawAmbientOverlay(
@@ -1144,7 +1286,11 @@ async function createRuntime(options: {
           runtimeState,
           getWorldBounds(runtimeState.snapshot),
         );
-        syncNpcMarkerObjects(runtimeState.objects, runtimeState, options.callbacksRef);
+        syncNpcMarkerObjects(
+          runtimeState.objects,
+          runtimeState,
+          options.callbacksRef,
+        );
         renderDynamicScene(runtimeState.objects, runtimeState);
         renderOverlay(runtimeState.objects, runtimeState);
       }
@@ -1155,11 +1301,12 @@ async function createRuntime(options: {
 function playerCharacterAppearance(): CharacterAppearance {
   return {
     accent: 0xf4d6a1,
-    coat: 0x7dbfc1,
+    accessory: "scarf",
+    coat: 0x4f78c9,
     face: 0xd7a476,
     hair: 0x4f3d31,
     hairStyle: "cropped",
-    outline: 0x162028,
+    outline: 0x101820,
   };
 }
 
@@ -1258,10 +1405,12 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
     case "npc-mara":
       return {
         badge: "Hearth-Eyed Keeper",
-        chatSubtitle: "Keeps the house steady with one look and two quiet steps.",
+        chatSubtitle:
+          "Keeps the house steady with one look and two quiet steps.",
         labelBackground: "rgba(54, 41, 29, 0.92)",
         labelColor: "#f3dec0",
-        listLine: "Grounded, observant, and warmer than she lets on at first glance.",
+        listLine:
+          "Grounded, observant, and warmer than she lets on at first glance.",
         motion: {
           ...DEFAULT_CHARACTER_MOTION_STYLE,
           armSwing: 0.76,
@@ -1274,7 +1423,8 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
         },
         pace: 0.88,
         scale: 1.03,
-        signature: "She moves like she already knows who needs help before they ask.",
+        signature:
+          "She moves like she already knows who needs help before they ask.",
         stepStrength: 0.72,
         sway: 0.02,
         swayRate: 0.72,
@@ -1282,10 +1432,12 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
     case "npc-ada":
       return {
         badge: "Clockwork Hostess",
-        chatSubtitle: "Every gesture is quick, practiced, and somehow still welcoming.",
+        chatSubtitle:
+          "Every gesture is quick, practiced, and somehow still welcoming.",
         labelBackground: "rgba(28, 63, 61, 0.92)",
         labelColor: "#d9f2ef",
-        listLine: "Brisk and bright, always half a beat ahead of the room around her.",
+        listLine:
+          "Brisk and bright, always half a beat ahead of the room around her.",
         motion: {
           ...DEFAULT_CHARACTER_MOTION_STYLE,
           armSwing: 1.08,
@@ -1298,7 +1450,8 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
         },
         pace: 1.15,
         scale: 1,
-        signature: "She cuts through the street like she has six tasks balanced in one hand.",
+        signature:
+          "She cuts through the street like she has six tasks balanced in one hand.",
         stepStrength: 0.96,
         sway: 0.014,
         swayRate: 1.22,
@@ -1306,10 +1459,12 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
     case "npc-jo":
       return {
         badge: "Grease-Stained Fixer",
-        chatSubtitle: "Loose shoulders, sharp eyes, and the kind of stillness that means thinking.",
+        chatSubtitle:
+          "Loose shoulders, sharp eyes, and the kind of stillness that means thinking.",
         labelBackground: "rgba(32, 39, 45, 0.92)",
         labelColor: "#dde5ec",
-        listLine: "A little slouched, a little guarded, but impossible to mistake for anyone else.",
+        listLine:
+          "A little slouched, a little guarded, but impossible to mistake for anyone else.",
         motion: {
           ...DEFAULT_CHARACTER_MOTION_STYLE,
           armLift: 0.84,
@@ -1334,10 +1489,12 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
     case "npc-tomas":
       return {
         badge: "Dock-Bell Foreman",
-        chatSubtitle: "Heavy-footed, planted, and all blunt edges until you earn the softer read.",
+        chatSubtitle:
+          "Heavy-footed, planted, and all blunt edges until you earn the softer read.",
         labelBackground: "rgba(67, 46, 26, 0.94)",
         labelColor: "#f0d8b0",
-        listLine: "Broad, deliberate, and built from the same timber as the yard he runs.",
+        listLine:
+          "Broad, deliberate, and built from the same timber as the yard he runs.",
         motion: {
           ...DEFAULT_CHARACTER_MOTION_STYLE,
           armLift: 0.72,
@@ -1364,10 +1521,12 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
     case "npc-nia":
       return {
         badge: "Street-Swift Spark",
-        chatSubtitle: "Every stop looks temporary, like she might launch into a sprint mid-sentence.",
+        chatSubtitle:
+          "Every stop looks temporary, like she might launch into a sprint mid-sentence.",
         labelBackground: "rgba(34, 68, 49, 0.92)",
         labelColor: "#e3f6d4",
-        listLine: "Quick, spring-loaded, and already halfway into the next idea.",
+        listLine:
+          "Quick, spring-loaded, and already halfway into the next idea.",
         motion: {
           ...DEFAULT_CHARACTER_MOTION_STYLE,
           armSwing: 1.16,
@@ -1383,7 +1542,8 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
         },
         pace: 1.28,
         scale: 0.98,
-        signature: "She crosses the square like the air itself is hurrying her along.",
+        signature:
+          "She crosses the square like the air itself is hurrying her along.",
         stepStrength: 1.12,
         sway: 0.032,
         swayRate: 1.78,
@@ -1391,10 +1551,12 @@ function npcPersonalityProfile(npc: NpcState): NpcPersonalityProfile {
     default:
       return {
         badge: "Neighborhood Regular",
-        chatSubtitle: "A familiar shape in the district, easy to place even before you know the details.",
+        chatSubtitle:
+          "A familiar shape in the district, easy to place even before you know the details.",
         labelBackground: "rgba(34, 43, 49, 0.92)",
         labelColor: "#e1e8ed",
-        listLine: "Distinct enough to notice, still holding most of their story close.",
+        listLine:
+          "Distinct enough to notice, still holding most of their story close.",
         motion: DEFAULT_CHARACTER_MOTION_STYLE,
         pace: 1,
         scale: 1,
@@ -1415,7 +1577,14 @@ function createCharacterAvatar(
   const rightLeg = createCharacterLeg(scene, 4.5, 8.5, appearance);
   const leftArm = createCharacterArm(scene, -8.5, -1.5, appearance);
   const rightArm = createCharacterArm(scene, 8.5, -1.5, appearance);
-  const torsoOutline = scene.add.ellipse(0, 2.5, 21.5, 24, appearance.outline, 0.92);
+  const torsoOutline = scene.add.ellipse(
+    0,
+    2.5,
+    21.5,
+    24,
+    appearance.outline,
+    0.92,
+  );
   const torso = scene.add.ellipse(0, 2.5, 19, 21.5, appearance.coat, 0.98);
   const torsoHighlight = scene.add.ellipse(
     -2.4,
@@ -1441,7 +1610,13 @@ function createCharacterAvatar(
   const faceNodes = [
     scene.add.circle(-2.5, -0.6, 0.8, appearance.outline, 0.9),
     scene.add.circle(2.5, -0.6, 0.8, appearance.outline, 0.9),
-    scene.add.circle(0.8, 1.3, 0.9, blendColor(appearance.face, 0xca8455, 0.25), 0.74),
+    scene.add.circle(
+      0.8,
+      1.3,
+      0.9,
+      blendColor(appearance.face, 0xca8455, 0.25),
+      0.74,
+    ),
     scene.add.ellipse(0, 3, 4, 1.2, appearance.outline, 0.22),
   ] as PhaserType.GameObjects.GameObject[];
   const hairNodes = createCharacterHairNodes(scene, appearance);
@@ -1493,7 +1668,14 @@ function createCharacterAccessoryNodes(
       ] as PhaserType.GameObjects.GameObject[];
     case "shawl":
       return [
-        scene.add.ellipse(0, 2, 22, 11, blendColor(appearance.accent, 0x1f2930, 0.1), 0.92),
+        scene.add.ellipse(
+          0,
+          2,
+          22,
+          11,
+          blendColor(appearance.accent, 0x1f2930, 0.1),
+          0.92,
+        ),
       ] as PhaserType.GameObjects.GameObject[];
     case "satchel":
       return [
@@ -1501,8 +1683,22 @@ function createCharacterAccessoryNodes(
       ] as PhaserType.GameObjects.GameObject[];
     case "vest":
       return [
-        scene.add.rectangle(-4, 8, 4, 13, blendColor(appearance.coat, 0x261d15, 0.45), 0.8),
-        scene.add.rectangle(4, 8, 4, 13, blendColor(appearance.coat, 0x261d15, 0.45), 0.8),
+        scene.add.rectangle(
+          -4,
+          8,
+          4,
+          13,
+          blendColor(appearance.coat, 0x261d15, 0.45),
+          0.8,
+        ),
+        scene.add.rectangle(
+          4,
+          8,
+          4,
+          13,
+          blendColor(appearance.coat, 0x261d15, 0.45),
+          0.8,
+        ),
       ] as PhaserType.GameObjects.GameObject[];
     case "scarf":
       return [
@@ -1557,7 +1753,14 @@ function createCharacterArm(
   y: number,
   appearance: CharacterAppearance,
 ) {
-  const sleeve = scene.add.ellipse(0, 4.5, 6.4, 13, blendColor(appearance.coat, 0x0f1419, 0.08), 0.98);
+  const sleeve = scene.add.ellipse(
+    0,
+    4.5,
+    6.4,
+    13,
+    blendColor(appearance.coat, 0x0f1419, 0.08),
+    0.98,
+  );
   const hand = scene.add.circle(0, 10.5, 2.2, appearance.face, 0.98);
   return {
     container: scene.add.container(x, y, [sleeve, hand]),
@@ -1570,8 +1773,22 @@ function createCharacterLeg(
   y: number,
   appearance: CharacterAppearance,
 ) {
-  const trouser = scene.add.ellipse(0, 4.5, 7, 14, blendColor(appearance.coat, 0x11161c, 0.14), 0.98);
-  const boot = scene.add.ellipse(0, 10.8, 8.5, 4.4, blendColor(appearance.outline, 0x2d251d, 0.18), 0.98);
+  const trouser = scene.add.ellipse(
+    0,
+    4.5,
+    7,
+    14,
+    blendColor(appearance.coat, 0x11161c, 0.14),
+    0.98,
+  );
+  const boot = scene.add.ellipse(
+    0,
+    10.8,
+    8.5,
+    4.4,
+    blendColor(appearance.outline, 0x2d251d, 0.18),
+    0.98,
+  );
   return {
     container: scene.add.container(x, y, [trouser, boot]),
   };
@@ -1593,7 +1810,8 @@ function poseCharacterRig(
 ) {
   const swing = clamp(stride * style.stepPower, -1, 1);
   const bob =
-    Math.abs(swing) * 2.1 * style.bodyBob + Math.sin(now / 240) * 0.22 * style.idleWave;
+    Math.abs(swing) * 2.1 * style.bodyBob +
+    Math.sin(now / 240) * 0.22 * style.idleWave;
   const armSwing = swing * 0.52 * style.armSwing;
   const legSwing = swing * 0.36 * style.legSwing;
   const squashX = 1 + Math.abs(swing) * 0.03 * style.squash;
@@ -1646,26 +1864,57 @@ function createRuntimeObjects(
   const ambientLayer = scene.add.graphics().setDepth(25);
   const overlayLayer = scene.add.graphics().setDepth(30);
 
-  const playerPulse = scene.add.circle(0, 0, 24, 0x8dd0cd, 0.12);
+  const playerPulse = scene.add.circle(0, 0, 34, 0x8dd0cd, 0.16);
+  const playerReticle = scene.add
+    .ellipse(0, 16, 52, 28, 0xf1d09f, 0.14)
+    .setStrokeStyle(2.2, 0xf1d09f, 0.5);
   const playerAppearance = playerCharacterAppearance();
   const playerRig = createCharacterAvatar(scene, playerAppearance);
   playerRig.avatar.setScale(1.06);
+  const playerBeacon = scene.add
+    .circle(0, -72, 5.2, 0xffefc8, 0.98)
+    .setStrokeStyle(2.2, 0xf0cf8c, 0.64);
+  const playerBeaconTail = scene.add.rectangle(0, -64, 2.4, 10, 0xf0cf8c, 0.84);
+
+  const playerTitle = scene.add
+    .text(0, -60, "YOU", {
+      align: "center",
+      color: "#f6deb0",
+      fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
+      fontSize: "11px",
+      fontStyle: "700",
+      letterSpacing: 3,
+    })
+    .setBackgroundColor("rgba(31, 25, 17, 0.96)")
+    .setOrigin(0.5, 0.5);
+  playerTitle.setPadding(8, 4, 8, 4);
+  playerTitle.setStroke("#0a1116", 2);
 
   const playerName = scene.add
-    .text(0, 23, snapshot.game?.player.name ?? "Rowan", {
+    .text(0, -41, snapshot.game?.player.name ?? "Rowan", {
       align: "center",
-      color: "#f2fbfb",
+      color: "#fffaf0",
       fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
-      fontSize: "12px",
+      fontSize: "15px",
       fontStyle: "700",
     })
-    .setBackgroundColor("rgba(7, 13, 18, 0.92)")
-    .setOrigin(0.5, 0);
-  playerName.setPadding(7, 4, 7, 4);
+    .setBackgroundColor("rgba(7, 13, 18, 0.95)")
+    .setOrigin(0.5, 0.5);
+  playerName.setPadding(10, 5, 10, 5);
+  playerName.setStroke("#091015", 2);
 
   const playerContainer = scene.add
-    .container(0, 0, [playerPulse, playerRig.avatar, playerName])
+    .container(0, 0, [
+      playerPulse,
+      playerReticle,
+      playerRig.avatar,
+      playerBeaconTail,
+      playerBeacon,
+      playerTitle,
+      playerName,
+    ])
     .setDepth(60);
+  playerContainer.setScale(1.08);
 
   return {
     ambientLayer,
@@ -1675,11 +1924,15 @@ function createRuntimeObjects(
     npcMarkers: new Map(),
     overlayDom,
     overlayLayer,
+    playerBeacon,
+    playerBeaconTail,
     playerAppearance,
     playerContainer,
     playerName,
     playerPulse,
+    playerReticle,
     playerRig,
+    playerTitle,
     scene,
     structureDetailLayer,
     structureLayer,
@@ -1692,6 +1945,16 @@ function bindOverlayEvents(
   runtimeState: RuntimeState,
   callbacksRef: React.MutableRefObject<RuntimeCallbacks>,
 ) {
+  root.addEventListener(
+    "wheel",
+    (event) => {
+      if (isOverlayEventTarget(root, event.target)) {
+        event.stopPropagation();
+      }
+    },
+    { capture: true, passive: true },
+  );
+
   root.onclick = (event) => {
     const target = event.target as HTMLElement | null;
     if (!target) {
@@ -1707,12 +1970,36 @@ function bindOverlayEvents(
       return;
     }
 
+    const toggleRailButton = target.closest<HTMLElement>("[data-toggle-rail]");
+    if (toggleRailButton) {
+      if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+        runtimeState.ui.railExpanded = !runtimeState.ui.railExpanded;
+        renderOverlay(runtimeState.objects!, runtimeState);
+      }
+      return;
+    }
+
+    const toggleSupportButton = target.closest<HTMLElement>(
+      "[data-toggle-support]",
+    );
+    if (toggleSupportButton) {
+      runtimeState.ui.supportExpanded = !runtimeState.ui.supportExpanded;
+      renderOverlay(runtimeState.objects!, runtimeState);
+      return;
+    }
+
     const selectNpcButton = target.closest<HTMLElement>("[data-select-npc]");
     if (selectNpcButton) {
       runtimeState.ui.selectedNpcId = selectNpcButton.dataset.selectNpc ?? null;
       runtimeState.ui.activeTab = "people";
       runtimeState.ui.focusPanel = "people";
+      runtimeState.ui.pendingConversationNpcId =
+        selectNpcButton.dataset.selectNpc ?? null;
+      if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+        runtimeState.ui.railExpanded = true;
+      }
       renderOverlay(runtimeState.objects!, runtimeState);
+      maybeAutostartConversation(runtimeState, callbacksRef);
       return;
     }
 
@@ -1732,15 +2019,20 @@ function bindOverlayEvents(
         const talkNpcId = extractTalkNpcId(actionId);
         if (talkNpcId) {
           runtimeState.ui.selectedNpcId = talkNpcId;
-          runtimeState.ui.activeTab = "people";
-          runtimeState.ui.focusPanel = "people";
+          runtimeState.ui.activeTab = "actions";
+          runtimeState.ui.focusPanel = null;
+          if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+            runtimeState.ui.railExpanded = true;
+          }
         }
         callbacksRef.current.onAction(actionId, actionLabel);
       }
       return;
     }
 
-    const objectiveButton = target.closest<HTMLElement>("[data-objective-text]");
+    const objectiveButton = target.closest<HTMLElement>(
+      "[data-objective-text]",
+    );
     if (objectiveButton) {
       const objectiveText = objectiveButton.dataset.objectiveText;
       if (objectiveText) {
@@ -1759,7 +2051,9 @@ function bindOverlayEvents(
       return;
     }
 
-    const advanceButton = target.closest<HTMLElement>("[data-advance-objective]");
+    const advanceButton = target.closest<HTMLElement>(
+      "[data-advance-objective]",
+    );
     if (advanceButton) {
       callbacksRef.current.onAdvanceObjective();
       return;
@@ -1781,7 +2075,9 @@ function bindOverlayEvents(
     const formData = new FormData(form);
 
     if (form.dataset.objectiveForm === "true") {
-      callbacksRef.current.onSetObjective(String(formData.get("objective") ?? ""));
+      callbacksRef.current.onSetObjective(
+        String(formData.get("objective") ?? ""),
+      );
       return;
     }
 
@@ -1792,7 +2088,9 @@ function bindOverlayEvents(
       }
 
       callbacksRef.current.onSpeak(npcId, String(formData.get("speech") ?? ""));
-      const input = form.querySelector<HTMLInputElement>('input[name="speech"]');
+      const input = form.querySelector<HTMLInputElement>(
+        'input[name="speech"]',
+      );
       if (input) {
         input.value = "";
       }
@@ -1815,8 +2113,17 @@ function isOverlayTextInputFocused(root: HTMLDivElement | null) {
   );
 }
 
+function isOverlayEventTarget(
+  root: HTMLDivElement | null,
+  target: EventTarget | null,
+) {
+  return target instanceof Node && Boolean(root?.contains(target));
+}
+
 type OverlayRenderState = {
   activeFieldKey: string | null;
+  commandRailNearBottom: boolean;
+  commandRailScrollTop: number | null;
   fieldSelectionEnd: number | null;
   fieldSelectionStart: number | null;
   fieldValueByKey: Map<string, string>;
@@ -1835,10 +2142,17 @@ function captureOverlayRenderState(root: HTMLDivElement): OverlayRenderState {
       : null;
   const fieldValueByKey = new Map<string, string>();
   const scrollTopByKey = new Map<string, number>();
-  const transcript = root.querySelector<HTMLElement>('[data-chat-transcript="true"]');
+  const commandRail = root.querySelector<HTMLElement>(
+    '[data-preserve-scroll="command-rail"]',
+  );
+  const transcript = root.querySelector<HTMLElement>(
+    '[data-chat-transcript="true"]',
+  );
 
   root
-    .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-overlay-field-key]')
+    .querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement
+    >("[data-overlay-field-key]")
     .forEach((field) => {
       const key = field.dataset.overlayFieldKey;
       if (key) {
@@ -1846,18 +2160,27 @@ function captureOverlayRenderState(root: HTMLDivElement): OverlayRenderState {
       }
     });
 
-  root.querySelectorAll<HTMLElement>('[data-preserve-scroll]').forEach((element) => {
-    const key = element.dataset.preserveScroll;
-    if (key) {
-      scrollTopByKey.set(key, element.scrollTop);
-    }
-  });
+  root
+    .querySelectorAll<HTMLElement>("[data-preserve-scroll]")
+    .forEach((element) => {
+      const key = element.dataset.preserveScroll;
+      if (key) {
+        scrollTopByKey.set(key, element.scrollTop);
+      }
+    });
 
   return {
     activeFieldKey:
       activeField && root.contains(activeField)
-        ? activeField.dataset.overlayFieldKey ?? null
+        ? (activeField.dataset.overlayFieldKey ?? null)
         : null,
+    commandRailNearBottom: commandRail
+      ? commandRail.scrollHeight -
+          commandRail.scrollTop -
+          commandRail.clientHeight <
+        56
+      : false,
+    commandRailScrollTop: commandRail?.scrollTop ?? null,
     fieldSelectionEnd: activeField?.selectionEnd ?? null,
     fieldSelectionStart: activeField?.selectionStart ?? null,
     fieldValueByKey,
@@ -1867,7 +2190,10 @@ function captureOverlayRenderState(root: HTMLDivElement): OverlayRenderState {
         : null,
     scrollTopByKey,
     transcriptNearBottom: transcript
-      ? transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48
+      ? transcript.scrollHeight -
+          transcript.scrollTop -
+          transcript.clientHeight <
+        48
       : false,
     transcriptScrollTop: transcript?.scrollTop ?? null,
   };
@@ -1878,7 +2204,9 @@ function restoreOverlayRenderState(
   state: OverlayRenderState,
 ) {
   root
-    .querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-overlay-field-key]')
+    .querySelectorAll<
+      HTMLInputElement | HTMLTextAreaElement
+    >("[data-overlay-field-key]")
     .forEach((field) => {
       const key = field.dataset.overlayFieldKey;
       if (!key) {
@@ -1891,19 +2219,37 @@ function restoreOverlayRenderState(
       }
     });
 
-  root.querySelectorAll<HTMLElement>('[data-preserve-scroll]').forEach((element) => {
-    const key = element.dataset.preserveScroll;
-    if (!key) {
-      return;
-    }
+  root
+    .querySelectorAll<HTMLElement>("[data-preserve-scroll]")
+    .forEach((element) => {
+      const key = element.dataset.preserveScroll;
+      if (!key) {
+        return;
+      }
 
-    const nextScrollTop = state.scrollTopByKey.get(key);
-    if (nextScrollTop !== undefined) {
-      element.scrollTop = nextScrollTop;
-    }
-  });
+      const nextScrollTop = state.scrollTopByKey.get(key);
+      if (nextScrollTop !== undefined) {
+        element.scrollTop = nextScrollTop;
+      }
+    });
 
-  const transcript = root.querySelector<HTMLElement>('[data-chat-transcript="true"]');
+  const commandRail = root.querySelector<HTMLElement>(
+    '[data-preserve-scroll="command-rail"]',
+  );
+  if (commandRail) {
+    if (state.commandRailNearBottom) {
+      commandRail.scrollTop = commandRail.scrollHeight;
+    } else if (state.commandRailScrollTop !== null) {
+      commandRail.scrollTop = Math.min(
+        state.commandRailScrollTop,
+        Math.max(commandRail.scrollHeight - commandRail.clientHeight, 0),
+      );
+    }
+  }
+
+  const transcript = root.querySelector<HTMLElement>(
+    '[data-chat-transcript="true"]',
+  );
   if (transcript) {
     if (state.transcriptNearBottom) {
       transcript.scrollTop = transcript.scrollHeight;
@@ -1919,9 +2265,9 @@ function restoreOverlayRenderState(
     return;
   }
 
-  const restoredField = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-    `[data-overlay-field-key="${CSS.escape(state.activeFieldKey)}"]`,
-  );
+  const restoredField = root.querySelector<
+    HTMLInputElement | HTMLTextAreaElement
+  >(`[data-overlay-field-key="${CSS.escape(state.activeFieldKey)}"]`);
   if (!restoredField) {
     return;
   }
@@ -1943,9 +2289,19 @@ function renderStaticScene(
   objects: RuntimeObjects,
   runtimeState: RuntimeState,
 ) {
-  const { ambientLayer, scene, structureDetailLayer, structureLayer, terrainLayer } = objects;
+  const {
+    ambientLayer,
+    scene,
+    structureDetailLayer,
+    structureLayer,
+    terrainLayer,
+  } = objects;
   const world = getWorldBounds(runtimeState.snapshot);
-  const sceneViewport = getSceneViewport(getRuntimeViewportSize(runtimeState), world);
+  const sceneViewport = getSceneViewport(
+    getRuntimeViewportSize(runtimeState),
+    world,
+    runtimeState.snapshot.viewport,
+  );
   const sceneZoom = getTargetSceneZoom(runtimeState, sceneViewport, world);
   const camera = scene.cameras.main;
   camera.setBackgroundColor("#000000");
@@ -1978,13 +2334,21 @@ function renderStaticScene(
   objects.assetStructureNodes = [];
 
   const game = runtimeState.snapshot.game;
-  drawBackdrop(terrainLayer, world, runtimeState.indices.visualScene ? undefined : game?.map);
+  drawBackdrop(
+    terrainLayer,
+    world,
+    runtimeState.indices.visualScene ? undefined : game?.map,
+  );
   if (!game) {
     return;
   }
 
   if (runtimeState.indices.visualScene) {
-    renderAuthoredVisualScene(objects, runtimeState, runtimeState.indices.visualScene);
+    renderAuthoredVisualScene(
+      objects,
+      runtimeState,
+      runtimeState.indices.visualScene,
+    );
     drawAmbientOverlay(ambientLayer, runtimeState, world);
     objects.mapLabels = drawLocationLabels(
       scene,
@@ -2010,7 +2374,12 @@ function renderStaticScene(
     ...drawKenneyPropSprites(scene, game.map.props),
   ];
   drawAmbientOverlay(ambientLayer, runtimeState, world);
-  objects.mapLabels = drawLocationLabels(scene, game, runtimeState.indices, null);
+  objects.mapLabels = drawLocationLabels(
+    scene,
+    game,
+    runtimeState.indices,
+    null,
+  );
 }
 
 function renderDynamicScene(
@@ -2037,17 +2406,46 @@ function renderDynamicScene(
 
   objects.playerContainer.setVisible(true);
   const playerTile = samplePlayerTile(runtimeState.playerMotion, now);
+  if (
+    runtimeState.waypointTarget &&
+    distanceBetween(playerTile, runtimeState.waypointTarget) <= 0.08
+  ) {
+    setRuntimeWaypointTarget(runtimeState, null, now);
+  }
   const playerPixel = playerTileToWorld(playerTile, runtimeState.indices);
   const activeConversationNpc = getSelectedNpc(runtimeState) ?? undefined;
   const animatedNpcs = computeAnimatedNpcs(runtimeState, now, playerPixel);
-  const playerAnimation = getPlayerAnimationState(runtimeState.playerMotion, now);
+  const playerAnimation = getPlayerAnimationState(
+    runtimeState.playerMotion,
+    now,
+  );
 
   objects.playerContainer.setPosition(playerPixel.x, playerPixel.y);
-  objects.playerName.setVisible(!usingAuthoredVisualScene);
+  objects.playerName
+    .setText(runtimeState.snapshot.game?.player.name ?? "Rowan")
+    .setVisible(!usingAuthoredVisualScene);
+  objects.playerBeacon
+    .setVisible(true)
+    .setScale(1 + Math.sin(now / 220) * (usingAuthoredVisualScene ? 0.1 : 0.08))
+    .setAlpha(usingAuthoredVisualScene ? 0.96 : 0.9);
+  objects.playerBeaconTail
+    .setVisible(true)
+    .setAlpha(
+      usingAuthoredVisualScene
+        ? 0.88 + Math.sin(now / 240) * 0.08
+        : 0.78 + Math.sin(now / 240) * 0.06,
+    );
+  objects.playerTitle
+    .setVisible(true)
+    .setAlpha(usingAuthoredVisualScene ? 0.96 : 0.84);
   objects.playerPulse
     .setVisible(!usingAuthoredVisualScene)
-    .setScale(1 + Math.sin(now / 220) * 0.06)
-    .setAlpha(runtimeState.snapshot.busyLabel ? 0.2 : 0.12);
+    .setScale(1 + Math.sin(now / 220) * 0.08)
+    .setAlpha(runtimeState.snapshot.busyLabel ? 0.24 : 0.16);
+  objects.playerReticle
+    .setVisible(!usingAuthoredVisualScene)
+    .setScale(1 + Math.sin(now / 260) * 0.04, 1 + Math.sin(now / 260) * 0.03)
+    .setAlpha(activeConversationNpc ? 0.56 : 0.42);
   poseCharacterRig(objects.playerRig, {
     facing: playerAnimation.facing,
     now,
@@ -2065,18 +2463,20 @@ function renderDynamicScene(
       : objects.playerAppearance.accent,
     0.94,
   );
-  objects.playerRig.shadow.setFillStyle(0x091015, activeConversationNpc ? 0.48 : 0.38);
+  objects.playerRig.shadow.setFillStyle(
+    0x091015,
+    activeConversationNpc ? 0.48 : 0.38,
+  );
 
   updateNpcMarkers(objects, runtimeState, animatedNpcs, now);
   drawDynamicOverlay(objects.overlayLayer, runtimeState, playerPixel, now);
-  updateCamera(
-    objects.scene.cameras.main,
-    runtimeState,
-    getSceneViewport(getRuntimeViewportSize(runtimeState), world),
-    playerPixel,
+  const sceneViewport = getSceneViewport(
+    getRuntimeViewportSize(runtimeState),
     world,
-    now,
+    runtimeState.snapshot.viewport,
   );
+  const camera = objects.scene.cameras.main;
+  updateCamera(camera, runtimeState, sceneViewport, playerPixel, world, now);
 }
 
 function renderAuthoredVisualScene(
@@ -2162,7 +2562,10 @@ function drawV2LandmarkStructureArt(
 ) {
   const layer = objects.structureLayer;
   for (const landmark of visualScene.landmarks) {
-    if (landmark.locationId === "market-square" || landmark.style === "square") {
+    if (
+      landmark.locationId === "market-square" ||
+      landmark.style === "square"
+    ) {
       drawQuaySquareHeroArt(layer, landmark.rect);
       continue;
     }
@@ -2200,13 +2603,37 @@ function drawTeaHouseHeroArt(
   const roofHeight = Math.max(24, Math.min(42, rect.height * 0.18));
   const lowerBandHeight = Math.max(26, rect.height * 0.16);
   layer.fillStyle(0xf0e4cd, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 20,
+  );
   layer.lineStyle(4, 0xf4ead3, 0.35);
-  layer.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.strokeRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 20,
+  );
   layer.fillStyle(0xb08c66, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, roofHeight, rect.radius ?? 18);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    roofHeight,
+    rect.radius ?? 18,
+  );
   layer.fillStyle(0xffffff, 0.52);
-  layer.fillRoundedRect(rect.x + 42, rect.y + roofHeight + 12, rect.width - 84, 10, 5);
+  layer.fillRoundedRect(
+    rect.x + 42,
+    rect.y + roofHeight + 12,
+    rect.width - 84,
+    10,
+    5,
+  );
   layer.fillStyle(0xf6eddc, 1);
   layer.fillRoundedRect(
     rect.x + 17,
@@ -2232,9 +2659,20 @@ function drawTeaHouseHeroArt(
     7,
   );
   layer.fillStyle(0x815d3f, 1);
-  layer.fillRect(rect.x + 9, rect.y + rect.height - lowerBandHeight - 10, rect.width - 18, lowerBandHeight);
+  layer.fillRect(
+    rect.x + 9,
+    rect.y + rect.height - lowerBandHeight - 10,
+    rect.width - 18,
+    lowerBandHeight,
+  );
   layer.fillStyle(0x6a4d35, 1);
-  layer.fillRoundedRect(rect.x + 27, rect.y + rect.height - 24, rect.width - 54, 12, 6);
+  layer.fillRoundedRect(
+    rect.x + 27,
+    rect.y + rect.height - 24,
+    rect.width - 54,
+    12,
+    6,
+  );
 }
 
 function drawBoardingHouseHeroArt(
@@ -2246,11 +2684,29 @@ function drawBoardingHouseHeroArt(
   const signWidth = Math.min(228, rect.width - 112);
   const signX = rect.x + (rect.width - signWidth) / 2;
   layer.fillStyle(0xd8c7b6, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 20,
+  );
   layer.lineStyle(4, 0xf4ead3, 0.35);
-  layer.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 20);
+  layer.strokeRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 20,
+  );
   layer.fillStyle(0x89949c, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, roofHeight, rect.radius ?? 18);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    roofHeight,
+    rect.radius ?? 18,
+  );
   layer.fillStyle(0x4d5961, 1);
   layer.fillRoundedRect(signX, rect.y + 12, signWidth, 34, 12);
   layer.lineStyle(3, 0xd5bd88, 1);
@@ -2258,9 +2714,21 @@ function drawBoardingHouseHeroArt(
   layer.fillStyle(0xffffff, 0.1);
   layer.fillRoundedRect(signX + 14, rect.y + 18, signWidth - 28, 7, 3.5);
   layer.fillStyle(0xe3d7c9, 1);
-  layer.fillRoundedRect(rect.x + 14, rect.y + roofHeight + 10, rect.width - 28, Math.max(86, rect.height * 0.34), 16);
+  layer.fillRoundedRect(
+    rect.x + 14,
+    rect.y + roofHeight + 10,
+    rect.width - 28,
+    Math.max(86, rect.height * 0.34),
+    16,
+  );
   layer.lineStyle(3, 0x7a614e, 0.12);
-  layer.strokeRoundedRect(rect.x + 14, rect.y + roofHeight + 10, rect.width - 28, Math.max(86, rect.height * 0.34), 16);
+  layer.strokeRoundedRect(
+    rect.x + 14,
+    rect.y + roofHeight + 10,
+    rect.width - 28,
+    Math.max(86, rect.height * 0.34),
+    16,
+  );
   layer.fillStyle(0xcfb9a5, 1);
   layer.fillRoundedRect(
     rect.x + 20,
@@ -2278,7 +2746,12 @@ function drawBoardingHouseHeroArt(
     14,
   );
   layer.fillStyle(0xa67961, 1);
-  layer.fillRect(rect.x + 9, rect.y + rect.height - lowerBandHeight - 10, rect.width - 18, lowerBandHeight);
+  layer.fillRect(
+    rect.x + 9,
+    rect.y + rect.height - lowerBandHeight - 10,
+    rect.width - 18,
+    lowerBandHeight,
+  );
 }
 
 function drawQuaySquareHeroArt(
@@ -2298,16 +2771,52 @@ function drawQuaySquareHeroArt(
   const crossHeight = Math.max(54, rect.height * 0.16);
   const civicRadius = Math.min(rect.width, rect.height) * 0.18;
   layer.fillStyle(0xd7c7a6, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 30);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 30,
+  );
   layer.lineStyle(4, 0xf4ead3, 0.28);
-  layer.strokeRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 30);
+  layer.strokeRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 30,
+  );
   layer.fillStyle(0xccb993, 1);
-  layer.fillRoundedRect(innerRect.x, innerRect.y, innerRect.width, innerRect.height, 24);
+  layer.fillRoundedRect(
+    innerRect.x,
+    innerRect.y,
+    innerRect.width,
+    innerRect.height,
+    24,
+  );
   layer.lineStyle(3, 0x9a805c, 0.18);
-  layer.strokeRoundedRect(innerRect.x, innerRect.y, innerRect.width, innerRect.height, 24);
+  layer.strokeRoundedRect(
+    innerRect.x,
+    innerRect.y,
+    innerRect.width,
+    innerRect.height,
+    24,
+  );
   layer.fillStyle(0xe7dcc3, 1);
-  layer.fillRoundedRect(centerX - crossWidth / 2, innerRect.y + 31, crossWidth, innerRect.height - 62, 22);
-  layer.fillRoundedRect(innerRect.x + 31, centerY - crossHeight / 2, innerRect.width - 62, crossHeight, 22);
+  layer.fillRoundedRect(
+    centerX - crossWidth / 2,
+    innerRect.y + 31,
+    crossWidth,
+    innerRect.height - 62,
+    22,
+  );
+  layer.fillRoundedRect(
+    innerRect.x + 31,
+    centerY - crossHeight / 2,
+    innerRect.width - 62,
+    crossHeight,
+    22,
+  );
   layer.fillStyle(0xb8a17a, 1);
   layer.fillCircle(centerX, centerY, civicRadius + 26);
   layer.fillStyle(0xe9dfcc, 1);
@@ -2319,10 +2828,34 @@ function drawQuaySquareHeroArt(
   layer.fillStyle(0xffffff, 0.36);
   layer.fillCircle(centerX, centerY - civicRadius * 0.16, civicRadius * 0.24);
   layer.fillStyle(0x9c8760, 1);
-  layer.fillRoundedRect(innerRect.x + 42, innerRect.y + 26, innerRect.width - 84, 16, 8);
-  layer.fillRoundedRect(innerRect.x + 42, innerRect.y + innerRect.height - 42, innerRect.width - 84, 16, 8);
-  layer.fillRoundedRect(innerRect.x + 26, innerRect.y + 42, 16, innerRect.height - 84, 8);
-  layer.fillRoundedRect(innerRect.x + innerRect.width - 42, innerRect.y + 42, 16, innerRect.height - 84, 8);
+  layer.fillRoundedRect(
+    innerRect.x + 42,
+    innerRect.y + 26,
+    innerRect.width - 84,
+    16,
+    8,
+  );
+  layer.fillRoundedRect(
+    innerRect.x + 42,
+    innerRect.y + innerRect.height - 42,
+    innerRect.width - 84,
+    16,
+    8,
+  );
+  layer.fillRoundedRect(
+    innerRect.x + 26,
+    innerRect.y + 42,
+    16,
+    innerRect.height - 84,
+    8,
+  );
+  layer.fillRoundedRect(
+    innerRect.x + innerRect.width - 42,
+    innerRect.y + 42,
+    16,
+    innerRect.height - 84,
+    8,
+  );
 }
 
 function drawV2GenericLandmarkArt(
@@ -2360,11 +2893,20 @@ function drawV2GenericLandmarkArt(
   const roofHeight = Math.max(28, Math.min(56, landmark.rect.height * 0.24));
   const lowerBandHeight = Math.max(40, landmark.rect.height * 0.22);
   const isDockyard = landmark.locationId === "freight-yard";
-  const dockyardCargoWidth = isDockyard ? Math.max(78, landmark.rect.width * 0.28) : 0;
-  const dockyardCargoHeight = isDockyard ? Math.max(104, landmark.rect.height * 0.5) : 0;
-  const dockyardCargoX = landmark.rect.x + landmark.rect.width - dockyardCargoWidth - 38;
+  const dockyardCargoWidth = isDockyard
+    ? Math.max(78, landmark.rect.width * 0.28)
+    : 0;
+  const dockyardCargoHeight = isDockyard
+    ? Math.max(104, landmark.rect.height * 0.5)
+    : 0;
+  const dockyardCargoX =
+    landmark.rect.x + landmark.rect.width - dockyardCargoWidth - 38;
   const dockyardCargoY =
-    landmark.rect.y + landmark.rect.height - lowerBandHeight - dockyardCargoHeight - 18;
+    landmark.rect.y +
+    landmark.rect.height -
+    lowerBandHeight -
+    dockyardCargoHeight -
+    18;
 
   layer.fillStyle(bodyFill, 1);
   layer.fillRoundedRect(
@@ -2393,17 +2935,59 @@ function drawV2GenericLandmarkArt(
 
   if (isDockyard) {
     layer.fillStyle(0x8a8376, 1);
-    layer.fillRoundedRect(landmark.rect.x + 17, landmark.rect.y + roofHeight + 18, landmark.rect.width - 34, Math.max(64, landmark.rect.height * 0.28), 14);
+    layer.fillRoundedRect(
+      landmark.rect.x + 17,
+      landmark.rect.y + roofHeight + 18,
+      landmark.rect.width - 34,
+      Math.max(64, landmark.rect.height * 0.28),
+      14,
+    );
     layer.lineStyle(3, 0x292622, 0.16);
-    layer.strokeRoundedRect(landmark.rect.x + 17, landmark.rect.y + roofHeight + 18, landmark.rect.width - 34, Math.max(64, landmark.rect.height * 0.28), 14);
+    layer.strokeRoundedRect(
+      landmark.rect.x + 17,
+      landmark.rect.y + roofHeight + 18,
+      landmark.rect.width - 34,
+      Math.max(64, landmark.rect.height * 0.28),
+      14,
+    );
     layer.fillStyle(0xd8ccb2, 0.2);
-    layer.fillRoundedRect(landmark.rect.x + 45, landmark.rect.y + roofHeight + 28, landmark.rect.width - 90, 10, 5);
+    layer.fillRoundedRect(
+      landmark.rect.x + 45,
+      landmark.rect.y + roofHeight + 28,
+      landmark.rect.width - 90,
+      10,
+      5,
+    );
     layer.fillStyle(0x5a564f, 1);
-    layer.fillRoundedRect(landmark.rect.x + 22, landmark.rect.y + landmark.rect.height - lowerBandHeight - Math.max(96, landmark.rect.height * 0.34), landmark.rect.width - 44, Math.max(74, landmark.rect.height * 0.32), 16);
+    layer.fillRoundedRect(
+      landmark.rect.x + 22,
+      landmark.rect.y +
+        landmark.rect.height -
+        lowerBandHeight -
+        Math.max(96, landmark.rect.height * 0.34),
+      landmark.rect.width - 44,
+      Math.max(74, landmark.rect.height * 0.32),
+      16,
+    );
     layer.lineStyle(3, 0xe8d8bb, 0.1);
-    layer.strokeRoundedRect(landmark.rect.x + 22, landmark.rect.y + landmark.rect.height - lowerBandHeight - Math.max(96, landmark.rect.height * 0.34), landmark.rect.width - 44, Math.max(74, landmark.rect.height * 0.32), 16);
+    layer.strokeRoundedRect(
+      landmark.rect.x + 22,
+      landmark.rect.y +
+        landmark.rect.height -
+        lowerBandHeight -
+        Math.max(96, landmark.rect.height * 0.34),
+      landmark.rect.width - 44,
+      Math.max(74, landmark.rect.height * 0.32),
+      16,
+    );
     layer.fillStyle(0xc6923d, 1);
-    layer.fillRoundedRect(landmark.rect.x + 35, landmark.rect.y + landmark.rect.height - lowerBandHeight - 26, landmark.rect.width - 70, 10, 5);
+    layer.fillRoundedRect(
+      landmark.rect.x + 35,
+      landmark.rect.y + landmark.rect.height - lowerBandHeight - 26,
+      landmark.rect.width - 70,
+      10,
+      5,
+    );
   }
 
   layer.fillStyle(lowerBand, 1);
@@ -2425,7 +3009,9 @@ function drawV2GenericLandmarkArt(
     layer.fillStyle(0x65513b, 1);
     layer.fillRoundedRect(
       dockyardCargoX + dockyardCargoWidth * 0.08,
-      dockyardCargoY + dockyardCargoHeight - Math.max(16, dockyardCargoHeight * 0.14),
+      dockyardCargoY +
+        dockyardCargoHeight -
+        Math.max(16, dockyardCargoHeight * 0.14),
       dockyardCargoWidth * 0.84,
       Math.max(10, dockyardCargoHeight * 0.1),
       4,
@@ -2540,8 +3126,20 @@ function drawV2GenericLandmarkArt(
       );
     }
     layer.fillStyle(0x4c4841, 1);
-    layer.fillRoundedRect(landmark.rect.x + 22, landmark.rect.y + 12, 10, landmark.rect.height - 26, 6);
-    layer.fillRoundedRect(landmark.rect.x + landmark.rect.width - 32, landmark.rect.y + 12, 10, landmark.rect.height - 26, 6);
+    layer.fillRoundedRect(
+      landmark.rect.x + 22,
+      landmark.rect.y + 12,
+      10,
+      landmark.rect.height - 26,
+      6,
+    );
+    layer.fillRoundedRect(
+      landmark.rect.x + landmark.rect.width - 32,
+      landmark.rect.y + 12,
+      10,
+      landmark.rect.height - 26,
+      6,
+    );
   }
 }
 
@@ -2600,7 +3198,12 @@ function drawSurfaceZones(
           stripe: 0xd0be9a,
         });
         layer.fillStyle(0x8a7960, 0.24);
-        layer.fillRect(rect.x + rect.width - 18, rect.y + 10, 8, rect.height - 20);
+        layer.fillRect(
+          rect.x + rect.width - 18,
+          rect.y + 10,
+          8,
+          rect.height - 20,
+        );
         break;
       case "service_lane":
         fillPatternedStoneZone(layer, rect, {
@@ -2633,7 +3236,13 @@ function drawSurfaceZones(
           stripe: 0xe3d7bf,
         });
         layer.lineStyle(2, 0xefe1c1, 0.52);
-        layer.strokeRoundedRect(rect.x + 18, rect.y + 18, rect.width - 36, rect.height - 36, 24);
+        layer.strokeRoundedRect(
+          rect.x + 18,
+          rect.y + 18,
+          rect.width - 36,
+          rect.height - 36,
+          24,
+        );
         break;
       case "square_center":
         fillPatternedStoneZone(layer, rect, {
@@ -2644,19 +3253,49 @@ function drawSurfaceZones(
           stripe: 0xf0e6cf,
         });
         layer.lineStyle(2, 0xf0e6cd, 0.36);
-        layer.strokeRoundedRect(rect.x + 12, rect.y + 12, rect.width - 24, rect.height - 24, 18);
+        layer.strokeRoundedRect(
+          rect.x + 12,
+          rect.y + 12,
+          rect.width - 24,
+          rect.height - 24,
+          18,
+        );
         break;
       case "courtyard_ground":
         layer.fillStyle(0x657855, 0.98);
-        layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 18);
+        layer.fillRoundedRect(
+          rect.x,
+          rect.y,
+          rect.width,
+          rect.height,
+          rect.radius ?? 18,
+        );
         layer.fillStyle(0x7d8c6b, 0.28);
-        layer.fillRoundedRect(rect.x + 16, rect.y + 16, rect.width - 32, rect.height - 32, 16);
+        layer.fillRoundedRect(
+          rect.x + 16,
+          rect.y + 16,
+          rect.width - 32,
+          rect.height - 32,
+          16,
+        );
         layer.fillStyle(0xbba985, 0.32);
-        layer.fillRoundedRect(rect.x + rect.width / 2 - 28, rect.y + 52, 56, rect.height - 110, 10);
+        layer.fillRoundedRect(
+          rect.x + rect.width / 2 - 28,
+          rect.y + 52,
+          56,
+          rect.height - 110,
+          10,
+        );
         break;
       case "dock_apron":
         layer.fillStyle(0xb69f7a, 0.98);
-        layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 12);
+        layer.fillRoundedRect(
+          rect.x,
+          rect.y,
+          rect.width,
+          rect.height,
+          rect.radius ?? 12,
+        );
         layer.lineStyle(2, 0x8f7755, 0.2);
         for (let x = rect.x + 14; x < rect.x + rect.width - 14; x += 28) {
           layer.lineBetween(x, rect.y + 8, x, rect.y + rect.height - 8);
@@ -2664,7 +3303,13 @@ function drawSurfaceZones(
         break;
       case "quay_wall":
         layer.fillStyle(0x5f625f, 1);
-        layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 8);
+        layer.fillRoundedRect(
+          rect.x,
+          rect.y,
+          rect.width,
+          rect.height,
+          rect.radius ?? 8,
+        );
         layer.fillStyle(0x8f846f, 0.34);
         layer.fillRect(rect.x, rect.y, rect.width, 10);
         layer.lineStyle(1, 0x4a4d4a, 0.28);
@@ -2676,7 +3321,12 @@ function drawSurfaceZones(
         layer.fillStyle(0x245c77, 1);
         layer.fillRect(rect.x, rect.y, rect.width, rect.height);
         layer.fillStyle(0x1f4e63, 0.28);
-        layer.fillRect(rect.x, rect.y + rect.height * 0.46, rect.width, rect.height * 0.54);
+        layer.fillRect(
+          rect.x,
+          rect.y + rect.height * 0.46,
+          rect.width,
+          rect.height * 0.54,
+        );
         break;
       default:
         break;
@@ -2699,7 +3349,9 @@ type TerrainDraftWaterSegment = {
   y: number;
 };
 
-function buildTerrainDraftGrid(visualScene: VisualScene): TerrainDraftGrid | null {
+function buildTerrainDraftGrid(
+  visualScene: VisualScene,
+): TerrainDraftGrid | null {
   const terrain = visualScene.terrainDraft;
   if (!terrain) {
     return null;
@@ -2807,7 +3459,9 @@ function drawWaveStroke(
   let previousY =
     y +
     Math.sin(previousX * 0.024 + beat * 1.6 + phaseOffset) * amplitude +
-    Math.sin(previousX * 0.011 + beat * 0.72 + phaseOffset * 0.7) * amplitude * 0.48;
+    Math.sin(previousX * 0.011 + beat * 0.72 + phaseOffset * 0.7) *
+      amplitude *
+      0.48;
 
   if (!travelFade) {
     layer.lineStyle(thickness, color, alpha);
@@ -2818,7 +3472,9 @@ function drawWaveStroke(
     const nextY =
       y +
       Math.sin(nextX * 0.024 + beat * 1.6 + phaseOffset) * amplitude +
-      Math.sin(nextX * 0.011 + beat * 0.72 + phaseOffset * 0.7) * amplitude * 0.48;
+      Math.sin(nextX * 0.011 + beat * 0.72 + phaseOffset * 0.7) *
+        amplitude *
+        0.48;
     if (travelFade) {
       const segmentProgress = ((previousX + nextX) * 0.5 - x) / width;
       const packetRatio = Math.min(
@@ -2828,7 +3484,10 @@ function drawWaveStroke(
       const cycleSpan = 1 + packetRatio * 2;
       const direction = travelFade.direction ?? 1;
       const front =
-        positiveModulo(beat * travelFade.speed + phaseOffset * 0.061, cycleSpan) - packetRatio;
+        positiveModulo(
+          beat * travelFade.speed + phaseOffset * 0.061,
+          cycleSpan,
+        ) - packetRatio;
       const softness = Math.max(travelFade.softness ?? 1.75, 0.45);
       let segmentAlpha = 0;
 
@@ -2961,27 +3620,61 @@ function drawTerrainDraftGround(
       ].filter(Boolean) as Array<"bottom" | "left" | "right" | "top">;
 
       for (const side of edges) {
-        const seed = col * 17 + row * 23 + (side === "top" ? 1 : side === "bottom" ? 3 : side === "left" ? 5 : 7);
+        const seed =
+          col * 17 +
+          row * 23 +
+          (side === "top"
+            ? 1
+            : side === "bottom"
+              ? 3
+              : side === "left"
+                ? 5
+                : 7);
         const bandThickness = 9;
 
         layer.fillStyle(0x7f694a, 0.28);
         if (side === "top") {
           layer.fillRect(rect.x + 6, rect.y, rect.width - 12, bandThickness);
         } else if (side === "bottom") {
-          layer.fillRect(rect.x + 6, rect.y + rect.height - bandThickness, rect.width - 12, bandThickness);
+          layer.fillRect(
+            rect.x + 6,
+            rect.y + rect.height - bandThickness,
+            rect.width - 12,
+            bandThickness,
+          );
         } else if (side === "left") {
           layer.fillRect(rect.x, rect.y + 6, bandThickness, rect.height - 12);
         } else {
-          layer.fillRect(rect.x + rect.width - bandThickness, rect.y + 6, bandThickness, rect.height - 12);
+          layer.fillRect(
+            rect.x + rect.width - bandThickness,
+            rect.y + 6,
+            bandThickness,
+            rect.height - 12,
+          );
         }
 
         layer.lineStyle(4, 0xf8faf4, 0.94);
         if (side === "top") {
-          layer.lineBetween(rect.x + 8, rect.y + 1, rect.x + rect.width - 10, rect.y + 1);
+          layer.lineBetween(
+            rect.x + 8,
+            rect.y + 1,
+            rect.x + rect.width - 10,
+            rect.y + 1,
+          );
           layer.lineStyle(2.6, 0xdff4fb, 0.5);
-          layer.lineBetween(rect.x + 10, rect.y - 5, rect.x + rect.width - 12, rect.y - 5);
+          layer.lineBetween(
+            rect.x + 10,
+            rect.y - 5,
+            rect.x + rect.width - 12,
+            rect.y - 5,
+          );
         } else if (side === "bottom") {
-          layer.lineBetween(rect.x + 8, rect.y + rect.height - 1, rect.x + rect.width - 10, rect.y + rect.height - 1);
+          layer.lineBetween(
+            rect.x + 8,
+            rect.y + rect.height - 1,
+            rect.x + rect.width - 10,
+            rect.y + rect.height - 1,
+          );
           layer.lineStyle(2.6, 0xdff4fb, 0.5);
           layer.lineBetween(
             rect.x + 10,
@@ -2990,9 +3683,19 @@ function drawTerrainDraftGround(
             rect.y + rect.height + 5,
           );
         } else if (side === "left") {
-          layer.lineBetween(rect.x + 1, rect.y + 8, rect.x + 1, rect.y + rect.height - 10);
+          layer.lineBetween(
+            rect.x + 1,
+            rect.y + 8,
+            rect.x + 1,
+            rect.y + rect.height - 10,
+          );
         } else {
-          layer.lineBetween(rect.x + rect.width - 1, rect.y + 8, rect.x + rect.width - 1, rect.y + rect.height - 10);
+          layer.lineBetween(
+            rect.x + rect.width - 1,
+            rect.y + 8,
+            rect.x + rect.width - 1,
+            rect.y + rect.height - 10,
+          );
         }
 
         drawTerrainDraftRubble(layer, rect, side, seed);
@@ -3013,12 +3716,20 @@ function getTerrainDraftKindAtPoint(
     return null;
   }
 
-  const maxCol = Math.max(0, Math.ceil(visualScene.width / terrain.cellSize) - 1);
-  const maxRow = Math.max(0, Math.ceil(visualScene.height / terrain.cellSize) - 1);
+  const maxCol = Math.max(
+    0,
+    Math.ceil(visualScene.width / terrain.cellSize) - 1,
+  );
+  const maxRow = Math.max(
+    0,
+    Math.ceil(visualScene.height / terrain.cellSize) - 1,
+  );
   const col = Math.max(0, Math.min(Math.floor(x / terrain.cellSize), maxCol));
   const row = Math.max(0, Math.min(Math.floor(y / terrain.cellSize), maxRow));
   const key = `${col}:${row}`;
-  const override = terrain.overrides.find((cell) => `${cell.col}:${cell.row}` === key);
+  const override = terrain.overrides.find(
+    (cell) => `${cell.col}:${cell.row}` === key,
+  );
   return override?.kind ?? terrain.baseKind;
 }
 
@@ -3088,14 +3799,23 @@ function drawSurfaceDraft(
             layer.fillRect(x, y + height - 2, width, 2);
             layer.lineStyle(2, 0xd9dccd, 0.22);
             for (let dashX = x + 10; dashX < x + width - 14; dashX += 18) {
-              layer.lineBetween(dashX, y + height / 2, Math.min(dashX + 8, x + width - 10), y + height / 2);
+              layer.lineBetween(
+                dashX,
+                y + height / 2,
+                Math.min(dashX + 8, x + width - 10),
+                y + height / 2,
+              );
             }
             break;
           case "tiled_stone_road":
             layer.fillStyle(0xb6b0a2, 0.98);
             layer.fillRect(x, y, width, height);
             layer.lineStyle(1.5, 0xe9e2d2, 0.2);
-            for (let seamY = y + height / 4; seamY < y + height; seamY += height / 4) {
+            for (
+              let seamY = y + height / 4;
+              seamY < y + height;
+              seamY += height / 4
+            ) {
               layer.lineBetween(x + 6, seamY, x + width - 6, seamY);
             }
             break;
@@ -3103,7 +3823,11 @@ function drawSurfaceDraft(
             layer.fillStyle(0xddd1bc, 0.98);
             layer.fillRect(x, y, width, height);
             layer.lineStyle(1.4, 0xf5ecdd, 0.2);
-            for (let seamY = y + height / 4; seamY < y + height; seamY += height / 4) {
+            for (
+              let seamY = y + height / 4;
+              seamY < y + height;
+              seamY += height / 4
+            ) {
               layer.lineBetween(x + 8, seamY, x + width - 8, seamY);
             }
             break;
@@ -3111,16 +3835,28 @@ function drawSurfaceDraft(
             layer.fillStyle(0x7d9566, 0.98);
             layer.fillRect(x, y, width, height);
             layer.fillStyle(0xb8d092, 0.12);
-            layer.fillRect(x + width * 0.08, y + height * 0.18, width * 0.68, height * 0.24);
+            layer.fillRect(
+              x + width * 0.08,
+              y + height * 0.18,
+              width * 0.68,
+              height * 0.24,
+            );
             layer.lineStyle(1.4, 0x566e3f, 0.16);
-            layer.lineBetween(x + 10, y + height * 0.64, x + width - 10, y + height * 0.58);
+            layer.lineBetween(
+              x + 10,
+              y + height * 0.64,
+              x + width - 10,
+              y + height * 0.58,
+            );
             break;
           case "bushes":
             layer.fillStyle(0x6d8a55, 0.98);
             layer.fillRect(x, y, width, height);
             layer.fillStyle(0x36552d, 0.44);
             for (let bushX = x + 22; bushX < x + width - 10; bushX += 42) {
-              const bushY = y + height * (((Math.round((bushX - x) / 42)) % 2 === 0) ? 0.5 : 0.42);
+              const bushY =
+                y +
+                height * (Math.round((bushX - x) / 42) % 2 === 0 ? 0.5 : 0.42);
               layer.fillCircle(bushX, bushY, 8);
               layer.fillCircle(bushX + 10, bushY - 4, 9);
             }
@@ -3131,7 +3867,9 @@ function drawSurfaceDraft(
             layer.fillStyle(0x74553d, 0.72);
             layer.fillStyle(0x4f7a42, 0.9);
             for (let treeX = x + 28; treeX < x + width - 10; treeX += 68) {
-              const treeY = y + height * (((Math.round((treeX - x) / 68)) % 2 === 0) ? 0.46 : 0.4);
+              const treeY =
+                y +
+                height * (Math.round((treeX - x) / 68) % 2 === 0 ? 0.46 : 0.4);
               layer.fillStyle(0x74553d, 0.72);
               layer.fillRoundedRect(treeX - 2, treeY + 10, 4, 8, 2);
               layer.fillStyle(0x4f7a42, 0.9);
@@ -3164,7 +3902,13 @@ function fillPatternedStoneZone(
   },
 ) {
   layer.fillStyle(palette.base, 0.99);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 16);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 16,
+  );
   layer.lineStyle(1, palette.joint, palette.emphasis === "high" ? 0.32 : 0.22);
 
   for (let x = rect.x + 16; x < rect.x + rect.width - 16; x += 30) {
@@ -3216,7 +3960,13 @@ function drawNeighborFacadeZone(
   edge: "east" | "north" | "south" | "west",
 ) {
   layer.fillStyle(0x1a2a31, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 16);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 16,
+  );
   layer.fillStyle(0x24363f, 0.9);
   layer.fillRect(rect.x, rect.y + 8, rect.width, 18);
   layer.lineStyle(1, 0x334852, 0.26);
@@ -3234,9 +3984,21 @@ function drawAlleyZone(
   rect: VisualRect,
 ) {
   layer.fillStyle(0x142028, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 18);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 18,
+  );
   layer.fillStyle(0x1e2d35, 0.8);
-  layer.fillRoundedRect(rect.x + 14, rect.y + 18, rect.width - 28, rect.height - 36, 14);
+  layer.fillRoundedRect(
+    rect.x + 14,
+    rect.y + 18,
+    rect.width - 28,
+    rect.height - 36,
+    14,
+  );
   layer.lineStyle(1, 0x2f4650, 0.22);
   for (let y = rect.y + 26; y < rect.y + rect.height - 18; y += 44) {
     layer.lineBetween(rect.x + 18, y, rect.x + rect.width - 18, y);
@@ -3249,14 +4011,25 @@ function drawSideStreetZone(
   edge: "east" | "north" | "south" | "west",
 ) {
   layer.fillStyle(0x1b2a32, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 16);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 16,
+  );
   layer.fillStyle(0x2a3942, 0.26);
   for (let y = rect.y + 18; y < rect.y + rect.height - 18; y += 36) {
     layer.fillRect(rect.x + 14, y, rect.width - 28, 8);
   }
   if (edge === "east" || edge === "west") {
     layer.fillStyle(0x23343d, 0.8);
-    layer.fillRect(rect.x + rect.width / 2 - 18, rect.y + 22, 36, rect.height - 44);
+    layer.fillRect(
+      rect.x + rect.width / 2 - 18,
+      rect.y + 22,
+      36,
+      rect.height - 44,
+    );
   }
 }
 
@@ -3267,20 +4040,37 @@ function drawQuayContinuationZone(
 ) {
   void edge;
   layer.fillStyle(0x1f2a2f, 1);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 12);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 12,
+  );
   layer.fillStyle(0x6a655a, 0.55);
   layer.fillRect(rect.x, rect.y, rect.width, 16);
   layer.fillStyle(0x23566f, 1);
-  layer.fillRect(rect.x, rect.y + Math.max(rect.height - 82, 0), rect.width, 82);
+  layer.fillRect(
+    rect.x,
+    rect.y + Math.max(rect.height - 82, 0),
+    rect.width,
+    82,
+  );
 }
 
 function drawHarborEdge(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const quayWall = visualScene.surfaceZones.find((zone) => zone.kind === "quay_wall");
-  const dockApron = visualScene.surfaceZones.find((zone) => zone.kind === "dock_apron");
-  const dockLandmark = visualScene.landmarks.find((landmark) => landmark.style === "dock");
+  const quayWall = visualScene.surfaceZones.find(
+    (zone) => zone.kind === "quay_wall",
+  );
+  const dockApron = visualScene.surfaceZones.find(
+    (zone) => zone.kind === "dock_apron",
+  );
+  const dockLandmark = visualScene.landmarks.find(
+    (landmark) => landmark.style === "dock",
+  );
 
   if (quayWall) {
     const rect = quayWall.rect;
@@ -3299,7 +4089,13 @@ function drawHarborEdge(
   if (dockLandmark) {
     const rect = dockLandmark.rect;
     layer.fillStyle(0x7a5b3f, 0.98);
-    layer.fillRoundedRect(rect.x + 24, rect.y + 34, rect.width - 48, rect.height - 52, 16);
+    layer.fillRoundedRect(
+      rect.x + 24,
+      rect.y + 34,
+      rect.width - 48,
+      rect.height - 52,
+      16,
+    );
     layer.lineStyle(2, 0xa67d52, 0.26);
     for (let x = rect.x + 36; x < rect.x + rect.width - 36; x += 30) {
       layer.lineBetween(x, rect.y + 44, x, rect.y + rect.height - 26);
@@ -3415,8 +4211,17 @@ function drawLandmarkRoofCap(
     landmarkModule.rect.radius ?? 12,
   );
   layer.lineStyle(2, 0xbda676, 0.18);
-  for (let x = landmarkModule.rect.x + 14; x < landmarkModule.rect.x + landmarkModule.rect.width - 14; x += 30) {
-    layer.lineBetween(x, landmarkModule.rect.y + 8, x, landmarkModule.rect.y + landmarkModule.rect.height - 8);
+  for (
+    let x = landmarkModule.rect.x + 14;
+    x < landmarkModule.rect.x + landmarkModule.rect.width - 14;
+    x += 30
+  ) {
+    layer.lineBetween(
+      x,
+      landmarkModule.rect.y + 8,
+      x,
+      landmarkModule.rect.y + landmarkModule.rect.height - 8,
+    );
   }
 }
 
@@ -3472,7 +4277,12 @@ function drawLandmarkAwning(
     );
   }
   layer.fillStyle(0x6b5037, 0.34);
-  layer.fillRect(landmarkModule.rect.x, landmarkModule.rect.y + landmarkModule.rect.height - 6, landmarkModule.rect.width, 6);
+  layer.fillRect(
+    landmarkModule.rect.x,
+    landmarkModule.rect.y + landmarkModule.rect.height - 6,
+    landmarkModule.rect.width,
+    6,
+  );
 }
 
 function drawLandmarkEntry(
@@ -3480,7 +4290,11 @@ function drawLandmarkEntry(
   landmarkModule: VisualScene["landmarkModules"][number],
 ) {
   const fill =
-    landmarkModule.variant === "house-door" ? 0x71533f : landmarkModule.variant === "arched" ? 0x6d4d39 : 0x3e4d53;
+    landmarkModule.variant === "house-door"
+      ? 0x71533f
+      : landmarkModule.variant === "arched"
+        ? 0x6d4d39
+        : 0x3e4d53;
   layer.fillStyle(fill, 1);
   layer.fillRoundedRect(
     landmarkModule.rect.x,
@@ -3505,15 +4319,33 @@ function drawLandmarkWindowRow(
 ) {
   const count = landmarkModule.count ?? 3;
   const gap = 14;
-  const unitWidth = Math.max((landmarkModule.rect.width - gap * (count - 1)) / count, 18);
-  const windowHeight = landmarkModule.variant === "cafe-large" ? landmarkModule.rect.height : landmarkModule.rect.height - 10;
+  const unitWidth = Math.max(
+    (landmarkModule.rect.width - gap * (count - 1)) / count,
+    18,
+  );
+  const windowHeight =
+    landmarkModule.variant === "cafe-large"
+      ? landmarkModule.rect.height
+      : landmarkModule.rect.height - 10;
 
   for (let index = 0; index < count; index += 1) {
     const x = landmarkModule.rect.x + index * (unitWidth + gap);
     layer.fillStyle(0xf0e0b4, 0.92);
-    layer.fillRoundedRect(x, landmarkModule.rect.y + 4, unitWidth, windowHeight, 8);
+    layer.fillRoundedRect(
+      x,
+      landmarkModule.rect.y + 4,
+      unitWidth,
+      windowHeight,
+      8,
+    );
     layer.fillStyle(0x5d4537, 0.22);
-    layer.fillRoundedRect(x + 4, landmarkModule.rect.y + 8, unitWidth - 8, Math.max(windowHeight - 14, 0), 6);
+    layer.fillRoundedRect(
+      x + 4,
+      landmarkModule.rect.y + 8,
+      unitWidth - 8,
+      Math.max(windowHeight - 14, 0),
+      6,
+    );
   }
 }
 
@@ -3529,8 +4361,18 @@ function drawLandmarkTerraceRail(
     8,
     4,
   );
-  for (let x = landmarkModule.rect.x + 12; x < landmarkModule.rect.x + landmarkModule.rect.width - 12; x += 26) {
-    layer.fillRoundedRect(x, landmarkModule.rect.y, 4, landmarkModule.rect.height, 2);
+  for (
+    let x = landmarkModule.rect.x + 12;
+    x < landmarkModule.rect.x + landmarkModule.rect.width - 12;
+    x += 26
+  ) {
+    layer.fillRoundedRect(
+      x,
+      landmarkModule.rect.y,
+      4,
+      landmarkModule.rect.height,
+      2,
+    );
   }
 }
 
@@ -3540,12 +4382,21 @@ function drawLandmarkShutters(
 ) {
   const count = landmarkModule.count ?? 2;
   const gap = 12;
-  const shutterWidth = Math.max((landmarkModule.rect.width - gap * (count - 1)) / count, 14);
+  const shutterWidth = Math.max(
+    (landmarkModule.rect.width - gap * (count - 1)) / count,
+    14,
+  );
 
   for (let index = 0; index < count; index += 1) {
     const x = landmarkModule.rect.x + index * (shutterWidth + gap);
     layer.fillStyle(0xc3cbc7, 0.95);
-    layer.fillRoundedRect(x, landmarkModule.rect.y, shutterWidth, landmarkModule.rect.height, 6);
+    layer.fillRoundedRect(
+      x,
+      landmarkModule.rect.y,
+      shutterWidth,
+      landmarkModule.rect.height,
+      6,
+    );
     layer.fillStyle(0x62737c, 0.18);
     layer.fillRect(x + 4, landmarkModule.rect.y + 8, shutterWidth - 8, 6);
   }
@@ -3564,14 +4415,23 @@ function drawLandmarkStoop(
     landmarkModule.rect.radius ?? 8,
   );
   layer.fillStyle(0x866f57, 0.9);
-  layer.fillRoundedRect(landmarkModule.rect.x + 10, landmarkModule.rect.y + 8, landmarkModule.rect.width - 20, 8, 4);
+  layer.fillRoundedRect(
+    landmarkModule.rect.x + 10,
+    landmarkModule.rect.y + 8,
+    landmarkModule.rect.width - 20,
+    8,
+    4,
+  );
 }
 
 function drawLandmarkServiceBay(
   layer: PhaserType.GameObjects.Graphics,
   landmarkModule: VisualScene["landmarkModules"][number],
 ) {
-  layer.fillStyle(landmarkModule.variant === "yard-gate" ? 0x6f5844 : 0x35474f, 1);
+  layer.fillStyle(
+    landmarkModule.variant === "yard-gate" ? 0x6f5844 : 0x35474f,
+    1,
+  );
   layer.fillRoundedRect(
     landmarkModule.rect.x,
     landmarkModule.rect.y,
@@ -3580,8 +4440,17 @@ function drawLandmarkServiceBay(
     landmarkModule.rect.radius ?? 10,
   );
   layer.lineStyle(2, 0xc6a873, 0.22);
-  for (let x = landmarkModule.rect.x + 12; x < landmarkModule.rect.x + landmarkModule.rect.width - 12; x += 26) {
-    layer.lineBetween(x, landmarkModule.rect.y + 10, x, landmarkModule.rect.y + landmarkModule.rect.height - 10);
+  for (
+    let x = landmarkModule.rect.x + 12;
+    x < landmarkModule.rect.x + landmarkModule.rect.width - 12;
+    x += 26
+  ) {
+    layer.lineBetween(
+      x,
+      landmarkModule.rect.y + 10,
+      x,
+      landmarkModule.rect.y + landmarkModule.rect.height - 10,
+    );
   }
 }
 
@@ -3706,15 +4575,29 @@ function drawCafeTerraceCluster(
   cluster: VisualScene["propClusters"][number],
 ) {
   layer.fillStyle(0x7b5d44, 0.96);
-  layer.fillRoundedRect(cluster.rect.x, cluster.rect.y + 12, cluster.rect.width, 8, 4);
-  for (let x = cluster.rect.x + 12; x < cluster.rect.x + cluster.rect.width - 12; x += 32) {
+  layer.fillRoundedRect(
+    cluster.rect.x,
+    cluster.rect.y + 12,
+    cluster.rect.width,
+    8,
+    4,
+  );
+  for (
+    let x = cluster.rect.x + 12;
+    x < cluster.rect.x + cluster.rect.width - 12;
+    x += 32
+  ) {
     layer.fillRoundedRect(x, cluster.rect.y, 4, cluster.rect.height - 18, 2);
   }
   for (const tablePoint of cluster.points ?? []) {
     drawAuthoredTerraceTable(layer, tablePoint.x, tablePoint.y);
   }
   drawMenuBoard(layer, cluster.rect.x + 28, cluster.rect.y + 28);
-  drawAuthoredPlanter(layer, cluster.rect.x + 20, cluster.rect.y + cluster.rect.height - 12);
+  drawAuthoredPlanter(
+    layer,
+    cluster.rect.x + 20,
+    cluster.rect.y + cluster.rect.height - 12,
+  );
   drawAuthoredPlanter(
     layer,
     cluster.rect.x + cluster.rect.width - 20,
@@ -3747,7 +4630,11 @@ function drawWorkshopStockCluster(
   for (const stockPoint of cluster.points ?? []) {
     drawCrateStack(layer, stockPoint.x, stockPoint.y);
   }
-  drawBarrel(layer, cluster.rect.x + cluster.rect.width - 30, cluster.rect.y + 34);
+  drawBarrel(
+    layer,
+    cluster.rect.x + cluster.rect.width - 30,
+    cluster.rect.y + 34,
+  );
   drawToolStand(layer, cluster.rect.x + 42, cluster.rect.y + 24);
 }
 
@@ -3758,9 +4645,22 @@ function drawYardServiceCluster(
   const [pumpPoint = { x: cluster.rect.x + 54, y: cluster.rect.y + 56 }] =
     cluster.points ?? [];
   drawPump(layer, pumpPoint.x, pumpPoint.y);
-  drawLaundryLine(layer, cluster.rect.x + 82, cluster.rect.y + 18, cluster.rect.x + cluster.rect.width - 26);
-  drawCrateStack(layer, cluster.rect.x + cluster.rect.width - 44, cluster.rect.y + cluster.rect.height - 30);
-  drawBarrel(layer, cluster.rect.x + cluster.rect.width / 2, cluster.rect.y + cluster.rect.height - 34);
+  drawLaundryLine(
+    layer,
+    cluster.rect.x + 82,
+    cluster.rect.y + 18,
+    cluster.rect.x + cluster.rect.width - 26,
+  );
+  drawCrateStack(
+    layer,
+    cluster.rect.x + cluster.rect.width - 44,
+    cluster.rect.y + cluster.rect.height - 30,
+  );
+  drawBarrel(
+    layer,
+    cluster.rect.x + cluster.rect.width / 2,
+    cluster.rect.y + cluster.rect.height - 34,
+  );
 }
 
 function drawHarborMooringCluster(
@@ -3772,8 +4672,16 @@ function drawHarborMooringCluster(
     drawRopeCoil(layer, mooringPoint.x + 18, mooringPoint.y + 8);
   }
   drawDockLadder(layer, cluster.rect.x + 112, cluster.rect.y + 24);
-  drawCrateStack(layer, cluster.rect.x + cluster.rect.width - 58, cluster.rect.y + 28);
-  drawBarrel(layer, cluster.rect.x + cluster.rect.width - 104, cluster.rect.y + 34);
+  drawCrateStack(
+    layer,
+    cluster.rect.x + cluster.rect.width - 58,
+    cluster.rect.y + 28,
+  );
+  drawBarrel(
+    layer,
+    cluster.rect.x + cluster.rect.width - 104,
+    cluster.rect.y + 34,
+  );
 }
 
 function drawAuthoredSceneGround(
@@ -3790,7 +4698,13 @@ function drawAuthoredSceneGround(
     height: visualScene.height - 128,
   };
   layer.fillStyle(0x202f35, 1);
-  layer.fillRoundedRect(townBody.x, townBody.y, townBody.width, townBody.height, 26);
+  layer.fillRoundedRect(
+    townBody.x,
+    townBody.y,
+    townBody.width,
+    townBody.height,
+    26,
+  );
   layer.lineStyle(2, 0x40515a, 0.7);
   layer.strokeRoundedRect(
     townBody.x,
@@ -3822,17 +4736,37 @@ function drawAuthoredSceneGround(
 
   for (const waterRegion of visualScene.waterRegions) {
     const { rect } = waterRegion;
-    layer.fillStyle(waterRegion.baseColor, waterRegion.tag === "shore_foam" ? 0.32 : 0.98);
+    layer.fillStyle(
+      waterRegion.baseColor,
+      waterRegion.tag === "shore_foam" ? 0.32 : 0.98,
+    );
     layer.fillRect(rect.x, rect.y, rect.width, rect.height);
   }
 
-  const dock = visualScene.landmarks.find((landmark) => landmark.style === "dock");
+  const dock = visualScene.landmarks.find(
+    (landmark) => landmark.style === "dock",
+  );
   if (dock) {
     layer.fillStyle(0x7f6040, 0.96);
-    layer.fillRoundedRect(dock.rect.x, dock.rect.y, dock.rect.width, dock.rect.height, 12);
+    layer.fillRoundedRect(
+      dock.rect.x,
+      dock.rect.y,
+      dock.rect.width,
+      dock.rect.height,
+      12,
+    );
     layer.lineStyle(2, 0xa88056, 0.28);
-    for (let x = dock.rect.x + 18; x < dock.rect.x + dock.rect.width - 18; x += 22) {
-      layer.lineBetween(x, dock.rect.y + 8, x, dock.rect.y + dock.rect.height - 8);
+    for (
+      let x = dock.rect.x + 18;
+      x < dock.rect.x + dock.rect.width - 18;
+      x += 22
+    ) {
+      layer.lineBetween(
+        x,
+        dock.rect.y + 8,
+        x,
+        dock.rect.y + dock.rect.height - 8,
+      );
     }
   }
 
@@ -3849,7 +4783,13 @@ function drawAuthoredPavingField(
   },
 ) {
   layer.fillStyle(palette.base, 0.98);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 16);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 16,
+  );
   layer.lineStyle(1, palette.line, 0.24);
 
   for (let x = rect.x + 16; x < rect.x + rect.width - 16; x += 28) {
@@ -3953,7 +4893,10 @@ function drawAuthoredSceneStructures(
   }
 }
 
-function drawCafeFacade(layer: PhaserType.GameObjects.Graphics, rect: VisualRect) {
+function drawCafeFacade(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
   layer.fillStyle(0x3e5548, 1);
   layer.fillRoundedRect(rect.x + 18, rect.y, rect.width - 36, 30, 14);
   layer.fillStyle(0xe6dec2, 1);
@@ -3968,12 +4911,7 @@ function drawCafeFacade(layer: PhaserType.GameObjects.Graphics, rect: VisualRect
   const awningWidth = (rect.width - 28) / awningSegments;
   for (let index = 0; index < awningSegments; index += 1) {
     layer.fillStyle(index % 2 === 0 ? 0x3e9f6f : 0xf3efe4, 1);
-    layer.fillRect(
-      rect.x + 14 + index * awningWidth,
-      awningY,
-      awningWidth,
-      28,
-    );
+    layer.fillRect(rect.x + 14 + index * awningWidth, awningY, awningWidth, 28);
   }
 
   layer.fillStyle(0xf8e9be, 0.95);
@@ -3996,7 +4934,13 @@ function drawBoardingHouseFacade(
   layer.fillStyle(0xb06d58, 0.92);
   layer.fillRect(rect.x + 12, rect.y + 78, rect.width - 24, 64);
   layer.fillStyle(0x6c4938, 1);
-  layer.fillRoundedRect(rect.x + rect.width / 2 - 22, rect.y + rect.height - 78, 44, 68, 10);
+  layer.fillRoundedRect(
+    rect.x + rect.width / 2 - 22,
+    rect.y + rect.height - 78,
+    44,
+    68,
+    10,
+  );
   layer.fillStyle(0xf2dfb6, 0.92);
   for (let index = 0; index < 4; index += 1) {
     const x = rect.x + 36 + index * 58;
@@ -4004,10 +4948,19 @@ function drawBoardingHouseFacade(
     layer.fillRoundedRect(x, rect.y + 114, 30, 34, 6);
   }
   layer.fillStyle(0x9a7a63, 1);
-  layer.fillRoundedRect(rect.x + rect.width / 2 - 34, rect.y + rect.height - 20, 68, 18, 8);
+  layer.fillRoundedRect(
+    rect.x + rect.width / 2 - 34,
+    rect.y + rect.height - 20,
+    68,
+    18,
+    8,
+  );
 }
 
-function drawWorkshopFacade(layer: PhaserType.GameObjects.Graphics, rect: VisualRect) {
+function drawWorkshopFacade(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
   layer.fillStyle(0x59656f, 1);
   layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, 16);
   layer.fillStyle(0x8e5e42, 0.92);
@@ -4017,7 +4970,12 @@ function drawWorkshopFacade(layer: PhaserType.GameObjects.Graphics, rect: Visual
   const segmentWidth = (rect.width - 24) / segments;
   for (let index = 0; index < segments; index += 1) {
     layer.fillStyle(index % 2 === 0 ? 0xf1f0ea : 0xc8824b, 1);
-    layer.fillRect(rect.x + 12 + index * segmentWidth, rect.y + 116, segmentWidth, 28);
+    layer.fillRect(
+      rect.x + 12 + index * segmentWidth,
+      rect.y + 116,
+      segmentWidth,
+      28,
+    );
   }
   layer.fillStyle(0x36454d, 1);
   layer.fillRoundedRect(rect.x + 54, rect.y + 138, rect.width - 108, 48, 10);
@@ -4026,9 +4984,18 @@ function drawWorkshopFacade(layer: PhaserType.GameObjects.Graphics, rect: Visual
   layer.fillRoundedRect(rect.x + rect.width - 42, rect.y + 144, 24, 34, 4);
 }
 
-function drawSquareLandmark(layer: PhaserType.GameObjects.Graphics, rect: VisualRect) {
+function drawSquareLandmark(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
   layer.fillStyle(0xddcfaf, 0.98);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 18);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 18,
+  );
   layer.lineStyle(1, 0xc7b898, 0.32);
   for (let x = rect.x + 18; x < rect.x + rect.width - 18; x += 30) {
     layer.lineBetween(x, rect.y + 14, x, rect.y + rect.height - 14);
@@ -4039,12 +5006,26 @@ function drawSquareLandmark(layer: PhaserType.GameObjects.Graphics, rect: Visual
   layer.fillStyle(0x8c948f, 0.96);
   layer.fillEllipse(rect.x + rect.width / 2, rect.y + rect.height / 2, 42, 42);
   layer.fillStyle(0xc8d8df, 0.72);
-  layer.fillEllipse(rect.x + rect.width / 2, rect.y + rect.height / 2 - 2, 20, 20);
+  layer.fillEllipse(
+    rect.x + rect.width / 2,
+    rect.y + rect.height / 2 - 2,
+    20,
+    20,
+  );
 }
 
-function drawYardLandmark(layer: PhaserType.GameObjects.Graphics, rect: VisualRect) {
+function drawYardLandmark(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
   layer.fillStyle(0x8d7458, 0.98);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 16);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 16,
+  );
   layer.fillStyle(0x6d5844, 0.82);
   for (let y = rect.y + 18; y < rect.y + rect.height - 18; y += 34) {
     layer.fillRect(rect.x + 14, y, rect.width - 28, 10);
@@ -4054,18 +5035,41 @@ function drawYardLandmark(layer: PhaserType.GameObjects.Graphics, rect: VisualRe
   layer.fillRoundedRect(rect.x + rect.width - 78, rect.y + 40, 52, 40, 8);
 }
 
-function drawCourtyardSpace(layer: PhaserType.GameObjects.Graphics, rect: VisualRect) {
+function drawCourtyardSpace(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
   layer.fillStyle(0x6f7f5a, 0.98);
-  layer.fillRoundedRect(rect.x, rect.y, rect.width, rect.height, rect.radius ?? 18);
+  layer.fillRoundedRect(
+    rect.x,
+    rect.y,
+    rect.width,
+    rect.height,
+    rect.radius ?? 18,
+  );
   layer.fillStyle(0x566746, 0.42);
-  layer.fillRoundedRect(rect.x + 12, rect.y + 12, rect.width - 24, rect.height - 24, 14);
+  layer.fillRoundedRect(
+    rect.x + 12,
+    rect.y + 12,
+    rect.width - 24,
+    rect.height - 24,
+    14,
+  );
   layer.fillStyle(0x8e8b78, 0.96);
   layer.fillRoundedRect(rect.x + rect.width / 2 - 16, rect.y + 68, 32, 32, 8);
   layer.lineStyle(3, 0xc7d8e1, 0.72);
-  layer.lineBetween(rect.x + rect.width / 2, rect.y + 82, rect.x + rect.width / 2, rect.y + 44);
+  layer.lineBetween(
+    rect.x + rect.width / 2,
+    rect.y + 82,
+    rect.x + rect.width / 2,
+    rect.y + 44,
+  );
 }
 
-function drawDockEdgeDetails(layer: PhaserType.GameObjects.Graphics, rect: VisualRect) {
+function drawDockEdgeDetails(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
   layer.fillStyle(0x9d794f, 0.94);
   for (let x = rect.x + 18; x < rect.x + rect.width - 18; x += 54) {
     layer.fillRoundedRect(x, rect.y + rect.height - 22, 12, 22, 4);
@@ -4084,10 +5088,22 @@ function drawAuthoredLamp(
   layer.fillStyle(0x0c1318, 0.22);
   layer.fillEllipse(x, y + 8 * scale, 12 * scale, 6 * scale);
   layer.fillStyle(0x3a474d, 1);
-  layer.fillRoundedRect(x - 2 * scale, y - 18 * scale, 4 * scale, 26 * scale, 2);
+  layer.fillRoundedRect(
+    x - 2 * scale,
+    y - 18 * scale,
+    4 * scale,
+    26 * scale,
+    2,
+  );
   layer.fillRoundedRect(x - 5 * scale, y + 6 * scale, 10 * scale, 4 * scale, 2);
   layer.fillStyle(0xf3dfa6, 0.98);
-  layer.fillRoundedRect(x - 5 * scale, y - 28 * scale, 10 * scale, 12 * scale, 4);
+  layer.fillRoundedRect(
+    x - 5 * scale,
+    y - 28 * scale,
+    10 * scale,
+    12 * scale,
+    4,
+  );
   layer.fillStyle(0xf3dfa6, 0.18);
   layer.fillCircle(x, y - 22 * scale, 11 * scale);
 }
@@ -4172,8 +5188,18 @@ function drawCrateStack(
     layer.fillRoundedRect(crate.x, crate.y, crate.width, crate.height, 4);
     layer.lineStyle(2, 0xa88460, 0.5);
     layer.strokeRoundedRect(crate.x, crate.y, crate.width, crate.height, 4);
-    layer.lineBetween(crate.x + 4, crate.y + 4, crate.x + crate.width - 4, crate.y + crate.height - 4);
-    layer.lineBetween(crate.x + crate.width - 4, crate.y + 4, crate.x + 4, crate.y + crate.height - 4);
+    layer.lineBetween(
+      crate.x + 4,
+      crate.y + 4,
+      crate.x + crate.width - 4,
+      crate.y + crate.height - 4,
+    );
+    layer.lineBetween(
+      crate.x + crate.width - 4,
+      crate.y + 4,
+      crate.x + 4,
+      crate.y + crate.height - 4,
+    );
   }
 }
 
@@ -4291,9 +5317,21 @@ function drawAuthoredBoat(
   layer.fillStyle(0x000000, 0.12);
   layer.fillEllipse(x, y + 10 * scale, width * 0.9, height * 0.78);
   layer.fillStyle(0x805f43, 0.98);
-  layer.fillRoundedRect(x - width / 2, y - height / 2, width, height, 8 * scale);
+  layer.fillRoundedRect(
+    x - width / 2,
+    y - height / 2,
+    width,
+    height,
+    8 * scale,
+  );
   layer.fillStyle(0xd7c095, 0.82);
-  layer.fillRoundedRect(x - width / 2 + 8, y - 2, width - 16, 4 * scale, 2 * scale);
+  layer.fillRoundedRect(
+    x - width / 2 + 8,
+    y - 2,
+    width - 16,
+    4 * scale,
+    2 * scale,
+  );
   void rotation;
 }
 
@@ -4304,7 +5342,8 @@ function drawAnimatedVisualWater(
 ) {
   const beat = now / 1000;
   const animatedWaterRegions =
-    visualScene.waterRegions.filter((region) => region.tag === "water_surface").length > 0
+    visualScene.waterRegions.filter((region) => region.tag === "water_surface")
+      .length > 0
       ? visualScene.waterRegions
           .filter((region) => region.tag === "water_surface")
           .map((region) => ({
@@ -4362,9 +5401,13 @@ function drawAnimatedVisualWater(
       for (let x = rect.x + 20; x < rect.x + rect.width - 28; x += 76) {
         const localWave = beat * 1.5 + row * 0.08 + x * 0.014;
         const drift = Math.sin(localWave) * 8;
-        const chopWidth = 24 + ((Math.sin(localWave * 0.72) + 1) * 14);
+        const chopWidth = 24 + (Math.sin(localWave * 0.72) + 1) * 14;
         const chopY = rect.y + row + Math.sin(localWave * 1.18) * 3.4;
-        layer.lineStyle(1.8, waterRegion.crestColor, 0.08 + waterRegion.intensity * 0.05);
+        layer.lineStyle(
+          1.8,
+          waterRegion.crestColor,
+          0.08 + waterRegion.intensity * 0.05,
+        );
         layer.lineBetween(
           x + drift,
           chopY,
@@ -4377,7 +5420,7 @@ function drawAnimatedVisualWater(
         const shimmerPhase = beat * 1.22 + row * 0.05 + x * 0.009;
         layer.fillStyle(
           blendColor(waterRegion.crestColor, 0xffffff, 0.38),
-          0.035 + ((Math.sin(shimmerPhase) + 1) * 0.018),
+          0.035 + (Math.sin(shimmerPhase) + 1) * 0.018,
         );
         layer.fillEllipse(
           x + Math.sin(shimmerPhase * 0.8) * 5,
@@ -4411,7 +5454,10 @@ function drawAnimatedVisualWater(
       );
       for (let x = rect.x; x < rect.x + rect.width; x += 22) {
         const lift = Math.sin(beat * 2.3 + x * 0.04) * 4;
-        layer.fillStyle(waterRegion.crestColor, 0.12 + waterRegion.intensity * 0.08);
+        layer.fillStyle(
+          waterRegion.crestColor,
+          0.12 + waterRegion.intensity * 0.08,
+        );
         layer.fillEllipse(x, rect.y + rect.height / 2 + lift, 20, 5);
         layer.fillStyle(0xffffff, 0.045 + waterRegion.intensity * 0.03);
         layer.fillEllipse(x + 4, rect.y + rect.height / 2 + lift - 1, 12, 2.8);
@@ -4479,11 +5525,18 @@ function drawAnimatedVisualWater(
           continue;
         }
 
-        const rect = terrainDraftCellRect(visualScene, terrainGrid.cellSize, col, row);
+        const rect = terrainDraftCellRect(
+          visualScene,
+          terrainGrid.cellSize,
+          col,
+          row,
+        );
         const top = row > 0 ? terrainGrid.kinds[row - 1][col] : null;
-        const bottom = row < terrainGrid.rows - 1 ? terrainGrid.kinds[row + 1][col] : null;
+        const bottom =
+          row < terrainGrid.rows - 1 ? terrainGrid.kinds[row + 1][col] : null;
         const left = col > 0 ? terrainGrid.kinds[row][col - 1] : null;
-        const right = col < terrainGrid.cols - 1 ? terrainGrid.kinds[row][col + 1] : null;
+        const right =
+          col < terrainGrid.cols - 1 ? terrainGrid.kinds[row][col + 1] : null;
         const shoreEdges = [
           top === "land" ? "top" : null,
           bottom === "land" ? "bottom" : null,
@@ -4492,7 +5545,8 @@ function drawAnimatedVisualWater(
         ].filter(Boolean) as Array<"bottom" | "left" | "right" | "top">;
 
         for (const side of shoreEdges) {
-          const foamAlpha = 0.13 + ((Math.sin(beat * 2.1 + col * 0.61 + row * 0.49) + 1) * 0.08);
+          const foamAlpha =
+            0.13 + (Math.sin(beat * 2.1 + col * 0.61 + row * 0.49) + 1) * 0.08;
           layer.fillStyle(0xf5fcff, foamAlpha);
 
           if (side === "top") {
@@ -4525,21 +5579,28 @@ function drawAnimatedVisualWater(
     if (prop.kind === "lamp") {
       const flicker = 0.12 + (Math.sin(beat * 2.4 + prop.x * 0.015) + 1) * 0.03;
       layer.fillStyle(0xf3dfa6, flicker);
-      layer.fillCircle(prop.x, prop.y - 22 * (prop.scale ?? 1), 12 * (prop.scale ?? 1));
+      layer.fillCircle(
+        prop.x,
+        prop.y - 22 * (prop.scale ?? 1),
+        12 * (prop.scale ?? 1),
+      );
       continue;
     }
 
     if (prop.kind === "boat") {
       const bob = Math.sin(beat * 1.2 + prop.x * 0.01) * (prop.bobAmount ?? 4);
-      drawAuthoredBoat(layer, prop.x, prop.y + bob, prop.rotation ?? 0, prop.scale ?? 1);
+      drawAuthoredBoat(
+        layer,
+        prop.x,
+        prop.y + bob,
+        prop.rotation ?? 0,
+        prop.scale ?? 1,
+      );
     }
   }
 }
 
-function renderOverlay(
-  objects: RuntimeObjects,
-  runtimeState: RuntimeState,
-) {
+function renderOverlay(objects: RuntimeObjects, runtimeState: RuntimeState) {
   syncConversationReplayState(runtimeState);
   const root = objects.overlayDom;
   const { width, height } = runtimeState.snapshot.viewport;
@@ -4610,7 +5671,10 @@ function skyLayerPalette(kind: VisualSceneCloudKind): SkyLayerPalette {
   }
 }
 
-function weatherLayerOpacity(kind: VisualSceneWeatherKind, baseOpacity: number) {
+function weatherLayerOpacity(
+  kind: VisualSceneWeatherKind,
+  baseOpacity: number,
+) {
   switch (kind) {
     case "mist":
       return Math.min(baseOpacity * 0.74, 0.48);
@@ -4637,9 +5701,15 @@ function drawAnimatedSkyWeather(
   const beat = now / 1000;
 
   for (const skyLayer of visualScene.skyLayers) {
-    const skyRect = getNormalizedSkyLayerRect(visualScene.height, skyLayer.rect);
+    const skyRect = getNormalizedSkyLayerRect(
+      visualScene.height,
+      skyLayer.rect,
+    );
     const bandX = clamp(skyRect.x, 0, Math.max(visualScene.width - 1, 0));
-    const bandWidth = Math.max(1, Math.min(skyRect.width, visualScene.width - bandX));
+    const bandWidth = Math.max(
+      1,
+      Math.min(skyRect.width, visualScene.width - bandX),
+    );
     const coverageWidth = Math.max(bandWidth, visualScene.width * 0.16);
     const cloudCount = Math.max(
       4,
@@ -4650,10 +5720,20 @@ function drawAnimatedSkyWeather(
       140,
     );
     const travelSpan = bandWidth + spacing * 3;
-    const phaseOffset = getSkyLayerPhaseOffset(skyRect.x, visualScene.width, travelSpan);
-    const drift = positiveModulo(beat * skyLayer.speed * 4 + phaseOffset, travelSpan);
+    const phaseOffset = getSkyLayerPhaseOffset(
+      skyRect.x,
+      visualScene.width,
+      travelSpan,
+    );
+    const drift = positiveModulo(
+      beat * skyLayer.speed * 4 + phaseOffset,
+      travelSpan,
+    );
     const palette = skyLayerPalette(skyLayer.cloudKind);
-    const weatherOpacity = weatherLayerOpacity(skyLayer.weather, skyLayer.opacity);
+    const weatherOpacity = weatherLayerOpacity(
+      skyLayer.weather,
+      skyLayer.opacity,
+    );
     const fallLength =
       skyLayer.weather === "storm"
         ? Math.min(visualScene.height - skyRect.y, 360)
@@ -4719,15 +5799,21 @@ function drawAnimatedSkyWeather(
             ? 32
             : 24;
       const rainWidth = skyLayer.weather === "storm" ? 2.6 : 1.8;
-      const rainColor = skyLayer.weather === "storm" ? palette.stormRain : palette.rain;
+      const rainColor =
+        skyLayer.weather === "storm" ? palette.stormRain : palette.rain;
       const rainAlpha =
         (skyLayer.weather === "storm" ? 0.3 : 0.24) *
-        clamp(weatherOpacity * (skyLayer.weather === "storm" ? 1.18 : 1.34), 0.24, 1);
+        clamp(
+          weatherOpacity * (skyLayer.weather === "storm" ? 1.18 : 1.34),
+          0.24,
+          1,
+        );
 
       layer.lineStyle(rainWidth, rainColor, rainAlpha);
       for (let rainIndex = 0; rainIndex < rainCount; rainIndex += 1) {
         const x =
-          bandX + (((rainIndex / rainCount) * bandWidth + rainLead) % bandWidth);
+          bandX +
+          (((rainIndex / rainCount) * bandWidth + rainLead) % bandWidth);
         const y =
           skyRect.y +
           18 +
@@ -4759,7 +5845,8 @@ function drawAnimatedSkyWeather(
     );
 
     for (let cloudIndex = 0; cloudIndex < cloudCount + 3; cloudIndex += 1) {
-      const wrappedX = positiveModulo(cloudIndex * spacing + drift, travelSpan) - spacing;
+      const wrappedX =
+        positiveModulo(cloudIndex * spacing + drift, travelSpan) - spacing;
       const cloudScale =
         skyLayer.scale *
         (skyLayer.cloudKind === "storm-front"
@@ -4980,7 +6067,8 @@ function syncConversationReplayState(runtimeState: RuntimeState) {
   const replaySignature = activeConversation
     ? buildConversationReplaySignature(activeConversation)
     : null;
-  const replayEntryIds = activeConversation?.lines.map((entry) => entry.id) ?? [];
+  const replayEntryIds =
+    activeConversation?.lines.map((entry) => entry.id) ?? [];
   const replay = runtimeState.conversationReplay;
 
   if (replay.activeNpcId !== selectedNpc.id) {
@@ -5039,7 +6127,9 @@ function scheduleConversationReplayTick(runtimeState: RuntimeState) {
     : undefined;
 
   if (currentStreamingEntry) {
-    const totalWords = splitConversationStreamWords(currentStreamingEntry.text).length;
+    const totalWords = splitConversationStreamWords(
+      currentStreamingEntry.text,
+    ).length;
     const delay =
       totalWords <= 1 || replay.streamedWordCount >= totalWords
         ? CONVERSATION_STREAM_ENTRY_SETTLE_MS
@@ -5082,9 +6172,14 @@ function scheduleConversationReplayTick(runtimeState: RuntimeState) {
     const previousSpeaker = nextEntryId
       ? findPreviousConversationSpeaker(visibleEntries, nextEntryId)
       : undefined;
-    const delay = conversationEntryStartDelayMs(previousSpeaker, nextEntry?.speaker);
+    const delay = conversationEntryStartDelayMs(
+      previousSpeaker,
+      nextEntry?.speaker,
+    );
     replay.streamPauseActor =
-      nextEntry && delay > 0 ? conversationActorForSpeaker(nextEntry.speaker) : null;
+      nextEntry && delay > 0
+        ? conversationActorForSpeaker(nextEntry.speaker)
+        : null;
 
     replay.timerId = window.setTimeout(() => {
       runtimeState.conversationReplay.streamQueue = remainingEntryIds;
@@ -5135,7 +6230,9 @@ function syncNpcMarkerObjects(
       runtimeState.ui.selectedNpcId = npc.id;
       runtimeState.ui.activeTab = "people";
       runtimeState.ui.focusPanel = "people";
+      runtimeState.ui.pendingConversationNpcId = npc.id;
       renderOverlay(objects, runtimeState);
+      maybeAutostartConversation(runtimeState, callbacksRef);
     });
     objects.npcMarkers.set(npc.id, marker);
   }
@@ -5178,9 +6275,7 @@ function createNpcMarker(
     .setOrigin(0.5, 0);
   label.setPadding(6, 3, 6, 3);
 
-  const container = scene.add
-    .container(0, 0, [rig.avatar, label])
-    .setDepth(40);
+  const container = scene.add.container(0, 0, [rig.avatar, label]).setDepth(40);
 
   container.setSize(50, 50);
   container.setInteractive({ useHandCursor: true });
@@ -5211,7 +6306,15 @@ function updateNpcMarkers(
   animatedNpcs: AnimatedNpcState[],
   now: number,
 ) {
-  const showActorLabels = runtimeState.indices.visualScene === null;
+  const game = runtimeState.snapshot.game;
+  const usingAuthoredVisualScene = runtimeState.indices.visualScene !== null;
+  const showActorLabels = !usingAuthoredVisualScene;
+  const talkableNpcIds = new Set(
+    (game?.availableActions ?? [])
+      .map((action) => extractTalkNpcId(action.id))
+      .filter(isPresent),
+  );
+
   for (const marker of objects.npcMarkers.values()) {
     marker.container.setVisible(false);
   }
@@ -5224,6 +6327,11 @@ function updateNpcMarkers(
 
     const personality = npcPersonalityProfile(animatedNpc.npc);
     const highlight = animatedNpc.npc.id === runtimeState.ui.selectedNpcId;
+    const inLiveConversation =
+      game?.activeConversation?.npcId === animatedNpc.npc.id;
+    const isTalkable = talkableNpcIds.has(animatedNpc.npc.id);
+    const showLabel =
+      showActorLabels || highlight || inLiveConversation || isTalkable;
     marker.container
       .setPosition(animatedNpc.x, animatedNpc.y)
       .setScale(
@@ -5234,19 +6342,51 @@ function updateNpcMarkers(
             : personality.scale,
       )
       .setVisible(true);
-    marker.label.setVisible(showActorLabels);
+    marker.label
+      .setVisible(showLabel)
+      .setAlpha(
+        usingAuthoredVisualScene
+          ? highlight || inLiveConversation
+            ? 0.98
+            : isTalkable
+              ? 0.88
+              : 0.8
+          : 0.96,
+      );
     poseCharacterRig(marker.rig, {
       facing: animatedNpc.facing,
       now,
       style: personality.motion,
-      stride: animatedNpc.isYielding ? animatedNpc.step * 0.42 : animatedNpc.step,
+      stride: animatedNpc.isYielding
+        ? animatedNpc.step * 0.42
+        : animatedNpc.step,
     });
     marker.label
-      .setColor(highlight ? "#fff1d2" : animatedNpc.npc.known ? personality.labelColor : "#eef5f7")
+      .setColor(
+        highlight
+          ? "#fff1d2"
+          : inLiveConversation
+            ? "#fff0c3"
+            : isTalkable && usingAuthoredVisualScene
+              ? "#f6e4bb"
+              : animatedNpc.npc.known
+                ? personality.labelColor
+                : "#eef5f7",
+      )
       .setBackgroundColor(
         highlight
-          ? colorToCssRgba(blendColor(marker.appearance.accent, 0x1a1f25, 0.36), 0.96)
-          : personality.labelBackground,
+          ? colorToCssRgba(
+              blendColor(marker.appearance.accent, 0x1a1f25, 0.36),
+              0.96,
+            )
+          : inLiveConversation
+            ? colorToCssRgba(
+                blendColor(marker.appearance.accent, 0x201910, 0.4),
+                0.94,
+              )
+            : isTalkable && usingAuthoredVisualScene
+              ? "rgba(37, 31, 21, 0.92)"
+              : personality.labelBackground,
       );
     marker.rig.torso.setFillStyle(
       highlight
@@ -5279,15 +6419,21 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const selectedNpc = getSelectedNpc(runtimeState);
   const recentFeed = game.feed.slice(0, 5);
   const objectivePlanItems = buildObjectivePlanRows(game, locationById);
-  const objectiveCompletedItems = buildObjectiveCompletionRows(game, locationById);
+  const objectiveCompletedItems = buildObjectiveCompletionRows(
+    game,
+    locationById,
+  );
   const actions = game.availableActions.slice(0, 8);
   const talkableNpcIds = new Set(
-    game.availableActions.map((action) => extractTalkNpcId(action.id)).filter(isPresent),
+    game.availableActions
+      .map((action) => extractTalkNpcId(action.id))
+      .filter(isPresent),
   );
   const nearbyNpcs = game.currentScene.people
     .map((person) => game.npcs.find((npc) => npc.id === person.id))
     .filter(isPresent);
-  const fallbackNpcList = nearbyNpcs.length > 0 ? nearbyNpcs : game.npcs.slice(0, 5);
+  const fallbackNpcList =
+    nearbyNpcs.length > 0 ? nearbyNpcs : game.npcs.slice(0, 5);
   const sceneNotes = game.currentScene.notes.slice(0, 3);
   const currentObjectiveText =
     game.player.objective?.text ?? "Find the next useful thing to do.";
@@ -5301,9 +6447,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     game.districtNarrative.context ||
     game.cityNarrative.context ||
     backstoryPreview;
-  const relationshipSummary = `Standing: ${reputationSummary(game)} • District sense: ${districtSenseSummary(
-    game,
-  )} • Work read: ${workReadSummary(game)}`;
   const activeJob = game.jobs.find(
     (job) =>
       job.id === game.player.activeJobId &&
@@ -5400,23 +6543,25 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     selectedNpc && game.activeConversation?.npcId === selectedNpc.id
       ? game.activeConversation
       : undefined;
+  const selectedTalkAction = selectedNpc
+    ? game.availableActions.find(
+        (action) => extractTalkNpcId(action.id) === selectedNpc.id,
+      )
+    : undefined;
   const focusPanel = ui.focusPanel;
-  const focusMeta =
-    focusPanel ? focusPanelMeta(focusPanel, selectedNpc, game) : null;
+  const focusMeta = focusPanel
+    ? focusPanelMeta(focusPanel, selectedNpc, game)
+    : null;
   const focusContent =
     focusPanel === "people"
       ? buildPeopleTabHtml({
           conversationDecision:
             selectedActiveConversation?.decision ??
             selectedConversationThread?.decision,
-          conversationLocationId:
-            selectedActiveConversation?.locationId ??
-            selectedConversationThread?.locationId,
           conversationLines,
           conversationObjectiveText:
             selectedActiveConversation?.objectiveText ??
             selectedConversationThread?.objectiveText,
-          conversationReplay: runtimeState.conversationReplay,
           conversationSummary: selectedConversationThread?.summary,
           conversationUpdatedAt:
             selectedActiveConversation?.updatedAt ??
@@ -5455,6 +6600,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             })
           : "";
   const {
+    dockFocusWidth,
     dockWidth,
     focusHeight,
     focusWidth,
@@ -5462,14 +6608,256 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     railMaxHeight,
     railWidth,
   } = getOverlayLayoutMetrics(snapshot.viewport);
-  const feedPreview = recentFeed.slice(0, 2);
-  const objectivePreview = objectivePlanItems.slice(0, width <= 1080 ? 2 : 3);
-  const quickActions = actions.slice(0, width <= 1080 ? 3 : 4);
-  const quickSceneNotes = sceneNotes.slice(0, 2);
+  const feedPreview = recentFeed.slice(0, height <= 900 ? 1 : 2);
+  const nextObjectiveStep =
+    objectivePlanItems.find((item) => !item.done) ?? objectivePlanItems[0];
+  const directionTitle = nextObjectiveStep?.title ?? currentObjectiveText;
+  const directionSupport = buildNarrativePreview(
+    nextObjectiveStep?.detail ?? activeCommitmentSummary ?? currentContext,
+    120,
+  );
+  const railThought =
+    currentThoughtPreview || directionSupport || currentObjectiveText;
+  const rowanContext =
+    currentSummaryPreview && currentSummaryPreview !== railThought
+      ? currentSummaryPreview
+      : directionSupport;
+  const railViewport = isPhoneRailViewport(snapshot.viewport)
+    ? "phone"
+    : isCollapsibleRailViewport(snapshot.viewport)
+      ? "tablet"
+      : "desktop";
+  const railExpanded = railViewport === "desktop" ? true : ui.railExpanded;
+  const supportExpanded = ui.supportExpanded;
+  const sceneDescriptionPreview = buildNarrativePreview(
+    game.currentScene.description,
+    116,
+  );
+  const quickSceneNotes = sceneNotes
+    .filter((note) => !/is active right now\.?$/i.test(note.text.trim()))
+    .slice(0, 1);
+  const sceneRead = joinNarrativeFragments([
+    sceneDescriptionPreview,
+    quickSceneNotes[0]?.text,
+  ]);
+  const selectedConversationLines = selectedNpc
+    ? getConversationPreview(game, selectedNpc.id)
+    : [];
+  const latestSelectedConversation = selectedConversationLines.at(-1);
+  const selectedConversationTimestamp =
+    selectedActiveConversation?.updatedAt ??
+    selectedConversationThread?.updatedAt ??
+    latestSelectedConversation?.time;
+  const hasConversationFocus = Boolean(
+    selectedNpc &&
+    (selectedActiveConversation ||
+      selectedConversationThread ||
+      selectedConversationLines.length > 0 ||
+      selectedTalkAction),
+  );
+  const nearbyNames = nearbyNpcs.slice(0, 3).map((npc) => npc.name);
+  const conversationEntry = selectedNpc
+    ? {
+        id: `conversation-${selectedNpc.id}`,
+        meta: selectedActiveConversation
+          ? "Conversation in motion"
+          : selectedConversationTimestamp
+            ? `Conversation thread • ${formatClock(
+                selectedConversationTimestamp,
+              )}`
+            : selectedTalkAction
+              ? "Rowan can open here"
+              : "Social read",
+        text: buildNarrativePreview(
+          joinNarrativeFragments([
+            latestSelectedConversation
+              ? `${latestSelectedConversation.speaker === "player" ? game.player.name : latestSelectedConversation.speakerName}: ${latestSelectedConversation.text}`
+              : selectedTalkAction
+                ? `${selectedNpc.name} is close enough to read. Let Rowan open and the exchange will start in his voice right here.`
+                : `${selectedNpc.name} is part of the block, but Rowan does not have a live thread with them yet.`,
+            selectedConversationThread?.decision ??
+              selectedConversationThread?.objectiveText ??
+              selectedConversationThread?.summary,
+          ]),
+          168,
+        ),
+        title: `With ${selectedNpc.name}`,
+        tone: selectedActiveConversation
+          ? "conversation"
+          : latestSelectedConversation
+            ? latestSelectedConversation.speaker === "player"
+              ? "objective"
+              : "conversation"
+            : "scene",
+        actionCopy:
+          !latestSelectedConversation && selectedTalkAction
+            ? `Start with ${selectedNpc.name} in Rowan's voice and let the thread unfold here.`
+            : undefined,
+        actionId:
+          !latestSelectedConversation && selectedTalkAction
+            ? selectedTalkAction.id
+            : undefined,
+        actionLabel:
+          !latestSelectedConversation && selectedTalkAction
+            ? `Rowan opens with ${selectedNpc.name}`
+            : undefined,
+      }
+    : {
+        id: "social-read",
+        meta: "Social read",
+        text:
+          nearbyNames.length > 0
+            ? `${formatNameList(nearbyNames)} ${
+                nearbyNames.length === 1 ? "is" : "are"
+              } close enough to read, but Rowan has not stepped into a real conversation yet.`
+            : "No one nearby has opened into a real conversation yet.",
+        title: "People on the edge of this beat",
+        tone: "scene",
+      };
+  const showConversationRail = Boolean(
+    selectedNpc &&
+    (selectedConversationLines.length > 0 ||
+      selectedTalkAction ||
+      selectedConversationThread ||
+      selectedActiveConversation),
+  );
+  const conversationRailHtml =
+    selectedNpc && showConversationRail
+      ? buildConversationPanelHtml({
+          conversationDecision:
+            selectedActiveConversation?.decision ??
+            selectedConversationThread?.decision,
+          conversationLines: selectedConversationLines,
+          conversationLocationId:
+            selectedActiveConversation?.locationId ??
+            selectedConversationThread?.locationId,
+          conversationObjectiveText:
+            selectedActiveConversation?.objectiveText ??
+            selectedConversationThread?.objectiveText,
+          conversationSummary: selectedConversationThread?.summary,
+          conversationUpdatedAt:
+            selectedActiveConversation?.updatedAt ??
+            selectedConversationThread?.updatedAt,
+          currentObjectiveText,
+          currentThought,
+          isLiveConversation: Boolean(selectedActiveConversation),
+          mode: "rail",
+          npc: selectedNpc,
+          replay: runtimeState.conversationReplay,
+          snapshot,
+          startAction: selectedTalkAction
+            ? {
+                id: selectedTalkAction.id,
+                label: `Rowan opens with ${selectedNpc.name}`,
+              }
+            : undefined,
+          talkableNpcIds,
+        })
+      : "";
+  const availableActionsForRail =
+    hasConversationFocus && selectedTalkAction
+      ? actions.filter((action) => action.id !== selectedTalkAction.id)
+      : actions;
+  const quickActions = availableActionsForRail.slice(0, width <= 1080 ? 3 : 4);
+  const primaryAction = showConversationRail ? null : (quickActions[0] ?? null);
+  const secondaryActions = availableActionsForRail.slice(
+    primaryAction ? 1 : 0,
+    width <= 1080 ? 4 : 5,
+  );
+  const rowanFeedEntries = hasConversationFocus
+    ? []
+    : feedPreview.map((entry) => ({
+        id: entry.id,
+        meta: `${formatClock(entry.time)} • ${feedToneLabel(entry.tone)}`,
+        text: buildNarrativePreview(entry.text, 148),
+        tone: entry.tone,
+      }));
+  const railContextEntries = [
+    ...(rowanContext && rowanContext !== directionSupport
+      ? [
+          {
+            id: "context",
+            label: "Context",
+            text: rowanContext,
+            tone: "info",
+          },
+        ]
+      : []),
+    ...(sceneRead
+      ? [
+          {
+            id: "scene",
+            label: "Scene",
+            text: sceneRead,
+            title: game.currentScene.title,
+            tone:
+              quickSceneNotes[0]?.tone === "warning"
+                ? "problem"
+                : quickSceneNotes[0]?.tone === "lead"
+                  ? "objective"
+                  : "scene",
+          },
+        ]
+      : []),
+    ...(!showConversationRail
+      ? [
+          {
+            id: conversationEntry.id,
+            label: conversationEntry.meta,
+            text: conversationEntry.text,
+            title: conversationEntry.title,
+            tone: conversationEntry.tone,
+          },
+        ]
+      : []),
+    ...rowanFeedEntries.map((entry) => ({
+      id: entry.id,
+      label: entry.meta,
+      text: entry.text,
+      tone: entry.tone,
+    })),
+  ];
+  const hasRailMore =
+    railContextEntries.length > 0 ||
+    secondaryActions.length > 0 ||
+    waitOptions.length > 0;
+  const railMoreSummary = [
+    railContextEntries.length > 0
+      ? `${railContextEntries.length} context note${
+          railContextEntries.length === 1 ? "" : "s"
+        }`
+      : null,
+    secondaryActions.length > 0
+      ? `${secondaryActions.length} more move${
+          secondaryActions.length === 1 ? "" : "s"
+        }`
+      : null,
+    waitOptions.length > 0 ? "time controls" : null,
+  ]
+    .filter(Boolean)
+    .join(" • ");
+  const railStatusLabel = selectedActiveConversation
+    ? "Live conversation"
+    : showConversationRail && selectedNpc
+      ? `With ${selectedNpc.name}`
+      : game.currentScene.title;
+  const railPeekLabel =
+    showConversationRail && selectedNpc ? selectedNpc.name : directionTitle;
   const dockActiveTab = focusPanel ?? "actions";
   const clockLabel = formatClock(game.currentTime);
   const todoCounterLabel =
-    game.player.objective?.progress?.label ?? `${objectivePlanItems.length} live threads`;
+    game.player.objective?.progress?.label ??
+    `${objectivePlanItems.length} live threads`;
+  const compactRailCollapsedHeight = railViewport === "phone" ? 104 : 112;
+  const compactRailExpandedHeight =
+    railViewport === "phone"
+      ? Math.max(340, Math.min(Math.round(height * 0.72), height - 156))
+      : Math.max(380, Math.min(Math.round(height * 0.76), height - 148));
+  const compactRailWidth =
+    railViewport === "phone"
+      ? Math.max(width - overlayInset * 2, 280)
+      : Math.min(Math.max(width * 0.42, 320), 360);
+  const compactRailBottomOffset = railViewport === "phone" ? 108 : 112;
   return `
     <style>
       .ml-root {
@@ -5484,9 +6872,14 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         --ml-inset: ${overlayInset}px;
         --ml-rail-width: ${Math.round(railWidth)}px;
         --ml-dock-width: ${Math.round(dockWidth)}px;
+        --ml-dock-focus-width: ${Math.round(dockFocusWidth)}px;
         --ml-focus-width: ${Math.round(focusWidth)}px;
         --ml-focus-height: ${Math.round(focusHeight)}px;
         --ml-rail-max-height: ${Math.round(railMaxHeight)}px;
+        --ml-compact-rail-bottom: ${Math.round(compactRailBottomOffset)}px;
+        --ml-compact-rail-collapsed-height: ${Math.round(compactRailCollapsedHeight)}px;
+        --ml-compact-rail-expanded-height: ${Math.round(compactRailExpandedHeight)}px;
+        --ml-compact-rail-width: ${Math.round(compactRailWidth)}px;
       }
       .ml-right-stack,
       .ml-dock {
@@ -5552,6 +6945,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       .ml-dock {
         left: var(--ml-inset);
         width: min(calc(100% - var(--ml-inset) * 2), var(--ml-dock-width));
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
       }
       .ml-panel {
         pointer-events: auto;
@@ -5560,12 +6956,86 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         background: linear-gradient(180deg, rgba(12, 19, 24, 0.96), rgba(8, 13, 18, 0.93));
         box-shadow: 0 22px 46px rgba(0, 0, 0, 0.28);
       }
-      .ml-command-rail {
+      .ml-rail-shell {
         min-width: 0;
         max-height: var(--ml-rail-max-height);
-        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .ml-rail-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
         padding: 14px;
+      }
+      .ml-rail-head-copy {
+        min-width: 0;
+        flex: 1;
+      }
+      .ml-rail-heading-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .ml-rail-name {
+        font-size: 28px;
+        line-height: 0.98;
+        font-weight: 700;
+        color: rgba(247, 249, 250, 0.98);
+      }
+      .ml-rail-status {
+        border-radius: 999px;
+        border: 1px solid rgba(205, 174, 115, 0.24);
+        background: rgba(205, 174, 115, 0.1);
+        padding: 6px 9px;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(241, 214, 160, 0.94);
+      }
+      .ml-rail-peek-label {
+        margin-top: 10px;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(213, 224, 229, 0.62);
+      }
+      .ml-rail-thought {
+        margin-top: 7px;
+        font-size: 18px;
+        line-height: 1.5;
+        color: rgba(239, 243, 245, 0.96);
+      }
+      .ml-rail-toggle {
+        flex-shrink: 0;
+        border-radius: 999px;
+        border: 1px solid rgba(138, 151, 161, 0.18);
+        background: rgba(28, 38, 45, 0.82);
+        color: rgba(232, 238, 241, 0.9);
+        padding: 10px 12px;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .ml-command-rail {
+        min-width: 0;
+        min-height: 0;
+        flex: 1;
+        overflow-y: auto;
+        padding: 0 14px 14px;
+        border-top: 1px solid rgba(138, 151, 161, 0.12);
         scrollbar-width: thin;
+      }
+      .ml-command-rail-body {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        padding-top: 14px;
       }
       .ml-command-rail,
       .ml-focus-body,
@@ -5585,11 +7055,153 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       .ml-dock-panel {
         padding: 12px 14px;
       }
+      .ml-dock-identity {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 10px;
+        border-radius: 18px;
+        border: 1px solid rgba(205, 174, 115, 0.2);
+        background:
+          radial-gradient(circle at top left, rgba(205, 174, 115, 0.16), transparent 48%),
+          linear-gradient(180deg, rgba(26, 33, 38, 0.9), rgba(14, 19, 24, 0.94));
+        padding: 10px 12px;
+      }
+      .ml-dock-identity-copy {
+        min-width: 0;
+      }
+      .ml-dock-identity-kicker {
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(236, 222, 184, 0.7);
+      }
+      .ml-dock-identity-name {
+        margin-top: 4px;
+        font-size: 18px;
+        font-weight: 700;
+        line-height: 1;
+        color: rgba(252, 246, 230, 0.98);
+      }
+      .ml-dock-identity-badge {
+        flex-shrink: 0;
+        border-radius: 999px;
+        border: 1px solid rgba(141, 208, 205, 0.28);
+        background: rgba(31, 52, 55, 0.6);
+        padding: 8px 10px;
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(214, 245, 243, 0.92);
+      }
       .ml-kicker {
         font-size: 11px;
         letter-spacing: 0.24em;
         text-transform: uppercase;
         color: rgba(213, 224, 229, 0.66);
+      }
+      .ml-rowan-directive {
+        border-radius: 18px;
+        border: 1px solid rgba(205, 174, 115, 0.18);
+        background: rgba(36, 30, 24, 0.56);
+        padding: 13px 14px;
+      }
+      .ml-rowan-directive-title {
+        margin-top: 7px;
+        font-size: 20px;
+        line-height: 1.16;
+        font-weight: 700;
+        color: rgba(247, 249, 250, 0.96);
+      }
+      .ml-rowan-directive-copy {
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.58;
+        color: rgba(220, 229, 233, 0.8);
+      }
+      .ml-rail-more {
+        border-top: 1px solid rgba(138, 151, 161, 0.12);
+        padding-top: 14px;
+      }
+      .ml-rail-more-toggle {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(138, 151, 161, 0.16);
+        background: rgba(20, 29, 34, 0.76);
+        padding: 12px 13px;
+        color: rgba(239, 243, 245, 0.94);
+        cursor: pointer;
+        text-align: left;
+      }
+      .ml-rail-more-copy {
+        min-width: 0;
+      }
+      .ml-rail-more-title {
+        margin-top: 6px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .ml-rail-more-state {
+        flex-shrink: 0;
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(241, 214, 160, 0.9);
+      }
+      .ml-rail-more-body {
+        display: none;
+        margin-top: 12px;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .ml-rail-more.is-open .ml-rail-more-body {
+        display: flex;
+      }
+      .ml-rail-context-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .ml-rail-context-row {
+        border-radius: 16px;
+        border: 1px solid rgba(138, 151, 161, 0.14);
+        background: rgba(21, 30, 35, 0.72);
+        padding: 11px 12px;
+      }
+      .ml-rail-context-row[data-tone="objective"] {
+        border-color: rgba(205, 174, 115, 0.18);
+        background: rgba(39, 34, 27, 0.54);
+      }
+      .ml-rail-context-row[data-tone="conversation"] {
+        border-color: rgba(89, 165, 132, 0.2);
+        background: rgba(19, 35, 33, 0.72);
+      }
+      .ml-rail-context-row[data-tone="problem"] {
+        border-color: rgba(167, 105, 99, 0.24);
+        background: rgba(44, 28, 31, 0.72);
+      }
+      .ml-rail-context-label {
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(205, 174, 115, 0.74);
+      }
+      .ml-rail-context-title {
+        margin-top: 6px;
+        font-size: 14px;
+        font-weight: 700;
+        color: rgba(239, 243, 245, 0.94);
+      }
+      .ml-rail-context-copy {
+        margin-top: 6px;
+        font-size: 12px;
+        line-height: 1.55;
+        color: rgba(219, 228, 233, 0.78);
       }
       .ml-title {
         margin-top: 8px;
@@ -5665,6 +7277,139 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         line-height: 1.42;
         color: rgba(229, 236, 239, 0.92);
       }
+      .ml-rowan-log-card {
+        margin-bottom: 12px;
+        border-radius: 24px;
+        border: 1px solid rgba(138, 151, 161, 0.18);
+        background:
+          radial-gradient(circle at top left, rgba(205, 174, 115, 0.14), transparent 34%),
+          linear-gradient(180deg, rgba(18, 28, 34, 0.82), rgba(12, 19, 24, 0.94));
+        padding: 16px;
+      }
+      .ml-rowan-log-title {
+        margin-top: 8px;
+        font-size: 28px;
+        line-height: 1;
+        font-weight: 700;
+      }
+      .ml-rowan-log-voice {
+        margin-top: 10px;
+        max-width: 18ch;
+        font-size: 18px;
+        line-height: 1.48;
+        color: rgba(239, 243, 245, 0.96);
+      }
+      .ml-rowan-log-context {
+        margin-top: 10px;
+        max-width: 34ch;
+        font-size: 13px;
+        line-height: 1.58;
+        color: rgba(216, 225, 229, 0.78);
+      }
+      .ml-rowan-flow {
+        margin-top: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .ml-rowan-entry {
+        display: grid;
+        grid-template-columns: 18px minmax(0, 1fr);
+        gap: 10px;
+      }
+      .ml-rowan-entry-rail {
+        position: relative;
+        display: flex;
+        justify-content: center;
+      }
+      .ml-rowan-entry-rail::before {
+        content: "";
+        position: absolute;
+        top: 6px;
+        bottom: -16px;
+        width: 1px;
+        background: rgba(138, 151, 161, 0.18);
+      }
+      .ml-rowan-entry:last-child .ml-rowan-entry-rail::before {
+        display: none;
+      }
+      .ml-rowan-entry-dot {
+        position: relative;
+        z-index: 1;
+        margin-top: 7px;
+        height: 8px;
+        width: 8px;
+        border-radius: 999px;
+        background: rgba(240, 207, 140, 0.94);
+        box-shadow: 0 0 0 6px rgba(205, 174, 115, 0.08);
+      }
+      .ml-rowan-entry-body {
+        border-radius: 18px;
+        border: 1px solid rgba(138, 151, 161, 0.16);
+        background: rgba(24, 32, 38, 0.76);
+        padding: 11px 12px;
+      }
+      .ml-rowan-entry-meta {
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(205, 174, 115, 0.76);
+      }
+      .ml-rowan-entry-title {
+        margin-top: 6px;
+        font-size: 14px;
+        font-weight: 700;
+        color: rgba(239, 243, 245, 0.95);
+      }
+      .ml-rowan-entry-copy {
+        margin-top: 5px;
+        font-size: 12px;
+        line-height: 1.56;
+        color: rgba(219, 228, 233, 0.78);
+      }
+      .ml-rowan-entry[data-tone="scene"] .ml-rowan-entry-dot,
+      .ml-rowan-entry[data-tone="info"] .ml-rowan-entry-dot {
+        background: rgba(148, 189, 212, 0.9);
+        box-shadow: 0 0 0 6px rgba(69, 133, 214, 0.08);
+      }
+      .ml-rowan-entry[data-tone="conversation"] .ml-rowan-entry-dot {
+        background: rgba(137, 205, 175, 0.92);
+        box-shadow: 0 0 0 6px rgba(89, 165, 132, 0.1);
+      }
+      .ml-rowan-entry[data-tone="problem"] .ml-rowan-entry-dot {
+        background: rgba(232, 154, 145, 0.92);
+        box-shadow: 0 0 0 6px rgba(167, 105, 99, 0.1);
+      }
+      .ml-rowan-entry[data-tone="memory"] .ml-rowan-entry-dot {
+        background: rgba(210, 181, 235, 0.88);
+        box-shadow: 0 0 0 6px rgba(168, 126, 205, 0.1);
+      }
+      .ml-rowan-entry[data-tone="objective"] .ml-rowan-entry-body,
+      .ml-rowan-entry[data-tone="job"] .ml-rowan-entry-body {
+        border-color: rgba(205, 174, 115, 0.2);
+        background: rgba(39, 34, 27, 0.58);
+      }
+      .ml-rowan-entry[data-tone="scene"] .ml-rowan-entry-meta,
+      .ml-rowan-entry[data-tone="info"] .ml-rowan-entry-meta {
+        color: rgba(176, 206, 220, 0.74);
+      }
+      .ml-rowan-entry[data-tone="conversation"] .ml-rowan-entry-body {
+        border-color: rgba(89, 165, 132, 0.2);
+        background: rgba(19, 35, 33, 0.76);
+      }
+      .ml-rowan-entry[data-tone="conversation"] .ml-rowan-entry-meta {
+        color: rgba(177, 226, 204, 0.74);
+      }
+      .ml-rowan-entry[data-tone="problem"] .ml-rowan-entry-body {
+        border-color: rgba(167, 105, 99, 0.24);
+        background: rgba(44, 28, 31, 0.76);
+      }
+      .ml-rowan-entry[data-tone="problem"] .ml-rowan-entry-meta {
+        color: rgba(239, 182, 176, 0.78);
+      }
+      .ml-rowan-entry[data-tone="memory"] .ml-rowan-entry-meta {
+        color: rgba(219, 200, 238, 0.74);
+      }
       .ml-summary-support {
         margin-top: 8px;
         font-size: 12px;
@@ -5739,6 +7484,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       .ml-person:focus-visible,
       .ml-chip:focus-visible,
       .ml-control:focus-visible,
+      .ml-rail-more-toggle:focus-visible,
+      .ml-rail-toggle:focus-visible,
       .ml-submit:focus-visible,
       .ml-focus-close:focus-visible,
       .ml-loading-button:focus-visible {
@@ -5795,9 +7542,29 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         border-color: rgba(205, 174, 115, 0.32);
         background: rgba(183, 146, 89, 0.1);
       }
+      .ml-person.has-live-thread {
+        border-color: rgba(242, 201, 124, 0.3);
+        box-shadow: inset 0 0 0 1px rgba(242, 201, 124, 0.08);
+      }
+      .ml-person-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
       .ml-person-name {
         font-size: 13px;
         font-weight: 700;
+      }
+      .ml-person-live-tag {
+        border-radius: 999px;
+        border: 1px solid rgba(242, 201, 124, 0.22);
+        background: rgba(242, 201, 124, 0.08);
+        color: rgba(248, 223, 169, 0.96);
+        padding: 4px 7px;
+        font-size: 9px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
       }
       .ml-person-meta {
         margin-top: 6px;
@@ -5908,9 +7675,25 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         background: linear-gradient(180deg, rgba(16, 24, 29, 0.96), rgba(10, 15, 19, 0.98));
         padding: 12px;
       }
+      .ml-chat-shell.is-rail {
+        margin-top: 0;
+        border-radius: 0;
+        border-width: 1px 0 0;
+        border-color: rgba(138, 151, 161, 0.12);
+        background: none;
+        padding: 16px 0 0;
+      }
+      .ml-chat-shell.is-live {
+        border-color: rgba(241, 214, 160, 0.34);
+        background: linear-gradient(180deg, rgba(17, 26, 32, 0.98), rgba(9, 15, 19, 1));
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(241, 214, 160, 0.08);
+      }
+      .ml-chat-shell.is-rail.is-live {
+        box-shadow: none;
+      }
       .ml-chat-header {
         display: flex;
-        align-items: center;
+        align-items: flex-start;
         gap: 10px;
       }
       .ml-chat-avatar {
@@ -5933,7 +7716,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         flex: 1;
       }
       .ml-chat-title {
-        font-size: 15px;
+        font-size: 17px;
         font-weight: 700;
       }
       .ml-chat-subtitle {
@@ -5970,6 +7753,34 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         background: rgba(241, 214, 160, 0.96);
         animation: mlPulse 1.15s ease-in-out infinite;
       }
+      .ml-chat-sim-strip {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .ml-chat-sim-card {
+        border-radius: 16px;
+        border: 1px solid rgba(138, 151, 161, 0.14);
+        background: rgba(22, 31, 37, 0.78);
+        padding: 10px 11px;
+      }
+      .ml-chat-sim-card.is-rowan {
+        border-color: rgba(69, 133, 214, 0.22);
+        background: rgba(32, 54, 83, 0.42);
+      }
+      .ml-chat-sim-label {
+        font-size: 10px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(205, 174, 115, 0.76);
+      }
+      .ml-chat-sim-copy {
+        margin-top: 6px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: rgba(229, 236, 239, 0.9);
+      }
       .ml-chat-transcript {
         max-height: 420px;
         min-height: 260px;
@@ -5979,6 +7790,21 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         display: flex;
         flex-direction: column;
         gap: 10px;
+      }
+      .ml-chat-shell.is-live .ml-chat-transcript {
+        max-height: 520px;
+        min-height: 340px;
+      }
+      .ml-chat-shell.is-rail .ml-chat-transcript {
+        max-height: none;
+        min-height: 0;
+        overflow: visible;
+        padding-right: 0;
+        gap: 12px;
+      }
+      .ml-chat-shell.is-rail.is-live .ml-chat-transcript {
+        max-height: none;
+        min-height: 0;
       }
       .ml-chat-row {
         display: flex;
@@ -6004,7 +7830,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         border: 1px solid rgba(138, 151, 161, 0.18);
         background: rgba(48, 58, 65, 0.92);
         padding: 11px 14px;
-        font-size: 13px;
+        font-size: 14px;
         line-height: 1.55;
         color: #edf3f6;
         box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
@@ -6091,6 +7917,29 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         font-size: 13px;
         line-height: 1.55;
       }
+      .ml-chat-rail-note {
+        margin-top: 10px;
+        border-left: 2px solid rgba(205, 174, 115, 0.28);
+        padding-left: 10px;
+        font-size: 12px;
+        line-height: 1.55;
+        color: rgba(226, 233, 236, 0.8);
+      }
+      .ml-chat-shell.is-rail .ml-chat-empty {
+        background: rgba(20, 29, 34, 0.72);
+      }
+      .ml-chat-shell.is-rail .ml-form {
+        position: sticky;
+        bottom: 0;
+        z-index: 1;
+        padding-top: 10px;
+        background: linear-gradient(
+          180deg,
+          rgba(9, 14, 18, 0),
+          rgba(9, 14, 18, 0.82) 24%,
+          rgba(9, 14, 18, 0.98)
+        );
+      }
       @keyframes mlPulse {
         0%, 100% {
           opacity: 0.45;
@@ -6165,7 +8014,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         padding-right: 2px;
       }
       .ml-inline-focus-window {
-        width: 100%;
+        width: min(var(--ml-dock-focus-width), calc(100vw - var(--ml-inset) * 2));
+        min-width: min(540px, var(--ml-dock-focus-width));
+        align-self: flex-start;
         max-height: min(var(--ml-focus-height), var(--ml-rail-max-height));
         display: flex;
         flex-direction: column;
@@ -6175,24 +8026,32 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         display: flex;
         align-items: flex-start;
         justify-content: space-between;
-        gap: 16px;
-        padding: 18px 18px 14px;
+        gap: 18px;
+        padding: 20px 20px 15px;
         border-bottom: 1px solid rgba(138, 151, 161, 0.14);
         background: linear-gradient(180deg, rgba(22, 31, 37, 0.8), rgba(12, 19, 24, 0.56));
       }
       .ml-focus-copy {
         min-width: 0;
+        flex: 1;
       }
       .ml-focus-title {
         margin-top: 8px;
-        font-size: 28px;
-        line-height: 1;
+        font-size: 30px;
+        line-height: 1.02;
         font-weight: 700;
+      }
+      .ml-focus-copy .ml-footer-copy {
+        margin-top: 10px;
+        max-width: 60ch;
+        line-height: 1.55;
       }
       .ml-focus-controls {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
+        justify-content: flex-end;
         gap: 10px;
+        flex-wrap: wrap;
       }
       .ml-focus-nav {
         display: flex;
@@ -6213,23 +8072,50 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       }
       .ml-focus-body {
         overflow-y: auto;
-        padding: 18px;
+        padding: 18px 20px 20px;
+      }
+      .ml-focus-body .ml-card {
+        padding: 14px;
+      }
+      .ml-focus-body .ml-row {
+        padding: 11px 12px;
+      }
+      .ml-focus-body .ml-row-title {
+        font-size: 13px;
+      }
+      .ml-focus-body .ml-row-copy {
+        margin-top: 5px;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .ml-focus-body .ml-list {
+        gap: 10px;
+      }
+      .ml-focus-body .ml-mini-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
       }
       .ml-focus-grid {
         display: grid;
-        grid-template-columns: minmax(240px, 0.92fr) minmax(0, 1.18fr);
-        gap: 14px;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 16px;
+      }
+      .ml-focus-grid.is-live-conversation {
+        grid-template-columns: minmax(260px, 0.76fr) minmax(0, 1.24fr);
       }
       .ml-focus-stack {
         display: flex;
         flex-direction: column;
-        gap: 14px;
+        gap: 16px;
       }
       @media (max-width: 1120px) {
         .ml-root {
           --ml-inset: 16px;
         }
         .ml-focus-grid {
+          grid-template-columns: 1fr;
+        }
+        .ml-focus-grid.is-live-conversation {
           grid-template-columns: 1fr;
         }
         .ml-focus-header {
@@ -6239,6 +8125,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         .ml-focus-controls {
           justify-content: space-between;
           align-items: center;
+        }
+        .ml-inline-focus-window {
+          min-width: min(480px, var(--ml-dock-focus-width));
         }
       }
       @media (max-width: 960px) {
@@ -6268,8 +8157,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         }
         .ml-command-rail,
         .ml-focus-body {
-          max-height: none;
-          overflow: visible;
+          max-height: min(52vh, var(--ml-rail-max-height));
+          overflow-y: auto;
         }
         .ml-dock-row,
         .ml-tab-row {
@@ -6289,8 +8178,312 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           gap: 6px;
         }
         .ml-inline-focus-window {
-          max-height: none;
+          min-width: 0;
+          width: 100%;
+          max-height: min(60vh, var(--ml-rail-max-height));
         }
+      }
+      @media (max-width: 560px) {
+        .ml-root {
+          padding: 0;
+          display: block;
+          overflow: hidden;
+        }
+        .ml-time-pill {
+          position: absolute;
+          top: max(var(--ml-inset), env(safe-area-inset-top));
+          left: var(--ml-inset);
+          z-index: 4;
+          max-width: 100%;
+          gap: 4px;
+          padding: 6px 8px;
+          border-radius: 22px;
+        }
+        .ml-right-stack,
+        .ml-dock {
+          position: absolute;
+          transform: none;
+          width: auto;
+          z-index: 3;
+        }
+        .ml-right-stack {
+          right: var(--ml-inset);
+          top: auto;
+          bottom: calc(max(var(--ml-inset), env(safe-area-inset-bottom)) + 108px);
+          width: min(48vw, 280px);
+          max-width: calc(100% - var(--ml-inset) * 2);
+          max-height: min(30vh, var(--ml-rail-max-height));
+        }
+        .ml-dock {
+          left: var(--ml-inset);
+          right: var(--ml-inset);
+          bottom: max(var(--ml-inset), env(safe-area-inset-bottom));
+        }
+        .ml-time-chip {
+          font-size: 9px;
+          letter-spacing: 0.1em;
+          padding: 5px 8px;
+        }
+        .ml-dock-panel {
+          padding: 10px;
+        }
+        .ml-dock-copy {
+          margin-top: 7px;
+          text-align: left;
+          font-size: 10px;
+          line-height: 1.4;
+        }
+        .ml-inline-focus-window {
+          width: 100%;
+          max-height: min(52vh, var(--ml-rail-max-height));
+        }
+        .ml-focus-header {
+          padding: 12px 12px 10px;
+          gap: 10px;
+        }
+        .ml-focus-title {
+          font-size: 24px;
+          line-height: 1.06;
+        }
+        .ml-focus-copy .ml-footer-copy {
+          margin-top: 8px;
+          font-size: 11px;
+          line-height: 1.45;
+        }
+        .ml-focus-controls {
+          gap: 8px;
+        }
+        .ml-focus-nav {
+          width: 100%;
+          justify-content: flex-start;
+        }
+        .ml-focus-tab {
+          flex: 1 1 calc(33.333% - 6px);
+        }
+        .ml-focus-body {
+          padding: 12px;
+        }
+        .ml-focus-grid {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+        .ml-focus-stack {
+          gap: 10px;
+        }
+        .ml-right-stack {
+          gap: 10px;
+        }
+        .ml-command-rail {
+          max-height: 100%;
+          padding: 8px;
+        }
+        .ml-command-rail > .ml-scene-card:not(.ml-summary-card) {
+          display: none;
+        }
+        .ml-command-rail > .ml-summary-card {
+          display: none;
+        }
+        .ml-command-rail > .ml-command-section:not(:first-of-type) {
+          display: none;
+        }
+        .ml-scene-card {
+          padding: 10px;
+        }
+        .ml-summary-card {
+          padding: 12px;
+          margin-bottom: 10px;
+        }
+        .ml-summary-title {
+          font-size: 22px;
+        }
+        .ml-summary-copy {
+          margin-top: 8px;
+          font-size: 13px;
+          line-height: 1.45;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .ml-summary-support {
+          display: none;
+        }
+        .ml-rowan-log-card {
+          margin-bottom: 10px;
+          padding: 12px;
+        }
+        .ml-rowan-log-title {
+          font-size: 22px;
+        }
+        .ml-rowan-log-voice {
+          margin-top: 8px;
+          max-width: none;
+          font-size: 14px;
+          line-height: 1.5;
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .ml-rowan-log-context {
+          margin-top: 8px;
+          font-size: 11px;
+          line-height: 1.45;
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .ml-rowan-flow {
+          margin-top: 10px;
+          gap: 8px;
+        }
+        .ml-rowan-entry:nth-of-type(n + 5) {
+          display: none;
+        }
+        .ml-rowan-entry-body {
+          padding: 10px;
+        }
+        .ml-rowan-entry-title {
+          font-size: 13px;
+        }
+        .ml-rowan-entry-copy {
+          font-size: 11px;
+          line-height: 1.45;
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .ml-player-meta {
+          display: none;
+        }
+        .ml-objective-card {
+          margin-top: 9px;
+        }
+        .ml-objective-card .ml-row-copy {
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .ml-objective-card .ml-row-meta {
+          display: none;
+        }
+        .ml-scene-title {
+          font-size: 16px;
+        }
+        .ml-scene-description {
+          margin-top: 6px;
+          font-size: 12px;
+          line-height: 1.45;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+        }
+        .ml-command-section {
+          gap: 8px;
+        }
+        .ml-button {
+          padding: 10px 11px;
+        }
+        .ml-button-copy {
+          display: none;
+        }
+      }
+      @media (min-width: 481px) and (max-width: 760px) {
+        .ml-right-stack {
+          display: none;
+        }
+        .ml-dock {
+          z-index: 4;
+        }
+      }
+      @media (max-width: 430px) {
+        .ml-right-stack {
+          width: min(52vw, 250px);
+        }
+        .ml-time-pill {
+          max-width: calc(100% - var(--ml-inset) * 2);
+        }
+        .ml-time-chip.is-core strong {
+          font-size: 11px;
+          letter-spacing: 0.14em;
+        }
+      }
+      .ml-root.is-collapsible-rail {
+        padding: 0;
+        display: block;
+        overflow: hidden;
+      }
+      .ml-root.is-collapsible-rail .ml-time-pill {
+        position: absolute;
+        top: max(var(--ml-inset), env(safe-area-inset-top));
+        left: var(--ml-inset);
+        z-index: 4;
+        max-width: calc(100% - var(--ml-inset) * 2);
+      }
+      .ml-root.is-collapsible-rail .ml-dock {
+        position: absolute;
+        left: var(--ml-inset);
+        right: var(--ml-inset);
+        bottom: max(var(--ml-inset), env(safe-area-inset-bottom));
+        width: auto;
+        z-index: 4;
+      }
+      .ml-root.is-collapsible-rail .ml-right-stack {
+        position: absolute;
+        right: var(--ml-inset);
+        bottom: calc(
+          max(var(--ml-inset), env(safe-area-inset-bottom)) +
+            var(--ml-compact-rail-bottom)
+        );
+        width: min(var(--ml-compact-rail-width), calc(100% - var(--ml-inset) * 2));
+        max-width: calc(100% - var(--ml-inset) * 2);
+        display: flex;
+        z-index: 4;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail .ml-right-stack {
+        left: var(--ml-inset);
+        right: var(--ml-inset);
+        width: auto;
+      }
+      .ml-root.is-collapsible-rail .ml-rail-shell {
+        width: 100%;
+        max-height: var(--ml-compact-rail-expanded-height);
+      }
+      .ml-root.is-collapsible-rail.is-rail-collapsed .ml-rail-shell {
+        max-height: var(--ml-compact-rail-collapsed-height);
+      }
+      .ml-root.is-collapsible-rail.is-rail-collapsed .ml-command-rail {
+        flex: 0 0 0;
+        max-height: 0;
+        overflow: hidden;
+        padding-top: 0;
+        padding-bottom: 0;
+        border-top-color: transparent;
+      }
+      .ml-root.is-collapsible-rail.is-rail-collapsed .ml-rail-thought {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .ml-root.is-collapsible-rail .ml-rail-toggle {
+        align-self: flex-start;
+      }
+      .ml-root.is-collapsible-rail .ml-rail-name {
+        font-size: 24px;
+      }
+      .ml-root.is-collapsible-rail .ml-rail-thought {
+        font-size: 16px;
+      }
+      .ml-root.is-collapsible-rail .ml-rowan-directive-title {
+        font-size: 18px;
+      }
+      .ml-root.is-collapsible-rail .ml-chat-bubble {
+        font-size: 13px;
       }
       @media (max-height: 820px) and (min-width: 1081px) {
         .ml-player-panel,
@@ -6304,7 +8497,11 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         }
       }
     </style>
-    <div class="ml-root">
+    <div
+      class="ml-root ${railViewport !== "desktop" ? "is-collapsible-rail" : ""} ${
+        railViewport === "phone" ? "is-phone-rail" : ""
+      } ${railExpanded ? "is-rail-expanded" : "is-rail-collapsed"}"
+    >
       <div class="ml-time-pill">
         <span class="ml-time-chip">Day ${escapeHtml(String(game.clock.day))}</span>
         <span class="ml-time-chip is-core">
@@ -6316,23 +8513,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         <span class="ml-time-chip is-metric">${escapeHtml(todoCounterLabel)}</span>
       </div>
       <div class="ml-dock">
-        <div class="ml-panel ml-dock-panel">
-          <div class="ml-kicker">Field Kit</div>
-          <div class="ml-dock-row">
-            ${buildTabButton("actions", dockActiveTab === "actions", "ml-dock-button")}
-            ${buildTabButton("people", dockActiveTab === "people", "ml-dock-button")}
-            ${buildTabButton("journal", dockActiveTab === "journal", "ml-dock-button")}
-            ${buildTabButton("mind", dockActiveTab === "mind", "ml-dock-button")}
-          </div>
-          <div class="ml-dock-copy">${escapeHtml(
-            focusMeta?.subtitle ??
-              upcomingCommitmentLabel ??
-              "Keep Rowan in motion on the map, then open locals, journal, or memory in the right rail when you want a proper read.",
-          )}</div>
-        </div>
-      </div>
-
-      <div class="ml-right-stack">
         ${
           focusPanel && focusMeta
             ? `
@@ -6359,140 +8539,251 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           `
             : ""
         }
-        <div class="ml-panel ml-command-rail">
-          <div class="ml-scene-card ml-summary-card">
-            <div class="ml-kicker">${escapeHtml(game.cityName)} • ${escapeHtml(
-              game.districtName,
-            )}</div>
-            <div class="ml-summary-title">${escapeHtml(game.player.name)}</div>
-            <div class="ml-summary-copy">${escapeHtml(currentThoughtPreview)}</div>
-            <div class="ml-summary-support">${escapeHtml(currentSummaryPreview)}</div>
-            <div class="ml-card ml-objective-card">
-              <div class="ml-kicker">Current Direction</div>
-              <div class="ml-card-title" style="margin-top: 8px;">${escapeHtml(
-                currentObjectiveText,
-              )}</div>
-              <div class="ml-row-copy" style="margin-top: 8px;">${escapeHtml(
-                activeCommitmentSummary ?? currentContext,
-              )}</div>
-              ${
-                objectivePreview.length > 0
-                  ? `<div class="ml-row-meta">${objectivePreview
-                      .map((item) => escapeHtml(item.title))
-                      .join(" • ")}</div>`
-                  : ""
-              }
+        <div class="ml-panel ml-dock-panel">
+          <div class="ml-kicker">Field Kit</div>
+          <div class="ml-dock-identity">
+            <div class="ml-dock-identity-copy">
+              <div class="ml-dock-identity-kicker">You are</div>
+              <div class="ml-dock-identity-name">${escapeHtml(game.player.name)}</div>
             </div>
-            <div class="ml-badge-row">
-              <div class="ml-badge">${escapeHtml(game.scenarioName)}</div>
-              ${
-                snapshot.busyLabel
-                  ? `<div class="ml-badge is-warm">${escapeHtml(snapshot.busyLabel)}</div>`
-                  : ""
-              }
-            </div>
-            <div class="ml-player-meta">${escapeHtml(relationshipSummary)}</div>
-            ${
-              snapshot.error
-                ? `<div class="ml-error">${escapeHtml(snapshot.error)}</div>`
-                : ""
-            }
+            <div class="ml-dock-identity-badge">Main Perspective</div>
           </div>
-          <div class="ml-scene-card">
-            <div class="ml-kicker">Current Scene</div>
-            <div class="ml-scene-title">${escapeHtml(game.currentScene.title)}</div>
-            <div class="ml-scene-description">${escapeHtml(
-              game.currentScene.description,
-            )}</div>
-            ${quickSceneNotes
-              .map(
-                (note) =>
-                  `<div class="ml-note" data-tone="${escapeHtml(note.tone)}">${escapeHtml(
-                    note.text,
-                  )}</div>`,
-              )
-              .join("")}
+          <div class="ml-dock-row">
+            ${buildTabButton("actions", dockActiveTab === "actions", "ml-dock-button")}
+            ${buildTabButton("people", dockActiveTab === "people", "ml-dock-button")}
+            ${buildTabButton("journal", dockActiveTab === "journal", "ml-dock-button")}
+            ${buildTabButton("mind", dockActiveTab === "mind", "ml-dock-button")}
           </div>
+          <div class="ml-dock-copy">${escapeHtml(
+            focusMeta?.subtitle ??
+              upcomingCommitmentLabel ??
+              "Keep Rowan in motion on the map, then open locals, journal, or memory in the right rail when you want a proper read.",
+          )}</div>
+        </div>
+      </div>
 
-          <div class="ml-command-section">
-            <div class="ml-kicker">Quick Moves</div>
-            ${quickActions
-              .map(
-                (action) => `
+      <div
+        class="ml-right-stack"
+        data-rail-state="${railExpanded ? "expanded" : "collapsed"}"
+        data-rail-viewport="${railViewport}"
+      >
+        <div class="ml-panel ml-rail-shell">
+          <div class="ml-rail-head">
+            <div class="ml-rail-head-copy">
+              <div class="ml-kicker">${escapeHtml(game.cityName)} • ${escapeHtml(
+                game.districtName,
+              )}</div>
+              <div class="ml-rail-heading-row">
+                <div class="ml-rail-name">${escapeHtml(game.player.name)}</div>
+                <div class="ml-rail-status">${escapeHtml(railStatusLabel)}</div>
+              </div>
+              <div class="ml-rail-peek-label">${escapeHtml(railPeekLabel)}</div>
+              <div class="ml-rail-thought">${escapeHtml(railThought)}</div>
+            </div>
+            ${
+              railViewport !== "desktop"
+                ? `
                 <button
-                  class="ml-button"
-                  data-action-id="${escapeHtml(action.id)}"
-                  data-action-label="${escapeHtml(action.label)}"
-                  data-tone="${escapeHtml(action.emphasis)}"
-                  ${snapshot.busyLabel || action.disabled ? "disabled" : ""}
+                  class="ml-rail-toggle"
+                  data-toggle-rail="true"
+                  aria-expanded="${railExpanded ? "true" : "false"}"
                   type="button"
                 >
-                  <div class="ml-button-title">${escapeHtml(action.label)}</div>
-                  <div class="ml-button-copy">${escapeHtml(action.description)}</div>
-                  ${
-                    action.disabledReason
-                      ? `<div class="ml-button-copy" style="color: rgba(246, 198, 193, 0.92);">${escapeHtml(
-                          action.disabledReason,
-                        )}</div>`
-                      : ""
-                  }
+                  ${railExpanded ? "Collapse" : "Open"}
                 </button>
-              `,
-              )
-              .join("")}
-            ${
-              actions.length > quickActions.length
-                ? `<div class="ml-footer-copy">The rail stays focused on immediate moves. Deeper reading lives in the right rail panel.</div>`
+              `
                 : ""
             }
           </div>
+          <div class="ml-command-rail" data-preserve-scroll="command-rail">
+            <div class="ml-command-rail-body">
+              <div class="ml-rowan-directive">
+                <div class="ml-kicker">Next move</div>
+                <div class="ml-rowan-directive-title">${escapeHtml(
+                  directionTitle,
+                )}</div>
+                <div class="ml-rowan-directive-copy">${escapeHtml(
+                  directionSupport || currentObjectiveText,
+                )}</div>
+              </div>
 
-          <div class="ml-command-section">
-            <div class="ml-kicker">Time And Intent</div>
-            <div class="ml-controls">
-              ${waitOptions
-                .map(
-                  (option) => `
+              ${
+                primaryAction
+                  ? `
                   <button
-                    class="ml-control"
-                    data-wait-minutes="${option.minutes}"
-                    data-wait-label="${escapeHtml(option.busyLabel)}"
-                    ${snapshot.busyLabel ? "disabled" : ""}
+                    class="ml-button"
+                    data-action-id="${escapeHtml(primaryAction.id)}"
+                    data-action-label="${escapeHtml(primaryAction.label)}"
+                    data-tone="${escapeHtml(primaryAction.emphasis)}"
+                    ${snapshot.busyLabel || primaryAction.disabled ? "disabled" : ""}
                     type="button"
                   >
-                    ${escapeHtml(option.label)}
+                    <div class="ml-button-title">${escapeHtml(
+                      primaryAction.label,
+                    )}</div>
+                    <div class="ml-button-copy">${escapeHtml(
+                      primaryAction.description,
+                    )}</div>
+                    ${
+                      primaryAction.disabledReason
+                        ? `<div class="ml-button-copy" style="color: rgba(246, 198, 193, 0.92);">${escapeHtml(
+                            primaryAction.disabledReason,
+                          )}</div>`
+                        : ""
+                    }
                   </button>
-                `,
-                )
-                .join("")}
-              <button
-                class="ml-control"
-                data-advance-objective="true"
-                ${snapshot.busyLabel ? "disabled" : ""}
-                type="button"
-              >
-                Pursue Objective
-              </button>
-            </div>
-            <div class="ml-footer-copy">${escapeHtml(
-              upcomingCommitmentLabel ??
-                "Drag to pan, scroll to zoom, click to move, and let the camera settle back toward Rowan once you stop pulling around the block.",
-            )}</div>
-          </div>
+                `
+                  : ""
+              }
 
-          <div class="ml-command-section">
-            <div class="ml-kicker">Recent Beat</div>
-            <div class="ml-list ml-rail-feed" data-preserve-scroll="rail-feed">
-              ${feedPreview
-                .map(
-                  (entry) => `
-                  <div class="ml-row">
-                    <div class="ml-row-title">${escapeHtml(formatClock(entry.time))}</div>
-                    <div class="ml-row-copy">${escapeHtml(entry.text)}</div>
+              ${conversationRailHtml}
+
+              ${
+                hasRailMore
+                  ? `
+                  <div class="ml-rail-more ${supportExpanded ? "is-open" : ""}">
+                    <button
+                      class="ml-rail-more-toggle"
+                      data-toggle-support="true"
+                      aria-expanded="${supportExpanded ? "true" : "false"}"
+                      type="button"
+                    >
+                      <div class="ml-rail-more-copy">
+                        <div class="ml-kicker">More</div>
+                        <div class="ml-rail-more-title">Context and tools</div>
+                        ${
+                          railMoreSummary
+                            ? `<div class="ml-footer-copy">${escapeHtml(
+                                railMoreSummary,
+                              )}</div>`
+                            : ""
+                        }
+                      </div>
+                      <div class="ml-rail-more-state">${
+                        supportExpanded ? "Hide" : "Open"
+                      }</div>
+                    </button>
+                    <div class="ml-rail-more-body">
+                      ${
+                        railContextEntries.length > 0
+                          ? `
+                          <div class="ml-rail-context-list">
+                            ${railContextEntries
+                              .map(
+                                (entry) => `
+                                <div class="ml-rail-context-row" data-tone="${escapeHtml(
+                                  entry.tone,
+                                )}">
+                                  <div class="ml-rail-context-label">${escapeHtml(
+                                    entry.label,
+                                  )}</div>
+                                  ${
+                                    "title" in entry && entry.title
+                                      ? `<div class="ml-rail-context-title">${escapeHtml(
+                                          entry.title,
+                                        )}</div>`
+                                      : ""
+                                  }
+                                  <div class="ml-rail-context-copy">${escapeHtml(
+                                    entry.text,
+                                  )}</div>
+                                </div>
+                              `,
+                              )
+                              .join("")}
+                          </div>
+                        `
+                          : ""
+                      }
+
+                      ${
+                        secondaryActions.length > 0
+                          ? `
+                          <div class="ml-command-section">
+                            <div class="ml-kicker">Moves</div>
+                            ${secondaryActions
+                              .map(
+                                (action) => `
+                                <button
+                                  class="ml-button"
+                                  data-action-id="${escapeHtml(action.id)}"
+                                  data-action-label="${escapeHtml(action.label)}"
+                                  data-tone="${escapeHtml(action.emphasis)}"
+                                  ${snapshot.busyLabel || action.disabled ? "disabled" : ""}
+                                  type="button"
+                                >
+                                  <div class="ml-button-title">${escapeHtml(
+                                    action.label,
+                                  )}</div>
+                                  <div class="ml-button-copy">${escapeHtml(
+                                    action.description,
+                                  )}</div>
+                                  ${
+                                    action.disabledReason
+                                      ? `<div class="ml-button-copy" style="color: rgba(246, 198, 193, 0.92);">${escapeHtml(
+                                          action.disabledReason,
+                                        )}</div>`
+                                      : ""
+                                  }
+                                </button>
+                              `,
+                              )
+                              .join("")}
+                          </div>
+                        `
+                          : ""
+                      }
+
+                      <div class="ml-command-section">
+                        <div class="ml-kicker">Spend Time</div>
+                        <div class="ml-controls">
+                          ${waitOptions
+                            .map(
+                              (option) => `
+                              <button
+                                class="ml-control"
+                                data-wait-minutes="${option.minutes}"
+                                data-wait-label="${escapeHtml(option.busyLabel)}"
+                                ${snapshot.busyLabel ? "disabled" : ""}
+                                type="button"
+                              >
+                                ${escapeHtml(option.label)}
+                              </button>
+                            `,
+                            )
+                            .join("")}
+                          <button
+                            class="ml-control"
+                            data-advance-objective="true"
+                            ${snapshot.busyLabel ? "disabled" : ""}
+                            type="button"
+                          >
+                            Pursue Objective
+                          </button>
+                        </div>
+                        <div class="ml-footer-copy">${escapeHtml(
+                          upcomingCommitmentLabel ??
+                            "Advance the hour when Rowan is waiting on the next useful beat, or click the street and let him move.",
+                        )}</div>
+                      </div>
+                    </div>
                   </div>
-                `,
-                )
-                .join("")}
+                `
+                  : ""
+              }
+
+              ${
+                snapshot.busyLabel
+                  ? `<div class="ml-footer-copy">${escapeHtml(
+                      snapshot.busyLabel,
+                    )}</div>`
+                  : ""
+              }
+              ${
+                snapshot.error
+                  ? `<div class="ml-error">${escapeHtml(snapshot.error)}</div>`
+                  : ""
+              }
             </div>
           </div>
         </div>
@@ -6608,31 +8899,25 @@ function buildTabButton(
   `;
 }
 
-function buildPeopleTabHtml(
-  options: {
-    conversationDecision?: string;
-    conversationLocationId?: string;
-    conversationLines: ConversationEntry[];
-    conversationObjectiveText?: string;
-    conversationReplay: ConversationReplayState;
-    conversationSummary?: string;
-    conversationUpdatedAt?: string;
-    currentObjectiveText: string;
-    currentSummary: string;
-    currentThought: string;
-    npcs: NpcState[];
-    selectedNpc: NpcState | null;
-    snapshot: StreetAppSnapshot;
-    talkableNpcIds: Set<string>;
-    tools: StreetGameState["player"]["inventory"];
-  },
-) {
+function buildPeopleTabHtml(options: {
+  conversationDecision?: string;
+  conversationLines: ConversationEntry[];
+  conversationObjectiveText?: string;
+  conversationSummary?: string;
+  conversationUpdatedAt?: string;
+  currentObjectiveText: string;
+  currentSummary: string;
+  currentThought: string;
+  npcs: NpcState[];
+  selectedNpc: NpcState | null;
+  snapshot: StreetAppSnapshot;
+  talkableNpcIds: Set<string>;
+  tools: StreetGameState["player"]["inventory"];
+}) {
   const {
     conversationDecision,
-    conversationLocationId,
     conversationLines,
     conversationObjectiveText,
-    conversationReplay,
     conversationSummary,
     conversationUpdatedAt,
     currentObjectiveText,
@@ -6644,13 +8929,18 @@ function buildPeopleTabHtml(
     talkableNpcIds,
     tools,
   } = options;
-  const selectedPersonality = selectedNpc ? npcPersonalityProfile(selectedNpc) : null;
+  const selectedPersonality = selectedNpc
+    ? npcPersonalityProfile(selectedNpc)
+    : null;
+  const liveConversationNpcId = snapshot.game?.activeConversation?.npcId;
+  const liveConversationSelected =
+    Boolean(selectedNpc) && liveConversationNpcId === selectedNpc?.id;
 
   return `
-    <div class="ml-focus-grid">
+    <div class="ml-focus-grid ${liveConversationSelected ? "is-live-conversation" : ""}">
       <div class="ml-focus-stack">
         <div class="ml-card">
-          <div class="ml-kicker">Rowan Right Now</div>
+          <div class="ml-kicker">Rowan Model</div>
           <div class="ml-row-title" style="margin-top: 8px;">${escapeHtml(
             currentThought,
           )}</div>
@@ -6663,18 +8953,28 @@ function buildPeopleTabHtml(
           )}</div>
         </div>
         <div class="ml-card">
-          <div class="ml-kicker">People In Reach</div>
+          <div class="ml-kicker">Agents In Reach</div>
           <div class="ml-people-grid" style="margin-top: 12px;">
             ${npcs
               .map((npc) => {
                 const personality = npcPersonalityProfile(npc);
+                const hasLiveThread = liveConversationNpcId === npc.id;
                 return `
                 <button
-                  class="ml-person ${selectedNpc?.id === npc.id ? "is-active" : ""}"
+                  class="ml-person ${selectedNpc?.id === npc.id ? "is-active" : ""} ${
+                    hasLiveThread ? "has-live-thread" : ""
+                  }"
                   data-select-npc="${escapeHtml(npc.id)}"
                   type="button"
                 >
-                  <div class="ml-person-name">${escapeHtml(npc.name)}</div>
+                  <div class="ml-person-heading">
+                    <div class="ml-person-name">${escapeHtml(npc.name)}</div>
+                    ${
+                      hasLiveThread
+                        ? '<div class="ml-person-live-tag">Live</div>'
+                        : ""
+                    }
+                  </div>
                   <div class="ml-person-meta">${escapeHtml(
                     `${personality.badge} • ${npc.known ? "known" : "unfamiliar"}`,
                   )}</div>
@@ -6693,7 +8993,9 @@ function buildPeopleTabHtml(
           selectedNpc
             ? `
             <div class="ml-card">
-              <div class="ml-kicker">Character Card</div>
+              <div class="ml-kicker">${escapeHtml(
+                liveConversationSelected ? "Agent In Motion" : "Agent Card",
+              )}</div>
               <div class="ml-card-title" style="margin-top: 8px;">${escapeHtml(
                 selectedNpc.name,
               )}</div>
@@ -6707,22 +9009,31 @@ function buildPeopleTabHtml(
               <div class="ml-row-copy" style="margin-top: 10px;">${escapeHtml(
                 selectedNpc.summary,
               )}</div>
-              <div class="ml-row-copy" style="margin-top: 10px;">${escapeHtml(
-                selectedNpc.currentThought ||
-                  selectedNpc.currentConcern ||
-                  selectedNpc.currentObjective ||
-                  "They are still hard to read beyond the role they hold here.",
-              )}</div>
-              ${buildConversationPanelHtml({
+              <div class="ml-mini-grid" style="margin-top: 12px;">
+                <div class="ml-row">
+                  <div class="ml-row-meta">Current Objective</div>
+                  <div class="ml-row-copy">${escapeHtml(
+                    selectedNpc.currentObjective ||
+                      "Still finding the clearest thread to protect.",
+                  )}</div>
+                </div>
+                <div class="ml-row">
+                  <div class="ml-row-meta">Current Concern</div>
+                  <div class="ml-row-copy">${escapeHtml(
+                    selectedNpc.currentConcern ||
+                      selectedNpc.currentThought ||
+                      "Still reading Rowan before showing their full hand.",
+                  )}</div>
+                </div>
+              </div>
+              ${buildPeopleConversationStatusHtml({
                 conversationDecision,
                 conversationLines,
-                conversationLocationId,
                 conversationObjectiveText,
                 conversationSummary,
                 conversationUpdatedAt,
+                isLiveConversation: liveConversationSelected,
                 npc: selectedNpc,
-                replay: conversationReplay,
-                snapshot,
                 talkableNpcIds,
               })}
             </div>
@@ -6739,6 +9050,55 @@ function buildPeopleTabHtml(
   `;
 }
 
+function buildPeopleConversationStatusHtml(options: {
+  conversationDecision?: string;
+  conversationLines: ConversationEntry[];
+  conversationObjectiveText?: string;
+  conversationSummary?: string;
+  conversationUpdatedAt?: string;
+  isLiveConversation: boolean;
+  npc: NpcState;
+  talkableNpcIds: Set<string>;
+}) {
+  const {
+    conversationDecision,
+    conversationLines,
+    conversationObjectiveText,
+    conversationSummary,
+    conversationUpdatedAt,
+    isLiveConversation,
+    npc,
+    talkableNpcIds,
+  } = options;
+  const threadRead =
+    conversationDecision ||
+    conversationObjectiveText ||
+    conversationSummary ||
+    (talkableNpcIds.has(npc.id)
+      ? `Rowan can open with ${npc.name} from the main log whenever you're ready.`
+      : `${npc.name} is not ready to talk right now.`);
+
+  return `
+    <div class="ml-card" style="margin-top: 12px;">
+      <div class="ml-kicker">${
+        isLiveConversation ? "Live In Rowan Log" : "Conversation Thread"
+      }</div>
+      <div class="ml-row-copy" style="margin-top: 8px;">${escapeHtml(
+        isLiveConversation
+          ? `The live exchange with ${npc.name} is unfolding in Rowan's log on the main rail.`
+          : threadRead,
+      )}</div>
+      ${
+        conversationLines.length > 0 && conversationUpdatedAt
+          ? `<div class="ml-row-meta">${escapeHtml(
+              `Last update • ${formatClock(conversationUpdatedAt)}`,
+            )}</div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 function buildConversationPanelHtml(options: {
   conversationDecision?: string;
   conversationLines: ConversationEntry[];
@@ -6746,9 +9106,17 @@ function buildConversationPanelHtml(options: {
   conversationObjectiveText?: string;
   conversationSummary?: string;
   conversationUpdatedAt?: string;
+  currentObjectiveText: string;
+  currentThought: string;
+  isLiveConversation: boolean;
+  mode: "focus" | "rail";
   npc: NpcState;
   replay: ConversationReplayState;
   snapshot: StreetAppSnapshot;
+  startAction?: {
+    id: string;
+    label: string;
+  };
   talkableNpcIds: Set<string>;
 }) {
   const {
@@ -6758,18 +9126,27 @@ function buildConversationPanelHtml(options: {
     conversationObjectiveText,
     conversationSummary,
     conversationUpdatedAt,
+    currentObjectiveText,
+    currentThought,
+    isLiveConversation,
+    mode,
     npc,
     replay,
     snapshot,
+    startAction,
     talkableNpcIds,
   } = options;
+  const isRailMode = mode === "rail";
   const personality = npcPersonalityProfile(npc);
   const npcInitials = initialsForName(npc.name);
   const conversationLocation = conversationLocationId
-    ? snapshot.game?.locations.find((location) => location.id === conversationLocationId)
+    ? snapshot.game?.locations.find(
+        (location) => location.id === conversationLocationId,
+      )
     : undefined;
   const conversationTimestamp =
-    conversationUpdatedAt ?? conversationLines[conversationLines.length - 1]?.time;
+    conversationUpdatedAt ??
+    conversationLines[conversationLines.length - 1]?.time;
   const conversationContext = [
     conversationLocation?.name,
     conversationTimestamp ? formatClock(conversationTimestamp) : null,
@@ -6777,12 +9154,12 @@ function buildConversationPanelHtml(options: {
     .filter(Boolean)
     .join(" • ");
   const revealedEntryIdSet = new Set(replay.revealedEntryIds);
-  const visibleConversationEntries = conversationLines
-    .slice(-6)
-    .filter(
-      (entry) =>
-        revealedEntryIdSet.has(entry.id) || entry.id === replay.streamingEntryId,
-    );
+  const visibleConversationEntries = (
+    isRailMode ? conversationLines : conversationLines.slice(-6)
+  ).filter(
+    (entry) =>
+      revealedEntryIdSet.has(entry.id) || entry.id === replay.streamingEntryId,
+  );
   const effectiveTypingState = replay.streamPauseActor
     ? {
         actor: replay.streamPauseActor,
@@ -6801,9 +9178,36 @@ function buildConversationPanelHtml(options: {
     conversationObjectiveText &&
     conversationObjectiveText !== conversationDecision &&
     !isTranscriptInMotion;
+  const threadShift =
+    conversationDecision ||
+    conversationObjectiveText ||
+    conversationSummary ||
+    "The exchange is still changing how both agents read the block.";
+  const railThreadNote = buildNarrativePreview(
+    joinNarrativeFragments([
+      conversationDecision,
+      journalNoteVisible ? conversationObjectiveText : null,
+      !conversationDecision && !journalNoteVisible ? conversationSummary : null,
+    ]),
+    188,
+  );
+  const rowanThread =
+    conversationObjectiveText || currentThought || currentObjectiveText;
+  const npcThread =
+    npc.currentConcern ||
+    npc.currentObjective ||
+    npc.currentThought ||
+    "Still deciding how much Rowan should matter here.";
+  const canSpeak = talkableNpcIds.has(npc.id) && conversationLines.length > 0;
+  const canStartWithRowan =
+    Boolean(startAction) &&
+    talkableNpcIds.has(npc.id) &&
+    conversationLines.length === 0;
 
   return `
-    <div class="ml-chat-shell">
+    <div class="ml-chat-shell ${isLiveConversation ? "is-live" : ""} ${
+      isRailMode ? "is-rail" : ""
+    }">
       <div class="ml-chat-header">
         <div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>
         <div class="ml-chat-head-copy">
@@ -6824,139 +9228,202 @@ function buildConversationPanelHtml(options: {
         </div>
       </div>
       ${
-        conversationSummary && !isTranscriptInMotion
+        isRailMode
+          ? `
+          <div class="ml-chat-rail-note">${escapeHtml(
+            conversationLines.length > 0
+              ? railThreadNote || threadShift
+              : `If Rowan starts with ${npc.name}, the exchange will unfold here in real time.`,
+          )}</div>
+        `
+          : `
+          <div class="ml-chat-sim-strip">
+            <div class="ml-chat-sim-card is-rowan">
+              <div class="ml-chat-sim-label">Rowan Is Testing</div>
+              <div class="ml-chat-sim-copy">${escapeHtml(rowanThread)}</div>
+            </div>
+            <div class="ml-chat-sim-card">
+              <div class="ml-chat-sim-label">${escapeHtml(npc.name)} Is Protecting</div>
+              <div class="ml-chat-sim-copy">${escapeHtml(npcThread)}</div>
+            </div>
+            <div class="ml-chat-sim-card">
+              <div class="ml-chat-sim-label">${
+                isTranscriptInMotion
+                  ? "Interpretation In Motion"
+                  : "Thread Shift"
+              }</div>
+              <div class="ml-chat-sim-copy">${escapeHtml(threadShift)}</div>
+            </div>
+          </div>
+        `
+      }
+      ${
+        !isRailMode && conversationSummary && !isTranscriptInMotion
           ? `
           <div class="ml-chat-summary">${escapeHtml(conversationSummary)}</div>
         `
           : ""
       }
       ${
-        conversationDecision && !isTranscriptInMotion
+        !isRailMode && conversationDecision && !isTranscriptInMotion
           ? `
           <div class="ml-chat-outcome">
-            <div class="ml-chat-outcome-title">Conversation Outcome</div>
+            <div class="ml-chat-outcome-title">Thread Shift</div>
             <div class="ml-chat-outcome-copy">${escapeHtml(conversationDecision)}</div>
           </div>
         `
           : ""
       }
       ${
-        journalNoteVisible
+        !isRailMode && journalNoteVisible
           ? `
           <div class="ml-chat-outcome">
-            <div class="ml-chat-outcome-title">Journal Note</div>
+            <div class="ml-chat-outcome-title">Objective Update</div>
             <div class="ml-chat-outcome-copy">${escapeHtml(conversationObjectiveText)}</div>
           </div>
         `
           : ""
       }
-      <div class="ml-chat-transcript" data-chat-transcript="true">
-        ${
-          conversationLines.length === 0
-            ? `<div class="ml-chat-empty">${escapeHtml(
-                `${npc.name} is here, but Rowan has not stepped into the conversation yet.`,
-              )}</div>`
-            : visibleConversationEntries
-                .map((entry) => {
-                  const isPlayer = entry.speaker === "player";
-                  const displayText =
-                    entry.id === replay.streamingEntryId
-                      ? revealConversationText(entry.text, replay.streamedWordCount)
-                      : entry.text;
+      ${
+        !isRailMode || conversationLines.length > 0 || effectiveTypingState
+          ? `
+          <div class="ml-chat-transcript" ${
+            isRailMode ? "" : 'data-chat-transcript="true"'
+          }>
+            ${
+              conversationLines.length === 0
+                ? `<div class="ml-chat-empty">${escapeHtml(
+                    `${npc.name} is here, but Rowan has not stepped into the conversation yet.`,
+                  )}</div>`
+                : visibleConversationEntries
+                    .map((entry) => {
+                      const isPlayer = entry.speaker === "player";
+                      const displayText =
+                        entry.id === replay.streamingEntryId
+                          ? revealConversationText(
+                              entry.text,
+                              replay.streamedWordCount,
+                            )
+                          : entry.text;
 
-                  return `
-                    <div class="ml-chat-row ${isPlayer ? "is-player" : ""}">
-                      <div class="ml-chat-stack ${isPlayer ? "is-player" : ""}">
-                        ${
-                          isPlayer
-                            ? ""
-                            : `<div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>`
-                        }
-                        <div class="ml-chat-bubble-wrap">
-                          <div class="ml-chat-bubble ${isPlayer ? "is-player" : ""}">
-                            ${escapeHtml(displayText)}${
-                              entry.id === replay.streamingEntryId
-                                ? '<span class="ml-chat-caret"></span>'
-                                : ""
+                      return `
+                        <div class="ml-chat-row ${isPlayer ? "is-player" : ""}">
+                          <div class="ml-chat-stack ${isPlayer ? "is-player" : ""}">
+                            ${
+                              isPlayer
+                                ? ""
+                                : `<div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>`
                             }
+                            <div class="ml-chat-bubble-wrap">
+                              <div class="ml-chat-bubble ${isPlayer ? "is-player" : ""}">
+                                ${escapeHtml(displayText)}${
+                                  entry.id === replay.streamingEntryId
+                                    ? '<span class="ml-chat-caret"></span>'
+                                    : ""
+                                }
+                              </div>
+                              <div class="ml-chat-meta ${isPlayer ? "is-player" : ""}">${escapeHtml(
+                                `${isPlayer ? "Rowan" : entry.speakerName} • ${formatClock(entry.time)}`,
+                              )}</div>
+                            </div>
                           </div>
-                          <div class="ml-chat-meta ${isPlayer ? "is-player" : ""}">${escapeHtml(
-                            `${isPlayer ? "Rowan" : entry.speakerName} • ${formatClock(entry.time)}`,
-                          )}</div>
+                        </div>
+                      `;
+                    })
+                    .join("")
+            }
+            ${
+              effectiveTypingState
+                ? `
+                <div class="ml-chat-row ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">
+                  <div class="ml-chat-stack ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">
+                    ${
+                      effectiveTypingState.actor === "rowan"
+                        ? ""
+                        : `<div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>`
+                    }
+                    <div class="ml-chat-bubble-wrap">
+                      <div class="ml-chat-bubble ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">
+                        <div class="ml-chat-typing">
+                          <span class="ml-chat-dot"></span>
+                          <span class="ml-chat-dot"></span>
+                          <span class="ml-chat-dot"></span>
                         </div>
                       </div>
-                    </div>
-                  `;
-                })
-                .join("")
-        }
-        ${
-          effectiveTypingState
-            ? `
-            <div class="ml-chat-row ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">
-              <div class="ml-chat-stack ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">
-                ${
-                  effectiveTypingState.actor === "rowan"
-                    ? ""
-                    : `<div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>`
-                }
-                <div class="ml-chat-bubble-wrap">
-                  <div class="ml-chat-bubble ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">
-                    <div class="ml-chat-typing">
-                      <span class="ml-chat-dot"></span>
-                      <span class="ml-chat-dot"></span>
-                      <span class="ml-chat-dot"></span>
+                      <div class="ml-chat-meta ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">${escapeHtml(
+                        effectiveTypingState.label,
+                      )}</div>
                     </div>
                   </div>
-                  <div class="ml-chat-meta ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">${escapeHtml(
-                    effectiveTypingState.label,
-                  )}</div>
                 </div>
-              </div>
-            </div>
+              `
+                : ""
+            }
+          </div>
+        `
+          : ""
+      }
+      ${
+        canStartWithRowan && startAction
+          ? `
+          <button
+            class="ml-button"
+            data-action-id="${escapeHtml(startAction.id)}"
+            data-action-label="${escapeHtml(startAction.label)}"
+            data-tone="high"
+            ${snapshot.busyLabel ? "disabled" : ""}
+            type="button"
+          >
+            <div class="ml-button-title">Let Rowan Open</div>
+            <div class="ml-button-copy">${escapeHtml(
+              `Start with ${npc.name} in Rowan's voice and let the conversation begin in the log.`,
+            )}</div>
+          </button>
+        `
+          : canSpeak
+            ? `
+            <form class="ml-form" data-speak-form="true" data-npc-id="${escapeHtml(
+              npc.id,
+            )}">
+              <input
+                class="ml-input"
+                data-overlay-field-key="speak:${escapeHtml(npc.id)}"
+                aria-label="Speak to ${escapeHtml(npc.name)}"
+                ${snapshot.busyLabel ? "disabled" : ""}
+                name="speech"
+                placeholder="${escapeHtml(
+                  isRailMode
+                    ? `What should Rowan say to ${npc.name}?`
+                    : `Say something to ${npc.name}`,
+                )}"
+                type="text"
+              />
+              <button class="ml-submit" ${snapshot.busyLabel ? "disabled" : ""} type="submit">
+                ${isRailMode ? "Rowan Says" : "Speak"}
+              </button>
+            </form>
           `
-            : ""
-        }
-      </div>
-      <form class="ml-form" data-speak-form="true" data-npc-id="${escapeHtml(
-        npc.id,
-      )}">
-        <input
-          class="ml-input"
-          data-overlay-field-key="speak:${escapeHtml(npc.id)}"
-          aria-label="Speak to ${escapeHtml(npc.name)}"
-          ${snapshot.busyLabel || !talkableNpcIds.has(npc.id) ? "disabled" : ""}
-          name="speech"
-          placeholder="${escapeHtml(
-            talkableNpcIds.has(npc.id)
-              ? `Say something to ${npc.name}`
-              : `${npc.name} is not ready to talk right now`,
-          )}"
-          type="text"
-        />
-        <button
-          class="ml-submit"
-          ${snapshot.busyLabel || !talkableNpcIds.has(npc.id) ? "disabled" : ""}
-          type="submit"
-        >
-          Speak
-        </button>
-      </form>
+            : talkableNpcIds.has(npc.id)
+              ? ""
+              : `
+            <div class="ml-chat-rail-note">${escapeHtml(
+              `${npc.name} is not ready to talk right now.`,
+            )}</div>
+          `
+      }
     </div>
   `;
 }
 
-function buildJournalTabHtml(
-  options: {
-    busyLabel: string | null;
-    currentObjectiveText: string;
-    game: StreetGameState;
-    objectiveCompleted: ObjectivePlanItem[];
-    objectivePlanItems: ObjectivePlanItem[];
-    objectiveSuggestions: string[];
-    recentFeed: StreetGameState["feed"];
-  },
-) {
+function buildJournalTabHtml(options: {
+  busyLabel: string | null;
+  currentObjectiveText: string;
+  game: StreetGameState;
+  objectiveCompleted: ObjectivePlanItem[];
+  objectivePlanItems: ObjectivePlanItem[];
+  objectiveSuggestions: string[];
+  recentFeed: StreetGameState["feed"];
+}) {
   const {
     busyLabel,
     currentObjectiveText,
@@ -7117,9 +9584,15 @@ function buildMindTabHtml(options: {
                 : "The district is still mostly unmapped in Rowan's head.",
             )}</div>
             ${
-              formatMemoryMeta(extraPlaceNames, game.player.knownLocationIds.length)
+              formatMemoryMeta(
+                extraPlaceNames,
+                game.player.knownLocationIds.length,
+              )
                 ? `<div class="ml-row-meta">${escapeHtml(
-                    formatMemoryMeta(extraPlaceNames, game.player.knownLocationIds.length) ?? "",
+                    formatMemoryMeta(
+                      extraPlaceNames,
+                      game.player.knownLocationIds.length,
+                    ) ?? "",
                   )}</div>`
                 : ""
             }
@@ -7136,7 +9609,10 @@ function buildMindTabHtml(options: {
             ${
               formatMemoryMeta(extraPeopleNames, game.player.knownNpcIds.length)
                 ? `<div class="ml-row-meta">${escapeHtml(
-                    formatMemoryMeta(extraPeopleNames, game.player.knownNpcIds.length) ?? "",
+                    formatMemoryMeta(
+                      extraPeopleNames,
+                      game.player.knownNpcIds.length,
+                    ) ?? "",
                   )}</div>`
                 : ""
             }
@@ -7152,7 +9628,8 @@ function buildMindTabHtml(options: {
             ${
               formatMemoryMeta(extraThreadTitles, memoryThreads.length)
                 ? `<div class="ml-row-meta">${escapeHtml(
-                    formatMemoryMeta(extraThreadTitles, memoryThreads.length) ?? "",
+                    formatMemoryMeta(extraThreadTitles, memoryThreads.length) ??
+                      "",
                   )}</div>`
                 : ""
             }
@@ -7162,12 +9639,17 @@ function buildMindTabHtml(options: {
               primaryTool?.name ?? `$${game.player.money} on hand`,
             )}</div>
             <div class="ml-row-copy">${escapeHtml(
-              primaryTool?.description ?? cashReadLabel(game.player.money, game.player.energy),
+              primaryTool?.description ??
+                cashReadLabel(game.player.money, game.player.energy),
             )}</div>
             ${
-              primaryTool && formatMemoryMeta(extraToolNames, game.player.inventory.length)
+              primaryTool &&
+              formatMemoryMeta(extraToolNames, game.player.inventory.length)
                 ? `<div class="ml-row-meta">${escapeHtml(
-                    formatMemoryMeta(extraToolNames, game.player.inventory.length) ?? "",
+                    formatMemoryMeta(
+                      extraToolNames,
+                      game.player.inventory.length,
+                    ) ?? "",
                   )}</div>`
                 : ""
             }
@@ -7210,6 +9692,43 @@ function buildWaitOptions(
   });
 }
 
+function joinNarrativeFragments(parts: Array<string | undefined>) {
+  return parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(" ");
+}
+
+function formatNameList(names: string[]) {
+  if (names.length === 0) {
+    return "";
+  }
+
+  if (names.length === 1) {
+    return names[0]!;
+  }
+
+  if (names.length === 2) {
+    return `${names[0]} and ${names[1]}`;
+  }
+
+  return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+}
+
+function feedToneLabel(tone: StreetGameState["feed"][number]["tone"]) {
+  switch (tone) {
+    case "job":
+      return "Work";
+    case "problem":
+      return "Problem";
+    case "memory":
+      return "Memory";
+    case "info":
+    default:
+      return "Activity";
+  }
+}
+
 function buildObjectivePlanRows(
   game: StreetGameState,
   locationById: Map<string, StreetGameState["locations"][number]>,
@@ -7249,9 +9768,15 @@ function buildObjectiveSuggestions(game: StreetGameState) {
   const activeJob = game.jobs.find(
     (job) => job.id === game.player.activeJobId && !job.completed,
   );
-  const pumpProblem = game.problems.find((problem) => problem.id === "problem-pump");
-  const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
-  const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
+  const pumpProblem = game.problems.find(
+    (problem) => problem.id === "problem-pump",
+  );
+  const cartProblem = game.problems.find(
+    (problem) => problem.id === "problem-cart",
+  );
+  const hasWrench = game.player.inventory.some(
+    (item) => item.id === "item-wrench",
+  );
   const spokenNpcCount = new Set(
     game.conversations
       .filter((entry) => entry.speaker === "player")
@@ -7266,7 +9791,11 @@ function buildObjectiveSuggestions(game: StreetGameState) {
     suggestions.add(`Finish ${activeJob.title.toLowerCase()}.`);
   }
 
-  if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
+  if (
+    pumpProblem?.discovered &&
+    pumpProblem.status === "active" &&
+    !hasWrench
+  ) {
     suggestions.add("Buy a wrench and fix the pump.");
   } else if (pumpProblem?.discovered && pumpProblem.status === "active") {
     suggestions.add("Fix the pump in Morrow Yard.");
@@ -7306,7 +9835,9 @@ function buildMemoryThreads(
   locationById: Map<string, StreetGameState["locations"][number]>,
 ) {
   const visibleJobs = game.jobs
-    .filter((job) => job.accepted || job.discovered || job.completed || job.missed)
+    .filter(
+      (job) => job.accepted || job.discovered || job.completed || job.missed,
+    )
     .map((job) => ({
       detail: buildJobMemoryDetail(job, locationById.get(job.locationId)?.name),
       id: job.id,
@@ -7398,9 +9929,7 @@ function buildNarrativePreview(text: string, maxLength: number) {
   return `${base.trimEnd()}...`;
 }
 
-function buildKnownPlaceDetail(
-  location: StreetGameState["locations"][number],
-) {
+function buildKnownPlaceDetail(location: StreetGameState["locations"][number]) {
   return `I know this as a ${location.type} in ${location.neighborhood}. ${location.context}`;
 }
 
@@ -7505,7 +10034,8 @@ function buildObjectiveCompletedItems(
       } and made the block a little easier to live in.`,
       done: true,
       id: `completed-problem-${problem.id}`,
-      progress: problem.rewardMoney > 0 ? `+$${problem.rewardMoney}` : undefined,
+      progress:
+        problem.rewardMoney > 0 ? `+$${problem.rewardMoney}` : undefined,
       title: `Solved ${problem.title.toLowerCase()}`,
     });
   }
@@ -7570,7 +10100,9 @@ function buildObjectivePlanItems(
   );
   const discoveredJobs = game.jobs.filter((job) => job.discovered);
   const completedJobs = game.jobs.filter((job) => job.completed).length;
-  const discoveredProblems = game.problems.filter((problem) => problem.discovered);
+  const discoveredProblems = game.problems.filter(
+    (problem) => problem.discovered,
+  );
   const activeProblems = discoveredProblems.filter(
     (problem) => problem.status === "active",
   );
@@ -7583,7 +10115,9 @@ function buildObjectivePlanItems(
   const houseStanding = game.player.reputation.morrow_house ?? 0;
   const homeName =
     locationById.get(game.player.homeLocationId)?.name ?? "Morrow House";
-  const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
+  const hasWrench = game.player.inventory.some(
+    (item) => item.id === "item-wrench",
+  );
   const activeProblem = activeProblems[0];
   const activeJobLocation = activeJob
     ? locationById.get(activeJob.locationId)?.name
@@ -7681,14 +10215,20 @@ function buildObjectivePlanItems(
         },
         {
           detail:
-            discoveredJobs.length > 0 || activeProblems.length > 0 || solvedProblems > 0
+            discoveredJobs.length > 0 ||
+            activeProblems.length > 0 ||
+            solvedProblems > 0
               ? "The district has already given you at least one thread worth following."
               : "Learning the lanes should surface one job, problem, or useful opening.",
           done:
-            discoveredJobs.length > 0 || activeProblems.length > 0 || solvedProblems > 0,
+            discoveredJobs.length > 0 ||
+            activeProblems.length > 0 ||
+            solvedProblems > 0,
           id: "explore-lead",
           progress:
-            discoveredJobs.length > 0 || activeProblems.length > 0 || solvedProblems > 0
+            discoveredJobs.length > 0 ||
+            activeProblems.length > 0 ||
+            solvedProblems > 0
               ? "Lead found"
               : "Still looking",
           title: "Come away with one usable lead",
@@ -7707,24 +10247,24 @@ function buildObjectivePlanItems(
           title: "Find the problem clearly",
         },
         {
-          detail:
-            !activeProblem
-              ? "Once the problem is clear, figure out whether it needs time, hands, or a tool."
-              : activeProblem.requiredItemId
-                ? hasWrench
-                  ? "You have the tool this fix has been waiting on."
-                  : "You know the fix needs a tool before your hands can finish it."
-                : "You already have what you need to handle this.",
-          done: Boolean(activeProblem) && (!activeProblem.requiredItemId || hasWrench),
+          detail: !activeProblem
+            ? "Once the problem is clear, figure out whether it needs time, hands, or a tool."
+            : activeProblem.requiredItemId
+              ? hasWrench
+                ? "You have the tool this fix has been waiting on."
+                : "You know the fix needs a tool before your hands can finish it."
+              : "You already have what you need to handle this.",
+          done:
+            Boolean(activeProblem) &&
+            (!activeProblem.requiredItemId || hasWrench),
           id: "help-ready",
-          progress:
-            !activeProblem
-              ? "Waiting on the read"
-              : activeProblem.requiredItemId
-                ? hasWrench
-                  ? "Tool ready"
-                  : "Tool needed"
-                : "Ready now",
+          progress: !activeProblem
+            ? "Waiting on the read"
+            : activeProblem.requiredItemId
+              ? hasWrench
+                ? "Tool ready"
+                : "Tool needed"
+              : "Ready now",
           title: "Get what the fix needs",
         },
         {
@@ -7748,7 +10288,9 @@ function buildObjectivePlanItems(
           done: Boolean(activeProblem?.requiredItemId || hasWrench),
           id: "tool-decide",
           progress:
-            activeProblem?.requiredItemId || hasWrench ? "Clear enough" : "Still asking",
+            activeProblem?.requiredItemId || hasWrench
+              ? "Clear enough"
+              : "Still asking",
           title: "Figure out which tool matters",
         },
         {
@@ -7762,10 +10304,9 @@ function buildObjectivePlanItems(
           title: "Get the money together",
         },
         {
-          detail:
-            hasWrench
-              ? "The tool is already in your hands now."
-              : "You still need to go get it.",
+          detail: hasWrench
+            ? "The tool is already in your hands now."
+            : "You still need to go get it.",
           done: hasWrench,
           id: "tool-buy",
           progress: hasWrench ? "Owned" : "Not bought",
@@ -7803,7 +10344,9 @@ function buildObjectivePlanItems(
       return [
         {
           detail: game.goals[0] ?? "You still need a real path to money.",
-          done: Boolean(activeJob || completedJobs > 0 || discoveredJobs.length > 0),
+          done: Boolean(
+            activeJob || completedJobs > 0 || discoveredJobs.length > 0,
+          ),
           id: "settle-income",
           progress:
             activeJob || completedJobs > 0 || discoveredJobs.length > 0
@@ -7812,7 +10355,8 @@ function buildObjectivePlanItems(
           title: "Find income",
         },
         {
-          detail: game.goals[1] ?? `You still need better footing at ${homeName}.`,
+          detail:
+            game.goals[1] ?? `You still need better footing at ${homeName}.`,
           done: houseStanding >= 2,
           id: "settle-stay",
           progress: `${houseStanding}/2 footing`,
@@ -7820,7 +10364,8 @@ function buildObjectivePlanItems(
         },
         {
           detail:
-            game.goals[2] ?? "You still need people who are more than passing faces.",
+            game.goals[2] ??
+            "You still need people who are more than passing faces.",
           done: trustedPeople >= 1 || knownPeople >= 3,
           id: "settle-people",
           progress: `${Math.max(trustedPeople, knownPeople)}/${trustedPeople > 0 ? 2 : 3}`,
@@ -7911,7 +10456,9 @@ function isoForTotalMinutes(totalMinutes: number) {
 
 function formatJobWindow(day: number, startHour: number, endHour: number) {
   const dayOffsetMinutes = (day - 1) * 24 * 60;
-  const start = formatClock(isoForTotalMinutes(dayOffsetMinutes + startHour * 60));
+  const start = formatClock(
+    isoForTotalMinutes(dayOffsetMinutes + startHour * 60),
+  );
   const end = formatClock(isoForTotalMinutes(dayOffsetMinutes + endHour * 60));
   return `${start} to ${end}`;
 }
@@ -7919,18 +10466,36 @@ function formatJobWindow(day: number, startHour: number, endHour: number) {
 function syncUiState(runtimeState: RuntimeState) {
   const game = runtimeState.snapshot.game;
   const nextDefaultNpcId = pickDefaultSelectedNpcId(game);
+  const previousSelectedNpcId = runtimeState.ui.selectedNpcId;
+  const collapsibleRailViewport = isCollapsibleRailViewport(
+    runtimeState.snapshot.viewport,
+  );
 
   if (!game) {
     runtimeState.ui.selectedNpcId = null;
     runtimeState.ui.activeTab = "actions";
     runtimeState.ui.focusPanel = null;
+    runtimeState.ui.railExpanded = !collapsibleRailViewport;
     return;
   }
 
+  if (!collapsibleRailViewport) {
+    runtimeState.ui.railExpanded = true;
+  }
+
   if (game.activeConversation?.npcId) {
+    if (
+      collapsibleRailViewport &&
+      !runtimeState.ui.railExpanded &&
+      previousSelectedNpcId !== game.activeConversation.npcId
+    ) {
+      runtimeState.ui.railExpanded = true;
+    }
     runtimeState.ui.selectedNpcId = game.activeConversation.npcId;
-    runtimeState.ui.activeTab = "people";
-    runtimeState.ui.focusPanel = "people";
+    if (runtimeState.ui.focusPanel !== "people") {
+      runtimeState.ui.activeTab = "actions";
+      runtimeState.ui.focusPanel = null;
+    }
   }
 
   if (
@@ -7947,6 +10512,67 @@ function syncUiState(runtimeState: RuntimeState) {
   ) {
     runtimeState.ui.focusPanel = null;
   }
+}
+
+function maybeAutostartConversation(
+  runtimeState: RuntimeState,
+  callbacksRef: React.MutableRefObject<RuntimeCallbacks>,
+) {
+  const game = runtimeState.snapshot.game;
+  if (!game || runtimeState.snapshot.busyLabel || game.activeConversation) {
+    return;
+  }
+
+  const selectedNpc = getSelectedNpc(runtimeState);
+  if (
+    !selectedNpc ||
+    !game.player.currentLocationId ||
+    selectedNpc.currentLocationId !== game.player.currentLocationId
+  ) {
+    return;
+  }
+
+  const talkActions = game.availableActions.filter((action) =>
+    extractTalkNpcId(action.id),
+  );
+  const selectedTalkAction = talkActions.find(
+    (action) => extractTalkNpcId(action.id) === selectedNpc.id,
+  );
+  if (!selectedTalkAction) {
+    return;
+  }
+
+  if (getConversationPreview(game, selectedNpc.id).length > 0) {
+    runtimeState.ui.pendingConversationNpcId = null;
+    return;
+  }
+
+  const onlyTalkActionNpcId =
+    talkActions.length === 1 ? extractTalkNpcId(talkActions[0].id) : null;
+  const shouldAutostart =
+    runtimeState.ui.pendingConversationNpcId === selectedNpc.id ||
+    onlyTalkActionNpcId === selectedNpc.id;
+
+  if (!shouldAutostart) {
+    return;
+  }
+
+  const autoStartKey = `${game.id}:${game.player.currentLocationId}:${selectedNpc.id}`;
+  if (runtimeState.autoStartedConversationKey === autoStartKey) {
+    return;
+  }
+
+  runtimeState.autoStartedConversationKey = autoStartKey;
+  runtimeState.ui.pendingConversationNpcId = null;
+  runtimeState.ui.activeTab = "actions";
+  runtimeState.ui.focusPanel = null;
+  if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+    runtimeState.ui.railExpanded = true;
+  }
+  callbacksRef.current.onAction(
+    selectedTalkAction.id,
+    `Rowan opens with ${selectedNpc.name}`,
+  );
 }
 
 function getPlayableVisualScene(game: StreetGameState | null) {
@@ -7978,6 +10604,103 @@ function getPlayableVisualScene(game: StreetGameState | null) {
   }
 }
 
+const BLOCKING_LANDMARK_INSET_BY_STYLE: Partial<
+  Record<VisualScene["landmarks"][number]["style"], number>
+> = {
+  "boarding-house": 12,
+  cafe: 18,
+  workshop: 18,
+  yard: 14,
+};
+
+const BLOCKING_LANDMARK_MODULE_KINDS = new Set([
+  "entry",
+  "service_bay",
+  "wall_band",
+]);
+
+function buildNavigationTiles(
+  game: StreetGameState,
+  visualScene: VisualScene | null,
+) {
+  if (!visualScene) {
+    return game.map.tiles;
+  }
+
+  const blockingRects = collectVisualSceneBlockingRects(visualScene);
+  if (blockingRects.length === 0) {
+    return game.map.tiles;
+  }
+
+  return game.map.tiles.map((tile) => {
+    if (!tile.walkable) {
+      return tile;
+    }
+
+    return isNavigationTileBlockedByVisualScene(
+      tile,
+      visualScene,
+      blockingRects,
+    )
+      ? { ...tile, walkable: false }
+      : tile;
+  });
+}
+
+function collectVisualSceneBlockingRects(scene: VisualScene) {
+  return [
+    ...scene.landmarks
+      .filter((landmark) => landmark.style in BLOCKING_LANDMARK_INSET_BY_STYLE)
+      .map((landmark) =>
+        insetVisualRect(
+          landmark.rect,
+          BLOCKING_LANDMARK_INSET_BY_STYLE[landmark.style] ?? 0,
+        ),
+      ),
+    ...scene.landmarkModules
+      .filter((module) => BLOCKING_LANDMARK_MODULE_KINDS.has(module.kind))
+      .map((module) => insetVisualRect(module.rect, 8)),
+  ].filter((rect) => rect.width > 1 && rect.height > 1);
+}
+
+function insetVisualRect(rect: VisualRect, inset: number): VisualRect {
+  const width = Math.max(rect.width - inset * 2, 0);
+  const height = Math.max(rect.height - inset * 2, 0);
+
+  return {
+    ...rect,
+    height,
+    radius: rect.radius ? Math.max(rect.radius - inset, 0) : rect.radius,
+    width,
+    x: rect.x + inset,
+    y: rect.y + inset,
+  };
+}
+
+function isNavigationTileBlockedByVisualScene(
+  tile: MapTile,
+  scene: VisualScene,
+  blockingRects: VisualRect[],
+) {
+  const projectedPoint = projectVisualScenePoint(scene, {
+    x: tile.x + 0.5,
+    y: tile.y + 0.5,
+  });
+
+  return blockingRects.some((rect) =>
+    pointInsideVisualRect(projectedPoint, rect),
+  );
+}
+
+function pointInsideVisualRect(point: Point, rect: VisualRect) {
+  return !(
+    point.x < rect.x ||
+    point.y < rect.y ||
+    point.x > rect.x + rect.width ||
+    point.y > rect.y + rect.height
+  );
+}
+
 function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
   const game = snapshot.game;
   if (!game) {
@@ -7996,32 +10719,40 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
   }
 
   const visualScene = getPlayableVisualScene(game);
+  const navigationTiles = buildNavigationTiles(game, visualScene);
 
   return {
-    animatedSurfaceTiles: visualScene ? [] : collectAnimatedSurfaceTiles(game.map),
+    animatedSurfaceTiles: visualScene
+      ? []
+      : collectAnimatedSurfaceTiles(game.map),
     footprintByLocationId: new Map(
       game.map.footprints
         .filter((footprint) => footprint.locationId)
         .map((footprint) => [footprint.locationId as string, footprint]),
     ),
-    locationsById: new Map(game.locations.map((location) => [location.id, location])),
+    locationsById: new Map(
+      game.locations.map((location) => [location.id, location]),
+    ),
     patrolDistanceByKey: new Map(),
     patrolPathByKey: new Map(),
     primaryDoorByLocation: new Map(
       game.map.doors.map((door) => [door.locationId, door]),
     ),
     propsByLocation: groupPropsByLocation(game.map.props),
-    routeFinder: createRouteFinder(game.map.tiles),
+    routeFinder: createRouteFinder(navigationTiles),
     visualScene,
-    walkableRuntimePoints: buildWalkableRuntimePoints(game, visualScene),
+    walkableRuntimePoints: buildWalkableRuntimePoints(
+      navigationTiles,
+      visualScene,
+    ),
   };
 }
 
 function buildWalkableRuntimePoints(
-  game: StreetGameState,
+  tiles: MapTile[],
   visualScene: VisualScene | null,
 ): WalkableRuntimePoint[] {
-  return game.map.tiles
+  return tiles
     .filter((tile) => tile.walkable)
     .map((tile) => {
       const tileCenter = {
@@ -8069,7 +10800,10 @@ function collectAnimatedSurfaceTiles(
       }
 
       const fringeTile = fringeTileForCoordinate(column, row, map);
-      if (!fringeTile || (fringeTile.kind !== "water" && fringeTile.kind !== "dock")) {
+      if (
+        !fringeTile ||
+        (fringeTile.kind !== "water" && fringeTile.kind !== "dock")
+      ) {
         continue;
       }
 
@@ -8137,11 +10871,54 @@ function projectRuntimePoint(indices: RuntimeIndices, point: Point) {
   return mapPointToWorld(point);
 }
 
-function projectRuntimeTileCenter(indices: RuntimeIndices, x: number, y: number) {
+function projectRuntimeTileCenter(
+  indices: RuntimeIndices,
+  x: number,
+  y: number,
+) {
   return projectRuntimePoint(indices, {
     x: x + 0.5,
     y: y + 0.5,
   });
+}
+
+function getCompactCameraHorizontalRange(
+  runtimeState: RuntimeState,
+  world: { height: number; width: number },
+  visibleWidth: number,
+) {
+  const maxScrollX = Math.max(world.width - visibleWidth, 0);
+  const game = runtimeState.snapshot.game;
+  if (!game) {
+    return { max: maxScrollX, min: 0 };
+  }
+
+  const visualScene = runtimeState.indices.visualScene;
+  if (visualScene) {
+    const projectedLeft = projectVisualScenePoint(visualScene, {
+      x: 0,
+      y: 0,
+    }).x;
+    const projectedRight = projectVisualScenePoint(visualScene, {
+      x: game.map.width,
+      y: 0,
+    }).x;
+    const contentLeft = Math.min(projectedLeft, projectedRight);
+    const contentRight = Math.max(projectedLeft, projectedRight);
+    const min = clamp(contentLeft, 0, maxScrollX);
+    const max = Math.max(
+      min,
+      Math.min(contentRight - visibleWidth, maxScrollX),
+    );
+    return { max, min };
+  }
+
+  const mapOrigin = getMapWorldOrigin();
+  const contentLeft = mapOrigin.x;
+  const contentRight = mapOrigin.x + game.map.width * CELL;
+  const min = clamp(contentLeft, 0, maxScrollX);
+  const max = Math.max(min, Math.min(contentRight - visibleWidth, maxScrollX));
+  return { max, min };
 }
 
 function getRuntimeLocationHighlightRect(
@@ -8211,8 +10988,18 @@ function getOverlayLayoutMetrics(viewport: ViewportSize): OverlayLayoutMetrics {
     width <= 720 ? height - overlayInset * 2 : clamp(height * 0.7, 540, 780);
   const railMaxHeight = Math.max(280, height - overlayInset * 2);
   const sceneGap = width <= 720 ? 0 : overlayInset;
+  const dockFocusGap = width <= 960 ? 0 : width <= 1320 ? 12 : 16;
+  const dockFocusMaxWidth =
+    width <= 960
+      ? width - overlayInset * 2
+      : Math.max(
+          width - overlayInset * 2 - railWidth - dockFocusGap,
+          dockWidth,
+        );
+  const dockFocusWidth = Math.min(focusWidth, dockFocusMaxWidth);
 
   return {
+    dockFocusWidth,
     dockWidth,
     focusHeight,
     focusWidth,
@@ -8223,11 +11010,28 @@ function getOverlayLayoutMetrics(viewport: ViewportSize): OverlayLayoutMetrics {
   };
 }
 
+function isCollapsibleRailViewport(viewport: ViewportSize) {
+  return viewport.width <= 960;
+}
+
+function isPhoneRailViewport(viewport: ViewportSize) {
+  return viewport.width <= 720;
+}
+
+function isCompactViewport(viewport: ViewportSize) {
+  return viewport.width <= COMPACT_LAYOUT_MAX_WIDTH;
+}
+
+function isCompactPortraitViewport(viewport: ViewportSize) {
+  return isCompactViewport(viewport) && viewport.height > viewport.width;
+}
+
 function getSceneViewport(
   viewport: ViewportSize,
   world: { height: number; width: number },
+  layoutViewport: ViewportSize = viewport,
 ): SceneViewport {
-  if (viewport.width <= 720) {
+  if (isCompactViewport(layoutViewport)) {
     return {
       height: viewport.height,
       width: viewport.width,
@@ -8236,11 +11040,12 @@ function getSceneViewport(
     };
   }
 
-  const { overlayInset, railWidth, sceneGap } = getOverlayLayoutMetrics(viewport);
-  const frameX = overlayInset;
+  const { overlayInset, railWidth, sceneGap } =
+    getOverlayLayoutMetrics(viewport);
+  const frameX = 0;
   const frameY = overlayInset;
   const frameWidth = Math.max(
-    viewport.width - overlayInset * 2 - railWidth - sceneGap,
+    viewport.width - railWidth - sceneGap - overlayInset,
     1,
   );
   const frameHeight = Math.max(viewport.height - overlayInset * 2, 1);
@@ -8249,12 +11054,14 @@ function getSceneViewport(
   const sceneWidth =
     frameAspect > worldAspect ? frameHeight * worldAspect : frameWidth;
   const sceneHeight =
-    frameAspect > worldAspect ? frameHeight : frameWidth / Math.max(worldAspect, 0.001);
+    frameAspect > worldAspect
+      ? frameHeight
+      : frameWidth / Math.max(worldAspect, 0.001);
 
   return {
     height: sceneHeight,
     width: sceneWidth,
-    x: frameX + (frameWidth - sceneWidth) / 2,
+    x: frameX,
     y: frameY + (frameHeight - sceneHeight) / 2,
   };
 }
@@ -8262,9 +11069,13 @@ function getSceneViewport(
 function getSceneZoom(
   viewport: SceneViewport,
   world: { height: number; width: number },
+  layoutViewport: ViewportSize = viewport,
 ) {
   const widthFit = viewport.width / Math.max(world.width, 1);
   const heightFit = viewport.height / Math.max(world.height, 1);
+  if (isCompactPortraitViewport(layoutViewport)) {
+    return heightFit * COMPACT_PORTRAIT_COVER_ZOOM_BOOST;
+  }
   return Math.min(widthFit, heightFit);
 }
 
@@ -8283,8 +11094,18 @@ function getRuntimeRenderScale(cameraZoomFactor = CAMERA_USER_ZOOM_DEFAULT) {
 
 function getRuntimeViewportSize(runtimeState: RuntimeState): ViewportSize {
   return {
-    height: Math.max(Math.round(runtimeState.snapshot.viewport.height * runtimeState.renderScale), 1),
-    width: Math.max(Math.round(runtimeState.snapshot.viewport.width * runtimeState.renderScale), 1),
+    height: Math.max(
+      Math.round(
+        runtimeState.snapshot.viewport.height * runtimeState.renderScale,
+      ),
+      1,
+    ),
+    width: Math.max(
+      Math.round(
+        runtimeState.snapshot.viewport.width * runtimeState.renderScale,
+      ),
+      1,
+    ),
   };
 }
 
@@ -8304,7 +11125,11 @@ function syncRuntimeRenderScale(
   return true;
 }
 
-function createInitialPlayerMotion(snapshot: StreetAppSnapshot): PlayerMotionState {
+function createInitialPlayerMotion(
+  snapshot: StreetAppSnapshot,
+  indices: RuntimeIndices,
+  startedAt = getRuntimeNow(),
+): PlayerMotionState {
   const point = snapshot.game
     ? {
         x: snapshot.optimisticPlayerPosition?.x ?? snapshot.game.player.x,
@@ -8312,19 +11137,62 @@ function createInitialPlayerMotion(snapshot: StreetAppSnapshot): PlayerMotionSta
       }
     : { x: 0, y: 0 };
 
+  if (snapshot.game) {
+    return createPlayerEntranceMotion(
+      snapshot.game,
+      indices.routeFinder,
+      point,
+      startedAt,
+    );
+  }
+
+  return createStaticPlayerMotion(point);
+}
+
+function createStaticPlayerMotion(
+  point: Point,
+  startedAt = getRuntimeNow(),
+): PlayerMotionState {
   return {
     durationMs: 1,
     path: [point],
-    startedAt: getRuntimeNow(),
+    startedAt,
     to: point,
   };
+}
+
+function setRuntimeWaypointTarget(
+  runtimeState: RuntimeState,
+  target: Point | null,
+  placedAt = getRuntimeNow(),
+) {
+  runtimeState.waypointPlacedAt = placedAt;
+  runtimeState.waypointTarget = target ? { x: target.x, y: target.y } : null;
+}
+
+function syncWaypointState(runtimeState: RuntimeState) {
+  if (
+    runtimeState.snapshot.waypointNonce === runtimeState.waypointAppliedNonce
+  ) {
+    return;
+  }
+
+  runtimeState.waypointAppliedNonce = runtimeState.snapshot.waypointNonce;
+  setRuntimeWaypointTarget(
+    runtimeState,
+    runtimeState.snapshot.waypointTarget ?? null,
+  );
 }
 
 function syncPlayerMotion(runtimeState: RuntimeState) {
   const game = runtimeState.snapshot.game;
   if (!game) {
     runtimeState.playerEntranceGameId = null;
-    runtimeState.playerMotion = createInitialPlayerMotion(runtimeState.snapshot);
+    runtimeState.playerMotion = createInitialPlayerMotion(
+      runtimeState.snapshot,
+      runtimeState.indices,
+    );
+    setRuntimeWaypointTarget(runtimeState, null);
     return;
   }
 
@@ -8335,29 +11203,15 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   };
 
   if (runtimeState.playerEntranceGameId !== game.id) {
-    const entrancePath = buildPlayerEntrancePath(
+    runtimeState.playerMotion = createPlayerEntranceMotion(
       game,
       runtimeState.indices.routeFinder,
       nextPoint,
+      now,
     );
 
-    if (entrancePath.length > 1) {
-      const introStepMs = Math.max(260, DEFAULT_PLAYER_MOVE_MS_PER_TILE * 0.92);
-      runtimeState.playerMotion = {
-        durationMs: clamp(
-          Math.max(entrancePath.length - 1, 1) * introStepMs,
-          introStepMs * 2,
-          PLAYER_MAX_MOVE_DURATION_MS,
-        ),
-        path: entrancePath,
-        startedAt: now,
-        to: nextPoint,
-      };
-      runtimeState.playerEntranceGameId = game.id;
-      return;
-    }
-
     runtimeState.playerEntranceGameId = game.id;
+    return;
   }
 
   if (
@@ -8385,49 +11239,93 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   };
 }
 
+function createPlayerEntranceMotion(
+  game: StreetGameState,
+  findRoute: (start: Point, end: Point) => Point[],
+  target: Point,
+  startedAt = getRuntimeNow(),
+): PlayerMotionState {
+  const entrancePath = buildPlayerEntrancePath(game, findRoute, target);
+
+  if (entrancePath.length <= 1) {
+    return createStaticPlayerMotion(target, startedAt);
+  }
+
+  const introStepMs = clamp(
+    DEFAULT_PLAYER_MOVE_MS_PER_TILE * 1.12,
+    DEFAULT_PLAYER_MOVE_MS_PER_TILE,
+    760,
+  );
+
+  return {
+    durationMs: clamp(
+      Math.max(entrancePath.length - 1, 1) * introStepMs,
+      introStepMs * 2,
+      PLAYER_MAX_MOVE_DURATION_MS,
+    ),
+    path: entrancePath,
+    startedAt,
+    to: target,
+  };
+}
+
 function buildPlayerEntrancePath(
   game: StreetGameState,
   findRoute: (start: Point, end: Point) => Point[],
   target: Point,
 ) {
-  const northernEntry = findNorthernStreetEntry(game, findRoute, target);
+  const westernEntry = findWesternStreetEntry(game, findRoute, target);
 
-  if (!northernEntry) {
+  if (!westernEntry) {
     return [target];
   }
 
-  const routedPoints = findRoute(northernEntry, target);
-  const path = routedPoints.length > 1 ? routedPoints : [northernEntry, target];
+  const routedPoints = findRoute(westernEntry, target);
+  const path = routedPoints.length > 1 ? routedPoints : [westernEntry, target];
 
   return [
-    { x: northernEntry.x, y: -0.95 },
-    { x: northernEntry.x, y: -0.2 },
+    { x: westernEntry.x - 1.45, y: westernEntry.y },
+    { x: westernEntry.x - 0.38, y: westernEntry.y },
     ...path,
   ];
 }
 
-function findNorthernStreetEntry(
+function findWesternStreetEntry(
   game: StreetGameState,
   findRoute: (start: Point, end: Point) => Point[],
   target: Point,
 ) {
-  const northernWalkableTiles = game.map.tiles.filter(
-    (tile) => tile.walkable && tile.y <= 1,
+  const westernRoadTiles = game.map.tiles.filter(
+    (tile) =>
+      tile.walkable &&
+      tile.x <= 1 &&
+      PLAYER_ENTRANCE_TILE_KINDS.includes(tile.kind),
   );
+  const westernWalkableTiles =
+    westernRoadTiles.length > 0
+      ? westernRoadTiles
+      : game.map.tiles.filter((tile) => tile.walkable && tile.x <= 1);
 
-  if (northernWalkableTiles.length === 0) {
+  if (westernWalkableTiles.length === 0) {
     return undefined;
   }
 
-  let bestTile = northernWalkableTiles[0];
+  let bestTile = westernWalkableTiles[0];
   let bestScore = Number.POSITIVE_INFINITY;
 
-  for (const tile of northernWalkableTiles) {
+  for (const tile of westernWalkableTiles) {
     const route = findRoute({ x: tile.x, y: tile.y }, target);
+    if (!routeReachesDestination(route, target)) {
+      continue;
+    }
+
     const routeDistance = pathDistance(route);
-    const laneBias = Math.abs(tile.x - target.x) * 0.3 + tile.y * 0.6;
-    const score =
-      (route.length > 1 ? routeDistance : Number.POSITIVE_INFINITY) + laneBias;
+    const verticalBias = Math.abs(tile.y - target.y) * 0.42;
+    const leftBias = tile.x * 0.55;
+    const publicTileBias = PLAYER_ENTRANCE_TILE_KINDS.includes(tile.kind)
+      ? 0
+      : 1.2;
+    const score = routeDistance + verticalBias + leftBias + publicTileBias;
 
     if (score < bestScore) {
       bestScore = score;
@@ -8468,9 +11366,9 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
     location: currentLocation,
     props: runtimeState.indices.propsByLocation.get(currentLocation.id) ?? [],
     visualHints:
-      runtimeState.indices.visualScene?.locationAnchors[currentLocation.id]?.npcStands?.filter(
-        Boolean,
-      ) ?? [],
+      runtimeState.indices.visualScene?.locationAnchors[
+        currentLocation.id
+      ]?.npcStands?.filter(Boolean) ?? [],
     walkableRuntimePoints: runtimeState.indices.walkableRuntimePoints,
   });
 
@@ -8534,7 +11432,11 @@ function buildAnimatedNpcState({
 
   const personality = npcPersonalityProfile(npc);
   const currentHour = game.clock.hour + game.clock.minute / 60;
-  const nextLocation = nextScheduledLocation(npc, currentHour, indices.locationsById);
+  const nextLocation = nextScheduledLocation(
+    npc,
+    currentHour,
+    indices.locationsById,
+  );
   const patrolPath = getCachedPatrolPath(indices, {
     door: indices.primaryDoorByLocation.get(location.id),
     findRoute: indices.routeFinder,
@@ -8542,7 +11444,9 @@ function buildAnimatedNpcState({
     nextLocation,
     props: indices.propsByLocation.get(location.id) ?? [],
     visualHints:
-      indices.visualScene?.locationAnchors[location.id]?.npcStands?.filter(Boolean) ?? [],
+      indices.visualScene?.locationAnchors[location.id]?.npcStands?.filter(
+        Boolean,
+      ) ?? [],
     walkableRuntimePoints: indices.walkableRuntimePoints,
   });
   const phaseOffset = ((hashString(npc.id) + index * 17) % 997) / 997;
@@ -8625,7 +11529,11 @@ function resolveCrowdPositions(
 
   for (let iteration = 0; iteration < 3; iteration += 1) {
     for (let leftIndex = 0; leftIndex < resolved.length; leftIndex += 1) {
-      for (let rightIndex = leftIndex + 1; rightIndex < resolved.length; rightIndex += 1) {
+      for (
+        let rightIndex = leftIndex + 1;
+        rightIndex < resolved.length;
+        rightIndex += 1
+      ) {
         const left = resolved[leftIndex];
         const right = resolved[rightIndex];
         const dx = right.x - left.x;
@@ -8666,10 +11574,7 @@ function resolveCrowdPositions(
   return resolved;
 }
 
-function clampNpcDisplacement(
-  point: Point,
-  original: Point,
-) {
+function clampNpcDisplacement(point: Point, original: Point) {
   const dx = point.x - original.x;
   const dy = point.y - original.y;
   const distance = Math.hypot(dx, dy);
@@ -8713,6 +11618,56 @@ function drawAmbientOverlay(
   layer.fillRect(0, 0, world.width, world.height);
 }
 
+function drawPlayerPresenceMarker(
+  layer: PhaserType.GameObjects.Graphics,
+  playerPixel: Point,
+  now: number,
+  options: {
+    authoredScene?: boolean;
+  } = {},
+) {
+  const authoredScene = options.authoredScene ?? false;
+  const playerPulse = 0.68 + Math.sin(now / 240) * 0.12;
+  const glowBoost = authoredScene ? 1.18 : 1;
+  const markerLift = authoredScene ? 0.96 : 0.84;
+  const markerY = playerPixel.y - CELL * markerLift - Math.sin(now / 200) * 2.8;
+
+  layer.fillStyle(0x8dd0cd, (0.08 + playerPulse * 0.04) * glowBoost);
+  layer.fillCircle(
+    playerPixel.x,
+    playerPixel.y,
+    CELL * (1.2 + (authoredScene ? 0.1 : 0)),
+  );
+  layer.fillStyle(0xe8d7ad, (0.06 + playerPulse * 0.03) * glowBoost);
+  layer.fillCircle(
+    playerPixel.x,
+    playerPixel.y,
+    CELL * (0.96 + (authoredScene ? 0.08 : 0)),
+  );
+  layer.lineStyle(2.2, 0x9bded7, (0.28 + playerPulse * 0.12) * glowBoost);
+  layer.strokeCircle(
+    playerPixel.x,
+    playerPixel.y,
+    CELL * (1.56 + (authoredScene ? 0.08 : 0)),
+  );
+  layer.lineStyle(2.1, 0xf0cf8c, (0.42 + playerPulse * 0.12) * glowBoost);
+  layer.strokeEllipse(
+    playerPixel.x,
+    playerPixel.y + CELL * 0.42,
+    CELL * (1.72 + (authoredScene ? 0.16 : 0)),
+    CELL * (0.94 + (authoredScene ? 0.08 : 0)),
+  );
+  layer.lineStyle(2.2, 0xf0cf8c, (0.34 + playerPulse * 0.12) * glowBoost);
+  layer.lineBetween(
+    playerPixel.x,
+    markerY + 8,
+    playerPixel.x,
+    playerPixel.y - CELL * 0.16,
+  );
+  layer.fillStyle(0xffefc8, 0.96);
+  layer.fillCircle(playerPixel.x, markerY, authoredScene ? 5.8 : 5.2);
+}
+
 function drawDynamicOverlay(
   layer: PhaserType.GameObjects.Graphics,
   runtimeState: RuntimeState,
@@ -8729,6 +11684,18 @@ function drawDynamicOverlay(
   if (runtimeState.indices.visualScene) {
     drawAnimatedCitySurface(layer, runtimeState.indices, now);
     drawAnimatedSkyWeather(layer, runtimeState.indices.visualScene, now);
+    if (runtimeState.waypointTarget) {
+      drawWaypointBeacon(
+        layer,
+        runtimeState.indices,
+        runtimeState.waypointTarget,
+        now,
+        runtimeState.waypointPlacedAt,
+      );
+    }
+    drawPlayerPresenceMarker(layer, playerPixel, now, {
+      authoredScene: true,
+    });
     return;
   }
 
@@ -8749,6 +11716,16 @@ function drawDynamicOverlay(
 
   drawAnimatedCitySurface(layer, runtimeState.indices, now);
 
+  if (runtimeState.waypointTarget) {
+    drawWaypointBeacon(
+      layer,
+      runtimeState.indices,
+      runtimeState.waypointTarget,
+      now,
+      runtimeState.waypointPlacedAt,
+    );
+  }
+
   if (currentFootprint) {
     drawFootprintHalo(layer, currentFootprint, 0xa9d7d4, 0.08, 0.48);
   }
@@ -8757,16 +11734,17 @@ function drawDynamicOverlay(
     drawFootprintHalo(layer, selectedFootprint, 0xf1d09f, 0.12 * pulse, 0.68);
   }
 
-  layer.fillStyle(0xe8d7ad, 0.03);
-  layer.fillCircle(playerPixel.x, playerPixel.y, CELL * 1.05);
-  layer.lineStyle(2, 0xd6c08f, 0.16);
-  layer.strokeCircle(playerPixel.x, playerPixel.y, CELL * 1.42);
+  drawPlayerPresenceMarker(layer, playerPixel, now);
 
   if (selectedNpc) {
     const selectedMarker = runtimeState.objects?.npcMarkers.get(selectedNpc.id);
     if (selectedMarker) {
       const personality = npcPersonalityProfile(selectedNpc);
-      const ringColor = blendColor(selectedMarker.appearance.accent, 0xfff2cf, 0.22);
+      const ringColor = blendColor(
+        selectedMarker.appearance.accent,
+        0xfff2cf,
+        0.22,
+      );
       const ringRadius = CELL * (0.78 + pulse * 0.08);
       layer.fillStyle(ringColor, 0.06 * pulse);
       layer.fillCircle(
@@ -8774,7 +11752,11 @@ function drawDynamicOverlay(
         selectedMarker.container.y - 2,
         CELL * 0.72,
       );
-      layer.lineStyle(2.5, ringColor, 0.34 + personality.motion.idleWave * 0.02);
+      layer.lineStyle(
+        2.5,
+        ringColor,
+        0.34 + personality.motion.idleWave * 0.02,
+      );
       layer.strokeCircle(
         selectedMarker.container.x,
         selectedMarker.container.y - 2,
@@ -8782,6 +11764,39 @@ function drawDynamicOverlay(
       );
     }
   }
+}
+
+function drawWaypointBeacon(
+  layer: PhaserType.GameObjects.Graphics,
+  indices: RuntimeIndices,
+  target: Point,
+  now: number,
+  placedAt: number,
+) {
+  const worldPoint = projectRuntimeTileCenter(indices, target.x, target.y);
+  const age = Math.max(now - placedAt, 0);
+  const bob = Math.sin(now / 180) * 3.2;
+  const pulse = 0.68 + (Math.sin(now / 210) + 1) * 0.16;
+  const settle = clamp(age / 260, 0, 1);
+  const outerRadius = CELL * (0.42 + pulse * 0.1);
+  const innerRadius = CELL * (0.18 + pulse * 0.03);
+  const markerY = worldPoint.y - CELL * (0.78 + (1 - settle) * 0.16) - bob;
+
+  layer.fillStyle(0xf3dcaa, 0.08 * pulse);
+  layer.fillCircle(worldPoint.x, worldPoint.y, outerRadius);
+  layer.lineStyle(2.4, 0xf0cf8c, 0.4 + pulse * 0.12);
+  layer.strokeCircle(worldPoint.x, worldPoint.y, outerRadius);
+  layer.lineStyle(1.8, 0xffefc8, 0.72);
+  layer.strokeCircle(worldPoint.x, worldPoint.y, innerRadius);
+  layer.lineStyle(2, 0xf0cf8c, 0.36 + pulse * 0.12);
+  layer.lineBetween(
+    worldPoint.x,
+    markerY + 8,
+    worldPoint.x,
+    worldPoint.y - CELL * 0.12,
+  );
+  layer.fillStyle(0xffefc8, 0.94);
+  layer.fillCircle(worldPoint.x, markerY, 4.8);
 }
 
 function drawAnimatedCitySurface(
@@ -8799,11 +11814,10 @@ function drawAnimatedCitySurface(
   for (const tile of indices.animatedSurfaceTiles) {
     if (tile.kind === "water") {
       const { x: worldX, y: worldY } = mapTileToWorldOrigin(tile.x, tile.y);
-      const crest =
-        positiveModulo(
-          wave * 0.84 + tile.x * 0.41 + tile.y * 0.23,
-          1,
-        );
+      const crest = positiveModulo(
+        wave * 0.84 + tile.x * 0.41 + tile.y * 0.23,
+        1,
+      );
       const drift = Math.sin(wave * 1.6 + tile.x * 0.68 + tile.y * 0.42);
 
       layer.lineStyle(2, 0xc9edf5, 0.09 + crest * 0.05);
@@ -8861,20 +11875,32 @@ function updateCamera(
 ) {
   relaxCameraOffset(runtimeState, viewport, now);
   const targetZoom = getTargetSceneZoom(runtimeState, viewport, world);
-  camera.setZoom(camera.zoom + (targetZoom - camera.zoom) * CAMERA_USER_ZOOM_LERP);
+  camera.setZoom(
+    camera.zoom + (targetZoom - camera.zoom) * CAMERA_USER_ZOOM_LERP,
+  );
   const effectiveZoom = Math.max(camera.zoom, 0.001);
   const visibleWidth = viewport.width / effectiveZoom;
   const visibleHeight = viewport.height / effectiveZoom;
-  const anchorX = visibleWidth / 2 + runtimeState.cameraOffset.x / effectiveZoom;
-  const anchorY = visibleHeight * 0.42 + runtimeState.cameraOffset.y / effectiveZoom;
+  const anchorX =
+    visibleWidth / 2 + runtimeState.cameraOffset.x / effectiveZoom;
+  const anchorY =
+    visibleHeight * 0.42 + runtimeState.cameraOffset.y / effectiveZoom;
   const deadzoneWidth =
-    clamp(viewport.width * 0.12, CELL * 1.6, CELL * 3.2) /
-    effectiveZoom;
+    clamp(viewport.width * 0.12, CELL * 1.6, CELL * 3.2) / effectiveZoom;
   const deadzoneHeight =
-    clamp(viewport.height * 0.085, CELL * 1.2, CELL * 2.4) /
-    effectiveZoom;
-  const maxScrollX = Math.max(world.width - visibleWidth, 0);
+    clamp(viewport.height * 0.085, CELL * 1.2, CELL * 2.4) / effectiveZoom;
+  let minScrollX = 0;
+  let maxScrollX = Math.max(world.width - visibleWidth, 0);
   const maxScrollY = Math.max(world.height - visibleHeight, 0);
+  if (isCompactViewport(runtimeState.snapshot.viewport)) {
+    const range = getCompactCameraHorizontalRange(
+      runtimeState,
+      world,
+      visibleWidth,
+    );
+    minScrollX = range.min;
+    maxScrollX = range.max;
+  }
   const playerViewportX = playerPixel.x - camera.scrollX;
   const playerViewportY = playerPixel.y - camera.scrollY;
   const isDragging = runtimeState.cameraGesture?.dragging === true;
@@ -8898,7 +11924,7 @@ function updateCamera(
     }
   }
 
-  targetScrollX = clamp(targetScrollX, 0, maxScrollX);
+  targetScrollX = clamp(targetScrollX, minScrollX, maxScrollX);
   targetScrollY = clamp(targetScrollY, 0, maxScrollY);
 
   const followLerp = isDragging ? 0.18 : PLAYER_CAMERA_LERP;
@@ -8917,6 +11943,7 @@ function beginCameraGesture(
   const sceneViewport = getSceneViewport(
     getRuntimeViewportSize(runtimeState),
     getWorldBounds(runtimeState.snapshot),
+    runtimeState.snapshot.viewport,
   );
   if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
     return;
@@ -8954,6 +11981,7 @@ function updateCameraGesture(
   const sceneViewport = getSceneViewport(
     getRuntimeViewportSize(runtimeState),
     getWorldBounds(runtimeState.snapshot),
+    runtimeState.snapshot.viewport,
   );
   runtimeState.cameraOffset = clampCameraOffset(sceneViewport, {
     x: gesture.originOffset.x + deltaX,
@@ -8987,6 +12015,7 @@ function finishCameraGesture(
   const sceneViewport = getSceneViewport(
     getRuntimeViewportSize(runtimeState),
     getWorldBounds(runtimeState.snapshot),
+    runtimeState.snapshot.viewport,
   );
   if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
     return;
@@ -8997,7 +12026,12 @@ function finishCameraGesture(
     return;
   }
 
-  callbacksRef.current.onMoveTo(tile.x, tile.y);
+  const accepted = callbacksRef.current.onMoveTo(tile.x, tile.y, {
+    showWaypoint: true,
+  });
+  if (accepted) {
+    setRuntimeWaypointTarget(runtimeState, tile);
+  }
 }
 
 function isPointerWithinSceneViewport(
@@ -9019,12 +12053,28 @@ function getPointerTargetTile(
 ) {
   const visualScene = runtimeState.indices.visualScene;
   if (visualScene) {
-    return resolveVisualSceneTargetTile(
-      visualScene,
-      game,
-      pointer.worldX,
-      pointer.worldY,
+    const nearestPoint = findNearestWalkablePointByWorldHint(
+      runtimeState.indices.walkableRuntimePoints,
+      {
+        x: pointer.worldX,
+        y: pointer.worldY,
+      },
+      {
+        preferredKinds: PUBLIC_TRAVEL_TILE_KINDS,
+      },
     );
+
+    if (
+      !nearestPoint ||
+      distanceBetween(nearestPoint.world, {
+        x: pointer.worldX,
+        y: pointer.worldY,
+      }) > 92
+    ) {
+      return null;
+    }
+
+    return nearestPoint.tile;
   }
 
   const mapOrigin = getMapWorldOrigin();
@@ -9035,7 +12085,7 @@ function getPointerTargetTile(
     return null;
   }
 
-  return findWalkableTile(game, x, y);
+  return findWalkableTile(game, x, y, visualScene);
 }
 
 function clampCameraOffset(viewport: ViewportSize, offset: Point) {
@@ -9047,13 +12097,31 @@ function clampCameraOffset(viewport: ViewportSize, offset: Point) {
   };
 }
 
-function clampCameraZoomFactor(zoomFactor: number) {
-  return clamp(zoomFactor, CAMERA_USER_ZOOM_MIN, CAMERA_USER_ZOOM_MAX);
+function getCameraZoomRange(viewport: ViewportSize) {
+  return {
+    max: CAMERA_USER_ZOOM_MAX,
+    min: isCompactViewport(viewport)
+      ? CAMERA_USER_ZOOM_DEFAULT
+      : CAMERA_USER_ZOOM_MIN,
+  };
+}
+
+function clampCameraZoomFactor(zoomFactor: number, viewport: ViewportSize) {
+  const range = getCameraZoomRange(viewport);
+  return clamp(zoomFactor, range.min, range.max);
+}
+
+function normalizeCameraZoomFactor(runtimeState: RuntimeState) {
+  runtimeState.cameraZoomFactor = clampCameraZoomFactor(
+    runtimeState.cameraZoomFactor,
+    runtimeState.snapshot.viewport,
+  );
 }
 
 function adjustCameraZoom(runtimeState: RuntimeState, delta: number) {
   runtimeState.cameraZoomFactor = clampCameraZoomFactor(
     Number((runtimeState.cameraZoomFactor + delta).toFixed(2)),
+    runtimeState.snapshot.viewport,
   );
   runtimeState.lastCameraInteractionAt = getRuntimeNow();
 }
@@ -9063,7 +12131,11 @@ function getTargetSceneZoom(
   viewport: SceneViewport,
   world: { height: number; width: number },
 ) {
-  return getSceneZoom(viewport, world) * runtimeState.cameraZoomFactor;
+  normalizeCameraZoomFactor(runtimeState);
+  return (
+    getSceneZoom(viewport, world, runtimeState.snapshot.viewport) *
+    runtimeState.cameraZoomFactor
+  );
 }
 
 function relaxCameraOffset(
@@ -9071,13 +12143,19 @@ function relaxCameraOffset(
   viewport: SceneViewport,
   now: number,
 ) {
-  runtimeState.cameraOffset = clampCameraOffset(viewport, runtimeState.cameraOffset);
+  runtimeState.cameraOffset = clampCameraOffset(
+    viewport,
+    runtimeState.cameraOffset,
+  );
 
   if (runtimeState.cameraGesture?.dragging) {
     return;
   }
 
-  if (now - runtimeState.lastCameraInteractionAt < CAMERA_OFFSET_RETURN_DELAY_MS) {
+  if (
+    now - runtimeState.lastCameraInteractionAt <
+    CAMERA_OFFSET_RETURN_DELAY_MS
+  ) {
     return;
   }
 
@@ -9161,7 +12239,12 @@ function drawBackdropCitySilhouette(
     { height: 104, width: 110, x: WORLD_PADDING + 146, y: nearBandY + 12 },
     { height: 132, width: 124, x: world.width * 0.37, y: nearBandY + 18 },
     { height: 112, width: 118, x: world.width * 0.54, y: nearBandY + 26 },
-    { height: 156, width: 126, x: world.width - WORLD_PADDING - 136, y: nearBandY + 24 },
+    {
+      height: 156,
+      width: 126,
+      x: world.width - WORLD_PADDING - 136,
+      y: nearBandY + 24,
+    },
   ];
   let cursor = WORLD_PADDING + 14;
 
@@ -9188,7 +12271,12 @@ function drawBackdropCitySilhouette(
   }
 
   layer.fillStyle(0x0b161d, 0.2);
-  layer.fillEllipse(world.width * 0.5, skylineTop + 186, world.width * 0.72, 80);
+  layer.fillEllipse(
+    world.width * 0.5,
+    skylineTop + 186,
+    world.width * 0.72,
+    80,
+  );
 
   for (let index = 0; index < nearBlocks.length; index += 1) {
     const block = nearBlocks[index];
@@ -9207,9 +12295,22 @@ function drawBackdropCitySilhouette(
       3,
     );
     layer.fillStyle(windowColor, 0.06);
-    for (let row = 0; row < Math.max(3, Math.floor(block.height / 32)); row += 1) {
-      for (let column = 0; column < Math.max(4, Math.floor(block.width / 22)); column += 1) {
-        layer.fillRect(block.x + 12 + column * 16, block.y + 18 + row * 18, 5, 5);
+    for (
+      let row = 0;
+      row < Math.max(3, Math.floor(block.height / 32));
+      row += 1
+    ) {
+      for (
+        let column = 0;
+        column < Math.max(4, Math.floor(block.width / 22));
+        column += 1
+      ) {
+        layer.fillRect(
+          block.x + 12 + column * 16,
+          block.y + 18 + row * 18,
+          5,
+          5,
+        );
       }
     }
   }
@@ -9276,13 +12377,24 @@ function drawFootprints(
   useKenneyAssets: boolean,
 ) {
   for (const footprint of map.footprints) {
-    const { x: worldX, y: worldY } = mapTileToWorldOrigin(footprint.x, footprint.y);
+    const { x: worldX, y: worldY } = mapTileToWorldOrigin(
+      footprint.x,
+      footprint.y,
+    );
     const width = footprint.width * CELL;
     const height = footprint.height * CELL;
 
     if (useKenneyAssets) {
       if (footprint.kind === "building") {
-        drawKenneyBuildingMass(layer, map, footprint, worldX, worldY, width, height);
+        drawKenneyBuildingMass(
+          layer,
+          map,
+          footprint,
+          worldX,
+          worldY,
+          width,
+          height,
+        );
         continue;
       }
 
@@ -9311,7 +12423,15 @@ function drawFootprints(
     if (footprint.kind === "building") {
       drawBuildingDetail(layer, worldX, worldY, width, height, palette);
     } else {
-      drawFootprintSurfaceDetail(layer, footprint.kind, worldX, worldY, width, height, palette);
+      drawFootprintSurfaceDetail(
+        layer,
+        footprint.kind,
+        worldX,
+        worldY,
+        width,
+        height,
+        palette,
+      );
     }
   }
 }
@@ -9371,7 +12491,9 @@ function drawKenneyBuildingMass(
   const roofColor = blendColor(
     palette.roof,
     0xe7d7bf,
-    palette.profile === "repair-stall" || palette.profile === "warehouse" ? 0.18 : 0.24,
+    palette.profile === "repair-stall" || palette.profile === "warehouse"
+      ? 0.18
+      : 0.24,
   );
   const trimColor = blendColor(palette.trim, 0xf8f0dd, 0.24);
   const outlineColor = blendColor(palette.outline, 0x0d1317, 0.08);
@@ -9405,7 +12527,13 @@ function drawKenneyBuildingMass(
   layer.fillStyle(trimColor, 0.96);
   drawFootprintParapet(layer, roofRect, facing);
   layer.lineStyle(2.6, outlineColor, 0.9);
-  layer.strokeRoundedRect(shellX, shellY, shellWidth, shellHeight, cornerRadius);
+  layer.strokeRoundedRect(
+    shellX,
+    shellY,
+    shellWidth,
+    shellHeight,
+    cornerRadius,
+  );
   layer.lineStyle(1.6, shadowColor, 0.3);
   drawRoofRhythm(layer, roofRect, facing, palette.profile);
   drawRoofClutter(layer, roofRect, facing, palette);
@@ -9452,11 +12580,7 @@ function drawKenneyOpenPlot(
     seedY: footprint.y,
   });
   const inset =
-    footprint.kind === "dock"
-      ? 4
-      : footprint.kind === "market"
-        ? 7
-        : 6;
+    footprint.kind === "dock" ? 4 : footprint.kind === "market" ? 7 : 6;
   const innerX = worldX + inset;
   const innerY = worldY + inset;
   const innerWidth = Math.max(width - inset * 2, 12);
@@ -9479,9 +12603,21 @@ function drawKenneyOpenPlot(
         : 0.12;
 
   layer.fillStyle(fillColor, fillAlpha);
-  layer.fillRoundedRect(innerX, innerY, innerWidth, innerHeight, footprint.kind === "dock" ? 8 : 12);
+  layer.fillRoundedRect(
+    innerX,
+    innerY,
+    innerWidth,
+    innerHeight,
+    footprint.kind === "dock" ? 8 : 12,
+  );
   layer.lineStyle(2.4, strokeColor, footprint.kind === "market" ? 0.62 : 0.48);
-  layer.strokeRoundedRect(innerX, innerY, innerWidth, innerHeight, footprint.kind === "dock" ? 8 : 12);
+  layer.strokeRoundedRect(
+    innerX,
+    innerY,
+    innerWidth,
+    innerHeight,
+    footprint.kind === "dock" ? 8 : 12,
+  );
   layer.lineStyle(1.2, blendColor(strokeColor, 0xffffff, 0.2), 0.2);
   layer.strokeRoundedRect(
     innerX + 6,
@@ -9503,17 +12639,41 @@ function drawKenneyOpenPlot(
 
   if (footprint.kind === "market") {
     layer.lineStyle(1.4, blendColor(strokeColor, 0xffffff, 0.18), 0.26);
-    layer.lineBetween(innerX + innerWidth / 2, innerY + 10, innerX + innerWidth / 2, innerY + innerHeight - 10);
-    layer.lineBetween(innerX + 10, innerY + innerHeight / 2, innerX + innerWidth - 10, innerY + innerHeight / 2);
+    layer.lineBetween(
+      innerX + innerWidth / 2,
+      innerY + 10,
+      innerX + innerWidth / 2,
+      innerY + innerHeight - 10,
+    );
+    layer.lineBetween(
+      innerX + 10,
+      innerY + innerHeight / 2,
+      innerX + innerWidth - 10,
+      innerY + innerHeight / 2,
+    );
     layer.fillStyle(0xc6b18a, 0.14);
-    layer.fillCircle(innerX + innerWidth / 2, innerY + innerHeight / 2, Math.min(innerWidth, innerHeight) * 0.12);
+    layer.fillCircle(
+      innerX + innerWidth / 2,
+      innerY + innerHeight / 2,
+      Math.min(innerWidth, innerHeight) * 0.12,
+    );
     return;
   }
 
   if (footprint.kind === "yard") {
     layer.lineStyle(1.4, blendColor(strokeColor, 0x5e4b35, 0.18), 0.22);
-    layer.lineBetween(innerX + 10, innerY + 12, innerX + innerWidth - 12, innerY + 18);
-    layer.lineBetween(innerX + 12, innerY + innerHeight - 14, innerX + innerWidth - 10, innerY + innerHeight - 20);
+    layer.lineBetween(
+      innerX + 10,
+      innerY + 12,
+      innerX + innerWidth - 12,
+      innerY + 18,
+    );
+    layer.lineBetween(
+      innerX + 12,
+      innerY + innerHeight - 14,
+      innerX + innerWidth - 10,
+      innerY + innerHeight - 20,
+    );
   }
 }
 
@@ -9532,7 +12692,9 @@ function resolveFootprintFacing(
   }
 
   const walkableTiles = new Set(
-    map.tiles.filter((tile) => tile.walkable).map((tile) => `${tile.x},${tile.y}`),
+    map.tiles
+      .filter((tile) => tile.walkable)
+      .map((tile) => `${tile.x},${tile.y}`),
   );
   const scores: Record<FootprintFacing, number> = {
     east: scoreFootprintAccessEdge(walkableTiles, footprint, "east"),
@@ -9540,9 +12702,9 @@ function resolveFootprintFacing(
     south: scoreFootprintAccessEdge(walkableTiles, footprint, "south"),
     west: scoreFootprintAccessEdge(walkableTiles, footprint, "west"),
   };
-  const ranked = (Object.entries(scores) as Array<[FootprintFacing, number]>).sort(
-    (left, right) => right[1] - left[1],
-  );
+  const ranked = (
+    Object.entries(scores) as Array<[FootprintFacing, number]>
+  ).sort((left, right) => right[1] - left[1]);
 
   if (ranked[0]?.[1]) {
     return ranked[0][0];
@@ -9577,9 +12739,11 @@ function facingFromDoor(
     west: Math.abs(doorCenterX - footprint.x),
   };
 
-  return (Object.entries(distances) as Array<[FootprintFacing, number]>).sort(
-    (left, right) => left[1] - right[1],
-  )[0]?.[0] ?? "south";
+  return (
+    (Object.entries(distances) as Array<[FootprintFacing, number]>).sort(
+      (left, right) => left[1] - right[1],
+    )[0]?.[0] ?? "south"
+  );
 }
 
 function scoreFootprintAccessEdge(
@@ -9646,13 +12810,23 @@ function getFootprintRoofRect(
 ) {
   switch (facing) {
     case "north":
-      return { height: Math.max(height - depth - 6, 12), width, x, y: y + depth + 2 };
+      return {
+        height: Math.max(height - depth - 6, 12),
+        width,
+        x,
+        y: y + depth + 2,
+      };
     case "south":
       return { height: Math.max(height - depth - 6, 12), width, x, y };
     case "east":
       return { height, width: Math.max(width - depth - 6, 12), x, y };
     case "west":
-      return { height, width: Math.max(width - depth - 6, 12), x: x + depth + 2, y };
+      return {
+        height,
+        width: Math.max(width - depth - 6, 12),
+        x: x + depth + 2,
+        y,
+      };
   }
 }
 
@@ -9663,7 +12837,13 @@ function drawFootprintParapet(
 ) {
   switch (facing) {
     case "north":
-      layer.fillRoundedRect(roofRect.x + 4, roofRect.y, roofRect.width - 8, 7, 3);
+      layer.fillRoundedRect(
+        roofRect.x + 4,
+        roofRect.y,
+        roofRect.width - 8,
+        7,
+        3,
+      );
       return;
     case "south":
       layer.fillRoundedRect(
@@ -9684,7 +12864,13 @@ function drawFootprintParapet(
       );
       return;
     case "west":
-      layer.fillRoundedRect(roofRect.x, roofRect.y + 4, 7, roofRect.height - 8, 3);
+      layer.fillRoundedRect(
+        roofRect.x,
+        roofRect.y + 4,
+        7,
+        roofRect.height - 8,
+        3,
+      );
   }
 }
 
@@ -9696,17 +12882,33 @@ function drawRoofRhythm(
 ) {
   const seamCount =
     facing === "north" || facing === "south"
-      ? Math.max(1, Math.floor(roofRect.width / (profile === "warehouse" ? 34 : 42)))
-      : Math.max(1, Math.floor(roofRect.height / (profile === "warehouse" ? 34 : 42)));
+      ? Math.max(
+          1,
+          Math.floor(roofRect.width / (profile === "warehouse" ? 34 : 42)),
+        )
+      : Math.max(
+          1,
+          Math.floor(roofRect.height / (profile === "warehouse" ? 34 : 42)),
+        );
 
   for (let seam = 1; seam < seamCount; seam += 1) {
     const ratio = seam / seamCount;
     if (facing === "north" || facing === "south") {
       const lineX = roofRect.x + roofRect.width * ratio;
-      layer.lineBetween(lineX, roofRect.y + 6, lineX, roofRect.y + roofRect.height - 6);
+      layer.lineBetween(
+        lineX,
+        roofRect.y + 6,
+        lineX,
+        roofRect.y + roofRect.height - 6,
+      );
     } else {
       const lineY = roofRect.y + roofRect.height * ratio;
-      layer.lineBetween(roofRect.x + 6, lineY, roofRect.x + roofRect.width - 6, lineY);
+      layer.lineBetween(
+        roofRect.x + 6,
+        lineY,
+        roofRect.x + roofRect.width - 6,
+        lineY,
+      );
     }
   }
 }
@@ -9723,7 +12925,8 @@ function drawRoofClutter(
   if (palette.profile === "boarding-house" || palette.profile === "rowhouse") {
     const dormerCount = Math.max(1, Math.floor(roofRect.width / 56));
     for (let dormer = 0; dormer < dormerCount; dormer += 1) {
-      const centerX = roofRect.x + ((dormer + 1) * roofRect.width) / (dormerCount + 1);
+      const centerX =
+        roofRect.x + ((dormer + 1) * roofRect.width) / (dormerCount + 1);
       const dormerY =
         facing === "north"
           ? roofRect.y + roofRect.height - 18
@@ -9738,7 +12941,13 @@ function drawRoofClutter(
 
   if (palette.profile === "repair-stall") {
     layer.fillStyle(accent, 0.95);
-    layer.fillRoundedRect(roofRect.x + 10, roofRect.y + 9, roofRect.width - 20, 6, 3);
+    layer.fillRoundedRect(
+      roofRect.x + 10,
+      roofRect.y + 9,
+      roofRect.width - 20,
+      6,
+      3,
+    );
     return;
   }
 
@@ -9764,8 +12973,10 @@ function drawRoofClutter(
   }
 
   layer.fillStyle(accent, 0.95);
-  const chimneyX = facing === "west" ? roofRect.x + roofRect.width - 14 : roofRect.x + 10;
-  const chimneyY = facing === "north" ? roofRect.y + roofRect.height - 24 : roofRect.y + 10;
+  const chimneyX =
+    facing === "west" ? roofRect.x + roofRect.width - 14 : roofRect.x + 10;
+  const chimneyY =
+    facing === "north" ? roofRect.y + roofRect.height - 24 : roofRect.y + 10;
   layer.fillRoundedRect(chimneyX, chimneyY, 10, 16, 2);
 }
 
@@ -9833,7 +13044,13 @@ function drawArchitecturalMass(
     10,
   );
   layer.fillStyle(palette.base, 1);
-  layer.fillRoundedRect(worldX + 4, bodyTop, width - 8, bodyHeight, cornerRadius);
+  layer.fillRoundedRect(
+    worldX + 4,
+    bodyTop,
+    width - 8,
+    bodyHeight,
+    cornerRadius,
+  );
   layer.fillStyle(blendColor(palette.base, 0x0a1014, 0.16), 1);
   layer.fillRoundedRect(
     worldX + 8,
@@ -9846,7 +13063,13 @@ function drawArchitecturalMass(
   if (kind === "building") {
     if (palette.profile === "freight-yard" || palette.profile === "warehouse") {
       layer.fillStyle(palette.roof, 1);
-      layer.fillRoundedRect(worldX + 6, worldY + 6, width - 12, Math.max(18, height - 22), 10);
+      layer.fillRoundedRect(
+        worldX + 6,
+        worldY + 6,
+        width - 12,
+        Math.max(18, height - 22),
+        10,
+      );
       layer.fillStyle(palette.roofBand, 1);
       layer.fillRoundedRect(worldX + 10, worldY + 11, width - 20, 11, 4);
     } else {
@@ -9877,7 +13100,13 @@ function drawArchitecturalMass(
       3,
     );
     layer.lineStyle(3, palette.outline, 0.84);
-    layer.strokeRoundedRect(worldX + 4, worldY + 4, width - 8, height - 8, cornerRadius);
+    layer.strokeRoundedRect(
+      worldX + 4,
+      worldY + 4,
+      width - 8,
+      height - 8,
+      cornerRadius,
+    );
     drawRoofSilhouette(layer, worldX, worldY, width, height, palette);
 
     if (palette.profile === "repair-stall") {
@@ -9895,9 +13124,21 @@ function drawArchitecturalMass(
     }
   } else {
     layer.fillStyle(palette.roof, 0.98);
-    layer.fillRoundedRect(worldX + 6, worldY + 6, width - 12, height - 12, cornerRadius - 4);
+    layer.fillRoundedRect(
+      worldX + 6,
+      worldY + 6,
+      width - 12,
+      height - 12,
+      cornerRadius - 4,
+    );
     layer.lineStyle(2.5, palette.outline, 0.72);
-    layer.strokeRoundedRect(worldX + 5, worldY + 5, width - 10, height - 10, cornerRadius - 2);
+    layer.strokeRoundedRect(
+      worldX + 5,
+      worldY + 5,
+      width - 10,
+      height - 10,
+      cornerRadius - 2,
+    );
   }
 
   return palette;
@@ -9915,9 +13156,25 @@ function drawFootprintSurfaceDetail(
   switch (kind) {
     case "market":
       layer.lineStyle(2, palette.outline, 0.32);
-      layer.strokeRoundedRect(worldX + 10, worldY + 10, width - 20, height - 20, 12);
-      layer.lineBetween(worldX + 16, worldY + height / 2, worldX + width - 16, worldY + height / 2);
-      layer.lineBetween(worldX + width / 2, worldY + 16, worldX + width / 2, worldY + height - 16);
+      layer.strokeRoundedRect(
+        worldX + 10,
+        worldY + 10,
+        width - 20,
+        height - 20,
+        12,
+      );
+      layer.lineBetween(
+        worldX + 16,
+        worldY + height / 2,
+        worldX + width - 16,
+        worldY + height / 2,
+      );
+      layer.lineBetween(
+        worldX + width / 2,
+        worldY + 16,
+        worldX + width / 2,
+        worldY + height - 16,
+      );
       layer.fillStyle(blendColor(palette.base, 0xf4dfb8, 0.18), 0.9);
       layer.fillCircle(worldX + width / 2, worldY + height / 2, 15);
       layer.lineStyle(2, blendColor(palette.trim, 0xffffff, 0.16), 0.24);
@@ -9925,30 +13182,72 @@ function drawFootprintSurfaceDetail(
       break;
     case "yard":
       layer.lineStyle(2, blendColor(palette.trim, 0x201810, 0.22), 0.24);
-      layer.lineBetween(worldX + 16, worldY + height - 18, worldX + width - 16, worldY + height - 28);
-      layer.lineBetween(worldX + 22, worldY + 20, worldX + width - 20, worldY + 28);
+      layer.lineBetween(
+        worldX + 16,
+        worldY + height - 18,
+        worldX + width - 16,
+        worldY + height - 28,
+      );
+      layer.lineBetween(
+        worldX + 22,
+        worldY + 20,
+        worldX + width - 20,
+        worldY + 28,
+      );
       layer.fillStyle(blendColor(palette.base, 0x3a2d20, 0.18), 0.58);
       layer.fillRoundedRect(worldX + 18, worldY + 16, 18, 10, 3);
-      layer.fillRoundedRect(worldX + width - 40, worldY + height - 28, 20, 11, 3);
+      layer.fillRoundedRect(
+        worldX + width - 40,
+        worldY + height - 28,
+        20,
+        11,
+        3,
+      );
       break;
     case "dock":
       layer.fillStyle(blendColor(palette.shadow, 0x090b0d, 0.18), 0.45);
       layer.fillRoundedRect(worldX + 6, worldY + height - 16, width - 12, 8, 3);
       layer.lineStyle(2, blendColor(palette.outline, 0xf7ead2, 0.08), 0.24);
-      layer.lineBetween(worldX + 12, worldY + 18, worldX + width - 12, worldY + 18);
-      layer.lineBetween(worldX + 12, worldY + height - 24, worldX + width - 12, worldY + height - 24);
+      layer.lineBetween(
+        worldX + 12,
+        worldY + 18,
+        worldX + width - 12,
+        worldY + 18,
+      );
+      layer.lineBetween(
+        worldX + 12,
+        worldY + height - 24,
+        worldX + width - 12,
+        worldY + height - 24,
+      );
       break;
     case "garden":
       layer.lineStyle(2, palette.outline, 0.22);
-      layer.strokeRoundedRect(worldX + 10, worldY + 10, width - 20, height - 20, 12);
+      layer.strokeRoundedRect(
+        worldX + 10,
+        worldY + 10,
+        width - 20,
+        height - 20,
+        12,
+      );
       layer.fillStyle(blendColor(palette.base, 0x9ec07e, 0.22), 0.58);
       layer.fillEllipse(worldX + width * 0.28, worldY + height * 0.54, 42, 18);
       layer.fillEllipse(worldX + width * 0.7, worldY + height * 0.48, 36, 16);
       break;
     case "water":
       layer.lineStyle(2, blendColor(palette.window, 0xffffff, 0.08), 0.24);
-      layer.lineBetween(worldX + 10, worldY + 16, worldX + width - 10, worldY + 10);
-      layer.lineBetween(worldX + 12, worldY + height - 14, worldX + width - 14, worldY + height - 18);
+      layer.lineBetween(
+        worldX + 10,
+        worldY + 16,
+        worldX + width - 10,
+        worldY + 10,
+      );
+      layer.lineBetween(
+        worldX + 12,
+        worldY + height - 14,
+        worldX + width - 14,
+        worldY + height - 18,
+      );
       layer.fillStyle(blendColor(palette.base, 0x0d2030, 0.18), 0.52);
       layer.fillEllipse(worldX + width * 0.3, worldY + height * 0.64, 44, 10);
       layer.fillEllipse(worldX + width * 0.75, worldY + height * 0.34, 34, 8);
@@ -9958,21 +13257,19 @@ function drawFootprintSurfaceDetail(
   }
 }
 
-function footprintPalette(
-  {
-    kind,
-    locationId,
-    roofStyle,
-    seedX,
-    seedY,
-  }: {
-    kind: MapFootprint["kind"];
-    locationId?: string;
-    roofStyle?: RoofStyle;
-    seedX: number;
-    seedY: number;
-  },
-): ArchitecturalPalette {
+function footprintPalette({
+  kind,
+  locationId,
+  roofStyle,
+  seedX,
+  seedY,
+}: {
+  kind: MapFootprint["kind"];
+  locationId?: string;
+  roofStyle?: RoofStyle;
+  seedX: number;
+  seedY: number;
+}): ArchitecturalPalette {
   if (kind === "building") {
     return buildingPaletteForProfile(
       resolveBuildingProfile(locationId, roofStyle, seedX, seedY),
@@ -10046,7 +13343,9 @@ function footprintPalette(
         window: 0xf1d3a2,
       };
     default:
-      return buildingPaletteForProfile(resolveBuildingProfile(locationId, roofStyle, seedX, seedY));
+      return buildingPaletteForProfile(
+        resolveBuildingProfile(locationId, roofStyle, seedX, seedY),
+      );
   }
 }
 
@@ -10078,13 +13377,7 @@ function drawBuildingDetail(
       : Math.max(2, Math.floor(width / 46));
 
   layer.fillStyle(palette.trim, 0.98);
-  layer.fillRoundedRect(
-    worldX + 10,
-    worldY + 20,
-    width - 20,
-    7,
-    6,
-  );
+  layer.fillRoundedRect(worldX + 10, worldY + 20, width - 20, 7, 6);
   layer.fillStyle(blendColor(palette.base, 0x11161b, 0.22), 1);
   layer.fillRoundedRect(
     worldX + 8,
@@ -10093,7 +13386,15 @@ function drawBuildingDetail(
     storefrontHeight,
     6,
   );
-  drawFacadeRhythm(layer, worldX, upperTop, upperBottom, width, bayCount, palette);
+  drawFacadeRhythm(
+    layer,
+    worldX,
+    upperTop,
+    upperBottom,
+    width,
+    bayCount,
+    palette,
+  );
 
   const span = width - 32;
   for (let row = 0; row < windowRows; row += 1) {
@@ -10103,14 +13404,16 @@ function drawBuildingDetail(
       if (windowY + 10 >= upperBottom) {
         continue;
       }
-      const lit =
-        sampleTileNoise(column + seedX, row + seedY, 113) > 0.42;
+      const lit = sampleTileNoise(column + seedX, row + seedY, 113) > 0.42;
       layer.fillStyle(
         lit ? palette.window : blendColor(palette.base, 0x20303a, 0.42),
         0.96,
       );
       layer.fillRoundedRect(windowX, windowY, 11, 10, 2);
-      layer.fillStyle(blendColor(0xffffff, palette.window, 0.25), lit ? 0.22 : 0.08);
+      layer.fillStyle(
+        blendColor(0xffffff, palette.window, 0.25),
+        lit ? 0.22 : 0.08,
+      );
       layer.fillRoundedRect(windowX + 1, windowY + 1, 9, 2.5, 1);
       layer.fillStyle(blendColor(palette.shadow, 0x05080a, 0.22), 0.34);
       layer.fillRect(windowX, windowY + 10, 11, 1.5);
@@ -10128,9 +13431,27 @@ function drawBuildingDetail(
       layer.fillRoundedRect(chimneyX + 1, chimneyY, 7, 3, 1);
     }
     layer.fillStyle(palette.sign, 0.98);
-    layer.fillRoundedRect(worldX + width / 2 - 24, worldY + height - 20, 48, 7, 3);
-    drawDoorPair(layer, worldX + width * 0.28, worldY + height - 17, palette, 0.92);
-    drawDoorPair(layer, worldX + width * 0.64, worldY + height - 17, palette, 0.92);
+    layer.fillRoundedRect(
+      worldX + width / 2 - 24,
+      worldY + height - 20,
+      48,
+      7,
+      3,
+    );
+    drawDoorPair(
+      layer,
+      worldX + width * 0.28,
+      worldY + height - 17,
+      palette,
+      0.92,
+    );
+    drawDoorPair(
+      layer,
+      worldX + width * 0.64,
+      worldY + height - 17,
+      palette,
+      0.92,
+    );
   }
 
   if (profile === "tea-house") {
@@ -10150,7 +13471,13 @@ function drawBuildingDetail(
     layer.fillStyle(blendColor(palette.awning, 0xffffff, 0.18), 1);
     layer.fillRoundedRect(canopyX + 4, canopyY, 40, 7, 3);
     layer.fillStyle(blendColor(palette.sign, 0x0d1216, 0.08), 1);
-    layer.fillRoundedRect(worldX + width / 2 - 32, worldY + height - 18, 64, 10, 4);
+    layer.fillRoundedRect(
+      worldX + width / 2 - 32,
+      worldY + height - 18,
+      64,
+      10,
+      4,
+    );
     layer.fillStyle(palette.window, 0.88);
     layer.fillCircle(worldX + 16, worldY + height - 16, 2.6);
     layer.fillCircle(worldX + width - 16, worldY + height - 16, 2.6);
@@ -10162,23 +13489,45 @@ function drawBuildingDetail(
     layer.fillStyle(blendColor(palette.base, 0x0a1014, 0.3), 1);
     layer.fillRoundedRect(worldX + 10, worldY + height - 25, width - 64, 16, 3);
     layer.lineStyle(2, blendColor(palette.outline, 0x0b1014, 0.16), 0.4);
-    layer.lineBetween(worldX + 10, worldY + height - 9, worldX + width - 10, worldY + height - 9);
+    layer.lineBetween(
+      worldX + 10,
+      worldY + height - 9,
+      worldX + width - 10,
+      worldY + height - 9,
+    );
     layer.lineStyle(2.4, palette.awning, 0.9);
-    layer.lineBetween(worldX + 8, worldY + 18, worldX + width - 10, worldY + 22);
+    layer.lineBetween(
+      worldX + 8,
+      worldY + 18,
+      worldX + width - 10,
+      worldY + 22,
+    );
   }
 
   if (profile === "freight-yard" || profile === "warehouse") {
     layer.fillStyle(palette.sign, 0.98);
     layer.fillRoundedRect(worldX + width / 2 - 28, worldY + 12, 56, 10, 4);
     layer.fillStyle(blendColor(palette.base, 0x0a1014, 0.34), 1);
-    layer.fillRoundedRect(worldX + width / 2 - 26, worldY + height - 30, 52, 20, 4);
+    layer.fillRoundedRect(
+      worldX + width / 2 - 26,
+      worldY + height - 30,
+      52,
+      20,
+      4,
+    );
     for (let index = 0; index < 4; index += 1) {
       const clerestoryX = worldX + 14 + index * ((width - 28) / 4);
       layer.fillStyle(palette.window, 0.9);
       layer.fillRoundedRect(clerestoryX, worldY + 26, 10, 6, 2);
     }
     layer.fillStyle(blendColor(palette.shadow, 0x05080a, 0.14), 1);
-    layer.fillRoundedRect(worldX + width / 2 - 18, worldY + height - 26, 36, 16, 3);
+    layer.fillRoundedRect(
+      worldX + width / 2 - 18,
+      worldY + height - 26,
+      36,
+      16,
+      3,
+    );
   }
 
   if (profile === "moss-pier") {
@@ -10210,7 +13559,13 @@ function drawBuildingDetail(
       layer.fillStyle(palette.sign, 0.96);
       layer.fillRoundedRect(dormerX, worldY + 15 + (dormer % 2) * 2, 14, 9, 3);
       layer.fillStyle(palette.window, 0.86);
-      layer.fillRoundedRect(dormerX + 3, worldY + 18 + (dormer % 2) * 2, 8, 4, 2);
+      layer.fillRoundedRect(
+        dormerX + 3,
+        worldY + 18 + (dormer % 2) * 2,
+        8,
+        4,
+        2,
+      );
     }
     if (width > CELL * 2.1) {
       const awningWidth = Math.min(34, width * 0.24);
@@ -10235,7 +13590,13 @@ function drawBuildingDetail(
   }
 
   layer.fillStyle(palette.trim, 0.98);
-  layer.fillRoundedRect(worldX + 12, worldY + height - storefrontHeight + 2, width - 24, 5, 2);
+  layer.fillRoundedRect(
+    worldX + 12,
+    worldY + height - storefrontHeight + 2,
+    width - 24,
+    5,
+    2,
+  );
 }
 
 function drawRoofSilhouette(
@@ -10286,7 +13647,13 @@ function drawRoofSilhouette(
   if (palette.profile === "freight-yard" || palette.profile === "warehouse") {
     const clerestoryWidth = Math.max(32, width * 0.34);
     layer.fillStyle(palette.roofBand, 0.98);
-    layer.fillRoundedRect(worldX + width / 2 - clerestoryWidth / 2, roofY - 4, clerestoryWidth, 11, 4);
+    layer.fillRoundedRect(
+      worldX + width / 2 - clerestoryWidth / 2,
+      roofY - 4,
+      clerestoryWidth,
+      11,
+      4,
+    );
     layer.fillTriangle(
       worldX + width / 2 - clerestoryWidth / 2,
       roofY + 7,
@@ -10329,9 +13696,21 @@ function drawFacadeRhythm(
   for (let bay = 1; bay < bayCount; bay += 1) {
     const dividerX = worldX + (width * bay) / bayCount;
     layer.fillStyle(blendColor(palette.trim, palette.shadow, 0.26), 0.68);
-    layer.fillRoundedRect(dividerX - 1.5, upperTop - 4, 3, upperBottom - upperTop + 14, 2);
+    layer.fillRoundedRect(
+      dividerX - 1.5,
+      upperTop - 4,
+      3,
+      upperBottom - upperTop + 14,
+      2,
+    );
     layer.fillStyle(blendColor(palette.window, 0xffffff, 0.12), 0.12);
-    layer.fillRoundedRect(dividerX - 0.5, upperTop - 2, 1, upperBottom - upperTop + 8, 1);
+    layer.fillRoundedRect(
+      dividerX - 0.5,
+      upperTop - 2,
+      1,
+      upperBottom - upperTop + 8,
+      1,
+    );
   }
 }
 
@@ -10484,10 +13863,7 @@ function buildingPaletteForProfile(
   }
 }
 
-function drawDoors(
-  layer: PhaserType.GameObjects.Graphics,
-  doors: MapDoor[],
-) {
+function drawDoors(layer: PhaserType.GameObjects.Graphics, doors: MapDoor[]) {
   for (const door of doors) {
     const { x: worldX, y: worldY } = mapTileToWorldOrigin(door.x, door.y);
     const width = Math.max(door.width * CELL, 12);
@@ -10510,10 +13886,7 @@ function drawDoors(
   }
 }
 
-function drawProps(
-  layer: PhaserType.GameObjects.Graphics,
-  props: MapProp[],
-) {
+function drawProps(layer: PhaserType.GameObjects.Graphics, props: MapProp[]) {
   for (const prop of props) {
     const { x: worldX, y: worldY } = mapTileToWorldOrigin(prop.x, prop.y);
     const scale = prop.scale ?? 1;
@@ -10532,40 +13905,104 @@ function drawProps(
         if (vertical) {
           layer.fillEllipse(worldX, worldY, 14 * scale, 30 * scale);
           layer.fillStyle(0xd8c3a3, 0.92);
-          layer.fillRoundedRect(worldX - 4 * scale, worldY - 9 * scale, 8 * scale, 14 * scale, 3);
+          layer.fillRoundedRect(
+            worldX - 4 * scale,
+            worldY - 9 * scale,
+            8 * scale,
+            14 * scale,
+            3,
+          );
           layer.lineStyle(1.5, 0xe8dec7, 0.42);
-          layer.lineBetween(worldX, worldY - 16 * scale, worldX, worldY + 10 * scale);
+          layer.lineBetween(
+            worldX,
+            worldY - 16 * scale,
+            worldX,
+            worldY + 10 * scale,
+          );
         } else {
           layer.fillEllipse(worldX, worldY, 30 * scale, 14 * scale);
           layer.fillStyle(0xd8c3a3, 0.92);
-          layer.fillRoundedRect(worldX - 9 * scale, worldY - 4 * scale, 14 * scale, 8 * scale, 3);
+          layer.fillRoundedRect(
+            worldX - 9 * scale,
+            worldY - 4 * scale,
+            14 * scale,
+            8 * scale,
+            3,
+          );
           layer.lineStyle(1.5, 0xe8dec7, 0.42);
-          layer.lineBetween(worldX - 14 * scale, worldY, worldX + 11 * scale, worldY);
+          layer.lineBetween(
+            worldX - 14 * scale,
+            worldY,
+            worldX + 11 * scale,
+            worldY,
+          );
         }
         layer.fillStyle(0x7eaec4, 0.28);
-        layer.fillEllipse(worldX - 1 * scale, worldY - 1 * scale, 10 * scale, 4 * scale);
+        layer.fillEllipse(
+          worldX - 1 * scale,
+          worldY - 1 * scale,
+          10 * scale,
+          4 * scale,
+        );
         break;
       case "fountain":
         layer.fillStyle(0x000000, 0.14);
-        layer.fillEllipse(worldX + 2 * scale, worldY + 8 * scale, 28 * scale, 12 * scale);
+        layer.fillEllipse(
+          worldX + 2 * scale,
+          worldY + 8 * scale,
+          28 * scale,
+          12 * scale,
+        );
         layer.fillStyle(0x51616c, 0.98);
         layer.fillCircle(worldX, worldY + 1 * scale, 10 * scale);
         layer.fillStyle(0xb6c7cf, 0.26);
         layer.fillCircle(worldX, worldY - 1 * scale, 7.5 * scale);
         layer.fillStyle(0x73858f, 0.98);
-        layer.fillRoundedRect(worldX - 3 * scale, worldY - 10 * scale, 6 * scale, 11 * scale, 2);
+        layer.fillRoundedRect(
+          worldX - 3 * scale,
+          worldY - 10 * scale,
+          6 * scale,
+          11 * scale,
+          2,
+        );
         layer.fillStyle(0x9fd5e3, 0.82);
         layer.fillCircle(worldX, worldY - 10 * scale, 3.2 * scale);
         layer.lineStyle(1.4, 0xcfeef6, 0.46);
-        layer.lineBetween(worldX, worldY - 12 * scale, worldX, worldY - 19 * scale);
-        layer.lineBetween(worldX - 2 * scale, worldY - 11 * scale, worldX - 5 * scale, worldY - 16 * scale);
-        layer.lineBetween(worldX + 2 * scale, worldY - 11 * scale, worldX + 5 * scale, worldY - 16 * scale);
+        layer.lineBetween(
+          worldX,
+          worldY - 12 * scale,
+          worldX,
+          worldY - 19 * scale,
+        );
+        layer.lineBetween(
+          worldX - 2 * scale,
+          worldY - 11 * scale,
+          worldX - 5 * scale,
+          worldY - 16 * scale,
+        );
+        layer.lineBetween(
+          worldX + 2 * scale,
+          worldY - 11 * scale,
+          worldX + 5 * scale,
+          worldY - 16 * scale,
+        );
         break;
       case "planter":
         layer.fillStyle(0x000000, 0.12);
-        layer.fillEllipse(worldX + 1 * scale, worldY + 7 * scale, 18 * scale, 8 * scale);
+        layer.fillEllipse(
+          worldX + 1 * scale,
+          worldY + 7 * scale,
+          18 * scale,
+          8 * scale,
+        );
         layer.fillStyle(0x7a6046, 0.96);
-        layer.fillRoundedRect(worldX - 7 * scale, worldY - 2 * scale, 14 * scale, 8 * scale, 3);
+        layer.fillRoundedRect(
+          worldX - 7 * scale,
+          worldY - 2 * scale,
+          14 * scale,
+          8 * scale,
+          3,
+        );
         layer.fillStyle(0x2f5a3e, 0.98);
         layer.fillCircle(worldX - 4 * scale, worldY - 4 * scale, 4 * scale);
         layer.fillCircle(worldX + 2 * scale, worldY - 5 * scale, 4.4 * scale);
@@ -10575,7 +14012,12 @@ function drawProps(
         break;
       case "tree":
         layer.fillStyle(0x000000, 0.14);
-        layer.fillEllipse(worldX + 1 * scale, worldY + 6 * scale, 24 * scale, 12 * scale);
+        layer.fillEllipse(
+          worldX + 1 * scale,
+          worldY + 6 * scale,
+          24 * scale,
+          12 * scale,
+        );
         layer.fillStyle(0x203528, 1);
         layer.fillCircle(worldX - 8 * scale, worldY - 6 * scale, 8 * scale);
         layer.fillCircle(worldX + 7 * scale, worldY - 7 * scale, 9 * scale);
@@ -10588,68 +14030,204 @@ function drawProps(
         layer.lineStyle(1.6, 0x112017, 0.42);
         layer.strokeCircle(worldX, worldY - 12 * scale, 12 * scale);
         layer.fillStyle(0x74553c, 1);
-        layer.fillRoundedRect(worldX - 2.5 * scale, worldY - 2 * scale, 5 * scale, 12 * scale, 2);
+        layer.fillRoundedRect(
+          worldX - 2.5 * scale,
+          worldY - 2 * scale,
+          5 * scale,
+          12 * scale,
+          2,
+        );
         break;
       case "lamp":
         layer.fillStyle(0x000000, 0.14);
-        layer.fillEllipse(worldX + 2 * scale, worldY + 9 * scale, 14 * scale, 7 * scale);
+        layer.fillEllipse(
+          worldX + 2 * scale,
+          worldY + 9 * scale,
+          14 * scale,
+          7 * scale,
+        );
         layer.fillStyle(0x26333b, 0.98);
-        layer.fillRoundedRect(worldX - 3 * scale, worldY + 7 * scale, 6 * scale, 4 * scale, 2);
-        layer.fillRoundedRect(worldX - 1.4 * scale, worldY - 11 * scale, 2.8 * scale, 20 * scale, 1.4);
+        layer.fillRoundedRect(
+          worldX - 3 * scale,
+          worldY + 7 * scale,
+          6 * scale,
+          4 * scale,
+          2,
+        );
+        layer.fillRoundedRect(
+          worldX - 1.4 * scale,
+          worldY - 11 * scale,
+          2.8 * scale,
+          20 * scale,
+          1.4,
+        );
         layer.lineStyle(2 * scale, 0x26333b, 0.98);
-        layer.lineBetween(worldX, worldY - 10 * scale, worldX + 5.5 * scale, worldY - 14 * scale);
-        layer.lineBetween(worldX + 5.5 * scale, worldY - 14 * scale, worldX + 5.5 * scale, worldY - 16 * scale);
+        layer.lineBetween(
+          worldX,
+          worldY - 10 * scale,
+          worldX + 5.5 * scale,
+          worldY - 14 * scale,
+        );
+        layer.lineBetween(
+          worldX + 5.5 * scale,
+          worldY - 14 * scale,
+          worldX + 5.5 * scale,
+          worldY - 16 * scale,
+        );
         layer.fillStyle(0x1a2329, 0.98);
-        layer.fillRoundedRect(worldX + 1.5 * scale, worldY - 20 * scale, 8 * scale, 10 * scale, 2);
+        layer.fillRoundedRect(
+          worldX + 1.5 * scale,
+          worldY - 20 * scale,
+          8 * scale,
+          10 * scale,
+          2,
+        );
         layer.fillStyle(0xf8e3b0, 0.28);
-        layer.fillCircle(worldX + 5.5 * scale, worldY - 14.5 * scale, 7 * scale);
+        layer.fillCircle(
+          worldX + 5.5 * scale,
+          worldY - 14.5 * scale,
+          7 * scale,
+        );
         layer.fillStyle(0xf8e3b0, 0.94);
-        layer.fillRoundedRect(worldX + 3 * scale, worldY - 18 * scale, 5 * scale, 6 * scale, 1.5);
+        layer.fillRoundedRect(
+          worldX + 3 * scale,
+          worldY - 18 * scale,
+          5 * scale,
+          6 * scale,
+          1.5,
+        );
         layer.fillStyle(0xcfb981, 0.96);
-        layer.fillRoundedRect(worldX + 4 * scale, worldY - 22 * scale, 3 * scale, 2 * scale, 1);
+        layer.fillRoundedRect(
+          worldX + 4 * scale,
+          worldY - 22 * scale,
+          3 * scale,
+          2 * scale,
+          1,
+        );
         break;
       case "cart":
         layer.fillStyle(0x000000, 0.12);
-        layer.fillEllipse(worldX + 2 * scale, worldY + 8 * scale, 24 * scale, 10 * scale);
+        layer.fillEllipse(
+          worldX + 2 * scale,
+          worldY + 8 * scale,
+          24 * scale,
+          10 * scale,
+        );
         layer.fillStyle(0x8f6c4d, 1);
         if (vertical) {
-          layer.fillRoundedRect(worldX - 6 * scale, worldY - 10 * scale, 12 * scale, 20 * scale, 5);
+          layer.fillRoundedRect(
+            worldX - 6 * scale,
+            worldY - 10 * scale,
+            12 * scale,
+            20 * scale,
+            5,
+          );
           layer.fillStyle(0xd8b08a, 0.34);
-          layer.fillRoundedRect(worldX - 5 * scale, worldY - 8 * scale, 10 * scale, 4 * scale, 3);
+          layer.fillRoundedRect(
+            worldX - 5 * scale,
+            worldY - 8 * scale,
+            10 * scale,
+            4 * scale,
+            3,
+          );
           layer.lineStyle(1.5, 0x3e2f22, 0.34);
-          layer.lineBetween(worldX - 4 * scale, worldY - 5 * scale, worldX + 4 * scale, worldY - 5 * scale);
+          layer.lineBetween(
+            worldX - 4 * scale,
+            worldY - 5 * scale,
+            worldX + 4 * scale,
+            worldY - 5 * scale,
+          );
           layer.fillStyle(0x2a343c, 0.92);
           layer.fillCircle(worldX - 6 * scale, worldY + 9 * scale, 3 * scale);
           layer.fillCircle(worldX + 6 * scale, worldY + 9 * scale, 3 * scale);
           layer.lineStyle(1.2, 0xd7b78d, 0.3);
-          layer.strokeRoundedRect(worldX - 6 * scale, worldY - 10 * scale, 12 * scale, 20 * scale, 5);
+          layer.strokeRoundedRect(
+            worldX - 6 * scale,
+            worldY - 10 * scale,
+            12 * scale,
+            20 * scale,
+            5,
+          );
         } else {
-          layer.fillRoundedRect(worldX - 10 * scale, worldY - 6 * scale, 20 * scale, 12 * scale, 5);
+          layer.fillRoundedRect(
+            worldX - 10 * scale,
+            worldY - 6 * scale,
+            20 * scale,
+            12 * scale,
+            5,
+          );
           layer.fillStyle(0xd8b08a, 0.34);
-          layer.fillRoundedRect(worldX - 8 * scale, worldY - 5 * scale, 16 * scale, 4 * scale, 3);
+          layer.fillRoundedRect(
+            worldX - 8 * scale,
+            worldY - 5 * scale,
+            16 * scale,
+            4 * scale,
+            3,
+          );
           layer.lineStyle(1.5, 0x3e2f22, 0.34);
-          layer.lineBetween(worldX - 7 * scale, worldY - 1 * scale, worldX + 7 * scale, worldY - 1 * scale);
+          layer.lineBetween(
+            worldX - 7 * scale,
+            worldY - 1 * scale,
+            worldX + 7 * scale,
+            worldY - 1 * scale,
+          );
           layer.fillStyle(0x2a343c, 0.92);
           layer.fillCircle(worldX - 7 * scale, worldY + 8 * scale, 3 * scale);
           layer.fillCircle(worldX + 7 * scale, worldY + 8 * scale, 3 * scale);
           layer.lineStyle(1.2, 0xd7b78d, 0.3);
-          layer.strokeRoundedRect(worldX - 10 * scale, worldY - 6 * scale, 20 * scale, 12 * scale, 5);
+          layer.strokeRoundedRect(
+            worldX - 10 * scale,
+            worldY - 6 * scale,
+            20 * scale,
+            12 * scale,
+            5,
+          );
         }
         break;
       case "laundry":
         layer.lineStyle(2 * scale, 0xe8ddca, 0.8);
         if (vertical) {
-          layer.lineBetween(worldX - 8 * scale, worldY - 12 * scale, worldX - 8 * scale, worldY + 12 * scale);
+          layer.lineBetween(
+            worldX - 8 * scale,
+            worldY - 12 * scale,
+            worldX - 8 * scale,
+            worldY + 12 * scale,
+          );
           layer.fillStyle(0xc89c79, 0.92);
-          layer.fillRect(worldX - 10 * scale, worldY - 9 * scale, 9 * scale, 5 * scale);
+          layer.fillRect(
+            worldX - 10 * scale,
+            worldY - 9 * scale,
+            9 * scale,
+            5 * scale,
+          );
           layer.fillStyle(0x7fa7bf, 0.9);
-          layer.fillRect(worldX - 10 * scale, worldY - 1 * scale, 10 * scale, 5 * scale);
+          layer.fillRect(
+            worldX - 10 * scale,
+            worldY - 1 * scale,
+            10 * scale,
+            5 * scale,
+          );
         } else {
-          layer.lineBetween(worldX - 12 * scale, worldY - 8 * scale, worldX + 12 * scale, worldY - 8 * scale);
+          layer.lineBetween(
+            worldX - 12 * scale,
+            worldY - 8 * scale,
+            worldX + 12 * scale,
+            worldY - 8 * scale,
+          );
           layer.fillStyle(0xc89c79, 0.92);
-          layer.fillRect(worldX - 9 * scale, worldY - 6 * scale, 5 * scale, 9 * scale);
+          layer.fillRect(
+            worldX - 9 * scale,
+            worldY - 6 * scale,
+            5 * scale,
+            9 * scale,
+          );
           layer.fillStyle(0x7fa7bf, 0.9);
-          layer.fillRect(worldX - 1 * scale, worldY - 6 * scale, 5 * scale, 10 * scale);
+          layer.fillRect(
+            worldX - 1 * scale,
+            worldY - 6 * scale,
+            5 * scale,
+            10 * scale,
+          );
         }
         break;
       case "crate":
@@ -10671,8 +14249,18 @@ function drawProps(
           12 * scale,
           2.5,
         );
-        layer.lineBetween(worldX - 4 * scale, worldY - 3 * scale, worldX + 4 * scale, worldY + 3 * scale);
-        layer.lineBetween(worldX + 4 * scale, worldY - 3 * scale, worldX - 4 * scale, worldY + 3 * scale);
+        layer.lineBetween(
+          worldX - 4 * scale,
+          worldY - 3 * scale,
+          worldX + 4 * scale,
+          worldY + 3 * scale,
+        );
+        layer.lineBetween(
+          worldX + 4 * scale,
+          worldY - 3 * scale,
+          worldX - 4 * scale,
+          worldY + 3 * scale,
+        );
         break;
       case "barrel":
         layer.fillStyle(0x000000, 0.12);
@@ -10687,8 +14275,18 @@ function drawProps(
           4,
         );
         layer.lineStyle(1.2, 0x2f241c, 0.28);
-        layer.lineBetween(worldX - 4.5 * scale, worldY - 1 * scale, worldX + 4.5 * scale, worldY - 1 * scale);
-        layer.lineBetween(worldX - 4.5 * scale, worldY + 4 * scale, worldX + 4.5 * scale, worldY + 4 * scale);
+        layer.lineBetween(
+          worldX - 4.5 * scale,
+          worldY - 1 * scale,
+          worldX + 4.5 * scale,
+          worldY - 1 * scale,
+        );
+        layer.lineBetween(
+          worldX - 4.5 * scale,
+          worldY + 4 * scale,
+          worldX + 4.5 * scale,
+          worldY + 4 * scale,
+        );
         layer.fillStyle(0xd5b48d, 0.12);
         layer.fillEllipse(worldX, worldY - 4 * scale, 8 * scale, 2.6 * scale);
         break;
@@ -10702,27 +14300,87 @@ function drawProps(
         );
         layer.fillStyle(0x88684a, 0.94);
         if (vertical) {
-          layer.fillRoundedRect(worldX - 3 * scale, worldY - 8 * scale, 6 * scale, 16 * scale, 2);
-          layer.fillRoundedRect(worldX - 6 * scale, worldY - 10 * scale, 12 * scale, 3 * scale, 2);
+          layer.fillRoundedRect(
+            worldX - 3 * scale,
+            worldY - 8 * scale,
+            6 * scale,
+            16 * scale,
+            2,
+          );
+          layer.fillRoundedRect(
+            worldX - 6 * scale,
+            worldY - 10 * scale,
+            12 * scale,
+            3 * scale,
+            2,
+          );
           layer.fillStyle(0x2c2118, 0.3);
-          layer.fillRect(worldX - 4 * scale, worldY + 8 * scale, 2 * scale, 5 * scale);
-          layer.fillRect(worldX + 2 * scale, worldY + 8 * scale, 2 * scale, 5 * scale);
+          layer.fillRect(
+            worldX - 4 * scale,
+            worldY + 8 * scale,
+            2 * scale,
+            5 * scale,
+          );
+          layer.fillRect(
+            worldX + 2 * scale,
+            worldY + 8 * scale,
+            2 * scale,
+            5 * scale,
+          );
         } else {
-          layer.fillRoundedRect(worldX - 8 * scale, worldY - 3 * scale, 16 * scale, 6 * scale, 2);
-          layer.fillRoundedRect(worldX - 10 * scale, worldY - 7 * scale, 20 * scale, 3 * scale, 2);
+          layer.fillRoundedRect(
+            worldX - 8 * scale,
+            worldY - 3 * scale,
+            16 * scale,
+            6 * scale,
+            2,
+          );
+          layer.fillRoundedRect(
+            worldX - 10 * scale,
+            worldY - 7 * scale,
+            20 * scale,
+            3 * scale,
+            2,
+          );
           layer.fillStyle(0x2c2118, 0.3);
-          layer.fillRect(worldX - 6 * scale, worldY + 3 * scale, 2 * scale, 5 * scale);
-          layer.fillRect(worldX + 4 * scale, worldY + 3 * scale, 2 * scale, 5 * scale);
+          layer.fillRect(
+            worldX - 6 * scale,
+            worldY + 3 * scale,
+            2 * scale,
+            5 * scale,
+          );
+          layer.fillRect(
+            worldX + 4 * scale,
+            worldY + 3 * scale,
+            2 * scale,
+            5 * scale,
+          );
         }
         break;
       case "canopy":
         layer.fillStyle(0x000000, 0.12);
         layer.fillEllipse(worldX + 2, worldY + 10, 28 * scale, 10 * scale);
         layer.lineStyle(2, 0x6f563f, 0.72);
-        layer.lineBetween(worldX - 10 * scale, worldY + 8 * scale, worldX - 10 * scale, worldY - 4 * scale);
-        layer.lineBetween(worldX + 10 * scale, worldY + 8 * scale, worldX + 10 * scale, worldY - 4 * scale);
+        layer.lineBetween(
+          worldX - 10 * scale,
+          worldY + 8 * scale,
+          worldX - 10 * scale,
+          worldY - 4 * scale,
+        );
+        layer.lineBetween(
+          worldX + 10 * scale,
+          worldY + 8 * scale,
+          worldX + 10 * scale,
+          worldY - 4 * scale,
+        );
         layer.fillStyle(0xddba8d, 1);
-        layer.fillRoundedRect(worldX - 12 * scale, worldY - 7 * scale, 24 * scale, 6 * scale, 3);
+        layer.fillRoundedRect(
+          worldX - 12 * scale,
+          worldY - 7 * scale,
+          24 * scale,
+          6 * scale,
+          3,
+        );
         layer.fillStyle(0x8f5a45, 1);
         layer.fillTriangle(
           worldX - 12 * scale,
@@ -10733,30 +14391,76 @@ function drawProps(
           worldY + 7 * scale,
         );
         layer.fillStyle(0xf4d6aa, 0.34);
-        layer.fillRoundedRect(worldX - 8 * scale, worldY - 5 * scale, 16 * scale, 2 * scale, 1);
+        layer.fillRoundedRect(
+          worldX - 8 * scale,
+          worldY - 5 * scale,
+          16 * scale,
+          2 * scale,
+          1,
+        );
         break;
       case "bollard":
         layer.fillStyle(0x000000, 0.1);
         layer.fillEllipse(worldX, worldY + 5, 10 * scale, 5 * scale);
         layer.fillStyle(0x49545d, 0.94);
-        layer.fillRoundedRect(worldX - 3 * scale, worldY - 6 * scale, 6 * scale, 12 * scale, 2);
+        layer.fillRoundedRect(
+          worldX - 3 * scale,
+          worldY - 6 * scale,
+          6 * scale,
+          12 * scale,
+          2,
+        );
         layer.fillStyle(0xd5dddf, 0.12);
-        layer.fillRoundedRect(worldX - 2 * scale, worldY - 5 * scale, 2 * scale, 6 * scale, 1);
+        layer.fillRoundedRect(
+          worldX - 2 * scale,
+          worldY - 5 * scale,
+          2 * scale,
+          6 * scale,
+          1,
+        );
         break;
       case "pump":
         layer.fillStyle(0x000000, 0.12);
         layer.fillEllipse(worldX + 1, worldY + 7, 16 * scale, 7 * scale);
         layer.fillStyle(0x667883, 0.92);
-        layer.fillRoundedRect(worldX - 4 * scale, worldY - 7 * scale, 8 * scale, 14 * scale, 3);
+        layer.fillRoundedRect(
+          worldX - 4 * scale,
+          worldY - 7 * scale,
+          8 * scale,
+          14 * scale,
+          3,
+        );
         layer.fillStyle(0x90a7b2, 0.14);
-        layer.fillRoundedRect(worldX - 2 * scale, worldY - 5 * scale, 2 * scale, 5 * scale, 1);
+        layer.fillRoundedRect(
+          worldX - 2 * scale,
+          worldY - 5 * scale,
+          2 * scale,
+          5 * scale,
+          1,
+        );
         layer.lineStyle(2, 0xcab58c, 0.36);
-        layer.lineBetween(worldX + 1 * scale, worldY - 5 * scale, worldX + 8 * scale, worldY - 11 * scale);
-        layer.lineBetween(worldX + 8 * scale, worldY - 11 * scale, worldX + 11 * scale, worldY - 8 * scale);
+        layer.lineBetween(
+          worldX + 1 * scale,
+          worldY - 5 * scale,
+          worldX + 8 * scale,
+          worldY - 11 * scale,
+        );
+        layer.lineBetween(
+          worldX + 8 * scale,
+          worldY - 11 * scale,
+          worldX + 11 * scale,
+          worldY - 8 * scale,
+        );
         break;
       default:
         layer.fillStyle(colorForProp(prop.kind), 0.94);
-        layer.fillRoundedRect(worldX - 8 * scale, worldY - 8 * scale, 16 * scale, 16 * scale, 5);
+        layer.fillRoundedRect(
+          worldX - 8 * scale,
+          worldY - 8 * scale,
+          16 * scale,
+          16 * scale,
+          5,
+        );
         break;
     }
   }
@@ -10848,7 +14552,13 @@ function createWorldLabelPlate(
 ) {
   const { accentColor, depth, tone } = options;
   const fontSize =
-    tone === "location" ? 13 : tone === "district" ? 16 : tone === "landmark" ? 12 : 11;
+    tone === "location"
+      ? 13
+      : tone === "district"
+        ? 16
+        : tone === "landmark"
+          ? 12
+          : 11;
   const boardFill =
     tone === "location" || tone === "landmark"
       ? 0x24352d
@@ -10866,7 +14576,10 @@ function createWorldLabelPlate(
   const textNode = scene.add
     .text(0, 0, text, {
       align: "center",
-      color: tone === "location" || tone === "landmark" ? "#f3ead0" : toneColor(tone),
+      color:
+        tone === "location" || tone === "landmark"
+          ? "#f3ead0"
+          : toneColor(tone),
       fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
       fontSize: `${fontSize}px`,
       fontStyle: tone === "district" || tone === "location" ? "700" : "600",
@@ -10880,12 +14593,36 @@ function createWorldLabelPlate(
 
   background.fillStyle(boardFill, tone === "street" ? 0.78 : 0.96);
   background.lineStyle(2, boardStroke, tone === "street" ? 0.5 : 0.95);
-  background.fillRoundedRect(-width / 2, -height / 2, width, height, tone === "district" ? 8 : 7);
-  background.strokeRoundedRect(-width / 2, -height / 2, width, height, tone === "district" ? 8 : 7);
+  background.fillRoundedRect(
+    -width / 2,
+    -height / 2,
+    width,
+    height,
+    tone === "district" ? 8 : 7,
+  );
+  background.strokeRoundedRect(
+    -width / 2,
+    -height / 2,
+    width,
+    height,
+    tone === "district" ? 8 : 7,
+  );
   background.fillStyle(boardInner, tone === "street" ? 0.18 : 0.54);
-  background.fillRoundedRect(-width / 2 + 3, -height / 2 + 3, width - 6, height - 6, tone === "district" ? 6 : 5);
+  background.fillRoundedRect(
+    -width / 2 + 3,
+    -height / 2 + 3,
+    width - 6,
+    height - 6,
+    tone === "district" ? 6 : 5,
+  );
   background.fillStyle(accentColor, tone === "street" ? 0.18 : 0.34);
-  background.fillRoundedRect(-width / 2 + 8, -height / 2 + 5, width - 16, 2.5, 1.5);
+  background.fillRoundedRect(
+    -width / 2 + 8,
+    -height / 2 + 5,
+    width - 16,
+    2.5,
+    1.5,
+  );
 
   return scene.add.container(x, y, [background, textNode]).setDepth(depth);
 }
@@ -10915,10 +14652,7 @@ const KENNEY_GRASS = [925, 926, 927, 962, 963, 964, 999, 1000, 1001];
 const KENNEY_TREE_FRAMES = [401, 402, 403, 404, 405];
 const KENNEY_SIGN_FRAMES = [290, 291, 292, 293];
 
-function drawKenneyTerrainSprites(
-  scene: PhaserType.Scene,
-  tiles: MapTile[],
-) {
+function drawKenneyTerrainSprites(scene: PhaserType.Scene, tiles: MapTile[]) {
   if (!scene.textures.exists(KENNEY_MODERN_CITY_KEY)) {
     return [];
   }
@@ -10974,8 +14708,14 @@ function drawKenneyFacadeSprites(
     const facing = resolveFootprintFacing(game.map, footprint);
     const tileMinX = Math.floor(footprint.x + 0.1);
     const tileMinY = Math.floor(footprint.y + 0.1);
-    const tileMaxX = Math.max(tileMinX + 1, Math.ceil(footprint.x + footprint.width - 0.1));
-    const tileMaxY = Math.max(tileMinY + 1, Math.ceil(footprint.y + footprint.height - 0.1));
+    const tileMaxX = Math.max(
+      tileMinX + 1,
+      Math.ceil(footprint.x + footprint.width - 0.1),
+    );
+    const tileMaxY = Math.max(
+      tileMinY + 1,
+      Math.ceil(footprint.y + footprint.height - 0.1),
+    );
     const columns = tileMaxX - tileMinX;
     const rows = tileMaxY - tileMinY;
 
@@ -10983,11 +14723,12 @@ function drawKenneyFacadeSprites(
       continue;
     }
 
-    const facadeRows = Math.min(rows, Math.max(2, Math.min(3, Math.round(footprint.height))));
+    const facadeRows = Math.min(
+      rows,
+      Math.max(2, Math.min(3, Math.round(footprint.height))),
+    );
     const baseTileY =
-      facing === "south"
-        ? Math.max(tileMinY, tileMaxY - facadeRows)
-        : tileMinY;
+      facing === "south" ? Math.max(tileMinY, tileMaxY - facadeRows) : tileMinY;
 
     for (let row = 0; row < facadeRows; row += 1) {
       const visualRow = facing === "south" ? row : facadeRows - row - 1;
@@ -10998,7 +14739,10 @@ function drawKenneyFacadeSprites(
             : visualRow === facadeRows - 1
               ? facade.base[column % facade.base.length]
               : facade.mid[(visualRow + column) % facade.mid.length];
-        const { x, y } = mapTileToWorldOrigin(tileMinX + column, baseTileY + row);
+        const { x, y } = mapTileToWorldOrigin(
+          tileMinX + column,
+          baseTileY + row,
+        );
         nodes.push(
           scene.add
             .image(x, y, KENNEY_MODERN_CITY_KEY, frame)
@@ -11080,16 +14824,29 @@ function drawKenneyLandmarkOverlays(
       continue;
     }
 
-    const { x: worldX, y: worldY } = mapTileToWorldOrigin(footprint.x, footprint.y);
+    const { x: worldX, y: worldY } = mapTileToWorldOrigin(
+      footprint.x,
+      footprint.y,
+    );
     const width = footprint.width * CELL;
     const height = footprint.height * CELL;
     const overlay = scene.add.graphics().setDepth(26);
 
-    if (footprint.locationId === "tea-house" && palette.profile === "tea-house") {
+    if (
+      footprint.locationId === "tea-house" &&
+      palette.profile === "tea-house"
+    ) {
       drawTeaHouseLandmark(overlay, worldX, worldY, width, height, palette);
     } else {
       drawBuildingDetail(overlay, worldX, worldY, width, height, palette);
-      drawLandmarkPurposeAccent(overlay, worldX, worldY, width, height, palette);
+      drawLandmarkPurposeAccent(
+        overlay,
+        worldX,
+        worldY,
+        width,
+        height,
+        palette,
+      );
     }
     nodes.push(overlay);
   }
@@ -11137,7 +14894,14 @@ function drawTeaHouseLandmark(
   layer.fillEllipse(centerX, worldY + height - 2, Math.max(width - 26, 40), 16);
 
   layer.fillStyle(teaRoof, 1);
-  layer.fillTriangle(roofLeft, roofBaseY + 14, roofRight, roofBaseY + 14, centerX, worldY + 8);
+  layer.fillTriangle(
+    roofLeft,
+    roofBaseY + 14,
+    roofRight,
+    roofBaseY + 14,
+    centerX,
+    worldY + 8,
+  );
   layer.fillStyle(blendColor(teaRoof, 0xb1cfbf, 0.18), 1);
   layer.fillRoundedRect(worldX + 16, worldY + 11, width - 32, 9, 4);
   layer.fillStyle(teaRoofDark, 1);
@@ -11155,7 +14919,13 @@ function drawTeaHouseLandmark(
   layer.fillStyle(blendColor(teaWall, 0xffffff, 0.18), 1);
   layer.fillRoundedRect(worldX + 14, wallTop + 5, width - 28, 8, 3);
   layer.fillStyle(creamTrim, 0.92);
-  layer.fillRoundedRect(worldX + width - 24, wallTop + 6, 12, wallHeight - 18, 4);
+  layer.fillRoundedRect(
+    worldX + width - 24,
+    wallTop + 6,
+    12,
+    wallHeight - 18,
+    4,
+  );
   layer.fillStyle(stripeGreen, 0.86);
   layer.fillRect(worldX + width - 22, wallTop + 22, 3, wallHeight - 34);
   layer.fillRect(worldX + width - 16, wallTop + 22, 3, wallHeight - 34);
@@ -11168,8 +14938,18 @@ function drawTeaHouseLandmark(
     layer.fillStyle(warmWindow, 0.96);
     layer.fillRoundedRect(windowX, upperWindowY, 22, 20, 3);
     layer.lineStyle(1.2, blendColor(teaTrim, 0x0d1114, 0.12), 0.42);
-    layer.lineBetween(windowX + 11, upperWindowY + 2, windowX + 11, upperWindowY + 18);
-    layer.lineBetween(windowX + 2, upperWindowY + 10, windowX + 20, upperWindowY + 10);
+    layer.lineBetween(
+      windowX + 11,
+      upperWindowY + 2,
+      windowX + 11,
+      upperWindowY + 18,
+    );
+    layer.lineBetween(
+      windowX + 2,
+      upperWindowY + 10,
+      windowX + 20,
+      upperWindowY + 10,
+    );
   }
 
   const awningWidth = width - 34;
@@ -11211,8 +14991,18 @@ function drawTeaHouseLandmark(
   layer.fillStyle(0xe9d8ad, 0.9);
   layer.fillCircle(centerX + 5, storefrontY + 13, 1.5);
   layer.lineStyle(1.2, blendColor(teaTrim, 0x0c1114, 0.14), 0.34);
-  layer.lineBetween(worldX + 30, storefrontY + 4, worldX + 30, storefrontY + 20);
-  layer.lineBetween(worldX + width - 30, storefrontY + 4, worldX + width - 30, storefrontY + 20);
+  layer.lineBetween(
+    worldX + 30,
+    storefrontY + 4,
+    worldX + 30,
+    storefrontY + 20,
+  );
+  layer.lineBetween(
+    worldX + width - 30,
+    storefrontY + 4,
+    worldX + width - 30,
+    storefrontY + 20,
+  );
   drawTeaHouseWallLantern(layer, worldX + 28, storefrontY - 6);
   drawTeaHouseWallLantern(layer, worldX + width - 28, storefrontY - 6);
   layer.fillStyle(0x476a45, 0.96);
@@ -11232,7 +15022,12 @@ function drawTeaHouseLandmark(
   layer.fillRect(worldX + 16, terraceY + 20, width - 26, 2);
   layer.fillStyle(cafeRail, 0.96);
   layer.fillRoundedRect(worldX + 15, terraceY + 20, width - 22, 3, 2);
-  for (const railX of [worldX + 20, worldX + 35, worldX + width - 42, worldX + width - 24]) {
+  for (const railX of [
+    worldX + 20,
+    worldX + 35,
+    worldX + width - 42,
+    worldX + width - 24,
+  ]) {
     layer.fillRoundedRect(railX, terraceY + 11, 3, 13, 1.5);
   }
   layer.fillRoundedRect(worldX + 18, terraceY + 8, 26, 3, 2);
@@ -11267,7 +15062,13 @@ function drawTeaHouseLandmark(
   layer.fillRoundedRect(worldX + width - 24, terraceY + 13, 6, 1.5, 1);
   layer.fillStyle(terraceStone, 0.98);
   layer.fillRoundedRect(worldX + width - 6, terraceY - 1, 18, 26, 5);
-  drawTeaHouseMenuBoard(layer, worldX + width + 4, terraceY + 11, menuBoard, menuFrame);
+  drawTeaHouseMenuBoard(
+    layer,
+    worldX + width + 4,
+    terraceY + 11,
+    menuBoard,
+    menuFrame,
+  );
   layer.fillStyle(cafeRail, 0.96);
   layer.fillRoundedRect(worldX + width + 4, terraceY + 20, 10, 3, 2);
   layer.fillRoundedRect(worldX + width + 8, terraceY + 9, 3, 14, 1.5);
@@ -11387,8 +15188,18 @@ function drawLandmarkPurposeAccent(
   switch (palette.profile) {
     case "boarding-house":
       layer.lineStyle(2, blendColor(palette.trim, 0xf2e7d4, 0.28), 0.6);
-      layer.lineBetween(centerX - 20, worldY + height - 27, centerX - 20, worldY + height - 12);
-      layer.lineBetween(centerX + 20, worldY + height - 27, centerX + 20, worldY + height - 12);
+      layer.lineBetween(
+        centerX - 20,
+        worldY + height - 27,
+        centerX - 20,
+        worldY + height - 12,
+      );
+      layer.lineBetween(
+        centerX + 20,
+        worldY + height - 27,
+        centerX + 20,
+        worldY + height - 12,
+      );
       layer.fillStyle(blendColor(palette.sign, 0xf6e6c8, 0.16), 0.98);
       layer.fillRoundedRect(centerX - 14, worldY + height - 30, 28, 8, 4);
       break;
@@ -11401,8 +15212,18 @@ function drawLandmarkPurposeAccent(
       break;
     case "repair-stall":
       layer.lineStyle(2, blendColor(palette.trim, 0xf0eadf, 0.12), 0.56);
-      layer.lineBetween(centerX - 6, worldY + height - 31, centerX + 6, worldY + height - 19);
-      layer.lineBetween(centerX - 6, worldY + height - 19, centerX + 6, worldY + height - 31);
+      layer.lineBetween(
+        centerX - 6,
+        worldY + height - 31,
+        centerX + 6,
+        worldY + height - 19,
+      );
+      layer.lineBetween(
+        centerX - 6,
+        worldY + height - 19,
+        centerX + 6,
+        worldY + height - 31,
+      );
       layer.fillStyle(blendColor(palette.sign, 0xe8ded0, 0.12), 0.96);
       layer.fillRoundedRect(centerX + 18, worldY + height - 28, 18, 10, 4);
       break;
@@ -11473,10 +15294,7 @@ function kenneyFacadeStyleForFootprint(footprint: MapFootprint) {
   }
 }
 
-function drawKenneyPropSprites(
-  scene: PhaserType.Scene,
-  props: MapProp[],
-) {
+function drawKenneyPropSprites(scene: PhaserType.Scene, props: MapProp[]) {
   if (!scene.textures.exists(KENNEY_MODERN_CITY_KEY)) {
     return [];
   }
@@ -11506,7 +15324,10 @@ function drawKenneyPropSprites(
 }
 
 function pickKenneyFrame(frames: number[], noise: number) {
-  const index = Math.max(0, Math.min(frames.length - 1, Math.floor(noise * frames.length)));
+  const index = Math.max(
+    0,
+    Math.min(frames.length - 1, Math.floor(noise * frames.length)),
+  );
   return frames[index] ?? frames[0]!;
 }
 
@@ -11538,11 +15359,27 @@ function drawTileCell(
 
   layer.fillStyle(fillColor, baseAlpha);
   if (isolated) {
-    layer.fillRoundedRect(surfaceX + 1, surfaceY + 1, surfaceWidth - 2, surfaceHeight - 2, 9);
+    layer.fillRoundedRect(
+      surfaceX + 1,
+      surfaceY + 1,
+      surfaceWidth - 2,
+      surfaceHeight - 2,
+      9,
+    );
   } else {
     layer.fillRect(surfaceX, surfaceY, surfaceWidth, surfaceHeight);
   }
-  drawSurfacePatina(layer, gridX, gridY, surfaceX, surfaceY, surfaceWidth, surfaceHeight, kind, alpha);
+  drawSurfacePatina(
+    layer,
+    gridX,
+    gridY,
+    surfaceX,
+    surfaceY,
+    surfaceWidth,
+    surfaceHeight,
+    kind,
+    alpha,
+  );
   drawTileSurfaceDetail(layer, gridX, gridY, worldX, worldY, kind, alpha);
 
   drawSurfaceEdge(
@@ -11558,7 +15395,12 @@ function drawTileCell(
 
   if (!walkable) {
     layer.lineStyle(2, 0x12181c, 0.42 * alpha);
-    layer.lineBetween(worldX + 8, worldY + 8, worldX + CELL - 8, worldY + CELL - 8);
+    layer.lineBetween(
+      worldX + 8,
+      worldY + 8,
+      worldX + CELL - 8,
+      worldY + CELL - 8,
+    );
   }
 }
 
@@ -11573,15 +15415,27 @@ function drawSurfacePatina(
   kind: TileKind,
   alpha: number,
 ) {
-  const patchColor = blendColor(TILE_COLORS[kind], 0xf0e2c4, kind === "water" ? 0.2 : 0.12);
+  const patchColor = blendColor(
+    TILE_COLORS[kind],
+    0xf0e2c4,
+    kind === "water" ? 0.2 : 0.12,
+  );
   const shadowColor = blendColor(TILE_COLORS[kind], 0x0a1116, 0.22);
-  const patchCount = kind === "lane" || kind === "plaza" ? 1 : kind === "water" ? 1 : 2;
+  const patchCount =
+    kind === "lane" || kind === "plaza" ? 1 : kind === "water" ? 1 : 2;
 
   for (let index = 0; index < patchCount; index += 1) {
-    const offsetSeed = sampleTileNoise(gridX + index * 2, gridY + index, 121 + index * 19);
+    const offsetSeed = sampleTileNoise(
+      gridX + index * 2,
+      gridY + index,
+      121 + index * 19,
+    );
     const patchX = surfaceX + 6 + offsetSeed * Math.max(width - 16, 8);
     const patchY =
-      surfaceY + 7 + sampleTileNoise(gridX, gridY + index * 3, 141 + index * 13) * Math.max(height - 18, 8);
+      surfaceY +
+      7 +
+      sampleTileNoise(gridX, gridY + index * 3, 141 + index * 13) *
+        Math.max(height - 18, 8);
     const patchWidth =
       kind === "water"
         ? 10 + sampleTileNoise(gridX + index, gridY, 161 + index * 11) * 12
@@ -11593,7 +15447,11 @@ function drawSurfacePatina(
 
     layer.fillStyle(
       index % 3 === 0 ? patchColor : shadowColor,
-      (kind === "water" ? 0.02 : kind === "lane" || kind === "plaza" ? 0.012 : 0.022) * alpha,
+      (kind === "water"
+        ? 0.02
+        : kind === "lane" || kind === "plaza"
+          ? 0.012
+          : 0.022) * alpha,
     );
     layer.fillEllipse(patchX, patchY, patchWidth, patchHeight);
   }
@@ -11609,7 +15467,11 @@ function drawSurfaceEdge(
   kind: TileKind,
   alpha: number,
 ) {
-  const highlight = blendColor(TILE_COLORS[kind], 0xf2e1bc, kind === "water" ? 0.4 : 0.32);
+  const highlight = blendColor(
+    TILE_COLORS[kind],
+    0xf2e1bc,
+    kind === "water" ? 0.4 : 0.32,
+  );
   const shadow = blendColor(TILE_COLORS[kind], 0x091015, 0.46);
 
   if (!edges.north) {
@@ -11624,12 +15486,22 @@ function drawSurfaceEdge(
 
   if (!edges.south) {
     layer.fillStyle(shadow, 0.14 * alpha);
-    layer.fillRect(surfaceX + 2, surfaceY + height - 3, Math.max(width - 4, 6), 2.5);
+    layer.fillRect(
+      surfaceX + 2,
+      surfaceY + height - 3,
+      Math.max(width - 4, 6),
+      2.5,
+    );
   }
 
   if (!edges.east) {
     layer.fillStyle(shadow, 0.09 * alpha);
-    layer.fillRect(surfaceX + width - 3, surfaceY + 2, 2.5, Math.max(height - 4, 6));
+    layer.fillRect(
+      surfaceX + width - 3,
+      surfaceY + 2,
+      2.5,
+      Math.max(height - 4, 6),
+    );
   }
 }
 
@@ -11715,13 +15587,22 @@ function drawPlazaDetail(
   const inset = 4;
 
   layer.lineStyle(1.1, 0xf0e3cc, (0.1 + tone * 0.04) * alpha);
-  layer.strokeRoundedRect(worldX + inset, worldY + inset, CELL - inset * 2, CELL - inset * 2, 5);
+  layer.strokeRoundedRect(
+    worldX + inset,
+    worldY + inset,
+    CELL - inset * 2,
+    CELL - inset * 2,
+    5,
+  );
   layer.lineBetween(worldX + 7, worldY + 13, worldX + CELL - 7, worldY + 13);
   layer.lineBetween(worldX + 7, worldY + 27, worldX + CELL - 7, worldY + 27);
   layer.lineBetween(worldX + 13, worldY + 7, worldX + 13, worldY + CELL - 7);
   layer.lineBetween(worldX + 27, worldY + 7, worldX + 27, worldY + CELL - 7);
 
-  layer.fillStyle(blendColor(0xc1b092, 0xf0e5cf, 0.24), (0.07 + tone * 0.02) * alpha);
+  layer.fillStyle(
+    blendColor(0xc1b092, 0xf0e5cf, 0.24),
+    (0.07 + tone * 0.02) * alpha,
+  );
   layer.fillRoundedRect(worldX + 15, worldY + 15, 10, 10, 3);
   layer.lineStyle(1, 0xc7b08a, 0.08 * alpha);
   layer.strokeCircle(worldX + CELL / 2, worldY + CELL / 2, 5.2);
@@ -11909,10 +15790,7 @@ function smoothstepUnit(value: number) {
   return clamped * clamped * (3 - 2 * clamped);
 }
 
-function drawFringeTiles(
-  layer: PhaserType.GameObjects.Graphics,
-  map: CityMap,
-) {
+function drawFringeTiles(layer: PhaserType.GameObjects.Graphics, map: CityMap) {
   const extendedGrid = getExtendedGridSize(map);
   const mapLeft = VISUAL_MARGIN_TILES.left;
   const mapRight = mapLeft + map.width;
@@ -12010,8 +15888,14 @@ function drawFringeBlocks(
   const westTall = worldGridToWorldOrigin(0.6, mapTop + 6.1);
   const southWest = worldGridToWorldOrigin(2.4, mapBottom - 2.5);
   const northBandLeft = worldGridToWorldOrigin(mapLeft - 7.3, mapTop - 5.7);
-  const northBandCenterLeft = worldGridToWorldOrigin(mapLeft - 1.3, mapTop - 5.9);
-  const northBandCenterRight = worldGridToWorldOrigin(mapLeft + 10.3, mapTop - 5.8);
+  const northBandCenterLeft = worldGridToWorldOrigin(
+    mapLeft - 1.3,
+    mapTop - 5.9,
+  );
+  const northBandCenterRight = worldGridToWorldOrigin(
+    mapLeft + 10.3,
+    mapTop - 5.8,
+  );
   const northBandRight = worldGridToWorldOrigin(mapRight + 1.1, mapTop - 5.4);
   const northAlleyShadow = worldGridToWorldOrigin(mapLeft + 6.6, mapTop - 4.6);
 
@@ -12105,10 +15989,38 @@ function drawFringeBlocks(
     width: CELL * 3.4,
     height: CELL * 2.2,
   });
-  drawBuildingDetail(layer, northWest.x, northWest.y, CELL * 4.7, CELL * 3.1, northWestPalette);
-  drawBuildingDetail(layer, northEast.x, northEast.y, CELL * 4.9, CELL * 2.8, northEastPalette);
-  drawBuildingDetail(layer, eastRow.x, eastRow.y, CELL * 2.8, CELL * 4.6, eastPalette);
-  drawBuildingDetail(layer, westTall.x, westTall.y, CELL * 2.3, CELL * 4.9, westTallPalette);
+  drawBuildingDetail(
+    layer,
+    northWest.x,
+    northWest.y,
+    CELL * 4.7,
+    CELL * 3.1,
+    northWestPalette,
+  );
+  drawBuildingDetail(
+    layer,
+    northEast.x,
+    northEast.y,
+    CELL * 4.9,
+    CELL * 2.8,
+    northEastPalette,
+  );
+  drawBuildingDetail(
+    layer,
+    eastRow.x,
+    eastRow.y,
+    CELL * 2.8,
+    CELL * 4.6,
+    eastPalette,
+  );
+  drawBuildingDetail(
+    layer,
+    westTall.x,
+    westTall.y,
+    CELL * 2.3,
+    CELL * 4.9,
+    westTallPalette,
+  );
   drawBuildingDetail(
     layer,
     northBandLeft.x,
@@ -12141,7 +16053,14 @@ function drawFringeBlocks(
     CELL * 3.8,
     northBandRightPalette,
   );
-  drawDockDetail(layer, mapRight + 2, mapBottom - 1, lowerSlip.x, lowerSlip.y, 0.7);
+  drawDockDetail(
+    layer,
+    mapRight + 2,
+    mapBottom - 1,
+    lowerSlip.x,
+    lowerSlip.y,
+    0.7,
+  );
   layer.fillStyle(0x071015, 0.22);
   layer.fillRoundedRect(
     northAlleyShadow.x,
@@ -12151,13 +16070,15 @@ function drawFringeBlocks(
     12,
   );
   layer.fillStyle(0xf0d5a0, 0.06);
-  layer.fillRect(northAlleyShadow.x + CELL * 1.28, northAlleyShadow.y + 26, 5, CELL * 2.2);
+  layer.fillRect(
+    northAlleyShadow.x + CELL * 1.28,
+    northAlleyShadow.y + 26,
+    5,
+    CELL * 2.2,
+  );
 }
 
-function drawFringeProps(
-  layer: PhaserType.GameObjects.Graphics,
-  map: MapSize,
-) {
+function drawFringeProps(layer: PhaserType.GameObjects.Graphics, map: MapSize) {
   const mapLeft = VISUAL_MARGIN_TILES.left;
   const mapTop = VISUAL_MARGIN_TILES.top;
   const mapRight = mapLeft + map.width;
@@ -12174,7 +16095,12 @@ function drawFringeProps(
   const alleyLaundry = worldGridToWorldOrigin(mapLeft + 7.7, mapTop - 1.3);
 
   layer.lineStyle(3, 0xd3c89a, 0.5);
-  layer.lineBetween(northLamp.x, northLamp.y + 10, northLamp.x, northLamp.y - 11);
+  layer.lineBetween(
+    northLamp.x,
+    northLamp.y + 10,
+    northLamp.x,
+    northLamp.y - 11,
+  );
   layer.fillStyle(0xf0dca6, 0.44);
   layer.fillCircle(northLamp.x, northLamp.y - 13, 4);
   layer.lineBetween(eastLamp.x, eastLamp.y + 10, eastLamp.x, eastLamp.y - 11);
@@ -12191,7 +16117,12 @@ function drawFringeProps(
   layer.fillRect(westTree.x - 2, westTree.y - 2, 4, 12);
 
   layer.lineStyle(2, 0xd8d2bf, 0.42);
-  layer.lineBetween(laundry.x - 14, laundry.y - 10, laundry.x + 14, laundry.y - 10);
+  layer.lineBetween(
+    laundry.x - 14,
+    laundry.y - 10,
+    laundry.x + 14,
+    laundry.y - 10,
+  );
   layer.fillStyle(0xc99172, 0.84);
   layer.fillRect(laundry.x - 11, laundry.y - 8, 6, 10);
   layer.fillStyle(0x8fb0ca, 0.82);
@@ -12210,15 +16141,30 @@ function drawFringeProps(
   layer.fillStyle(0x7c6047, 0.9);
   layer.fillRoundedRect(signboard.x - 12, signboard.y - 5, 24, 10, 3);
   layer.lineStyle(1.6, 0xd8c19a, 0.2);
-  layer.lineBetween(signboard.x - 8, signboard.y - 1, signboard.x + 8, signboard.y - 1);
+  layer.lineBetween(
+    signboard.x - 8,
+    signboard.y - 1,
+    signboard.x + 8,
+    signboard.y - 1,
+  );
 
   layer.fillStyle(0x3b4853, 0.82);
   layer.fillRoundedRect(roofTank.x - 9, roofTank.y - 7, 18, 14, 4);
   layer.fillStyle(0x1e2a33, 0.3);
   layer.fillRoundedRect(roofTank.x - 6, roofTank.y - 4, 12, 3, 2);
   layer.lineStyle(1.6, 0x8696a2, 0.16);
-  layer.lineBetween(roofTank.x - 4, roofTank.y + 7, roofTank.x - 6, roofTank.y + 14);
-  layer.lineBetween(roofTank.x + 4, roofTank.y + 7, roofTank.x + 6, roofTank.y + 14);
+  layer.lineBetween(
+    roofTank.x - 4,
+    roofTank.y + 7,
+    roofTank.x - 6,
+    roofTank.y + 14,
+  );
+  layer.lineBetween(
+    roofTank.x + 4,
+    roofTank.y + 7,
+    roofTank.x + 6,
+    roofTank.y + 14,
+  );
 
   layer.lineStyle(2, 0xd9d1be, 0.3);
   layer.lineBetween(
@@ -12251,7 +16197,11 @@ function fringeTileForCoordinate(
   }
 
   const horizontalDistance =
-    column < mapLeft ? mapLeft - column : column > mapRight ? column - mapRight : 0;
+    column < mapLeft
+      ? mapLeft - column
+      : column > mapRight
+        ? column - mapRight
+        : 0;
   const verticalDistance =
     row < mapTop ? mapTop - row : row > mapBottom ? row - mapBottom : 0;
   const edgeDistance = Math.max(horizontalDistance, verticalDistance);
@@ -12260,7 +16210,13 @@ function fringeTileForCoordinate(
     baseTile.kind,
     horizontalDistance,
     verticalDistance,
-    column < mapLeft ? "west" : column > mapRight ? "east" : row < mapTop ? "north" : "south",
+    column < mapLeft
+      ? "west"
+      : column > mapRight
+        ? "east"
+        : row < mapTop
+          ? "north"
+          : "south",
   );
 
   return {
@@ -12367,7 +16323,9 @@ function getSelectedNpc(runtimeState: RuntimeState) {
     return null;
   }
 
-  return game.npcs.find((npc) => npc.id === runtimeState.ui.selectedNpcId) ?? null;
+  return (
+    game.npcs.find((npc) => npc.id === runtimeState.ui.selectedNpcId) ?? null
+  );
 }
 
 function getConversationThreadState(game: StreetGameState, npcId: string) {
@@ -12421,9 +16379,7 @@ function conversationEntryStartDelayMs(
   previousSpeaker:
     | StreetGameState["conversations"][number]["speaker"]
     | undefined,
-  nextSpeaker:
-    | StreetGameState["conversations"][number]["speaker"]
-    | undefined,
+  nextSpeaker: StreetGameState["conversations"][number]["speaker"] | undefined,
 ) {
   if (!nextSpeaker) {
     return 0;
@@ -12491,15 +16447,25 @@ function buildPlayerThought(game: StreetGameState) {
   }
 
   const activeJob = game.jobs.find((job) => job.id === game.player.activeJobId);
-  const pumpProblem = game.problems.find((problem) => problem.id === "problem-pump");
-  const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
-  const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
+  const pumpProblem = game.problems.find(
+    (problem) => problem.id === "problem-pump",
+  );
+  const cartProblem = game.problems.find(
+    (problem) => problem.id === "problem-cart",
+  );
+  const hasWrench = game.player.inventory.some(
+    (item) => item.id === "item-wrench",
+  );
 
   if (activeJob && !activeJob.completed) {
     return "I can't blow this shift.";
   }
 
-  if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
+  if (
+    pumpProblem?.discovered &&
+    pumpProblem.status === "active" &&
+    !hasWrench
+  ) {
     return "I need a wrench first.";
   }
 
@@ -12534,51 +16500,27 @@ function buildPlayerThought(game: StreetGameState) {
   return "I think I could find a real friend here.";
 }
 
-function reputationSummary(game: StreetGameState) {
-  const total = Object.values(game.player.reputation).reduce(
-    (sum, value) => sum + value,
-    0,
-  );
-
-  if (total >= 6) {
-    return "Known face";
-  }
-  if (total >= 3) {
-    return "Recognized";
-  }
-  return "Still new";
-}
-
-function districtSenseSummary(game: StreetGameState) {
-  const knownPlaces = game.player.knownLocationIds.length;
-  if (knownPlaces >= 5) {
-    return "Know the block";
-  }
-  if (knownPlaces >= 3) {
-    return "Learning lanes";
-  }
-  return "Still strange";
-}
-
-function workReadSummary(game: StreetGameState) {
-  const completedJobs = game.jobs.filter((job) => job.completed).length;
-  if (completedJobs >= 2) {
-    return "Pulling weight";
-  }
-  if (completedJobs >= 1) {
-    return "Work behind you";
-  }
-  if (game.player.activeJobId) {
-    return "Shift in hand";
-  }
-  return "Still looking";
-}
-
 function createRouteFinder(tiles: MapTile[]) {
-  const walkable = new Set(
-    tiles.filter((tile) => tile.walkable).map((tile) => `${tile.x},${tile.y}`),
+  const walkableTiles = tiles.filter((tile) => tile.walkable);
+  const walkable = new Set(walkableTiles.map((tile) => `${tile.x},${tile.y}`));
+  const tileByKey = new Map<string, MapTile>(
+    walkableTiles.map((tile) => [`${tile.x},${tile.y}`, tile]),
   );
+  const clearancePenaltyByKey = new Map<string, number>();
   const cache = new Map<string, Point[]>();
+
+  for (const tile of walkableTiles) {
+    const key = `${tile.x},${tile.y}`;
+    let penalty = 0;
+
+    for (const offset of ROUTE_CLEARANCE_OFFSETS) {
+      if (!walkable.has(`${tile.x + offset.x},${tile.y + offset.y}`)) {
+        penalty += offset.weight;
+      }
+    }
+
+    clearancePenaltyByKey.set(key, penalty);
+  }
 
   return (start: Point, end: Point) => {
     const roundedStart = {
@@ -12597,37 +16539,80 @@ function createRouteFinder(tiles: MapTile[]) {
       return cache.get(cacheKey)!;
     }
 
-    const queue: Point[] = [roundedStart];
-    const visited = new Set([startTile]);
+    const frontier: Array<{
+      cost: number;
+      point: Point;
+      priority: number;
+    }> = [
+      {
+        cost: 0,
+        point: roundedStart,
+        priority: routeHeuristic(roundedStart, roundedEnd),
+      },
+    ];
+    const bestCostByKey = new Map([[startTile, 0]]);
     const parentByKey = new Map<string, string>();
     let foundKey = startTile;
 
-    while (queue.length > 0) {
-      const current = queue.shift()!;
+    while (frontier.length > 0) {
+      let bestIndex = 0;
+      for (let index = 1; index < frontier.length; index += 1) {
+        if (frontier[index].priority < frontier[bestIndex].priority) {
+          bestIndex = index;
+        }
+      }
+
+      const currentEntry = frontier.splice(bestIndex, 1)[0];
+      const current = currentEntry.point;
       const currentKey = `${current.x},${current.y}`;
+      const bestKnownCost = bestCostByKey.get(currentKey);
+
+      if (
+        bestKnownCost === undefined ||
+        currentEntry.cost > bestKnownCost + 0.0001
+      ) {
+        continue;
+      }
 
       if (currentKey === endTile) {
         foundKey = currentKey;
         break;
       }
 
-      for (const [dx, dy] of [
-        [1, 0],
-        [-1, 0],
-        [0, 1],
-        [0, -1],
-      ]) {
-        const nextX = current.x + dx;
-        const nextY = current.y + dy;
+      for (const offset of ROUTE_NEIGHBOR_OFFSETS) {
+        const nextX = current.x + offset.x;
+        const nextY = current.y + offset.y;
         const nextKey = `${nextX},${nextY}`;
+        const nextTile = tileByKey.get(nextKey);
 
-        if (!walkable.has(nextKey) || visited.has(nextKey)) {
+        if (!nextTile) {
           continue;
         }
 
-        visited.add(nextKey);
+        const nextCost =
+          currentEntry.cost +
+          routeTileTraversalCost(
+            nextTile,
+            clearancePenaltyByKey.get(nextKey) ?? 0,
+          );
+
+        if (
+          nextCost >= (bestCostByKey.get(nextKey) ?? Number.POSITIVE_INFINITY)
+        ) {
+          continue;
+        }
+
+        bestCostByKey.set(nextKey, nextCost);
         parentByKey.set(nextKey, currentKey);
-        queue.push({ x: nextX, y: nextY });
+        frontier.push({
+          cost: nextCost,
+          point: {
+            x: nextX,
+            y: nextY,
+          },
+          priority:
+            nextCost + routeHeuristic({ x: nextX, y: nextY }, roundedEnd),
+        });
       }
     }
 
@@ -12651,12 +16636,39 @@ function createRouteFinder(tiles: MapTile[]) {
   };
 }
 
+function routeHeuristic(from: Point, to: Point) {
+  return Math.abs(to.x - from.x) + Math.abs(to.y - from.y);
+}
+
+function routeTileTraversalCost(tile: MapTile, clearancePenalty: number) {
+  return routeTileKindCost(tile.kind) + clearancePenalty * 0.16;
+}
+
+function routeTileKindCost(kind: TileKind) {
+  switch (kind) {
+    case "lane":
+      return 1;
+    case "plaza":
+      return 1.04;
+    case "stoop":
+      return 1.08;
+    case "dock":
+      return 1.12;
+    case "courtyard":
+      return 1.34;
+    case "workyard":
+      return 1.42;
+    default:
+      return 1.18;
+  }
+}
+
 function routeReachesDestination(route: Point[], destination: Point) {
   const endpoint = route[route.length - 1];
   return Boolean(
     endpoint &&
-      endpoint.x === Math.round(destination.x) &&
-      endpoint.y === Math.round(destination.y),
+    endpoint.x === Math.round(destination.x) &&
+    endpoint.y === Math.round(destination.y),
   );
 }
 
@@ -12694,10 +16706,7 @@ function getCachedPatrolPath(
     walkableRuntimePoints: WalkableRuntimePoint[];
   },
 ) {
-  const key = patrolCacheKey(
-    options.location.id,
-    options.nextLocation?.id,
-  );
+  const key = patrolCacheKey(options.location.id, options.nextLocation?.id);
   const cached = indices.patrolPathByKey.get(key);
   if (cached) {
     return cached;
@@ -12713,10 +16722,7 @@ function getCachedPatrolDistance(
   indices: RuntimeIndices,
   options: Parameters<typeof getCachedPatrolPath>[1],
 ) {
-  const key = patrolCacheKey(
-    options.location.id,
-    options.nextLocation?.id,
-  );
+  const key = patrolCacheKey(options.location.id, options.nextLocation?.id);
   const cachedDistance = indices.patrolDistanceByKey.get(key);
   if (cachedDistance !== undefined) {
     return cachedDistance;
@@ -12769,7 +16775,10 @@ function buildNpcPatrolPath({
         entryPoint,
         { x: location.x + 1.4, y: location.y + 1.1 },
         { x: location.x + location.width - 1.2, y: location.y + 1.15 },
-        { x: location.x + location.width - 1.05, y: location.y + location.height - 1.1 },
+        {
+          x: location.x + location.width - 1.05,
+          y: location.y + location.height - 1.1,
+        },
         { x: location.x + 1.2, y: location.y + location.height - 1.0 },
       ];
       break;
@@ -12778,7 +16787,10 @@ function buildNpcPatrolPath({
         entryPoint,
         { x: location.x + 1.2, y: location.y + 1.15 },
         { x: location.x + location.width - 1.15, y: location.y + 1.15 },
-        { x: location.x + location.width - 1.15, y: location.y + location.height - 1.0 },
+        {
+          x: location.x + location.width - 1.15,
+          y: location.y + location.height - 1.0,
+        },
         centerPoint,
         { x: location.x + 1.25, y: location.y + location.height - 1.05 },
       ];
@@ -12789,9 +16801,15 @@ function buildNpcPatrolPath({
         { x: location.x + 1.2, y: location.y + 1.2 },
         pump
           ? { x: pump.x, y: pump.y }
-          : { x: location.x + location.width / 2, y: location.y + location.height / 2 },
+          : {
+              x: location.x + location.width / 2,
+              y: location.y + location.height / 2,
+            },
         { x: location.x + location.width - 1.1, y: location.y + 1.3 },
-        { x: location.x + location.width - 1.4, y: location.y + location.height - 1.0 },
+        {
+          x: location.x + location.width - 1.4,
+          y: location.y + location.height - 1.0,
+        },
         { x: location.x + 1.35, y: location.y + location.height - 1.05 },
       ];
       break;
@@ -12853,7 +16871,11 @@ function buildNpcPatrolPath({
       ? routedVisualLoop
       : routedBaseLoop.length > 0
         ? routedBaseLoop
-        : [entryWalkablePoint ? tilePointToCenter(entryWalkablePoint.tile) : entryPoint];
+        : [
+            entryWalkablePoint
+              ? tilePointToCenter(entryWalkablePoint.tile)
+              : entryPoint,
+          ];
 
   if (nextLocation && nextLocation.id !== location.id) {
     const nextEntryWalkablePoint = findNearestWalkablePointByTileHint(
@@ -13178,7 +17200,8 @@ function sampleLoopPath(path: Point[], progress: number) {
     const segmentLength = distanceBetween(segment.from, segment.to);
 
     if (covered + segmentLength >= target) {
-      const localProgress = segmentLength === 0 ? 0 : (target - covered) / segmentLength;
+      const localProgress =
+        segmentLength === 0 ? 0 : (target - covered) / segmentLength;
       return interpolatePoint(segment.from, segment.to, localProgress);
     }
 
@@ -13212,7 +17235,8 @@ function samplePathPoint(path: Point[], progress: number) {
     const segmentLength = distanceBetween(segment.from, segment.to);
 
     if (covered + segmentLength >= target) {
-      const localProgress = segmentLength === 0 ? 0 : (target - covered) / segmentLength;
+      const localProgress =
+        segmentLength === 0 ? 0 : (target - covered) / segmentLength;
       return interpolatePoint(segment.from, segment.to, localProgress);
     }
 
@@ -13299,14 +17323,24 @@ function focusPanelMeta(
   selectedNpc: NpcState | null,
   game: StreetGameState,
 ) {
-  const selectedPersonality = selectedNpc ? npcPersonalityProfile(selectedNpc) : null;
+  const selectedPersonality = selectedNpc
+    ? npcPersonalityProfile(selectedNpc)
+    : null;
+  const isLiveConversation =
+    Boolean(selectedNpc) && game.activeConversation?.npcId === selectedNpc?.id;
 
   switch (focusPanel) {
     case "people":
       return {
-        kicker: selectedNpc ? "Character Card" : "People In Reach",
+        kicker: selectedNpc
+          ? isLiveConversation
+            ? "Live Conversation"
+            : "Agent Card"
+          : "People In Reach",
         subtitle: selectedNpc
-          ? `${selectedPersonality?.badge ?? selectedNpc.role} • mood ${selectedNpc.mood} • trust ${selectedNpc.trust}`
+          ? isLiveConversation
+            ? `${selectedPersonality?.badge ?? selectedNpc.role} • mood ${selectedNpc.mood} • trust ${selectedNpc.trust} • actively updating the thread`
+            : `${selectedPersonality?.badge ?? selectedNpc.role} • mood ${selectedNpc.mood} • trust ${selectedNpc.trust}`
           : `People Rowan can read or approach in ${game.currentScene.title}.`,
         title: selectedNpc?.name ?? "Locals",
       };
@@ -13332,8 +17366,15 @@ function extractTalkNpcId(actionId: string) {
   return kind === "talk" && targetId ? targetId : undefined;
 }
 
-function findWalkableTile(game: StreetGameState, x: number, y: number) {
-  return game.map.tiles.find((tile) => tile.x === x && tile.y === y && tile.walkable);
+function findWalkableTile(
+  game: StreetGameState,
+  x: number,
+  y: number,
+  visualScene: VisualScene | null = getPlayableVisualScene(game),
+) {
+  return buildNavigationTiles(game, visualScene).find(
+    (tile) => tile.x === x && tile.y === y && tile.walkable,
+  );
 }
 
 function createMapKey(game: StreetGameState | null) {
@@ -13404,10 +17445,12 @@ function toneColor(tone: MapLabel["tone"]) {
 function blendColor(base: number, mix: number, amount: number) {
   const clampedAmount = Math.max(0, Math.min(amount, 1));
   const red = Math.round(
-    ((base >> 16) & 0xff) * (1 - clampedAmount) + ((mix >> 16) & 0xff) * clampedAmount,
+    ((base >> 16) & 0xff) * (1 - clampedAmount) +
+      ((mix >> 16) & 0xff) * clampedAmount,
   );
   const green = Math.round(
-    ((base >> 8) & 0xff) * (1 - clampedAmount) + ((mix >> 8) & 0xff) * clampedAmount,
+    ((base >> 8) & 0xff) * (1 - clampedAmount) +
+      ((mix >> 8) & 0xff) * clampedAmount,
   );
   const blue = Math.round(
     (base & 0xff) * (1 - clampedAmount) + (mix & 0xff) * clampedAmount,
