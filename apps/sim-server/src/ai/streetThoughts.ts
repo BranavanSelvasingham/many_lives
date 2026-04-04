@@ -67,6 +67,10 @@ export function streetThoughtsCacheKey(game: StreetGameState): string {
       currentConcern: npc.currentConcern,
       lastSpokenLine: npc.lastSpokenLine ?? null,
       lastInteractionAt: npc.lastInteractionAt ?? null,
+      conversationObjectiveText:
+        game.conversationThreads?.[npc.id]?.objectiveText ?? null,
+      conversationDecision:
+        game.conversationThreads?.[npc.id]?.decision ?? null,
     })),
     jobs: game.jobs.map((job) => ({
       id: job.id,
@@ -398,6 +402,176 @@ function buildPlanningThought(game: StreetGameState) {
   return "I should map South Quay and make a few introductions.";
 }
 
+function buildRecentConversationThought(
+  npc: NpcState,
+  game: StreetGameState,
+  seed: number,
+) {
+  const thread = game.conversationThreads?.[npc.id];
+  if (!thread || minutesSinceLastInteraction(game, npc) > 120) {
+    return undefined;
+  }
+
+  const cue = `${thread.objectiveText ?? ""} ${thread.decision ?? ""}`.toLowerCase().trim();
+  if (!cue) {
+    return undefined;
+  }
+
+  const playerNearby = game.player.currentLocationId === npc.currentLocationId;
+  const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
+  const yardJob = game.jobs.find((job) => job.id === "job-yard-shift");
+  const playerHasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
+
+  switch (npc.id) {
+    case "npc-mara":
+      if (cue.includes("wrench") && !playerHasWrench) {
+        return rotatingThought(
+          [
+            "If Rowan means it, Mercer Repairs is the next stop.",
+            "The pump talk only matters if Rowan comes back with the wrench.",
+            "Rowan needs to leave the house and solve the tool first.",
+          ],
+          seed,
+        );
+      }
+      if (cue.includes("pump")) {
+        return rotatingThought(
+          playerNearby
+            ? [
+                "The pump is still waiting, even if Rowan is not moving yet.",
+                "Rowan heard me. Now he needs to go fix the pump.",
+                "Talk is over. The yard still wants the wrench on that pump.",
+              ]
+            : [
+                "Maybe Rowan finally went to steady the yard.",
+                "If Rowan follows through, the house gets quieter tonight.",
+                "The right kind of promise sounds like footsteps toward the yard.",
+              ],
+          seed,
+        );
+      }
+      if (cue.includes("ada") || cue.includes("tea")) {
+        return rotatingThought(
+          [
+            "If Rowan wants footing, Ada is the right next test.",
+            "Rowan does not need another speech from me. He needs Ada's room.",
+            "A place here starts with following the lead, not hovering in the hall.",
+          ],
+          seed,
+        );
+      }
+      break;
+    case "npc-ada":
+      if (cue.includes("shift") || cue.includes("tea") || cue.includes("cup")) {
+        return rotatingThought(
+          playerNearby
+            ? [
+                "If Rowan wants the shift, he should stop talking and take it.",
+                "The room is here. Rowan can either keep up or clear out.",
+                "I already gave Rowan the terms. Now he needs to move.",
+              ]
+            : [
+                "If Rowan comes back, he better come back ready to work.",
+                "The room will tell me fast whether Rowan meant any of that.",
+                "A steady pair of hands would still help if Rowan returns in time.",
+              ],
+          seed,
+        );
+      }
+      if ((cue.includes("tomas") || cue.includes("yard")) && yardJob && !yardJob.missed) {
+        return rotatingThought(
+          [
+            "If Rowan held up here, Tomas is the next hard room to prove it in.",
+            "The tea room was only the first test. The yard is the next one.",
+            "Rowan can carry this momentum to Tomas if he does not drift.",
+          ],
+          seed,
+        );
+      }
+      break;
+    case "npc-jo":
+      if (cue.includes("wrench") || cue.includes("pump")) {
+        return rotatingThought(
+          playerHasWrench
+            ? [
+                "The bench part is over. Rowan should be using the wrench by now.",
+                "Once the wrench leaves my stall, the problem belongs to Rowan's hands.",
+                "If Rowan bought the tool, the next honest move is the yard.",
+              ]
+            : [
+                "Either Rowan buys the wrench or he keeps circling the same leak.",
+                "The pump is not getting fixed by talking at my bench.",
+                "If Rowan wants the truth, it still costs eight coins and some follow-through.",
+              ],
+          seed,
+        );
+      }
+      break;
+    case "npc-tomas":
+      if ((cue.includes("yard") || cue.includes("lift") || cue.includes("load")) && yardJob && !yardJob.missed) {
+        return rotatingThought(
+          playerNearby
+            ? [
+                "If Rowan wants the coins, he should get his hands on the load now.",
+                "The work is right here. Rowan can lift or move aside.",
+                "The yard heard enough already. Time for Rowan to work.",
+              ]
+            : [
+                "If Rowan shows, put him on the load and see if he lasts.",
+                "The next useful thing Rowan can do is still here in the yard.",
+                "The load will tell me whether Rowan meant any of that talk.",
+              ],
+          seed,
+        );
+      }
+      break;
+    case "npc-nia":
+      if (cue.includes("cart") || cue.includes("square")) {
+        return rotatingThought(
+          playerNearby
+            ? [
+                "If Rowan sees the jam early, he should already be moving the cart.",
+                "The square won't wait for Rowan to feel ready.",
+                "This is the part where Rowan moves before the crowd notices.",
+              ]
+            : [
+                "Maybe Rowan actually caught the problem before it spread.",
+                "If Rowan listened, Quay Square might stay loose today.",
+                "A useful person moves the cart before the story gets bigger.",
+              ],
+          seed,
+        );
+      }
+      break;
+    default:
+      break;
+  }
+
+  if (playerNearby) {
+    return rotatingThought(
+      [
+        "Rowan is still here. He should move on what we just said.",
+        "The point landed. Now Rowan needs to act on it.",
+        "A good conversation should turn into motion.",
+      ],
+      seed,
+    );
+  }
+
+  if (!teaJob?.missed && (cue.includes("ada") || cue.includes("tea"))) {
+    return rotatingThought(
+      [
+        "Maybe Rowan headed toward Kettle & Lamp after all.",
+        "If Rowan keeps the lead warm, the tea house still makes sense.",
+        "The next useful answer for Rowan is probably not here anymore.",
+      ],
+      seed,
+    );
+  }
+
+  return undefined;
+}
+
 function buildNpcThought(npc: NpcState, game: StreetGameState) {
   const narrative = getNpcNarrative(npc.id);
   const hour = game.clock.hour + game.clock.minute / 60;
@@ -408,9 +582,13 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
   const playerHasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
   const recentlySpoke = minutesSinceLastInteraction(game, npc) <= 25;
   const seed = thoughtSeed(game, npc);
+  const recentConversationThought = buildRecentConversationThought(npc, game, seed);
 
   switch (npc.id) {
     case "npc-mara":
+      if (recentConversationThought) {
+        return recentConversationThought;
+      }
       if (recentlySpoke) {
         return rotatingThought(
           [
@@ -443,12 +621,12 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
       }
       return hour < 12
         ? rotatingThought(
-            [
-              "Somebody's late on rent again.",
-              "I can hear who came in honest tired.",
-              "This house remembers every set of footsteps.",
-            ],
-            seed,
+          [
+            "Somebody's late on rent again.",
+            "I can hear who came in honest tired at Morrow House.",
+            "This house remembers every set of footsteps.",
+          ],
+          seed,
           )
         : rotatingThought(
             [
@@ -459,6 +637,9 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
             seed,
           );
     case "npc-ada":
+      if (recentConversationThought) {
+        return recentConversationThought;
+      }
       if (recentlySpoke) {
         return rotatingThought(
           [
@@ -498,6 +679,9 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
         seed,
       );
     case "npc-jo":
+      if (recentConversationThought) {
+        return recentConversationThought;
+      }
       if (recentlySpoke) {
         return rotatingThought(
           [
@@ -527,6 +711,9 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
         seed,
       );
     case "npc-tomas":
+      if (recentConversationThought) {
+        return recentConversationThought;
+      }
       if (recentlySpoke) {
         return rotatingThought(
           [
@@ -566,6 +753,9 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
         seed,
       );
     case "npc-nia":
+      if (recentConversationThought) {
+        return recentConversationThought;
+      }
       if (recentlySpoke) {
         return rotatingThought(
           [

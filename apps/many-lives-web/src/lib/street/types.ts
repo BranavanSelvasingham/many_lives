@@ -72,7 +72,10 @@ export type MapPropKind =
   | "canopy"
   | "bollard"
   | "pump"
-  | "tree";
+  | "tree"
+  | "fountain"
+  | "planter"
+  | "boat";
 
 export interface MapProp {
   id: string;
@@ -360,6 +363,7 @@ export interface StreetGameState {
   cityNarrative: SettingNarrativeProfile;
   districtName: string;
   districtNarrative: SettingNarrativeProfile;
+  visualSceneId?: string;
   currentTime: string;
   clock: ClockState;
   map: CityMap;

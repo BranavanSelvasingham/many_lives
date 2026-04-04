@@ -17,8 +17,9 @@ import type {
 
 const CELL = 38;
 const MAP_PADDING = 24;
-const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 1200;
-const PLAYER_MAX_MOVE_DURATION_MS = 12000;
+const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 320;
+const PLAYER_MAX_MOVE_DURATION_MS = 4800;
+const PLAYER_MOVE_DURATION_MULTIPLIER = 0.42;
 const DARKEN_OUTSIDE_PLAYER_FIELD_OF_VIEW = false;
 
 type Point = {
@@ -128,7 +129,9 @@ export function DistrictMap({
       return DEFAULT_PLAYER_MOVE_MS_PER_TILE;
     }
 
-    return (patrolCycleSeconds(currentLocation.type) * 1000) / patrolDistance;
+    const rawMsPerTile =
+      (patrolCycleSeconds(currentLocation.type) * 1000) / patrolDistance;
+    return clamp(rawMsPerTile * PLAYER_MOVE_DURATION_MULTIPLIER, 220, 640);
   }, [currentLocation, findRoute, primaryDoorByLocation, propsByLocation]);
   const [playerMotion, setPlayerMotion] = useState<PlayerMotionState>(() => {
     const point = playerPosition ?? { x: game.player.x, y: game.player.y };
@@ -3004,7 +3007,6 @@ function createRouteFinder(tiles: MapTile[]) {
     if (foundKey !== endTile) {
       const fallback = [
         { x: Math.round(start.x), y: Math.round(start.y) },
-        { x: Math.round(end.x), y: Math.round(end.y) },
       ];
       cache.set(cacheKey, fallback);
       return fallback;

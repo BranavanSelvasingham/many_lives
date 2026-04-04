@@ -20,9 +20,9 @@ export const CITY_NARRATIVE: SettingNarrativeProfile = {
 
 export const DISTRICT_NARRATIVE: SettingNarrativeProfile = {
   context:
-    "South Quay is where Brackenport's errands turn visible. Work, gossip, rent pressure, repairs, and dock spillover all meet here before the rest of the city pretends not to notice them.",
+    "South Quay is where Brackenport's errands turn visible. Work, gossip, rent pressure, repairs, and dock spillover all meet in a tight quay-side square before the rest of the city pretends not to notice them.",
   backstory:
-    "It began as service lanes for the docks and cheap rooms for transient hands, then hardened into a district where favors travel almost as reliably as wages and everybody learns who can keep a promise under pressure.",
+    "It began as service lanes for the docks and cheap rooms for transient hands, then thickened into a waterfront quarter of stone lanes, cramped courts, and a public square where favors travel almost as reliably as wages.",
 };
 
 const DEFAULT_LOCATION_NARRATIVE: LocationNarrativeProfile = {
@@ -45,11 +45,11 @@ const LOCATION_NARRATIVES: Record<string, LocationNarrativeProfile> = {
   },
   "tea-house": {
     description:
-      "A cramped tea room where gossip, shift work, and favors all pass over the same counter.",
+      "A cramped tea room facing the square, where gossip, shift work, and favors all pass over the same counter.",
     context:
       "Kettle & Lamp keeps the district stitched together between shifts, rumors, and small practical arrangements.",
     backstory:
-      "It was built to feed and warm workers spilling out of the lanes, and over time it turned into one of those places where jobs, apologies, and warnings all get served in the same cup.",
+      "It was built to feed and warm workers spilling out of the square and lanes, and over time it turned into one of those places where jobs, apologies, and warnings all get served in the same cup.",
   },
   "repair-stall": {
     description:
@@ -69,11 +69,11 @@ const LOCATION_NARRATIVES: Record<string, LocationNarrativeProfile> = {
   },
   "market-square": {
     description:
-      "The center of the district: notices, carts, fishmongers, arguments, and half-heard chances crossing all day.",
+      "A stone square opening toward the water, with notices, carts, awnings, arguments, and half-heard chances crossing all day.",
     context:
       "Quay Square is the district's public pulse, where opportunities and problems both become visible fast.",
     backstory:
-      "It formed where the lanes widened enough for trading tables and public notices, and it stayed important because South Quay needs one place where everybody's version of the day collides.",
+      "It formed where the lanes widened enough for trading tables and public notices, and it stayed important because South Quay needs one place where everybody's version of the day collides in full view of the quay road.",
   },
   "freight-yard": {
     description:
@@ -85,11 +85,11 @@ const LOCATION_NARRATIVES: Record<string, LocationNarrativeProfile> = {
   },
   "moss-pier": {
     description:
-      "Wet planks, rope burns, gull noise, and boats that smell like trade before they smell like fish.",
+      "Wet planks, rope burns, gull noise, and low quay steps where boats smell like trade before they smell like fish.",
     context:
       "Pilgrim Slip is where the district feels the river most directly, with arrivals, departures, and rumors all coming in over the same water.",
     backstory:
-      "It began as a practical unloading pier and kept its importance because small boats, side cargo, and unofficial errands still need somewhere less polished than the main docks.",
+      "It began as a practical unloading pier and kept its importance because small boats, side cargo, and unofficial errands still need somewhere less polished than the main docks or more formal quay walls.",
   },
 };
 
@@ -128,6 +128,12 @@ const MAP_LABEL_NARRATIVES: Record<string, MapLabelNarrativeProfile> = {
       "Pilgrim Steps carries people toward the river, the slip, and whatever they are hoping to catch before it leaves.",
     backstory:
       "Its worn descent toward the water made it a natural route for workers, drifters, and cargo hands long before the paving ever matched the traffic.",
+  },
+  "label-street-harbor-walk": {
+    context:
+      "Harbor Walk is where the square turns toward the river and the district starts to feel the pull of the slip.",
+    backstory:
+      "The name stuck once the market edge, quay road, and dock approach began reading as one continuous waterfront walk.",
   },
   "label-landmark-riverside": {
     context:

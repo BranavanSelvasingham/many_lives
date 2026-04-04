@@ -1,0 +1,120 @@
+name: Build and deploy Many Lives builder preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to deploy to the builder preview environment
+        required: false
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-preview:
+    if: ${{ vars.AZURE_PREVIEW_WEBAPP_NAME != '' && vars.AZURE_PREVIEW_SLOT_NAME != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.3
+          run_install: false
+
+      - name: Set up Node.js version
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web app with builder enabled
+        env:
+          NEXT_PUBLIC_ENABLE_SCENE_BUILDER: "true"
+          NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}
+        run: pnpm --filter @many-lives/many-lives-web build
+
+      - name: Prepare artifact for deployment
+        run: |
+          rm -rf deployment
+          mkdir -p deployment/apps/many-lives-web/.next
+          cp -R apps/many-lives-web/.next/standalone/. deployment/
+          cp -R apps/many-lives-web/.next/static deployment/apps/many-lives-web/.next/static
+          cp -R apps/many-lives-web/public deployment/apps/many-lives-web/public
+          mkdir -p deployment/apps/many-lives-web/node_modules
+          for pkg in apps/many-lives-web/.next/standalone/node_modules/.pnpm/*/node_modules/*; do
+            name="$(basename "$pkg")"
+            rm -rf "deployment/apps/many-lives-web/node_modules/$name"
+            cp -RL "$pkg" "deployment/apps/many-lives-web/node_modules/$name"
+          done
+          cat > deployment/package.json <<'EOF'
+          {
+            "name": "many-lives-web-builder-preview",
+            "private": true,
+            "scripts": {
+              "start": "node apps/many-lives-web/server.js"
+            }
+          }
+          EOF
+          cat > deployment/web.config <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <configuration>
+            <system.webServer>
+              <handlers>
+                <add name="iisnode" path="apps/many-lives-web/server.js" verb="*" modules="iisnode" />
+              </handlers>
+              <rewrite>
+                <rules>
+                  <rule name="DynamicContent">
+                    <match url=".*" />
+                    <action type="Rewrite" url="apps/many-lives-web/server.js" />
+                  </rule>
+                </rules>
+              </rewrite>
+              <iisnode watchedFiles="web.config;apps/many-lives-web/server.js" />
+            </system.webServer>
+          </configuration>
+          EOF
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v6
+        with:
+          name: builder-preview-node-app
+          path: deployment
+          include-hidden-files: true
+
+  deploy-preview:
+    if: ${{ vars.AZURE_PREVIEW_WEBAPP_NAME != '' && vars.AZURE_PREVIEW_SLOT_NAME != '' }}
+    runs-on: ubuntu-latest
+    needs: build-preview
+    environment:
+      name: Builder Preview
+      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+
+    steps:
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v5
+        with:
+          name: builder-preview-node-app
+          path: deployment
+
+      - name: Deploy to Azure Web App preview slot
+        id: deploy-to-webapp
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_PREVIEW_WEBAPP_NAME }}
+          slot-name: ${{ vars.AZURE_PREVIEW_SLOT_NAME }}
+          package: deployment
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_PREVIEW }}

@@ -61,8 +61,8 @@ describe("HTTP routes", () => {
       url: `/game/${createdGame.id}/command`,
       payload: {
         type: "move_to",
-        x: 12,
-        y: 5,
+        x: 6,
+        y: 4,
       },
     });
 

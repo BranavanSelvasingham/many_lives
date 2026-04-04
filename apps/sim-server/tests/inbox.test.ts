@@ -21,8 +21,8 @@ describe("Scene actions", () => {
 
     world = await engine.runCommand(world, {
       type: "move_to",
-      x: 18,
-      y: 5,
+      x: 16,
+      y: 9,
     });
 
     expect(world.player.currentLocationId).toBe("repair-stall");
