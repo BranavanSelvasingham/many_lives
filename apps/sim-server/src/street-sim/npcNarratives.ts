@@ -8,51 +8,51 @@ export interface NpcNarrativeProfile {
 export const NPC_NARRATIVES: Record<string, NpcNarrativeProfile> = {
   "npc-mara": {
     backstory:
-      "Mara runs Morrow House with a keeper's eye and a tenant's memory. She knows which people help the house stay calm and which ones make every day harder.",
+      "Mara runs Morrow House with a keeper's eye and a neighbor's patience. She notices who makes the house feel calmer after breakfast.",
     context:
-      "New faces, rent pressure, and shared chores all test whether the house stays steady.",
-    objective: "Keep Morrow House steady, useful, and worth coming back to.",
-    voice: "plainspoken, careful, house-minded, and protective without getting sentimental.",
+      "New faces, shared chores, and little courtyard fixes all shape whether the house stays easy.",
+    objective: "Keep Morrow House steady, safe, and pleasant to come back to.",
+    voice: "gentle, house-minded, practical, and protective without getting heavy.",
   },
   "npc-ada": {
     backstory:
-      "Ada owns Kettle & Lamp and keeps the tea room moving on speed, reputation, and clean tables.",
+      "Ada owns Kettle & Lamp and keeps the tea room bright with clean tables, quick hands, and the sea breeze through the front door.",
     context:
-      "Noon rush is coming and she is short on hands.",
-    objective: "Keep Kettle & Lamp moving and welcoming through the rush.",
-    voice: "plainspoken, brisk, efficient, and lightly teasing when the room allows it.",
+      "Lunch is coming and she could use help before the cafe fills.",
+    objective: "Keep Kettle & Lamp warm, bright, and welcoming through lunch.",
+    voice: "quick, cafe-warm, efficient, and lightly teasing when the room allows it.",
   },
   "npc-jo": {
     backstory:
-      "Jo runs Mercer Repairs and believes a fair fix should be as plain as the price tag.",
+      "Jo runs Mercer Repairs and believes old tools deserve one more good afternoon if somebody treats them gently.",
     context:
-      "The stall needs sales, and the wrench on the bench should not sit all day.",
-    objective: "Keep honest repairs moving and customers coming back.",
-    voice: "plainspoken, blunt, exact, and dry about wasted words.",
+      "The stall is quiet enough for dry jokes, small repairs, and one wrench waiting on the bench.",
+    objective: "Keep honest repairs moving and make sure good tools find the right hands.",
+    voice: "dry, exact, quietly amused, and allergic to fuss.",
   },
   "npc-tomas": {
     backstory:
-      "Tomas foremans the freight yard, where speed matters and excuses slow the load.",
+      "Tomas foremans the freight yard with a sun-faded cap, practical habits, and a better mood when the cart lane stays clear.",
     context:
-      "A short loading block is waiting on another back.",
-    objective: "Clear the yard on time and keep good workers in rotation.",
-    voice: "plainspoken, blunt, work-first, and impatient with drifting.",
+      "A short loading block is waiting, but the day is still allowed to stay pleasant.",
+    objective: "Clear the yard without turning the afternoon sour.",
+    voice: "direct, dry, practical, and more amused than mean.",
   },
   "npc-nia": {
     backstory:
-      "Nia runs errands through South Quay by reading notices, rumors, and small jams before they turn into the day's problem.",
+      "Nia runs errands through South Quay by catching notices, rumors, cafe chatter, and little jams before anyone else bothers to name them.",
     context:
-      "Quay Square and the pier are full of signals she wants to read first.",
-    objective: "Stay ahead of what the block is about to notice and share useful leads.",
-    voice: "plainspoken, quick, observant, and always reading the crowd.",
+      "Quay Square and the pier are full of tiny details she enjoys catching first.",
+    objective: "Stay ahead of what the block is about to notice and share good leads without making a scene.",
+    voice: "breezy, quick, observant, and cheerfully nosy.",
   },
 };
 
 const DEFAULT_NPC_NARRATIVE: NpcNarrativeProfile = {
   backstory: "This person has a place in South Quay, even if Rowan does not know it yet.",
-  context: "They are reading the block for the next useful opening.",
-  objective: "Keep moving with purpose.",
-  voice: "plainspoken, practical, and local.",
+  context: "They are watching the square for the next small opening.",
+  objective: "Keep the day pleasant and moving.",
+  voice: "casual, practical, and local.",
 };
 
 export function getNpcNarrative(npcId: string): NpcNarrativeProfile {

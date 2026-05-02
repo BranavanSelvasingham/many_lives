@@ -279,32 +279,32 @@ export function buildDeterministicStreetReply(
 
   switch (npc.id) {
     case "npc-mara":
-      if (topics.has("pump") || (topics.has("help") && pumpProblem?.discovered)) {
+      if (topics.has("pump") || topics.has("help")) {
         return {
           reply: pumpProblem?.status === "solved"
             ? chooseConversationLine(
                 [
-                  "You already did right by the house. Keep that habit.",
-                  "That work held. Keep showing up like that.",
-                  "You handled the yard. Don't waste the momentum.",
+                  "That's much nicer. Little fixes make a house feel easier to come home to.",
+                  "That held. People notice when the morning runs smoother.",
+                  "You handled the yard. Good. Have a breath before you go looking for the next thing.",
                 ],
                 context,
                 "mara-pump-solved",
               )
             : chooseConversationLine(
-              [
-                  `Start with the pump in the yard. ${nearbyPlaceName ? "That place still needs a hand." : "Fix shared trouble and this house notices."}`,
-                  "Start with the pump in the yard. That's the piece that matters.",
-                  "The yard wants the pump fixed before anything else gets louder.",
+                [
+                  `Start with the pump in the yard. ${nearbyPlaceName ? "It's close, and everyone uses it." : "It is a small thing, but everyone feels it."}`,
+                  "The yard pump has been leaking all morning. Take a look there if you want an easy way to help.",
+                  "The pump in the yard needs fixing. It is not exciting, but the house will notice.",
                 ],
                 context,
                 "mara-pump-help",
               ),
           followupThought: pickFollowupThought(
             [
-              "Maybe you really will fix it.",
-              "Let's see if he follows through.",
-              "That sounded less like talk.",
+              "That was a good ask.",
+              "A small start is enough.",
+              "He has somewhere simple to begin.",
             ],
             context,
             "mara-pump-followup",
@@ -316,18 +316,18 @@ export function buildDeterministicStreetReply(
         return {
           reply: chooseConversationLine(
             [
-              "If you need money, ask Ada at Kettle & Lamp before the lunch rush. If you want people here on your side, help where the house is stretched thin.",
-              "Ada at Kettle & Lamp may have work if you get there before the room fills up.",
-              "Work is around. You just have to ask before someone else gets it.",
+              "Ask Ada at Kettle & Lamp before lunch. She always knows who could use an extra pair of hands.",
+              "Kettle & Lamp may need help before the lunch crowd wanders in. Try Ada now.",
+              "Start with Ada at Kettle & Lamp. She will tell you quickly if lunch needs help.",
             ],
             context,
             "mara-work",
           ),
           followupThought: pickFollowupThought(
             [
-              "See whether Rowan moves on it.",
-              "He can go ask Ada now.",
-              "Let's see if he takes the hint.",
+              "Ada will set him straight kindly.",
+              "That should be enough to start.",
+              "A tea room is a gentle first step.",
             ],
             context,
             "mara-work-followup",
@@ -339,18 +339,18 @@ export function buildDeterministicStreetReply(
         return {
           reply: chooseConversationLine(
             [
-              "Pay on time, help when the house is stretched, and Morrow House stays livable.",
-              "Pay your rent and pull your weight. That's how a room stays yours.",
-              "A place like this keeps you if the money is honest and the burden isn't all yours.",
+              "Pay when you say you will, be kind in the shared spaces, and rinse your cup before it becomes everyone's cup.",
+              "Morrow House keeps people who make the place easier to wake up in.",
+              "A room starts feeling like yours when you treat the house like it is partly yours too.",
             ],
             context,
             "mara-home",
           ),
           followupThought: pickFollowupThought(
             [
-              "House first, always.",
-              "The house comes before charm.",
-              "Keep the place from souring.",
+              "That is the heart of it.",
+              "Keep the house easy.",
+              "A fair answer is enough.",
             ],
             context,
             "mara-home-followup",
@@ -361,18 +361,18 @@ export function buildDeterministicStreetReply(
       return {
         reply: chooseConversationLine(
           [
-            "South Quay makes more sense once you do a few useful things in it. Start there.",
-            "This district opens up once people see you pulling your weight.",
-            "Keep your eyes open, stay useful, and the place starts to make sense.",
+            "Take a slow lap of South Quay. Start with the places that are already open.",
+            "Do one small useful thing and come back. That is usually enough to start.",
+            "Keep your eyes open and ask plain questions. People here answer better that way.",
           ],
           context,
           "mara-default",
         ),
         followupThought: pickFollowupThought(
           [
-            "Still reading the new one.",
-            "He'll need more than one conversation.",
-            "Let's see where he walks next.",
+            "He sounded less lost that time.",
+            "Maybe the quay will be kind.",
+            "One calm step, then another.",
           ],
           context,
           "mara-default-followup",
@@ -384,18 +384,18 @@ export function buildDeterministicStreetReply(
           return {
             reply: chooseConversationLine(
               [
-                "I need hands for the noon rush. Clear cups, wipe tables, keep moving. I pay fourteen.",
-                "I need help through lunch. Clear cups and keep the room moving. Fourteen if you can keep up.",
-                "Lunch is about to hit. If you're steady, I can pay fourteen.",
+                "I could use help through lunch: clear cups, wipe tables, keep an eye on the counter. The shift pays fourteen if you can stay steady.",
+                "Lunch is coming. Clear cups, wipe tables, listen the first time. Fourteen for the shift, and tea after if we both survive it.",
+                "I can use steady hands through lunch. It is simple work, and it pays fourteen.",
               ],
               context,
               "ada-work-open",
             ),
             followupThought: pickFollowupThought(
               [
-                "Need the room moving, not charming.",
-                "I need speed more than manners.",
-                "He should either help or move on.",
+                "He might manage the room.",
+                "Steady is plenty.",
+                "Tea after, if he survives lunch.",
               ],
               context,
               "ada-work-open-followup",
@@ -407,9 +407,9 @@ export function buildDeterministicStreetReply(
           return {
             reply: chooseConversationLine(
               [
-                "You held up well enough here. Tomas in the yard may still need another back.",
-                "You kept pace. Tomas at the yard may still need another back.",
-                "You did fine here. The yard might be the next useful stop.",
+                "You kept up. Tomas by the yard may need another set of hands, and he's easier after someone else has already vouched for you.",
+                "You kept pace. If you still want coin, try Tomas before the afternoon goes sleepy.",
+                "You did fine here. North Crane Yard is the next place I would ask, preferably with a full cup in you.",
               ],
               context,
               "ada-yard-handoff",
@@ -418,7 +418,7 @@ export function buildDeterministicStreetReply(
               [
                 "Maybe Tomas can use Rowan next.",
                 "He can go see Tomas now.",
-                "The next stop is obvious enough.",
+                "The yard will be louder than this.",
               ],
               context,
               "ada-yard-handoff-followup",
@@ -431,18 +431,18 @@ export function buildDeterministicStreetReply(
         return {
           reply: chooseConversationLine(
             [
-              "Gossip costs a cup or a favor. Do something useful first, then ask again.",
-              "Gossip costs a cup. Bring me something useful with it.",
-              "If it's gossip, earn it. I don't stop the room for free stories.",
+              "Buy a cup and I will give you the short version.",
+              "Gossip is better with tea. Terrible business model, lovely habit.",
+              "If it is gossip, at least let me pour something warm while I say it.",
             ],
             context,
             "ada-gossip",
           ),
           followupThought: pickFollowupThought(
             [
-              "Everybody wants the easy part.",
-              "He can pay in effort first.",
-              "Don't let the room drift.",
+              "Tea makes gossip civilized.",
+              "Keep the room light.",
+              "A cup buys a minute.",
             ],
             context,
             "ada-gossip-followup",
@@ -453,9 +453,9 @@ export function buildDeterministicStreetReply(
       return {
         reply: chooseConversationLine(
           [
-            "If you're staying, stay useful. This room notices slow hands fast.",
-            "If you're here, keep your hands useful.",
-            "Slow hands stand out in a room like this.",
+            "If you're staying, look for the table that needs clearing and start there.",
+            "New hands are fine. Just ask once, then keep the cups moving.",
+            "If you want to help, clear the nearest table and bring the cups to the counter.",
           ],
           context,
           "ada-default",
@@ -463,8 +463,8 @@ export function buildDeterministicStreetReply(
         followupThought: pickFollowupThought(
           [
             "Keep the cups moving.",
-            "I need the room working.",
-            "No drifting now.",
+            "Keep the room light.",
+            "The room will teach him.",
           ],
           context,
           "ada-default-followup",
@@ -476,27 +476,27 @@ export function buildDeterministicStreetReply(
           reply: hasWrench
             ? chooseConversationLine(
                 [
-                  "You've already got the wrench. The rest is in your wrists.",
-                  "You have the wrench. Now use it like you mean it.",
-                  "The wrench is the easy part. The hands are next.",
+                  "You've already got the wrench. Good. Go slow and do not force the old metal.",
+                  "You have the wrench. Try the fitting gently first, then tighten only what moves cleanly.",
+                  "The wrench is the easy part. Take your time with the pump.",
                 ],
                 context,
                 "jo-tool-owned",
               )
             : chooseConversationLine(
-            [
-              `Old wrench, eight coins. It still turns what needs turning. ${context.scene.context}`,
-              "Old wrench, eight coins. It still does the job if you do yours.",
-                  "Eight coins gets you the wrench that matters.",
+                [
+                  "Old wrench, eight coins. It is ugly, but it works.",
+                  "Eight coins for the wrench. It has handled worse than that pump.",
+                  "Eight coins gets you the wrench I would use myself.",
                 ],
                 context,
                 "jo-tool-sell",
               ),
           followupThought: pickFollowupThought(
             [
-              "That wrench should move today.",
-              "He should buy it or leave it.",
-              "This is the honest part.",
+              "That wrench has another morning in it.",
+              "The price is fair.",
+              "Old metal, new hands.",
             ],
             context,
             "jo-tool-followup",
@@ -509,19 +509,19 @@ export function buildDeterministicStreetReply(
           reply: chooseConversationLine(
             [
               nearbyPlaceName
-                ? `I sell fixes, not wages. But the right tool can earn its money fast around ${nearbyPlaceName}.`
-                : "I sell fixes, not wages. But the right tool can earn its money fast.",
-              "I sell fixes. Wages come from work, not wishes.",
-              "Money goes further when you spend it on the right tool.",
+                ? `I sell repairs, not shifts. Around ${nearbyPlaceName}, a decent tool can still save your afternoon.`
+                : "I sell repairs, not shifts. A decent tool can still save your afternoon.",
+              "Paid work is elsewhere. If the pump is your problem, the wrench is the practical part.",
+              "If the money is tight, spend it only when you know what it helps you fix.",
             ],
             context,
             "jo-money-work",
           ),
           followupThought: pickFollowupThought(
             [
-              "Let's see if Rowan buys it.",
-              "The point should be obvious.",
-              "He needs to decide soon.",
+              "He can take his time.",
+              "The wrench is simple enough.",
+              "A calm decision is fine.",
             ],
             context,
             "jo-money-work-followup",
@@ -532,41 +532,75 @@ export function buildDeterministicStreetReply(
       return {
         reply: chooseConversationLine(
           [
-            "If it's bent, I say so. If it still works, I say that too.",
-            "Most things here don't need romance. They need the right tool.",
-            "I sell straight answers and repairs that hold.",
+            "If it's bent, I say so. If it still has life in it, I say that too.",
+            "Most things here need patience before they need replacing.",
+            "I sell straight answers and small repairs. The opinions come free.",
           ],
           context,
           "jo-default",
         ),
         followupThought: pickFollowupThought(
           [
-            "Tell the truth about the metal.",
             "Don't dress it up.",
-            "Keep it honest.",
+            "Keep it easy.",
+            "Say the plain thing.",
           ],
           context,
           "jo-default-followup",
         ),
       };
     case "npc-tomas":
-      if (topics.has("work") || topics.has("money") || topics.has("yard")) {
+      if (
+        (topics.has("help") || topics.has("next_step")) &&
+        yardJob?.discovered &&
+        !yardJob.accepted &&
+        !yardJob.completed &&
+        !yardJob.missed
+      ) {
+        return {
+          reply: chooseConversationLine(
+            [
+              "Take the short loading block if you want it. Start with the lighter crates by the bay, keep the cart lane clear, and I will pay twenty-four when the run is done.",
+              "First thing is simple: stack the small crates by the service bay and leave the handcart lane open. Twenty-four when it is done.",
+              "If you are in, start with the crates nearest the bay door. Keep the lane clear for the handcart, finish the run, and the pay is twenty-four.",
+            ],
+            context,
+            "tomas-yard-next-step",
+          ),
+          followupThought: pickFollowupThought(
+            [
+              "That is clear enough.",
+              "Crates first, then pay.",
+              "He gave the actual job.",
+            ],
+            context,
+            "tomas-yard-next-step-followup",
+          ),
+        };
+      }
+
+      if (
+        topics.has("work") ||
+        topics.has("money") ||
+        topics.has("yard") ||
+        topics.has("next_step")
+      ) {
         if (!yardJob?.accepted && !yardJob?.completed && !yardJob?.missed) {
           return {
             reply: chooseConversationLine(
               [
-                "Short lift, hard work, twenty-four coins if you finish clean and on time. That's it.",
-                "One loading block. Hard work. Twenty-four if you keep up and finish clean.",
-                "The yard needs another back for a short run. Twenty-four if you do it right.",
+                "Short loading block by the yard. Twenty-four coins if you keep the cart lane clear and stack the lighter crates by the bay.",
+                "One loading block. Keep up, finish clean, and I pay twenty-four. Start with the crates by the service bay.",
+                "The yard needs another set of hands for a short run. Twenty-four if you can start with the bay crates now.",
               ],
               context,
               "tomas-yard-offer",
             ),
             followupThought: pickFollowupThought(
               [
-                "Need another back, not a speech.",
+                "Keep it simple.",
                 "He either lifts or he doesn't.",
-                "No room for drifting here.",
+                "The path can stay clear.",
               ],
               context,
               "tomas-yard-offer-followup",
@@ -577,18 +611,18 @@ export function buildDeterministicStreetReply(
         return {
           reply: chooseConversationLine(
             [
-              `If you're here to work, work. If not, keep clear of the load path. ${context.scene.context}`,
-              "If you're here to work, work. Otherwise stay out of the way.",
-              "Keep the path clear if you want the yard to stay sane.",
+              "If you're here to work, I can use you. If not, stand where the carts can get by.",
+              "You can ask while we walk. The only rule is to keep the lane clear.",
+              "Stay clear of the handcart lane and I will point you to the next crate.",
             ],
             context,
             "tomas-work-active",
           ),
           followupThought: pickFollowupThought(
             [
-              "No excuses, just the lift.",
               "Keep the load moving.",
-              "Straight to the work.",
+              "Simple work, simple day.",
+              "Almost charming is enough.",
             ],
             context,
             "tomas-work-active-followup",
@@ -599,9 +633,9 @@ export function buildDeterministicStreetReply(
       return {
         reply: chooseConversationLine(
           [
-            "Talk if you want, but keep walking. The crates still need moving.",
-            "You can ask on the way. I'm not stopping the yard for a chat.",
-            "Words are fine. Just don't slow the lift.",
+            "Ask while we walk. If you want to help, start by keeping the handcart lane clear.",
+            "You can talk, just stay out of the cart lane. That is the useful thing right now.",
+            "If you want the easiest first step, keep the path clear and I will point you at the next crate.",
           ],
           context,
           "tomas-default",
@@ -609,8 +643,8 @@ export function buildDeterministicStreetReply(
         followupThought: pickFollowupThought(
           [
             "Keep the yard moving.",
-            "Work first, then words.",
-            "Stay on the lift.",
+            "Keep the lane clear.",
+            "Simple enough.",
           ],
           context,
           "tomas-default-followup",
@@ -621,18 +655,18 @@ export function buildDeterministicStreetReply(
         return {
           reply: chooseConversationLine(
             [
-              `Most rumors are hungry, not true. Watch which ones arrive with a place and an hour attached. ${context.scene.context}`,
-              "Most rumors are hungry, not true. Watch the ones with a place and time attached.",
-              "Rumors only matter when they arrive with details.",
+              "The good rumors come with a place, an hour, and somebody who saw it happen.",
+              "Most rumors are just noise. The useful ones come with details.",
+              "Rumors only matter when they point somewhere you can actually check.",
             ],
             context,
             "nia-rumor",
           ),
           followupThought: pickFollowupThought(
             [
-              "One of these rumors is real.",
-              "Watch which one lands.",
-              "Something here is useful.",
+              "Time and place matter.",
+              "Details over drama.",
+              "That one has a breeze to it.",
             ],
             context,
             "nia-rumor-followup",
@@ -645,27 +679,27 @@ export function buildDeterministicStreetReply(
           reply: cartProblem?.status === "solved"
             ? chooseConversationLine(
                 [
-                  "Square is breathing again. Somebody noticed in time.",
-                  "That jam's gone. Good. The square can breathe now.",
-                  "The square is loose again. Somebody moved before it got ugly.",
+                  "Square's clear again. Nicely done before everyone had to complain about it.",
+                  "That jam's gone. Good. The square feels lighter already.",
+                  "The square loosened up. Small fix, big difference.",
                 ],
                 context,
                 "nia-cart-solved",
               )
             : chooseConversationLine(
-              [
-                  "That split-wheel cart will jam Quay Square once foot traffic picks up. Move it early and everybody gets on with the day.",
-                  "That cart will jam the square if nobody moves it early.",
-                  "Move the cart before the square gets busy.",
+                [
+                  "That split-wheel cart will jam Quay Square once foot traffic picks up. Move it early and everyone has an easier day.",
+                  "That cart will block the square if nobody moves it before the lunch crowd drifts in.",
+                  "Move the cart while it is still a small problem.",
                 ],
                 context,
                 "nia-cart-active",
               ),
           followupThought: pickFollowupThought(
             [
-              "That cart needs moving before the rush.",
-              "The square will jam if nobody acts.",
-              "This is the kind of thing that spreads.",
+              "That cart needs moving before lunch.",
+              "The square wants an easier day.",
+              "Small jams get loud fast.",
             ],
             context,
             "nia-cart-followup",
@@ -676,18 +710,18 @@ export function buildDeterministicStreetReply(
       return {
         reply: chooseConversationLine(
           [
-            "You learn this part of town by watching where people slow down.",
-            "Watch where the traffic bunches up. That's where the real story is.",
-            "If you pay attention to the slow spots, South Quay starts to explain itself.",
+            "You learn this part of town by watching where people pause and who they listen to.",
+            "Watch where traffic bunches up. Crowds show you where something wants a little help.",
+            "Pay attention to the slow spots. South Quay usually explains itself there.",
           ],
           context,
           "nia-default",
         ),
         followupThought: pickFollowupThought(
           [
-            "Watch where the block backs up.",
-            "The useful clue is always moving.",
-            "Slow spots matter most.",
+            "Watch where people pause.",
+            "The good clue is usually small.",
+            "Slow spots give things away.",
           ],
           context,
           "nia-default-followup",
@@ -697,9 +731,9 @@ export function buildDeterministicStreetReply(
       return {
         reply: chooseConversationLine(
           [
-            "Same as anybody else here: keep working and don't waste the day.",
+            "Same as anybody else here: take the day one cup at a time.",
             "If you need something, ask it plain.",
-            "I'm just trying to get through the day in one piece.",
+            "I'm just trying to keep the afternoon pleasant.",
           ],
           context,
           `${npc.id}-default`,
@@ -808,6 +842,10 @@ export function generatedReplyLooksInvalid(
     return true;
   }
 
+  if (generatedReplyHasToneDrift(normalized)) {
+    return true;
+  }
+
   if (normalizedNpcName) {
     const npcNamePattern = new RegExp(`\\b${escapeRegExp(normalizedNpcName)}\\b`, "i");
     if (npcNamePattern.test(normalized)) {
@@ -831,6 +869,21 @@ export function generatedReplyLooksInvalid(
   return false;
 }
 
+function generatedReplyHasToneDrift(normalized: string): boolean {
+  return [
+    /\baye\b/,
+    /\blass(?:ie)?\b/,
+    /\bladdie\b/,
+    /\bye\b/,
+    /\bempty apron\b/,
+    /\bsun tables?\b/,
+    /\bprep shelf\b/,
+    /\bfetch(?:ing)?\b.*\btins?\b/,
+    /\bgrab(?:bing)?\b.*\bpeg\b/,
+    /\bkeep an eye on the bell\b/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 function normalizePlayerText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -844,9 +897,24 @@ function detectTopics(text: string): Set<string> {
     topics.add("money");
   }
 
-  if (/\bhelp\b|\bfix\b|\brepair\b|\bsolve\b|\bhandle\b/.test(normalized)) {
+  if (
+    /\bhelp\b|\bfix\b|\brepair\b|\bsolve\b|\bhandle\b|\banything i can do\b|\bwhat needs doing\b|\bneed doing\b|\bchores?\b/.test(
+      normalized,
+    )
+  ) {
     topics.add("help");
+  }
+
+  if (/\bfix\b|\brepair\b|\bsolve\b|\bhandle\b|\bpump\b|\bleak\b/.test(normalized)) {
     topics.add("repair");
+  }
+
+  if (
+    /\bwhat\b.*\b(first|next|start)\b|\bwhere\b.*\b(start|begin)\b|\beasiest\b.*\b(first|start|begin|helpful)\b|\bdo first\b|\bstart with\b|\bbegin with\b/.test(
+      normalized,
+    )
+  ) {
+    topics.add("next_step");
   }
 
   if (/\bpump\b|\bleak\b/.test(normalized)) {
@@ -862,7 +930,7 @@ function detectTopics(text: string): Set<string> {
     topics.add("rent");
   }
 
-  if (/\brumou?r\b|\bgossip\b|\bhear\b|\bnews\b/.test(normalized)) {
+  if (/\brumou?rs?\b|\bgossip\b|\bhear\b|\bnews\b/.test(normalized)) {
     topics.add("rumor");
     topics.add("gossip");
   }

@@ -1,4 +1,10 @@
-import type { StreetGameState } from "../street-sim/types.js";
+import type {
+  RowanAutonomyEffect,
+  RowanAutonomyLayer,
+  RowanAutonomyState,
+  RowanAutonomyStepKind,
+  StreetGameState,
+} from "../street-sim/types.js";
 
 export type RowanNeedKey =
   | "shelter"
@@ -31,9 +37,12 @@ export interface RowanBelief {
 export interface RowanNextMove {
   text: string;
   rationale: string;
+  effects?: RowanAutonomyEffect[];
+  layer?: RowanAutonomyLayer;
   targetLocationId?: string;
   npcId?: string;
   actionId?: string;
+  kind?: RowanAutonomyStepKind;
 }
 
 export interface RowanCognition {
@@ -181,7 +190,7 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
     beliefs.push({
       id: "belief-ada-work",
       topic: "work",
-      text: "Ada may have paid work at Kettle & Lamp if Rowan shows up before the room hardens around somebody else.",
+      text: "Ada may have paid work at Kettle & Lamp if Rowan shows up before the lunch crowd fills the cafe.",
       confidence: hasAnyTopic(adaTopics, ["work"]) ? "confirmed" : teaJob?.discovered ? "promising" : "possible",
       source: "Kettle & Lamp",
       npcId: "npc-ada",
@@ -193,7 +202,7 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
     beliefs.push({
       id: "belief-tomas-work",
       topic: "work",
-      text: "Tomas may have yard work when the freight window is open and Rowan sounds useful enough to bother with.",
+      text: "Tomas may have yard work when the freight window is open and Rowan sounds reliable enough to bother with.",
       confidence: hasAnyTopic(tomasTopics, ["work", "yard"]) ? "confirmed" : yardJob?.discovered ? "promising" : "possible",
       source: "North Crane Yard",
       npcId: "npc-tomas",
@@ -238,93 +247,27 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
   return beliefs;
 }
 
-function buildRowanNextMove(world: StreetGameState): RowanNextMove | undefined {
-  if (world.player.pendingObjectiveMove) {
-    return {
-      text: world.player.pendingObjectiveMove.objectiveText,
-      rationale: world.player.pendingObjectiveMove.rationale,
-      targetLocationId: world.player.pendingObjectiveMove.targetLocationId,
-      npcId: world.player.pendingObjectiveMove.npcId,
-      actionId: world.player.pendingObjectiveMove.actionId,
-    };
-  }
-
-  const activeJob = world.jobs.find(
-    (job) =>
-      job.id === world.player.activeJobId &&
-      job.accepted &&
-      !job.completed &&
-      !job.missed,
-  );
-  if (activeJob) {
-    const location = world.locations.find((entry) => entry.id === activeJob.locationId);
-    const currentTotalMinutes = world.clock.totalMinutes;
-    const startTotalMinutes = totalMinutesForDayHour(world.clock.day, activeJob.startHour);
-    const endTotalMinutes = totalMinutesForDayHour(world.clock.day, activeJob.endHour);
-
-    if (
-      activeJob.deferredUntilMinutes !== undefined &&
-      activeJob.deferredUntilMinutes > currentTotalMinutes
-    ) {
-      return {
-        text: `Pick ${activeJob.title.toLowerCase()} back up when the defer window ends.`,
-        rationale: `The commitment is still live, but Rowan intentionally pushed it back until about ${formatClockForCognition(activeJob.deferredUntilMinutes)}.`,
-        targetLocationId: activeJob.locationId,
-        actionId: `resume:${activeJob.id}`,
-      };
-    }
-
-    if (world.player.currentLocationId !== activeJob.locationId) {
-      return {
-        text: `Get to ${location?.name ?? "the job site"} for ${activeJob.title.toLowerCase()}.`,
-        rationale:
-          currentTotalMinutes < startTotalMinutes
-            ? `The commitment starts around ${formatClockForCognition(startTotalMinutes)}, so Rowan should already be moving toward it.`
-            : `The commitment window is open now, so Rowan needs to get on site before it slips.`,
-        targetLocationId: activeJob.locationId,
-        actionId: `work:${activeJob.id}`,
-      };
-    }
-
-    if (currentTotalMinutes < startTotalMinutes) {
-      return {
-        text: `Stay ready for ${activeJob.title.toLowerCase()}.`,
-        rationale: `The shift has not opened yet, but Rowan is already where he needs to be when ${formatClockForCognition(startTotalMinutes)} hits.`,
-        targetLocationId: activeJob.locationId,
-        actionId: `work:${activeJob.id}`,
-      };
-    }
-
-    if (currentTotalMinutes < endTotalMinutes) {
-      return {
-        text: `Start ${activeJob.title.toLowerCase()}.`,
-        rationale: "The shift window is open now, so the next meaningful move is to work it.",
-        targetLocationId: activeJob.locationId,
-        actionId: `work:${activeJob.id}`,
-      };
-    }
-  }
-
-  const nextStep = world.player.objective?.trail.find((step) => !step.done);
-  if (!nextStep) {
+export function buildRowanNextMoveFromAutonomy(
+  autonomy?: RowanAutonomyState,
+): RowanNextMove | undefined {
+  if (!autonomy) {
     return undefined;
   }
 
   return {
-    text: nextStep.title,
-    rationale: nextStep.detail ?? world.player.objective?.text ?? nextStep.title,
+    actionId: autonomy.actionId,
+    effects: autonomy.effects,
+    kind: autonomy.stepKind,
+    layer: autonomy.layer,
+    npcId: autonomy.npcId,
+    rationale: autonomy.detail,
+    targetLocationId: autonomy.targetLocationId,
+    text: autonomy.label,
   };
 }
 
-function totalMinutesForDayHour(day: number, hour: number) {
-  return Math.max(0, day - 1) * 24 * 60 + hour * 60;
-}
-
-function formatClockForCognition(totalMinutes: number) {
-  const minuteOfDay = ((totalMinutes % (24 * 60)) + (24 * 60)) % (24 * 60);
-  const hour = Math.floor(minuteOfDay / 60);
-  const minute = minuteOfDay % 60;
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+function buildRowanNextMove(world: StreetGameState): RowanNextMove | undefined {
+  return buildRowanNextMoveFromAutonomy(world.rowanAutonomy);
 }
 
 function npcReplyTopics(world: StreetGameState, npcId: string) {

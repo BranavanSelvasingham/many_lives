@@ -76,7 +76,7 @@ export function ObjectiveTrail({
         <div className="space-y-3">
           <SectionHeading
             label="Working Plan"
-            detail="The live steps Rowan is carrying and checking off."
+            detail="The live steps Rowan is working through."
           />
 
           {checklistItems.length > 0 ? (

@@ -7,3 +7,8 @@ coverage/
 .env
 .godot/
 *.import
+
+# Local Codex/game-session scratch
+.codex/
+.live-game.json
+skills/

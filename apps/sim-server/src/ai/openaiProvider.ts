@@ -25,6 +25,7 @@ import {
   type StreetDialogueRequest,
   type StreetDialogueResult,
 } from "./streetDialogue.js";
+import { normalizeStreetVoice } from "./streetVoice.js";
 import {
   buildDeterministicStreetThoughts,
   sanitizeThought,
@@ -36,7 +37,11 @@ import type { StreetGameState } from "../street-sim/types.js";
 interface OpenAIProviderOptions {
   apiKey?: string;
   model?: string;
+  timeoutMs?: number;
 }
+
+const DEFAULT_OPENAI_TIMEOUT_MS = 1800;
+const MAX_OPENAI_TIMEOUT_MS = 30_000;
 
 export class OpenAIProvider implements AIProvider {
   private readonly fallback = new MockAIProvider();
@@ -101,6 +106,10 @@ export class OpenAIProvider implements AIProvider {
   async generateStreetThoughts(
     game: StreetGameState,
   ): Promise<StreetThoughtsResult> {
+    if (!shouldUseOpenAIForStreetSupportTasks()) {
+      return this.fallback.generateStreetThoughts(game);
+    }
+
     const cacheKey = streetThoughtsCacheKey(game);
     const cached = this.streetThoughtCache.get(cacheKey);
     if (cached) {
@@ -140,6 +149,10 @@ export class OpenAIProvider implements AIProvider {
   async generateStreetAutonomousLine(
     input: StreetAutonomousLineRequest,
   ): Promise<StreetAutonomousLineResult> {
+    if (!shouldUseOpenAIForStreetSupportTasks()) {
+      return this.fallback.generateStreetAutonomousLine(input);
+    }
+
     const prompt = buildGenerateStreetAutonomousLinePrompt(input);
 
     return this.callOrFallback(async () => {
@@ -151,6 +164,10 @@ export class OpenAIProvider implements AIProvider {
   async interpretStreetConversation(
     input: StreetConversationInterpretationRequest,
   ): Promise<StreetConversationInterpretationResult> {
+    if (!shouldUseOpenAIForStreetSupportTasks()) {
+      return this.fallback.interpretStreetConversation(input);
+    }
+
     const prompt = buildInterpretStreetConversationPrompt(input);
 
     return this.callOrFallback(async () => {
@@ -178,51 +195,79 @@ export class OpenAIProvider implements AIProvider {
     prompt: string,
     maxOutputTokens: number,
   ): Promise<string> {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.options.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.options.model ?? "gpt-5-nano",
-        input: prompt,
-        reasoning: {
-          effort: "minimal",
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, this.requestTimeoutMs());
+
+    try {
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.options.apiKey}`,
+          "Content-Type": "application/json",
         },
-        max_output_tokens: maxOutputTokens,
-      }),
-    });
+        body: JSON.stringify({
+          model: this.options.model ?? "gpt-5-nano",
+          input: prompt,
+          reasoning: {
+            effort: "minimal",
+          },
+          max_output_tokens: maxOutputTokens,
+        }),
+        signal: abortController.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(`OpenAI request failed with ${response.status}`);
-    }
+      if (!response.ok) {
+        throw new Error(`OpenAI request failed with ${response.status}`);
+      }
 
-    const json = (await response.json()) as {
-      output_text?: string;
-      output?: Array<{
-        content?: Array<{
-          type?: string;
-          text?: string;
+      const json = (await response.json()) as {
+        output_text?: string;
+        output?: Array<{
+          content?: Array<{
+            type?: string;
+            text?: string;
+          }>;
         }>;
-      }>;
-    };
+      };
 
-    const outputText =
-      json.output_text ??
-      json.output
-        ?.flatMap((item) => item.content ?? [])
-        .filter((item) => item.type === "output_text" || item.type === "text")
-        .map((item) => item.text ?? "")
-        .join("\n")
-        .trim();
+      const outputText =
+        json.output_text ??
+        json.output
+          ?.flatMap((item) => item.content ?? [])
+          .filter((item) => item.type === "output_text" || item.type === "text")
+          .map((item) => item.text ?? "")
+          .join("\n")
+          .trim();
 
-    if (!outputText) {
-      throw new Error("OpenAI response did not include text output");
+      if (!outputText) {
+        throw new Error("OpenAI response did not include text output");
+      }
+
+      return outputText;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    return outputText;
   }
+
+  private requestTimeoutMs(): number {
+    return normalizeOpenAIRequestTimeoutMs(
+      this.options.timeoutMs ?? Number(process.env.OPENAI_TIMEOUT_MS),
+    );
+  }
+}
+
+function normalizeOpenAIRequestTimeoutMs(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return DEFAULT_OPENAI_TIMEOUT_MS;
+  }
+
+  return Math.min(Math.max(Math.round(value), 1), MAX_OPENAI_TIMEOUT_MS);
+}
+
+function shouldUseOpenAIForStreetSupportTasks(): boolean {
+  return process.env.OPENAI_STREET_SUPPORT_TASKS === "1";
 }
 
 function normalizeStreetThoughts(
@@ -369,7 +414,11 @@ function safeParseConversationInterpretationJson(rawText: string): {
 }
 
 function sanitizeStreetSpeech(text: string) {
-  return text.replace(/\s+/g, " ").trim().replace(/^"+|"+$/g, "").slice(0, 240);
+  return normalizeStreetVoice(text)
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^"+|"+$/g, "")
+    .slice(0, 240);
 }
 
 function sanitizeOptionalNarrativeField(text?: string) {

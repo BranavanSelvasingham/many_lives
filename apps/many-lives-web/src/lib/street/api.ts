@@ -10,6 +10,11 @@ export async function createStreetGame() {
   return response.game;
 }
 
+export async function loadStreetGame(gameId: string) {
+  const response = await requestJson<GameStateResponse>(`/game/${gameId}/state`);
+  return response.game;
+}
+
 export async function moveStreetPlayer(
   gameId: string,
   x: number,
@@ -97,6 +102,7 @@ export async function advanceStreetObjective(
   gameId: string,
   options: {
     allowTimeSkip?: boolean;
+    confirmMove?: boolean;
   } = {},
 ): Promise<StreetGameState> {
   const response = await requestJson<GameStateResponse>(`/game/${gameId}/command`, {
@@ -104,6 +110,7 @@ export async function advanceStreetObjective(
     body: JSON.stringify({
       type: "advance_objective",
       allowTimeSkip: options.allowTimeSkip,
+      confirmMove: options.confirmMove,
     }),
   });
 

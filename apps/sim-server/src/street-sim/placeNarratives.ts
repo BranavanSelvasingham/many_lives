@@ -13,81 +13,81 @@ type MapLabelNarrativeProfile = Pick<MapLabel, "context" | "backstory">;
 
 export const CITY_NARRATIVE: SettingNarrativeProfile = {
   context:
-    "Brackenport runs on tide tables, dock credit, and whoever can prove they are useful before the day closes in.",
+    "Brackenport runs on tide tables, cafe bells, sun-warmed errands, and people who learn where they can be kind before the day gets busy.",
   backstory:
-    "It grew rich on river trade and warehouse money; over time, the polished districts rose uphill while the working wards along the water built a culture of practical cooperation that still keeps the city moving.",
+    "It grew around the water, then softened into a city of small squares, tea rooms, repair stalls, and seaside habits where practical favors travel as easily as gossip.",
 };
 
 export const DISTRICT_NARRATIVE: SettingNarrativeProfile = {
   context:
-    "South Quay is where Brackenport's errands turn visible. Work, gossip, rent pressure, repairs, and dock spillover all meet in a tight quay-side square before the rest of the city pretends not to notice them.",
+    "South Quay is where Brackenport slows down by the water. Tea, errands, repairs, room keys, gossip, and small favors all meet in a bright quay-side square.",
   backstory:
-    "It began as service lanes for the docks and cheap rooms for transient hands, then grew into a tight waterfront quarter where work leads, favors, and second chances travel almost as reliably as wages.",
+    "It began as service lanes for the docks and simple rooms for passing hands, then grew into a waterfront quarter where second chances are usually offered over a cup of tea.",
 };
 
 const DEFAULT_LOCATION_NARRATIVE: LocationNarrativeProfile = {
   description:
-    "A piece of South Quay still doing what the district needs from it.",
+    "A small piece of South Quay doing its part in the day.",
   context:
-    "People come through here because the block still expects something from this place.",
+    "People come through here because the square has a way of pulling errands into conversation.",
   backstory:
-    "Like most places in South Quay, it was shaped by work first and comfort second.",
+    "Like most places in South Quay, it started practical and slowly learned how to be pleasant too.",
 };
 
 const LOCATION_NARRATIVES: Record<string, LocationNarrativeProfile> = {
   "boarding-house": {
     description:
-      "A narrow boarding house with warm stair rails, thin walls, and a keeper who notices who returns tired and who returns useful.",
+      "A narrow boarding house with warm stair rails, thin walls, and a keeper who notices who comes back tired but still rinses their cup.",
     context:
-      "Morrow House is where people in South Quay try to turn a temporary bed into something steadier than the day's luck.",
+      "Morrow House is where people in South Quay try to make a temporary room feel a little more like home.",
     backstory:
-      "It started as overflow rooms for dock hands and carters, then became a boarding house that stays steady by remembering who pays on time, who helps out, and who keeps the place running for everyone.",
+      "It started as overflow rooms for dock hands and carters, then became a boarding house that stays steady through shared chores, paid rent, and gentle habits.",
   },
   "tea-house": {
     description:
-      "A cramped tea room facing the square, where gossip, shift work, and favors all pass over the same counter.",
+      "A bright tea room facing the square, where gossip, lunch plates, small jobs, and favors all pass over the same counter.",
     context:
-      "Kettle & Lamp keeps the district stitched together between shifts, rumors, and small practical arrangements.",
+      "Kettle & Lamp keeps the district stitched together with warm cups, quick lunches, and practical little arrangements.",
     backstory:
-      "It was built to feed and warm workers spilling out of the square and lanes, and over time it turned into one of those places where jobs, apologies, and warnings all get served in the same cup.",
+      "It was built to feed and warm people coming off the lanes, and over time it turned into the kind of cafe where jobs, apologies, and warnings all arrive with tea.",
   },
   "repair-stall": {
     description:
-      "A repair stall full of secondhand tools, bent brass, and fixes that hold because Mercer says they do.",
+      "A repair stall full of secondhand tools, bent brass, and little fixes laid out in the sea air.",
     context:
-      "Mercer Repairs is where broken things come when replacing them would cost more than the block can spare.",
+      "Mercer Repairs is where broken things come when replacing them feels wasteful and Jo is in the mood to help.",
     backstory:
       "The stall grew out of salvaged parts and stubborn workmanship, building a reputation on repairs that outlast the promise they were sold with.",
   },
   courtyard: {
     description:
-      "Buckets, laundry lines, cracked stone, and a hand pump everybody has been stepping around instead of fixing.",
+      "Buckets, laundry lines, cracked stone, and a hand pump everyone has been politely ignoring.",
     context:
-      "Morrow Yard is shared breathing room, work space, and trouble sink for the people living around it.",
+      "Morrow Yard is shared breathing room, laundry space, and morning coffee territory for the people living around it.",
     backstory:
       "It used to be a service yard for carts and coal, and now it carries the quieter labor of washing, hauling, waiting, and dealing with whatever the boarding house cannot keep indoors.",
   },
   "market-square": {
     description:
-      "A stone square opening toward the water, with notices, carts, awnings, arguments, and half-heard chances crossing all day.",
+      "A stone square opening toward the water, with notices, carts, awnings, cafe chairs, and half-heard chances crossing all day.",
     context:
-      "Quay Square is the district's public pulse, where opportunities and problems both become visible fast.",
+      "Quay Square is the district's public pulse, where opportunities and problems both become visible before lunch.",
     backstory:
       "It formed where the lanes widened enough for trading tables and public notices, and it stayed important because South Quay needs one place where everybody's version of the day collides in full view of the quay road.",
   },
   "freight-yard": {
     description:
-      "Crates, ropes, handcarts, and short tempers. If you want paid for your back, this is where backs get counted.",
+      "Crates, ropes, handcarts, sun on the stones, and Tomas pretending he does not enjoy the sea breeze.",
     context:
-      "North Crane Yard turns labor into wages in the bluntest possible way: by measuring what got moved before the light changed.",
+      "North Crane Yard turns a short burst of labor into coin, preferably before the afternoon gets too sleepy.",
     backstory:
-      "It expanded from a riverside loading patch into a hard-run workyard that answers to cargo schedules more than to comfort, patience, or excuses.",
+      "It expanded from a riverside loading patch into a busy workyard that answers to cargo schedules but still gets the same afternoon light as the cafe.",
   },
   "moss-pier": {
     description:
-      "Wet planks, rope burns, gull noise, and low quay steps where boats smell like trade before they smell like fish.",
+      "Wet planks, rope burns, gull noise, and low quay steps where boats rock close enough to make everyone speak softer.",
     context:
-      "Pilgrim Slip is where the district feels the river most directly, with arrivals, departures, and rumors all coming in over the same water.",
+      "Pilgrim Slip is where the district feels the water most directly, with arrivals, departures, and rumors all coming in on the same breeze.",
     backstory:
       "It began as a practical unloading pier and kept its importance because small boats, side cargo, and unofficial errands still need somewhere less polished than the main docks or more formal quay walls.",
   },
@@ -95,7 +95,7 @@ const LOCATION_NARRATIVES: Record<string, LocationNarrativeProfile> = {
 
 const DEFAULT_LABEL_NARRATIVE: MapLabelNarrativeProfile = {
   context:
-    "This part of the district carries its own habits, pressure, and local memory.",
+    "This part of the district carries its own habits, timing, and local memory.",
   backstory:
     "The name stuck because people working here needed a way to mark what kind of street they were stepping into.",
 };

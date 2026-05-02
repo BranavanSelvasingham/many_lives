@@ -794,7 +794,7 @@ export function StreetGameApp() {
   const liveCurrentTime = isoForTotalMinutes(liveClock.totalMinutes);
   const npcById = new Map(game.npcs.map((npc) => [npc.id, npc] as const));
   const currentObjective =
-    game.player.objective?.text ?? "No clear direction yet. Rowan is still reading the block.";
+    game.player.objective?.text ?? "No clear direction yet. Rowan is still getting his bearings.";
   const currentThought = toFirstPersonText(game.player.currentThought ?? currentObjective);
   const currentSummary = toFirstPersonText(game.summary);
   const activeJob = game.jobs.find(
@@ -1372,7 +1372,7 @@ export function StreetGameApp() {
             completedItems={objectiveCompletedItems}
             objectiveText={
               game.player.objective?.text ??
-              "No fixed objective yet. Rowan is still reading the block."
+              "No fixed objective yet. Rowan is still getting his bearings."
             }
             objectiveUpdatedAt={game.player.objective?.updatedAt}
             subtitle="A compact read of what Rowan is actively trying to solve and what he has already managed to pull off."
@@ -1912,7 +1912,7 @@ function TimeStatCard({
       <div className="space-y-3 border-t border-[rgba(134,145,154,0.14)] px-4 py-3">
         <div className="text-[0.82rem] leading-6 text-[color:var(--text-muted)]">
           {nextBeatLabel ??
-            "Move time forward when Rowan is waiting on the next useful beat."}
+            "Move time forward when Rowan is waiting."}
         </div>
         <div className="flex flex-wrap gap-2">
           {options.map((option) => (
@@ -3299,7 +3299,7 @@ function buildClockState(totalMinutes: number): StreetGameState["clock"] {
 function phaseForHour(hour: number) {
   if (hour < 6) return "Pre-dawn";
   if (hour < 11) return "Morning";
-  if (hour < 14) return "Late morning";
+  if (hour < 12) return "Late morning";
   if (hour < 18) return "Afternoon";
   if (hour < 22) return "Evening";
   return "Night";
@@ -3682,7 +3682,7 @@ function buildObjectivePlanItems(
                 : "You already have what you need to handle this.",
           progress:
             !activeProblem
-              ? "Waiting on the read"
+              ? "Waiting on details"
               : activeProblem.requiredItemId
                 ? hasWrench
                   ? "Tool ready"
@@ -3754,7 +3754,7 @@ function buildObjectivePlanItems(
         },
         {
           id: "rest-hour",
-          title: "Let the hour land",
+          title: "Rest for an hour",
           detail:
             game.player.energy >= 70
               ? "Your energy has already come back enough that the edge is off."

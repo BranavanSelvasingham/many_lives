@@ -224,7 +224,7 @@ function buildActiveCommitmentThought(
   }
 
   return sanitizeThought(
-    `That shift slipped. I need the next useful opening.`,
+    `That shift slipped. I need the next real opening.`,
   );
 }
 
@@ -372,7 +372,7 @@ function buildPlanningThought(game: StreetGameState) {
       return `I should ask ${nextPeople[0]} where the work is.`;
     }
 
-    return "I should map the block and look for paid work.";
+    return "I should walk the block and look for a little paid work.";
   }
 
   if (objectiveFocus === "help") {
@@ -427,9 +427,9 @@ function buildRecentConversationThought(
       if (cue.includes("wrench") && !playerHasWrench) {
         return rotatingThought(
           [
-            "If Rowan means it, Mercer Repairs is the next stop.",
-            "The pump talk only matters if Rowan comes back with the wrench.",
-            "Rowan needs to leave the house and solve the tool first.",
+            "Mercer Repairs is the next stop if Rowan wants to handle the pump.",
+            "The pump talk only matters if Rowan comes back with a tool.",
+            "Rowan has a clear next errand now.",
           ],
           seed,
         );
@@ -438,14 +438,14 @@ function buildRecentConversationThought(
         return rotatingThought(
           playerNearby
             ? [
-                "The pump is still waiting, even if Rowan is not moving yet.",
-                "Rowan heard me. Now he needs to go fix the pump.",
-                "Talk is over. The yard still wants the wrench on that pump.",
+                "The pump is still waiting.",
+                "Rowan knows where to start now.",
+                "A small repair would make the house easier today.",
               ]
             : [
-                "Maybe Rowan finally went to steady the yard.",
+                "Maybe Rowan went to look at the pump.",
                 "If Rowan follows through, the house gets quieter tonight.",
-                "The right kind of promise sounds like footsteps toward the yard.",
+                "A useful promise usually turns into a short walk.",
               ],
           seed,
         );
@@ -453,9 +453,9 @@ function buildRecentConversationThought(
       if (cue.includes("ada") || cue.includes("tea")) {
         return rotatingThought(
           [
-            "If Rowan wants footing, Ada is the right next test.",
-            "Rowan does not need another speech from me. He needs Ada's room.",
-            "A place here starts with following the lead, not hovering in the hall.",
+            "Ada is a good next stop if Rowan wants work.",
+            "Rowan has enough to go ask Ada now.",
+            "A clear lead is better than another hallway conversation.",
           ],
           seed,
         );
@@ -466,13 +466,13 @@ function buildRecentConversationThought(
         return rotatingThought(
           playerNearby
             ? [
-                "If Rowan wants the shift, he should stop talking and take it.",
-                "The room is here. Rowan can either keep up or clear out.",
-                "I already gave Rowan the terms. Now he needs to move.",
+                "If Rowan wants the shift, he can start with the cups.",
+                "The room is busy, but there is space for steady hands.",
+                "I gave Rowan the terms. Now he can decide.",
               ]
             : [
-                "If Rowan comes back, he better come back ready to work.",
-                "The room will tell me fast whether Rowan meant any of that.",
+                "If Rowan comes back, I hope he is ready for lunch.",
+                "The room will show quickly whether he can keep pace.",
                 "A steady pair of hands would still help if Rowan returns in time.",
               ],
           seed,
@@ -481,9 +481,9 @@ function buildRecentConversationThought(
       if ((cue.includes("tomas") || cue.includes("yard")) && yardJob && !yardJob.missed) {
         return rotatingThought(
           [
-            "If Rowan held up here, Tomas is the next hard room to prove it in.",
-            "The tea room was only the first test. The yard is the next one.",
-            "Rowan can carry this momentum to Tomas if he does not drift.",
+            "If Rowan held up here, Tomas is the next place to try.",
+            "The tea room was one kind of work. The yard will be another.",
+            "Rowan can take this momentum to Tomas while the lead is fresh.",
           ],
           seed,
         );
@@ -494,14 +494,14 @@ function buildRecentConversationThought(
         return rotatingThought(
           playerHasWrench
             ? [
-                "The bench part is over. Rowan should be using the wrench by now.",
-                "Once the wrench leaves my stall, the problem belongs to Rowan's hands.",
-                "If Rowan bought the tool, the next honest move is the yard.",
+                "The wrench part is done. The pump is the next bit.",
+                "Once the wrench leaves my stall, the rest is patience.",
+                "If Rowan bought the tool, he knows where to take it.",
               ]
             : [
-                "Either Rowan buys the wrench or he keeps circling the same leak.",
+                "Either Rowan buys the wrench or finds another way to handle the leak.",
                 "The pump is not getting fixed by talking at my bench.",
-                "If Rowan wants the truth, it still costs eight coins and some follow-through.",
+                "Eight coins is a lot when you are new. Still, it would help.",
               ],
           seed,
         );
@@ -512,14 +512,14 @@ function buildRecentConversationThought(
         return rotatingThought(
           playerNearby
             ? [
-                "If Rowan wants the coins, he should get his hands on the load now.",
-                "The work is right here. Rowan can lift or move aside.",
-                "The yard heard enough already. Time for Rowan to work.",
+                "If Rowan wants the coins, the load is right here.",
+                "The work is right here. Rowan can start with the crates.",
+                "The terms are clear enough now.",
               ]
             : [
-                "If Rowan shows, put him on the load and see if he lasts.",
-                "The next useful thing Rowan can do is still here in the yard.",
-                "The load will tell me whether Rowan meant any of that talk.",
+                "If Rowan shows, put him on the load and keep it simple.",
+                "If Rowan wants the shift, it is still here in the yard.",
+                "A short shift will tell me enough.",
               ],
           seed,
         );
@@ -530,14 +530,14 @@ function buildRecentConversationThought(
         return rotatingThought(
           playerNearby
             ? [
-                "If Rowan sees the jam early, he should already be moving the cart.",
-                "The square won't wait for Rowan to feel ready.",
-                "This is the part where Rowan moves before the crowd notices.",
+                "If Rowan sees the jam early, moving the cart is enough.",
+                "The square will get noisy if Rowan waits too long.",
+                "This is a small fix while it is still small.",
               ]
             : [
-                "Maybe Rowan actually caught the problem before it spread.",
+                "Maybe Rowan caught the problem while it was still small.",
                 "If Rowan listened, Quay Square might stay loose today.",
-                "A useful person moves the cart before the story gets bigger.",
+                "Someone moving the cart early would help.",
               ],
           seed,
         );
@@ -550,9 +550,9 @@ function buildRecentConversationThought(
   if (playerNearby) {
     return rotatingThought(
       [
-        "Rowan is still here. He should move on what we just said.",
-        "The point landed. Now Rowan needs to act on it.",
-        "A good conversation should turn into motion.",
+        "Rowan is still here. I hope that helped.",
+        "Rowan has the point now.",
+        "That should give him a next step.",
       ],
       seed,
     );
@@ -563,7 +563,7 @@ function buildRecentConversationThought(
       [
         "Maybe Rowan headed toward Kettle & Lamp after all.",
         "If Rowan keeps the lead warm, the tea house still makes sense.",
-        "The next useful answer for Rowan is probably not here anymore.",
+        "The next answer for Rowan is probably not here anymore.",
       ],
       seed,
     );
@@ -592,9 +592,9 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
       if (recentlySpoke) {
         return rotatingThought(
           [
-            "Maybe Rowan will actually follow through.",
-            "Let's see if Rowan keeps the promise.",
-            "He sounded useful. Now prove it.",
+            "Maybe Rowan will follow through.",
+            "Let's see if Rowan keeps it simple.",
+            "He sounded kind enough to try.",
           ],
           seed,
         );
@@ -602,9 +602,9 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
       if (pumpProblem?.discovered && pumpProblem.status === "active") {
         return rotatingThought(
           [
-            "That pump is making the yard sour.",
+            "That pump is making the yard harder than it needs to be.",
             "I need that pump sorted before supper.",
-            "Water turns house trouble public fast.",
+            "A small leak becomes everyone's problem fast.",
           ],
           seed,
         );
@@ -672,9 +672,9 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
       }
       return rotatingThought(
         [
-          "Noon rush is almost on top of me.",
-          "The room always gets tighter before the rush.",
-          "I need the kettle ahead of the crowd.",
+          "Lunch is almost here.",
+          "The room gets louder before it gets easier.",
+          "I need the kettle ahead of the lunch crowd.",
         ],
         seed,
       );
@@ -780,7 +780,7 @@ function buildNpcThought(npc: NpcState, game: StreetGameState) {
         ? rotatingThought(
             [
               "Watch the boats, not the gulls.",
-              "The useful story comes off the boats first.",
+              "The good story comes off the boats first.",
               "The slip shows you tomorrow before noon does.",
             ],
             seed,

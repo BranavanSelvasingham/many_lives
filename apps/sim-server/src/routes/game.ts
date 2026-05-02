@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { STEP_MINUTES } from "../sim/engine.js";
 import type { SimulationEngine } from "../sim/engine.js";
+import { projectStreetGameForPlayer } from "../street-sim/playerView.js";
 import type { StreetGameState } from "../street-sim/types.js";
 import type { MemoryGameStore } from "../storage/memoryStore.js";
 import type {
@@ -25,8 +26,9 @@ export function registerGameRoutes(
     async () => {
       const gameId = deps.store.createGameId();
       const world = await deps.engine.createGame(gameId);
+      const savedWorld = deps.store.save(world);
       return {
-        game: deps.store.save(world),
+        game: projectStreetGameForPlayer(savedWorld),
       };
     },
   );
@@ -43,7 +45,7 @@ export function registerGameRoutes(
       };
     }
 
-    return { game: world };
+    return { game: projectStreetGameForPlayer(world) };
   });
 
   app.post<{
@@ -63,8 +65,9 @@ export function registerGameRoutes(
       world,
       normalizeTickCount(request.body),
     );
+    const savedWorld = deps.store.save(nextWorld);
     return {
-      game: deps.store.save(nextWorld),
+      game: projectStreetGameForPlayer(savedWorld),
     };
   });
 
@@ -73,6 +76,13 @@ export function registerGameRoutes(
     Body: GameCommand;
     Reply: GameStateResponse | { message: string };
   }>("/game/:id/command", async (request, reply) => {
+    if (isPublicFreeTextCommand(request.body) && !allowPublicFreeTextCommands()) {
+      reply.code(403);
+      return {
+        message: "Free-text commands are disabled on this public build.",
+      };
+    }
+
     const world = deps.store.get(request.params.id);
     if (!world) {
       reply.code(404);
@@ -82,8 +92,9 @@ export function registerGameRoutes(
     }
 
     const nextWorld = await deps.engine.runCommand(world, request.body);
+    const savedWorld = deps.store.save(nextWorld);
     return {
-      game: deps.store.save(nextWorld),
+      game: projectStreetGameForPlayer(savedWorld),
     };
   });
 
@@ -105,9 +116,10 @@ export function registerGameRoutes(
       characterId: request.body.characterId,
       policy: request.body.policy,
     });
+    const savedWorld = deps.store.save(nextWorld);
 
     return {
-      game: deps.store.save(nextWorld),
+      game: projectStreetGameForPlayer(savedWorld),
     };
   });
 }
@@ -122,4 +134,15 @@ function normalizeTickCount(body: TickGameRequest = {}): number {
   }
 
   return 1;
+}
+
+function isPublicFreeTextCommand(command: GameCommand | undefined) {
+  return command?.type === "speak" || command?.type === "set_objective";
+}
+
+function allowPublicFreeTextCommands() {
+  return (
+    process.env.NODE_ENV !== "production" ||
+    process.env.SIM_ALLOW_FREE_TEXT_COMMANDS === "true"
+  );
 }

@@ -50,6 +50,7 @@ export interface SpeakCommand {
 export interface AdvanceObjectiveCommand {
   type: "advance_objective";
   allowTimeSkip?: boolean;
+  confirmMove?: boolean;
 }
 
 export interface UpdatePolicyRequest {

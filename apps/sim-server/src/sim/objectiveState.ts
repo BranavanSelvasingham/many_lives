@@ -48,6 +48,7 @@ export function buildPlayerObjectiveState(
       explicitText,
       explicitFocus ?? classifyObjective(explicitText),
       explicitSource,
+      previous,
     );
     return composeObjective(world, explicitText, route, previous);
   }
@@ -74,6 +75,7 @@ export function buildPlayerObjectiveState(
       previous.text,
       previous.focus,
       previous.source,
+      previous,
     );
     if (!routeCompleted(previousRoute) && !shouldInterruptCurrentObjective(world, previous)) {
       return composeObjective(world, previous.text, previousRoute, previous);
@@ -214,7 +216,11 @@ function shouldInterruptCurrentObjective(
   if (previous.source === "manual") {
     const scores = scoreObjectiveFocus(world);
     const restScore = scoreForFocus(scores, "rest");
-    return world.player.energy < 35 && restScore >= 35;
+    return (
+      !hasRecentRest(world) &&
+      world.player.energy < 35 &&
+      restScore >= 35
+    );
   }
 
   const scores = scoreObjectiveFocus(world);
@@ -227,7 +233,7 @@ function shouldInterruptCurrentObjective(
     return false;
   }
 
-  if (bestFocus === "rest" && world.player.energy < 45) {
+  if (bestFocus === "rest" && world.player.energy < 45 && !hasRecentRest(world)) {
     return true;
   }
 
@@ -280,7 +286,12 @@ function chooseDynamicRoute(
       continue;
     }
 
-    const route = buildRouteForFocus(world, focus as ObjectiveFocus, "dynamic");
+    const route = buildRouteForFocus(
+      world,
+      focus as ObjectiveFocus,
+      "dynamic",
+      world.player.objective,
+    );
     if (!isAvoidedRoute(route, avoid) && routeHasWork(route)) {
       return route;
     }
@@ -325,6 +336,7 @@ function buildRouteForFocus(
   world: StreetGameState,
   focus: ObjectiveFocus,
   source: ObjectiveSource,
+  previous?: PlayerObjective,
 ): ObjectiveRoute {
   switch (focus) {
     case "work":
@@ -334,7 +346,7 @@ function buildRouteForFocus(
     case "tool":
       return buildToolRoute(world, source);
     case "rest":
-      return buildRestRoute(world, source);
+      return buildRestRoute(world, source, "", previous);
     case "people":
       return buildPeopleRoute(world, source);
     case "explore":
@@ -351,6 +363,7 @@ function buildRouteForObjectiveText(
   text: string,
   focus: ObjectiveFocus,
   source: ObjectiveSource,
+  previous?: PlayerObjective,
 ): ObjectiveRoute {
   switch (focus) {
     case "work":
@@ -360,7 +373,7 @@ function buildRouteForObjectiveText(
     case "tool":
       return buildToolRoute(world, source, text);
     case "rest":
-      return buildRestRoute(world, source, text);
+      return buildRestRoute(world, source, text, previous);
     case "people":
       return buildPeopleRoute(world, source, text);
     case "explore":
@@ -388,6 +401,10 @@ function buildSettleRoute(
   const hasStayTerms = houseStanding >= 2 || hasAnyTopic(maraTopics, ["home", "stay"]);
   const hasWorkLead = hasConfirmedWorkLead(world);
   const hasCommittedIncome = hasCommittedOrCompletedJob(world);
+  const settleLeadNpcId = lead === "yard" ? "npc-tomas" : "npc-ada";
+  const settleLeadLocationId = lead === "yard" ? "freight-yard" : "tea-house";
+  const settleLeadJob = lead === "yard" ? yardJob : teaJob;
+  const settlePeopleTarget = nextUntalkedNpc(world);
 
   return {
     key: "settle-core",
@@ -408,6 +425,8 @@ function buildSettleRoute(
             ? "Need exact terms"
             : "Talk to Mara",
         done: hasStayTerms,
+        npcId: "npc-mara",
+        targetLocationId: home?.id,
       }),
       makeStep({
         id: "settle-standing",
@@ -415,9 +434,14 @@ function buildSettleRoute(
         detail:
           houseStanding >= 2
             ? "Morrow House is starting to see Rowan as dependable."
-            : "Now that Rowan knows the terms, he needs to show up and follow through.",
+            : "Now that Rowan knows the terms, he needs to show up, help out, and make the house easier to run.",
         progress: `Standing ${houseStanding}/2`,
         done: houseStanding >= 2,
+        actionId:
+          hasStayTerms && houseStanding < 2 && home
+            ? `contribute:${home.id}`
+            : undefined,
+        targetLocationId: home?.id,
       }),
       makeStep({
         id: "settle-lead",
@@ -438,6 +462,8 @@ function buildSettleRoute(
                 ? "Work in hand"
                 : "Looking",
         done: hasWorkLead,
+        npcId: settleLeadNpcId,
+        targetLocationId: settleLeadLocationId,
       }),
       makeStep({
         id: "settle-income",
@@ -455,6 +481,18 @@ function buildSettleRoute(
                 ? "Ready to commit"
                 : "Looking",
         done: hasCommittedIncome,
+        actionId:
+          settleLeadJob &&
+          !settleLeadJob.completed &&
+          !settleLeadJob.missed
+            ? settleLeadJob.accepted ||
+              world.player.activeJobId === settleLeadJob.id
+              ? `work:${settleLeadJob.id}`
+              : settleLeadJob.discovered
+                ? `accept:${settleLeadJob.id}`
+                : undefined
+            : undefined,
+        targetLocationId: settleLeadJob?.locationId,
       }),
       makeStep({
         id: "settle-people",
@@ -465,6 +503,9 @@ function buildSettleRoute(
             : "Rowan needs a few real connections to make this place feel like home.",
         progress: `${Math.min(familiarPeople, 2)}/2 real connections`,
         done: familiarPeople >= 2,
+        npcId: familiarPeople < 2 ? settlePeopleTarget?.id : undefined,
+        targetLocationId:
+          familiarPeople < 2 ? settlePeopleTarget?.currentLocationId : undefined,
       }),
     ],
   };
@@ -505,6 +546,8 @@ function buildWorkRoute(
             ? "Heard about it"
             : "Still asking",
         done: confirmedWorkLeadFor(world, lead),
+        npcId: leadNpc?.id,
+        targetLocationId: leadLocation?.id,
       }),
       makeStep({
         id: "work-commit",
@@ -519,12 +562,21 @@ function buildWorkRoute(
         progress:
           leadJob?.accepted || world.player.activeJobId === leadJob?.id
             ? "Committed"
-            : leadJob?.completed
+          : leadJob?.completed
               ? "Already worked"
               : leadJob?.discovered
                 ? "Lead waiting"
                 : "Still asking",
         done: Boolean(leadJob?.accepted || leadJob?.completed),
+        actionId:
+          leadJob && !leadJob.completed && !leadJob.missed
+            ? leadJob.accepted || world.player.activeJobId === leadJob.id
+              ? `work:${leadJob.id}`
+              : leadJob.discovered
+                ? `accept:${leadJob.id}`
+                : undefined
+            : undefined,
+        targetLocationId: leadLocation?.id,
       }),
       makeStep({
         id: "work-finish",
@@ -538,6 +590,9 @@ function buildWorkRoute(
             : "Finishing the rush matters more than saying yes to it.",
         progress: leadJob?.completed ? "Finished" : "Still ahead",
         done: Boolean(leadJob?.completed),
+        actionId:
+          leadJob && !leadJob.completed ? `work:${leadJob.id}` : undefined,
+        targetLocationId: leadLocation?.id,
       }),
       makeStep({
         id: "work-pay",
@@ -573,6 +628,7 @@ function buildCommittedJobRoute(
         detail: "A live commitment should be the first thing Rowan can actually cash in.",
         progress: atLocation ? "On site" : "Still moving",
         done: atLocation || job.completed,
+        targetLocationId: location?.id,
       }),
       makeStep({
         id: `commitment-window-${job.id}`,
@@ -584,6 +640,7 @@ function buildCommittedJobRoute(
             ? "Waiting on the hour"
             : "Window slipping",
         done: inWindow || job.completed,
+        targetLocationId: location?.id,
       }),
       makeStep({
         id: `commitment-finish-${job.id}`,
@@ -591,6 +648,8 @@ function buildCommittedJobRoute(
         detail: "Following through is what turns a lead into standing.",
         progress: job.completed ? "Finished" : "Still committed",
         done: job.completed,
+        actionId: job.completed ? undefined : `work:${job.id}`,
+        targetLocationId: location?.id,
       }),
     ],
   };
@@ -624,13 +683,17 @@ function buildHelpRoute(
           detail: "The wheel is already starting to catch on the square's traffic.",
           progress: problem.discovered ? "Problem seen" : "Still a rumor",
           done: problem.discovered,
+          actionId: "inspect:problem-cart",
+          targetLocationId: problem.locationId,
         }),
         makeStep({
           id: "help-cart-solve",
           title: "Clear the cart before it snarls the square.",
-          detail: "The square stays readable when somebody moves trouble before it spreads.",
+          detail: "The square works better when somebody moves trouble before it spreads.",
           progress: problem.status === "solved" ? "Solved" : "Active",
           done: problem.status === "solved",
+          actionId: "solve:problem-cart",
+          targetLocationId: problem.locationId,
         }),
       ],
     };
@@ -650,15 +713,19 @@ function buildHelpRoute(
             : "A closer look will tell Rowan whether this is his problem or just nearby trouble.",
         progress: problem?.discovered ? "Problem seen" : "Still a lead",
         done: Boolean(problem?.discovered),
+        actionId: "inspect:problem-pump",
+        targetLocationId: problem?.locationId,
       }),
       makeStep({
         id: "help-pump-tool",
         title: hasWrench ? "Bring the wrench back to the pump." : "Buy a wrench from Jo.",
         detail: hasWrench
           ? "The tool is in hand. The yard just needs Rowan to use it."
-          : "Jo is the clearest place to turn loose coins into something useful.",
+          : "Jo is the easiest place to turn loose coins into something that helps.",
         progress: hasWrench ? "Tool in hand" : "No wrench yet",
         done: hasWrench,
+        actionId: hasWrench ? undefined : "buy:item-wrench",
+        targetLocationId: hasWrench ? problem?.locationId : "repair-stall",
       }),
       makeStep({
         id: "help-pump-fix",
@@ -666,6 +733,8 @@ function buildHelpRoute(
         detail: "South Quay remembers the people who solve trouble before it gets loud.",
         progress: problem?.status === "solved" ? "Solved" : "Active",
         done: problem?.status === "solved",
+        actionId: "solve:problem-pump",
+        targetLocationId: problem?.locationId,
       }),
     ],
   };
@@ -695,6 +764,8 @@ function buildToolRoute(
         detail: "A tool is only a tool until it reaches the problem that needs it.",
         progress: hasWrench ? "Bought" : "Needed",
         done: hasWrench,
+        actionId: hasWrench ? undefined : "buy:item-wrench",
+        targetLocationId: "repair-stall",
       }),
       makeStep({
         id: "tool-return",
@@ -710,13 +781,16 @@ function buildToolRoute(
               (world.player.currentLocationId === target.locationId ||
                 target.status === "solved"),
           ),
+        targetLocationId: target?.locationId,
       }),
       makeStep({
         id: "tool-use",
         title: "Use it before the trouble spreads.",
-        detail: "A useful tool should end the problem, not just change the label on it.",
+        detail: "The right tool should end the problem, not just change the label on it.",
         progress: target?.status === "solved" ? "Solved" : "Active",
         done: target?.status === "solved",
+        actionId: target ? `solve:${target.id}` : undefined,
+        targetLocationId: target?.locationId,
       }),
     ],
   };
@@ -726,9 +800,13 @@ function buildRestRoute(
   world: StreetGameState,
   source: ObjectiveSource,
   textHint = "",
+  previous?: PlayerObjective,
 ): ObjectiveRoute {
   const home = findLocation(world, world.player.homeLocationId);
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
+  const restLanded =
+    previous?.routeKey === "rest-home" &&
+    previous.completedTrail.some((step) => step.id === "rest-hour");
   return {
     key: "rest-home",
     focus: "rest",
@@ -743,13 +821,16 @@ function buildRestRoute(
             : "Rowan needs somewhere familiar before the hour does any good.",
         progress: atHome ? "Home" : "Away",
         done: atHome,
+        targetLocationId: home?.id,
       }),
       makeStep({
         id: "rest-hour",
         title: "Rest for an hour.",
         detail: "The point is to stop fighting the block long enough to get your legs back.",
-        progress: world.player.energy >= 55 ? "Recovered" : `Energy ${world.player.energy}`,
-        done: world.player.energy >= 55,
+        progress: restLanded ? "Recovered" : `Energy ${world.player.energy}`,
+        done: restLanded,
+        actionId: "rest:home",
+        targetLocationId: home?.id,
       }),
     ],
   };
@@ -760,9 +841,11 @@ function buildPeopleRoute(
   source: ObjectiveSource,
   textHint = "",
 ): ObjectiveRoute {
-  const target = nextUntalkedNpc(world) ?? world.npcs[0];
+  const target = choosePeopleTarget(world, textHint);
   const familiarPeople = familiarNpcCount(world);
   const trustedPeople = trustedNpcCount(world);
+  const secondConnectionTarget =
+    trustedPeople < 2 ? nextUntalkedNpc(world, target?.id) : undefined;
 
   return {
     key: `people-${target?.id ?? "locals"}`,
@@ -783,6 +866,8 @@ function buildPeopleRoute(
           target
             ? countPlayerConversationsWithNpc(world, target.id) > 0
             : familiarPeople > 0,
+        npcId: target?.id,
+        targetLocationId: target?.currentLocationId,
       }),
       makeStep({
         id: "people-open",
@@ -790,9 +875,12 @@ function buildPeopleRoute(
         detail:
           familiarPeople > 0
             ? "At least one conversation has started to feel warmer than surface-level."
-            : "A useful exchange should leave somebody a little more open than before.",
+            : "A good conversation should leave somebody a little more open than before.",
         progress: `${Math.min(familiarPeople, 1)}/1 person opened up`,
         done: familiarPeople >= 1,
+        npcId: familiarPeople < 1 ? target?.id : undefined,
+        targetLocationId:
+          familiarPeople < 1 ? target?.currentLocationId : undefined,
       }),
       makeStep({
         id: "people-friend",
@@ -803,6 +891,9 @@ function buildPeopleRoute(
             : "Rowan still needs more than one good conversation if he's going to stop feeling dropped in.",
         progress: `${Math.min(trustedPeople, 2)}/2 trusted`,
         done: trustedPeople >= 2,
+        npcId: trustedPeople < 2 ? secondConnectionTarget?.id : undefined,
+        targetLocationId:
+          trustedPeople < 2 ? secondConnectionTarget?.currentLocationId : undefined,
       }),
     ],
   };
@@ -813,11 +904,14 @@ function buildExploreRoute(
   source: ObjectiveSource,
   textHint = "",
 ): ObjectiveRoute {
-  const target = nextUnknownLocation(world) ?? world.locations[0];
+  const target =
+    preservedExploreTargetLocation(world, textHint) ??
+    chooseExploreTargetLocation(world, textHint);
   const hasVisitedTarget = target ? world.player.knownLocationIds.includes(target.id) : false;
   const targetPeople = target
     ? world.npcs.filter((npc) => npc.currentLocationId === target.id)
     : [];
+  const targetGuide = target ? chooseExploreGuide(world, target.id) : undefined;
 
   return {
     key: `explore-${target?.id ?? "district"}`,
@@ -835,20 +929,23 @@ function buildExploreRoute(
             : "A new corner is usually easier to understand once you stand in it.",
         progress: target ? `${hasVisitedTarget ? "Known" : "Unknown"} place` : "No target",
         done: hasVisitedTarget,
+        targetLocationId: target?.id,
       }),
       makeStep({
         id: "explore-talk",
-        title: targetPeople[0]
-          ? `Talk to ${targetPeople[0].name} there.`
+        title: targetGuide
+          ? `Talk to ${targetGuide.name} there.`
           : "Talk to whoever runs that corner.",
         detail:
-          targetPeople.length > 0
-            ? `${targetPeople[0].name} is the most likely person to explain the place.`
+          targetGuide
+            ? `${targetGuide.name} is the most likely person to explain the place.`
             : "Someone there should know what the corner is really for.",
         progress: `${targetPeople.length} people nearby`,
         done:
           targetPeople.length > 0 &&
           targetPeople.some((npc) => countPlayerConversationsWithNpc(world, npc.id) > 0),
+        npcId: targetGuide?.id,
+        targetLocationId: target?.id,
       }),
       makeStep({
         id: "explore-learn",
@@ -856,7 +953,7 @@ function buildExploreRoute(
         detail:
           world.player.knownLocationIds.length >= 4
             ? "The district is starting to feel like a place rather than a blur."
-            : "Rowan still needs one more useful corner before the map starts making sense.",
+            : "Rowan still needs one more place before the map starts making sense.",
         progress: `${world.player.knownLocationIds.length}/4 places`,
         done: world.player.knownLocationIds.length >= 4,
       }),
@@ -876,6 +973,7 @@ function chooseConversationRoute(world: StreetGameState): ConversationObjectiveR
       text,
       classifyObjective(text),
       "conversation",
+      world.player.objective,
     );
     if (routeHasWork(route)) {
       return {
@@ -967,9 +1065,92 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
   return "tea" as const;
 }
 
-function nextUntalkedNpc(world: StreetGameState) {
+function choosePeopleTarget(world: StreetGameState, textHint = "") {
+  return npcMentionedInText(world, textHint) ?? nextUntalkedNpc(world) ?? world.npcs[0];
+}
+
+function chooseExploreTargetLocation(
+  world: StreetGameState,
+  textHint = "",
+) {
+  const hintedNpc = npcMentionedInText(world, textHint);
+  if (hintedNpc) {
+    return findLocation(world, hintedNpc.currentLocationId) ?? nextUnknownLocation(world) ?? world.locations[0];
+  }
+
+  return (
+    locationMentionedInText(world, textHint) ??
+    nextUnknownLocation(world) ??
+    world.locations[0]
+  );
+}
+
+function preservedExploreTargetLocation(
+  world: StreetGameState,
+  textHint = "",
+) {
+  if (npcMentionedInText(world, textHint) || locationMentionedInText(world, textHint)) {
+    return undefined;
+  }
+
+  const currentObjective = world.player.objective;
+  if (!currentObjective || currentObjective.focus !== "explore") {
+    return undefined;
+  }
+
+  const nextStep = currentObjective.trail.find((step) => !step.done);
+  if (
+    !nextStep ||
+    (nextStep.id !== "explore-go" && nextStep.id !== "explore-talk") ||
+    !nextStep.targetLocationId
+  ) {
+    return undefined;
+  }
+
+  return findLocation(world, nextStep.targetLocationId);
+}
+
+function chooseExploreGuide(world: StreetGameState, locationId: string) {
   return world.npcs
-    .filter((npc) => countPlayerConversationsWithNpc(world, npc.id) === 0)
+    .filter((npc) => npc.currentLocationId === locationId)
+    .sort((left, right) => {
+      if (left.known !== right.known) {
+        return Number(right.known) - Number(left.known);
+      }
+
+      return right.trust - left.trust;
+    })[0];
+}
+
+function npcMentionedInText(world: StreetGameState, textHint = "") {
+  const normalized = textHint.toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return world.npcs.find((npc) => normalized.includes(npc.name.toLowerCase()));
+}
+
+function locationMentionedInText(world: StreetGameState, textHint = "") {
+  const normalized = textHint.toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+
+  return world.locations.find(
+    (location) =>
+      normalized.includes(location.name.toLowerCase()) ||
+      normalized.includes(location.shortLabel.toLowerCase()),
+  );
+}
+
+function nextUntalkedNpc(world: StreetGameState, currentNpcId?: string) {
+  return world.npcs
+    .filter(
+      (npc) =>
+        npc.id !== currentNpcId &&
+        countPlayerConversationsWithNpc(world, npc.id) === 0,
+    )
     .sort((left, right) => {
       const leftDistance = distanceToLocation(world, left.currentLocationId);
       const rightDistance = distanceToLocation(world, right.currentLocationId);
@@ -1189,6 +1370,7 @@ function recentConversationTopics(world: StreetGameState) {
 }
 
 function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
+  const recentRest = hasRecentRest(world);
   const topics = recentConversationTopics(world);
   const activeJob = world.jobs.find(
     (job) =>
@@ -1228,11 +1410,14 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
         : 0) +
       (topics.has("tool") || topics.has("wrench") ? 10 : 0),
     rest:
-      (world.player.energy < 35 ? 50 : 0) +
-      (world.player.energy < 50 ? 18 : 0) +
-      (world.player.currentLocationId !== world.player.homeLocationId && world.player.energy < 45
+      (!recentRest && world.player.energy < 35 ? 50 : 0) +
+      (!recentRest && world.player.energy < 50 ? 18 : 0) +
+      (!recentRest &&
+      world.player.currentLocationId !== world.player.homeLocationId &&
+      world.player.energy < 45
         ? 12
         : 0) +
+      (recentRest && world.player.energy < 22 ? 20 : 0) +
       (currentHour(world) >= 20 || currentHour(world) < 6 ? 14 : 0),
     people:
       (world.player.knownNpcIds.length < 3 ? 16 : 0) +
@@ -1250,6 +1435,24 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
       (topics.has("stay") || topics.has("home") || topics.has("room") ? 10 : 0),
     custom: 0,
   };
+}
+
+function hasRecentRest(world: StreetGameState) {
+  const minutesSinceRest = minutesSinceTimestamp(world, world.player.lastRestAt);
+  return minutesSinceRest !== null && minutesSinceRest < 120;
+}
+
+function minutesSinceTimestamp(
+  world: StreetGameState,
+  timestamp?: string,
+) {
+  if (!timestamp) {
+    return null;
+  }
+
+  const diffMs =
+    new Date(world.currentTime).getTime() - new Date(timestamp).getTime();
+  return Math.max(0, Math.round(diffMs / 60_000));
 }
 
 function selectBestFocus(scores: ObjectiveScores): ObjectiveFocus {
@@ -1270,13 +1473,39 @@ export function classifyObjective(text: string): ObjectiveFocus {
   const hasWorkNeed = /(work|job|money|coin|earn|pay|shift|income|kettle & lamp|tea[- ]house|north crane|counter|apron|tray|booths?|tables?|rush|gloves|bays?)/.test(
     normalized,
   );
-  const hasHomeNeed = /(room|stay|home|house|bed|rent|lodg|shelter|tenant)/.test(normalized);
+  const hasConcreteHousingNeed =
+    /(stay|home|house|bed|rent|lodg|shelter|tenant|morrow house)/.test(
+      normalized,
+    ) ||
+    /\bkeep (my|the) room\b|\broom (here|tonight|to stay|at)\b/.test(
+      normalized,
+    ) ||
+    (/\broom\b/.test(normalized) && !/\broom for\b/.test(normalized));
+  const pointsToSpecificWorkLead =
+    hasWorkNeed &&
+    /(ada|kettle & lamp|tea[- ]house|north crane|crane yard|tomas|yard|counter|apron|tray|booths?|tables?|rush|gloves|bays?)/.test(
+      normalized,
+    );
+  const hasHomeNeed = hasConcreteHousingNeed;
   const hasPeopleNeed = /(talk|meet|people|trust|introduce|friend|friends|belong)/.test(
     normalized,
   );
   const hasStabilityNeed = /(\bstanding\b|\breliable\b|\bdependable\b|follow through|follow-through|pull (my|your|their) weight|steady tenant)/.test(
     normalized,
   );
+
+  if (pointsToSpecificWorkLead && !hasConcreteHousingNeed) {
+    return "work";
+  }
+
+  if (
+    hasHomeNeed &&
+    /\b(keep|lock in|secure|find out|what it takes|terms?|mine|stay)\b/.test(
+      normalized,
+    )
+  ) {
+    return "settle";
+  }
 
   if (
     /\b(new in|new here|new to|footing|settle|belong|start over|make a life)\b/.test(

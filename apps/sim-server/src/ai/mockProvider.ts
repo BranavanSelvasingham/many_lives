@@ -187,11 +187,41 @@ export class MockAIProvider implements AIProvider {
     input: StreetAutonomousLineRequest,
   ): Promise<StreetAutonomousLineResult> {
     buildGenerateStreetAutonomousLinePrompt(input);
+    const lastNpcReply = input.lastNpcReply?.toLowerCase() ?? "";
+
+    if (input.purpose === "followup") {
+      if (
+        input.npcId === "npc-tomas" &&
+        /\byard\b|\bloading\b|\blift\b|\btwenty-four\b|\bset of hands\b/.test(
+          lastNpcReply,
+        )
+      ) {
+        return {
+          speech: "If I take it, what exactly do you need me to move first?",
+        };
+      }
+
+      if (
+        input.npcId === "npc-ada" &&
+        /\blunch\b|\bcups?\b|\btables?\b|\bfourteen\b/.test(lastNpcReply)
+      ) {
+        return {
+          speech: "If I help through lunch, where should I start?",
+        };
+      }
+
+      if (/\bwrench\b|\bpump\b|\brepair\b/.test(lastNpcReply)) {
+        return {
+          speech: "What should I check first so I do this properly?",
+        };
+      }
+    }
+
     return {
       speech:
         input.purpose === "followup"
-          ? "What does that change for me right now?"
-          : "I'm Rowan. I'm trying to get my feet under me here. What matters most right now?",
+          ? "Okay. What should I do first?"
+          : "I'm Rowan. I'm new here. What should I know before I get in anyone's way?",
     };
   }
 
@@ -208,12 +238,12 @@ export class MockAIProvider implements AIProvider {
 
     return {
       npcImpression: npc
-        ? `${npc.name} is still deciding how much Rowan will follow through.`
+        ? `${npc.name} thinks Rowan seems open, polite, and worth pointing in a helpful direction.`
         : undefined,
       summary: npc
-        ? `${npc.name} and Rowan clarified the thread at ${
+        ? `${npc.name} gave Rowan an easy next step at ${
             location?.name ?? "South Quay"
-          }, but the next move still needs a sharper read.`
+          }, with room for him to follow it at his own pace.`
         : undefined,
     };
   }

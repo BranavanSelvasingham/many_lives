@@ -272,6 +272,7 @@ export type VisualSceneDocument = VisualScene;
 
 export type VisualSceneValidationWarning = {
   code:
+    | "anchor-wrong-location"
     | "anchor-near-prop"
     | "boat-missing-water-region"
     | "edge-gap"
@@ -628,6 +629,48 @@ function pointInsideRect(point: VisualPoint, rect: VisualRect) {
   );
 }
 
+function locationAnchorBounds(scene: VisualScene, locationId: string) {
+  const anchors = scene.locationAnchors[locationId];
+  if (anchors) {
+    return expandRect(anchors.highlight, 72);
+  }
+
+  const landmark = scene.landmarks.find(
+    (candidate) => candidate.locationId === locationId,
+  );
+  if (!landmark) {
+    return null;
+  }
+
+  return expandRect(landmark.rect, 72);
+}
+
+function locationAnchorHighlightMatchesLandmark(
+  scene: VisualScene,
+  locationId: string,
+) {
+  const anchors = scene.locationAnchors[locationId];
+  const landmark = scene.landmarks.find(
+    (candidate) => candidate.locationId === locationId,
+  );
+  if (!anchors || !landmark) {
+    return true;
+  }
+
+  return rectsOverlapWithPadding(anchors.highlight, landmark.rect, 48);
+}
+
+function locationAnchorPoints(anchors: VisualSceneLocationAnchors) {
+  return [
+    { label: "door", point: anchors.door },
+    { label: "frontage", point: anchors.frontage },
+    ...((anchors.npcStands ?? []).map((point, index) => ({
+      label: `npc stand ${index + 1}`,
+      point,
+    })) as Array<{ label: string; point: VisualPoint }>),
+  ];
+}
+
 function getPropSafetyRadius(prop: VisualSceneProp) {
   switch (prop.kind) {
     case "boat":
@@ -834,6 +877,30 @@ export function collectVisualSceneWarnings(
         code: "missing-required-landmark",
         message: `Missing landmark record for ${locationId}.`,
       });
+    }
+  }
+
+  for (const [locationId, anchors] of Object.entries(scene.locationAnchors)) {
+    if (!locationAnchorHighlightMatchesLandmark(scene, locationId)) {
+      warnings.push({
+        code: "anchor-wrong-location",
+        message: `${locationId} highlight drifted away from its landmark.`,
+      });
+      continue;
+    }
+
+    const bounds = locationAnchorBounds(scene, locationId);
+    if (!bounds) {
+      continue;
+    }
+
+    for (const { label, point } of locationAnchorPoints(anchors)) {
+      if (!pointInsideRect(point, bounds)) {
+        warnings.push({
+          code: "anchor-wrong-location",
+          message: `${locationId} ${label} drifted away from its landmark bounds.`,
+        });
+      }
     }
   }
 
@@ -1106,4 +1173,26 @@ export function validateVisualSceneAgainstGame(
   if (scene.id !== "south-quay-v2") {
     return;
   }
+
+  for (const [locationId, anchors] of Object.entries(scene.locationAnchors)) {
+    if (!locationAnchorHighlightMatchesLandmark(scene, locationId)) {
+      throw new Error(
+        `Visual scene ${scene.id} has ${locationId} highlight detached from its landmark.`,
+      );
+    }
+
+    const bounds = locationAnchorBounds(scene, locationId);
+    if (!bounds) {
+      continue;
+    }
+
+    for (const { label, point } of locationAnchorPoints(anchors)) {
+      if (!pointInsideRect(point, bounds)) {
+        throw new Error(
+          `Visual scene ${scene.id} has ${locationId} ${label} outside its landmark bounds.`,
+        );
+      }
+    }
+  }
+
 }

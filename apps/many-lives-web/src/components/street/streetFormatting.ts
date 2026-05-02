@@ -28,6 +28,8 @@ export function actionKindLabel(kind: ActionOption["kind"]) {
       return "help";
     case "buy":
       return "trade";
+    case "contribute":
+      return "pull weight";
     case "rest":
       return "rest";
     case "talk":
@@ -282,7 +284,7 @@ function exactFirstPersonRewrite(text: string) {
     case "Watch the boats, not the gulls":
       return "I need to watch the boats, not the gulls.";
     case "No clear direction yet. Rowan is still reading the block":
-      return "I don't have a clear direction yet. I'm still reading the block.";
+      return "I don't have a clear direction yet. I'm still getting my bearings.";
     default:
       return null;
   }

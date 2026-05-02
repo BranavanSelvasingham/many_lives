@@ -1,5 +1,11 @@
 import type { StreetConversationInterpretationRequest } from "../provider.js";
 import { buildStreetConversationContext } from "../streetDialogue.js";
+import {
+  buildPlainConversationContext,
+  buildPlainPersonContext,
+  buildPlainPlaceContext,
+  buildPlainRowanContext,
+} from "./plainStreetConversationContext.js";
 
 export function buildInterpretStreetConversationPrompt(
   input: StreetConversationInterpretationRequest,
@@ -10,59 +16,36 @@ export function buildInterpretStreetConversationPrompt(
     playerText: "",
   });
   const promptContext = {
-    objective: input.objective,
-    rowan: {
-      backstory: context.rowan.backstory,
-      broadObjective: context.rowan.objective,
-      objectiveState: context.rowan.objectiveState,
-      currentThought: context.rowan.currentThought,
-      cognition: context.rowan.cognition,
-      memories: context.rowan.memories.slice(0, 6),
+    rowanCurrentGoal: {
+      goal: input.objective.text,
+      kind: input.objective.focus,
     },
-    npc: {
-      id: context.npc.id,
-      name: context.npc.name,
-      role: context.npc.role,
-      summary: context.npc.summary,
-      narrative: context.npc.narrative,
-      currentObjective: context.npc.currentObjective,
-      currentConcern: context.npc.currentConcern,
-      currentThought: context.npc.currentThought,
-      lastSpokenLine: context.npc.lastSpokenLine,
-      trust: context.npc.trust,
-      openness: context.npc.openness,
-    },
-    scene: context.scene,
-    recentConversation: context.recentConversation,
-    thread: {
-      decision: context.thread.decision,
-      objectiveText: context.thread.objectiveText,
-      summary: context.thread.summary,
-      turnCount: context.thread.turnCount,
-    },
+    placeAndTime: buildPlainPlaceContext(context),
+    rowan: buildPlainRowanContext(context),
+    personRowanTalkedTo: buildPlainPersonContext(context),
+    conversationSoFar: buildPlainConversationContext(context),
     closingReply: input.closingReply,
-    discussedTopics: input.discussedTopics,
-    time: context.time,
+    topicsMentioned: input.discussedTopics,
   };
 
   return [
-    "Interpret a just-finished conversation beat for a live AI-agent street simulation.",
+    "Read the conversation that just ended and summarize what changed.",
     "Return strict JSON only with this shape:",
     '{"decision":"...","objectiveText":"...","summary":"...","memoryKind":"self","memoryText":"...","npcImpression":"..."}',
     "Rules:",
-    "- This is simulation state interpretation, not dialogue writing.",
-    "- Base the output on the actual exchange, current world state, and known leads. Do not invent new jobs, items, promises, or facts.",
-    "- `decision` is Rowan's clearest immediate takeaway in natural language. Leave it empty if the exchange did not sharpen one.",
-    "- `objectiveText` is optional, but include it whenever the exchange changes where Rowan should go next, who he should test, which opening matters now, or what proof he needs to show.",
-    "- When you set `objectiveText`, translate the concrete takeaway into Rowan's live objective in a way that preserves the underlying pressure: room, work, trust, tools, or fixing a problem.",
+    "- Do not write more dialogue.",
+    "- Base the output on the actual exchange, what is already known, and the current place. Do not invent new jobs, items, promises, or facts.",
+    "- `decision` is Rowan's clearest takeaway in natural language. Leave it empty if nothing became clearer.",
+    "- `objectiveText` is optional, but include it whenever the exchange changes where Rowan should go next, who he should check in with, which opening matters now, or what small favor would help.",
+    "- When you set `objectiveText`, make it sound like Rowan's next practical goal.",
     "- Keep `objectiveText` concise: one sentence or sentence fragment Rowan could carry as his live objective, ideally under 18 words.",
     "- If the decision points Rowan toward a specific person or place, let `objectiveText` explain why that contact or location matters instead of only repeating 'talk to X next'.",
     "- `summary` should explain what changed in this exchange in one natural sentence.",
     "- `memoryKind` must be one of place, person, job, problem, or self when `memoryText` is present.",
     "- `memoryText` should capture a durable thing Rowan learned or realized from the exchange.",
-    "- `npcImpression` should capture how this NPC now reads Rowan in one short sentence.",
-    "- Prefer outputs that show agents updating beliefs, priorities, trust, or timing pressure rather than receiving quest text.",
+    "- `npcImpression` should capture how this person now reads Rowan in one short sentence.",
+    "- Prefer simple human changes: what Rowan learned, what matters next, and how the other person now feels about him.",
     "- Avoid tutorial tone, UI labels, and generic filler like 'talk to X next' unless that really is the clearest concrete takeaway.",
-    `Context: ${JSON.stringify(promptContext)}`,
+    `Context in plain English: ${JSON.stringify(promptContext)}`,
   ].join("\n");
 }

@@ -1,11 +1,14 @@
+import { randomUUID } from "node:crypto";
+
 export class MemoryGameStore<TGame extends { id: string } = { id: string }> {
   private readonly games = new Map<string, TGame>();
 
-  private nextGameNumber = 1;
-
   createGameId(): string {
-    const id = `game-${this.nextGameNumber}`;
-    this.nextGameNumber += 1;
+    let id: string;
+    do {
+      id = `game-${randomUUID()}`;
+    } while (this.games.has(id));
+
     return id;
   }
 

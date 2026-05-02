@@ -58,7 +58,7 @@ export function buildGenerateStreetThoughtsPrompt(
   }));
 
   return [
-    "Write very short present-tense thought bubbles for a small city-sim scene.",
+    "Write very short present-tense thought bubbles for a small seaside neighborhood scene.",
     "Return strict JSON only with this shape:",
     '{"playerThought":"...","npcThoughts":{"npc-id":"..."}}',
     "Rules:",
@@ -66,23 +66,23 @@ export function buildGenerateStreetThoughtsPrompt(
     "- Write each thought in first person singular, as that character's own inner voice.",
     "- No narration, labels, quotation marks inside values, or emojis.",
     "- Keep each person distinct, grounded, practical, and a little private.",
-    "- Treat each thought as a tiny window into that agent's current world-model: what they notice, what they think matters, and what they believe comes next.",
-    "- Reflect immediate concerns, bodily strain, timing pressure, or small judgments, not exposition.",
-    "- Keep thoughts quietly forward-looking: pressure is real, but each line should imply a doable next move.",
+    "- Treat each thought as a tiny window into what the person notices, what they care about, and what they think comes next.",
+    "- Reflect immediate concerns, bodily strain, timing, small judgments, or seaside-cafe details, not exposition.",
+    "- Keep thoughts quietly forward-looking: needs are real, but each line should imply a doable next move without sounding dire.",
     "- Avoid defeated or doom-heavy phrasing unless the character is truly blocked right now.",
     "- Let idle thoughts shift with the hour and recent conversations instead of repeating the same sentence.",
     "- Rowan's thought should often become a short plan that uses known places, buildings, and people to decide where to go next.",
     "- If Rowan has already decided on his next stop, make the thought reflect that pause before he sets off.",
-    "- When Rowan is still learning the district, make the thought point toward exploring the next building or NPC that can sharpen the plan.",
-    "- If Rowan has a live commitment or shift and the hour changes, his thought should react immediately to whether it is not open yet, open now, or slipping away.",
+    "- When Rowan is still learning the district, make the thought point toward the next building or person that can make the day clearer.",
+    "- If Rowan has work scheduled and the hour changes, his thought should react immediately to whether it is not open yet, open now, or slipping away.",
     "- Keep Rowan's inner voice respectful and emotionally normal. He can be uncertain or intent, but not creepy, possessive, or target-fixated about people.",
     "- Prefer natural lines like 'I should talk to Mara about a room' over compressed shorthand like 'eyes on Mara for a bed'.",
     ...buildStreetVoicePromptLines(),
     `Time: ${game.clock.label}, day ${game.clock.day}, ${String(game.clock.hour).padStart(2, "0")}:${String(game.clock.minute).padStart(2, "0")}`,
     `Player: ${game.player.name} at ${currentLocation?.name ?? "the street"}, backstory ${game.player.backstory}, money ${game.player.money}, energy ${game.player.energy}, objective ${objective?.text ?? "none"}, active job ${activeJob?.title ?? "none"}`,
-    `Active job timing: ${JSON.stringify(activeJobTiming)}`,
-    `Pending move: ${JSON.stringify(pendingObjectiveMove)}`,
-    `Objective state: ${JSON.stringify(
+    `Current job timing: ${JSON.stringify(activeJobTiming)}`,
+    `Place Rowan is about to go: ${JSON.stringify(pendingObjectiveMove)}`,
+    `Rowan's current plan: ${JSON.stringify(
       objective
         ? {
             text: objective.text,
@@ -94,9 +94,9 @@ export function buildGenerateStreetThoughtsPrompt(
           }
         : null,
     )}`,
-    `City narrative: ${JSON.stringify(game.cityNarrative)}`,
-    `District narrative: ${JSON.stringify(game.districtNarrative)}`,
-    `Scene: ${JSON.stringify(
+    `City background: ${JSON.stringify(game.cityNarrative)}`,
+    `District background: ${JSON.stringify(game.districtNarrative)}`,
+    `Current place: ${JSON.stringify(
       currentLocation
         ? {
             id: currentLocation.id,
@@ -115,13 +115,13 @@ export function buildGenerateStreetThoughtsPrompt(
             backstory: game.currentScene.backstory,
           },
     )}`,
-    `Active conversation thread: ${JSON.stringify(
+    `Current conversation: ${JSON.stringify(
       activeConversation
         ? {
             id: activeConversation.id,
-            npcId: activeConversation.npcId,
-            decision: activeConversation.decision,
-            objectiveText: activeConversation.objectiveText,
+            personId: activeConversation.npcId,
+            takeaway: activeConversation.decision,
+            possibleNextStepForRowan: activeConversation.objectiveText,
             lines: activeConversation.lines.slice(-6).map((entry) => ({
               speaker: entry.speaker,
               speakerName: entry.speakerName,
@@ -130,25 +130,25 @@ export function buildGenerateStreetThoughtsPrompt(
           }
         : null,
     )}`,
-    `Discovered problems: ${JSON.stringify(discoveredProblems)}`,
+    `Known problems: ${JSON.stringify(discoveredProblems)}`,
     `Recent conversation: ${JSON.stringify(recentConversation)}`,
-      `NPCs: ${JSON.stringify(
-        game.npcs.map((npc) => ({
-          id: npc.id,
-          name: npc.name,
-          role: npc.role,
-          location: locationById.get(npc.currentLocationId)?.name ?? npc.currentLocationId,
-          trust: npc.trust,
-          openness: npc.openness,
-          known: npc.known,
-          mood: npc.mood,
-          narrative: getNpcNarrative(npc.id),
-          currentObjective: npc.currentObjective,
-          currentConcern: npc.currentConcern,
-          lastSpokenLine: npc.lastSpokenLine ?? null,
-          summary: npc.summary,
-        })),
-      )}`,
-    "NPC narrative profiles are fixed anchors: backstory, context, objective, and voice should stay coherent even as the live concern changes.",
+    `People nearby: ${JSON.stringify(
+      game.npcs.map((npc) => ({
+        id: npc.id,
+        name: npc.name,
+        role: npc.role,
+        location: locationById.get(npc.currentLocationId)?.name ?? npc.currentLocationId,
+        trust: npc.trust,
+        openness: npc.openness,
+        known: npc.known,
+        mood: npc.mood,
+        background: getNpcNarrative(npc.id),
+        whatTheyCareAbout: npc.currentObjective,
+        whatIsOnTheirMind: npc.currentConcern,
+        lastThingTheySaid: npc.lastSpokenLine ?? null,
+        summary: npc.summary,
+      })),
+    )}`,
+    "Each person's background, current concern, and voice should stay coherent as the day changes.",
   ].join("\n");
 }

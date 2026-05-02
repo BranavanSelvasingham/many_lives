@@ -7,6 +7,11 @@ import {
   classifyObjective,
 } from "./objectiveState.js";
 import { buildRowanCognition } from "./rowanCognition.js";
+import {
+  executeRowanLoopStep,
+  resolveRowanLoopStep as resolveLayeredRowanLoopStep,
+  rowanAutonomyFromLoopStep,
+} from "./rowanLoop.js";
 import type {
   ActionOption,
   ClockState,
@@ -20,12 +25,20 @@ import type {
   NpcState,
   ObjectiveFocus,
   ProblemState,
+  RowanAutonomyEffect,
+  RowanAutonomyStepKind,
   SceneNote,
   StreetGameState,
 } from "../street-sim/types.js";
 import type { GameCommand } from "../types/api.js";
+import type {
+  RowanLoopObjectiveDirective as ObjectiveDirective,
+  RowanLoopStep,
+} from "./rowanLoop.js";
 
 export const STEP_MINUTES = 30;
+
+const MINUTES_PER_MOVEMENT_TILE = 1.5;
 
 const BASE_DAY = "2026-03-21T00:00:00.000Z";
 
@@ -45,6 +58,12 @@ type ConversationResolution = {
   npcImpression?: string;
   objectiveText?: string;
   summary?: string;
+};
+
+type ConversationLoopOptions = {
+  addFallbackFeed?: boolean;
+  maxAutonomousFollowups?: number;
+  surfaceNpcRepliesInFeed?: boolean;
 };
 
 type ThoughtRefreshMode = "full" | "deterministic";
@@ -97,7 +116,7 @@ export class SimulationEngine {
       clearPendingObjectiveMove(nextWorld);
     }
 
-    if (command.type !== "speak") {
+    if (command.type !== "speak" && command.type !== "advance_objective") {
       clearActiveConversation(nextWorld);
     }
 
@@ -142,6 +161,7 @@ export class SimulationEngine {
         thoughtRefreshMode =
           (await advanceObjective(nextWorld, this.aiProvider, {
             allowTimeSkip: command.allowTimeSkip ?? true,
+            confirmMove: command.confirmMove ?? false,
           })) ?? thoughtRefreshMode;
         break;
       default:
@@ -175,9 +195,11 @@ async function refreshWorld(
   });
   reconcilePendingObjectiveMove(world);
   syncNpcInnerState(world);
+  reconcileActiveConversation(world);
   world.currentScene = buildScene(world);
   world.availableActions = buildAvailableActions(world);
   world.goals = buildGoals(world);
+  world.rowanAutonomy = deriveRowanAutonomy(world);
   world.summary = buildSummary(world);
   await hydrateStreetThoughts(world, aiProvider, thoughtRefreshMode);
   trimFeed(world);
@@ -241,6 +263,7 @@ function movePlayer(world: StreetGameState, x: number, y: number): void {
     return;
   }
 
+  advanceWorld(world, movementMinutesForDistance(distance));
   world.player.x = targetTile.x;
   world.player.y = targetTile.y;
   world.player.energy = clamp(world.player.energy - distance * 2, 18, 100);
@@ -265,6 +288,10 @@ function movePlayer(world: StreetGameState, x: number, y: number): void {
       "You walked the lane and kept watching the district unfold.",
     );
   }
+}
+
+function movementMinutesForDistance(distance: number): number {
+  return Math.max(1, Math.ceil(distance * MINUTES_PER_MOVEMENT_TILE));
 }
 
 function findWalkableRoute(tiles: MapTile[], start: GridPoint, end: GridPoint) {
@@ -380,6 +407,11 @@ async function performAction(
         buyItem(world, targetId);
       }
       break;
+    case "contribute":
+      if (targetId) {
+        contributeToLocation(world, targetId);
+      }
+      break;
     case "solve":
       if (targetId) {
         solveProblem(world, targetId);
@@ -401,7 +433,12 @@ async function performAction(
 
 function isTimeSkippingAction(actionId: string) {
   const [kind] = actionId.split(":");
-  return kind === "work" || kind === "solve" || kind === "rest";
+  return (
+    kind === "contribute" ||
+    kind === "work" ||
+    kind === "solve" ||
+    kind === "rest"
+  );
 }
 
 function setLongActionThought(world: StreetGameState, actionId: string) {
@@ -411,20 +448,24 @@ function setLongActionThought(world: StreetGameState, actionId: string) {
     case "work": {
       const job = targetId ? jobById(world, targetId) : undefined;
       world.player.currentThought = job
-        ? `The ${job.title.toLowerCase()} is ready. I can start when you tell me to spend the time.`
-        : "I'm ready to work when you want to let the time pass.";
+        ? `The ${job.title.toLowerCase()} is ready. I can take the next step when you want me to.`
+        : "I'm ready to work when you want Rowan to take the next step.";
       return;
     }
     case "solve": {
       const problem = targetId ? problemById(world, targetId) : undefined;
       world.player.currentThought = problem
-        ? `I'm ready to deal with ${problem.title.toLowerCase()} when you want to let the time pass.`
-        : "I'm ready to deal with this once you're ready to spend the time.";
+        ? `I'm ready to deal with ${problem.title.toLowerCase()} when you want Rowan to take the next step.`
+        : "I'm ready to deal with this once you want Rowan to take the next step.";
       return;
     }
+    case "contribute":
+      world.player.currentThought =
+        "I'm ready to help around Morrow House when you want Rowan to take the next step.";
+      return;
     case "rest":
       world.player.currentThought =
-        "I can stop and rest when you want to let the hour pass.";
+        "I can stop and rest when you want Rowan to take the next step.";
       return;
     default:
       return;
@@ -451,12 +492,12 @@ function setObjective(world: StreetGameState, text: string): void {
     addFeed(
       world,
       "memory",
-      "You let go of the fixed objective for now and went back to reading the block moment by moment.",
+      "You let go of the fixed objective for now and went back to taking the day one step at a time.",
     );
     remember(
       world,
       "self",
-      "You stopped pushing one explicit objective and decided to stay more reactive to the block.",
+      "You let go of one fixed objective and decided to take the day more as it comes.",
     );
     return;
   }
@@ -484,7 +525,9 @@ function setObjective(world: StreetGameState, text: string): void {
   );
 }
 
-function currentObjectiveDirective(world: StreetGameState) {
+function currentObjectiveDirective(
+  world: StreetGameState,
+): ObjectiveDirective | undefined {
   const objective = world.player.objective;
   if (!objective) {
     return undefined;
@@ -511,133 +554,64 @@ async function advanceObjective(
   aiProvider: AIProvider,
   options: {
     allowTimeSkip?: boolean;
+    confirmMove?: boolean;
   } = {},
 ): Promise<ThoughtRefreshMode | void> {
   const allowTimeSkip = options.allowTimeSkip ?? true;
-  const objective = currentObjectiveDirective(world);
-  if (!objective) {
-    addFeed(
-      world,
-      "info",
-      "Rowan has no clear direction yet. Set an objective first, then let him run with it.",
-    );
-    return;
-  }
-
   syncNpcInnerState(world);
+  const loopStep = resolveRowanLoopStep(world);
 
-  const committedJob = world.jobs.find(
-    (job) =>
-      job.id === world.player.activeJobId &&
-      job.accepted &&
-      !job.completed &&
-      !job.missed,
-  );
-
-  if (committedJob) {
-    const handledCommittedJob = handleCommittedJob(world, committedJob, {
-      allowTimeSkip,
-    });
-    if (handledCommittedJob) {
-      return handledCommittedJob === true ? undefined : handledCommittedJob;
-    }
-  }
-
-  const plan = chooseObjectivePlan(world);
-  if (!plan) {
-    addFeed(
-      world,
-      "info",
-      `Rowan keeps circling the objective, but the block has not given him a clean next move yet.`,
-    );
-    return;
-  }
-
-  const targetLocation =
-    plan.targetLocationId !== undefined
-      ? findLocation(world, plan.targetLocationId)
-      : undefined;
-
-  if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
-    if (
-      !pendingObjectiveMoveMatches(
-        world,
-        objective.text,
-        targetLocation.id,
-        plan,
-      )
-    ) {
-      queuePendingObjectiveMove(world, objective.text, plan, targetLocation.id);
-      addFeed(
-        world,
-        "info",
-        `Rowan slows for a beat and decides ${targetLocation.name} is the next place to try.`,
-      );
-      return "deterministic";
-    }
-
-    clearPendingObjectiveMove(world);
-    addFeed(
-      world,
-      "info",
-      `Rowan heads to ${targetLocation.name} to ${planMovementPurpose(world, plan, objective)}.`,
-    );
-    movePlayer(world, targetLocation.entryX, targetLocation.entryY);
-    syncNpcInnerState(world);
-    if (plan.npcId && plan.speech) {
-      await conductAutonomousConversation(
-        world,
-        plan.npcId,
-        plan.speech,
-        objective,
-        aiProvider,
-      );
-      return;
-    }
-    world.player.currentThought = arrivalThought(
-      world,
-      plan,
-      targetLocation.id,
-    );
-    return "deterministic";
-  }
-
-  clearPendingObjectiveMove(world);
-
-  if (plan.npcId && plan.speech) {
-    await conductAutonomousConversation(
-      world,
-      plan.npcId,
-      plan.speech,
-      objective,
-      aiProvider,
-    );
-    return;
-  }
-
-  if (plan.actionId) {
-    if (!allowTimeSkip && isTimeSkippingAction(plan.actionId)) {
-      setLongActionThought(world, plan.actionId);
-      return;
-    }
-
-    await performAction(world, plan.actionId, aiProvider);
-    return;
-  }
-
-  if (targetLocation) {
-    addFeed(
-      world,
-      "info",
-      `Rowan reaches ${targetLocation.name} and keeps reading the room for the next opening.`,
-    );
-    return;
-  }
-
-  addFeed(
-    world,
-    "info",
-    `Rowan re-centers on the objective, but nothing immediate yields yet.`,
+  return executeRowanLoopStep<ThoughtRefreshMode | void>(
+    loopStep,
+    {
+      idle: () => {
+        addFeed(
+          world,
+          "info",
+          "Rowan has no clear direction yet. Set an objective first, then let him run with it.",
+        );
+      },
+      blocked: () => {
+        addFeed(
+          world,
+          "info",
+          "Rowan keeps circling the objective, but the block has not given him a clean next move yet.",
+        );
+      },
+      reflect: (step) => executeRowanReflectLoopStep(world, step),
+      continueConversation: () => continueActiveConversation(world, aiProvider),
+      openConversation: async (step) => {
+        if (step.npcId && step.speech && step.objective) {
+          await conductAutonomousConversation(
+            world,
+            step.npcId,
+            step.speech,
+            step.objective,
+            aiProvider,
+          );
+        }
+      },
+      move: (step) =>
+        executeRowanMoveLoopStep(world, step, aiProvider, {
+          confirmMove: options.confirmMove ?? false,
+        }),
+      action: (step) =>
+        executeRowanActionLoopStep(world, step, aiProvider, {
+          allowTimeSkip,
+        }),
+      observe: (step) => {
+        if (step.targetLocationId) {
+          const location = findLocation(world, step.targetLocationId);
+          addFeed(
+            world,
+            "info",
+            `Rowan reaches ${location?.name ?? "the next spot"} and keeps reading the room for the next opening.`,
+          );
+        }
+        world.player.currentThought = step.detail;
+        return "deterministic" as const;
+      },
+    },
   );
 }
 
@@ -656,6 +630,496 @@ function resolveConversationTarget(world: StreetGameState, npcId: string) {
   return { npc, location };
 }
 
+function resolveRowanLoopStep(world: StreetGameState): RowanLoopStep {
+  return resolveLayeredRowanLoopStep(world, {
+    conversation: resolveConversationLoopStep,
+    pendingMove: resolvePendingMoveLoopStep,
+    commitment: resolveCommittedJobLoopStep,
+    objective: resolveObjectiveLoopStep,
+  });
+}
+
+function resolveConversationLoopStep(
+  world: StreetGameState,
+): RowanLoopStep | undefined {
+  if (!world.activeConversation) {
+    return undefined;
+  }
+
+  const npc = npcById(world, world.activeConversation.npcId);
+  const hasResolution = Boolean(
+    world.activeConversation.decision || world.activeConversation.objectiveText,
+  );
+  const objective = currentConversationObjective(world);
+  const discussedTopics = collectConversationTopics(world.activeConversation.lines);
+  const lastNpcReply = latestNpcReplyFromConversation(
+    world.activeConversation.lines,
+  );
+  const provisionalResolution =
+    npc && lastNpcReply
+      ? deriveConversationResolution(
+          world,
+          npc,
+          objective,
+          lastNpcReply,
+          discussedTopics,
+        )
+      : {};
+  const canContinueConversation =
+    npc && lastNpcReply
+      ? shouldContinueConversation(
+          world,
+          npc,
+          objective,
+          lastNpcReply,
+          discussedTopics,
+          provisionalResolution,
+        )
+      : false;
+  const effects: RowanAutonomyEffect[] = hasResolution
+    ? [
+        ...(world.activeConversation.decision ? (["memory"] as const) : []),
+        ...(world.activeConversation.objectiveText
+          ? (["objective"] as const)
+          : []),
+      ]
+    : ["conversation"];
+
+  return {
+    autoContinue: hasResolution || canContinueConversation,
+    detail: hasResolution
+      ? "The conversation gave Rowan a next step. He can act on it now."
+      : canContinueConversation
+        ? `Rowan has one more question for ${npc?.name ?? "someone nearby"} before he moves on.`
+        : "The conversation has gone quiet, and Rowan can turn back toward the day.",
+    effects,
+    key: `conversation:${world.activeConversation.threadId}:${world.activeConversation.updatedAt}`,
+    kind: hasResolution
+      ? "reflect"
+      : canContinueConversation
+        ? "talk"
+        : "reflect",
+    label: `With ${npc?.name ?? "someone nearby"}`,
+    layer: "conversation",
+    npcId: world.activeConversation.npcId,
+    targetLocationId: world.activeConversation.locationId,
+  };
+}
+
+function resolvePendingMoveLoopStep(
+  world: StreetGameState,
+): RowanLoopStep | undefined {
+  const pendingMove = world.player.pendingObjectiveMove;
+  if (!pendingMove) {
+    return undefined;
+  }
+
+  const location = findLocation(world, pendingMove.targetLocationId);
+  const activeJobId = world.player.activeJobId;
+
+  return {
+    actionId: pendingMove.actionId,
+    autoContinue: true,
+    detail:
+      pendingMove.rationale ||
+      `Rowan already chose ${location?.name ?? "the next stop"} and can go there now.`,
+    key: `pending:${pendingMove.preparedAt}:${pendingMove.targetLocationId}:${pendingMove.actionId ?? pendingMove.npcId ?? ""}`,
+    kind: "move",
+    label: autonomyLabelForNextBeat(world, pendingMove),
+    layer:
+      activeJobId && pendingMove.actionId === `work:${activeJobId}`
+        ? "commitment"
+        : "objective",
+    npcId: pendingMove.npcId,
+    objective: currentObjectiveDirective(world),
+    speech: pendingMove.speech,
+    targetLocationId: pendingMove.targetLocationId,
+  };
+}
+
+function resolveCommittedJobLoopStep(
+  world: StreetGameState,
+): RowanLoopStep | undefined {
+  const committedJob = world.jobs.find(
+    (job) =>
+      job.id === world.player.activeJobId &&
+      job.accepted &&
+      !job.completed &&
+      !job.missed,
+  );
+  if (!committedJob) {
+    return undefined;
+  }
+
+  const location = findLocation(world, committedJob.locationId);
+  const startTotalMinutes = totalMinutesForDayHour(
+    world.clock.day,
+    committedJob.startHour,
+  );
+
+  if (
+    committedJob.deferredUntilMinutes !== undefined &&
+    world.clock.totalMinutes < committedJob.deferredUntilMinutes
+  ) {
+    return {
+      actionId: `resume:${committedJob.id}`,
+      autoContinue: true,
+      detail: `The commitment is still live. Rowan can wait until about ${formatClockAt(
+        world,
+        committedJob.deferredUntilMinutes,
+      )}.`,
+      effects: ["thought"],
+      key: `job-deferred:${committedJob.id}:${committedJob.deferredUntilMinutes}`,
+      kind: "wait",
+      label: `Hold for ${committedJob.title}`,
+      layer: "commitment",
+      targetLocationId: committedJob.locationId,
+      waitUntilMinutes: committedJob.deferredUntilMinutes,
+    };
+  }
+
+  if (world.player.currentLocationId !== committedJob.locationId) {
+    return {
+      actionId: `work:${committedJob.id}`,
+      autoContinue: true,
+      detail: `The shift matters more than wandering right now, so Rowan is routing himself to ${location?.name ?? "the job site"}.`,
+      key: `job-travel:${committedJob.id}:${world.player.currentLocationId ?? "none"}:${committedJob.locationId}`,
+      kind: "move",
+      label: `Get to ${location?.name ?? "the job site"}`,
+      layer: "commitment",
+      targetLocationId: committedJob.locationId,
+    };
+  }
+
+  if (world.clock.totalMinutes < startTotalMinutes) {
+    return {
+      actionId: `work:${committedJob.id}`,
+      autoContinue: true,
+      detail: `Rowan is already in place and can hold until ${formatClockAt(
+        world,
+        startTotalMinutes,
+      )} without another prompt.`,
+      effects: ["thought"],
+      key: `job-start:${committedJob.id}:${startTotalMinutes}`,
+      kind: "wait",
+      label: `Hold for ${committedJob.title}`,
+      layer: "commitment",
+      targetLocationId: committedJob.locationId,
+      waitUntilMinutes: startTotalMinutes,
+    };
+  }
+
+  if (currentHour(world) < committedJob.endHour && world.player.energy >= 28) {
+    return {
+      actionId: `work:${committedJob.id}`,
+      autoContinue: true,
+      detail:
+        "The shift window is open now, so Rowan can start working without another prompt.",
+      key: `job-work:${committedJob.id}:${world.clock.totalMinutes}`,
+      kind: "act",
+      label: `Start ${committedJob.title}`,
+      layer: "commitment",
+      targetLocationId: committedJob.locationId,
+    };
+  }
+
+  if (
+    world.player.energy < 28 &&
+    world.player.currentLocationId !== world.player.homeLocationId
+  ) {
+    const home = findLocation(world, world.player.homeLocationId);
+    return {
+      autoContinue: true,
+      detail:
+        "Rowan needs a quick reset at Morrow House before he burns the shift on tired legs.",
+      key: `job-rest:${committedJob.id}:${world.player.currentLocationId ?? "none"}:${world.player.homeLocationId}`,
+      kind: "move",
+      label: `Reset at ${home?.name ?? "Morrow House"}`,
+      layer: "commitment",
+      targetLocationId: world.player.homeLocationId,
+    };
+  }
+
+  return undefined;
+}
+
+function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
+  const objective = currentObjectiveDirective(world);
+  if (!objective) {
+    return {
+      autoContinue: false,
+      detail: "Choose where Rowan should go or what he should do next.",
+      key: `idle:${world.clock.totalMinutes}`,
+      kind: "idle",
+      label: "Choose a direction",
+      layer: "idle",
+    };
+  }
+
+  const plan = chooseObjectivePlan(world);
+  if (!plan) {
+    return {
+      autoContinue: false,
+      detail:
+        "Rowan has exhausted the obvious next steps here and needs a fresher lead, a different route, or a more specific objective.",
+      key: `blocked:${objective.routeKey}:${world.player.currentLocationId ?? "none"}:${world.clock.totalMinutes}`,
+      kind: "blocked",
+      label: "Needs a fresher lead",
+      layer: "objective",
+      objective,
+    };
+  }
+
+  const targetLocation =
+    plan.targetLocationId !== undefined
+      ? findLocation(world, plan.targetLocationId)
+      : undefined;
+  const label = autonomyLabelForNextBeat(world, plan);
+  const detail = autonomyDetailForObjectivePlan(world, plan, objective.text);
+  const key = `plan:${[
+    objective.routeKey,
+    plan.targetLocationId ?? "here",
+    plan.actionId ?? "no-action",
+    plan.npcId ?? "no-npc",
+    loopKindForObjectivePlan(world, plan),
+  ].join(":")}`;
+
+  if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
+    return {
+      actionId: plan.actionId,
+      autoContinue: true,
+      detail,
+      key,
+      kind: "move",
+      label,
+      layer: "objective",
+      npcId: plan.npcId,
+      objective,
+      speech: plan.speech,
+      targetLocationId: plan.targetLocationId,
+    };
+  }
+
+  if (plan.npcId) {
+    return {
+      actionId: plan.actionId,
+      autoContinue: true,
+      detail,
+      effects: ["conversation"],
+      key,
+      kind: "talk",
+      label,
+      layer: "objective",
+      npcId: plan.npcId,
+      objective,
+      speech: plan.speech,
+      targetLocationId: plan.targetLocationId,
+    };
+  }
+
+  if (plan.actionId) {
+    return {
+      actionId: plan.actionId,
+      autoContinue: true,
+      detail,
+      effects: isTimeSkippingAction(plan.actionId) ? ["thought"] : undefined,
+      key,
+      kind: isTimeSkippingAction(plan.actionId) ? "wait" : "act",
+      label,
+      layer: "objective",
+      objective,
+      targetLocationId: plan.targetLocationId,
+    };
+  }
+
+  return {
+    autoContinue: true,
+    detail,
+    effects: ["thought"],
+    key,
+    kind: "observe",
+    label,
+    layer: "objective",
+    objective,
+    targetLocationId: plan.targetLocationId,
+  };
+}
+
+async function executeRowanMoveLoopStep(
+  world: StreetGameState,
+  loopStep: RowanLoopStep,
+  aiProvider: AIProvider,
+  options: { confirmMove?: boolean } = {},
+) {
+  const targetLocation = loopStep.targetLocationId
+    ? findLocation(world, loopStep.targetLocationId)
+    : undefined;
+  if (!targetLocation) {
+    return;
+  }
+
+  const objective =
+    loopStep.objective ??
+    currentObjectiveDirective(world) ??
+    fallbackConversationObjective(world);
+  const plan = loopStepToObjectivePlan(loopStep);
+
+  if (
+    !options.confirmMove &&
+    !pendingObjectiveMoveMatches(
+      world,
+      objective.text,
+      targetLocation.id,
+      plan,
+    )
+  ) {
+    queuePendingObjectiveMove(world, objective.text, plan, targetLocation.id);
+    addFeed(
+      world,
+      "info",
+      `Rowan slows for a beat and decides ${targetLocation.name} is the next place to try.`,
+    );
+    return "deterministic" as const;
+  }
+
+  clearPendingObjectiveMove(world);
+  addFeed(
+    world,
+    "info",
+    `Rowan heads to ${targetLocation.name} to ${planMovementPurpose(world, plan, objective)}.`,
+  );
+  movePlayer(world, targetLocation.entryX, targetLocation.entryY);
+  syncNpcInnerState(world);
+  if (loopStep.npcId && loopStep.speech) {
+    await conductAutonomousConversation(
+      world,
+      loopStep.npcId,
+      loopStep.speech,
+      objective,
+      aiProvider,
+    );
+    return;
+  }
+
+  world.player.currentThought = arrivalThought(world, plan, targetLocation.id);
+  return "deterministic" as const;
+}
+
+async function executeRowanActionLoopStep(
+  world: StreetGameState,
+  loopStep: RowanLoopStep,
+  aiProvider: AIProvider,
+  options: {
+    allowTimeSkip: boolean;
+  },
+) {
+  if (loopStep.kind === "wait" && loopStep.waitUntilMinutes !== undefined) {
+    if (!options.allowTimeSkip) {
+      if (loopStep.actionId) {
+        setLongActionThought(world, loopStep.actionId);
+      } else {
+        world.player.currentThought = loopStep.detail;
+      }
+      return;
+    }
+
+    const minutesToAdvance = Math.max(
+      loopStep.waitUntilMinutes - world.clock.totalMinutes,
+      0,
+    );
+    if (minutesToAdvance > 0) {
+      advanceWorld(world, minutesToAdvance);
+      addFeed(world, "info", loopStep.detail);
+    }
+
+    if (loopStep.actionId?.startsWith("resume:")) {
+      await performAction(world, loopStep.actionId, aiProvider);
+    }
+
+    return advanceObjective(world, aiProvider, options);
+  }
+
+  if (!loopStep.actionId) {
+    return;
+  }
+
+  if (loopStep.kind === "wait" && !options.allowTimeSkip) {
+    setLongActionThought(world, loopStep.actionId);
+    return;
+  }
+
+  await performAction(world, loopStep.actionId, aiProvider);
+}
+
+async function executeRowanReflectLoopStep(
+  world: StreetGameState,
+  loopStep: RowanLoopStep,
+) {
+  if (loopStep.layer !== "conversation" || !world.activeConversation) {
+    world.player.currentThought = loopStep.detail;
+    return "deterministic" as const;
+  }
+
+  const npc = npcById(world, world.activeConversation.npcId);
+  const hadResolution = Boolean(
+    world.activeConversation.decision || world.activeConversation.objectiveText,
+  );
+  clearActiveConversation(world);
+
+  addFeed(
+    world,
+    "info",
+    hadResolution
+      ? `Rowan leaves ${npc?.name ?? "the conversation"} with enough to act on.`
+      : `The conversation with ${npc?.name ?? "them"} quiets down, and Rowan turns back toward the day.`,
+  );
+
+  world.player.objective = buildPlayerObjectiveState(world, {
+    previous: world.player.objective,
+  });
+  world.currentScene = buildScene(world);
+  world.availableActions = buildAvailableActions(world);
+  world.player.currentThought = hadResolution
+    ? `That gives Rowan the next step: ${world.player.objective?.text ?? "keep going"}.`
+    : loopStep.detail;
+  return "deterministic" as const;
+}
+
+function loopStepToObjectivePlan(loopStep: RowanLoopStep): ObjectivePlan {
+  return {
+    actionId: loopStep.actionId,
+    npcId: loopStep.npcId,
+    rationale: loopStep.detail,
+    score: 0,
+    speech: loopStep.speech,
+    targetLocationId: loopStep.targetLocationId,
+  };
+}
+
+function loopKindForObjectivePlan(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+): RowanAutonomyStepKind {
+  const targetLocation =
+    plan.targetLocationId !== undefined
+      ? findLocation(world, plan.targetLocationId)
+      : undefined;
+
+  if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
+    return "move";
+  }
+
+  if (plan.npcId) {
+    return "talk";
+  }
+
+  if (plan.actionId) {
+    return isTimeSkippingAction(plan.actionId) ? "wait" : "act";
+  }
+
+  return "observe";
+}
+
 function clearPendingObjectiveMove(world: StreetGameState) {
   world.player.pendingObjectiveMove = undefined;
 }
@@ -672,6 +1136,7 @@ function queuePendingObjectiveMove(
     rationale: plan.rationale,
     npcId: plan.npcId,
     actionId: plan.actionId,
+    speech: plan.speech,
     preparedAt: isoFor(world.clock.totalMinutes),
   };
 }
@@ -711,6 +1176,60 @@ function reconcilePendingObjectiveMove(world: StreetGameState) {
   }
 }
 
+function reconcileActiveConversation(world: StreetGameState) {
+  const activeConversation = world.activeConversation;
+  if (!activeConversation) {
+    return;
+  }
+
+  if (activeConversation.decision || activeConversation.objectiveText) {
+    return;
+  }
+
+  const npc = npcById(world, activeConversation.npcId);
+  if (!npc) {
+    clearActiveConversation(world);
+    return;
+  }
+
+  if (
+    !world.player.currentLocationId ||
+    npc.currentLocationId !== world.player.currentLocationId
+  ) {
+    clearActiveConversation(world);
+    return;
+  }
+
+  const lastNpcReply = latestNpcReplyFromConversation(activeConversation.lines);
+  if (!lastNpcReply) {
+    clearActiveConversation(world);
+    return;
+  }
+
+  const objective = currentConversationObjective(world);
+  const discussedTopics = collectConversationTopics(activeConversation.lines);
+  const provisionalResolution = deriveConversationResolution(
+    world,
+    npc,
+    objective,
+    lastNpcReply,
+    discussedTopics,
+  );
+
+  if (
+    !shouldContinueConversation(
+      world,
+      npc,
+      objective,
+      lastNpcReply,
+      discussedTopics,
+      provisionalResolution,
+    )
+  ) {
+    clearActiveConversation(world);
+  }
+}
+
 function primeNpcConversation(world: StreetGameState, npc: NpcState) {
   ensureNpcKnown(world, npc);
   npc.lastInteractionAt = isoFor(world.clock.totalMinutes);
@@ -729,19 +1248,19 @@ function primeNpcConversation(world: StreetGameState, npc: NpcState) {
       rememberIfNew(
         world,
         "person",
-        "Mara weighs newcomers by whether they settle in, pull their weight, or drift off.",
+        "Mara weighs newcomers by whether they settle in, pull their weight, or disappear.",
       );
       break;
     case "npc-ada":
       addFeed(
         world,
         "info",
-        "Ada sizes you up like the room is already busy and you might still be useful if you keep your words short.",
+        "Ada glances over like the room is already filling, but there is still a little welcome in it.",
       );
       rememberIfNew(
         world,
         "person",
-        "Ada only offers work after she decides you can finish it without making her regret the chance.",
+        "Ada offers work when she thinks someone can keep the tea room easy through lunch.",
       );
       break;
     case "npc-jo":
@@ -772,7 +1291,7 @@ function primeNpcConversation(world: StreetGameState, npc: NpcState) {
       addFeed(
         world,
         "info",
-        "Nia is already half-reading the square while she talks to you, like she expects the next useful detail to arrive mid-sentence.",
+        "Nia watches the square while she talks to you, like she expects the next important detail to arrive mid-sentence.",
       );
       rememberIfNew(
         world,
@@ -797,6 +1316,210 @@ function fallbackConversationObjective(world: StreetGameState) {
   };
 }
 
+function currentConversationObjective(world: StreetGameState) {
+  return currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
+}
+
+function collectConversationTopics(
+  lines: Array<Pick<ConversationEntry, "text">>,
+) {
+  const topics = new Set<string>();
+
+  for (const line of lines) {
+    for (const topic of detectConversationTopics(line.text)) {
+      topics.add(topic);
+    }
+  }
+
+  return topics;
+}
+
+function latestNpcReplyFromConversation(
+  lines: Array<Pick<ConversationEntry, "speaker" | "text">>,
+) {
+  return [...lines].reverse().find((line) => line.speaker === "npc")?.text;
+}
+
+function shouldContinueConversation(
+  world: StreetGameState,
+  npc: NpcState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  closingReply: string,
+  discussedTopics: Set<string>,
+  resolution: ConversationResolution,
+) {
+  return shouldAskAutonomousFollowup(
+    world,
+    npc,
+    objective,
+    closingReply,
+    discussedTopics,
+    resolution,
+  );
+}
+
+async function runConversationLoop(
+  world: StreetGameState,
+  npc: NpcState,
+  location: LocationState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  openingText: string,
+  aiProvider: AIProvider,
+  options: ConversationLoopOptions = {},
+) {
+  const maxAutonomousFollowups = options.maxAutonomousFollowups ?? 0;
+  let remainingAutonomousFollowups = maxAutonomousFollowups;
+  let trustOpened = false;
+  let closingReply = "";
+  let discussedTopics = new Set<string>();
+  let resolution: ConversationResolution = {};
+  let nextPlayerText = openingText;
+
+  while (nextPlayerText) {
+    const turn = await performConversationTurn(
+      world,
+      npc,
+      location.id,
+      nextPlayerText,
+      aiProvider,
+    );
+    if (options.surfaceNpcRepliesInFeed) {
+      addFeed(world, "info", `${npc.name}: ${turn.npcReply}`);
+    }
+
+    trustOpened = trustOpened || turn.trustDelta > 0;
+    closingReply = turn.npcReply;
+    turn.topics.forEach((topic) => {
+      discussedTopics.add(topic);
+    });
+    resolution = await resolveConversationResolution(
+      world,
+      npc,
+      objective,
+      closingReply,
+      discussedTopics,
+      aiProvider,
+    );
+
+    if (
+      remainingAutonomousFollowups <= 0 ||
+      !shouldContinueConversation(
+        world,
+        npc,
+        objective,
+        closingReply,
+        discussedTopics,
+        resolution,
+      )
+    ) {
+      break;
+    }
+
+    remainingAutonomousFollowups -= 1;
+    nextPlayerText = await generateAutonomousContinuation(
+      world,
+      npc,
+      objective,
+      closingReply,
+      aiProvider,
+    );
+  }
+
+  const conversationCanContinue =
+    Boolean(closingReply) &&
+    shouldContinueConversation(
+      world,
+      npc,
+      objective,
+      closingReply,
+      discussedTopics,
+      resolution,
+    );
+  const outcome = applyConversationResolution(
+    world,
+    npc,
+    location,
+    objective,
+    resolution,
+    {
+      closingReply,
+      trustOpened,
+    },
+  );
+
+  if (outcome.feedTone && outcome.feedText) {
+    addFeed(world, outcome.feedTone, outcome.feedText);
+  } else if (options.addFallbackFeed) {
+    addFeed(
+      world,
+      "info",
+      `Rowan and ${npc.name} trade a few direct words, then the block keeps moving.`,
+    );
+  }
+
+  if (
+    !resolution.decision &&
+    !resolution.objectiveText &&
+    !conversationCanContinue
+  ) {
+    clearActiveConversation(world);
+  }
+
+  return {
+    conversationCanContinue,
+    resolution,
+  };
+}
+
+async function continueActiveConversation(
+  world: StreetGameState,
+  aiProvider: AIProvider,
+) {
+  const activeConversation = world.activeConversation;
+  if (!activeConversation) {
+    return;
+  }
+
+  const target = resolveConversationTarget(world, activeConversation.npcId);
+  if (!target) {
+    clearActiveConversation(world);
+    return;
+  }
+
+  const objective = currentConversationObjective(world);
+  const lastNpcReply = latestNpcReplyFromConversation(activeConversation.lines);
+  if (!lastNpcReply) {
+    clearActiveConversation(world);
+    return;
+  }
+
+  const followup = await generateAutonomousContinuation(
+    world,
+    target.npc,
+    objective,
+    lastNpcReply,
+    aiProvider,
+  );
+
+  if (!followup) {
+    clearActiveConversation(world);
+    return "deterministic" as const;
+  }
+
+  await runConversationLoop(
+    world,
+    target.npc,
+    target.location,
+    objective,
+    followup,
+    aiProvider,
+    {
+      maxAutonomousFollowups: 0,
+    },
+  );
+  return;
+}
+
 async function talkToNpc(
   world: StreetGameState,
   npcId: string,
@@ -809,8 +1532,7 @@ async function talkToNpc(
 
   const { npc, location } = target;
   primeNpcConversation(world, npc);
-  const objective =
-    currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
+  const objective = currentConversationObjective(world);
   const opener = await generateAutonomousSpeech(
     world,
     npc,
@@ -818,13 +1540,7 @@ async function talkToNpc(
     aiProvider,
   );
 
-  await conductAutonomousConversation(
-    world,
-    npc.id,
-    opener,
-    objective,
-    aiProvider,
-  );
+  await conductAutonomousConversation(world, npc.id, opener, objective, aiProvider);
 }
 
 async function speakToNpc(
@@ -840,44 +1556,17 @@ async function speakToNpc(
 
   const { npc, location } = target;
   const text = normalizeSpeechText(rawText);
-  const objective =
-    currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
+  const objective = currentConversationObjective(world);
   if (!text) {
     addFeed(world, "info", "Say something Rowan can actually put into words.");
     return;
   }
 
   primeNpcConversation(world, npc);
-  const turn = await performConversationTurn(
-    world,
-    npc,
-    location.id,
-    text,
-    aiProvider,
-  );
-  addFeed(world, "info", `${npc.name}: ${turn.npcReply}`);
-  const resolution = await resolveConversationResolution(
-    world,
-    npc,
-    objective,
-    turn.npcReply,
-    turn.topics,
-    aiProvider,
-  );
-  const outcome = applyConversationResolution(
-    world,
-    npc,
-    location,
-    objective,
-    resolution,
-    {
-      closingReply: turn.npcReply,
-      trustOpened: turn.trustDelta > 0,
-    },
-  );
-  if (outcome.feedTone && outcome.feedText) {
-    addFeed(world, outcome.feedTone, outcome.feedText);
-  }
+  await runConversationLoop(world, npc, location, objective, text, aiProvider, {
+    maxAutonomousFollowups: 1,
+    surfaceNpcRepliesInFeed: true,
+  });
 }
 
 async function conductAutonomousConversation(
@@ -898,85 +1587,10 @@ async function conductAutonomousConversation(
     return;
   }
 
-  const firstTurn = await performConversationTurn(
-    world,
-    npc,
-    location.id,
-    opener,
-    aiProvider,
-  );
-  let trustOpened = firstTurn.trustDelta > 0;
-  let closingReply = firstTurn.npcReply;
-  const discussedTopics = new Set(firstTurn.topics);
-  let resolution = await resolveConversationResolution(
-    world,
-    npc,
-    objective,
-    closingReply,
-    discussedTopics,
-    aiProvider,
-  );
-  const followup = shouldAskAutonomousFollowup(
-    world,
-    npc,
-    objective,
-    closingReply,
-    discussedTopics,
-    resolution,
-  )
-    ? await generateAutonomousContinuation(
-        world,
-        npc,
-        objective,
-        closingReply,
-        aiProvider,
-      )
-    : undefined;
-  if (followup) {
-    const secondTurn = await performConversationTurn(
-      world,
-      npc,
-      location.id,
-      followup,
-      aiProvider,
-    );
-    trustOpened = trustOpened || secondTurn.trustDelta > 0;
-    closingReply = secondTurn.npcReply;
-    secondTurn.topics.forEach((topic) => {
-      discussedTopics.add(topic);
-    });
-
-    resolution = await resolveConversationResolution(
-      world,
-      npc,
-      objective,
-      closingReply,
-      discussedTopics,
-      aiProvider,
-    );
-  }
-
-  const outcome = applyConversationResolution(
-    world,
-    npc,
-    location,
-    objective,
-    resolution,
-    {
-      closingReply,
-      trustOpened,
-    },
-  );
-  if (outcome.feedTone && outcome.feedText) {
-    addFeed(world, outcome.feedTone, outcome.feedText);
-    return;
-  }
-
-  addFeed(
-    world,
-    "info",
-    `Rowan and ${npc.name} trade a few direct words, then the block keeps moving.`,
-  );
+  await runConversationLoop(world, npc, location, objective, opener, aiProvider, {
+    addFallbackFeed: true,
+    maxAutonomousFollowups: 1,
+  });
 }
 
 async function performConversationTurn(
@@ -1006,6 +1620,7 @@ async function performConversationTurn(
 
   const playerTopics = detectConversationTopics(text);
   const trustDelta = updateNpcTrustFromSpeech(npc, text, playerTopics);
+  syncRowanAutonomy(world);
   const reply = await aiProvider.generateStreetReply({
     game: world,
     npcId: npc.id,
@@ -1083,6 +1698,12 @@ function applyConversationResolution(
     normalizeObjectiveText(resolution.objectiveText ?? "") !==
       normalizeObjectiveText(world.player.objective?.text ?? "");
   if (objectiveUpdated && resolution.objectiveText) {
+    world.player.objective = buildPlayerObjectiveState(world, {
+      text: resolution.objectiveText,
+      focus: classifyObjective(resolution.objectiveText),
+      previous: world.player.objective,
+      source: "conversation",
+    });
     rememberIfNew(
       world,
       "self",
@@ -1127,103 +1748,118 @@ function buildConversationThreadSummary(
   return `${npc.name} at ${moment}: ${trimmedReply}`;
 }
 
-function handleCommittedJob(
+function deriveRowanAutonomy(world: StreetGameState) {
+  return rowanAutonomyFromLoopStep(resolveRowanLoopStep(world));
+}
+
+function syncRowanAutonomy(world: StreetGameState) {
+  world.rowanAutonomy = deriveRowanAutonomy(world);
+}
+
+function autonomyLabelForNextBeat(
   world: StreetGameState,
-  job: JobState,
-  options: {
-    allowTimeSkip?: boolean;
-  } = {},
+  plan: Pick<ObjectivePlan, "actionId" | "npcId" | "targetLocationId">,
 ) {
-  const allowTimeSkip = options.allowTimeSkip ?? true;
-  const location = findLocation(world, job.locationId);
-  if (!location) {
-    return false;
+  const targetLocation =
+    plan.targetLocationId !== undefined
+      ? findLocation(world, plan.targetLocationId)
+      : undefined;
+
+  if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
+    return `Head to ${targetLocation.name}`;
   }
 
-  if (job.deferredUntilMinutes !== undefined) {
-    if (world.clock.totalMinutes < job.deferredUntilMinutes) {
-      world.player.currentThought = `I'm still committed to ${job.title.toLowerCase()}, but I'm letting it breathe until about ${formatClockAt(world, job.deferredUntilMinutes)}.`;
-      return false;
+  if (plan.npcId) {
+    const npc = npcById(world, plan.npcId);
+    return `Open with ${npc?.name ?? "someone nearby"}`;
+  }
+
+  if (plan.actionId) {
+    return autonomyLabelForAction(world, plan.actionId);
+  }
+
+  if (targetLocation) {
+    return `Read ${targetLocation.name}`;
+  }
+
+  return "Carry the objective forward";
+}
+
+function autonomyLabelForAction(world: StreetGameState, actionId: string) {
+  const currentAction = world.availableActions.find(
+    (action) => action.id === actionId,
+  );
+  if (currentAction) {
+    return currentAction.label;
+  }
+
+  const [kind, targetId] = actionId.split(":");
+  switch (kind) {
+    case "talk": {
+      const npc = targetId ? npcById(world, targetId) : undefined;
+      return `Open with ${npc?.name ?? "someone nearby"}`;
     }
-
-    job.deferredUntilMinutes = undefined;
+    case "accept": {
+      const job = targetId ? jobById(world, targetId) : undefined;
+      return job ? `Take ${job.title}` : "Take the next job";
+    }
+    case "work":
+    case "resume": {
+      const job = targetId ? jobById(world, targetId) : undefined;
+      return job ? `Start ${job.title}` : "Start work";
+    }
+    case "solve": {
+      const problem = targetId ? problemById(world, targetId) : undefined;
+      return problem ? `Solve ${problem.title}` : "Solve the problem";
+    }
+    case "inspect": {
+      const problem = targetId ? problemById(world, targetId) : undefined;
+      return problem ? `Inspect ${problem.title}` : "Inspect the lead";
+    }
+    case "contribute":
+      return "Handle house chores";
+    case "rest":
+      return "Rest at Morrow House";
+    default:
+      return "Take the next action";
   }
+}
 
-  if (world.player.currentLocationId !== job.locationId) {
-    const objectiveText =
-      currentObjectiveDirective(world)?.text ??
-      `Keep ${job.title.toLowerCase()} from slipping.`;
-    const jobTravelPlan: ObjectivePlan = {
-      score: 0,
-      rationale: `Get to ${location.name} before the ${job.title.toLowerCase()} slips.`,
-      targetLocationId: location.id,
-      actionId: `work:${job.id}`,
-    };
+function autonomyDetailForObjectivePlan(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  objectiveText: string,
+) {
+  const rationale = normalizeAutonomyRationale(plan.rationale || objectiveText);
+  const targetLocation =
+    plan.targetLocationId !== undefined
+      ? findLocation(world, plan.targetLocationId)
+      : undefined;
 
-    if (
-      !pendingObjectiveMoveMatches(
-        world,
-        objectiveText,
-        location.id,
-        jobTravelPlan,
+  if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
+    return `Rowan has a clear destination now: ${
+      normalizeAutonomyRationale(
+        plan.rationale || `get to ${targetLocation.name} and keep the objective moving`,
       )
-    ) {
-      queuePendingObjectiveMove(
-        world,
-        objectiveText,
-        jobTravelPlan,
-        location.id,
-      );
-      addFeed(
-        world,
-        "info",
-        `Rowan checks the hour and decides he should get to ${location.name} before the ${job.title.toLowerCase()} slips.`,
-      );
-      return "deterministic";
-    }
-
-    clearPendingObjectiveMove(world);
-    addFeed(
-      world,
-      "info",
-      `Rowan heads to ${location.name} to keep the ${job.title.toLowerCase()} from slipping.`,
-    );
-    movePlayer(world, location.entryX, location.entryY);
-    return "deterministic";
+    }.`;
   }
 
-  if (currentHour(world) < job.startHour) {
-    world.player.currentThought = `My shift at ${location.name} has not opened yet. I can wait here or fast-forward to it.`;
-    return true;
+  if (plan.npcId) {
+    const npc = npcById(world, plan.npcId);
+    return `The context is specific enough for Rowan to start with ${npc?.name ?? "someone nearby"} in his own voice without another prompt.`;
   }
 
-  if (currentHour(world) < job.endHour && world.player.energy >= 28) {
-    if (!allowTimeSkip) {
-      world.player.currentThought = `The shift at ${location.name} is open. I can start when you tell me to spend the time.`;
-      return true;
-    }
-
-    workJob(world, job.id);
-    return true;
+  if (plan.actionId) {
+    return isTimeSkippingAction(plan.actionId)
+      ? `The next step is time-based, and Rowan can wait without another prompt: ${rationale}.`
+      : `The next move is clear enough to take without another prompt: ${rationale}.`;
   }
 
-  if (
-    world.player.energy < 28 &&
-    world.player.currentLocationId !== world.player.homeLocationId
-  ) {
-    const home = findLocation(world, world.player.homeLocationId);
-    if (home) {
-      addFeed(
-        world,
-        "info",
-        `Rowan backs off to Morrow House before he burns the shift on tired legs.`,
-      );
-      movePlayer(world, home.entryX, home.entryY);
-      return true;
-    }
-  }
+  return `Rowan still has a clear next step: ${rationale}.`;
+}
 
-  return false;
+function normalizeAutonomyRationale(text: string) {
+  return text.trim().replace(/[.?!]+$/g, "");
 }
 
 function chooseObjectivePlan(
@@ -1232,6 +1868,11 @@ function chooseObjectivePlan(
   const objective = currentObjectiveDirective(world);
   if (!objective) {
     return undefined;
+  }
+
+  const directRoutePlan = directObjectiveRoutePlan(world, objective);
+  if (directRoutePlan) {
+    return directRoutePlan;
   }
 
   const planningText = objectivePlanningText(world, objective);
@@ -1343,6 +1984,41 @@ function chooseObjectivePlan(
   return candidates[0];
 }
 
+function directObjectiveRoutePlan(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+): ObjectivePlan | undefined {
+  const nextStep = world.player.objective?.trail.find((step) => !step.done);
+  if (!nextStep) {
+    return undefined;
+  }
+
+  const targetNpc = nextStep.npcId ? npcById(world, nextStep.npcId) : undefined;
+  const targetLocationId =
+    nextStep.targetLocationId ?? targetNpc?.currentLocationId;
+
+  if (!targetNpc && !nextStep.actionId && !targetLocationId) {
+    return undefined;
+  }
+
+  if (
+    !targetNpc &&
+    !nextStep.actionId &&
+    targetLocationId === world.player.currentLocationId
+  ) {
+    return undefined;
+  }
+
+  return {
+    score: 999,
+    rationale: nextStep.detail ?? nextStep.title,
+    actionId: nextStep.actionId,
+    npcId: targetNpc?.id,
+    speech: targetNpc ? buildAutonomousSpeech(world, targetNpc, objective) : undefined,
+    targetLocationId,
+  };
+}
+
 function objectivePlanningText(
   world: StreetGameState,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
@@ -1403,6 +2079,10 @@ function planMovementPurpose(
 
     if (kind === "buy") {
       return "pick up the tool he needs";
+    }
+
+    if (kind === "contribute") {
+      return "pull his weight around the house";
     }
 
     if (kind === "rest") {
@@ -1498,7 +2178,11 @@ function canAutoPlanAction(
     return false;
   }
 
-  return npc.known || locationId === world.player.currentLocationId;
+  return (
+    npc.known ||
+    locationId === world.player.currentLocationId ||
+    world.player.knownLocationIds.includes(locationId)
+  );
 }
 
 function explorationFrontier(world: StreetGameState) {
@@ -1630,6 +2314,10 @@ function scoreAutoActionForObjective(
 
   if (action.kind === "buy") {
     score += 12;
+  }
+
+  if (action.kind === "contribute") {
+    score += objectiveFocus === "settle" ? 18 : 8;
   }
 
   if (action.kind === "inspect") {
@@ -1818,6 +2506,7 @@ async function generateAutonomousSpeech(
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   aiProvider: AIProvider,
 ) {
+  syncRowanAutonomy(world);
   const generated = await aiProvider.generateStreetAutonomousLine({
     game: world,
     npcId: npc.id,
@@ -1839,6 +2528,7 @@ async function generateAutonomousContinuation(
   lastNpcReply: string,
   aiProvider: AIProvider,
 ) {
+  syncRowanAutonomy(world);
   const generated = await aiProvider.generateStreetAutonomousLine({
     game: world,
     lastNpcReply,
@@ -1869,6 +2559,7 @@ async function resolveConversationResolution(
     closingReply,
     discussedTopics,
   );
+  syncRowanAutonomy(world);
   const interpreted = await aiProvider.interpretStreetConversation({
     closingReply,
     discussedTopics: [...discussedTopics],
@@ -1929,46 +2620,46 @@ function buildAutonomousSpeech(
     case "settle":
       if (npc.id === "npc-mara") {
         if (primaryNeed === "shelter") {
-          return "I'm Rowan. New in Brackenport. I've got tonight at Morrow House, but not much beyond that. What does somebody have to do to keep a room here?";
+          return "I'm Rowan. New in Brackenport. I've got tonight at Morrow House, and I'd like to be an easy guest. What should I know?";
         }
         if (primaryNeed === "income") {
-          return "I'm Rowan. New here. Who on this block actually needs hands before noon gets away from me?";
+          return "I'm Rowan. New here. Who might need an extra pair of hands before lunch gets busy?";
         }
         if (primaryNeed === "belonging") {
-          return "I'm Rowan. New in Brackenport. Who around here is worth knowing properly if I don't want to stay a stranger?";
+          return "I'm Rowan. New in Brackenport. Who around here is kind to newcomers who ask normal questions?";
         }
-        return "I'm Rowan. New in Brackenport. I'm trying to find a place to stay, steady income, and a few friends. Where should I start?";
+        return "I'm Rowan. New in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where should I start?";
       }
       if (npc.id === "npc-ada") {
         if (teaLeadKnown) {
-          return "I'm Rowan. I heard the noon rush might still need hands. Is that still true?";
+          return "I'm Rowan. I heard lunch might still need hands. Is that still true?";
         }
-        return "I'm new here and trying to start earning my keep. Need another pair of hands right now?";
+        return "I'm new here and trying to be helpful. Need another pair of hands right now?";
       }
       if (npc.id === "npc-tomas") {
         if (yardLeadKnown) {
-          return "I'm Rowan. I heard the yard might still need another back. Still true?";
+          return "I'm Rowan. I heard the yard might still need another set of hands. Still true?";
         }
-        return "I'm Rowan. New in town. If I want to start making steady money here, is the yard still short a back?";
+        return "I'm Rowan. New in town. If I want a little honest work today, is the yard still short on hands?";
       }
       if (npc.id === "npc-nia") {
-        return "I'm new in South Quay. Who should I know if I don't want to stay a stranger for long?";
+        return "I'm new in South Quay. Who should I talk to if I want to understand the place a little better?";
       }
-      return "I'm new in Brackenport. I'm looking for a place to stay, steady income, and a few friends. Where do I begin?";
+      return "I'm new in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where do I begin?";
     case "work":
       if (npc.id === "npc-ada") {
         if (teaLeadKnown) {
-          return "I'm Rowan. I heard you might still need hands for the rush. Is there still room for me?";
+          return "I'm Rowan. I heard you might still need hands for lunch. Is there still room for me?";
         }
-        return "I'm Rowan. I'm trying to start bringing in money here. Do you need another pair of hands right now?";
+        return "I'm Rowan. I'm looking for work and happy to help. Do you need another pair of hands?";
       }
       if (npc.id === "npc-tomas") {
         if (yardLeadKnown) {
-          return "I'm Rowan. I heard the yard might still be short a back. Still looking?";
+          return "I'm Rowan. I heard the yard might still be short on hands. Still looking?";
         }
-        return "I'm Rowan. I'm looking for work. Still need another back in the yard?";
+        return "I'm Rowan. I'm looking for work. Still need another set of hands in the yard?";
       }
-      return "I'm Rowan. I'm trying to start earning here. Where should I start on this block?";
+      return "I'm Rowan. I'm trying to start earning today. Where should I begin?";
     case "help":
       if (text.includes("pump")) {
         return npc.id === "npc-jo"
@@ -1976,9 +2667,9 @@ function buildAutonomousSpeech(
           : "I'm trying to sort out the leaking pump. What matters first?";
       }
       if (text.includes("cart")) {
-        return "I heard the square is about to jam. What's actually wrong with the cart?";
+        return "I heard the square might jam up. What's actually wrong with the cart?";
       }
-      return "I'm trying to be useful today. What trouble is about to spread if nobody steps in?";
+      return "I'm trying to help before anything gets annoying. What needs a hand?";
     case "tool":
       return "I need the right tool for this. What would actually help me today?";
     case "rest":
@@ -1999,7 +2690,7 @@ function buildAutonomousSpeech(
     return "I need to fix the pump. What do I need to know before I start?";
   }
 
-  return `I'm trying to ${objectiveClause(objective.text)}. Where should I push first?`;
+  return `I'm trying to ${objectiveClause(objective.text)}. Where is the easiest place to start?`;
 }
 
 function buildAutonomousFollowup(
@@ -2011,33 +2702,39 @@ function buildAutonomousFollowup(
 ) {
   const cognition = buildRowanCognition(world);
   const primaryNeed = cognition.primaryNeed?.key;
-  const replyTopics = detectConversationTopics(lastNpcReply ?? "");
+  const normalizedReply = lastNpcReply ?? "";
+  const replyTopics = detectConversationTopics(normalizedReply);
+  const replyNamesAdaLead = /\bada\b|\bkettle\b|\blamp\b/.test(normalizedReply);
+  const replyNamesTomasLead = /\btomas\b|\bnorth crane\b|\byard\b/.test(normalizedReply);
 
   if (objectiveFocus === "settle") {
     switch (npcId) {
       case "npc-mara":
+        if (replyNamesAdaLead) {
+          return undefined;
+        }
         if (!replyTopics.has("home") && !replyTopics.has("stay")) {
-          return "What does somebody have to do to keep a room here past the first night?";
+          return "What helps a room here start feeling less temporary?";
         }
         if (!replyTopics.has("work")) {
-          return "And if I need paid work quickly, who on this block is worth asking before noon?";
+          return "And if I need paid work soon, who is good to ask before lunch?";
         }
         if (primaryNeed === "belonging" && !replyTopics.has("people")) {
-          return "Who around here is worth knowing properly if I want to stop feeling new?";
+          return "Who would you talk to next if you were new here?";
         }
         return undefined;
       case "npc-ada":
         if (!replyTopics.has("work")) {
-          return "Do you actually need hands, or am I already too late?";
+          return "Do you still need hands, or did lunch beat me here?";
         }
-        return "If I help here, does that turn into something steady or just today's rush?";
+        return undefined;
       case "npc-jo":
-        return "What does somebody new waste money on before he learns better?";
+        return "What should someone new avoid spending money on?";
       case "npc-tomas":
         if (!replyTopics.has("work") && !replyTopics.has("yard")) {
-          return "Does the yard actually still need hands, or am I chasing yesterday's opening?";
+          return "Does the yard still need hands, or did I miss the easy part?";
         }
-        return "If I pull my weight in the yard, does that open anything steadier than today's coins?";
+        return "If I do a good job here, is there anyone I should check with after?";
       case "npc-nia":
         return "Who actually makes South Quay feel less strange once you know them?";
       default:
@@ -2047,22 +2744,40 @@ function buildAutonomousFollowup(
 
   if (objectiveFocus === "work") {
     if (npcId === "npc-ada") {
+      if (replyNamesTomasLead) {
+        return undefined;
+      }
       if (!replyTopics.has("work")) {
         return "Do you actually need hands, or should I keep moving?";
       }
-      return /\bfourteen\b|\bpay\b|\bcoin\b|\bcoins\b/.test(lastNpcReply ?? "")
-        ? "If I take it, what does the room need from me first?"
-        : "What does it pay if I keep up?";
+      if (
+        /\bfourteen\b|\bpay\b|\bpays\b|\bshift\b|\bcoin\b|\bcoins\b/.test(
+          normalizedReply,
+        )
+      ) {
+        return undefined;
+      }
+      return "What does it pay if I keep up?";
     }
 
     if (npcId === "npc-tomas") {
       if (!replyTopics.has("work") && !replyTopics.has("yard")) {
-        return "Is the yard actually short a back, or am I too late?";
+        return "Is the yard actually short on hands, or am I too late?";
       }
-      return "If I step into the yard, what's the pay and what kind of pace are you expecting from me?";
+      if (
+        /\btwenty-four\b|\bcrates?\b|\bcart lane\b|\bbay\b|\bpay\b|\bpays\b/.test(
+          normalizedReply,
+        )
+      ) {
+        return undefined;
+      }
+      return "If I take it, what do you need me to move first?";
     }
 
     if (npcId === "npc-mara") {
+      if (replyNamesAdaLead) {
+        return undefined;
+      }
       return "Who on this block actually follows through when work opens up?";
     }
   }
@@ -2144,7 +2859,7 @@ function acceptJob(world: StreetGameState, jobId: string): void {
   }
 
   if (world.player.activeJobId && world.player.activeJobId !== job.id) {
-    addFeed(world, "info", "You are already carrying another commitment.");
+    addFeed(world, "info", "You already have another commitment.");
     return;
   }
 
@@ -2292,7 +3007,7 @@ function workJob(world: StreetGameState, jobId: string): void {
   }
 
   if (world.player.energy < 28) {
-    addFeed(world, "info", "You are too worn down to be useful on this shift.");
+    addFeed(world, "info", "You are too worn down to be much help on this shift.");
     return;
   }
 
@@ -2446,9 +3161,77 @@ function inspectLead(world: StreetGameState, targetId: string): void {
     addFeed(
       world,
       "problem",
-      "The split wheel on the handcart is already starting to snag foot traffic through the square.",
+      "The split wheel on the handcart is already starting to jam foot traffic through the square.",
     );
   }
+}
+
+function contributeToLocation(world: StreetGameState, locationId: string): void {
+  const location = currentLocation(world);
+  if (!location || location.id !== locationId) {
+    addFeed(world, "info", "Rowan needs to be there before he can pull his weight.");
+    return;
+  }
+
+  if (location.id !== world.player.homeLocationId) {
+    addFeed(
+      world,
+      "info",
+      "That kind of steady, local chore work only really counts at Morrow House right now.",
+    );
+    return;
+  }
+
+  if (world.player.energy < 24) {
+    addFeed(world, "info", "Rowan is too worn down to be much help around the house.");
+    return;
+  }
+
+  advanceWorld(world, 60);
+  world.player.energy = clamp(world.player.energy - 10, 12, 100);
+  world.player.reputation.morrow_house = clamp(
+    (world.player.reputation.morrow_house ?? 0) + 1,
+    0,
+    10,
+  );
+  addFeed(
+    world,
+    "memory",
+    "Rowan spent the hour sweeping the stairs, straightening the entry, and making Morrow House feel a little easier.",
+  );
+  remember(
+    world,
+    "self",
+    "You kept your head down and helped the house run more cleanly for an hour.",
+  );
+}
+
+function markCurrentObjectiveStepCompleted(
+  world: StreetGameState,
+  routeKey: string,
+  stepId: string,
+): void {
+  const objective = world.player.objective;
+  if (!objective || objective.routeKey !== routeKey) {
+    return;
+  }
+
+  const step = objective.trail.find((candidate) => candidate.id === stepId);
+  if (!step) {
+    return;
+  }
+
+  step.done = true;
+
+  if (objective.completedTrail.some((candidate) => candidate.id === stepId)) {
+    return;
+  }
+
+  objective.completedTrail.unshift({
+    ...step,
+    done: true,
+    timestamp: world.currentTime,
+  });
 }
 
 function restAtHome(world: StreetGameState): void {
@@ -2469,6 +3252,7 @@ function restAtHome(world: StreetGameState): void {
     12,
     100,
   );
+  world.player.lastRestAt = world.currentTime;
   addFeed(
     world,
     "memory",
@@ -2476,6 +3260,7 @@ function restAtHome(world: StreetGameState): void {
       ? "You rested in a quiet room at Morrow House and felt the hour actually land."
       : "You rested, but the house never quite stopped sounding busy and unfinished.",
   );
+  markCurrentObjectiveStepCompleted(world, "rest-home", "rest-hour");
 }
 
 function resolvePassiveState(world: StreetGameState): void {
@@ -2749,13 +3534,37 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
       id: "buy:item-wrench",
       label: "Buy old wrench",
       description:
-        "A solid tool for $8. Heavy, ugly, and exactly as useful as that sounds.",
+        "A solid tool for $8. Heavy, ugly, and friendly once it starts turning.",
       kind: "buy",
       emphasis: "medium",
       disabled: world.player.money < 8,
       disabledReason:
         world.player.money < 8
           ? "You only have enough money to be thoughtful, not equipped."
+          : undefined,
+    });
+  }
+
+  const houseStanding = world.player.reputation.morrow_house ?? 0;
+  const maraTopics = conversationTopicsForNpc(world, "npc-mara");
+  const stayTermsClear =
+    houseStanding >= 2 || hasAnyConversationTopic(maraTopics, ["home", "stay"]);
+  if (
+    location?.id === world.player.homeLocationId &&
+    stayTermsClear &&
+    houseStanding < 2
+  ) {
+    actions.push({
+      id: `contribute:${location.id}`,
+      label: "Handle house chores",
+      description:
+        "Sweep stairs, tidy the entry, and take some weight off the house before the day tightens up.",
+      kind: "contribute",
+      emphasis: "high",
+      disabled: world.player.energy < 24,
+      disabledReason:
+        world.player.energy < 24
+          ? "You are too drained to be much help around the house."
           : undefined,
     });
   }
@@ -2896,7 +3705,7 @@ function syncNpcInnerState(world: StreetGameState) {
           !playerHasWrench
             ? "That wrench should leave the bench before dusk."
             : narrative.context;
-        npc.mood = "blunt";
+        npc.mood = "dry";
         npc.openness = clamp(npc.openness || 44, 22, 82);
         break;
       case "npc-tomas":
@@ -2906,8 +3715,8 @@ function syncNpcInnerState(world: StreetGameState) {
             ? "That lift needs finishing clean."
             : hour < 14
               ? narrative.context
-              : "Keep the yard from slowing to somebody else's pace.";
-        npc.mood = "hard-edged";
+              : "Keep the yard moving without rushing anyone into a mistake.";
+        npc.mood = "busy";
         npc.openness = clamp(npc.openness || 34, 18, 74);
         break;
       case "npc-nia":
@@ -2953,6 +3762,10 @@ function findLocationAt(world: StreetGameState, x: number, y: number) {
 
 function currentHour(world: StreetGameState) {
   return world.clock.hour + world.clock.minute / 60;
+}
+
+function totalMinutesForDayHour(day: number, hour: number) {
+  return Math.max(0, day - 1) * 24 * 60 + hour * 60;
 }
 
 function isLocationOpen(world: StreetGameState, location: LocationState) {
@@ -3032,6 +3845,26 @@ function countPlayerConversationsWithNpc(
   return world.conversations.filter(
     (entry) => entry.npcId === npcId && entry.speaker === "player",
   ).length;
+}
+
+function conversationTopicsForNpc(world: StreetGameState, npcId: string) {
+  const topics = new Set<string>();
+
+  for (const entry of world.conversations) {
+    if (entry.npcId !== npcId || entry.speaker !== "npc") {
+      continue;
+    }
+
+    for (const topic of detectConversationTopics(entry.text)) {
+      topics.add(topic);
+    }
+  }
+
+  return topics;
+}
+
+function hasAnyConversationTopic(topics: Set<string>, candidates: string[]) {
+  return candidates.some((candidate) => topics.has(candidate));
 }
 
 function countUniqueNpcConversations(world: StreetGameState) {
@@ -3161,16 +3994,16 @@ function buildAutonomousContinuation(
         ? "Who should I see after you if I'm trying to get my feet under me here?"
         : "What would stop me from still feeling new by tonight?";
     case "work":
-      return "So if the money isn't right here, where do I put my feet next?";
+      return "So if the work is not here, where should I try next?";
     case "help":
-      return "What needs doing first if I want to help instead of hover?";
+      return "What needs doing first?";
     case "tool":
       return "If I spend the coin, what does it actually unlock for me?";
     case "explore":
     case "people":
       return nextNpc
-        ? `Who should I go see after you if I'm making the rounds properly?`
-        : "What am I still not reading right on this block?";
+        ? `Who should I go see after you?`
+        : "What am I still missing about this block?";
     case "rest":
       return "What can wait until I've got my legs back under me?";
     default:
@@ -3264,10 +4097,10 @@ function deriveConversationResolution(
 
   if (socialLoopObjective && nextNpc) {
     return {
-      decision: `talk to ${nextNpc.name} next and keep the rounds going.`,
+      decision: `talk to ${nextNpc.name} next.`,
       memoryKind: "person",
-      memoryText: `${npc.name} gave the block a clearer shape, but you're still not done making the rounds.`,
-      objectiveText: `Talk to ${nextNpc.name} next and keep the rounds going.`,
+      memoryText: `${npc.name} gave the block a clearer shape and pointed you toward the next person.`,
+      objectiveText: `Talk to ${nextNpc.name} next.`,
     };
   }
 
@@ -3284,7 +4117,7 @@ function deriveConversationResolution(
             "get to Mercer Repairs for a wrench, then come back to the pump.",
           memoryKind: "problem",
           memoryText:
-            "Talking with Mara made it plain that fixing the pump is the fastest way to stop looking like you're only passing through.",
+            "Mara made it plain that fixing the pump would make the house easier for everyone.",
           objectiveText: shouldSharpenObjective
             ? "Buy a wrench and fix the pump."
             : undefined,
@@ -3317,10 +4150,10 @@ function deriveConversationResolution(
       ) {
         return {
           decision:
-            "get to Kettle & Lamp before the rush hardens and ask Ada for work.",
+            "get to Kettle & Lamp before lunch gets busy and ask Ada for work.",
           memoryKind: "job",
           memoryText:
-            "Mara reads usefulness in who follows through, not who sounds hungry.",
+            "Mara trusts follow-through more than worry, and Ada is the nearest honest place to start.",
           objectiveText: shouldSharpenObjective
             ? "Get to Kettle & Lamp and ask Ada for work."
             : undefined,
@@ -3354,12 +4187,12 @@ function deriveConversationResolution(
       ) {
         return {
           decision:
-            "head to North Crane Yard and see if Tomas still needs another back.",
+            "head to North Crane Yard and see if Tomas still needs another set of hands.",
           memoryKind: "job",
           memoryText:
-            "Ada points you onward only after deciding you won't embarrass the chance in front of her.",
+            "Ada sent you onward because she thinks you might hold up outside her room too.",
           objectiveText: shouldSharpenObjective
-            ? "See if Tomas still needs another back in the yard."
+            ? "See if Tomas still needs another set of hands in the yard."
             : undefined,
         };
       }
@@ -3394,7 +4227,7 @@ function deriveConversationResolution(
             "leave the stall and go use the wrench before the pump gets worse.",
           memoryKind: "problem",
           memoryText:
-            "Jo stripped the problem down to the part that still needs your hands, not more talk.",
+            "Jo made the repair feel plain: take the tool back and use it before the leak gets worse.",
           objectiveText: shouldSharpenObjective
             ? "Fix the pump in Morrow Yard."
             : undefined,
@@ -3410,10 +4243,10 @@ function deriveConversationResolution(
       ) {
         return {
           decision:
-            "stay near the yard and take the lift if the pay and timing still stand.",
+            "stay near the yard and take the loading shift if the pay and timing still work.",
           memoryKind: "job",
           memoryText:
-            "Tomas only hears the point of a conversation once it starts sounding like labor.",
+            "Tomas was clear about the work: keep the lane open, move the crates, and finish on time.",
           objectiveText: shouldSharpenObjective
             ? "Take the freight yard lift before the window closes."
             : undefined,
@@ -3440,9 +4273,9 @@ function deriveConversationResolution(
 
   if (nextNpc) {
     return {
-      decision: `keep moving and talk to ${nextNpc.name} before the next opening goes stale.`,
+      decision: `talk to ${nextNpc.name} next while there is still time.`,
       memoryKind: "person",
-      memoryText: `${npc.name} helped narrow the district down to the next useful face.`,
+      memoryText: `${npc.name} pointed Rowan toward the next person to talk to.`,
       objectiveText: shouldSharpenObjective
         ? buildNextNpcObjectiveText(nextNpc.id)
         : undefined,
@@ -3450,7 +4283,7 @@ function deriveConversationResolution(
   }
 
   return {
-    decision: `keep moving with ${closingReply.toLowerCase()}`,
+    decision: `follow up on this: ${closingReply.toLowerCase()}`,
     memoryKind: "self",
     memoryText:
       "The conversation gave you a clearer feel for where to lean next, even if it didn't hand you the whole answer.",
@@ -3470,15 +4303,15 @@ function rememberNpcIfNew(npc: NpcState, text: string) {
 function buildNextNpcObjectiveText(npcId: string) {
   switch (npcId) {
     case "npc-mara":
-      return "Show Mara how I'll pull my weight this week so the room stays mine.";
+      return "Ask Mara how to keep my room at Morrow House feeling settled.";
     case "npc-ada":
-      return "See if Ada has room for one steady pair of hands at Kettle & Lamp.";
+      return "Ask Ada if Kettle & Lamp needs steady hands today.";
     case "npc-jo":
       return "Find out what tool or repair Jo says matters before I spend coin.";
     case "npc-tomas":
-      return "See if Tomas still needs another back at North Crane Yard.";
+      return "See if Tomas still needs another set of hands at North Crane Yard.";
     case "npc-nia":
-      return "Ask Nia where the block is about to snag before the square feels it.";
+      return "Ask Nia where the block is about to jam before the square feels it.";
     default:
       return undefined;
   }
@@ -3496,13 +4329,13 @@ function buildNpcConversationImpression(
     case "npc-mara":
       return `Rowan sounded willing to ${objectiveClause(nextMove)}.`;
     case "npc-ada":
-      return `Rowan might actually keep pace if the room turns hot.`;
+      return `Rowan might keep pace when the cafe fills up.`;
     case "npc-jo":
-      return `Rowan listened for the useful part instead of the shine.`;
+      return `Rowan listened for the practical part instead of the shine.`;
     case "npc-tomas":
-      return `Rowan kept the talk close to work and timing.`;
+      return `Rowan asked about the work clearly and stayed practical.`;
     case "npc-nia":
-      return `Rowan paid attention to where the block is about to snag.`;
+      return `Rowan paid attention to where the block might jam up.`;
     default:
       return `Rowan stayed direct about wanting to ${objectiveClause(nextMove)}.`;
   }
@@ -3596,7 +4429,7 @@ function applyConversationRevelations(
         rememberIfNew(
           world,
           "person",
-          "Mara keeps measuring usefulness in terms of what gets fixed for everybody, not what sounds impressive.",
+          "Mara notices small fixes because they make the whole house easier to live in.",
         );
       }
       if (topics.has("work")) {
@@ -3647,7 +4480,7 @@ function applyConversationRevelations(
       rememberIfNew(
         world,
         "person",
-        "Nia watches for the small jams that reveal where the whole block is about to snag.",
+        "Nia watches for the small jams that reveal where the whole block might get stuck.",
       );
       break;
     default:
@@ -3803,7 +4636,7 @@ function updateClock(clock: ClockState) {
 function phaseForHour(hour: number) {
   if (hour < 6) return "Pre-dawn";
   if (hour < 11) return "Morning";
-  if (hour < 14) return "Late morning";
+  if (hour < 12) return "Late morning";
   if (hour < 18) return "Afternoon";
   if (hour < 22) return "Evening";
   return "Night";
@@ -3843,7 +4676,7 @@ function arrivalThought(
     const npc = npcById(world, plan.npcId);
     return npc
       ? `I'm at ${location.name} now. I should see whether ${npc.name} actually has a minute for me.`
-      : `I'm at ${location.name} now. I should read the room before I push any harder.`;
+      : `I'm at ${location.name} now. I should take in the room before I ask for more.`;
   }
 
   if (!plan.actionId) {
@@ -3910,7 +4743,7 @@ function roomGoalLine(world: StreetGameState) {
   }
 
   if (houseStanding >= 1) {
-    return `Stay useful enough that ${home?.name ?? "this place"} still has a bed for you tonight.`;
+    return `Keep ${home?.name ?? "this place"} easy enough that the room still feels welcome tonight.`;
   }
 
   return "Make sure tonight ends with somewhere to sleep, not another scramble.";
@@ -4025,7 +4858,8 @@ function scoreActionForObjective(
         action.kind === "talk" ||
         action.kind === "accept_job" ||
         action.kind === "work_job" ||
-        action.kind === "inspect"
+        action.kind === "inspect" ||
+        action.kind === "contribute"
       ) {
         score += 5;
       }
@@ -4111,10 +4945,20 @@ function scoreActionForObjective(
       action.kind === "talk" ||
       action.kind === "accept_job" ||
       action.kind === "work_job" ||
-      action.kind === "inspect"
+      action.kind === "inspect" ||
+      action.kind === "contribute"
     ) {
       score += 3;
     }
+  }
+
+  if (
+    /(standing|reliable|dependable|pull (my|your|their) weight|follow through|stairs|chores|entry|laundry|ledger)/.test(
+      normalized,
+    ) &&
+    action.kind === "contribute"
+  ) {
+    score += 8;
   }
 
   if (normalized.includes("pump") && action.id.includes("problem-pump")) {
@@ -4214,7 +5058,7 @@ function describeStanding(completedJobs: number, solvedProblems: number) {
   }
 
   if (usefulMoments >= 1) {
-    return "A few people have started to remember you for something useful.";
+    return "A few people have started to remember you for something helpful.";
   }
 
   return "Most of the block is still trying to place your face.";

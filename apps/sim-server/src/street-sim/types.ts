@@ -199,6 +199,9 @@ export interface ObjectiveTrailItem {
   progress?: string;
   timestamp?: string;
   done?: boolean;
+  targetLocationId?: string;
+  npcId?: string;
+  actionId?: string;
 }
 
 export interface ObjectiveProgressState {
@@ -226,6 +229,7 @@ export interface PendingObjectiveMove {
   rationale: string;
   npcId?: string;
   actionId?: string;
+  speech?: string;
   preparedAt: string;
 }
 
@@ -246,6 +250,7 @@ export interface PlayerState {
   objective?: PlayerObjective;
   pendingObjectiveMove?: PendingObjectiveMove;
   currentThought?: string;
+  lastRestAt?: string;
   reputation: Record<string, number>;
   memories: MemoryEntry[];
 }
@@ -348,6 +353,7 @@ export type ActionKind =
   | "accept_job"
   | "work_job"
   | "buy"
+  | "contribute"
   | "solve"
   | "rest"
   | "inspect";
@@ -369,6 +375,42 @@ export interface ClockState {
   minute: number;
   totalMinutes: number;
   label: string;
+}
+
+export type RowanAutonomyLayer =
+  | "commitment"
+  | "conversation"
+  | "idle"
+  | "objective";
+
+export type RowanAutonomyStepKind =
+  | "act"
+  | "blocked"
+  | "idle"
+  | "move"
+  | "observe"
+  | "reflect"
+  | "talk"
+  | "wait";
+
+export type RowanAutonomyEffect =
+  | "conversation"
+  | "memory"
+  | "objective"
+  | "thought";
+
+export interface RowanAutonomyState {
+  actionId?: string;
+  autoContinue: boolean;
+  detail: string;
+  effects?: RowanAutonomyEffect[];
+  key: string;
+  label: string;
+  layer?: RowanAutonomyLayer;
+  mode: "acting" | "blocked" | "conversation" | "idle" | "moving" | "waiting";
+  npcId?: string;
+  stepKind?: RowanAutonomyStepKind;
+  targetLocationId?: string;
 }
 
 export interface StreetGameState {
@@ -394,5 +436,6 @@ export interface StreetGameState {
   currentScene: SceneSummary;
   availableActions: ActionOption[];
   goals: string[];
+  rowanAutonomy: RowanAutonomyState;
   summary: string;
 }

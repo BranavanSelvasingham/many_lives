@@ -131,6 +131,15 @@ export function seedStreetGame(gameId: string): StreetGameState {
     },
     availableActions: [],
     goals: [],
+    rowanAutonomy: {
+      autoContinue: false,
+      detail: "Choose where Rowan should go or what he should do next.",
+      key: "idle:seed",
+      label: "Choose a direction",
+      layer: "idle",
+      mode: "idle",
+      stepKind: "idle",
+    },
     summary: "",
   };
 }
@@ -701,7 +710,7 @@ function buildNpcs(): NpcState[] {
       trust: 0,
       openness: 44,
       known: false,
-      mood: "blunt",
+      mood: "dry",
       currentObjective: jo.objective,
       currentConcern: jo.context,
       memory: [],
@@ -717,7 +726,7 @@ function buildNpcs(): NpcState[] {
       trust: 0,
       openness: 34,
       known: false,
-      mood: "hard-edged",
+      mood: "busy",
       currentObjective: tomas.objective,
       currentConcern: tomas.context,
       memory: [],
@@ -767,7 +776,7 @@ function buildJobs(): JobState[] {
       id: "job-yard-shift",
       title: "Freight yard lift",
       summary:
-        "Tomas needs an extra back for a short loading block before the river carts turn up.",
+        "Tomas needs another set of hands for a short loading block before the river carts turn up.",
       giverNpcId: "npc-tomas",
       locationId: "freight-yard",
       startHour: 13,
@@ -797,24 +806,24 @@ function buildProblems(): ProblemState[] {
       rewardMoney: 12,
       requiredItemId: "item-wrench",
       consequenceIfIgnored:
-        "If nobody fixes it by evening, Morrow Yard floods and the house turns sour for the night.",
+        "If nobody fixes it by evening, Morrow Yard gets soggy and everyone starts the night grumbling.",
       benefitIfSolved:
-        "If you fix it, Mara stops seeing you as someone only passing through.",
+        "If you fix it, Mara starts seeing Rowan as someone who notices small things.",
     },
     {
       id: "problem-cart",
       title: "Jammed handcart",
       summary:
-        "A delivery handcart is going to snarl the square once the afternoon rush starts.",
+        "A delivery handcart is going to jam the square once the lunch crowd drifts in.",
       locationId: "market-square",
       status: "hidden",
       discovered: false,
       urgency: 2,
       rewardMoney: 8,
       consequenceIfIgnored:
-        "If nobody clears it, the square slows down and people remember who only watched.",
+        "If nobody clears it, the square slows down and everyone gets mildly dramatic about it.",
       benefitIfSolved:
-        "If you clear it early, the square starts treating you like a pair of useful hands instead of driftwood.",
+        "If you clear it early, people in the square notice that Rowan helps before a problem gets loud.",
     },
   ];
 }

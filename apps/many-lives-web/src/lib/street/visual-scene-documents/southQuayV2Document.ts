@@ -444,36 +444,36 @@ const SOUTH_QUAY_V2_DOCUMENT = {
   "locationAnchors": {
     "tea-house": {
       "door": {
-        "x": 440,
-        "y": 354
+        "x": 1342,
+        "y": 580
       },
       "frontage": {
-        "x": 440,
-        "y": 340
+        "x": 1342,
+        "y": 596
       },
       "highlight": {
-        "x": 243,
-        "y": 91,
-        "width": 394,
-        "height": 262,
+        "x": 1138,
+        "y": 324,
+        "width": 412,
+        "height": 272,
         "radius": 26
       },
       "label": {
-        "x": 440,
-        "y": 118
+        "x": 1342,
+        "y": 404
       },
       "npcStands": [
         {
-          "x": 388,
-          "y": 356
+          "x": 1288,
+          "y": 612
         },
         {
-          "x": 440,
-          "y": 352
+          "x": 1342,
+          "y": 606
         },
         {
-          "x": 494,
-          "y": 356
+          "x": 1396,
+          "y": 612
         }
       ]
     },
@@ -576,32 +576,32 @@ const SOUTH_QUAY_V2_DOCUMENT = {
     },
     "freight-yard": {
       "door": {
-        "x": 1286,
-        "y": 828
+        "x": 698,
+        "y": 952
       },
       "frontage": {
-        "x": 1254,
-        "y": 842
+        "x": 698,
+        "y": 968
       },
       "highlight": {
-        "x": 1265,
-        "y": 659,
-        "width": 310,
-        "height": 262,
+        "x": 536,
+        "y": 708,
+        "width": 324,
+        "height": 268,
         "radius": 24
       },
       "label": {
-        "x": 1420,
-        "y": 800
+        "x": 698,
+        "y": 782
       },
       "npcStands": [
         {
-          "x": 1346,
-          "y": 860
+          "x": 646,
+          "y": 890
         },
         {
-          "x": 1496,
-          "y": 888
+          "x": 752,
+          "y": 890
         }
       ]
     },
@@ -670,12 +670,12 @@ const SOUTH_QUAY_V2_DOCUMENT = {
   },
   "npcAnchors": {
     "npc-ada": {
-      "x": 440,
-      "y": 352
+      "x": 1342,
+      "y": 606
     },
     "npc-jo": {
-      "x": 1240,
-      "y": 676
+      "x": 1306,
+      "y": 634
     },
     "npc-mara": {
       "x": 292,
@@ -686,8 +686,8 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "y": 952
     },
     "npc-tomas": {
-      "x": 1496,
-      "y": 888
+      "x": 752,
+      "y": 890
     }
   },
   "playerSpawn": {
