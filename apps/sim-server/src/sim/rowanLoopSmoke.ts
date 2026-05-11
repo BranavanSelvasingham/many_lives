@@ -57,7 +57,7 @@ export async function runRowanLoopSmoke(
 
   throw new Error(
     [
-      `Rowan loop smoke did not reach the expected post-rest handoff within ${maxSteps} steps.`,
+      `Rowan loop smoke did not reach the expected first-afternoon finish within ${maxSteps} steps.`,
       formatTrace(trace),
     ].join("\n"),
   );
@@ -146,12 +146,14 @@ function isSuccessfulSmokeEndState(world: StreetGameState): boolean {
 
   return Boolean(
     teaShift?.completed &&
-      world.clock.hour >= 14 &&
-      world.clock.label === "Afternoon" &&
-      world.player.currentLocationId === world.player.homeLocationId &&
-      world.player.objective?.routeKey !== "rest-home" &&
-      world.rowanAutonomy.stepKind !== "wait" &&
-      world.rowanAutonomy.targetLocationId !== world.player.homeLocationId,
+    world.firstAfternoon?.completedAt &&
+    world.clock.label === "Afternoon" &&
+    world.player.currentLocationId === world.player.homeLocationId &&
+    world.player.objective?.routeKey === "first-afternoon" &&
+    world.player.objective.progress.completed >=
+      world.player.objective.progress.total &&
+    world.rowanAutonomy.stepKind === "idle" &&
+    world.rowanAutonomy.label === "First afternoon complete",
   );
 }
 
@@ -161,7 +163,10 @@ async function main(): Promise<void> {
   process.stdout.write(`${formatTrace(result.trace)}\n`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((error) => {
     process.stderr.write(
       `[many-lives] Rowan loop smoke failed: ${error.stack ?? error.message}\n`,

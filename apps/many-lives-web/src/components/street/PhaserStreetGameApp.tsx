@@ -3082,13 +3082,25 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     canAdvanceObjectiveManually &&
     rowanAutonomy.autoContinue &&
     !snapshot.busyLabel;
+  const activeConversationContinueLabel = rowanAutonomy.label.startsWith(
+    "With ",
+  )
+    ? `Finish with ${rowanAutonomy.label.slice("With ".length)}`
+    : "Continue conversation";
+  const primaryContinueLabel = snapshot.rowanAutoplayEnabled
+    ? "Continue Now"
+    : game.activeConversation
+      ? activeConversationContinueLabel
+      : rowanAutonomy.label || "Continue";
   const primaryContinueCopy = game.activeConversation
-    ? "Finish the current conversation."
+    ? "Let the conversation land."
     : rowanAutonomy.mode === "moving"
-      ? "Walk there."
+      ? "Move Rowan there."
       : rowanAutonomy.mode === "waiting"
-        ? "Wait until the scheduled time."
-        : "Continue Rowan's plan.";
+        ? "Let the clock pass."
+        : rowanAutonomy.mode === "conversation"
+          ? "Start the conversation."
+          : "Do this step.";
   const conversationEntry = selectedNpc
     ? {
         id: `conversation-${selectedNpc.id}`,
@@ -3464,7 +3476,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                     type="button"
                   >
                     <span class="ml-primary-action-label">${escapeHtml(
-                      snapshot.rowanAutoplayEnabled ? "Continue Now" : "Continue",
+                      primaryContinueLabel,
                     )}</span>
                     <span class="ml-primary-action-copy">${escapeHtml(
                       primaryContinueCopy,
@@ -5308,7 +5320,7 @@ function buildPlayerThought(game: StreetGameState) {
   }
 
   if (game.player.energy < 38) {
-    return "I could use a proper sit-down.";
+    return "I need a minute to rest.";
   }
 
   if ((game.player.reputation.morrow_house ?? 0) < 2) {

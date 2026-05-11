@@ -13,6 +13,7 @@ interface ObjectiveRoute {
   focus: ObjectiveFocus;
   source: ObjectiveSource;
   steps: ObjectiveTrailItem[];
+  terminal?: boolean;
 }
 
 interface BuildObjectiveOptions {
@@ -37,10 +38,25 @@ export function buildPlayerObjectiveState(
 ): PlayerObjective | undefined {
   const previous = options.previous ?? world.player.objective;
   const explicitText = normalizeObjectiveText(options.text ?? "");
-  const explicitFocus = options.focus ?? (explicitText ? classifyObjective(explicitText) : undefined);
+  const explicitFocus =
+    options.focus ??
+    (explicitText ? classifyObjective(explicitText) : undefined);
   const explicitSource = options.source ?? previous?.source ?? "dynamic";
   const conversationRoute =
     explicitSource === "manual" ? undefined : chooseConversationRoute(world);
+
+  if (
+    previous &&
+    explicitText &&
+    explicitSource === "conversation" &&
+    shouldKeepFirstAfternoonRoute(previous) &&
+    shouldFirstAfternoonAbsorbConversationRoute(
+      explicitFocus ?? classifyObjective(explicitText),
+    )
+  ) {
+    const route = buildFirstAfternoonRoute(world, previous.source);
+    return composeObjective(world, previous.text, route, previous);
+  }
 
   if (explicitText) {
     const route = buildRouteForObjectiveText(
@@ -51,6 +67,18 @@ export function buildPlayerObjectiveState(
       previous,
     );
     return composeObjective(world, explicitText, route, previous);
+  }
+
+  if (
+    previous &&
+    shouldKeepFirstAfternoonRoute(previous) &&
+    (!conversationRoute ||
+      shouldFirstAfternoonAbsorbConversationRoute(
+        conversationRoute.route.focus,
+      ))
+  ) {
+    const previousRoute = buildFirstAfternoonRoute(world, previous.source);
+    return composeObjective(world, previous.text, previousRoute, previous);
   }
 
   if (conversationRoute && routeHasWork(conversationRoute.route)) {
@@ -77,13 +105,21 @@ export function buildPlayerObjectiveState(
       previous.source,
       previous,
     );
-    if (!routeCompleted(previousRoute) && !shouldInterruptCurrentObjective(world, previous)) {
+    if (
+      !routeCompleted(previousRoute) &&
+      !shouldInterruptCurrentObjective(world, previous)
+    ) {
       return composeObjective(world, previous.text, previousRoute, previous);
     }
   }
 
   const dynamicRoute = chooseDynamicRoute(world);
-  return composeObjective(world, routeHeadline(dynamicRoute), dynamicRoute, previous);
+  return composeObjective(
+    world,
+    routeHeadline(dynamicRoute),
+    dynamicRoute,
+    previous,
+  );
 }
 
 function composeObjective(
@@ -100,15 +136,24 @@ function composeObjective(
     return undefined;
   }
 
-  const updatedAt = shouldUpdateObjective(previous, route, progress, completedTrail)
+  const updatedAt = shouldUpdateObjective(
+    previous,
+    route,
+    progress,
+    completedTrail,
+  )
     ? world.currentTime
-    : previous?.updatedAt ?? world.currentTime;
+    : (previous?.updatedAt ?? world.currentTime);
   const createdAt =
-    previous && previous.routeKey === route.key && previous.focus === route.focus
+    previous &&
+    previous.routeKey === route.key &&
+    previous.focus === route.focus
       ? previous.createdAt
-      : previous?.createdAt ?? world.currentTime;
+      : (previous?.createdAt ?? world.currentTime);
   const id =
-    previous && previous.routeKey === route.key && previous.focus === route.focus
+    previous &&
+    previous.routeKey === route.key &&
+    previous.focus === route.focus
       ? previous.id
       : `objective-${route.key}-${world.clock.totalMinutes}`;
 
@@ -125,14 +170,19 @@ function composeObjective(
     progress,
   };
 
-  if (progress.completed >= progress.total) {
+  if (progress.completed >= progress.total && !route.terminal) {
     const nextRoute = chooseDynamicRoute(world, {
       routeKey: route.key,
       focus: route.focus,
     });
 
     if (nextRoute.key !== route.key || nextRoute.focus !== route.focus) {
-      return composeObjective(world, routeHeadline(nextRoute), nextRoute, objective);
+      return composeObjective(
+        world,
+        routeHeadline(nextRoute),
+        nextRoute,
+        objective,
+      );
     }
   }
 
@@ -161,7 +211,10 @@ function shouldUpdateObjective(
     return true;
   }
 
-  if (previous.progress.completed !== progress.completed || previous.progress.total !== progress.total) {
+  if (
+    previous.progress.completed !== progress.completed ||
+    previous.progress.total !== progress.total
+  ) {
     return true;
   }
 
@@ -177,7 +230,9 @@ function buildCompletedTrail(
   previous: PlayerObjective | undefined,
   steps: ObjectiveTrailItem[],
 ) {
-  const completed = previous?.completedTrail ? [...previous.completedTrail] : [];
+  const completed = previous?.completedTrail
+    ? [...previous.completedTrail]
+    : [];
   const completedIds = new Set(completed.map((item) => item.id));
 
   for (const step of steps) {
@@ -209,6 +264,14 @@ function routeCompleted(route: ObjectiveRoute) {
   return route.steps.every((step) => step.done);
 }
 
+function shouldKeepFirstAfternoonRoute(previous: PlayerObjective) {
+  return previous.routeKey === "first-afternoon";
+}
+
+function shouldFirstAfternoonAbsorbConversationRoute(focus: ObjectiveFocus) {
+  return focus === "settle" || focus === "work";
+}
+
 function shouldInterruptCurrentObjective(
   world: StreetGameState,
   previous: PlayerObjective,
@@ -216,11 +279,7 @@ function shouldInterruptCurrentObjective(
   if (previous.source === "manual") {
     const scores = scoreObjectiveFocus(world);
     const restScore = scoreForFocus(scores, "rest");
-    return (
-      !hasRecentRest(world) &&
-      world.player.energy < 35 &&
-      restScore >= 35
-    );
+    return !hasRecentRest(world) && world.player.energy < 35 && restScore >= 35;
   }
 
   const scores = scoreObjectiveFocus(world);
@@ -233,7 +292,11 @@ function shouldInterruptCurrentObjective(
     return false;
   }
 
-  if (bestFocus === "rest" && world.player.energy < 45 && !hasRecentRest(world)) {
+  if (
+    bestFocus === "rest" &&
+    world.player.energy < 45 &&
+    !hasRecentRest(world)
+  ) {
     return true;
   }
 
@@ -269,6 +332,15 @@ function chooseDynamicRoute(
     }
   }
 
+  const firstAfternoonRoute = buildFirstAfternoonRoute(world, "dynamic");
+  if (
+    !world.firstAfternoon?.completedAt &&
+    !isAvoidedRoute(firstAfternoonRoute, avoid) &&
+    routeHasWork(firstAfternoonRoute)
+  ) {
+    return firstAfternoonRoute;
+  }
+
   const conversationRoute = chooseConversationRoute(world);
   if (
     conversationRoute &&
@@ -279,7 +351,9 @@ function chooseDynamicRoute(
   }
 
   const scores = scoreObjectiveFocus(world);
-  const ranked = Object.entries(scores).sort((left, right) => right[1] - left[1]);
+  const ranked = Object.entries(scores).sort(
+    (left, right) => right[1] - left[1],
+  );
 
   for (const [focus, score] of ranked) {
     if (score <= 0) {
@@ -365,6 +439,15 @@ function buildRouteForObjectiveText(
   source: ObjectiveSource,
   previous?: PlayerObjective,
 ): ObjectiveRoute {
+  if (
+    normalizedIncludes(text, "first afternoon") ||
+    (previous?.routeKey === "first-afternoon" &&
+      source !== "manual" &&
+      normalizeObjectiveText(text) === normalizeObjectiveText(previous.text))
+  ) {
+    return buildFirstAfternoonRoute(world, source);
+  }
+
   switch (focus) {
     case "work":
       return buildWorkRoute(world, source, text);
@@ -385,6 +468,112 @@ function buildRouteForObjectiveText(
   }
 }
 
+function buildFirstAfternoonRoute(
+  world: StreetGameState,
+  source: ObjectiveSource,
+): ObjectiveRoute {
+  const home = findLocation(world, world.player.homeLocationId);
+  const teaJob = jobById(world, "job-tea-shift");
+  const hasTalkedToMara =
+    countPlayerConversationsWithNpc(world, "npc-mara") > 0;
+  const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
+  const hasTakenTeaShift = Boolean(
+    teaJob?.accepted ||
+    teaJob?.completed ||
+    world.player.activeJobId === "job-tea-shift",
+  );
+  const hasFinishedTeaShift = Boolean(teaJob?.completed);
+  const atHome = world.player.currentLocationId === world.player.homeLocationId;
+  const wrappedFirstAfternoon = Boolean(world.firstAfternoon?.completedAt);
+
+  return {
+    key: "first-afternoon",
+    focus: "settle",
+    source,
+    terminal: true,
+    steps: [
+      makeStep({
+        id: "first-afternoon-room",
+        title: "Ask Mara how to keep tonight's room.",
+        detail: hasTalkedToMara
+          ? "Mara explained how Morrow House works."
+          : "Ask what the room costs, what the house expects, and how tonight works.",
+        progress: hasTalkedToMara ? "Mara has weighed in" : "Talk to Mara",
+        done: hasTalkedToMara,
+        npcId: "npc-mara",
+        targetLocationId: home?.id,
+      }),
+      makeStep({
+        id: "first-afternoon-ada-lead",
+        title: "Ask Ada if Kettle & Lamp needs help today.",
+        detail: hasTalkedToAda
+          ? "Ada made the tea-house lead concrete."
+          : "Ask Ada directly if there is work Rowan can do today.",
+        progress: hasTalkedToAda ? "Ada asked" : "Find Ada",
+        done: hasTalkedToAda || hasTakenTeaShift || hasFinishedTeaShift,
+        npcId: "npc-ada",
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
+        id: "first-afternoon-take-shift",
+        title: "Take the cup-and-counter shift.",
+        detail: hasTakenTeaShift
+          ? "Rowan has the shift."
+          : "Say yes to the cup-and-counter shift.",
+        progress: hasTakenTeaShift
+          ? "Shift taken"
+          : teaJob?.discovered
+            ? "Offer ready"
+            : "Need the offer",
+        done: hasTakenTeaShift || hasFinishedTeaShift,
+        actionId:
+          teaJob && !teaJob.completed && !teaJob.missed
+            ? teaJob.accepted || world.player.activeJobId === teaJob.id
+              ? `work:${teaJob.id}`
+              : teaJob.discovered
+                ? `accept:${teaJob.id}`
+                : undefined
+            : undefined,
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
+        id: "first-afternoon-finish-shift",
+        title: "Finish the shift and get paid.",
+        detail: hasFinishedTeaShift
+          ? "Rowan worked the shift and got paid."
+          : "Work the shift and leave with pay.",
+        progress: hasFinishedTeaShift ? "Paid" : "Still ahead",
+        done: hasFinishedTeaShift,
+        actionId:
+          teaJob && !teaJob.completed && !teaJob.missed
+            ? `work:${teaJob.id}`
+            : undefined,
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
+        id: "first-afternoon-take-stock",
+        title: "Head back to Morrow House and take stock.",
+        detail: wrappedFirstAfternoon
+          ? "Rowan made it through the first afternoon with a room to return to, paid work, and a clearer map of the block."
+          : atHome && hasFinishedTeaShift
+            ? "Stop for a minute and count what changed today."
+            : "Go back to Morrow House before ending the first afternoon.",
+        progress: wrappedFirstAfternoon
+          ? "First afternoon complete"
+          : atHome
+            ? "Ready to take stock"
+            : "Head home",
+        done: wrappedFirstAfternoon,
+        actionId:
+          atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
+            ? "reflect:first-afternoon"
+            : undefined,
+        targetLocationId: home?.id,
+      }),
+    ],
+  };
+}
+
 function buildSettleRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -396,9 +585,11 @@ function buildSettleRoute(
   const familiarPeople = familiarNpcCount(world);
   const lead = chooseWorkLead(world, textHint);
   const houseStanding = world.player.reputation.morrow_house ?? 0;
-  const hasTalkedToMara = countPlayerConversationsWithNpc(world, "npc-mara") > 0;
+  const hasTalkedToMara =
+    countPlayerConversationsWithNpc(world, "npc-mara") > 0;
   const maraTopics = npcReplyTopics(world, "npc-mara");
-  const hasStayTerms = houseStanding >= 2 || hasAnyTopic(maraTopics, ["home", "stay"]);
+  const hasStayTerms =
+    houseStanding >= 2 || hasAnyTopic(maraTopics, ["home", "stay"]);
   const hasWorkLead = hasConfirmedWorkLead(world);
   const hasCommittedIncome = hasCommittedOrCompletedJob(world);
   const settleLeadNpcId = lead === "yard" ? "npc-tomas" : "npc-ada";
@@ -453,14 +644,13 @@ function buildSettleRoute(
           lead === "yard"
             ? "The yard is a reliable place to turn effort into decent pay."
             : "The tea room is a strong place to turn conversation into work.",
-        progress:
-          hasWorkLead
-            ? "Lead locked"
-            : teaJob?.discovered || yardJob?.discovered
-              ? "Lead spotted"
-              : hasCommittedIncome
-                ? "Work in hand"
-                : "Looking",
+        progress: hasWorkLead
+          ? "Lead locked"
+          : teaJob?.discovered || yardJob?.discovered
+            ? "Lead spotted"
+            : hasCommittedIncome
+              ? "Work in hand"
+              : "Looking",
         done: hasWorkLead,
         npcId: settleLeadNpcId,
         targetLocationId: settleLeadLocationId,
@@ -468,10 +658,9 @@ function buildSettleRoute(
       makeStep({
         id: "settle-income",
         title: "Turn that lead into steady pay.",
-        detail:
-          hasCommittedIncome
-            ? "Real work is finally taking shape."
-            : "A lead matters once Rowan commits and follows through.",
+        detail: hasCommittedIncome
+          ? "Real work is finally taking shape."
+          : "A lead matters once Rowan commits and follows through.",
         progress:
           world.player.activeJobId !== undefined
             ? "Working"
@@ -482,9 +671,7 @@ function buildSettleRoute(
                 : "Looking",
         done: hasCommittedIncome,
         actionId:
-          settleLeadJob &&
-          !settleLeadJob.completed &&
-          !settleLeadJob.missed
+          settleLeadJob && !settleLeadJob.completed && !settleLeadJob.missed
             ? settleLeadJob.accepted ||
               world.player.activeJobId === settleLeadJob.id
               ? `work:${settleLeadJob.id}`
@@ -505,7 +692,9 @@ function buildSettleRoute(
         done: familiarPeople >= 2,
         npcId: familiarPeople < 2 ? settlePeopleTarget?.id : undefined,
         targetLocationId:
-          familiarPeople < 2 ? settlePeopleTarget?.currentLocationId : undefined,
+          familiarPeople < 2
+            ? settlePeopleTarget?.currentLocationId
+            : undefined,
       }),
     ],
   };
@@ -519,9 +708,12 @@ function buildWorkRoute(
   const lead = chooseWorkLead(world, textHint);
   const teaJob = jobById(world, "job-tea-shift");
   const yardJob = jobById(world, "job-yard-shift");
-  const leadNpc = lead === "yard" ? npcById(world, "npc-tomas") : npcById(world, "npc-ada");
+  const leadNpc =
+    lead === "yard" ? npcById(world, "npc-tomas") : npcById(world, "npc-ada");
   const leadLocation =
-    lead === "yard" ? findLocation(world, "freight-yard") : findLocation(world, "tea-house");
+    lead === "yard"
+      ? findLocation(world, "freight-yard")
+      : findLocation(world, "tea-house");
   const leadJob = lead === "yard" ? yardJob : teaJob;
   const anyCompletedWork = world.jobs.some((job) => job.completed);
 
@@ -562,7 +754,7 @@ function buildWorkRoute(
         progress:
           leadJob?.accepted || world.player.activeJobId === leadJob?.id
             ? "Committed"
-          : leadJob?.completed
+            : leadJob?.completed
               ? "Already worked"
               : leadJob?.discovered
                 ? "Lead waiting"
@@ -615,7 +807,8 @@ function buildCommittedJobRoute(
 ): ObjectiveRoute {
   const location = findLocation(world, job.locationId);
   const atLocation = world.player.currentLocationId === job.locationId;
-  const inWindow = currentHour(world) >= job.startHour && currentHour(world) < job.endHour;
+  const inWindow =
+    currentHour(world) >= job.startHour && currentHour(world) < job.endHour;
 
   return {
     key: `commitment-${job.id}`,
@@ -625,7 +818,8 @@ function buildCommittedJobRoute(
       makeStep({
         id: `commitment-go-${job.id}`,
         title: `Get to ${location?.name ?? "the job site"} for ${job.title.toLowerCase()}.`,
-        detail: "A live commitment should be the first thing Rowan can actually cash in.",
+        detail:
+          "A live commitment should be the first thing Rowan can actually cash in.",
         progress: atLocation ? "On site" : "Still moving",
         done: atLocation || job.completed,
         targetLocationId: location?.id,
@@ -668,8 +862,10 @@ function buildHelpRoute(
     normalizedIncludes(textHint, "wrench") ||
     pumpProblem?.discovered ||
     false;
-  const problem = isPumpLead ? pumpProblem : cartProblem ?? pumpProblem;
-  const problemLocation = problem ? findLocation(world, problem.locationId) : undefined;
+  const problem = isPumpLead ? pumpProblem : (cartProblem ?? pumpProblem);
+  const problemLocation = problem
+    ? findLocation(world, problem.locationId)
+    : undefined;
 
   if (problem?.id === "problem-cart") {
     return {
@@ -680,7 +876,8 @@ function buildHelpRoute(
         makeStep({
           id: "help-cart-inspect",
           title: `Inspect the jammed cart in ${problemLocation?.name ?? "Quay Square"}.`,
-          detail: "The wheel is already starting to catch on the square's traffic.",
+          detail:
+            "The wheel is already starting to catch on the square's traffic.",
           progress: problem.discovered ? "Problem seen" : "Still a rumor",
           done: problem.discovered,
           actionId: "inspect:problem-cart",
@@ -689,7 +886,8 @@ function buildHelpRoute(
         makeStep({
           id: "help-cart-solve",
           title: "Clear the cart before it snarls the square.",
-          detail: "The square works better when somebody moves trouble before it spreads.",
+          detail:
+            "The square works better when somebody moves trouble before it spreads.",
           progress: problem.status === "solved" ? "Solved" : "Active",
           done: problem.status === "solved",
           actionId: "solve:problem-cart",
@@ -707,10 +905,9 @@ function buildHelpRoute(
       makeStep({
         id: "help-pump-inspect",
         title: `Inspect the pump in ${problemLocation?.name ?? "Morrow Yard"}.`,
-        detail:
-          problem?.discovered
-            ? "Rowan knows enough to tell the leak is one bad turn away from a worse day."
-            : "A closer look will tell Rowan whether this is his problem or just nearby trouble.",
+        detail: problem?.discovered
+          ? "Rowan knows enough to tell the leak is one bad turn away from a worse day."
+          : "A closer look will tell Rowan whether this is his problem or just nearby trouble.",
         progress: problem?.discovered ? "Problem seen" : "Still a lead",
         done: Boolean(problem?.discovered),
         actionId: "inspect:problem-pump",
@@ -718,7 +915,9 @@ function buildHelpRoute(
       }),
       makeStep({
         id: "help-pump-tool",
-        title: hasWrench ? "Bring the wrench back to the pump." : "Buy a wrench from Jo.",
+        title: hasWrench
+          ? "Bring the wrench back to the pump."
+          : "Buy a wrench from Jo.",
         detail: hasWrench
           ? "The tool is in hand. The yard just needs Rowan to use it."
           : "Jo is the easiest place to turn loose coins into something that helps.",
@@ -730,7 +929,8 @@ function buildHelpRoute(
       makeStep({
         id: "help-pump-fix",
         title: "Fix the leak before it spreads.",
-        detail: "South Quay remembers the people who solve trouble before it gets loud.",
+        detail:
+          "South Quay remembers the people who solve trouble before it gets loud.",
         progress: problem?.status === "solved" ? "Solved" : "Active",
         done: problem?.status === "solved",
         actionId: "solve:problem-pump",
@@ -747,10 +947,13 @@ function buildToolRoute(
 ): ObjectiveRoute {
   const pumpProblem = problemById(world, "problem-pump");
   const cartProblem = problemById(world, "problem-cart");
-  const target = pumpProblem?.discovered || normalizedIncludes(textHint, "pump")
-    ? pumpProblem
-    : cartProblem ?? pumpProblem;
-  const targetLocation = target ? findLocation(world, target.locationId) : undefined;
+  const target =
+    pumpProblem?.discovered || normalizedIncludes(textHint, "pump")
+      ? pumpProblem
+      : (cartProblem ?? pumpProblem);
+  const targetLocation = target
+    ? findLocation(world, target.locationId)
+    : undefined;
   const hasWrench = hasItem(world, "item-wrench");
 
   return {
@@ -761,7 +964,8 @@ function buildToolRoute(
       makeStep({
         id: "tool-buy",
         title: "Buy a wrench from Jo.",
-        detail: "A tool is only a tool until it reaches the problem that needs it.",
+        detail:
+          "A tool is only a tool until it reaches the problem that needs it.",
         progress: hasWrench ? "Bought" : "Needed",
         done: hasWrench,
         actionId: hasWrench ? undefined : "buy:item-wrench",
@@ -778,15 +982,16 @@ function buildToolRoute(
           hasWrench &&
           Boolean(
             target &&
-              (world.player.currentLocationId === target.locationId ||
-                target.status === "solved"),
+            (world.player.currentLocationId === target.locationId ||
+              target.status === "solved"),
           ),
         targetLocationId: target?.locationId,
       }),
       makeStep({
         id: "tool-use",
         title: "Use it before the trouble spreads.",
-        detail: "The right tool should end the problem, not just change the label on it.",
+        detail:
+          "The right tool should end the problem, not just change the label on it.",
         progress: target?.status === "solved" ? "Solved" : "Active",
         done: target?.status === "solved",
         actionId: target ? `solve:${target.id}` : undefined,
@@ -815,10 +1020,9 @@ function buildRestRoute(
       makeStep({
         id: "rest-return",
         title: `Get back to ${home?.name ?? "Morrow House"}.`,
-        detail:
-          normalizedIncludes(textHint, "rest")
-            ? "The day is asking for a pause."
-            : "Rowan needs somewhere familiar before the hour does any good.",
+        detail: normalizedIncludes(textHint, "rest")
+          ? "The day is asking for a pause."
+          : "Rowan needs somewhere familiar before the hour does any good.",
         progress: atHome ? "Home" : "Away",
         done: atHome,
         targetLocationId: home?.id,
@@ -826,7 +1030,8 @@ function buildRestRoute(
       makeStep({
         id: "rest-hour",
         title: "Rest for an hour.",
-        detail: "The point is to stop fighting the block long enough to get your legs back.",
+        detail:
+          "The point is to stop fighting the block long enough to get your legs back.",
         progress: restLanded ? "Recovered" : `Energy ${world.player.energy}`,
         done: restLanded,
         actionId: "rest:home",
@@ -857,15 +1062,15 @@ function buildPeopleRoute(
         title: target
           ? `Talk to ${target.name} and make a proper introduction.`
           : "Talk to someone new nearby.",
-        detail:
-          normalizedIncludes(textHint, "friend")
-            ? "Rowan is looking for more than a name now."
-            : "A real introduction makes the block feel less faceless.",
-        progress: target ? `${countPlayerConversationsWithNpc(world, target.id)} chats` : "No target",
-        done:
-          target
-            ? countPlayerConversationsWithNpc(world, target.id) > 0
-            : familiarPeople > 0,
+        detail: normalizedIncludes(textHint, "friend")
+          ? "Rowan is looking for more than a name now."
+          : "A real introduction makes the block feel less faceless.",
+        progress: target
+          ? `${countPlayerConversationsWithNpc(world, target.id)} chats`
+          : "No target",
+        done: target
+          ? countPlayerConversationsWithNpc(world, target.id) > 0
+          : familiarPeople > 0,
         npcId: target?.id,
         targetLocationId: target?.currentLocationId,
       }),
@@ -893,7 +1098,9 @@ function buildPeopleRoute(
         done: trustedPeople >= 2,
         npcId: trustedPeople < 2 ? secondConnectionTarget?.id : undefined,
         targetLocationId:
-          trustedPeople < 2 ? secondConnectionTarget?.currentLocationId : undefined,
+          trustedPeople < 2
+            ? secondConnectionTarget?.currentLocationId
+            : undefined,
       }),
     ],
   };
@@ -907,7 +1114,9 @@ function buildExploreRoute(
   const target =
     preservedExploreTargetLocation(world, textHint) ??
     chooseExploreTargetLocation(world, textHint);
-  const hasVisitedTarget = target ? world.player.knownLocationIds.includes(target.id) : false;
+  const hasVisitedTarget = target
+    ? world.player.knownLocationIds.includes(target.id)
+    : false;
   const targetPeople = target
     ? world.npcs.filter((npc) => npc.currentLocationId === target.id)
     : [];
@@ -924,10 +1133,13 @@ function buildExploreRoute(
           ? `Walk to ${target.name} and see what it is for.`
           : "Walk to a corner you do not know yet.",
         detail:
-          normalizedIncludes(textHint, "map") || normalizedIncludes(textHint, "learn")
+          normalizedIncludes(textHint, "map") ||
+          normalizedIncludes(textHint, "learn")
             ? "Rowan is trying to make the district legible."
             : "A new corner is usually easier to understand once you stand in it.",
-        progress: target ? `${hasVisitedTarget ? "Known" : "Unknown"} place` : "No target",
+        progress: target
+          ? `${hasVisitedTarget ? "Known" : "Unknown"} place`
+          : "No target",
         done: hasVisitedTarget,
         targetLocationId: target?.id,
       }),
@@ -936,14 +1148,15 @@ function buildExploreRoute(
         title: targetGuide
           ? `Talk to ${targetGuide.name} there.`
           : "Talk to whoever runs that corner.",
-        detail:
-          targetGuide
-            ? `${targetGuide.name} is the most likely person to explain the place.`
-            : "Someone there should know what the corner is really for.",
+        detail: targetGuide
+          ? `${targetGuide.name} is the most likely person to explain the place.`
+          : "Someone there should know what the corner is really for.",
         progress: `${targetPeople.length} people nearby`,
         done:
           targetPeople.length > 0 &&
-          targetPeople.some((npc) => countPlayerConversationsWithNpc(world, npc.id) > 0),
+          targetPeople.some(
+            (npc) => countPlayerConversationsWithNpc(world, npc.id) > 0,
+          ),
         npcId: targetGuide?.id,
         targetLocationId: target?.id,
       }),
@@ -961,7 +1174,9 @@ function buildExploreRoute(
   };
 }
 
-function chooseConversationRoute(world: StreetGameState): ConversationObjectiveRoute | undefined {
+function chooseConversationRoute(
+  world: StreetGameState,
+): ConversationObjectiveRoute | undefined {
   const threads = Object.values(world.conversationThreads ?? {})
     .filter((thread) => thread.objectiveText)
     .sort((left, right) => compareConversationThreads(world, left, right));
@@ -1038,7 +1253,11 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
     return "tea" as const;
   }
 
-  if (hint.includes("cook") || hint.includes("counter") || hint.includes("tables")) {
+  if (
+    hint.includes("cook") ||
+    hint.includes("counter") ||
+    hint.includes("tables")
+  ) {
     return "tea" as const;
   }
 
@@ -1066,16 +1285,21 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
 }
 
 function choosePeopleTarget(world: StreetGameState, textHint = "") {
-  return npcMentionedInText(world, textHint) ?? nextUntalkedNpc(world) ?? world.npcs[0];
+  return (
+    npcMentionedInText(world, textHint) ??
+    nextUntalkedNpc(world) ??
+    world.npcs[0]
+  );
 }
 
-function chooseExploreTargetLocation(
-  world: StreetGameState,
-  textHint = "",
-) {
+function chooseExploreTargetLocation(world: StreetGameState, textHint = "") {
   const hintedNpc = npcMentionedInText(world, textHint);
   if (hintedNpc) {
-    return findLocation(world, hintedNpc.currentLocationId) ?? nextUnknownLocation(world) ?? world.locations[0];
+    return (
+      findLocation(world, hintedNpc.currentLocationId) ??
+      nextUnknownLocation(world) ??
+      world.locations[0]
+    );
   }
 
   return (
@@ -1085,11 +1309,11 @@ function chooseExploreTargetLocation(
   );
 }
 
-function preservedExploreTargetLocation(
-  world: StreetGameState,
-  textHint = "",
-) {
-  if (npcMentionedInText(world, textHint) || locationMentionedInText(world, textHint)) {
+function preservedExploreTargetLocation(world: StreetGameState, textHint = "") {
+  if (
+    npcMentionedInText(world, textHint) ||
+    locationMentionedInText(world, textHint)
+  ) {
     return undefined;
   }
 
@@ -1180,7 +1404,10 @@ function nextUnknownLocation(world: StreetGameState) {
     })[0]?.location;
 }
 
-function nearestKnownLocationDistance(world: StreetGameState, locationId: string) {
+function nearestKnownLocationDistance(
+  world: StreetGameState,
+  locationId: string,
+) {
   if (world.player.knownLocationIds.length === 0) {
     return distanceToLocation(world, locationId);
   }
@@ -1198,7 +1425,10 @@ function distanceToLocation(world: StreetGameState, locationId: string) {
     return Number.POSITIVE_INFINITY;
   }
 
-  return Math.abs(world.player.x - location.entryX) + Math.abs(world.player.y - location.entryY);
+  return (
+    Math.abs(world.player.x - location.entryX) +
+    Math.abs(world.player.y - location.entryY)
+  );
 }
 
 function locationDistance(
@@ -1239,7 +1469,10 @@ function hasItem(world: StreetGameState, itemId: string) {
   return world.player.inventory.some((entry) => entry.id === itemId);
 }
 
-function countPlayerConversationsWithNpc(world: StreetGameState, npcId: string) {
+function countPlayerConversationsWithNpc(
+  world: StreetGameState,
+  npcId: string,
+) {
   return world.conversations.filter(
     (entry) => entry.npcId === npcId && entry.speaker === "player",
   ).length;
@@ -1274,28 +1507,38 @@ function trustedNpcCount(world: StreetGameState) {
 }
 
 function hasDiscoveredWorkLead(world: StreetGameState) {
-  return world.jobs.some((job) => job.discovered || job.accepted || job.completed);
+  return world.jobs.some(
+    (job) => job.discovered || job.accepted || job.completed,
+  );
 }
 
 function confirmedWorkLeadFor(world: StreetGameState, lead: "tea" | "yard") {
-  const job = lead === "yard" ? jobById(world, "job-yard-shift") : jobById(world, "job-tea-shift");
+  const job =
+    lead === "yard"
+      ? jobById(world, "job-yard-shift")
+      : jobById(world, "job-tea-shift");
   const npcId = lead === "yard" ? "npc-tomas" : "npc-ada";
   const topics = npcReplyTopics(world, npcId);
   const requiredTopics = lead === "yard" ? ["work", "yard"] : ["work"];
 
   return Boolean(
     job?.accepted ||
-      job?.completed ||
-      (job?.discovered && hasAnyTopic(topics, requiredTopics)),
+    job?.completed ||
+    (job?.discovered && hasAnyTopic(topics, requiredTopics)),
   );
 }
 
 function hasCommittedOrCompletedJob(world: StreetGameState) {
-  return world.player.activeJobId !== undefined || world.jobs.some((job) => job.accepted || job.completed);
+  return (
+    world.player.activeJobId !== undefined ||
+    world.jobs.some((job) => job.accepted || job.completed)
+  );
 }
 
 function hasConfirmedWorkLead(world: StreetGameState) {
-  return confirmedWorkLeadFor(world, "tea") || confirmedWorkLeadFor(world, "yard");
+  return (
+    confirmedWorkLeadFor(world, "tea") || confirmedWorkLeadFor(world, "yard")
+  );
 }
 
 function normalizedIncludes(text: string, needle: string) {
@@ -1306,7 +1549,11 @@ function detectTopics(text: string) {
   const normalized = text.toLowerCase();
   const topics = new Set<string>();
 
-  if (/\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bpay\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(normalized)) {
+  if (
+    /\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bpay\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(
+      normalized,
+    )
+  ) {
     topics.add("work");
   }
 
@@ -1342,7 +1589,11 @@ function detectTopics(text: string) {
     topics.add("people");
   }
 
-  if (/\bmap\b|\blearn\b|\bexplore\b|\blane\b|\bdistrict\b|\bcity\b/.test(normalized)) {
+  if (
+    /\bmap\b|\blearn\b|\bexplore\b|\blane\b|\bdistrict\b|\bcity\b/.test(
+      normalized,
+    )
+  ) {
     topics.add("learn");
   }
 
@@ -1389,26 +1640,30 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
   return {
     work:
       (activeJob ? 60 : 0) +
-      ((teaJob?.discovered && !teaJob.completed) || (yardJob?.discovered && !yardJob.completed)
+      ((teaJob?.discovered && !teaJob.completed) ||
+      (yardJob?.discovered && !yardJob.completed)
         ? 22
         : 0) +
       (world.player.money < 15 ? 14 : 0) +
-      (topics.has("work") || topics.has("job") || topics.has("shift") ? 10 : 0) +
+      (topics.has("work") || topics.has("job") || topics.has("shift")
+        ? 10
+        : 0) +
       (currentHour(world) < 17 ? 4 : 0),
     help:
       ((pumpProblem?.discovered || cartProblem?.discovered) &&
       (pumpProblem?.status === "active" || cartProblem?.status === "active")
         ? 34
         : 0) +
-      (topics.has("help") || topics.has("fix") || topics.has("repair") ? 10 : 0) +
+      (topics.has("help") || topics.has("fix") || topics.has("repair")
+        ? 10
+        : 0) +
       (topics.has("pump") || topics.has("cart") ? 8 : 0),
     tool:
       ((pumpProblem?.discovered || cartProblem?.discovered) &&
       (pumpProblem?.requiredItemId || cartProblem?.requiredItemId) &&
       !hasWrench
         ? 42
-        : 0) +
-      (topics.has("tool") || topics.has("wrench") ? 10 : 0),
+        : 0) + (topics.has("tool") || topics.has("wrench") ? 10 : 0),
     rest:
       (!recentRest && world.player.energy < 35 ? 50 : 0) +
       (!recentRest && world.player.energy < 50 ? 18 : 0) +
@@ -1427,7 +1682,9 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
         : 0),
     explore:
       (world.player.knownLocationIds.length < 4 ? 16 : 0) +
-      (topics.has("learn") || topics.has("map") || topics.has("explore") ? 8 : 0),
+      (topics.has("learn") || topics.has("map") || topics.has("explore")
+        ? 8
+        : 0),
     settle:
       ((world.player.reputation.morrow_house ?? 0) < 2 ? 14 : 0) +
       (world.player.money < 20 ? 10 : 0) +
@@ -1438,14 +1695,14 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
 }
 
 function hasRecentRest(world: StreetGameState) {
-  const minutesSinceRest = minutesSinceTimestamp(world, world.player.lastRestAt);
+  const minutesSinceRest = minutesSinceTimestamp(
+    world,
+    world.player.lastRestAt,
+  );
   return minutesSinceRest !== null && minutesSinceRest < 120;
 }
 
-function minutesSinceTimestamp(
-  world: StreetGameState,
-  timestamp?: string,
-) {
+function minutesSinceTimestamp(world: StreetGameState, timestamp?: string) {
   if (!timestamp) {
     return null;
   }
@@ -1456,7 +1713,9 @@ function minutesSinceTimestamp(
 }
 
 function selectBestFocus(scores: ObjectiveScores): ObjectiveFocus {
-  const sorted = Object.entries(scores).sort((left, right) => right[1] - left[1]);
+  const sorted = Object.entries(scores).sort(
+    (left, right) => right[1] - left[1],
+  );
   if (!sorted[0] || sorted[0][1] <= 0) {
     return "settle";
   }
@@ -1470,9 +1729,10 @@ function scoreForFocus(scores: ObjectiveScores, focus: ObjectiveFocus) {
 
 export function classifyObjective(text: string): ObjectiveFocus {
   const normalized = text.toLowerCase();
-  const hasWorkNeed = /(work|job|money|coin|earn|pay|shift|income|kettle & lamp|tea[- ]house|north crane|counter|apron|tray|booths?|tables?|rush|gloves|bays?)/.test(
-    normalized,
-  );
+  const hasWorkNeed =
+    /(work|job|money|coin|earn|pay|shift|income|kettle & lamp|tea[- ]house|north crane|counter|apron|tray|booths?|tables?|rush|gloves|bays?)/.test(
+      normalized,
+    );
   const hasConcreteHousingNeed =
     /(stay|home|house|bed|rent|lodg|shelter|tenant|morrow house)/.test(
       normalized,
@@ -1487,12 +1747,12 @@ export function classifyObjective(text: string): ObjectiveFocus {
       normalized,
     );
   const hasHomeNeed = hasConcreteHousingNeed;
-  const hasPeopleNeed = /(talk|meet|people|trust|introduce|friend|friends|belong)/.test(
-    normalized,
-  );
-  const hasStabilityNeed = /(\bstanding\b|\breliable\b|\bdependable\b|follow through|follow-through|pull (my|your|their) weight|steady tenant)/.test(
-    normalized,
-  );
+  const hasPeopleNeed =
+    /(talk|meet|people|trust|introduce|friend|friends|belong)/.test(normalized);
+  const hasStabilityNeed =
+    /(\bstanding\b|\breliable\b|\bdependable\b|follow through|follow-through|pull (my|your|their) weight|steady tenant)/.test(
+      normalized,
+    );
 
   if (pointsToSpecificWorkLead && !hasConcreteHousingNeed) {
     return "work";
@@ -1546,7 +1806,10 @@ export function classifyObjective(text: string): ObjectiveFocus {
 }
 
 function normalizeObjectiveText(text: string) {
-  const cleaned = text.replace(/\s+/g, " ").trim().replace(/^"+|"+$/g, "");
+  const cleaned = text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^"+|"+$/g, "");
   const maxChars = 140;
   if (cleaned.length <= maxChars) {
     return cleaned;
@@ -1562,7 +1825,17 @@ function normalizeObjectiveText(text: string) {
 }
 
 function routeHeadline(route: ObjectiveRoute) {
-  return route.steps.find((step) => !step.done)?.title ?? defaultObjectiveTextForFocus(route.focus);
+  if (
+    route.key === "first-afternoon" &&
+    route.steps.every((step) => step.done)
+  ) {
+    return "First afternoon complete.";
+  }
+
+  return (
+    route.steps.find((step) => !step.done)?.title ??
+    defaultObjectiveTextForFocus(route.focus)
+  );
 }
 
 function defaultObjectiveTextForFocus(focus: ObjectiveFocus) {

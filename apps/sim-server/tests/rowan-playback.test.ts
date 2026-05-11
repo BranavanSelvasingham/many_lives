@@ -214,7 +214,7 @@ describe("Rowan playback helpers", () => {
     });
 
     expect(railView.now.title).toBe(world.rowanAutonomy.label);
-    expect(railView.next?.title).toBe("Lock in my stay at Morrow House.");
+    expect(railView.next?.title).toBe("Ask Mara how to keep tonight's room.");
 
     const liveConversation = await engine.runCommand(world, {
       type: "act",
@@ -233,7 +233,7 @@ describe("Rowan playback helpers", () => {
     expect(liveRailView.shouldAutoOpen).toBe(true);
   });
 
-  it("drops the stale route headline once Rowan is already home and resting", async () => {
+  it("shows the finish state once Rowan is already home and the first afternoon is done", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("rowan-playback-home-rest");
 
@@ -244,7 +244,7 @@ describe("Rowan playback helpers", () => {
       });
       if (
         world.player.currentLocationId === "boarding-house" &&
-        world.rowanAutonomy.actionId === "rest:home"
+        world.rowanAutonomy.label === "First afternoon complete"
       ) {
         break;
       }
@@ -258,7 +258,7 @@ describe("Rowan playback helpers", () => {
       quietStatusLabel: world.currentScene.title,
     });
 
-    expect(railView.now.title).toBe("Rest for an hour");
+    expect(railView.now.title).toBe("First afternoon complete");
     expect(railView.next).toBeNull();
   });
 });

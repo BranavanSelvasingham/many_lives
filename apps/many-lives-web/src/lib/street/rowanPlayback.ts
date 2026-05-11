@@ -194,13 +194,13 @@ export function alignRowanPlaybackWithGame(
   };
 }
 
-export function isBlockingRowanPlayback(state: RowanPlaybackState | null | undefined) {
+export function isBlockingRowanPlayback(
+  state: RowanPlaybackState | null | undefined,
+) {
   return Boolean(state?.activeBeat || state?.queuedBeats.length);
 }
 
-export function estimateLiveConversationBeatMs(
-  game: StreetGameState,
-): number {
+export function estimateLiveConversationBeatMs(game: StreetGameState): number {
   if (!game.activeConversation?.lines.length) {
     return 0;
   }
@@ -251,7 +251,9 @@ export function deriveRowanPlaybackBeats(
 
   const beats: RowanPlaybackBeat[] = [];
   const playerMoveDistance = tileDistance(previousGame.player, nextGame.player);
-  const previousObjectiveText = normalizeText(previousGame.player.objective?.text);
+  const previousObjectiveText = normalizeText(
+    previousGame.player.objective?.text,
+  );
   const nextObjectiveText = normalizeText(nextGame.player.objective?.text);
   const previousJobsById = new Map(
     previousGame.jobs.map((job) => [job.id, job] as const),
@@ -307,7 +309,7 @@ export function deriveRowanPlaybackBeats(
       kind: "thread_open",
       locationId: nextGame.activeConversation.locationId,
       npcId: nextGame.activeConversation.npcId,
-      title: `Open with ${npcName}`,
+      title: `Talk to ${npcName}`,
       tone: "conversation",
     });
   }
@@ -334,7 +336,10 @@ export function deriveRowanPlaybackBeats(
   if (previousGame.activeConversation && !nextGame.activeConversation) {
     const thread =
       nextGame.conversationThreads[previousGame.activeConversation.npcId];
-    const npcName = npcNameForId(nextGame, previousGame.activeConversation.npcId);
+    const npcName = npcNameForId(
+      nextGame,
+      previousGame.activeConversation.npcId,
+    );
     const outcomeText =
       thread?.decision ??
       thread?.objectiveText ??
@@ -361,8 +366,7 @@ export function deriveRowanPlaybackBeats(
   if (completedJob) {
     const locationName =
       locationNameForId(nextGame, completedJob.locationId) ?? "the shift";
-    const payCopy =
-      moneyDelta > 0 ? ` and came away with +$${moneyDelta}` : "";
+    const payCopy = moneyDelta > 0 ? ` and came away with +$${moneyDelta}` : "";
     beats.push({
       blocking: true,
       detail: `Rowan made it through ${locationName}${payCopy}.`,
@@ -382,9 +386,7 @@ export function deriveRowanPlaybackBeats(
     if (!conversationJustLanded) {
       beats.push({
         blocking: true,
-        detail:
-          nextGame.player.objective?.text ??
-          "Rowan has a new objective.",
+        detail: nextGame.player.objective?.text ?? "Rowan has a new objective.",
         durationMs: ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
         key: `objective-shift:${nextGame.player.objective?.routeKey ?? nextGame.currentTime}`,
         kind: "objective_shift",
@@ -395,10 +397,11 @@ export function deriveRowanPlaybackBeats(
   }
 
   if (timeDeltaMinutes >= 45) {
-    const alreadyExplained = beats.some((beat) =>
-      beat.kind === "action_complete" ||
-      beat.kind === "thread_landed" ||
-      beat.kind === "objective_shift",
+    const alreadyExplained = beats.some(
+      (beat) =>
+        beat.kind === "action_complete" ||
+        beat.kind === "thread_landed" ||
+        beat.kind === "objective_shift",
     );
     if (!alreadyExplained) {
       const atHome =
@@ -450,16 +453,20 @@ export function buildRowanRailViewModel({
       : null;
   const activeBeat = liveConversationBeat ?? alignedPlayback?.activeBeat;
   const useConversationTranscript = Boolean(liveConversationBeat);
+  const completedObjectiveAutonomy =
+    objectiveIsComplete(game) &&
+    game.rowanAutonomy?.layer === "objective" &&
+    !game.rowanAutonomy.autoContinue;
   const autonomyCard = {
     detail:
-      game.rowanAutonomy?.autoContinue
+      game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
         ? game.rowanAutonomy.detail
-        : game.player.objective?.text ??
-          "Choose where Rowan should go or what he should do next.",
+        : (game.player.objective?.text ??
+          "Choose where Rowan should go or what he should do next."),
     title:
-      game.rowanAutonomy?.autoContinue
+      game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
         ? game.rowanAutonomy.label
-        : game.player.objective?.text ?? "Choose a direction",
+        : (game.player.objective?.text ?? "Choose a direction"),
     tone: beatToneForAutonomy(game.rowanAutonomy?.layer),
   };
   const nowCard = activeBeat ? railCardFromBeat(activeBeat) : autonomyCard;
@@ -471,11 +478,13 @@ export function buildRowanRailViewModel({
         : buildObjectiveNextRailCard(game, autonomyCard);
   const statusLabel = useConversationTranscript
     ? "Live conversation"
-      : activeBeat
+    : activeBeat
       ? statusLabelForBeat(activeBeat)
-      : game.rowanAutonomy?.autoContinue
-        ? "Autoplay"
-        : quietStatusLabel;
+      : completedObjectiveAutonomy
+        ? "Complete"
+        : game.rowanAutonomy?.autoContinue
+          ? "Autoplay"
+          : quietStatusLabel;
   const justHappened = useConversationTranscript
     ? null
     : alignedPlayback?.lastCompletedBeat
@@ -517,8 +526,9 @@ function trimConversationBeatText(text: string) {
 
 function sentenceCaseFragment(text: string) {
   const trimmed = text.trim();
-  return trimmed.replace(/^([\s"'(\[]*)([a-z])/, (_match, prefix, firstLetter) =>
-    `${prefix}${firstLetter.toUpperCase()}`,
+  return trimmed.replace(
+    /^([\s"'(\[]*)([a-z])/,
+    (_match, prefix, firstLetter) => `${prefix}${firstLetter.toUpperCase()}`,
   );
 }
 
@@ -549,6 +559,10 @@ function buildObjectiveNextRailCard(
   game: StreetGameState,
   nowCard: RowanRailCard,
 ): RowanRailCard | null {
+  if (objectiveIsComplete(game)) {
+    return null;
+  }
+
   const nextObjectiveStep = game.player.objective?.trail.find(
     (step) => !step.done,
   );
@@ -558,9 +572,7 @@ function buildObjectiveNextRailCard(
     "Choose Rowan's next objective.";
   const nextCard = {
     detail:
-      nextObjectiveStep?.detail ??
-      game.player.objective?.text ??
-      objectiveText,
+      nextObjectiveStep?.detail ?? game.player.objective?.text ?? objectiveText,
     title: objectiveText,
     tone: "objective" as const,
   };
@@ -600,7 +612,11 @@ function statusLabelForBeat(beat: RowanPlaybackBeat) {
 function recentBeatFromPlaybackBeat(
   beat: RowanPlaybackBeat,
 ): RecentBeat | null {
-  if (beat.kind === "move" || beat.kind === "thread_open" || beat.kind === "action_start") {
+  if (
+    beat.kind === "move" ||
+    beat.kind === "thread_open" ||
+    beat.kind === "action_start"
+  ) {
     return null;
   }
 
@@ -627,7 +643,11 @@ function beatStillMatchesGameLocation(
 }
 
 function moveDurationMs(tileCount: number) {
-  return clamp(tileCount * 360, ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap, 4800);
+  return clamp(
+    tileCount * 360,
+    ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
+    4800,
+  );
 }
 
 function beatToneForAutonomy(
@@ -646,7 +666,8 @@ function beatToneForAutonomy(
 
 function npcNameForId(game: StreetGameState, npcId: string | undefined) {
   return (
-    game.npcs.find((candidate) => candidate.id === npcId)?.name ?? "someone nearby"
+    game.npcs.find((candidate) => candidate.id === npcId)?.name ??
+    "someone nearby"
   );
 }
 
@@ -661,7 +682,10 @@ function tileDistance(
   previousPlayer: Pick<StreetGameState["player"], "x" | "y">,
   nextPlayer: Pick<StreetGameState["player"], "x" | "y">,
 ) {
-  return Math.abs(nextPlayer.x - previousPlayer.x) + Math.abs(nextPlayer.y - previousPlayer.y);
+  return (
+    Math.abs(nextPlayer.x - previousPlayer.x) +
+    Math.abs(nextPlayer.y - previousPlayer.y)
+  );
 }
 
 function normalizeText(text: string | null | undefined) {
@@ -671,6 +695,13 @@ function normalizeText(text: string | null | undefined) {
       .trim()
       .replace(/[.?!]+$/g, "")
       .toLowerCase() ?? ""
+  );
+}
+
+function objectiveIsComplete(game: StreetGameState) {
+  const progress = game.player.objective?.progress;
+  return Boolean(
+    progress && progress.total > 0 && progress.completed >= progress.total,
   );
 }
 

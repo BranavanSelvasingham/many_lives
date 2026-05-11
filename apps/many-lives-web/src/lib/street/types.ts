@@ -347,6 +347,7 @@ export interface ActionOption {
     | "contribute"
     | "solve"
     | "rest"
+    | "reflect"
     | "inspect";
   emphasis: "low" | "medium" | "high";
   matchesObjective?: boolean;
@@ -414,6 +415,9 @@ export interface StreetGameState {
   npcs: NpcState[];
   jobs: JobState[];
   problems: ProblemState[];
+  firstAfternoon?: {
+    completedAt?: string;
+  };
   feed: FeedEntry[];
   conversations: ConversationEntry[];
   conversationThreads: Record<string, ConversationThreadState>;

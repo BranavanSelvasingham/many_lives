@@ -1593,7 +1593,7 @@ function buildPlayerThought(snapshot: DistrictMapSnapshot) {
   }
 
   if (snapshot.player.energy < 38) {
-    return "I could use a proper sit-down.";
+    return "I need a minute to rest.";
   }
 
   if ((snapshot.player.reputation.morrow_house ?? 0) < 2) {
