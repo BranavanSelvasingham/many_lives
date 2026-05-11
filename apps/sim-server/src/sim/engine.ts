@@ -186,6 +186,7 @@ async function refreshWorld(
   const thoughtRefreshMode = options.thoughtRefreshMode ?? "full";
   world.conversations ??= [];
   world.conversationThreads ??= {};
+  world.firstAfternoon ??= {};
   world.currentTime = isoFor(world.clock.totalMinutes);
   updateNpcLocations(world);
   updatePlayerLocation(world);
@@ -425,6 +426,11 @@ async function performAction(
     case "rest":
       restAtHome(world);
       break;
+    case "reflect":
+      if (targetId === "first-afternoon") {
+        completeFirstAfternoon(world);
+      }
+      break;
     default:
       addFeed(world, "info", "Nothing came of that.");
       break;
@@ -549,6 +555,13 @@ function currentObjectiveDirective(
   };
 }
 
+function isCurrentObjectiveComplete(world: StreetGameState) {
+  const progress = world.player.objective?.progress;
+  return Boolean(
+    progress && progress.total > 0 && progress.completed >= progress.total,
+  );
+}
+
 async function advanceObjective(
   world: StreetGameState,
   aiProvider: AIProvider,
@@ -561,58 +574,55 @@ async function advanceObjective(
   syncNpcInnerState(world);
   const loopStep = resolveRowanLoopStep(world);
 
-  return executeRowanLoopStep<ThoughtRefreshMode | void>(
-    loopStep,
-    {
-      idle: () => {
-        addFeed(
-          world,
-          "info",
-          "Rowan has no clear direction yet. Set an objective first, then let him run with it.",
-        );
-      },
-      blocked: () => {
-        addFeed(
-          world,
-          "info",
-          "Rowan keeps circling the objective, but the block has not given him a clean next move yet.",
-        );
-      },
-      reflect: (step) => executeRowanReflectLoopStep(world, step),
-      continueConversation: () => continueActiveConversation(world, aiProvider),
-      openConversation: async (step) => {
-        if (step.npcId && step.speech && step.objective) {
-          await conductAutonomousConversation(
-            world,
-            step.npcId,
-            step.speech,
-            step.objective,
-            aiProvider,
-          );
-        }
-      },
-      move: (step) =>
-        executeRowanMoveLoopStep(world, step, aiProvider, {
-          confirmMove: options.confirmMove ?? false,
-        }),
-      action: (step) =>
-        executeRowanActionLoopStep(world, step, aiProvider, {
-          allowTimeSkip,
-        }),
-      observe: (step) => {
-        if (step.targetLocationId) {
-          const location = findLocation(world, step.targetLocationId);
-          addFeed(
-            world,
-            "info",
-            `Rowan reaches ${location?.name ?? "the next spot"} and keeps reading the room for the next opening.`,
-          );
-        }
-        world.player.currentThought = step.detail;
-        return "deterministic" as const;
-      },
+  return executeRowanLoopStep<ThoughtRefreshMode | void>(loopStep, {
+    idle: () => {
+      addFeed(
+        world,
+        "info",
+        "Rowan has no clear direction yet. Set an objective first, then let him run with it.",
+      );
     },
-  );
+    blocked: () => {
+      addFeed(
+        world,
+        "info",
+        "Rowan keeps circling the objective, but the block has not given him a clean next move yet.",
+      );
+    },
+    reflect: (step) => executeRowanReflectLoopStep(world, step),
+    continueConversation: () => continueActiveConversation(world, aiProvider),
+    openConversation: async (step) => {
+      if (step.npcId && step.speech && step.objective) {
+        await conductAutonomousConversation(
+          world,
+          step.npcId,
+          step.speech,
+          step.objective,
+          aiProvider,
+        );
+      }
+    },
+    move: (step) =>
+      executeRowanMoveLoopStep(world, step, aiProvider, {
+        confirmMove: options.confirmMove ?? false,
+      }),
+    action: (step) =>
+      executeRowanActionLoopStep(world, step, aiProvider, {
+        allowTimeSkip,
+      }),
+    observe: (step) => {
+      if (step.targetLocationId) {
+        const location = findLocation(world, step.targetLocationId);
+        addFeed(
+          world,
+          "info",
+          `Rowan reaches ${location?.name ?? "the next spot"} and keeps reading the room for the next opening.`,
+        );
+      }
+      world.player.currentThought = step.detail;
+      return "deterministic" as const;
+    },
+  });
 }
 
 function resolveConversationTarget(world: StreetGameState, npcId: string) {
@@ -651,7 +661,9 @@ function resolveConversationLoopStep(
     world.activeConversation.decision || world.activeConversation.objectiveText,
   );
   const objective = currentConversationObjective(world);
-  const discussedTopics = collectConversationTopics(world.activeConversation.lines);
+  const discussedTopics = collectConversationTopics(
+    world.activeConversation.lines,
+  );
   const lastNpcReply = latestNpcReplyFromConversation(
     world.activeConversation.lines,
   );
@@ -688,7 +700,7 @@ function resolveConversationLoopStep(
   return {
     autoContinue: hasResolution || canContinueConversation,
     detail: hasResolution
-      ? "The conversation gave Rowan a next step. He can act on it now."
+      ? "That gives Rowan enough to work with. He can close the conversation and act on it."
       : canContinueConversation
         ? `Rowan has one more question for ${npc?.name ?? "someone nearby"} before he moves on.`
         : "The conversation has gone quiet, and Rowan can turn back toward the day.",
@@ -795,10 +807,10 @@ function resolveCommittedJobLoopStep(
     return {
       actionId: `work:${committedJob.id}`,
       autoContinue: true,
-      detail: `Rowan is already in place and can hold until ${formatClockAt(
+      detail: `Rowan is already in place. The shift starts at ${formatClockAt(
         world,
         startTotalMinutes,
-      )} without another prompt.`,
+      )}.`,
       effects: ["thought"],
       key: `job-start:${committedJob.id}:${startTotalMinutes}`,
       kind: "wait",
@@ -813,8 +825,7 @@ function resolveCommittedJobLoopStep(
     return {
       actionId: `work:${committedJob.id}`,
       autoContinue: true,
-      detail:
-        "The shift window is open now, so Rowan can start working without another prompt.",
+      detail: "The shift window is open now. Rowan can start working.",
       key: `job-work:${committedJob.id}:${world.clock.totalMinutes}`,
       kind: "act",
       label: `Start ${committedJob.title}`,
@@ -853,6 +864,27 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
       kind: "idle",
       label: "Choose a direction",
       layer: "idle",
+    };
+  }
+
+  if (isCurrentObjectiveComplete(world)) {
+    const firstAfternoonComplete =
+      world.firstAfternoon?.completedAt &&
+      world.player.objective?.routeKey === "first-afternoon";
+
+    return {
+      autoContinue: false,
+      detail: firstAfternoonComplete
+        ? "Good stopping point: Rowan has a bed for tonight, pay in his pocket, and someone to follow up with."
+        : "Rowan has checked off this objective. Set a new direction when you want to keep going.",
+      effects: ["memory", "objective"],
+      key: `complete:${world.player.objective?.routeKey ?? "objective"}:${world.player.objective?.updatedAt ?? world.currentTime}:${world.firstAfternoon?.completedAt ?? "done"}`,
+      kind: "idle",
+      label: firstAfternoonComplete
+        ? "First afternoon complete"
+        : "Objective complete",
+      layer: "objective",
+      objective,
     };
   }
 
@@ -966,18 +998,13 @@ async function executeRowanMoveLoopStep(
 
   if (
     !options.confirmMove &&
-    !pendingObjectiveMoveMatches(
-      world,
-      objective.text,
-      targetLocation.id,
-      plan,
-    )
+    !pendingObjectiveMoveMatches(world, objective.text, targetLocation.id, plan)
   ) {
     queuePendingObjectiveMove(world, objective.text, plan, targetLocation.id);
     addFeed(
       world,
       "info",
-      `Rowan slows for a beat and decides ${targetLocation.name} is the next place to try.`,
+      `Rowan sets a course for ${targetLocation.name}.`,
     );
     return "deterministic" as const;
   }
@@ -1317,7 +1344,9 @@ function fallbackConversationObjective(world: StreetGameState) {
 }
 
 function currentConversationObjective(world: StreetGameState) {
-  return currentObjectiveDirective(world) ?? fallbackConversationObjective(world);
+  return (
+    currentObjectiveDirective(world) ?? fallbackConversationObjective(world)
+  );
 }
 
 function collectConversationTopics(
@@ -1540,7 +1569,13 @@ async function talkToNpc(
     aiProvider,
   );
 
-  await conductAutonomousConversation(world, npc.id, opener, objective, aiProvider);
+  await conductAutonomousConversation(
+    world,
+    npc.id,
+    opener,
+    objective,
+    aiProvider,
+  );
 }
 
 async function speakToNpc(
@@ -1587,10 +1622,18 @@ async function conductAutonomousConversation(
     return;
   }
 
-  await runConversationLoop(world, npc, location, objective, opener, aiProvider, {
-    addFallbackFeed: true,
-    maxAutonomousFollowups: 1,
-  });
+  await runConversationLoop(
+    world,
+    npc,
+    location,
+    objective,
+    opener,
+    aiProvider,
+    {
+      addFallbackFeed: true,
+      maxAutonomousFollowups: 1,
+    },
+  );
 }
 
 async function performConversationTurn(
@@ -1771,7 +1814,7 @@ function autonomyLabelForNextBeat(
 
   if (plan.npcId) {
     const npc = npcById(world, plan.npcId);
-    return `Open with ${npc?.name ?? "someone nearby"}`;
+    return `Talk to ${npc?.name ?? "someone nearby"}`;
   }
 
   if (plan.actionId) {
@@ -1797,7 +1840,7 @@ function autonomyLabelForAction(world: StreetGameState, actionId: string) {
   switch (kind) {
     case "talk": {
       const npc = targetId ? npcById(world, targetId) : undefined;
-      return `Open with ${npc?.name ?? "someone nearby"}`;
+      return `Talk to ${npc?.name ?? "someone nearby"}`;
     }
     case "accept": {
       const job = targetId ? jobById(world, targetId) : undefined;
@@ -1820,6 +1863,8 @@ function autonomyLabelForAction(world: StreetGameState, actionId: string) {
       return "Handle house chores";
     case "rest":
       return "Rest at Morrow House";
+    case "reflect":
+      return "Take stock";
     default:
       return "Take the next action";
   }
@@ -1837,22 +1882,21 @@ function autonomyDetailForObjectivePlan(
       : undefined;
 
   if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
-    return `Rowan has a clear destination now: ${
-      normalizeAutonomyRationale(
-        plan.rationale || `get to ${targetLocation.name} and keep the objective moving`,
-      )
-    }.`;
+    return `${targetLocation.name} is the next stop: ${normalizeAutonomyRationale(
+      plan.rationale ||
+        `get to ${targetLocation.name} and keep the objective moving`,
+    )}.`;
   }
 
   if (plan.npcId) {
     const npc = npcById(world, plan.npcId);
-    return `The context is specific enough for Rowan to start with ${npc?.name ?? "someone nearby"} in his own voice without another prompt.`;
+    return `Rowan is ready to talk to ${npc?.name ?? "someone nearby"}: ${rationale}.`;
   }
 
   if (plan.actionId) {
     return isTimeSkippingAction(plan.actionId)
-      ? `The next step is time-based, and Rowan can wait without another prompt: ${rationale}.`
-      : `The next move is clear enough to take without another prompt: ${rationale}.`;
+      ? `This will take some time: ${rationale}.`
+      : `This step is ready now: ${rationale}.`;
   }
 
   return `Rowan still has a clear next step: ${rationale}.`;
@@ -2014,7 +2058,9 @@ function directObjectiveRoutePlan(
     rationale: nextStep.detail ?? nextStep.title,
     actionId: nextStep.actionId,
     npcId: targetNpc?.id,
-    speech: targetNpc ? buildAutonomousSpeech(world, targetNpc, objective) : undefined,
+    speech: targetNpc
+      ? buildAutonomousSpeech(world, targetNpc, objective)
+      : undefined,
     targetLocationId,
   };
 }
@@ -2087,6 +2133,10 @@ function planMovementPurpose(
 
     if (kind === "rest") {
       return "get off his feet for an hour";
+    }
+
+    if (kind === "reflect") {
+      return "take stock of the afternoon";
     }
   }
 
@@ -2705,12 +2755,20 @@ function buildAutonomousFollowup(
   const normalizedReply = lastNpcReply ?? "";
   const replyTopics = detectConversationTopics(normalizedReply);
   const replyNamesAdaLead = /\bada\b|\bkettle\b|\blamp\b/.test(normalizedReply);
-  const replyNamesTomasLead = /\btomas\b|\bnorth crane\b|\byard\b/.test(normalizedReply);
+  const replyNamesTomasLead = /\btomas\b|\bnorth crane\b|\byard\b/.test(
+    normalizedReply,
+  );
 
   if (objectiveFocus === "settle") {
     switch (npcId) {
       case "npc-mara":
         if (replyNamesAdaLead) {
+          if (
+            objectiveText.includes("room") ||
+            objectiveText.includes("first afternoon")
+          ) {
+            return "Got it. Anything I should know before I ask Ada?";
+          }
           return undefined;
         }
         if (!replyTopics.has("home") && !replyTopics.has("stay")) {
@@ -3007,7 +3065,11 @@ function workJob(world: StreetGameState, jobId: string): void {
   }
 
   if (world.player.energy < 28) {
-    addFeed(world, "info", "You are too worn down to be much help on this shift.");
+    addFeed(
+      world,
+      "info",
+      "You are too worn down to be much help on this shift.",
+    );
     return;
   }
 
@@ -3166,10 +3228,17 @@ function inspectLead(world: StreetGameState, targetId: string): void {
   }
 }
 
-function contributeToLocation(world: StreetGameState, locationId: string): void {
+function contributeToLocation(
+  world: StreetGameState,
+  locationId: string,
+): void {
   const location = currentLocation(world);
   if (!location || location.id !== locationId) {
-    addFeed(world, "info", "Rowan needs to be there before he can pull his weight.");
+    addFeed(
+      world,
+      "info",
+      "Rowan needs to be there before he can pull his weight.",
+    );
     return;
   }
 
@@ -3183,7 +3252,11 @@ function contributeToLocation(world: StreetGameState, locationId: string): void 
   }
 
   if (world.player.energy < 24) {
-    addFeed(world, "info", "Rowan is too worn down to be much help around the house.");
+    addFeed(
+      world,
+      "info",
+      "Rowan is too worn down to be much help around the house.",
+    );
     return;
   }
 
@@ -3261,6 +3334,48 @@ function restAtHome(world: StreetGameState): void {
       : "You rested, but the house never quite stopped sounding busy and unfinished.",
   );
   markCurrentObjectiveStepCompleted(world, "rest-home", "rest-hour");
+}
+
+function completeFirstAfternoon(world: StreetGameState): void {
+  const location = currentLocation(world);
+  if (!location || location.id !== world.player.homeLocationId) {
+    addFeed(
+      world,
+      "info",
+      "Bring Rowan back to Morrow House before calling the first afternoon done.",
+    );
+    return;
+  }
+
+  const teaShift = jobById(world, "job-tea-shift");
+  if (!teaShift?.completed) {
+    addFeed(
+      world,
+      "info",
+      "There is still no paid shift to count. Rowan needs one real follow-through first.",
+    );
+    return;
+  }
+
+  world.firstAfternoon ??= {};
+  if (world.firstAfternoon.completedAt) {
+    addFeed(world, "info", "The first afternoon is already settled.");
+    return;
+  }
+
+  world.firstAfternoon.completedAt = world.currentTime;
+  world.player.currentThought =
+    "I have a bed for tonight, some pay, and someone to follow up with. That is enough for a first afternoon.";
+  addFeed(
+    world,
+    "memory",
+    "Rowan takes stock at Morrow House: a bed for tonight, a paid tea-house shift behind him, and a clearer reason to keep going tomorrow.",
+  );
+  remember(
+    world,
+    "self",
+    "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay.",
+  );
 }
 
 function resolvePassiveState(world: StreetGameState): void {
@@ -3569,6 +3684,20 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     });
   }
 
+  if (
+    location?.id === world.player.homeLocationId &&
+    !world.firstAfternoon?.completedAt &&
+    jobById(world, "job-tea-shift")?.completed
+  ) {
+    actions.push({
+      id: "reflect:first-afternoon",
+      label: "Take stock",
+      description: "Count what changed today before chasing another errand.",
+      kind: "reflect",
+      emphasis: "high",
+    });
+  }
+
   if (location?.id === world.player.homeLocationId) {
     actions.push({
       id: "rest:home",
@@ -3608,13 +3737,26 @@ function buildSummary(world: StreetGameState): string {
     world.player.activeJobId !== undefined
       ? jobById(world, world.player.activeJobId)
       : undefined;
+  const objectiveComplete = Boolean(
+    objective?.progress.total &&
+    objective.progress.completed >= objective.progress.total,
+  );
+  const firstAfternoonComplete = Boolean(
+    world.firstAfternoon?.completedAt &&
+    objective?.routeKey === "first-afternoon",
+  );
 
-  const objectiveTail = objective
-    ? ` I'm still trying to ${objectiveClause(objective.text)}.`
-    : "";
-  const nextStepTail = nextObjectiveStep
-    ? ` Right now the next thing is to ${objectiveClause(nextObjectiveStep.title)}.`
-    : "";
+  const objectiveTail = firstAfternoonComplete
+    ? " The first afternoon is complete: room to return to, paid shift, and a real foothold."
+    : objectiveComplete
+      ? " That objective is checked off."
+      : objective
+        ? ` I'm still trying to ${objectiveClause(objective.text)}.`
+        : "";
+  const nextStepTail =
+    !objectiveComplete && nextObjectiveStep
+      ? ` Right now the next thing is to ${objectiveClause(nextObjectiveStep.title)}.`
+      : "";
   const objectiveProgressTail = objective?.progress
     ? ` ${objective.progress.label}.`
     : "";
@@ -4859,7 +5001,8 @@ function scoreActionForObjective(
         action.kind === "accept_job" ||
         action.kind === "work_job" ||
         action.kind === "inspect" ||
-        action.kind === "contribute"
+        action.kind === "contribute" ||
+        action.kind === "reflect"
       ) {
         score += 5;
       }
@@ -4946,9 +5089,18 @@ function scoreActionForObjective(
       action.kind === "accept_job" ||
       action.kind === "work_job" ||
       action.kind === "inspect" ||
-      action.kind === "contribute"
+      action.kind === "contribute" ||
+      action.kind === "reflect"
     ) {
       score += 3;
+    }
+  }
+
+  if (
+    /(take stock|first afternoon|foothold|wrap|finish|done)/.test(normalized)
+  ) {
+    if (action.kind === "reflect") {
+      score += 8;
     }
   }
 

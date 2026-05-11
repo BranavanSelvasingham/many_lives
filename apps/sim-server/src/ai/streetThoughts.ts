@@ -141,7 +141,7 @@ function buildPlayerThought(game: StreetGameState) {
   }
 
   if (game.player.energy < 38) {
-    return "I could use a proper sit-down.";
+    return "I need a minute to rest.";
   }
 
   if ((game.player.reputation.morrow_house ?? 0) < 2) {

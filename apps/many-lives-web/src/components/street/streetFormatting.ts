@@ -32,6 +32,8 @@ export function actionKindLabel(kind: ActionOption["kind"]) {
       return "pull weight";
     case "rest":
       return "rest";
+    case "reflect":
+      return "take stock";
     case "talk":
     default:
       return "talk";
@@ -266,7 +268,7 @@ function exactFirstPersonRewrite(text: string) {
     case "Need steadier income if I'm going to stay here":
       return "I need steadier income if I'm going to stay here.";
     case "Could use a proper sit-down":
-      return "I could use a proper sit-down.";
+      return "I need a minute to rest.";
     case "Don't blow this shift":
       return "I can't blow this shift.";
     case "Someone here needs a hand":

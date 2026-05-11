@@ -223,6 +223,10 @@ export interface PlayerObjective {
   progress: ObjectiveProgressState;
 }
 
+export interface FirstAfternoonState {
+  completedAt?: string;
+}
+
 export interface PendingObjectiveMove {
   targetLocationId: string;
   objectiveText: string;
@@ -356,6 +360,7 @@ export type ActionKind =
   | "contribute"
   | "solve"
   | "rest"
+  | "reflect"
   | "inspect";
 
 export interface ActionOption {
@@ -429,6 +434,7 @@ export interface StreetGameState {
   npcs: NpcState[];
   jobs: JobState[];
   problems: ProblemState[];
+  firstAfternoon?: FirstAfternoonState;
   feed: FeedEntry[];
   conversations: ConversationEntry[];
   conversationThreads: Record<string, ConversationThreadState>;

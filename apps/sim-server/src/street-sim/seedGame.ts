@@ -85,12 +85,12 @@ export function seedStreetGame(gameId: string): StreetGameState {
       activeJobId: undefined,
       objective: {
         id: "objective-settle-seed",
-        text: "Get settled in Brackenport: lock in a room, steady income, and a few real friends.",
+        text: "Make Rowan's first afternoon count: understand the room, earn a little money, and end with a real foothold.",
         createdAt: SCENARIO_START,
         updatedAt: SCENARIO_START,
         focus: "settle",
         source: "seed",
-        routeKey: "settle-core",
+        routeKey: "first-afternoon",
         trail: [],
         completedTrail: [],
         progress: {
@@ -116,6 +116,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
     npcs: buildNpcs(),
     jobs: buildJobs(),
     problems: buildProblems(),
+    firstAfternoon: {},
     feed,
     conversations: [],
     conversationThreads: {},
