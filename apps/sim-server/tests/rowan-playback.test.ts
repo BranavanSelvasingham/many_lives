@@ -108,7 +108,15 @@ describe("Rowan playback helpers", () => {
       readyToWork = await engine.tick(readyToWork, 1);
     }
 
-    const completed = await engine.runCommand(readyToWork, {
+    const started = await engine.runCommand(readyToWork, {
+      type: "act",
+      actionId: "work:job-tea-shift",
+    });
+    const counter = await engine.runCommand(started, {
+      type: "act",
+      actionId: "work:job-tea-shift",
+    });
+    const completed = await engine.runCommand(counter, {
       type: "act",
       actionId: "work:job-tea-shift",
     });
@@ -118,11 +126,20 @@ describe("Rowan playback helpers", () => {
       asWebGame(accepted),
     );
     const completedBeats = deriveRowanPlaybackBeats(
-      asWebGame(readyToWork),
+      asWebGame(counter),
       asWebGame(completed),
+    );
+    const startedBeats = deriveRowanPlaybackBeats(
+      asWebGame(readyToWork),
+      asWebGame(started),
     );
 
     expect(acceptedBeats.map((beat) => beat.kind)).toContain("action_start");
+    expect(started.firstAfternoon?.teaShiftStage).toBe("rush");
+    expect(startedBeats.map((beat) => beat.title)).toContain(
+      "Lunch rush started",
+    );
+    expect(counter.firstAfternoon?.teaShiftStage).toBe("counter");
     expect(completedBeats.map((beat) => beat.kind)).toContain(
       "action_complete",
     );
@@ -237,7 +254,7 @@ describe("Rowan playback helpers", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("rowan-playback-home-rest");
 
-    for (let step = 0; step < 12; step += 1) {
+    for (let step = 0; step < 16; step += 1) {
       world = await engine.runCommand(world, {
         type: "advance_objective",
         allowTimeSkip: true,

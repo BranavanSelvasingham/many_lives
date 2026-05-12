@@ -427,7 +427,9 @@ async function performAction(
       restAtHome(world);
       break;
     case "reflect":
-      if (targetId === "first-afternoon") {
+      if (targetId === "first-afternoon-plan") {
+        settleFirstAfternoonPlan(world);
+      } else if (targetId === "first-afternoon") {
         completeFirstAfternoon(world);
       }
       break;
@@ -600,7 +602,9 @@ async function advanceObjective(
           step.objective,
           aiProvider,
         );
+        return "deterministic" as const;
       }
+      return undefined;
     },
     move: (step) =>
       executeRowanMoveLoopStep(world, step, aiProvider, {
@@ -749,6 +753,28 @@ function resolvePendingMoveLoopStep(
   };
 }
 
+function teaShiftWatchLabel(world: StreetGameState) {
+  switch (world.firstAfternoon?.teaShiftStage) {
+    case "rush":
+      return "Keep the lunch rush moving";
+    case "counter":
+      return "Finish the cup-and-counter shift";
+    default:
+      return "Start the lunch rush";
+  }
+}
+
+function teaShiftWatchDetail(world: StreetGameState) {
+  switch (world.firstAfternoon?.teaShiftStage) {
+    case "rush":
+      return "The room is busy now. Rowan can keep clearing cups and watching Ada's rhythm.";
+    case "counter":
+      return "The rush is almost through. Rowan can finish the last counter pass and collect the pay.";
+    default:
+      return "Lunch is filling Kettle & Lamp. Rowan can start with cups, tables, and the counter.";
+  }
+}
+
 function resolveCommittedJobLoopStep(
   world: StreetGameState,
 ): RowanLoopStep | undefined {
@@ -822,13 +848,18 @@ function resolveCommittedJobLoopStep(
   }
 
   if (currentHour(world) < committedJob.endHour && world.player.energy >= 28) {
+    const isFirstAfternoonTeaShift = committedJob.id === "job-tea-shift";
     return {
       actionId: `work:${committedJob.id}`,
       autoContinue: true,
-      detail: "The shift window is open now. Rowan can start working.",
-      key: `job-work:${committedJob.id}:${world.clock.totalMinutes}`,
+      detail: isFirstAfternoonTeaShift
+        ? teaShiftWatchDetail(world)
+        : "The shift window is open now. Rowan can start working.",
+      key: `job-work:${committedJob.id}:${world.clock.totalMinutes}:${world.firstAfternoon?.teaShiftStage ?? "ready"}`,
       kind: "act",
-      label: `Start ${committedJob.title}`,
+      label: isFirstAfternoonTeaShift
+        ? teaShiftWatchLabel(world)
+        : `Start ${committedJob.title}`,
       layer: "commitment",
       targetLocationId: committedJob.locationId,
     };
@@ -875,7 +906,7 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
     return {
       autoContinue: false,
       detail: firstAfternoonComplete
-        ? "Good stopping point: Rowan has a bed for tonight, pay in his pocket, and someone to follow up with."
+        ? "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead."
         : "Rowan has checked off this objective. Set a new direction when you want to keep going.",
       effects: ["memory", "objective"],
       key: `complete:${world.player.objective?.routeKey ?? "objective"}:${world.player.objective?.updatedAt ?? world.currentTime}:${world.firstAfternoon?.completedAt ?? "done"}`,
@@ -1546,7 +1577,7 @@ async function continueActiveConversation(
       maxAutonomousFollowups: 0,
     },
   );
-  return;
+  return "deterministic" as const;
 }
 
 async function talkToNpc(
@@ -1636,6 +1667,52 @@ async function conductAutonomousConversation(
   );
 }
 
+function buildFirstAfternoonScriptedReply(
+  world: StreetGameState,
+  npc: NpcState,
+  playerText: string,
+): { reply: string; followupThought?: string } | undefined {
+  if (world.player.objective?.routeKey !== "first-afternoon") {
+    return undefined;
+  }
+
+  const normalized = playerText.toLowerCase();
+  const firstPlayerLineWithNpc =
+    countPlayerConversationsWithNpc(world, npc.id) <= 1;
+
+  if (npc.id === "npc-mara" && firstPlayerLineWithNpc) {
+    if (
+      /\broom\b|\btonight\b|\bmorrow house\b|\bstay\b|\bbed\b/.test(
+        normalized,
+      )
+    ) {
+      return {
+        reply:
+          "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. Ada at Kettle & Lamp may still need calm hands before lunch.",
+        followupThought:
+          "Rowan listened like someone who wants the room to become less temporary.",
+      };
+    }
+  }
+
+  if (npc.id === "npc-ada" && firstPlayerLineWithNpc) {
+    if (
+      /\bwork\b|\bhelp\b|\bhands?\b|\blunch\b|\bshift\b|\broom\b/.test(
+        normalized,
+      )
+    ) {
+      return {
+        reply:
+          "Yes. Lunch is about to start. Clear cups, wipe tables, and keep the counter moving. It pays fourteen if you can stay steady.",
+        followupThought:
+          "Rowan asked plainly, which is the fastest way Ada knows how to answer.",
+      };
+    }
+  }
+
+  return undefined;
+}
+
 async function performConversationTurn(
   world: StreetGameState,
   npc: NpcState,
@@ -1664,11 +1741,13 @@ async function performConversationTurn(
   const playerTopics = detectConversationTopics(text);
   const trustDelta = updateNpcTrustFromSpeech(npc, text, playerTopics);
   syncRowanAutonomy(world);
-  const reply = await aiProvider.generateStreetReply({
-    game: world,
-    npcId: npc.id,
-    playerText: text,
-  });
+  const reply =
+    buildFirstAfternoonScriptedReply(world, npc, text) ??
+    (await aiProvider.generateStreetReply({
+      game: world,
+      npcId: npc.id,
+      playerText: text,
+    }));
   const replyTopics = detectConversationTopics(reply.reply);
   const topics = new Set<string>([...playerTopics, ...replyTopics]);
   applyConversationRevelations(world, npc, topics);
@@ -1735,6 +1814,16 @@ function applyConversationResolution(
     objectiveText: resolution.objectiveText,
     summary: resolution.summary ?? summary,
   });
+
+  if (objective.routeKey === "first-afternoon") {
+    if (npc.id === "npc-mara") {
+      world.player.currentThought =
+        "Mara gave me three ways to spend the afternoon: drift, rest, or ask Ada. Ada turns the room into something earned.";
+    } else if (npc.id === "npc-ada") {
+      world.player.currentThought =
+        "Ada made the work concrete. If I can stay steady through lunch, tonight feels less temporary.";
+    }
+  }
 
   const objectiveUpdated =
     Boolean(resolution.objectiveText) &&
@@ -2669,6 +2758,12 @@ function buildAutonomousSpeech(
   switch (objective.focus) {
     case "settle":
       if (npc.id === "npc-mara") {
+        if (
+          objective.routeKey === "first-afternoon" &&
+          /\broom\b|\btonight\b|\bmorrow house\b|\bstay\b/.test(text)
+        ) {
+          return "I'm Rowan. I've got tonight at Morrow House, and I'd like to do this right. What do I need to know about keeping the room?";
+        }
         if (primaryNeed === "shelter") {
           return "I'm Rowan. New in Brackenport. I've got tonight at Morrow House, and I'd like to be an easy guest. What should I know?";
         }
@@ -3073,7 +3168,58 @@ function workJob(world: StreetGameState, jobId: string): void {
     return;
   }
 
-  advanceWorld(world, job.durationMinutes);
+  if (job.id === "job-tea-shift") {
+    world.firstAfternoon ??= {};
+    if (!world.firstAfternoon.teaShiftStage) {
+      advanceWorld(world, 20);
+      world.player.energy = clamp(world.player.energy - 4, 12, 100);
+      world.firstAfternoon.teaShiftStage = "rush";
+      world.player.currentThought =
+        "The room is filling. Cups first, tables second, keep moving.";
+      addFeed(
+        world,
+        "job",
+        "Lunch starts to fill Kettle & Lamp. Rowan clears cups, wipes tables, and learns where Ada points before she has to say it twice.",
+      );
+      rememberIfNew(
+        world,
+        "job",
+        "Rowan started the lunch rush at Kettle & Lamp by keeping the small things moving.",
+      );
+      return;
+    }
+
+    if (world.firstAfternoon.teaShiftStage === "rush") {
+      advanceWorld(world, 25);
+      world.player.energy = clamp(world.player.energy - 5, 12, 100);
+      world.firstAfternoon.teaShiftStage = "counter";
+      world.player.currentThought =
+        "Ada is not watching every step now. That probably means I am keeping up.";
+      addFeed(
+        world,
+        "job",
+        "The rush crests. Rowan keeps the counter moving, catches a tray before it tips, and Ada gives one small nod that counts.",
+      );
+      rememberIfNew(
+        world,
+        "person",
+        "Ada trusts steady hands more than big promises.",
+      );
+      return;
+    }
+  }
+
+  const workMinutes =
+    job.id === "job-tea-shift" &&
+    world.firstAfternoon?.teaShiftStage === "counter"
+      ? Math.max(
+          5,
+          totalMinutesForDayHour(world.clock.day, job.endHour) -
+            world.clock.totalMinutes,
+        )
+      : job.durationMinutes;
+
+  advanceWorld(world, workMinutes);
   world.player.money += job.pay;
   world.player.energy = clamp(world.player.energy - 14, 12, 100);
   world.player.activeJobId = undefined;
@@ -3087,11 +3233,15 @@ function workJob(world: StreetGameState, jobId: string): void {
   }
 
   if (job.id === "job-tea-shift") {
+    world.firstAfternoon ??= {};
+    world.firstAfternoon.teaShiftStage = "paid";
     discoverJob(world, "job-yard-shift");
+    world.player.currentThought =
+      "That was tiring, but it turned an afternoon into proof. I should go back to Morrow House and let it land.";
     addFeed(
       world,
       "job",
-      `You finished ${job.title.toLowerCase()} and earned $${job.pay}. Ada points you toward Tomas at North Crane Yard for heavier work.`,
+      `Rowan finishes ${job.title.toLowerCase()} and earns $${job.pay}. Ada says the room stayed easier because he kept up.`,
     );
   } else {
     addFeed(
@@ -3336,6 +3486,27 @@ function restAtHome(world: StreetGameState): void {
   markCurrentObjectiveStepCompleted(world, "rest-home", "rest-hour");
 }
 
+function settleFirstAfternoonPlan(world: StreetGameState): void {
+  world.firstAfternoon ??= {};
+  if (world.firstAfternoon.planSettledAt) {
+    return;
+  }
+
+  world.firstAfternoon.planSettledAt = world.currentTime;
+  world.player.currentThought =
+    "Mara gave me three ways to spend the afternoon: drift, rest, or ask Ada. Ada turns the room into something earned.";
+  addFeed(
+    world,
+    "memory",
+    "Rowan weighs the first move and chooses Ada over drifting or hiding from the day.",
+  );
+  rememberIfNew(
+    world,
+    "self",
+    "When the first afternoon opened up, Rowan chose the useful errand instead of wandering until the day spent itself.",
+  );
+}
+
 function completeFirstAfternoon(world: StreetGameState): void {
   const location = currentLocation(world);
   if (!location || location.id !== world.player.homeLocationId) {
@@ -3365,11 +3536,11 @@ function completeFirstAfternoon(world: StreetGameState): void {
 
   world.firstAfternoon.completedAt = world.currentTime;
   world.player.currentThought =
-    "I have a bed for tonight, some pay, and someone to follow up with. That is enough for a first afternoon.";
+    "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and tomorrow has a lead. That is enough for a first afternoon.";
   addFeed(
     world,
     "memory",
-    "Rowan takes stock at Morrow House: a bed for tonight, a paid tea-house shift behind him, and a clearer reason to keep going tomorrow.",
+    "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and tomorrow has a real lead.",
   );
   remember(
     world,
@@ -3586,10 +3757,15 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
             : undefined,
       });
     } else {
+      const firstAfternoonTeaShift = job.id === "job-tea-shift";
       actions.push({
         id: `work:${job.id}`,
-        label: `Work ${job.title}`,
-        description: `${job.durationMinutes} minutes for $${job.pay}.`,
+        label: firstAfternoonTeaShift
+          ? teaShiftWatchLabel(world)
+          : `Work ${job.title}`,
+        description: firstAfternoonTeaShift
+          ? teaShiftWatchDetail(world)
+          : `${job.durationMinutes} minutes for $${job.pay}.`,
         kind: "work_job",
         emphasis: "high",
         disabled:
@@ -3681,6 +3857,21 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
         world.player.energy < 24
           ? "You are too drained to be much help around the house."
           : undefined,
+    });
+  }
+
+  if (
+    location?.id === world.player.homeLocationId &&
+    !world.firstAfternoon?.planSettledAt &&
+    countPlayerConversationsWithNpc(world, "npc-mara") > 0
+  ) {
+    actions.push({
+      id: "reflect:first-afternoon-plan",
+      label: "Choose the first useful move",
+      description:
+        "Rowan could wander, rest, or ask Ada. Ada is the move that turns the room into something earned.",
+      kind: "reflect",
+      emphasis: "high",
     });
   }
 

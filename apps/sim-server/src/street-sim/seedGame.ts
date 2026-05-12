@@ -112,6 +112,8 @@ export function seedStreetGame(gameId: string): StreetGameState {
           text: "You woke up at Morrow House with only tonight's bed certain, new enough to Brackenport that every lane still feels like a question and every face might matter.",
         },
       ],
+      currentThought:
+        "Tonight's bed is real, but it is not much of a life yet. Start with Mara, then turn one useful thing into a foothold.",
     },
     npcs: buildNpcs(),
     jobs: buildJobs(),

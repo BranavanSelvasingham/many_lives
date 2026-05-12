@@ -37,7 +37,7 @@ export async function runRowanLoopSmoke(
 ): Promise<RowanLoopSmokeResult> {
   const engine = new SimulationEngine(new MockAIProvider());
   let world = await engine.createGame(options.gameId ?? "rowan-loop-smoke");
-  const maxSteps = options.maxSteps ?? 10;
+  const maxSteps = options.maxSteps ?? 16;
   const trace = [buildTraceEntry(0, "create_game", world)];
   const seen = new Map<string, number>();
 

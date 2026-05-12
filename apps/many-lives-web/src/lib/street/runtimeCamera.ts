@@ -50,7 +50,13 @@ export type RuntimeCameraState = {
   };
   lastCameraInteractionAt: number;
   snapshot: {
-    game: { map: MapSize } | null;
+    game: {
+      map: MapSize;
+      rowanAutonomy?: {
+        autoContinue?: boolean;
+      };
+    } | null;
+    rowanAutoplayEnabled?: boolean;
     viewport: ViewportSize;
   };
 };
@@ -72,14 +78,27 @@ export function updateCamera(
   const effectiveZoom = Math.max(camera.zoom, 0.001);
   const visibleWidth = viewport.width / effectiveZoom;
   const visibleHeight = viewport.height / effectiveZoom;
+  const isWatchingRowan = Boolean(
+    runtimeState.snapshot.rowanAutoplayEnabled &&
+      runtimeState.snapshot.game?.rowanAutonomy?.autoContinue,
+  );
+  const anchorYRatio = isWatchingRowan ? 0.46 : 0.42;
   const anchorX =
     visibleWidth / 2 + runtimeState.cameraOffset.x / effectiveZoom;
   const anchorY =
-    visibleHeight * 0.42 + runtimeState.cameraOffset.y / effectiveZoom;
+    visibleHeight * anchorYRatio + runtimeState.cameraOffset.y / effectiveZoom;
   const deadzoneWidth =
-    clamp(viewport.width * 0.12, CELL * 1.6, CELL * 3.2) / effectiveZoom;
+    clamp(
+      viewport.width * (isWatchingRowan ? 0.08 : 0.12),
+      CELL * (isWatchingRowan ? 1.2 : 1.6),
+      CELL * (isWatchingRowan ? 2.5 : 3.2),
+    ) / effectiveZoom;
   const deadzoneHeight =
-    clamp(viewport.height * 0.085, CELL * 1.2, CELL * 2.4) / effectiveZoom;
+    clamp(
+      viewport.height * (isWatchingRowan ? 0.06 : 0.085),
+      CELL * (isWatchingRowan ? 0.9 : 1.2),
+      CELL * (isWatchingRowan ? 1.8 : 2.4),
+    ) / effectiveZoom;
   let minScrollX = 0;
   let maxScrollX = Math.max(world.width - visibleWidth, 0);
   const maxScrollY = Math.max(world.height - visibleHeight, 0);
@@ -139,7 +158,9 @@ export function updateCamera(
   if (isExploring && hasBlockedCameraEdge(blockedEdges)) {
     runtimeState.cameraOffset = clampCameraOffset(runtimeState, viewport, {
       x: (playerPixel.x - targetScrollX - visibleWidth / 2) * effectiveZoom,
-      y: (playerPixel.y - targetScrollY - visibleHeight * 0.42) * effectiveZoom,
+      y:
+        (playerPixel.y - targetScrollY - visibleHeight * anchorYRatio) *
+        effectiveZoom,
     });
   }
 
@@ -147,7 +168,9 @@ export function updateCamera(
     ? 0.22
     : isExploring
       ? CAMERA_RECENT_INTERACTION_LERP
-      : PLAYER_CAMERA_LERP;
+      : isWatchingRowan
+        ? 0.13
+        : PLAYER_CAMERA_LERP;
   camera.scrollX += (targetScrollX - camera.scrollX) * followLerp;
   camera.scrollY += (targetScrollY - camera.scrollY) * followLerp;
   return blockedEdges;

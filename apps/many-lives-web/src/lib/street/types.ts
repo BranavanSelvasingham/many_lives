@@ -417,6 +417,8 @@ export interface StreetGameState {
   problems: ProblemState[];
   firstAfternoon?: {
     completedAt?: string;
+    planSettledAt?: string;
+    teaShiftStage?: "rush" | "counter" | "paid";
   };
   feed: FeedEntry[];
   conversations: ConversationEntry[];

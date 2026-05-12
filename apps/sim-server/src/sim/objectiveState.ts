@@ -476,6 +476,7 @@ function buildFirstAfternoonRoute(
   const teaJob = jobById(world, "job-tea-shift");
   const hasTalkedToMara =
     countPlayerConversationsWithNpc(world, "npc-mara") > 0;
+  const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
   const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
   const hasTakenTeaShift = Boolean(
     teaJob?.accepted ||
@@ -483,6 +484,13 @@ function buildFirstAfternoonRoute(
     world.player.activeJobId === "job-tea-shift",
   );
   const hasFinishedTeaShift = Boolean(teaJob?.completed);
+  const teaShiftStage = world.firstAfternoon?.teaShiftStage;
+  const hasStartedTeaShift = Boolean(
+    teaShiftStage === "rush" ||
+      teaShiftStage === "counter" ||
+      teaShiftStage === "paid" ||
+      hasFinishedTeaShift,
+  );
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
   const wrappedFirstAfternoon = Boolean(world.firstAfternoon?.completedAt);
 
@@ -501,6 +509,20 @@ function buildFirstAfternoonRoute(
         progress: hasTalkedToMara ? "Mara has weighed in" : "Talk to Mara",
         done: hasTalkedToMara,
         npcId: "npc-mara",
+        targetLocationId: home?.id,
+      }),
+      makeStep({
+        id: "first-afternoon-choose-move",
+        title: "Choose the first useful move.",
+        detail: hasSettledPlan
+          ? "Rowan chose Ada over drifting or resting."
+          : "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.",
+        progress: hasSettledPlan ? "Ada chosen" : "Weigh the options",
+        done: hasSettledPlan,
+        actionId:
+          hasTalkedToMara && !hasSettledPlan
+            ? "reflect:first-afternoon-plan"
+            : undefined,
         targetLocationId: home?.id,
       }),
       makeStep({
@@ -537,11 +559,27 @@ function buildFirstAfternoonRoute(
         targetLocationId: "tea-house",
       }),
       makeStep({
+        id: "first-afternoon-start-shift",
+        title: "Get through the lunch rush.",
+        detail: hasStartedTeaShift
+          ? "Rowan has started keeping the room moving."
+          : "Start with cups, tables, and the counter when lunch fills in.",
+        progress: hasStartedTeaShift ? "Rush handled" : "Shift ahead",
+        done: hasStartedTeaShift,
+        actionId:
+          teaJob && teaJob.accepted && !teaJob.completed && !teaJob.missed
+            ? `work:${teaJob.id}`
+            : undefined,
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
         id: "first-afternoon-finish-shift",
         title: "Finish the shift and get paid.",
         detail: hasFinishedTeaShift
           ? "Rowan worked the shift and got paid."
-          : "Work the shift and leave with pay.",
+          : teaShiftStage === "counter"
+            ? "Finish the last counter pass and collect the pay."
+            : "Keep the shift steady until Ada can pay Rowan.",
         progress: hasFinishedTeaShift ? "Paid" : "Still ahead",
         done: hasFinishedTeaShift,
         actionId:
@@ -554,7 +592,7 @@ function buildFirstAfternoonRoute(
         id: "first-afternoon-take-stock",
         title: "Head back to Morrow House and take stock.",
         detail: wrappedFirstAfternoon
-          ? "Rowan made it through the first afternoon with a room to return to, paid work, and a clearer map of the block."
+          ? "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead."
           : atHome && hasFinishedTeaShift
             ? "Stop for a minute and count what changed today."
             : "Go back to Morrow House before ending the first afternoon.",

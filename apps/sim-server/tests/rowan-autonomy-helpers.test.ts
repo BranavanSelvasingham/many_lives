@@ -179,7 +179,7 @@ describe("Rowan autonomy helper seams", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-rowan-rail-finished-thread");
 
-    for (let index = 0; index < 12; index += 1) {
+    for (let index = 0; index < 16; index += 1) {
       world = await engine.runCommand(world, {
         type: "advance_objective",
         allowTimeSkip: true,
@@ -188,7 +188,7 @@ describe("Rowan autonomy helper seams", () => {
       if (
         teaShift?.completed &&
         world.player.currentLocationId === "boarding-house" &&
-        world.rowanAutonomy.actionId === "rest:home"
+        world.firstAfternoon?.completedAt
       ) {
         break;
       }

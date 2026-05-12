@@ -225,6 +225,8 @@ export interface PlayerObjective {
 
 export interface FirstAfternoonState {
   completedAt?: string;
+  planSettledAt?: string;
+  teaShiftStage?: "rush" | "counter" | "paid";
 }
 
 export interface PendingObjectiveMove {

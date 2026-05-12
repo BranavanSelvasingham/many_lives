@@ -85,6 +85,7 @@ type BuildRowanRailViewModelOptions = {
 
 const AUTO_OPEN_BEAT_KINDS = new Set<RowanPlaybackBeatKind>([
   "action_complete",
+  "action_start",
   "arrive",
   "objective_shift",
   "rest",
@@ -333,6 +334,37 @@ export function deriveRowanPlaybackBeats(
     });
   }
 
+  const previousTeaShiftStage = previousGame.firstAfternoon?.teaShiftStage;
+  const nextTeaShiftStage = nextGame.firstAfternoon?.teaShiftStage;
+  if (
+    nextTeaShiftStage &&
+    nextTeaShiftStage !== previousTeaShiftStage &&
+    nextTeaShiftStage !== "paid"
+  ) {
+    const stageCopy =
+      nextTeaShiftStage === "rush"
+        ? {
+            detail:
+              "Lunch is filling Kettle & Lamp. Rowan starts with cups, tables, and the counter.",
+            title: "Lunch rush started",
+          }
+        : {
+            detail:
+              "The rush is cresting. Rowan has found the rhythm and can finish the counter pass.",
+            title: "Rush steadied",
+          };
+    beats.push({
+      blocking: true,
+      detail: stageCopy.detail,
+      durationMs: ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
+      key: `tea-shift-stage:${nextTeaShiftStage}:${nextGame.currentTime}`,
+      kind: "action_start",
+      locationId: "tea-house",
+      title: stageCopy.title,
+      tone: "objective",
+    });
+  }
+
   if (previousGame.activeConversation && !nextGame.activeConversation) {
     const thread =
       nextGame.conversationThreads[previousGame.activeConversation.npcId];
@@ -483,7 +515,7 @@ export function buildRowanRailViewModel({
       : completedObjectiveAutonomy
         ? "Complete"
         : game.rowanAutonomy?.autoContinue
-          ? "Autoplay"
+          ? "Watching Rowan"
           : quietStatusLabel;
   const justHappened = useConversationTranscript
     ? null

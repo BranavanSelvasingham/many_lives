@@ -339,9 +339,9 @@ export function buildDeterministicStreetReply(
         return {
           reply: chooseConversationLine(
             [
-              "Pay when you say you will, be kind in the shared spaces, and rinse your cup before it becomes everyone's cup.",
-              "Morrow House keeps people who make the place easier to wake up in.",
-              "A room starts feeling like yours when you treat the house like it is partly yours too.",
+              "Pay when you say you will, be kind in the shared spaces, and rinse your cup before it becomes everyone's cup. If you need coin today, ask Ada at Kettle & Lamp before lunch.",
+              "Morrow House keeps people who make the place easier to wake up in. Ada may still need help through lunch if you want the room to feel less temporary.",
+              "A room starts feeling like yours when you treat the house like it is partly yours too. Start with Ada at Kettle & Lamp if you need honest work today.",
             ],
             context,
             "mara-home",

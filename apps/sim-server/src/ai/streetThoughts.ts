@@ -120,6 +120,35 @@ function buildPlayerThought(game: StreetGameState) {
     return buildActiveCommitmentThought(game, activeJob);
   }
 
+  if (
+    game.player.objective?.routeKey === "first-afternoon" &&
+    game.firstAfternoon?.completedAt
+  ) {
+    return "Tonight's bed holds. I earned real money, and tomorrow has a lead.";
+  }
+
+  if (
+    game.player.objective?.routeKey === "first-afternoon" &&
+    game.firstAfternoon?.teaShiftStage === "paid" &&
+    game.player.currentLocationId !== game.player.homeLocationId
+  ) {
+    return "I should head back to Morrow House and let today land.";
+  }
+
+  if (
+    game.player.objective?.routeKey === "first-afternoon" &&
+    game.firstAfternoon?.teaShiftStage === "counter"
+  ) {
+    return "One last counter pass, then Ada can pay me.";
+  }
+
+  if (
+    game.player.objective?.routeKey === "first-afternoon" &&
+    game.firstAfternoon?.teaShiftStage === "rush"
+  ) {
+    return "Cups, tables, counter. Keep it simple.";
+  }
+
   const immediateObjectiveThought = buildImmediateObjectiveThought(
     game,
     nextObjectiveText,
@@ -206,6 +235,17 @@ function buildActiveCommitmentThought(
   }
 
   if (currentTotalMinutes < endTotalMinutes) {
+    if (job.id === "job-tea-shift" && onSite && game.player.energy >= 28) {
+      switch (game.firstAfternoon?.teaShiftStage) {
+        case "rush":
+          return "Cups, tables, counter. Keep it simple.";
+        case "counter":
+          return "One last counter pass, then Ada can pay me.";
+        default:
+          return "Lunch is filling up. Start with cups and tables.";
+      }
+    }
+
     if (onSite && game.player.energy >= 28) {
       return sanitizeThought(
         `It's time. ${job.title} is open now.`,

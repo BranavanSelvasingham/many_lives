@@ -219,11 +219,12 @@ const PLAYER_MAX_MOVE_DURATION_MS = 4800;
 const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
+const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 8000;
 const AUTONOMY_BEAT_DELAY_MS = {
-  acting: ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
-  conversation: ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
-  moving: ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
-  waiting: 780,
+  acting: 16000,
+  conversation: 26000,
+  moving: 9000,
+  waiting: 18000,
 } as const;
 const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
   autoContinue: false,
@@ -253,10 +254,7 @@ function autoContinueDelayMsForBeat(game: StreetGameState) {
   }
 
   // Keep Rowan's next step behind the human-visible transcript, not just the sim state.
-  return Math.max(
-    baseDelay,
-    estimateLiveConversationBeatMs(game),
-  );
+  return Math.max(baseDelay, estimateLiveConversationBeatMs(game) + 3000);
 }
 
 function buildGameSyncKey(game: StreetGameState) {
@@ -271,6 +269,9 @@ function buildGameSyncKey(game: StreetGameState) {
     game.player.objective?.routeKey ?? "",
     game.player.objective?.text ?? "",
     game.player.objective?.progress?.label ?? "",
+    game.firstAfternoon?.planSettledAt ?? "",
+    game.firstAfternoon?.teaShiftStage ?? "",
+    game.firstAfternoon?.completedAt ?? "",
     game.rowanAutonomy.key,
     game.rowanAutonomy.label,
     game.rowanAutonomy.mode,
@@ -3088,7 +3089,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     ? `Finish with ${rowanAutonomy.label.slice("With ".length)}`
     : "Continue conversation";
   const primaryContinueLabel = snapshot.rowanAutoplayEnabled
-    ? "Continue Now"
+    ? "Skip Ahead"
     : game.activeConversation
       ? activeConversationContinueLabel
       : rowanAutonomy.label || "Continue";
@@ -3239,10 +3240,10 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     hasConversationFocus && selectedTalkAction
       ? actions.filter((action) => action.id !== selectedTalkAction.id)
       : actions;
-  const secondaryActions = availableActionsForRail.slice(
-    0,
-    width <= 1080 ? 4 : 5,
-  );
+  const firstAfternoonComplete = Boolean(game.firstAfternoon?.completedAt);
+  const secondaryActions = (
+    firstAfternoonComplete ? [] : availableActionsForRail
+  ).slice(0, width <= 1080 ? 4 : 5);
   const rowanFeedEntries = hasConversationFocus
     ? []
     : feedPreview.map((entry) => ({
@@ -3297,7 +3298,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     })),
   ];
   const showManualTimeControls =
-    !railActiveConversation && !isBlockingRowanPlayback(snapshot.rowanPlayback);
+    !firstAfternoonComplete &&
+    !railActiveConversation &&
+    !isBlockingRowanPlayback(snapshot.rowanPlayback);
   const hasRailMore =
     railContextEntries.length > 0 ||
     secondaryActions.length > 0 ||
@@ -3332,7 +3335,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const todoCounterLabel =
     game.player.objective?.progress?.label ??
     `${objectivePlanItems.length} open tasks`;
-  const compactRailCollapsedHeight = railViewport === "phone" ? 88 : 104;
+  const compactRailCollapsedHeight = railViewport === "phone" ? 176 : 112;
   const compactRailExpandedHeight =
     railViewport === "phone"
       ? Math.max(320, Math.min(Math.round(height * 0.58), height - 152))
@@ -3485,7 +3488,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 `
                   : snapshot.rowanAutoplayEnabled && rowanAutonomy.autoContinue
                     ? `<div class="ml-autoplay-note">${escapeHtml(
-                        "Autoplay is on. Remove autoplay=1 if you want to step through manually.",
+                        "Watching Rowan choose. Use Skip Ahead if you want to move faster.",
                       )}</div>`
                     : ""
               }
@@ -3631,14 +3634,14 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                                   ${snapshot.busyLabel || visualMovePending ? "disabled" : ""}
                                   type="button"
                                 >
-                                  Continue Now
+                                  Skip Ahead
                                 </button>`
                               : ""
                           }
                         </div>
                           <div class="ml-footer-copy">${escapeHtml(
                             rowanAutonomy.autoContinue
-                              ? "Autoplay is on. Use these controls to jump ahead or choose a different move."
+                              ? "Watching Rowan choose. You can still jump ahead or choose a different move."
                               : upcomingCommitmentLabel ??
                                   "Use time controls when Rowan is waiting, or click the street to move.",
                           )}</div>
@@ -3990,7 +3993,7 @@ function maybeAutostartConversation(
       nextAutoStartPlan.talkActionId,
       `Starting conversation with ${activeSelectedNpc.name}`,
     );
-  }, ROWAN_PLAYBACK_TIMING_MS.preConversationPause);
+  }, AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS);
 
   if (runtimeState.objects) {
     renderOverlay(runtimeState.objects, runtimeState);
