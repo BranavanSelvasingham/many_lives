@@ -321,6 +321,9 @@ async function createDistrictMapRuntime(options: {
   };
 
   const game = new Phaser.Game({
+    audio: {
+      noAudio: true,
+    },
     backgroundColor: "#08141a",
     input: {
       mouse: {

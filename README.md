@@ -10,6 +10,8 @@ The living reference for the game's underlying simulation model is [CORE_CONSTRU
 
 Use that document as the architectural anchor for changes to world simulation, character behavior, memory, embodiment, and the canonical game loop.
 
+For the current street micro-app runtime, saved-run behavior, autoplay/watch mode, visual QA, and deployment checks, use [docs/street/runtime-operating-manual.md](/Users/branavan/GitHub/many_lives/docs/street/runtime-operating-manual.md).
+
 ## Prototype Pillars
 
 - One character in one city is the current gameplay foundation.

@@ -886,8 +886,16 @@ function buildRegressionSteps(gameRef) {
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
+      label: "head-to-cafe-plan",
+      mutate: async () => advanceObjective(gameRef.current.id, false),
+    },
+    {
+      label: "stage-cafe-move",
+      mutate: async () => advanceObjective(gameRef.current.id, false),
+    },
+    {
       label: "ada-live-thread",
-      mutate: async () => advanceObjective(gameRef.current.id, false, true),
+      mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
       label: "ada-thread-landed",
@@ -895,6 +903,14 @@ function buildRegressionSteps(gameRef) {
     },
     {
       label: "hold-for-shift",
+      mutate: async () => advanceObjective(gameRef.current.id, true),
+    },
+    {
+      label: "lunch-rush",
+      mutate: async () => advanceObjective(gameRef.current.id, true),
+    },
+    {
+      label: "finish-shift",
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
@@ -910,7 +926,7 @@ function buildRegressionSteps(gameRef) {
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
-      label: "post-rest-next-beat",
+      label: "first-afternoon-complete",
       mutate: async () => advanceObjective(gameRef.current.id, true),
     },
   ];
@@ -986,10 +1002,25 @@ async function main() {
     "boarding-house",
     "Expected Rowan to still be at Morrow House when the Mara thread lands.",
   );
+  assert.match(
+    byLabel["mara-thread-landed"]?.autonomy?.label ?? "",
+    /first useful move/i,
+    "Expected Mara's thread to leave Rowan choosing a useful first move.",
+  );
   assert.equal(
-    byLabel["mara-thread-landed"]?.autonomy?.targetLocationId,
+    byLabel["head-to-cafe-plan"]?.autonomy?.targetLocationId,
     "tea-house",
     "Expected Mara's thread to point Rowan toward Kettle & Lamp.",
+  );
+  assert.equal(
+    byLabel["stage-cafe-move"]?.location?.id,
+    "boarding-house",
+    "Expected the Kettle & Lamp move to stage before the visual arrival.",
+  );
+  assert.equal(
+    byLabel["stage-cafe-move"]?.autonomy?.targetLocationId,
+    "tea-house",
+    "Expected the staged move to keep Kettle & Lamp as the target.",
   );
   assert.equal(
     byLabel["ada-live-thread"]?.activeConversation?.npcId,
@@ -1007,34 +1038,44 @@ async function main() {
     "Expected Rowan to visibly hold for the tea-house shift.",
   );
   assert.equal(
+    byLabel["lunch-rush"]?.clock?.totalMinutes,
+    740,
+    "Expected the lunch rush beat to land at 12:20.",
+  );
+  assert.match(
+    byLabel["lunch-rush"]?.autonomy?.label ?? "",
+    /lunch rush/i,
+    "Expected Rowan to keep the lunch rush moving once the shift begins.",
+  );
+  assert.match(
+    byLabel["finish-shift"]?.autonomy?.label ?? "",
+    /finish/i,
+    "Expected Rowan to finish the cafe shift before heading home.",
+  );
+  assert.equal(
+    byLabel["head-home"]?.autonomy?.targetLocationId,
+    "boarding-house",
+    "Expected Rowan to point back to Morrow House after the paid shift.",
+  );
+  assert.equal(
     byLabel["arrive-home"]?.location?.id,
     "boarding-house",
     "Expected Rowan to visibly arrive back at Morrow House.",
   );
   assert.match(
     byLabel["arrive-home"]?.autonomy?.label ?? "",
-    /rest/i,
-    "Expected Rowan to be ready to rest once he gets home.",
+    /take stock/i,
+    "Expected Rowan to take stock once he gets home.",
   );
   assert.equal(
-    byLabel["post-rest-next-beat"]?.location?.id,
+    byLabel["first-afternoon-complete"]?.location?.id,
     "boarding-house",
-    "Expected Rowan to still be at Morrow House right after the rest hour lands.",
+    "Expected Rowan to end the first-afternoon loop at Morrow House.",
   );
-  assert.equal(
-    byLabel["post-rest-next-beat"]?.clock?.totalMinutes,
-    (byLabel["arrive-home"]?.clock?.totalMinutes ?? Number.NaN) + 60,
-    "Expected the browser run to land one hour after arriving home.",
-  );
-  assert.notEqual(
-    byLabel["post-rest-next-beat"]?.objective?.routeKey,
-    "rest-home",
-    "Expected Rowan to leave the stale rest route once the hour lands.",
-  );
-  assert.doesNotMatch(
-    byLabel["post-rest-next-beat"]?.autonomy?.label ?? "",
-    /rest/i,
-    "Expected Rowan to carry a new post-rest beat instead of falling straight back into rest.",
+  assert.match(
+    byLabel["first-afternoon-complete"]?.autonomy?.label ?? "",
+    /first afternoon complete/i,
+    "Expected the browser run to land the complete first-afternoon state.",
   );
 
   process.stdout.write(
