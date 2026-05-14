@@ -10,8 +10,9 @@
     "dev:health": "node scripts/check-local-dev-stack.mjs",
     "playtest:rowan": "corepack pnpm --filter @many-lives/sim-server playtest:rowan",
     "playtest:rowan:browser": "node scripts/rowan-browser-regression.mjs",
+    "visual:game": "node scripts/visual-game-smoke.mjs",
     "deploy:check": "bash scripts/check-manylives-deploy.sh",
-    "test": "corepack pnpm --filter @many-lives/sim-server test && node --test scripts/run-sim-dev.test.mjs scripts/visual-scene-anchor-regression.test.mjs && corepack pnpm --filter @many-lives/sim-server exec node --import tsx --test ../../scripts/web-sim-fallback.test.ts",
+    "test": "corepack pnpm --filter @many-lives/sim-server test && node --test scripts/run-sim-dev.test.mjs scripts/visual-scene-anchor-regression.test.mjs && corepack pnpm --filter @many-lives/sim-server exec node --import tsx --test ../../scripts/web-sim-fallback.test.ts && node scripts/visual-game-smoke.mjs",
     "lint": "corepack pnpm --filter @many-lives/sim-server lint && corepack pnpm --filter @many-lives/many-lives-web lint",
     "format": "corepack pnpm --filter @many-lives/sim-server format && corepack pnpm --filter @many-lives/many-lives-web format"
   }

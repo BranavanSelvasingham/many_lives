@@ -15,6 +15,7 @@ type StreetOverlaySnapshot = {
   error: string | null;
   game: StreetGameState | null;
   loadingLabel: string;
+  storedGameId?: string | null;
 };
 
 export function buildLoadingHtml(
@@ -88,15 +89,52 @@ export function buildLoadingHtml(
         text-transform: uppercase;
         cursor: pointer;
       }
+      .ml-loading-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+      .ml-loading-actions .ml-loading-button {
+        margin-top: 0;
+      }
+      .ml-loading-button.is-primary {
+        background: rgba(205, 174, 115, 0.18);
+        color: rgba(255, 239, 205, 0.98);
+      }
+      .ml-loading-button.is-secondary {
+        border-color: rgba(138, 151, 161, 0.22);
+        background: rgba(28, 38, 45, 0.78);
+        color: rgba(232, 238, 241, 0.9);
+      }
     </style>
     <div class="ml-loading-root">
       <div class="ml-loading-card">
         <div class="ml-loading-kicker">Brackenport • South Quay</div>
-        <div class="ml-loading-title">Opening the district</div>
-        <div class="ml-loading-copy">One person, one block, one day to start finding a place in the city.</div>
+        <div class="ml-loading-title">${
+          snapshot.storedGameId ? "Continue Rowan's run?" : "Opening the district"
+        }</div>
+        <div class="ml-loading-copy">${
+          snapshot.storedGameId
+            ? "This browser has a saved run. Continue where Rowan left off, or start a fresh first afternoon."
+            : "One person, one block, one day to start finding a place in the city."
+        }</div>
         <div class="ml-loading-status ${snapshot.error ? "ml-loading-error" : ""}">
-          ${escapeHtml(snapshot.error ?? snapshot.loadingLabel)}
+          ${escapeHtml(
+            snapshot.error ??
+              (snapshot.storedGameId
+                ? "Saved run found on this device."
+                : snapshot.loadingLabel),
+          )}
         </div>
+        ${
+          snapshot.storedGameId && !snapshot.error
+            ? `<div class="ml-loading-actions">
+                <button class="ml-loading-button is-primary" data-resume-stored-game="true" type="button">Continue Saved Run</button>
+                <button class="ml-loading-button is-secondary" data-start-new-game="true" type="button">Start New Run</button>
+              </div>`
+            : ""
+        }
         ${
           snapshot.error
             ? `<button class="ml-loading-button" data-reload="true" type="button">Try Again</button>`

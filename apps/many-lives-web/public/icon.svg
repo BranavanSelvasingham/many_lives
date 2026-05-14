@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Many Lives">
+  <rect width="64" height="64" rx="16" fill="#081016"/>
+  <circle cx="24" cy="34" r="11" fill="#f0cf8c"/>
+  <circle cx="24" cy="28" r="5" fill="#c3a47c"/>
+  <circle cx="39" cy="31" r="10" fill="#8dd0cd"/>
+  <circle cx="39" cy="25" r="4.7" fill="#c3a47c"/>
+  <path d="M14 48c9-6 22-6 36 0" fill="none" stroke="#f7e0b4" stroke-width="4" stroke-linecap="round"/>
+</svg>

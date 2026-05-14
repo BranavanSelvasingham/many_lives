@@ -11,15 +11,17 @@ import {
   clampCameraZoomFactor,
   getSceneZoom,
   isCompactViewport,
+  isCompactPortraitViewport,
   type SceneViewport,
   type ViewportSize,
 } from "@/lib/street/runtimeViewport";
 import type { VisualScene } from "@/lib/street/visualScenes";
 
 const CAMERA_DRAG_START_DISTANCE_PX = 10;
-const CAMERA_OFFSET_RETURN_DELAY_MS = 900;
-const CAMERA_OFFSET_RETURN_LERP = 0.035;
-const CAMERA_RECENT_INTERACTION_LERP = 0.2;
+const CAMERA_DRAG_PAN_MULTIPLIER = 2.05;
+const CAMERA_OFFSET_RETURN_DELAY_MS = 9_500;
+const CAMERA_OFFSET_RETURN_LERP = 0.006;
+const CAMERA_RECENT_INTERACTION_LERP = 0.68;
 const CAMERA_USER_ZOOM_LERP = 0.16;
 const PLAYER_CAMERA_LERP = 0.08;
 
@@ -82,9 +84,10 @@ export function updateCamera(
     runtimeState.snapshot.rowanAutoplayEnabled &&
       runtimeState.snapshot.game?.rowanAutonomy?.autoContinue,
   );
-  const anchorYRatio = isWatchingRowan ? 0.46 : 0.42;
+  const anchorYRatio = getRuntimeCameraAnchorYRatio(runtimeState);
   const anchorX =
-    visibleWidth / 2 + runtimeState.cameraOffset.x / effectiveZoom;
+    visibleWidth * getRuntimeCameraAnchorXRatio(runtimeState) +
+    runtimeState.cameraOffset.x / effectiveZoom;
   const anchorY =
     visibleHeight * anchorYRatio + runtimeState.cameraOffset.y / effectiveZoom;
   const deadzoneWidth =
@@ -157,15 +160,30 @@ export function updateCamera(
 
   if (isExploring && hasBlockedCameraEdge(blockedEdges)) {
     runtimeState.cameraOffset = clampCameraOffset(runtimeState, viewport, {
-      x: (playerPixel.x - targetScrollX - visibleWidth / 2) * effectiveZoom,
+      x:
+        (playerPixel.x -
+          targetScrollX -
+          visibleWidth * getRuntimeCameraAnchorXRatio(runtimeState)) *
+        effectiveZoom,
       y:
         (playerPixel.y - targetScrollY - visibleHeight * anchorYRatio) *
         effectiveZoom,
     });
   }
 
+  const scrollGap = Math.hypot(
+    targetScrollX - camera.scrollX,
+    targetScrollY - camera.scrollY,
+  );
+  const snapThreshold = Math.max(visibleWidth, visibleHeight) * 0.42;
+  if (!isExploring && isWatchingRowan && scrollGap > snapThreshold) {
+    camera.scrollX = targetScrollX;
+    camera.scrollY = targetScrollY;
+    return blockedEdges;
+  }
+
   const followLerp = isDragging
-    ? 0.22
+    ? 0.84
     : isExploring
       ? CAMERA_RECENT_INTERACTION_LERP
       : isWatchingRowan
@@ -176,17 +194,46 @@ export function updateCamera(
   return blockedEdges;
 }
 
+export function getRuntimeCameraAnchorYRatio(
+  runtimeState: RuntimeCameraState,
+) {
+  const isWatchingRowan = Boolean(
+    runtimeState.snapshot.rowanAutoplayEnabled &&
+      runtimeState.snapshot.game?.rowanAutonomy?.autoContinue,
+  );
+  if (isCompactPortraitViewport(runtimeState.snapshot.viewport)) {
+    return isWatchingRowan ? 0.32 : 0.36;
+  }
+
+  return isWatchingRowan ? 0.46 : 0.42;
+}
+
+export function getRuntimeCameraAnchorXRatio(
+  runtimeState: RuntimeCameraState,
+) {
+  const isWatchingRowan = Boolean(
+    runtimeState.snapshot.rowanAutoplayEnabled &&
+      runtimeState.snapshot.game?.rowanAutonomy?.autoContinue,
+  );
+  if (isCompactPortraitViewport(runtimeState.snapshot.viewport)) {
+    return isWatchingRowan ? 0.62 : 0.56;
+  }
+
+  return 0.5;
+}
+
 export function beginCameraGesture(
   runtimeState: RuntimeCameraState,
   pointer: PhaserType.Input.Pointer,
   sceneViewport: SceneViewport,
   now = getRuntimeNow(),
+  gestureViewport = sceneViewport,
 ) {
   if (!runtimeState.snapshot.game) {
     return;
   }
 
-  if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
+  if (!isPointerWithinSceneViewport(pointer, gestureViewport)) {
     return;
   }
 
@@ -204,9 +251,14 @@ export function updateCameraGesture(
   pointer: PhaserType.Input.Pointer,
   sceneViewport: SceneViewport,
   now = getRuntimeNow(),
+  gestureViewport = sceneViewport,
 ) {
   const gesture = runtimeState.cameraGesture;
   if (!gesture || gesture.pointerId !== pointer.id || !pointer.isDown) {
+    return createEmptyCameraPanResult();
+  }
+
+  if (!isPointerWithinSceneViewport(pointer, gestureViewport)) {
     return createEmptyCameraPanResult();
   }
 
@@ -225,8 +277,8 @@ export function updateCameraGesture(
     runtimeState,
     sceneViewport,
     {
-      x: gesture.originOffset.x + deltaX,
-      y: gesture.originOffset.y + deltaY,
+      x: gesture.originOffset.x + deltaX * CAMERA_DRAG_PAN_MULTIPLIER,
+      y: gesture.originOffset.y + deltaY * CAMERA_DRAG_PAN_MULTIPLIER,
     },
     now,
   );

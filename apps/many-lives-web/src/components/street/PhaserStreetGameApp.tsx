@@ -163,6 +163,8 @@ import {
   adjustCameraZoom,
   beginCameraGesture,
   finishCameraGesture,
+  getRuntimeCameraAnchorXRatio,
+  getRuntimeCameraAnchorYRatio,
   getTargetSceneZoom,
   isPointerWithinSceneViewport,
   updateCamera,
@@ -174,6 +176,7 @@ import {
 import {
   CELL,
   KENNEY_TILE,
+  getCompactCameraHorizontalRange,
   getMapWorldOrigin,
   getWorldBoundsForRuntime,
   mapPointToWorld,
@@ -215,16 +218,18 @@ const CAMERA_EDGE_CUE_NAMES: CameraEdgeName[] = [
 const CAMERA_WHEEL_PAN_MAX_DELTA = 150;
 const CAMERA_WHEEL_PAN_SENSITIVITY = 0.92;
 const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 320;
-const PLAYER_MAX_MOVE_DURATION_MS = 4800;
+const PLAYER_MAX_MOVE_DURATION_MS = 5200;
+const WATCH_PLAYER_MOVE_MS_PER_TILE = 620;
+const WATCH_PLAYER_MAX_MOVE_DURATION_MS = 8600;
 const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
-const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 8000;
+const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 14000;
 const AUTONOMY_BEAT_DELAY_MS = {
-  acting: 16000,
-  conversation: 26000,
-  moving: 9000,
-  waiting: 18000,
+  acting: 26000,
+  conversation: 42000,
+  moving: 19000,
+  waiting: 30000,
 } as const;
 const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
   autoContinue: false,
@@ -312,31 +317,64 @@ function estimateDeferredPlayerMoveMs(
   previousGame: StreetGameState,
   nextGame: StreetGameState,
   route?: Point[] | null,
+  options: { watchMode?: boolean } = {},
 ) {
   const routeDistance =
     route && routeReachesDestination(route, nextGame.player)
       ? pathDistance(route)
       : distanceBetween(previousGame.player, nextGame.player);
+  const msPerTile = options.watchMode ? WATCH_PLAYER_MOVE_MS_PER_TILE : 360;
+  const maxDuration = options.watchMode
+    ? WATCH_PLAYER_MAX_MOVE_DURATION_MS
+    : PLAYER_MAX_MOVE_DURATION_MS;
 
   return clamp(
-    Math.max(routeDistance, 1) * 360,
+    Math.max(routeDistance, 1) * msPerTile,
     ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
-    PLAYER_MAX_MOVE_DURATION_MS,
+    maxDuration,
   );
 }
 
-function bindGameToCurrentUrl(gameId: string) {
+const FRESH_GAME_QUERY_PARAMS = ["new", "newGame", "reset"] as const;
+
+function isTruthyQueryValue(value: string | null | undefined) {
+  const normalizedValue = value?.trim().toLowerCase();
+  return (
+    normalizedValue === "1" ||
+    normalizedValue === "true" ||
+    normalizedValue === "yes" ||
+    normalizedValue === "on"
+  );
+}
+
+function bindGameToCurrentUrl(
+  gameId: string,
+  options: { clearFreshGameParams?: boolean } = {},
+) {
   if (typeof window === "undefined") {
     return;
   }
 
   const nextUrl = new URL(window.location.href);
-  if (nextUrl.searchParams.get("gameId") === gameId) {
-    return;
+  let didUpdate = false;
+
+  if (nextUrl.searchParams.get("gameId") !== gameId) {
+    nextUrl.searchParams.set("gameId", gameId);
+    didUpdate = true;
   }
 
-  nextUrl.searchParams.set("gameId", gameId);
-  window.history.replaceState(null, "", nextUrl.toString());
+  if (options.clearFreshGameParams) {
+    for (const param of FRESH_GAME_QUERY_PARAMS) {
+      if (nextUrl.searchParams.has(param)) {
+        nextUrl.searchParams.delete(param);
+        didUpdate = true;
+      }
+    }
+  }
+
+  if (didUpdate) {
+    window.history.replaceState(null, "", nextUrl.toString());
+  }
 }
 
 function hideGameIdFromCurrentUrl() {
@@ -414,6 +452,7 @@ type StreetAppSnapshot = {
   recentBeat?: RecentBeat;
   rowanPlayback?: RowanPlaybackState;
   rowanAutoplayEnabled: boolean;
+  storedGameId?: string | null;
   waypointNonce: number;
   waypointTarget?: Point;
   visualSceneRefreshNonce: number;
@@ -428,6 +467,11 @@ type AdvanceObjectiveOptions = {
   confirmedByUser?: boolean;
 };
 
+type LoadGameOptions = {
+  forceNew?: boolean;
+  resumeStored?: boolean;
+};
+
 type PhaserStreetExperienceProps = {
   onAction: (actionId: string, label: string) => void;
   onAdvanceObjective: (options?: AdvanceObjectiveOptions) => void;
@@ -435,6 +479,8 @@ type PhaserStreetExperienceProps = {
   onMoveBy: (deltaX: number, deltaY: number) => void;
   onMoveTo: (x: number, y: number, options?: MoveToOptions) => boolean;
   onReload: () => void;
+  onResumeStoredGame: () => void;
+  onStartNewGame: () => void;
   snapshot: StreetAppSnapshot;
 };
 
@@ -446,6 +492,8 @@ type RuntimeCallbacks = Pick<
   | "onMoveBy"
   | "onMoveTo"
   | "onReload"
+  | "onResumeStoredGame"
+  | "onStartNewGame"
 >;
 
 type PlayerMotionState = {
@@ -493,6 +541,8 @@ type NpcMarkerObjects = {
 };
 
 type RuntimeObjects = {
+  agencyIntentText: PhaserType.GameObjects.Text;
+  agencyTargetText: PhaserType.GameObjects.Text;
   ambientLayer: PhaserType.GameObjects.Graphics;
   assetStructureNodes: PhaserType.GameObjects.GameObject[];
   assetTerrainNodes: PhaserType.GameObjects.GameObject[];
@@ -514,6 +564,137 @@ type RuntimeObjects = {
   structureLayer: PhaserType.GameObjects.Graphics;
   terrainLayer: PhaserType.GameObjects.Graphics;
 };
+
+type MapAgencyTone =
+  | "acting"
+  | "blocked"
+  | "conversation"
+  | "idle"
+  | "moving"
+  | "waiting";
+
+type MapAgencyCue = {
+  detail: string;
+  intent: string;
+  targetIsNpc: boolean;
+  targetLabel: string | null;
+  targetLocationId: string | null;
+  targetTile: Point | null;
+  targetWorld: Point | null;
+  tone: MapAgencyTone;
+};
+
+type AmbientCityRoute = {
+  accent: number;
+  color: number;
+  id: string;
+  path: Point[];
+  phase: number;
+  scale: number;
+  seconds: number;
+  startHour?: number;
+  endHour?: number;
+};
+
+const AMBIENT_CITY_ROUTES: AmbientCityRoute[] = [
+  {
+    accent: 0xd7bc79,
+    color: 0x52646c,
+    id: "tea-house-front",
+    path: [
+      { x: 338, y: 356 },
+      { x: 470, y: 360 },
+      { x: 620, y: 360 },
+      { x: 620, y: 520 },
+      { x: 470, y: 520 },
+    ],
+    phase: 0.08,
+    scale: 0.9,
+    seconds: 34,
+    startHour: 10,
+    endHour: 16,
+  },
+  {
+    accent: 0x8dd0cd,
+    color: 0x4a5961,
+    id: "morrow-court",
+    path: [
+      { x: 250, y: 646 },
+      { x: 360, y: 646 },
+      { x: 486, y: 646 },
+      { x: 486, y: 760 },
+    ],
+    phase: 0.42,
+    scale: 0.86,
+    seconds: 42,
+    startHour: 7,
+    endHour: 19,
+  },
+  {
+    accent: 0xb68d5b,
+    color: 0x43545c,
+    id: "market-crossing",
+    path: [
+      { x: 720, y: 624 },
+      { x: 846, y: 744 },
+      { x: 934, y: 744 },
+      { x: 1066, y: 624 },
+    ],
+    phase: 0.2,
+    scale: 0.88,
+    seconds: 46,
+    startHour: 8,
+    endHour: 18,
+  },
+  {
+    accent: 0xd79c65,
+    color: 0x4d4f50,
+    id: "repair-lane",
+    path: [
+      { x: 1086, y: 520 },
+      { x: 1238, y: 618 },
+      { x: 1366, y: 618 },
+      { x: 1366, y: 744 },
+    ],
+    phase: 0.66,
+    scale: 0.86,
+    seconds: 38,
+    startHour: 9,
+    endHour: 17,
+  },
+  {
+    accent: 0xc78c59,
+    color: 0x3f4b52,
+    id: "yard-shuttle",
+    path: [
+      { x: 1224, y: 792 },
+      { x: 1290, y: 808 },
+      { x: 1444, y: 842 },
+      { x: 1518, y: 842 },
+    ],
+    phase: 0.12,
+    scale: 0.92,
+    seconds: 32,
+    startHour: 6,
+    endHour: 18,
+  },
+  {
+    accent: 0xa8c0cc,
+    color: 0x374c56,
+    id: "pier-hands",
+    path: [
+      { x: 1094, y: 1032 },
+      { x: 1316, y: 1032 },
+      { x: 1452, y: 1040 },
+      { x: 1614, y: 1040 },
+    ],
+    phase: 0.5,
+    scale: 0.88,
+    seconds: 52,
+    startHour: 6,
+    endHour: 20,
+  },
+];
 
 type FocusPanel = "journal" | "mind" | "people";
 
@@ -582,6 +763,9 @@ export function PhaserStreetGameApp() {
   const [game, setGame] = useState<StreetGameState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [storedGamePromptId, setStoredGamePromptId] = useState<string | null>(
+    null,
+  );
   const [rowanPlayback, setRowanPlayback] = useState<RowanPlaybackState>(
     createEmptyRowanPlaybackState(),
   );
@@ -624,23 +808,18 @@ export function PhaserStreetGameApp() {
     const normalizedGameId = rawGameId?.trim();
     return normalizedGameId ? normalizedGameId : null;
   }, [searchParams]);
+  const forceFreshGame = useMemo(
+    () =>
+      FRESH_GAME_QUERY_PARAMS.some((param) =>
+        isTruthyQueryValue(searchParams.get(param)),
+      ),
+    [searchParams],
+  );
   const rowanAutoplayEnabled = useMemo(() => {
-    const autoplayValue = searchParams.get("autoplay")?.trim().toLowerCase();
-    return (
-      autoplayValue === "1" ||
-      autoplayValue === "true" ||
-      autoplayValue === "yes" ||
-      autoplayValue === "on"
-    );
+    return isTruthyQueryValue(searchParams.get("autoplay"));
   }, [searchParams]);
   const boundGameObserverEnabled = useMemo(() => {
-    const observeValue = searchParams.get("observe")?.trim().toLowerCase();
-    return (
-      observeValue === "1" ||
-      observeValue === "true" ||
-      observeValue === "yes" ||
-      observeValue === "on"
-    );
+    return isTruthyQueryValue(searchParams.get("observe"));
   }, [searchParams]);
 
   useEffect(() => {
@@ -767,6 +946,7 @@ export function PhaserStreetGameApp() {
           previousGame,
           nextGame,
           visualRoute,
+          { watchMode: rowanAutoplayEnabled },
         );
         const deferredPlaybackBeats = nextPlaybackBeats.map((beat) =>
           beat.kind === "move" ? { ...beat, durationMs: transitionMs } : beat,
@@ -828,13 +1008,32 @@ export function PhaserStreetGameApp() {
 
       return true;
     },
-    [clearPendingVisualGameUpdate, publishWaypoint],
+    [clearPendingVisualGameUpdate, publishWaypoint, rowanAutoplayEnabled],
   );
 
-  const loadGame = useCallback(async () => {
+  const loadGame = useCallback(async (options: LoadGameOptions = {}) => {
     const requestId = nextRequestId();
-    const storedGameId = requestedGameId ? null : readStoredStreetGameId();
-    const gameIdToOpen = requestedGameId ?? storedGameId;
+    const shouldCreateFreshGame = forceFreshGame || options.forceNew === true;
+    const storedGameId =
+      requestedGameId || shouldCreateFreshGame
+        ? null
+        : readStoredStreetGameId();
+
+    if (storedGameId && !options.resumeStored) {
+      setError(null);
+      setBusyLabel(null);
+      setStoredGamePromptId(storedGameId);
+      setGame(null);
+      gameRef.current = null;
+      setRowanPlayback(createEmptyRowanPlaybackState());
+      publishWaypoint(null);
+      return;
+    }
+
+    const gameIdToOpen = shouldCreateFreshGame
+      ? null
+      : requestedGameId ?? storedGameId;
+    setStoredGamePromptId(null);
     setError(null);
     setBusyLabel(
       gameIdToOpen ? "Opening your game..." : "Opening the district...",
@@ -854,8 +1053,13 @@ export function PhaserStreetGameApp() {
           })
         : await createStreetGame();
       rememberStreetGameId(nextGame.id);
-      if (requestedGameId && nextGame.id !== requestedGameId) {
-        bindGameToCurrentUrl(nextGame.id);
+      if (
+        forceFreshGame ||
+        (requestedGameId && nextGame.id !== requestedGameId)
+      ) {
+        bindGameToCurrentUrl(nextGame.id, {
+          clearFreshGameParams: forceFreshGame,
+        });
       } else if (
         requestedGameId &&
         !boundGameObserverEnabled &&
@@ -884,11 +1088,20 @@ export function PhaserStreetGameApp() {
   }, [
     applyGameUpdate,
     boundGameObserverEnabled,
+    forceFreshGame,
     nextRequestId,
     publishWaypoint,
     requestedGameId,
     rowanAutoplayEnabled,
   ]);
+
+  const handleResumeStoredGame = useCallback(() => {
+    void loadGame({ resumeStored: true });
+  }, [loadGame]);
+
+  const handleStartNewGame = useCallback(() => {
+    void loadGame({ forceNew: true });
+  }, [loadGame]);
 
   useEffect(() => {
     void loadGame();
@@ -1341,7 +1554,7 @@ export function PhaserStreetGameApp() {
       busyLabel,
       error,
       game,
-      animatePlayerEntrance: !requestedGameId,
+      animatePlayerEntrance: forceFreshGame || !requestedGameId,
       loadingLabel: busyLabel ?? "Preparing the district...",
       optimisticPlayerPosition: optimisticPlayerPosition ?? undefined,
       optimisticPlayerLocationId,
@@ -1350,6 +1563,7 @@ export function PhaserStreetGameApp() {
       recentBeat: rowanPlayback.lastCompletedBeat,
       rowanPlayback,
       rowanAutoplayEnabled,
+      storedGameId: storedGamePromptId,
       waypointNonce,
       waypointTarget: waypointTarget ?? undefined,
       visualSceneRefreshNonce: sceneOverrideVersion,
@@ -1359,6 +1573,7 @@ export function PhaserStreetGameApp() {
       busyLabel,
       error,
       game,
+      forceFreshGame,
       optimisticPlayerConversationLocationId,
       optimisticPlayerLocationId,
       optimisticPlayerMoveDurationMs,
@@ -1367,6 +1582,7 @@ export function PhaserStreetGameApp() {
       rowanPlayback,
       rowanAutoplayEnabled,
       sceneOverrideVersion,
+      storedGamePromptId,
       viewport,
       waypointNonce,
       waypointTarget,
@@ -1393,6 +1609,8 @@ export function PhaserStreetGameApp() {
             onReload={() => {
               void loadGame();
             }}
+            onResumeStoredGame={handleResumeStoredGame}
+            onStartNewGame={handleStartNewGame}
             snapshot={snapshot}
           />
         ) : null}
@@ -1409,6 +1627,8 @@ function PhaserStreetExperience({
   onAdvanceTime,
   onAdvanceObjective,
   onReload,
+  onResumeStoredGame,
+  onStartNewGame,
 }: PhaserStreetExperienceProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const runtimeRef = useRef<RuntimeHandle | null>(null);
@@ -1419,6 +1639,8 @@ function PhaserStreetExperience({
     onMoveBy,
     onMoveTo,
     onReload,
+    onResumeStoredGame,
+    onStartNewGame,
   });
   const latestSnapshotRef = useRef(snapshot);
 
@@ -1430,6 +1652,8 @@ function PhaserStreetExperience({
       onMoveBy,
       onMoveTo,
       onReload,
+      onResumeStoredGame,
+      onStartNewGame,
     };
   }, [
     onAction,
@@ -1438,6 +1662,8 @@ function PhaserStreetExperience({
     onMoveBy,
     onMoveTo,
     onReload,
+    onResumeStoredGame,
+    onStartNewGame,
   ]);
 
   useEffect(() => {
@@ -1492,6 +1718,8 @@ async function createRuntime(options: {
   overlayDom.style.pointerEvents = "none";
   overlayDom.style.overflow = "hidden";
   options.mount.style.position = "relative";
+  options.mount.style.touchAction = "none";
+  options.mount.style.cursor = "grab";
   options.mount.appendChild(overlayDom);
   const runtimeNow = getRuntimeNow();
   const renderScale = getRuntimeRenderScale();
@@ -1515,7 +1743,7 @@ async function createRuntime(options: {
       timerId: null,
     },
     indices: initialIndices,
-    lastCameraInteractionAt: runtimeNow,
+    lastCameraInteractionAt: Number.NEGATIVE_INFINITY,
     mapKey: createMapKey(initialSnapshot.game),
     objects: null,
     pendingConversationAutostartNpcId: null,
@@ -1577,6 +1805,7 @@ async function createRuntime(options: {
       bindOverlayEvents(objects.overlayDom, runtimeState, options.callbacksRef);
 
       renderStaticScene(objects, runtimeState);
+      resetRuntimeCameraForGame(runtimeState, objects);
       syncNpcMarkerObjects(objects, runtimeState, options.callbacksRef);
       renderDynamicScene(objects, runtimeState);
       renderOverlay(objects, runtimeState);
@@ -1666,10 +1895,13 @@ async function createRuntime(options: {
       }
 
       this.input.on("pointerdown", (pointer: PhaserType.Input.Pointer) => {
+        options.mount.style.cursor = "grabbing";
         beginCameraGesture(
           runtimeState,
           pointer,
           getRuntimeSceneViewport(runtimeState),
+          getRuntimeNow(),
+          getRuntimeCameraGestureViewport(runtimeState),
         );
       });
       this.input.on("pointermove", (pointer: PhaserType.Input.Pointer) => {
@@ -1679,13 +1911,16 @@ async function createRuntime(options: {
           pointer,
           getRuntimeSceneViewport(runtimeState),
           now,
+          getRuntimeCameraGestureViewport(runtimeState),
         );
         pulseCameraEdgeCue(runtimeState, panResult.blockedEdges, now);
       });
       this.input.on("pointerup", (pointer: PhaserType.Input.Pointer) => {
+        options.mount.style.cursor = "grab";
         finishRuntimePointerTap(runtimeState, pointer, options.callbacksRef);
       });
       this.input.on("pointerupoutside", (pointer: PhaserType.Input.Pointer) => {
+        options.mount.style.cursor = "grab";
         finishRuntimePointerTap(runtimeState, pointer, options.callbacksRef);
       });
       this.input.on(
@@ -1719,7 +1954,12 @@ async function createRuntime(options: {
           }
 
           const sceneViewport = getRuntimeSceneViewport(runtimeState);
-          if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
+          if (
+            !isPointerWithinSceneViewport(
+              pointer,
+              getRuntimeCameraGestureViewport(runtimeState),
+            )
+          ) {
             return;
           }
 
@@ -1766,6 +2006,9 @@ async function createRuntime(options: {
   };
 
   const game = new Phaser.Game({
+    audio: {
+      noAudio: true,
+    },
     backgroundColor: "#111d23",
     dom: {
       createContainer: true,
@@ -1810,6 +2053,9 @@ async function createRuntime(options: {
     },
 
     updateSnapshot(nextSnapshot) {
+      const previousGameId = runtimeState.snapshot.game?.id ?? null;
+      const nextGameId = nextSnapshot.game?.id ?? null;
+      const gameChanged = previousGameId !== nextGameId;
       runtimeState.snapshot = nextSnapshot;
       const nextMapKey = createMapKey(nextSnapshot.game);
 
@@ -1820,6 +2066,10 @@ async function createRuntime(options: {
         if (runtimeState.objects) {
           renderStaticScene(runtimeState.objects, runtimeState);
         }
+      }
+
+      if (gameChanged) {
+        resetRuntimeCameraForGame(runtimeState, runtimeState.objects);
       }
 
       syncUiState(runtimeState);
@@ -1855,6 +2105,8 @@ function createRuntimeObjects(
   const structureDetailLayer = scene.add.graphics().setDepth(22);
   const ambientLayer = scene.add.graphics().setDepth(25);
   const overlayLayer = scene.add.graphics().setDepth(30);
+  const agencyIntentText = createMapAgencyLabel(scene, "intent").setDepth(86);
+  const agencyTargetText = createMapAgencyLabel(scene, "target").setDepth(84);
 
   const playerPulse = scene.add.circle(0, 0, 34, 0x8dd0cd, 0.16);
   const playerReticle = scene.add
@@ -1909,6 +2161,8 @@ function createRuntimeObjects(
   playerContainer.setScale(1.08);
 
   return {
+    agencyIntentText,
+    agencyTargetText,
     ambientLayer,
     assetStructureNodes: [],
     assetTerrainNodes: [],
@@ -1930,6 +2184,38 @@ function createRuntimeObjects(
     structureLayer,
     terrainLayer,
   };
+}
+
+function createMapAgencyLabel(
+  scene: PhaserType.Scene,
+  variant: "intent" | "target",
+) {
+  const label = scene.add
+    .text(0, 0, "", {
+      align: "center",
+      color: variant === "intent" ? "#fffaf0" : "#f4d99d",
+      fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
+      fontSize: variant === "intent" ? "16px" : "12px",
+      fontStyle: "700",
+      letterSpacing: variant === "intent" ? 0.2 : 2.2,
+    })
+    .setAlpha(0)
+    .setBackgroundColor(
+      variant === "intent"
+        ? "rgba(6, 13, 17, 0.84)"
+        : "rgba(20, 17, 12, 0.78)",
+    )
+    .setOrigin(0.5, 1)
+    .setVisible(false);
+
+  label.setPadding(
+    variant === "intent" ? 10 : 8,
+    variant === "intent" ? 6 : 4,
+    variant === "intent" ? 10 : 8,
+    variant === "intent" ? 6 : 4,
+  );
+  label.setStroke("#061016", variant === "intent" ? 3 : 2);
+  return label;
 }
 
 function bindOverlayEvents(
@@ -2057,6 +2343,21 @@ function bindOverlayEvents(
     const reloadButton = target.closest<HTMLElement>("[data-reload]");
     if (reloadButton) {
       callbacksRef.current.onReload();
+      return;
+    }
+
+    const resumeStoredButton = target.closest<HTMLElement>(
+      "[data-resume-stored-game]",
+    );
+    if (resumeStoredButton) {
+      callbacksRef.current.onResumeStoredGame();
+      return;
+    }
+
+    const startNewButton = target.closest<HTMLElement>("[data-start-new-game]");
+    if (startNewButton) {
+      callbacksRef.current.onStartNewGame();
+      return;
     }
   };
 }
@@ -2200,6 +2501,8 @@ function renderDynamicScene(
 
   if (!game) {
     objects.overlayLayer.clear();
+    hideMapAgencyObjects(objects);
+    syncBrowserMapAgencyProbe(objects.overlayDom, null);
     objects.playerContainer.setVisible(false);
     for (const marker of objects.npcMarkers.values()) {
       marker.container.setVisible(false);
@@ -2210,6 +2513,8 @@ function renderDynamicScene(
   if (syncRuntimeRenderScale(objects, runtimeState)) {
     renderStaticScene(objects, runtimeState);
   }
+
+  drawAmbientOverlay(objects.ambientLayer, runtimeState, world, now);
 
   objects.playerContainer.setVisible(true);
   const playerTile = samplePlayerTile(runtimeState.playerMotion, now);
@@ -2276,7 +2581,18 @@ function renderDynamicScene(
   );
 
   updateNpcMarkers(objects, runtimeState, animatedNpcs, now);
-  drawDynamicOverlay(objects.overlayLayer, runtimeState, playerPixel, now);
+  const mapAgencyCue = buildMapAgencyCue(
+    runtimeState,
+    animatedNpcs,
+  );
+  drawDynamicOverlay(
+    objects.overlayLayer,
+    runtimeState,
+    playerTile,
+    playerPixel,
+    now,
+    mapAgencyCue,
+  );
   const sceneViewport = getSceneViewport(
     getRuntimeViewportSize(runtimeState),
     world,
@@ -2291,6 +2607,7 @@ function renderDynamicScene(
     world,
     now,
   );
+  syncMapAgencyObjects(objects, runtimeState, playerPixel, mapAgencyCue, now);
   pulseCameraEdgeCue(runtimeState, cameraBlockedEdges, now);
   syncCameraEdgeCues(
     objects.overlayDom,
@@ -2298,6 +2615,7 @@ function renderDynamicScene(
     getOverlaySceneViewport(runtimeState),
     now,
   );
+  syncBrowserCameraProbe(objects.overlayDom, runtimeState, camera, sceneViewport);
 }
 
 function renderOverlay(objects: RuntimeObjects, runtimeState: RuntimeState) {
@@ -2790,6 +3108,519 @@ function updateNpcMarkers(
   }
 }
 
+function hideMapAgencyObjects(objects: RuntimeObjects) {
+  objects.agencyIntentText.setVisible(false).setAlpha(0);
+  objects.agencyTargetText.setVisible(false).setAlpha(0);
+}
+
+function syncMapAgencyObjects(
+  objects: RuntimeObjects,
+  runtimeState: RuntimeState,
+  playerPixel: Point,
+  cue: MapAgencyCue | null,
+  now: number,
+) {
+  if (!cue) {
+    hideMapAgencyObjects(objects);
+    syncBrowserMapAgencyProbe(objects.overlayDom, null);
+    return;
+  }
+
+  const world = getWorldBounds(runtimeState.snapshot);
+  const labelSafeRect = getMapAgencyLabelSafeRect(objects, runtimeState, world);
+  const playerLabelVisible = pointNearVisualRect(
+    playerPixel,
+    labelSafeRect,
+    CELL * 1.2,
+  );
+  const intentCopy = cue.targetWorld || cue.targetLabel
+    ? cue.intent
+    : cue.detail
+      ? `${cue.intent}\n${cue.detail}`
+      : cue.intent;
+  const intentHalfWidth = estimateMapAgencyLabelHalfWidth(intentCopy, "intent");
+  const intentPosition = clampMapAgencyLabelPosition(
+    {
+      x: playerPixel.x,
+      y:
+        playerPixel.y -
+        (runtimeState.indices.visualScene ? CELL * 1.88 : CELL * 1.56),
+    },
+    world,
+    intentHalfWidth,
+    54,
+    labelSafeRect,
+  );
+  const labelPulse = 0.92 + Math.sin(now / 560) * 0.035;
+
+  if (playerLabelVisible) {
+    setMapAgencyLabel(objects.agencyIntentText, intentCopy, intentPosition, {
+      alpha: labelPulse,
+      background:
+        cue.tone === "conversation"
+          ? "rgba(5, 20, 23, 0.86)"
+          : "rgba(7, 13, 18, 0.84)",
+      color: "#fffaf0",
+    });
+  } else {
+    objects.agencyIntentText.setVisible(false).setAlpha(0);
+  }
+
+  const showTargetLabel =
+    cue.targetWorld &&
+    cue.targetLabel &&
+    pointNearVisualRect(cue.targetWorld, labelSafeRect, CELL * 0.7) &&
+    distanceBetween(playerPixel, cue.targetWorld) >
+      (cue.targetIsNpc ? CELL * 1.45 : CELL * 1.8);
+
+  if (showTargetLabel && cue.targetWorld && cue.targetLabel) {
+    const targetCopy = cue.targetLabel.toUpperCase();
+    const targetHalfWidth = estimateMapAgencyLabelHalfWidth(
+      targetCopy,
+      "target",
+    );
+    const targetPosition = clampMapAgencyLabelPosition(
+      {
+        x: cue.targetWorld.x,
+        y: cue.targetWorld.y - (cue.targetIsNpc ? CELL * 0.86 : CELL * 0.62),
+      },
+      world,
+      targetHalfWidth,
+      34,
+      labelSafeRect,
+    );
+    setMapAgencyLabel(
+      objects.agencyTargetText,
+      targetCopy,
+      targetPosition,
+      {
+        alpha: 0.8 + Math.sin(now / 640) * 0.035,
+        background: "rgba(28, 22, 14, 0.72)",
+        color: "#f4d99d",
+      },
+    );
+  } else {
+    objects.agencyTargetText.setVisible(false).setAlpha(0);
+  }
+
+  syncBrowserMapAgencyProbe(objects.overlayDom, cue);
+}
+
+function setMapAgencyLabel(
+  label: PhaserType.GameObjects.Text,
+  text: string,
+  point: Point,
+  options: {
+    alpha: number;
+    background: string;
+    color: string;
+  },
+) {
+  label
+    .setText(text)
+    .setColor(options.color)
+    .setBackgroundColor(options.background)
+    .setPosition(Math.round(point.x), Math.round(point.y))
+    .setVisible(true)
+    .setAlpha(clamp(options.alpha, 0, 1));
+}
+
+function pointNearVisualRect(point: Point, rect: VisualRect, margin: number) {
+  return !(
+    point.x < rect.x - margin ||
+    point.y < rect.y - margin ||
+    point.x > rect.x + rect.width + margin ||
+    point.y > rect.y + rect.height + margin
+  );
+}
+
+function clampMapAgencyLabelPosition(
+  point: Point,
+  world: { height: number; width: number },
+  halfWidth: number,
+  height: number,
+  safeRect?: VisualRect,
+) {
+  const worldMinX = halfWidth + 10;
+  const worldMaxX = Math.max(worldMinX, world.width - halfWidth - 10);
+  const worldMinY = height + 10;
+  const worldMaxY = Math.max(worldMinY, world.height - 10);
+  let minX = worldMinX;
+  let maxX = worldMaxX;
+  let minY = worldMinY;
+  let maxY = worldMaxY;
+
+  if (safeRect) {
+    minX = Math.max(minX, safeRect.x + halfWidth);
+    maxX = Math.min(maxX, safeRect.x + safeRect.width - halfWidth);
+    minY = Math.max(minY, safeRect.y + height);
+    maxY = Math.min(maxY, safeRect.y + safeRect.height);
+
+    if (maxX < minX) {
+      const visibleMidX = safeRect.x + safeRect.width / 2;
+      const clampedMidX = clamp(visibleMidX, worldMinX, worldMaxX);
+      minX = clampedMidX;
+      maxX = clampedMidX;
+    }
+
+    if (maxY < minY) {
+      const visibleMidY = safeRect.y + safeRect.height / 2;
+      const clampedMidY = clamp(visibleMidY, worldMinY, worldMaxY);
+      minY = clampedMidY;
+      maxY = clampedMidY;
+    }
+  }
+
+  return {
+    x: clamp(point.x, minX, maxX),
+    y: clamp(point.y, minY, maxY),
+  };
+}
+
+function estimateMapAgencyLabelHalfWidth(
+  text: string,
+  variant: "intent" | "target",
+) {
+  const longestLineLength = text
+    .split("\n")
+    .reduce((maxLength, line) => Math.max(maxLength, line.trim().length), 0);
+  const characterWidth = variant === "intent" ? 8.8 : 8.2;
+  const padding = variant === "intent" ? 24 : 22;
+  const minimum = variant === "intent" ? 150 : 110;
+  const maximum = variant === "intent" ? 220 : 180;
+
+  return clamp(
+    Math.round((longestLineLength * characterWidth + padding) / 2),
+    minimum,
+    maximum,
+  );
+}
+
+function getMapAgencyLabelSafeRect(
+  objects: RuntimeObjects,
+  runtimeState: RuntimeState,
+  world: { height: number; width: number },
+): VisualRect {
+  const camera = objects.scene.cameras.main;
+  const sceneViewport = getRuntimeSceneViewport(runtimeState);
+  const zoom = Math.max(camera.zoom, 0.001);
+  const visibleWidth = Math.min(sceneViewport.width / zoom, world.width);
+  const visibleHeight = Math.min(sceneViewport.height / zoom, world.height);
+  const compactPortrait =
+    isCompactViewport(runtimeState.snapshot.viewport) &&
+    runtimeState.snapshot.viewport.height > runtimeState.snapshot.viewport.width;
+  const sideGutter = (compactPortrait ? 92 : 54) / zoom;
+  const topGutter = (compactPortrait ? 54 : 24) / zoom;
+  const bottomGutter = (compactPortrait ? 170 : 36) / zoom;
+  const x = clamp(camera.scrollX + sideGutter, 0, world.width);
+  const y = clamp(camera.scrollY + topGutter, 0, world.height);
+  const maxWidth = Math.max(world.width - x, 1);
+  const maxHeight = Math.max(world.height - y, 1);
+
+  return {
+    height: Math.min(Math.max(visibleHeight - topGutter - bottomGutter, 1), maxHeight),
+    width: Math.min(Math.max(visibleWidth - sideGutter * 2, 1), maxWidth),
+    x,
+    y,
+  };
+}
+
+function buildMapAgencyCue(
+  runtimeState: RuntimeState,
+  animatedNpcs: AnimatedNpcState[],
+): MapAgencyCue | null {
+  const game = runtimeState.snapshot.game;
+  if (!game) {
+    return null;
+  }
+
+  const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
+  const activeConversation = game.activeConversation;
+  const pendingMove = game.player.pendingObjectiveMove;
+  const shouldShowCue =
+    autonomy.autoContinue ||
+    Boolean(activeConversation) ||
+    Boolean(pendingMove) ||
+    Boolean(runtimeState.waypointTarget);
+
+  if (!shouldShowCue) {
+    return null;
+  }
+
+  const targetNpc =
+    resolveNpcById(game, activeConversation?.npcId) ??
+    resolveNpcById(game, autonomy.npcId) ??
+    resolveNpcById(game, pendingMove?.npcId);
+  const conversationLike =
+    Boolean(activeConversation) ||
+    autonomy.mode === "conversation" ||
+    autonomy.stepKind === "talk";
+  const targetLocationId =
+    activeConversation?.locationId ??
+    autonomy.targetLocationId ??
+    pendingMove?.targetLocationId ??
+    targetNpc?.currentLocationId ??
+    null;
+  const targetLocation = targetLocationId
+    ? runtimeState.indices.locationsById.get(targetLocationId) ?? null
+    : null;
+  const npcWorld = targetNpc
+    ? getAnimatedNpcWorldPoint(animatedNpcs, targetNpc.id) ??
+      getMapAgencyLocationWorldPoint(runtimeState, targetNpc.currentLocationId)
+    : null;
+  const locationWorld = targetLocationId
+    ? getMapAgencyLocationWorldPoint(runtimeState, targetLocationId)
+    : null;
+  const locationTile = targetLocation
+    ? {
+        x: targetLocation.entryX,
+        y: targetLocation.entryY,
+      }
+    : null;
+  const waypointWorld = runtimeState.waypointTarget
+    ? projectRuntimeTileCenter(
+        runtimeState.indices,
+        runtimeState.waypointTarget.x,
+        runtimeState.waypointTarget.y,
+      )
+    : null;
+  const targetWorld =
+    conversationLike && npcWorld
+      ? npcWorld
+      : locationWorld ?? npcWorld ?? waypointWorld;
+  const targetIsNpc = Boolean(
+    conversationLike && npcWorld && targetWorld === npcWorld,
+  );
+  const targetTile =
+    runtimeState.waypointTarget ??
+    locationTile ??
+    (targetNpc?.currentLocationId
+      ? getMapAgencyLocationTile(runtimeState, targetNpc.currentLocationId)
+      : null);
+  const targetLabel = buildMapAgencyTargetLabel({
+    conversationLike,
+    targetLocation,
+    targetNpc,
+  });
+  const tone = normalizeMapAgencyTone(autonomy.mode);
+  const intent = buildMapAgencyIntent({
+    activeConversation: Boolean(activeConversation),
+    autonomy,
+    targetLocation,
+    targetNpc,
+  });
+  const detail = buildMapAgencyDetail({
+    activeConversation,
+    autonomy,
+    game,
+    pendingMove,
+    targetLocation,
+  });
+
+  if (!targetWorld && !intent) {
+    return null;
+  }
+
+  return {
+    detail,
+    intent,
+    targetIsNpc,
+    targetLabel,
+    targetLocationId,
+    targetTile,
+    targetWorld,
+    tone,
+  };
+}
+
+function resolveNpcById(game: StreetGameState, npcId?: string | null) {
+  return npcId ? game.npcs.find((npc) => npc.id === npcId) ?? null : null;
+}
+
+function getAnimatedNpcWorldPoint(
+  animatedNpcs: AnimatedNpcState[],
+  npcId: string,
+) {
+  const animatedNpc = animatedNpcs.find((entry) => entry.npc.id === npcId);
+  return animatedNpc ? { x: animatedNpc.x, y: animatedNpc.y } : null;
+}
+
+function getMapAgencyLocationWorldPoint(
+  runtimeState: RuntimeState,
+  locationId: string,
+) {
+  const game = runtimeState.snapshot.game;
+  const location = runtimeState.indices.locationsById.get(locationId);
+  if (!game || !location) {
+    return null;
+  }
+
+  const point = {
+    x: location.entryX,
+    y: location.entryY,
+  };
+
+  return (
+    resolveAuthoredLocationWorldPoint({
+      conversationLocationId: game.activeConversation?.locationId,
+      indices: runtimeState.indices,
+      locationId,
+      point,
+    }) ?? projectRuntimeTileCenter(runtimeState.indices, point.x, point.y)
+  );
+}
+
+function getMapAgencyLocationTile(
+  runtimeState: RuntimeState,
+  locationId: string,
+) {
+  const location = runtimeState.indices.locationsById.get(locationId);
+  return location
+    ? {
+        x: location.entryX,
+        y: location.entryY,
+      }
+    : null;
+}
+
+function buildMapAgencyTargetLabel({
+  conversationLike,
+  targetLocation,
+  targetNpc,
+}: {
+  conversationLike: boolean;
+  targetLocation: LocationState | null;
+  targetNpc: NpcState | null;
+}) {
+  if (conversationLike && targetNpc) {
+    return null;
+  }
+
+  if (targetLocation) {
+    return `Next: ${mapAgencyLocationName(targetLocation)}`;
+  }
+
+  if (targetNpc) {
+    return `Find: ${targetNpc.name}`;
+  }
+
+  return null;
+}
+
+function buildMapAgencyIntent({
+  activeConversation,
+  autonomy,
+  targetLocation,
+  targetNpc,
+}: {
+  activeConversation: boolean;
+  autonomy: StreetGameState["rowanAutonomy"];
+  targetLocation: LocationState | null;
+  targetNpc: NpcState | null;
+}) {
+  if (activeConversation && targetNpc) {
+    return `With ${targetNpc.name}`;
+  }
+
+  if (autonomy.mode === "moving" && targetLocation) {
+    return `Heading to ${mapAgencyLocationName(targetLocation)}`;
+  }
+
+  if (autonomy.mode === "conversation" && targetNpc) {
+    return `Talk with ${targetNpc.name}`;
+  }
+
+  if (autonomy.mode === "acting") {
+    return compactMapAgencyCopy(autonomy.label || "Taking the next step", 34);
+  }
+
+  if (autonomy.mode === "waiting") {
+    return "Letting a little time pass";
+  }
+
+  if (autonomy.mode === "blocked") {
+    return "Needs another way forward";
+  }
+
+  return autonomy.autoContinue ? "Choosing the next step" : "Looking around";
+}
+
+function buildMapAgencyDetail({
+  activeConversation,
+  autonomy,
+  game,
+  pendingMove,
+  targetLocation,
+}: {
+  activeConversation?: StreetGameState["activeConversation"];
+  autonomy: StreetGameState["rowanAutonomy"];
+  game: StreetGameState;
+  pendingMove?: StreetGameState["player"]["pendingObjectiveMove"];
+  targetLocation: LocationState | null;
+}) {
+  if (activeConversation?.objectiveText) {
+    return compactMapAgencyCopy(`Goal: ${activeConversation.objectiveText}`, 58);
+  }
+
+  if (activeConversation?.decision) {
+    return compactMapAgencyCopy(activeConversation.decision, 58);
+  }
+
+  if (activeConversation) {
+    const latestNpcLine = [...activeConversation.lines]
+      .reverse()
+      .find((entry) => entry.speaker === "npc");
+    return compactMapAgencyCopy(
+      latestNpcLine
+        ? `${latestNpcLine.speakerName}: ${latestNpcLine.text}`
+        : "Listening for what matters next.",
+      58,
+    );
+  }
+
+  if (pendingMove?.rationale) {
+    return compactMapAgencyCopy(pendingMove.rationale, 58);
+  }
+
+  if (pendingMove?.objectiveText) {
+    return compactMapAgencyCopy(`Goal: ${pendingMove.objectiveText}`, 58);
+  }
+
+  if (autonomy.mode === "moving" && targetLocation) {
+    return `Next stop: ${mapAgencyLocationName(targetLocation)}.`;
+  }
+
+  if (game.player.objective?.text) {
+    return compactMapAgencyCopy(`Goal: ${game.player.objective.text}`, 58);
+  }
+
+  if (autonomy.detail && autonomy.detail !== autonomy.label) {
+    return compactMapAgencyCopy(autonomy.detail, 58);
+  }
+
+  return compactMapAgencyCopy(buildPlayerThought(game), 58);
+}
+
+function normalizeMapAgencyTone(
+  mode: StreetGameState["rowanAutonomy"]["mode"],
+): MapAgencyTone {
+  return mode;
+}
+
+function mapAgencyLocationName(location: LocationState) {
+  return location.name || location.shortLabel;
+}
+
+function compactMapAgencyCopy(text: string, maxLength: number) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const cutAt = normalized.lastIndexOf(" ", maxLength - 3);
+  return `${normalized.slice(0, cutAt > 28 ? cutAt : maxLength - 3).trim()}...`;
+}
+
 function buildOverlayHtml(runtimeState: RuntimeState) {
   const { snapshot, ui } = runtimeState;
   const { width, height } = snapshot.viewport;
@@ -3021,6 +3852,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     : isCollapsibleRailViewport(snapshot.viewport)
       ? "tablet"
       : "desktop";
+  const watchModeClass = snapshot.rowanAutoplayEnabled
+    ? "is-watch-mode"
+    : "";
   const railExpanded = railViewport === "desktop" ? true : ui.railExpanded;
   const supportExpanded = ui.supportExpanded;
   const sceneDescriptionPreview = buildNarrativePreview(
@@ -3089,19 +3923,23 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     ? `Finish with ${rowanAutonomy.label.slice("With ".length)}`
     : "Continue conversation";
   const primaryContinueLabel = snapshot.rowanAutoplayEnabled
-    ? "Skip Ahead"
+    ? "Nudge Rowan"
     : game.activeConversation
       ? activeConversationContinueLabel
       : rowanAutonomy.label || "Continue";
   const primaryContinueCopy = game.activeConversation
-    ? "Let the conversation land."
-    : rowanAutonomy.mode === "moving"
-      ? "Move Rowan there."
-      : rowanAutonomy.mode === "waiting"
-        ? "Let the clock pass."
-        : rowanAutonomy.mode === "conversation"
-          ? "Start the conversation."
-          : "Do this step.";
+    ? snapshot.rowanAutoplayEnabled
+      ? "He will keep talking on his own."
+      : "Let the conversation land."
+    : snapshot.rowanAutoplayEnabled
+      ? "He will keep going on his own."
+      : rowanAutonomy.mode === "moving"
+        ? "Move Rowan there."
+        : rowanAutonomy.mode === "waiting"
+          ? "Let the clock pass."
+          : rowanAutonomy.mode === "conversation"
+            ? "Start the conversation."
+            : "Do this step.";
   const conversationEntry = selectedNpc
     ? {
         id: `conversation-${selectedNpc.id}`,
@@ -3362,7 +4200,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       width,
     })}
     <div
-      class="ml-root ${railViewport !== "desktop" ? "is-collapsible-rail" : ""} ${
+      class="ml-root ${watchModeClass} ${railViewport !== "desktop" ? "is-collapsible-rail" : ""} ${
         railViewport === "phone" ? "is-phone-rail" : ""
       } ${railExpanded ? "is-rail-expanded" : "is-rail-collapsed"}"
     >
@@ -3422,7 +4260,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           <div class="ml-dock-copy">${escapeHtml(
             focusMeta?.subtitle ??
               upcomingCommitmentLabel ??
-              "Scroll or drag the map to look around. Click a street tile to move, or open People, Journal, and Mind for details.",
+              (snapshot.rowanAutoplayEnabled
+                ? "Drag the map to look around. Open Locals, Journal, or Mind when you want details."
+                : "Scroll or drag the map to look around. Click a street tile to move, or open People, Journal, and Mind for details."),
           )}</div>
         </div>
       </div>
@@ -3474,7 +4314,11 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 showPrimaryContinue
                   ? `
                   <button
-                    class="ml-primary-action"
+                    class="ml-primary-action ${
+                      snapshot.rowanAutoplayEnabled
+                        ? "is-autoplay-nudge"
+                        : ""
+                    }"
                     data-advance-objective="true"
                     type="button"
                   >
@@ -3488,7 +4332,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 `
                   : snapshot.rowanAutoplayEnabled && rowanAutonomy.autoContinue
                     ? `<div class="ml-autoplay-note">${escapeHtml(
-                        "Watching Rowan choose. Use Skip Ahead if you want to move faster.",
+                        "Rowan is moving through this beat. You can still take the next step when you want.",
                       )}</div>`
                     : ""
               }
@@ -3668,6 +4512,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                   : ""
               }
               <script id="ml-browser-probe" type="application/json">${browserProbeJson}</script>
+              <script id="ml-browser-map-agency-probe" type="application/json">{}</script>
+              <script id="ml-browser-camera-probe" type="application/json">{}</script>
             </div>
           </div>
         </div>
@@ -3821,6 +4667,11 @@ function syncUiState(runtimeState: RuntimeState) {
   const collapsibleRailViewport = isCollapsibleRailViewport(
     runtimeState.snapshot.viewport,
   );
+  const compactAutoplayWatchMode =
+    collapsibleRailViewport &&
+    runtimeState.snapshot.rowanAutoplayEnabled &&
+    !runtimeState.ui.focusPanel &&
+    !runtimeState.ui.supportExpanded;
 
   if (!game) {
     runtimeState.ui.selectedNpcId = null;
@@ -3836,7 +4687,11 @@ function syncUiState(runtimeState: RuntimeState) {
   }
 
   if (game.activeConversation?.npcId) {
-    if (collapsibleRailViewport && !runtimeState.ui.railExpanded) {
+    if (
+      collapsibleRailViewport &&
+      !compactAutoplayWatchMode &&
+      !runtimeState.ui.railExpanded
+    ) {
       runtimeState.ui.railExpanded = true;
     }
     runtimeState.ui.selectedNpcId = game.activeConversation.npcId;
@@ -3870,6 +4725,7 @@ function syncUiState(runtimeState: RuntimeState) {
   if (
     collapsibleRailViewport &&
     shouldAutoOpenRail &&
+    !compactAutoplayWatchMode &&
     !runtimeState.ui.railExpanded
   ) {
     runtimeState.ui.railExpanded = true;
@@ -3985,7 +4841,10 @@ function maybeAutostartConversation(
     clearPendingConversation(runtimeState);
     runtimeState.ui.activeTab = "actions";
     runtimeState.ui.focusPanel = null;
-    if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+    if (
+      isCollapsibleRailViewport(runtimeState.snapshot.viewport) &&
+      !runtimeState.snapshot.rowanAutoplayEnabled
+    ) {
       runtimeState.ui.railExpanded = true;
     }
     clearConversationAutostartTimer(runtimeState);
@@ -4088,6 +4947,70 @@ function buildMapEdgeCuesHtml(sceneViewport: SceneViewport) {
       ).join("")}
     </div>
   `;
+}
+
+function syncBrowserMapAgencyProbe(
+  root: HTMLElement,
+  cue: MapAgencyCue | null,
+) {
+  const probe = root.querySelector<HTMLScriptElement>(
+    "#ml-browser-map-agency-probe",
+  );
+  if (!probe) {
+    return;
+  }
+
+  probe.textContent = JSON.stringify(
+    cue
+      ? {
+          detail: cue.detail,
+          intent: cue.intent,
+          target: cue.targetWorld
+            ? {
+                isNpc: cue.targetIsNpc,
+                label: cue.targetLabel,
+                locationId: cue.targetLocationId,
+                x: Math.round(cue.targetWorld.x),
+                y: Math.round(cue.targetWorld.y),
+              }
+            : null,
+          tone: cue.tone,
+        }
+      : null,
+  ).replace(/</g, "\\u003c");
+}
+
+function syncBrowserCameraProbe(
+  root: HTMLElement,
+  runtimeState: RuntimeState,
+  camera: PhaserType.Cameras.Scene2D.Camera,
+  sceneViewport: SceneViewport,
+) {
+  const probe = root.querySelector<HTMLScriptElement>(
+    "#ml-browser-camera-probe",
+  );
+  if (!probe) {
+    return;
+  }
+
+  probe.textContent = JSON.stringify({
+    cameraOffset: {
+      x: Number(runtimeState.cameraOffset.x.toFixed(2)),
+      y: Number(runtimeState.cameraOffset.y.toFixed(2)),
+    },
+    dragging: runtimeState.cameraGesture?.dragging === true,
+    sceneViewport: {
+      height: Math.round(sceneViewport.height),
+      width: Math.round(sceneViewport.width),
+      x: Math.round(sceneViewport.x),
+      y: Math.round(sceneViewport.y),
+    },
+    scroll: {
+      x: Number(camera.scrollX.toFixed(2)),
+      y: Number(camera.scrollY.toFixed(2)),
+    },
+    zoom: Number(camera.zoom.toFixed(4)),
+  }).replace(/</g, "\\u003c");
 }
 
 function getOverlaySceneViewport(runtimeState: RuntimeState): SceneViewport {
@@ -4380,6 +5303,85 @@ function getRuntimeSceneViewport(runtimeState: RuntimeState): SceneViewport {
   );
 }
 
+function getRuntimeCameraGestureViewport(
+  runtimeState: RuntimeState,
+): SceneViewport {
+  const viewport = getRuntimeViewportSize(runtimeState);
+  return {
+    height: viewport.height,
+    width: viewport.width,
+    x: 0,
+    y: 0,
+  };
+}
+
+function resetRuntimeCameraForGame(
+  runtimeState: RuntimeState,
+  objects: RuntimeObjects | null,
+) {
+  runtimeState.cameraGesture = null;
+  runtimeState.cameraOffset = { x: 0, y: 0 };
+  runtimeState.cameraZoomFactor = CAMERA_USER_ZOOM_DEFAULT;
+  runtimeState.lastCameraInteractionAt = Number.NEGATIVE_INFINITY;
+
+  const game = runtimeState.snapshot.game;
+  if (!game || !objects) {
+    return;
+  }
+
+  if (syncRuntimeRenderScale(objects, runtimeState)) {
+    renderStaticScene(objects, runtimeState);
+  }
+
+  const world = getWorldBounds(runtimeState.snapshot);
+  const sceneViewport = getSceneViewport(
+    getRuntimeViewportSize(runtimeState),
+    world,
+    runtimeState.snapshot.viewport,
+  );
+  const targetZoom = getTargetSceneZoom(runtimeState, sceneViewport, world);
+  const visibleWidth = sceneViewport.width / Math.max(targetZoom, 0.001);
+  const visibleHeight = sceneViewport.height / Math.max(targetZoom, 0.001);
+  const playerPixel = playerTileToWorld(
+    {
+      x: runtimeState.snapshot.optimisticPlayerPosition?.x ?? game.player.x,
+      y: runtimeState.snapshot.optimisticPlayerPosition?.y ?? game.player.y,
+    },
+    runtimeState.indices,
+    game,
+  );
+  let minScrollX = 0;
+  let maxScrollX = Math.max(world.width - visibleWidth, 0);
+  if (isCompactViewport(runtimeState.snapshot.viewport)) {
+    const range = getCompactCameraHorizontalRange({
+      map: game.map,
+      visibleWidth,
+      visualScene: runtimeState.indices.visualScene,
+      world,
+    });
+    minScrollX = range.min;
+    maxScrollX = range.max;
+  }
+  const maxScrollY = Math.max(world.height - visibleHeight, 0);
+
+  objects.scene.cameras.main
+    .setZoom(targetZoom)
+    .setScroll(
+      clamp(
+        playerPixel.x -
+          visibleWidth * getRuntimeCameraAnchorXRatio(runtimeState),
+        minScrollX,
+        maxScrollX,
+      ),
+      clamp(
+        playerPixel.y -
+          visibleHeight * getRuntimeCameraAnchorYRatio(runtimeState),
+        0,
+        maxScrollY,
+      ),
+    );
+}
+
 function syncRuntimeRenderScale(
   objects: RuntimeObjects,
   runtimeState: RuntimeState,
@@ -4503,12 +5505,15 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   const routedPoints = runtimeState.indices.routeFinder(fromPoint, nextPoint);
   const path = [fromPoint, ...routedPoints.slice(1)];
   const playerMoveMsPerTile = derivePlayerMoveMsPerTile(runtimeState);
+  const playerMoveMaxDurationMs = runtimeState.snapshot.rowanAutoplayEnabled
+    ? WATCH_PLAYER_MAX_MOVE_DURATION_MS
+    : PLAYER_MAX_MOVE_DURATION_MS;
   const durationMs =
     runtimeState.snapshot.optimisticPlayerMoveDurationMs ??
     clamp(
       Math.max(path.length - 1, 1) * playerMoveMsPerTile,
       playerMoveMsPerTile,
-      PLAYER_MAX_MOVE_DURATION_MS,
+      playerMoveMaxDurationMs,
     );
 
   runtimeState.playerMotion = {
@@ -4654,7 +5659,12 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
 
   const rawMsPerTile =
     (patrolCycleSeconds(currentLocation.type) * 1000) / patrolDistance;
-  return clamp(rawMsPerTile * PLAYER_MOVE_DURATION_MULTIPLIER, 300, 760);
+  const watchMultiplier = runtimeState.snapshot.rowanAutoplayEnabled ? 1.24 : 1;
+  return clamp(
+    rawMsPerTile * PLAYER_MOVE_DURATION_MULTIPLIER * watchMultiplier,
+    runtimeState.snapshot.rowanAutoplayEnabled ? 360 : 300,
+    runtimeState.snapshot.rowanAutoplayEnabled ? 880 : 760,
+  );
 }
 
 function computeAnimatedNpcs(
@@ -4677,8 +5687,9 @@ function computeAnimatedNpcs(
       npc,
     }),
   );
+  const playerPath = buildPlayerAvoidanceWorldPath(runtimeState, now);
 
-  return resolveCrowdPositions(rawNpcs, playerPixel);
+  return resolveCrowdPositions(rawNpcs, playerPixel, playerPath);
 }
 
 function buildAnimatedNpcState({
@@ -4804,6 +5815,7 @@ function buildAuthoredNpcPatrolPath(
 function resolveCrowdPositions(
   rawNpcs: AnimatedNpcState[],
   playerPixel: Point,
+  playerPath: Point[] = [],
 ) {
   const playerRadius = CELL * 0.34;
   const npcRadius = CELL * 0.28;
@@ -4831,6 +5843,29 @@ function resolveCrowdPositions(
       entry.isYielding = true;
       entry.step *= 0.35;
       entry.facing = steered.x >= playerPixel.x ? 1 : -1;
+    }
+
+    if (playerPath.length > 1) {
+      const nearestPathPoint = nearestPointOnPolyline(
+        { x: entry.x, y: entry.y },
+        playerPath,
+      );
+      const pathSteered = steerAroundOccupant(
+        { x: entry.x, y: entry.y },
+        nearestPathPoint,
+        playerRadius + npcRadius + 4,
+        CELL * 1.05,
+        hashString(`${entry.npc.id}:path`) % 2 === 0 ? 1 : -1,
+      );
+
+      entry.x = pathSteered.x;
+      entry.y = pathSteered.y;
+
+      if (pathSteered.didYield) {
+        entry.isYielding = true;
+        entry.step *= 0.46;
+        entry.facing = pathSteered.x >= nearestPathPoint.x ? 1 : -1;
+      }
     }
   }
 
@@ -4881,6 +5916,63 @@ function resolveCrowdPositions(
   return resolved;
 }
 
+function buildPlayerAvoidanceWorldPath(runtimeState: RuntimeState, now: number) {
+  const motion = runtimeState.playerMotion;
+  if (motion.path.length <= 1 || isPlayerMotionSettled(motion, now)) {
+    return [];
+  }
+
+  const worldPath =
+    motion.worldPath && motion.worldPath.length > 1
+      ? motion.worldPath
+      : motion.path.map((point) =>
+          projectRuntimeTileCenter(runtimeState.indices, point.x, point.y),
+        );
+
+  return dedupePointSequence(worldPath);
+}
+
+function isPlayerMotionSettled(motion: PlayerMotionState, now: number) {
+  return (now - motion.startedAt) / Math.max(motion.durationMs, 1) >= 0.98;
+}
+
+function nearestPointOnPolyline(point: Point, path: Point[]) {
+  let nearest = path[0] ?? point;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+
+  for (let index = 1; index < path.length; index += 1) {
+    const candidate = nearestPointOnSegment(point, path[index - 1], path[index]);
+    const candidateDistance = distanceBetween(point, candidate);
+    if (candidateDistance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = candidateDistance;
+    }
+  }
+
+  return nearest;
+}
+
+function nearestPointOnSegment(point: Point, start: Point, end: Point) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+
+  if (lengthSquared <= 0.0001) {
+    return start;
+  }
+
+  const progress = clamp(
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared,
+    0,
+    1,
+  );
+
+  return {
+    x: start.x + dx * progress,
+    y: start.y + dy * progress,
+  };
+}
+
 function clampNpcDisplacement(point: Point, original: Point) {
   const dx = point.x - original.x;
   const dy = point.y - original.y;
@@ -4907,6 +5999,7 @@ function drawAmbientOverlay(
   layer: PhaserType.GameObjects.Graphics,
   runtimeState: RuntimeState,
   world: { height: number; width: number },
+  now = getRuntimeNow(),
 ) {
   const game = runtimeState.snapshot.game;
   layer.clear();
@@ -4923,6 +6016,162 @@ function drawAmbientOverlay(
   layer.fillRect(0, 0, world.width, world.height);
   layer.fillStyle(0x000000, 0.03);
   layer.fillRect(0, 0, world.width, world.height);
+
+  drawAmbientCityLife(layer, runtimeState, now, hour);
+}
+
+function drawAmbientCityLife(
+  layer: PhaserType.GameObjects.Graphics,
+  runtimeState: RuntimeState,
+  now: number,
+  hour: number,
+) {
+  const game = runtimeState.snapshot.game;
+  if (!game || !runtimeState.indices.visualScene) {
+    return;
+  }
+
+  const lunchPulse = hour >= 11 && hour <= 15.4 ? 1 : 0.72;
+  const cityAlpha = runtimeState.snapshot.rowanAutoplayEnabled ? 0.9 : 0.74;
+
+  for (const route of AMBIENT_CITY_ROUTES) {
+    if (!ambientRouteIsActive(route, hour)) {
+      continue;
+    }
+
+    const crowdCount =
+      route.id === "tea-house-front" && hour >= 11 && hour <= 15.4
+        ? 3
+        : route.id === "market-crossing" || route.id === "yard-shuttle"
+          ? 2
+          : 1;
+    const routeTempo =
+      route.id === "tea-house-front" || route.id === "market-crossing"
+        ? lunchPulse
+        : 0.78;
+
+    for (let walkerIndex = 0; walkerIndex < crowdCount; walkerIndex += 1) {
+      const progress = positiveModulo(
+        now / (route.seconds * 1000) +
+          route.phase +
+          walkerIndex / crowdCount +
+          game.clock.totalMinutes * 0.004 * routeTempo,
+        1,
+      );
+      const point = sampleLoopPath(route.path, progress);
+      const lookAhead = sampleLoopPath(
+        route.path,
+        positiveModulo(progress + 0.025, 1),
+      );
+      const bob =
+        Math.sin(
+          now / 190 + (route.phase + walkerIndex * 0.19) * Math.PI * 2,
+        ) * 1.7;
+      const pace = Math.sin(progress * Math.PI * 2 * route.path.length);
+
+      drawAmbientPedestrian(layer, {
+        accent: route.accent,
+        alpha:
+          cityAlpha *
+          (crowdCount > 1 ? 0.82 : 0.92) *
+          (0.84 + Math.abs(pace) * 0.16),
+        color: route.color,
+        facing: lookAhead.x >= point.x ? 1 : -1,
+        scale: route.scale * (crowdCount > 1 ? 1.08 : 1.18),
+        step: pace,
+        x: point.x,
+        y: point.y + bob,
+      });
+    }
+  }
+}
+
+function ambientRouteIsActive(route: AmbientCityRoute, hour: number) {
+  const startHour = route.startHour ?? 0;
+  const endHour = route.endHour ?? 24;
+  return hour >= startHour && hour <= endHour;
+}
+
+function drawAmbientPedestrian(
+  layer: PhaserType.GameObjects.Graphics,
+  options: {
+    accent: number;
+    alpha: number;
+    color: number;
+    facing: 1 | -1;
+    scale: number;
+    step: number;
+    x: number;
+    y: number;
+  },
+) {
+  const { accent, alpha, color, facing, scale, step, x, y } = options;
+  const swing = Math.sin(step * Math.PI) * scale;
+  const bodyBob = Math.abs(swing) * 1.6;
+  const coatShade = blendColor(color, 0x10161b, 0.18);
+
+  layer.fillStyle(0x081016, 0.18 * alpha);
+  layer.fillEllipse(x, y + 13.5 * scale, 18 * scale, 5.6 * scale);
+
+  layer.lineStyle(3.1 * scale, color, 0.68 * alpha);
+  layer.lineBetween(
+    x - 4.5 * scale,
+    y + 8 * scale - bodyBob,
+    x - 5.8 * scale,
+    y + 17.2 * scale + swing * 2,
+  );
+  layer.lineBetween(
+    x + 4.5 * scale,
+    y + 8 * scale - bodyBob,
+    x + 5.8 * scale,
+    y + 17.2 * scale - swing * 2,
+  );
+  layer.lineStyle(3 * scale, coatShade, 0.52 * alpha);
+  layer.lineBetween(
+    x - 8.2 * scale,
+    y - 1.8 * scale - bodyBob,
+    x - 9.4 * scale,
+    y + 8.8 * scale + swing,
+  );
+  layer.lineBetween(
+    x + 8.2 * scale,
+    y - 1.8 * scale - bodyBob,
+    x + 9.4 * scale,
+    y + 8.8 * scale - swing,
+  );
+
+  layer.fillStyle(0x101820, 0.42 * alpha);
+  layer.fillEllipse(x, y + 2.5 * scale - bodyBob, 21.5 * scale, 24 * scale);
+  layer.fillStyle(color, 0.88 * alpha);
+  layer.fillEllipse(x, y + 2.5 * scale - bodyBob, 19 * scale, 21.5 * scale);
+  layer.fillStyle(accent, 0.76 * alpha);
+  layer.fillRoundedRect(
+    x - 4.5 * scale,
+    y + 1.2 * scale - bodyBob,
+    9 * scale,
+    12.5 * scale,
+    3 * scale,
+  );
+
+  layer.fillStyle(0x101820, 0.38 * alpha);
+  layer.fillCircle(
+    x + facing * 0.8 * scale,
+    y - 10.5 * scale - bodyBob,
+    9.9 * scale,
+  );
+  layer.fillStyle(0xc3a47c, 0.9 * alpha);
+  layer.fillCircle(
+    x + facing * 0.8 * scale,
+    y - 10.5 * scale - bodyBob,
+    8.9 * scale,
+  );
+  layer.fillStyle(blendColor(accent, 0x392f28, 0.35), 0.78 * alpha);
+  layer.fillEllipse(
+    x + facing * 0.2 * scale,
+    y - 15 * scale - bodyBob,
+    15 * scale,
+    7 * scale,
+  );
 }
 
 function drawPlayerPresenceMarker(
@@ -4975,11 +6224,279 @@ function drawPlayerPresenceMarker(
   layer.fillCircle(playerPixel.x, markerY, authoredScene ? 5.8 : 5.2);
 }
 
+function drawMapAgencyOverlay(
+  layer: PhaserType.GameObjects.Graphics,
+  runtimeState: RuntimeState,
+  playerTile: Point,
+  playerPixel: Point,
+  cue: MapAgencyCue | null,
+  now: number,
+) {
+  if (!cue?.targetWorld) {
+    return;
+  }
+
+  const color = mapAgencyToneColor(cue.tone);
+  const distance = distanceBetween(playerPixel, cue.targetWorld);
+  const pulse = 0.64 + (Math.sin(now / 360) + 1) * 0.16;
+  const targetPoint = {
+    x: cue.targetWorld.x,
+    y: cue.targetWorld.y - (cue.targetIsNpc ? 4 : 0),
+  };
+
+  if (cue.targetLocationId && distance > CELL * 1.1) {
+    const footprint = getRuntimeLocationHighlightRect(
+      runtimeState.indices,
+      cue.targetLocationId,
+    );
+    if (footprint) {
+      drawFootprintHalo(layer, footprint, color, 0.035, 0.14);
+    }
+  }
+
+  if (distance > CELL * 1.05) {
+    drawMapAgencyPath(
+      layer,
+      playerPixel,
+      targetPoint,
+      color,
+      now,
+      buildMapAgencyRouteWorldPath(runtimeState, playerTile, cue, targetPoint),
+    );
+  }
+
+  const ringRadius =
+    CELL * (cue.targetIsNpc ? 0.68 + pulse * 0.12 : 0.52 + pulse * 0.12);
+  layer.fillStyle(color, cue.targetIsNpc ? 0.07 : 0.055);
+  layer.fillCircle(targetPoint.x, targetPoint.y, ringRadius * 1.12);
+  layer.lineStyle(2.4, color, 0.26 + pulse * 0.13);
+  layer.strokeCircle(targetPoint.x, targetPoint.y, ringRadius);
+  layer.lineStyle(1.4, 0xfff2cf, 0.26 + pulse * 0.12);
+  layer.strokeCircle(targetPoint.x, targetPoint.y, ringRadius * 0.62);
+}
+
+function drawMapAgencyPath(
+  layer: PhaserType.GameObjects.Graphics,
+  from: Point,
+  to: Point,
+  color: number,
+  now: number,
+  routePath?: Point[] | null,
+) {
+  if (routePath && routePath.length > 1) {
+    drawMapAgencyPolylinePath(layer, [from, ...routePath], color, now);
+    return;
+  }
+
+  const distance = distanceBetween(from, to);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const normalLength = Math.hypot(dx, dy) || 1;
+  const normal = {
+    x: -dy / normalLength,
+    y: dx / normalLength,
+  };
+  const bend = clamp(distance * 0.1, 12, 58) * (dx >= 0 ? -1 : 1);
+  const control = {
+    x: (from.x + to.x) / 2 + normal.x * bend,
+    y: (from.y + to.y) / 2 + normal.y * bend,
+  };
+  const segmentCount = clamp(Math.round(distance / 42), 5, 20);
+
+  layer.lineStyle(2.2, color, 0.13);
+  let previous = sampleQuadraticPoint(from, control, to, 0.08);
+  for (let index = 1; index <= segmentCount; index += 1) {
+    const progress = clamp(index / segmentCount, 0.08, 0.93);
+    const next = sampleQuadraticPoint(from, control, to, progress);
+    layer.lineBetween(previous.x, previous.y, next.x, next.y);
+    previous = next;
+  }
+
+  const flow = positiveModulo(now / 2600, 1);
+  for (let index = 0; index < segmentCount; index += 1) {
+    const progress = positiveModulo((index + flow) / segmentCount, 1);
+    if (progress < 0.08 || progress > 0.92) {
+      continue;
+    }
+    const point = sampleQuadraticPoint(from, control, to, progress);
+    const size = 2.6 + Math.sin(now / 240 + index) * 0.35;
+    layer.fillStyle(0x091015, 0.16);
+    layer.fillCircle(point.x + 1.2, point.y + 1.4, size + 0.8);
+    layer.fillStyle(color, 0.32);
+    layer.fillCircle(point.x, point.y, size);
+  }
+
+  const arrowTip = sampleQuadraticPoint(from, control, to, 0.94);
+  const arrowBack = sampleQuadraticPoint(from, control, to, 0.87);
+  const angle = Math.atan2(arrowTip.y - arrowBack.y, arrowTip.x - arrowBack.x);
+  const wing = 8.5;
+  layer.fillStyle(color, 0.42);
+  layer.fillTriangle(
+    arrowTip.x,
+    arrowTip.y,
+    arrowTip.x - Math.cos(angle - 0.72) * wing,
+    arrowTip.y - Math.sin(angle - 0.72) * wing,
+    arrowTip.x - Math.cos(angle + 0.72) * wing,
+    arrowTip.y - Math.sin(angle + 0.72) * wing,
+  );
+}
+
+function buildMapAgencyRouteWorldPath(
+  runtimeState: RuntimeState,
+  playerTile: Point,
+  cue: MapAgencyCue,
+  finalWorldPoint: Point,
+) {
+  if (!cue.targetTile) {
+    return null;
+  }
+
+  const route = runtimeState.indices.routeFinder(playerTile, cue.targetTile);
+  if (!routeReachesDestination(route, cue.targetTile) || route.length <= 1) {
+    return null;
+  }
+
+  const routePath = route.map((point) =>
+    projectRuntimeTileCenter(runtimeState.indices, point.x, point.y),
+  );
+  const path = dedupePointSequence([routePath[0], ...routePath.slice(1)]);
+  const lastPoint = path[path.length - 1];
+
+  if (lastPoint && distanceBetween(lastPoint, finalWorldPoint) > CELL * 0.42) {
+    path.push(finalWorldPoint);
+  }
+
+  return path.length > 1 ? path : null;
+}
+
+function drawMapAgencyPolylinePath(
+  layer: PhaserType.GameObjects.Graphics,
+  path: Point[],
+  color: number,
+  now: number,
+) {
+  const cleanPath = dedupePointSequence(path);
+  if (cleanPath.length <= 1) {
+    return;
+  }
+
+  layer.lineStyle(2.4, color, 0.13);
+  for (let index = 1; index < cleanPath.length; index += 1) {
+    layer.lineBetween(
+      cleanPath[index - 1].x,
+      cleanPath[index - 1].y,
+      cleanPath[index].x,
+      cleanPath[index].y,
+    );
+  }
+
+  const totalDistance = polylineDistance(cleanPath);
+  const markerCount = clamp(Math.round(totalDistance / 42), 4, 24);
+  const flow = positiveModulo(now / 2600, 1);
+  for (let index = 0; index < markerCount; index += 1) {
+    const progress = positiveModulo((index + flow) / markerCount, 1);
+    if (progress < 0.06 || progress > 0.94) {
+      continue;
+    }
+    const point = samplePolylinePoint(cleanPath, progress);
+    const size = 2.5 + Math.sin(now / 240 + index) * 0.32;
+    layer.fillStyle(0x091015, 0.15);
+    layer.fillCircle(point.x + 1.2, point.y + 1.4, size + 0.8);
+    layer.fillStyle(color, 0.34);
+    layer.fillCircle(point.x, point.y, size);
+  }
+
+  const arrowTip = samplePolylinePoint(cleanPath, 0.96);
+  const arrowBack = samplePolylinePoint(cleanPath, 0.9);
+  const angle = Math.atan2(arrowTip.y - arrowBack.y, arrowTip.x - arrowBack.x);
+  const wing = 8.5;
+  layer.fillStyle(color, 0.44);
+  layer.fillTriangle(
+    arrowTip.x,
+    arrowTip.y,
+    arrowTip.x - Math.cos(angle - 0.72) * wing,
+    arrowTip.y - Math.sin(angle - 0.72) * wing,
+    arrowTip.x - Math.cos(angle + 0.72) * wing,
+    arrowTip.y - Math.sin(angle + 0.72) * wing,
+  );
+}
+
+function polylineDistance(path: Point[]) {
+  return path.slice(1).reduce((sum, point, index) => {
+    return sum + distanceBetween(path[index], point);
+  }, 0);
+}
+
+function samplePolylinePoint(path: Point[], progress: number) {
+  const totalDistance = polylineDistance(path);
+  if (totalDistance <= 0) {
+    return path[0] ?? { x: 0, y: 0 };
+  }
+
+  let remainingDistance = clamp(progress, 0, 1) * totalDistance;
+  for (let index = 1; index < path.length; index += 1) {
+    const start = path[index - 1];
+    const end = path[index];
+    const segmentDistance = distanceBetween(start, end);
+    if (segmentDistance <= 0) {
+      continue;
+    }
+    if (remainingDistance <= segmentDistance) {
+      const segmentProgress = remainingDistance / segmentDistance;
+      return {
+        x: start.x + (end.x - start.x) * segmentProgress,
+        y: start.y + (end.y - start.y) * segmentProgress,
+      };
+    }
+    remainingDistance -= segmentDistance;
+  }
+
+  return path[path.length - 1];
+}
+
+function sampleQuadraticPoint(
+  from: Point,
+  control: Point,
+  to: Point,
+  progress: number,
+) {
+  const inverse = 1 - progress;
+  return {
+    x:
+      inverse * inverse * from.x +
+      2 * inverse * progress * control.x +
+      progress * progress * to.x,
+    y:
+      inverse * inverse * from.y +
+      2 * inverse * progress * control.y +
+      progress * progress * to.y,
+  };
+}
+
+function mapAgencyToneColor(tone: MapAgencyTone) {
+  switch (tone) {
+    case "conversation":
+      return 0x8dd0cd;
+    case "moving":
+      return 0xf0cf8c;
+    case "acting":
+      return 0xe7bf78;
+    case "waiting":
+      return 0xbfd6dc;
+    case "blocked":
+      return 0xef9a7b;
+    case "idle":
+      return 0xb9c4c8;
+  }
+}
+
 function drawDynamicOverlay(
   layer: PhaserType.GameObjects.Graphics,
   runtimeState: RuntimeState,
+  playerTile: Point,
   playerPixel: Point,
   now: number,
+  mapAgencyCue: MapAgencyCue | null,
 ) {
   const game = runtimeState.snapshot.game;
   layer.clear();
@@ -5000,6 +6517,14 @@ function drawDynamicOverlay(
         runtimeState.waypointPlacedAt,
       );
     }
+    drawMapAgencyOverlay(
+      layer,
+      runtimeState,
+      playerTile,
+      playerPixel,
+      mapAgencyCue,
+      now,
+    );
     drawPlayerPresenceMarker(layer, playerPixel, now, {
       authoredScene: true,
     });
@@ -5032,6 +6557,15 @@ function drawDynamicOverlay(
       runtimeState.waypointPlacedAt,
     );
   }
+
+  drawMapAgencyOverlay(
+    layer,
+    runtimeState,
+    playerTile,
+    playerPixel,
+    mapAgencyCue,
+    now,
+  );
 
   if (currentFootprint) {
     drawFootprintHalo(layer, currentFootprint, 0xa9d7d4, 0.08, 0.48);

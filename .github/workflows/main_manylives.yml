@@ -35,6 +35,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Visual game smoke
+        env:
+          NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}
+        run: pnpm visual:game
+
       - name: Build web app
         env:
           NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}

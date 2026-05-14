@@ -450,6 +450,30 @@ export function buildStreetOverlayStyle({
         line-height: 1.45;
         color: rgba(247, 227, 187, 0.78);
       }
+      .ml-primary-action.is-autoplay-nudge {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border-radius: 999px;
+        border-color: rgba(138, 151, 161, 0.2);
+        background: rgba(20, 29, 34, 0.58);
+        padding: 9px 12px;
+        color: rgba(232, 239, 242, 0.9);
+        box-shadow: none;
+      }
+      .ml-primary-action.is-autoplay-nudge .ml-primary-action-label {
+        font-size: 12px;
+        line-height: 1.1;
+        font-weight: 800;
+      }
+      .ml-primary-action.is-autoplay-nudge .ml-primary-action-copy {
+        max-width: 210px;
+        font-size: 11px;
+        line-height: 1.3;
+        text-align: right;
+        color: rgba(205, 216, 221, 0.62);
+      }
       .ml-autoplay-note {
         border-radius: 16px;
         border: 1px solid rgba(138, 151, 161, 0.14);
@@ -1367,6 +1391,44 @@ export function buildStreetOverlayStyle({
         color: rgba(216, 225, 229, 0.74);
         text-align: center;
       }
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock {
+        width: min(calc(100% - var(--ml-inset) * 2), 332px);
+      }
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-panel {
+        padding: 10px;
+        border-radius: 18px;
+        background: linear-gradient(
+          180deg,
+          rgba(12, 19, 24, 0.82),
+          rgba(8, 13, 18, 0.78)
+        );
+        box-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
+      }
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-panel > .ml-kicker,
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-identity {
+        display: none;
+      }
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-row {
+        margin-top: 0;
+        gap: 5px;
+      }
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-button {
+        padding: 7px 8px;
+        font-size: 9px;
+        letter-spacing: 0.12em;
+      }
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-copy {
+        margin-top: 7px;
+        min-height: 14px;
+        padding-left: 34px;
+        font-size: 10px;
+        line-height: 1.35;
+        text-align: left;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
       .ml-rail-feed {
         max-height: 156px;
         overflow-y: auto;
@@ -1834,6 +1896,9 @@ export function buildStreetOverlayStyle({
         right: auto;
         width: min(360px, calc(100% - var(--ml-inset) * 2));
       }
+      .ml-root.is-collapsible-rail.is-phone-rail .ml-dock-copy {
+        display: none;
+      }
       .ml-root.is-collapsible-rail.is-phone-rail .ml-time-chip.is-metric:last-child {
         display: none;
       }
@@ -1870,6 +1935,15 @@ export function buildStreetOverlayStyle({
       .ml-root.is-collapsible-rail .ml-rowan-directive-title,
       .ml-root.is-collapsible-rail .ml-rowan-story-card-title {
         font-size: 18px;
+      }
+      .ml-root.is-collapsible-rail .ml-primary-action.is-autoplay-nudge {
+        justify-content: center;
+      }
+      .ml-root.is-collapsible-rail .ml-primary-action.is-autoplay-nudge .ml-primary-action-label {
+        white-space: nowrap;
+      }
+      .ml-root.is-collapsible-rail .ml-primary-action.is-autoplay-nudge .ml-primary-action-copy {
+        display: none;
       }
       .ml-root.is-collapsible-rail .ml-chat-bubble {
         font-size: 13px;
