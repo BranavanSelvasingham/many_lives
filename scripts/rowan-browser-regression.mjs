@@ -295,8 +295,11 @@ class CdpSession {
     } catch {}
 
     if (this.browser) {
-      this.browser.kill("SIGKILL");
-      await once(this.browser, "close").catch(() => undefined);
+      const closed = once(this.browser, "close").catch(() => undefined);
+      if (this.browser.exitCode === null && this.browser.signalCode === null) {
+        this.browser.kill("SIGKILL");
+      }
+      await Promise.race([closed, sleep(1_500)]);
     }
   }
 

@@ -140,6 +140,7 @@ import {
   deriveRowanPlaybackBeats,
   estimateLiveConversationBeatMs,
   isBlockingRowanPlayback,
+  isFirstAfternoonOpening,
   ROWAN_PLAYBACK_TIMING_MS,
   startNextRowanPlaybackBeat,
   type RecentBeat,
@@ -1949,10 +1950,6 @@ async function createRuntime(options: {
           ) {
             return;
           }
-          if (isCompactViewport(runtimeState.snapshot.viewport)) {
-            return;
-          }
-
           const sceneViewport = getRuntimeSceneViewport(runtimeState);
           if (
             !isPointerWithinSceneViewport(
@@ -3888,6 +3885,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     game,
     playback: snapshot.rowanPlayback,
     quietStatusLabel: game.currentScene.title,
+    watchMode: snapshot.rowanAutoplayEnabled,
   });
   const latestRailConversation = railConversationLines.at(-1);
   const railConversationTimestamp =
@@ -3917,13 +3915,16 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     canAdvanceObjectiveManually &&
     rowanAutonomy.autoContinue &&
     !snapshot.busyLabel;
+  const firstAfternoonOpening = isFirstAfternoonOpening(game);
   const activeConversationContinueLabel = rowanAutonomy.label.startsWith(
     "With ",
   )
     ? `Finish with ${rowanAutonomy.label.slice("With ".length)}`
     : "Continue conversation";
   const primaryContinueLabel = snapshot.rowanAutoplayEnabled
-    ? "Nudge Rowan"
+    ? firstAfternoonOpening
+      ? "Watch Rowan begin"
+      : "Nudge Rowan"
     : game.activeConversation
       ? activeConversationContinueLabel
       : rowanAutonomy.label || "Continue";
@@ -3932,13 +3933,17 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       ? "He will keep talking on his own."
       : "Let the conversation land."
     : snapshot.rowanAutoplayEnabled
-      ? "He will keep going on his own."
+      ? firstAfternoonOpening
+        ? "He'll start with Mara."
+        : "He will keep going on his own."
       : rowanAutonomy.mode === "moving"
         ? "Move Rowan there."
         : rowanAutonomy.mode === "waiting"
           ? "Let the clock pass."
           : rowanAutonomy.mode === "conversation"
-            ? "Start the conversation."
+            ? firstAfternoonOpening
+              ? "Start with the person who runs Morrow House."
+              : "Start the conversation."
             : "Do this step.";
   const conversationEntry = selectedNpc
     ? {
@@ -4161,6 +4166,25 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const railStatusLabel = rowanRail.statusLabel;
   const railPeekLabel = rowanRail.peekLabel;
   const railThought = buildNarrativePreview(rowanRail.thought, 120);
+  const compactPrimaryActionHtml = showPrimaryContinue
+    ? `
+      <button
+        class="ml-compact-primary-action ${
+          snapshot.rowanAutoplayEnabled ? "is-autoplay-nudge" : ""
+        }"
+        data-advance-objective="true"
+        type="button"
+        aria-label="${escapeHtml(primaryContinueLabel)}"
+      >
+        <span class="ml-compact-primary-action-label">${escapeHtml(
+          primaryContinueLabel,
+        )}</span>
+        <span class="ml-compact-primary-action-copy">${escapeHtml(
+          primaryContinueCopy,
+        )}</span>
+      </button>
+    `
+    : "";
   const browserProbeJson = buildStreetBrowserProbeJson({
     activeConversation: railActiveConversation,
     conversationNpcName: railConversationNpc?.name,
@@ -4173,7 +4197,13 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const todoCounterLabel =
     game.player.objective?.progress?.label ??
     `${objectivePlanItems.length} open tasks`;
-  const compactRailCollapsedHeight = railViewport === "phone" ? 176 : 112;
+  const compactRailCollapsedHeight = showPrimaryContinue
+    ? railViewport === "phone"
+      ? 218
+      : 158
+    : railViewport === "phone"
+      ? 176
+      : 112;
   const compactRailExpandedHeight =
     railViewport === "phone"
       ? Math.max(320, Math.min(Math.round(height * 0.58), height - 152))
@@ -4280,10 +4310,11 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
               )}</div>
               <div class="ml-rail-heading-row">
                 <div class="ml-rail-name">${escapeHtml(game.player.name)}</div>
-                <div class="ml-rail-status">${escapeHtml(railStatusLabel)}</div>
+              <div class="ml-rail-status">${escapeHtml(railStatusLabel)}</div>
               </div>
               <div class="ml-rail-peek-label">${escapeHtml(railPeekLabel)}</div>
               <div class="ml-rail-thought">${escapeHtml(railThought)}</div>
+              ${compactPrimaryActionHtml}
             </div>
             ${
               railViewport !== "desktop"
@@ -4662,6 +4693,7 @@ function syncUiState(runtimeState: RuntimeState) {
         game,
         playback: runtimeState.snapshot.rowanPlayback,
         quietStatusLabel: game.currentScene.title,
+        watchMode: runtimeState.snapshot.rowanAutoplayEnabled,
       }).shouldAutoOpen
     : false;
   const collapsibleRailViewport = isCollapsibleRailViewport(

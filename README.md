@@ -158,13 +158,27 @@ Right-panel priority is deliberate:
 
 ## Validation
 
-Run the web lint pass:
+Run the full app harness before release or deployment work:
+
+```bash
+corepack pnpm harness
+```
+
+This runs lint, sim tests, web fallback coverage, the production web build, public secret exposure scanning, Rowan playtests, and browser visual smoke checks. It writes logs, screenshots, and a `summary.json` file to `/tmp/manylives-app-harness-<timestamp>/`.
+
+Run the faster structural harness while iterating:
+
+```bash
+corepack pnpm harness:quick
+```
+
+Run only the web lint pass:
 
 ```bash
 corepack pnpm --filter @many-lives/many-lives-web lint
 ```
 
-Run the sim tests:
+Run the CI release gate:
 
 ```bash
 corepack pnpm test

@@ -358,6 +358,29 @@ export function buildDeterministicStreetReply(
         };
       }
 
+      if (context.rowan.objectiveState?.routeKey === "first-afternoon") {
+        return {
+          reply: chooseConversationLine(
+            [
+              "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.",
+              "Start with Ada at Kettle & Lamp. If lunch still needs hands, that gives you coin and a reason to be seen.",
+              "Make Kettle & Lamp your next stop. Ask Ada directly about lunch work, then bring what you learn back here.",
+            ],
+            context,
+            "mara-first-afternoon-next",
+          ),
+          followupThought: pickFollowupThought(
+            [
+              "That gives Rowan a clear first errand.",
+              "A direct next step is easier to trust.",
+              "Ada is the right first bet.",
+            ],
+            context,
+            "mara-first-afternoon-next-followup",
+          ),
+        };
+      }
+
       return {
         reply: chooseConversationLine(
           [
