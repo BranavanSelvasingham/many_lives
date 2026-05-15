@@ -230,7 +230,9 @@ describe("Rowan playback helpers", () => {
       quietStatusLabel: world.currentScene.title,
     });
 
-    expect(railView.now.title).toBe(world.rowanAutonomy.label);
+    expect(railView.now.title).toBe("A room for tonight");
+    expect(railView.peekLabel).toBe("First morning in South Quay");
+    expect(railView.statusLabel).toBe("Ready");
     expect(railView.next?.title).toBe("Ask Mara how to keep tonight's room.");
 
     const liveConversation = await engine.runCommand(world, {

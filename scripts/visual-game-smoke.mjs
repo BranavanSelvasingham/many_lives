@@ -251,8 +251,11 @@ class CdpSession {
     } catch {}
 
     if (this.browser) {
-      this.browser.kill("SIGKILL");
-      await once(this.browser, "close").catch(() => undefined);
+      const closed = once(this.browser, "close").catch(() => undefined);
+      if (this.browser.exitCode === null && this.browser.signalCode === null) {
+        this.browser.kill("SIGKILL");
+      }
+      await Promise.race([closed, sleep(1_500)]);
     }
   }
 
@@ -314,11 +317,14 @@ class CdpSession {
   async inspectPage() {
     return this.evaluate(`(() => {
       const canvas = document.querySelector("canvas");
+      const compactPrimaryAction = document.querySelector(".ml-compact-primary-action");
       const dock = document.querySelector(".ml-dock-panel");
       const rail = document.querySelector(".ml-rail-shell");
       const root = document.querySelector(".ml-root");
       const text = document.body.innerText || "";
       const canvasRect = canvas?.getBoundingClientRect();
+      const compactPrimaryActionRect =
+        compactPrimaryAction?.getBoundingClientRect();
       const dockRect = dock?.getBoundingClientRect();
       const railRect = rail?.getBoundingClientRect();
       return {
@@ -328,6 +334,13 @@ class CdpSession {
           width: Math.round(canvasRect.width),
           x: Math.round(canvasRect.x),
           y: Math.round(canvasRect.y)
+        } : null,
+        compactPrimaryAction: compactPrimaryActionRect ? {
+          height: Math.round(compactPrimaryActionRect.height),
+          text: compactPrimaryAction.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          width: Math.round(compactPrimaryActionRect.width),
+          x: Math.round(compactPrimaryActionRect.x),
+          y: Math.round(compactPrimaryActionRect.y)
         } : null,
         dock: dockRect ? {
           height: Math.round(dockRect.height),
@@ -467,6 +480,21 @@ class CdpSession {
     await this.dragMouse(options);
   }
 
+  async wheelMap({ at, deltaX = 0, deltaY = 0 }) {
+    await this.send("Input.dispatchMouseEvent", {
+      button: "none",
+      type: "mouseMoved",
+      x: at.x,
+      y: at.y,
+    });
+    await this.send("Input.dispatchMouseEvent", {
+      deltaX,
+      deltaY,
+      type: "mouseWheel",
+      x: at.x,
+      y: at.y,
+    });
+  }
 
   async captureScreenshot(targetPath) {
     const response = await this.send("Page.captureScreenshot", {
@@ -763,7 +791,8 @@ async function assertWatchModeFeelGuard() {
   );
   assert.ok(
     streetSource.includes('"? "Nudge Rowan"') ||
-      streetSource.includes('? "Nudge Rowan"'),
+      streetSource.includes('? "Nudge Rowan"') ||
+      streetSource.includes('? "Watch Rowan begin"'),
     "Watch-mode primary action should be a soft nudge, not a command.",
   );
   assert.ok(
@@ -822,13 +851,31 @@ async function runViewportCheck(session, viewport) {
     `${viewport.name}: canvas height is too small.`,
   );
   assert.ok(
-    page.bodyText.includes("Rowan") && page.bodyText.includes("Nudge Rowan"),
+    page.bodyText.includes("Rowan") &&
+      (page.bodyText.includes("Nudge Rowan") ||
+        page.bodyText.includes("Watch Rowan begin")),
     `${viewport.name}: expected Rowan watch-mode UI text was missing.`,
   );
   assert.ok(
     page.rootClass.includes("is-watch-mode"),
     `${viewport.name}: autoplay run did not mark the overlay as watch mode.`,
   );
+  if (viewport.width <= 960) {
+    assert.ok(
+      page.compactPrimaryAction,
+      `${viewport.name}: compact collapsed rail is missing its primary action.`,
+    );
+    assert.ok(
+      page.compactPrimaryAction.width >= Math.min(240, viewport.width * 0.56) &&
+        page.compactPrimaryAction.height >= 36,
+      `${viewport.name}: compact primary action is too small (${page.compactPrimaryAction.width}x${page.compactPrimaryAction.height}).`,
+    );
+    assert.ok(
+      page.compactPrimaryAction.text.includes("Watch Rowan begin") ||
+        page.compactPrimaryAction.text.includes("Nudge Rowan"),
+      `${viewport.name}: compact primary action text is not the current Rowan action: ${page.compactPrimaryAction.text}`,
+    );
+  }
   if (viewport.name === "desktop") {
     assert.ok(page.dock, "desktop: missing map controls dock.");
     assert.ok(
@@ -880,7 +927,7 @@ async function runViewportCheck(session, viewport) {
   });
   await sleep(350);
   const panAfter = await session.readCameraProbe();
-  assert.ok(panAfter, `${viewport.name}: missing camera probe after drag.`);
+  assert.ok(panAfter, `${viewport.name}: missing camera probe after eastward drag.`);
   const offsetDelta =
     Math.abs(panAfter.cameraOffset.x - panBefore.cameraOffset.x) +
     Math.abs(panAfter.cameraOffset.y - panBefore.cameraOffset.y);
@@ -893,6 +940,11 @@ async function runViewportCheck(session, viewport) {
       1,
     )}, scroll delta ${scrollDelta.toFixed(1)}.`,
   );
+  assert.equal(
+    panAfter.dragging,
+    false,
+    `${viewport.name}: camera still reports dragging after mouse/touch release.`,
+  );
   const panScreenshotPath = path.join(
     OUTPUT_DIR,
     `${viewport.name}-after-pan.png`,
@@ -900,6 +952,86 @@ async function runViewportCheck(session, viewport) {
   await session.captureScreenshot(panScreenshotPath);
   const panScreenshot = await readFile(panScreenshotPath);
   assertPngScreenshot(panScreenshot, viewport);
+
+  let compactWheelPan = null;
+  if (viewport.width <= 960) {
+    await session.wheelMap({
+      at: { x: dragFromX, y: dragY },
+      deltaX: -260,
+    });
+    await sleep(300);
+    compactWheelPan = await session.readCameraProbe();
+    assert.ok(
+      compactWheelPan,
+      `${viewport.name}: missing camera probe after compact wheel pan.`,
+    );
+    const wheelOffsetDelta =
+      compactWheelPan.cameraOffset.x - panAfter.cameraOffset.x;
+    const wheelScrollDelta = panAfter.scroll.x - compactWheelPan.scroll.x;
+    assert.ok(
+      wheelOffsetDelta > 40 || wheelScrollDelta > 24,
+      `${viewport.name}: scroll/trackpad pan did not move back toward the left edge. Offset delta ${wheelOffsetDelta.toFixed(
+        1,
+      )}, scroll delta ${wheelScrollDelta.toFixed(1)}.`,
+    );
+  }
+
+  await session.dragMap({
+    from: { x: dragToX, y: dragY },
+    touch: viewport.width < 600,
+    to: { x: dragFromX, y: dragY },
+  });
+  await sleep(350);
+  const panAfterReverse = await session.readCameraProbe();
+  assert.ok(
+    panAfterReverse,
+    `${viewport.name}: missing camera probe after westward drag.`,
+  );
+  const reverseOffsetDelta =
+    panAfterReverse.cameraOffset.x - panAfter.cameraOffset.x;
+  const reverseScrollDelta = panAfter.scroll.x - panAfterReverse.scroll.x;
+  assert.ok(
+    reverseOffsetDelta > 80 || reverseScrollDelta > 32,
+    `${viewport.name}: map drag back toward the left edge did not move the camera enough. Offset delta ${reverseOffsetDelta.toFixed(
+      1,
+    )}, scroll delta ${reverseScrollDelta.toFixed(1)}.`,
+  );
+  assert.equal(
+    panAfterReverse.dragging,
+    false,
+    `${viewport.name}: camera still reports dragging after reverse drag release.`,
+  );
+
+  let panAtWestEdge = panAfterReverse;
+  if (viewport.width <= 960) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await session.dragMap({
+        from: { x: dragToX, y: dragY },
+        touch: viewport.width < 600,
+        to: { x: dragFromX, y: dragY },
+      });
+      await sleep(220);
+    }
+    panAtWestEdge = await session.readCameraProbe();
+    assert.ok(
+      panAtWestEdge,
+      `${viewport.name}: missing camera probe at west edge.`,
+    );
+    assert.ok(
+      panAtWestEdge.scroll.x <= 48,
+      `${viewport.name}: left map edge is still clamped too far inward (scroll x ${panAtWestEdge.scroll.x.toFixed(
+        1,
+      )}).`,
+    );
+  }
+
+  const westPanScreenshotPath = path.join(
+    OUTPUT_DIR,
+    `${viewport.name}-after-pan-west.png`,
+  );
+  await session.captureScreenshot(westPanScreenshotPath);
+  const westPanScreenshot = await readFile(westPanScreenshotPath);
+  assertPngScreenshot(westPanScreenshot, viewport);
 
   return {
     mapAgency,
@@ -912,10 +1044,15 @@ async function runViewportCheck(session, viewport) {
         to: { x: dragToX, y: dragY },
       },
       offsetDelta: Number(offsetDelta.toFixed(2)),
+      reverseOffsetDelta: Number(reverseOffsetDelta.toFixed(2)),
+      reverseScrollDelta: Number(reverseScrollDelta.toFixed(2)),
       scrollDelta: Number(scrollDelta.toFixed(2)),
+      wheel: compactWheelPan,
+      westEdge: panAtWestEdge,
     },
     panScreenshotPath,
     screenshotPath,
+    westPanScreenshotPath,
   };
 }
 
@@ -1016,6 +1153,7 @@ async function main() {
   const session = await launchBrowser(devtoolsPort);
   const results = [];
   let storedGameChoice = null;
+  const summaryPath = path.join(OUTPUT_DIR, "summary.json");
 
   try {
     for (const viewport of VIEWPORTS) {
@@ -1031,40 +1169,41 @@ async function main() {
       [],
       `Page logged runtime errors:\n${session.pageErrors.join("\n")}`,
     );
+
+    await writeFile(
+      summaryPath,
+      `${JSON.stringify(
+        {
+          outputDir: OUTPUT_DIR,
+          results,
+          storedGameChoice,
+          webBase: activeWebBase,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    process.stdout.write(
+      [
+        "[many-lives] Visual game smoke passed.",
+        `[many-lives] Web base: ${activeWebBase}`,
+        `[many-lives] Output: ${OUTPUT_DIR}`,
+        `[many-lives] Desktop: ${path.join(OUTPUT_DIR, "desktop.png")}`,
+        `[many-lives] Desktop after pan: ${path.join(OUTPUT_DIR, "desktop-after-pan.png")}`,
+        `[many-lives] Desktop after west pan: ${path.join(OUTPUT_DIR, "desktop-after-pan-west.png")}`,
+        `[many-lives] Mobile: ${path.join(OUTPUT_DIR, "mobile.png")}`,
+        `[many-lives] Mobile after pan: ${path.join(OUTPUT_DIR, "mobile-after-pan.png")}`,
+        `[many-lives] Mobile after west pan: ${path.join(OUTPUT_DIR, "mobile-after-pan-west.png")}`,
+        `[many-lives] Summary: ${summaryPath}`,
+        "",
+      ].join("\n"),
+    );
   } finally {
     await session.close();
     await closeChildProcess(webServer);
   }
-
-  const summaryPath = path.join(OUTPUT_DIR, "summary.json");
-  await writeFile(
-    summaryPath,
-    `${JSON.stringify(
-      {
-        outputDir: OUTPUT_DIR,
-        results,
-        storedGameChoice,
-        webBase: activeWebBase,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-
-  process.stdout.write(
-    [
-      "[many-lives] Visual game smoke passed.",
-      `[many-lives] Web base: ${activeWebBase}`,
-      `[many-lives] Output: ${OUTPUT_DIR}`,
-      `[many-lives] Desktop: ${path.join(OUTPUT_DIR, "desktop.png")}`,
-      `[many-lives] Desktop after pan: ${path.join(OUTPUT_DIR, "desktop-after-pan.png")}`,
-      `[many-lives] Mobile: ${path.join(OUTPUT_DIR, "mobile.png")}`,
-      `[many-lives] Mobile after pan: ${path.join(OUTPUT_DIR, "mobile-after-pan.png")}`,
-      `[many-lives] Summary: ${summaryPath}`,
-      "",
-    ].join("\n"),
-  );
 }
 
 main().catch((error) => {

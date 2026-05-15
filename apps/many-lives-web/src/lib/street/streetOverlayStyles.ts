@@ -279,6 +279,37 @@ export function buildStreetOverlayStyle({
         line-height: 1.5;
         color: rgba(239, 243, 245, 0.96);
       }
+      .ml-compact-primary-action {
+        display: none;
+        width: 100%;
+        margin-top: 12px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(205, 174, 115, 0.34);
+        background: linear-gradient(180deg, rgba(205, 174, 115, 0.18), rgba(127, 96, 52, 0.14));
+        padding: 10px 12px;
+        color: rgba(250, 239, 213, 0.98);
+        cursor: pointer;
+        text-align: left;
+      }
+      .ml-compact-primary-action-label {
+        min-width: 0;
+        font-size: 12px;
+        line-height: 1.1;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+      .ml-compact-primary-action-copy {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 11px;
+        line-height: 1.2;
+        color: rgba(247, 227, 187, 0.76);
+      }
       .ml-rail-toggle {
         flex-shrink: 0;
         border-radius: 999px;
@@ -849,6 +880,7 @@ export function buildStreetOverlayStyle({
       .ml-control:focus-visible,
       .ml-rail-more-toggle:focus-visible,
       .ml-rail-toggle:focus-visible,
+      .ml-compact-primary-action:focus-visible,
       .ml-primary-action:focus-visible,
       .ml-submit:focus-visible,
       .ml-focus-close:focus-visible,
@@ -1919,9 +1951,15 @@ export function buildStreetOverlayStyle({
       }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-rail-thought {
         display: -webkit-box;
-        -webkit-line-clamp: 2;
+        -webkit-line-clamp: 1;
         -webkit-box-orient: vertical;
         overflow: hidden;
+      }
+      .ml-root.is-collapsible-rail.is-rail-collapsed .ml-compact-primary-action {
+        display: flex;
+      }
+      .ml-root.is-collapsible-rail.is-rail-expanded .ml-compact-primary-action {
+        display: none;
       }
       .ml-root.is-collapsible-rail .ml-rail-toggle {
         align-self: flex-start;
@@ -1944,6 +1982,14 @@ export function buildStreetOverlayStyle({
       }
       .ml-root.is-collapsible-rail .ml-primary-action.is-autoplay-nudge .ml-primary-action-copy {
         display: none;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail .ml-compact-primary-action {
+        flex-direction: column;
+        align-items: flex-start;
+        border-radius: 16px;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail .ml-compact-primary-action-copy {
+        width: 100%;
       }
       .ml-root.is-collapsible-rail .ml-chat-bubble {
         font-size: 13px;

@@ -35,15 +35,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Visual game smoke
+      - name: App harness
         env:
           NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}
-        run: pnpm visual:game
-
-      - name: Build web app
-        env:
-          NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}
-        run: pnpm --filter @many-lives/many-lives-web build
+          MANY_LIVES_APP_HARNESS_DIR: ${{ runner.temp }}/manylives-app-harness
+        run: pnpm test
 
       - name: Prepare artifact for deployment
         run: |

@@ -81,6 +81,7 @@ type BuildRowanRailViewModelOptions = {
   game: StreetGameState;
   playback?: RowanPlaybackState;
   quietStatusLabel: string;
+  watchMode?: boolean;
 };
 
 const AUTO_OPEN_BEAT_KINDS = new Set<RowanPlaybackBeatKind>([
@@ -475,6 +476,7 @@ export function buildRowanRailViewModel({
   game,
   playback,
   quietStatusLabel,
+  watchMode = false,
 }: BuildRowanRailViewModelOptions): RowanRailViewModel {
   const alignedPlayback = playback
     ? alignRowanPlaybackWithGame(playback, game)
@@ -501,13 +503,32 @@ export function buildRowanRailViewModel({
         : (game.player.objective?.text ?? "Choose a direction"),
     tone: beatToneForAutonomy(game.rowanAutonomy?.layer),
   };
-  const nowCard = activeBeat ? railCardFromBeat(activeBeat) : autonomyCard;
+  const openingBeat = isFirstAfternoonOpening(game);
+  const openingNowCard: RowanRailCard = {
+    detail:
+      "Rowan has $12, tonight's bed at Morrow House, and one useful first person to ask: Mara.",
+    title: "A room for tonight",
+    tone: "info",
+  };
+  const openingNextCard: RowanRailCard = {
+    detail:
+      "Mara can explain what the room costs, what the house expects, and how tonight works.",
+    title: "Ask Mara how to keep tonight's room.",
+    tone: "objective",
+  };
+  const nowCard = activeBeat
+    ? railCardFromBeat(activeBeat)
+    : openingBeat
+      ? openingNowCard
+      : autonomyCard;
   const nextCard =
     activeBeat?.kind === "thread_line"
       ? null
       : activeBeat
         ? buildNextRailCard(autonomyCard, activeBeat)
-        : buildObjectiveNextRailCard(game, autonomyCard);
+        : openingBeat
+          ? openingNextCard
+          : buildObjectiveNextRailCard(game, autonomyCard);
   const statusLabel = useConversationTranscript
     ? "Live conversation"
     : activeBeat
@@ -515,7 +536,9 @@ export function buildRowanRailViewModel({
       : completedObjectiveAutonomy
         ? "Complete"
         : game.rowanAutonomy?.autoContinue
-          ? "Watching Rowan"
+          ? watchMode
+            ? "Watching Rowan"
+            : "Ready"
           : quietStatusLabel;
   const justHappened = useConversationTranscript
     ? null
@@ -528,6 +551,9 @@ export function buildRowanRailViewModel({
       : null;
   const thought =
     activeBeat?.detail ||
+    (openingBeat
+      ? "Follow Rowan as he spends time, earns money, meets people, and tries to get a foothold."
+      : "") ||
     fallbackThought ||
     nextCard?.detail ||
     game.player.objective?.text ||
@@ -537,7 +563,9 @@ export function buildRowanRailViewModel({
     justHappened,
     next: nextCard,
     now: nowCard,
-    peekLabel: activeBeat?.title ?? nextCard?.title ?? nowCard.title,
+    peekLabel: openingBeat
+      ? "First morning in South Quay"
+      : activeBeat?.title ?? nextCard?.title ?? nowCard.title,
     shouldAutoOpen:
       useConversationTranscript ||
       Boolean(activeBeat && AUTO_OPEN_BEAT_KINDS.has(activeBeat.kind)),
@@ -545,6 +573,26 @@ export function buildRowanRailViewModel({
     thought,
     useConversationTranscript,
   };
+}
+
+export function isFirstAfternoonOpening(game: StreetGameState) {
+  const progress = game.player.objective?.progress;
+  const hasConversationHistory =
+    game.conversations.length > 0 ||
+    Object.values(game.conversationThreads).some(
+      (thread) => thread.lines.length > 0,
+    );
+
+  return Boolean(
+    game.player.objective?.routeKey === "first-afternoon" &&
+      progress &&
+      progress.completed === 0 &&
+      !game.activeConversation &&
+      !hasConversationHistory &&
+      !game.firstAfternoon?.planSettledAt &&
+      !game.firstAfternoon?.teaShiftStage &&
+      !game.firstAfternoon?.completedAt,
+  );
 }
 
 function trimConversationBeatText(text: string) {

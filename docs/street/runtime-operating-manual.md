@@ -126,6 +126,40 @@ Use this checklist when the user asks whether the app is playable, ready, or dep
 - Run `corepack pnpm lint` and `corepack pnpm --filter @many-lives/many-lives-web build` for code changes.
 - Run `corepack pnpm test` before commit/push when gameplay, routes, sim behavior, or visual smoke coverage changed.
 
+## App Harness
+
+The app-level harness is the single release-readiness command for this street micro-app:
+
+```bash
+corepack pnpm harness
+```
+
+It runs the sim lint pass, web lint pass, sim tests, repo Node tests, web fallback test, production Next build, public secret exposure scan, Rowan sim playtest, Rowan browser regression, and visual game smoke. `corepack pnpm test` runs the same harness with the CI profile.
+
+Harness artifacts are written outside the repo by default:
+
+```text
+/tmp/manylives-app-harness-<timestamp>/
+  logs/
+  rowan-browser/
+  visual-game/
+  summary.json
+```
+
+For a faster structural check that skips browser and visual playtests:
+
+```bash
+corepack pnpm harness:quick
+```
+
+For a deployed smoke check, pass the live base URL:
+
+```bash
+corepack pnpm harness -- --live-url https://manylives-sim.branavan.com
+```
+
+Do not claim the app is deployment-ready from isolated commands if the harness is failing. If a narrower command is used because the change is deliberately small, say exactly which surface was not covered.
+
 ## Debug Recipes
 
 Check the stored game id in browser context:

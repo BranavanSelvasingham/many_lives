@@ -71,22 +71,7 @@ export function getCompactCameraHorizontalRange({
   }
 
   if (visualScene) {
-    const projectedLeft = projectVisualScenePoint(visualScene, {
-      x: 0,
-      y: 0,
-    }).x;
-    const projectedRight = projectVisualScenePoint(visualScene, {
-      x: map.width,
-      y: 0,
-    }).x;
-    const contentLeft = Math.min(projectedLeft, projectedRight);
-    const contentRight = Math.max(projectedLeft, projectedRight);
-    const min = clamp(contentLeft, 0, maxScrollX);
-    const max = Math.max(
-      min,
-      Math.min(contentRight - visibleWidth, maxScrollX),
-    );
-    return { max, min };
+    return { max: maxScrollX, min: 0 };
   }
 
   const mapOrigin = getMapWorldOrigin();

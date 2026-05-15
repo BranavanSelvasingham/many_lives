@@ -254,7 +254,13 @@ export function updateCameraGesture(
   gestureViewport = sceneViewport,
 ) {
   const gesture = runtimeState.cameraGesture;
-  if (!gesture || gesture.pointerId !== pointer.id || !pointer.isDown) {
+  if (!gesture || gesture.pointerId !== pointer.id) {
+    return createEmptyCameraPanResult();
+  }
+
+  if (!pointer.isDown) {
+    runtimeState.cameraGesture = null;
+    runtimeState.lastCameraInteractionAt = now;
     return createEmptyCameraPanResult();
   }
 
