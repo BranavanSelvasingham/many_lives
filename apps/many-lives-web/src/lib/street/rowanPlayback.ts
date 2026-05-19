@@ -60,6 +60,8 @@ export type RowanPlaybackState = {
 
 export type RowanRailCard = {
   detail: string;
+  reason?: string;
+  signals?: string[];
   title: string;
   tone: RowanPlaybackBeatTone;
 };
@@ -497,6 +499,14 @@ export function buildRowanRailViewModel({
         ? game.rowanAutonomy.detail
         : (game.player.objective?.text ??
           "Choose where Rowan should go or what he should do next."),
+    reason:
+      game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
+        ? game.rowanAutonomy.intent?.reason
+        : undefined,
+    signals:
+      game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
+        ? game.rowanAutonomy.intent?.signals
+        : undefined,
     title:
       game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
         ? game.rowanAutonomy.label
@@ -507,6 +517,8 @@ export function buildRowanRailViewModel({
   const openingNowCard: RowanRailCard = {
     detail:
       "Rowan has $12, tonight's bed at Morrow House, and one useful first person to ask: Mara.",
+    reason: game.rowanAutonomy?.intent?.reason,
+    signals: game.rowanAutonomy?.intent?.signals,
     title: "A room for tonight",
     tone: "info",
   };
@@ -551,6 +563,7 @@ export function buildRowanRailViewModel({
       : null;
   const thought =
     activeBeat?.detail ||
+    game.rowanAutonomy?.intent?.reason ||
     (openingBeat
       ? "Follow Rowan as he spends time, earns money, meets people, and tries to get a foothold."
       : "") ||

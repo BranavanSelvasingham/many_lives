@@ -1,6 +1,7 @@
 import type {
   ObjectiveFocus,
   RowanAutonomyEffect,
+  RowanAutonomyIntent,
   RowanAutonomyLayer,
   RowanAutonomyState,
   RowanAutonomyStepKind,
@@ -18,6 +19,7 @@ export type RowanLoopStep = {
   autoContinue: boolean;
   detail: string;
   effects?: RowanAutonomyEffect[];
+  intent?: RowanAutonomyIntent;
   key: string;
   kind: RowanAutonomyStepKind;
   label: string;
@@ -84,6 +86,7 @@ export function rowanAutonomyFromLoopStep(
     autoContinue: loopStep.autoContinue,
     detail: loopStep.detail,
     effects: loopStep.effects,
+    intent: loopStep.intent,
     key: loopStep.key,
     label: loopStep.label,
     layer: loopStep.layer,

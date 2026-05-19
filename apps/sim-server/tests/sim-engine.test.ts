@@ -269,6 +269,14 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy.detail).toContain(
       "Ask what the room costs",
     );
+    expect(world.rowanAutonomy.intent).toMatchObject({
+      reason:
+        "Mara is here and matches the current objective, so Rowan can ask directly.",
+      signals: expect.arrayContaining([
+        "Here: Morrow House",
+        "Person: Mara",
+      ]),
+    });
     expect(world.rowanAutonomy.detail).not.toMatch(
       /prompt|context is specific|clear enough/i,
     );

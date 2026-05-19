@@ -26,6 +26,7 @@ import type {
   ObjectiveFocus,
   ProblemState,
   RowanAutonomyEffect,
+  RowanAutonomyIntent,
   RowanAutonomyStepKind,
   SceneNote,
   StreetGameState,
@@ -645,12 +646,17 @@ function resolveConversationTarget(world: StreetGameState, npcId: string) {
 }
 
 function resolveRowanLoopStep(world: StreetGameState): RowanLoopStep {
-  return resolveLayeredRowanLoopStep(world, {
+  const loopStep = resolveLayeredRowanLoopStep(world, {
     conversation: resolveConversationLoopStep,
     pendingMove: resolvePendingMoveLoopStep,
     commitment: resolveCommittedJobLoopStep,
     objective: resolveObjectiveLoopStep,
   });
+
+  return {
+    ...loopStep,
+    intent: loopStep.intent ?? buildRowanAutonomyIntent(world, loopStep),
+  };
 }
 
 function resolveConversationLoopStep(
@@ -1989,6 +1995,198 @@ function autonomyDetailForObjectivePlan(
   }
 
   return `Rowan still has a clear next step: ${rationale}.`;
+}
+
+function buildRowanAutonomyIntent(
+  world: StreetGameState,
+  loopStep: RowanLoopStep,
+): RowanAutonomyIntent {
+  const currentLocation = world.player.currentLocationId
+    ? findLocation(world, world.player.currentLocationId)
+    : undefined;
+  const targetLocation = loopStep.targetLocationId
+    ? findLocation(world, loopStep.targetLocationId)
+    : undefined;
+  const npc = loopStep.npcId ? npcById(world, loopStep.npcId) : undefined;
+  const objective =
+    loopStep.objective ??
+    currentObjectiveDirective(world) ??
+    fallbackConversationObjective(world);
+  const action = loopStep.actionId
+    ? world.availableActions.find((candidate) => candidate.id === loopStep.actionId)
+    : undefined;
+
+  return {
+    reason: compactIntentText(
+      buildRowanAutonomyReason({
+        actionLabel: action?.label,
+        currentLocationName: currentLocation?.name,
+        loopStep,
+        npcName: npc?.name,
+        targetLocationName: targetLocation?.name,
+        world,
+      }),
+      170,
+    ),
+    signals: buildRowanAutonomySignals({
+      actionLabel: action?.label,
+      currentLocationName: currentLocation?.name,
+      loopStep,
+      npcName: npc?.name,
+      objectiveText: objective.text,
+      targetLocationName: targetLocation?.name,
+      world,
+    }).map((signal) => compactIntentText(signal, 72)),
+  };
+}
+
+function buildRowanAutonomyReason({
+  actionLabel,
+  currentLocationName,
+  loopStep,
+  npcName,
+  targetLocationName,
+  world,
+}: {
+  actionLabel?: string;
+  currentLocationName?: string;
+  loopStep: RowanLoopStep;
+  npcName?: string;
+  targetLocationName?: string;
+  world: StreetGameState;
+}) {
+  const activeConversation = world.activeConversation;
+  if (loopStep.layer === "conversation" && activeConversation) {
+    if (activeConversation.decision || activeConversation.objectiveText) {
+      return "The conversation produced a usable lead, so Rowan can close it and act on what changed.";
+    }
+
+    if (loopStep.kind === "talk") {
+      return "The last answer left one practical gap, so Rowan is asking one more question before moving.";
+    }
+
+    return "No clearer lead is forming here, so Rowan can step back into the day.";
+  }
+
+  if (world.player.pendingObjectiveMove && loopStep.kind === "move") {
+    return "Rowan already picked this destination; this beat confirms the route instead of changing course.";
+  }
+
+  const activeJob = activeJobForIntent(world);
+  if (loopStep.layer === "commitment" && activeJob) {
+    if (loopStep.kind === "move" && targetLocationName) {
+      return `${activeJob.title} is already accepted, so Rowan is getting to ${targetLocationName} before the window slips.`;
+    }
+
+    if (loopStep.kind === "wait") {
+      return `${activeJob.title} is already accepted, so Rowan is watching the clock instead of starting a new thread.`;
+    }
+
+    return `${activeJob.title} is open now, and finishing it matters more than wandering.`;
+  }
+
+  if (loopStep.kind === "move" && targetLocationName) {
+    if (npcName) {
+      return `${npcName} is tied to the next step, so Rowan is getting to ${targetLocationName} before talking.`;
+    }
+
+    if (actionLabel) {
+      return `${targetLocationName} is where ${lowercaseFirst(actionLabel)} can happen, so Rowan is going there now.`;
+    }
+
+    return `The current objective points to ${targetLocationName}, so Rowan is walking there before deciding again.`;
+  }
+
+  if (loopStep.kind === "talk" && npcName) {
+    return `${npcName} is here and matches the current objective, so Rowan can ask directly.`;
+  }
+
+  if (loopStep.kind === "act" && actionLabel) {
+    return `${actionLabel} is available ${currentLocationName ? `at ${currentLocationName}` : "here"} and fits the current objective.`;
+  }
+
+  if (loopStep.kind === "wait") {
+    return "The timing matters, so Rowan is letting the clock move instead of starting something unrelated.";
+  }
+
+  if (loopStep.kind === "blocked") {
+    return "None of the available moves clearly fit the current objective, so Rowan needs a fresher lead.";
+  }
+
+  if (loopStep.kind === "observe") {
+    return "No action needs a click yet; Rowan is reading the place before committing.";
+  }
+
+  if (loopStep.kind === "idle" && isCurrentObjectiveComplete(world)) {
+    return "This is a natural stopping point: the objective is complete and Rowan has enough from today to sleep on.";
+  }
+
+  return loopStep.detail;
+}
+
+function buildRowanAutonomySignals({
+  actionLabel,
+  currentLocationName,
+  loopStep,
+  npcName,
+  objectiveText,
+  targetLocationName,
+  world,
+}: {
+  actionLabel?: string;
+  currentLocationName?: string;
+  loopStep: RowanLoopStep;
+  npcName?: string;
+  objectiveText: string;
+  targetLocationName?: string;
+  world: StreetGameState;
+}) {
+  const activeJob = activeJobForIntent(world);
+  const signals = [
+    `Goal: ${objectiveText}`,
+    currentLocationName ? `Here: ${currentLocationName}` : undefined,
+    targetLocationName && targetLocationName !== currentLocationName
+      ? `Target: ${targetLocationName}`
+      : undefined,
+    npcName ? `Person: ${npcName}` : undefined,
+    loopStep.kind === "wait" && loopStep.waitUntilMinutes !== undefined
+      ? `Timing: about ${formatClockAt(world, loopStep.waitUntilMinutes)}`
+      : undefined,
+    actionLabel && loopStep.kind !== "wait"
+      ? `Action: ${actionLabel}`
+      : undefined,
+    `Resources: $${world.player.money}, ${world.player.energy} energy`,
+    activeJob ? `Commitment: ${activeJob.title}` : undefined,
+    loopStep.layer === "conversation" && world.activeConversation
+      ? `Conversation: ${npcName ?? world.activeConversation.npcId}`
+      : undefined,
+  ].filter((signal): signal is string => Boolean(signal));
+
+  return [...new Set(signals)].slice(0, 4);
+}
+
+function activeJobForIntent(world: StreetGameState) {
+  return world.jobs.find(
+    (job) =>
+      job.id === world.player.activeJobId &&
+      job.accepted &&
+      !job.completed &&
+      !job.missed,
+  );
+}
+
+function compactIntentText(text: string, maxLength: number) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const cutAt = normalized.lastIndexOf(" ", maxLength - 3);
+  return `${normalized.slice(0, cutAt > 24 ? cutAt : maxLength - 3).trim()}...`;
+}
+
+function lowercaseFirst(text: string) {
+  return text.charAt(0).toLowerCase() + text.slice(1);
 }
 
 function normalizeAutonomyRationale(text: string) {

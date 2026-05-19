@@ -385,11 +385,17 @@ export type RowanAutonomyEffect =
   | "objective"
   | "thought";
 
+export interface RowanAutonomyIntent {
+  reason: string;
+  signals: string[];
+}
+
 export interface RowanAutonomyState {
   actionId?: string;
   autoContinue: boolean;
   detail: string;
   effects?: RowanAutonomyEffect[];
+  intent?: RowanAutonomyIntent;
   key: string;
   label: string;
   layer?: RowanAutonomyLayer;

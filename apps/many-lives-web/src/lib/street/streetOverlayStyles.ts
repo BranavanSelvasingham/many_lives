@@ -457,6 +457,41 @@ export function buildStreetOverlayStyle({
         line-height: 1.58;
         color: rgba(220, 229, 233, 0.8);
       }
+      .ml-rowan-story-card-reason {
+        margin-top: 11px;
+        border-left: 2px solid rgba(141, 208, 205, 0.3);
+        padding-left: 10px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: rgba(227, 235, 238, 0.82);
+      }
+      .ml-rowan-story-card-reason span {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 9px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(141, 208, 205, 0.72);
+      }
+      .ml-rowan-signal-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .ml-rowan-signal {
+        max-width: 100%;
+        border-radius: 999px;
+        border: 1px solid rgba(138, 151, 161, 0.16);
+        background: rgba(6, 16, 22, 0.28);
+        padding: 4px 7px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 10px;
+        line-height: 1.1;
+        color: rgba(219, 228, 233, 0.7);
+      }
       .ml-primary-action {
         width: 100%;
         display: flex;
@@ -1916,8 +1951,12 @@ export function buildStreetOverlayStyle({
         );
         width: min(var(--ml-compact-rail-width), calc(100% - var(--ml-inset) * 2));
         max-width: calc(100% - var(--ml-inset) * 2);
+        max-height: var(--ml-compact-rail-expanded-height);
         display: flex;
         z-index: 4;
+      }
+      .ml-root.is-collapsible-rail.is-rail-collapsed .ml-right-stack {
+        max-height: var(--ml-compact-rail-collapsed-height);
       }
       .ml-root.is-collapsible-rail.is-phone-rail .ml-right-stack {
         left: var(--ml-inset);

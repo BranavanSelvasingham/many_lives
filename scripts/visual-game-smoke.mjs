@@ -214,6 +214,7 @@ class CdpSession {
     this.eventListeners = new Map();
     this.buffer = Buffer.alloc(0);
     this.handshakeComplete = false;
+    this.socketClosed = false;
     this.pageErrors = [];
   }
 
@@ -225,11 +226,10 @@ class CdpSession {
 
     this.socket.on("data", (chunk) => this.handleData(chunk));
     this.socket.on("error", (error) => {
-      for (const deferred of this.pending.values()) {
-        deferred.reject(error);
-      }
-      this.pending.clear();
+      this.rejectPending(error);
     });
+    this.socket.on("end", () => this.handleSocketClosed("ended"));
+    this.socket.on("close", () => this.handleSocketClosed("closed"));
 
     await once(this.socket, "connect");
     this.writeHandshake();
@@ -320,13 +320,24 @@ class CdpSession {
       const compactPrimaryAction = document.querySelector(".ml-compact-primary-action");
       const dock = document.querySelector(".ml-dock-panel");
       const rail = document.querySelector(".ml-rail-shell");
+      const rightStack = document.querySelector(".ml-right-stack");
       const root = document.querySelector(".ml-root");
+      const whyNow = document.querySelector(".ml-rowan-story-card-reason");
       const text = document.body.innerText || "";
       const canvasRect = canvas?.getBoundingClientRect();
       const compactPrimaryActionRect =
         compactPrimaryAction?.getBoundingClientRect();
       const dockRect = dock?.getBoundingClientRect();
       const railRect = rail?.getBoundingClientRect();
+      const rightStackRect = rightStack?.getBoundingClientRect();
+      const whyNowRect = whyNow?.getBoundingClientRect();
+      const whyNowVisible = Boolean(
+        whyNowRect &&
+          railRect &&
+          whyNowRect.top >= railRect.top &&
+          whyNowRect.bottom <= railRect.bottom &&
+          whyNowRect.bottom <= window.innerHeight
+      );
       return {
         bodyText: text.slice(0, 1200),
         canvas: canvasRect ? {
@@ -358,9 +369,17 @@ class CdpSession {
           x: Math.round(railRect.x),
           y: Math.round(railRect.y)
         } : null,
+        railState: rightStack?.getAttribute("data-rail-state") ?? null,
+        rightStack: rightStackRect ? {
+          height: Math.round(rightStackRect.height),
+          width: Math.round(rightStackRect.width),
+          x: Math.round(rightStackRect.x),
+          y: Math.round(rightStackRect.y)
+        } : null,
         rootClass: root?.className ?? "",
         title: document.title,
-        url: location.href
+        url: location.href,
+        whyNowVisible
       };
     })()`);
   }
@@ -396,10 +415,11 @@ class CdpSession {
   }
 
   async clickSelector(selector) {
+    const missingMessage = JSON.stringify(`Missing clickable selector: ${selector}`);
     await this.evaluate(`(() => {
       const element = document.querySelector(${JSON.stringify(selector)});
       if (!(element instanceof HTMLElement)) {
-        throw new Error("Missing clickable selector: ${selector}");
+        throw new Error(${missingMessage});
       }
       element.click();
       return true;
@@ -520,6 +540,12 @@ class CdpSession {
   }
 
   async send(method, params = {}) {
+    if (this.socketClosed || !this.socket || this.socket.destroyed || !this.socket.writable) {
+      throw new Error(
+        `Cannot send ${method}; Chrome DevTools connection is already closed.`,
+      );
+    }
+
     this.messageId += 1;
     const id = this.messageId;
     const payload = JSON.stringify({ id, method, params });
@@ -529,6 +555,20 @@ class CdpSession {
 
     this.writeFrame(payload);
     return promise;
+  }
+
+  handleSocketClosed(verb) {
+    this.socketClosed = true;
+    this.rejectPending(
+      new Error(`Chrome DevTools connection ${verb} before the visual check finished.`),
+    );
+  }
+
+  rejectPending(error) {
+    for (const deferred of this.pending.values()) {
+      deferred.reject(error);
+    }
+    this.pending.clear();
   }
 
   writeHandshake() {
@@ -900,6 +940,64 @@ async function runViewportCheck(session, viewport) {
     mapAgency.target?.label || mapAgency.detail,
     `${viewport.name}: in-map agency cue has no target or reason.`,
   );
+  const browserProbe = await session.readBrowserProbe();
+  assert.ok(browserProbe, `${viewport.name}: missing browser probe.`);
+  assert.ok(
+    browserProbe.autonomy?.intent?.reason,
+    `${viewport.name}: autonomy probe is missing a state-based reason.`,
+  );
+  assert.ok(
+    browserProbe.autonomy.intent.signals.length >= 2,
+    `${viewport.name}: autonomy reason needs at least two state signals.`,
+  );
+  assert.ok(
+    !/choosing the next step|do this step/i.test(
+      browserProbe.autonomy.intent.reason,
+    ),
+    `${viewport.name}: autonomy reason is still generic: ${browserProbe.autonomy.intent.reason}`,
+  );
+  const railShowsWhyNow =
+    /why now/i.test(page.bodyText) ||
+    (await session.evaluate(
+      `(/why now/i).test(document.body.innerText || "")`,
+    ));
+  assert.ok(
+    railShowsWhyNow,
+    `${viewport.name}: Rowan rail does not show why the next step is happening.`,
+  );
+
+  let expandedRailScreenshotPath = null;
+  if (viewport.width <= 960) {
+    const collapsedRailHeight = page.rail?.height ?? 0;
+    await session.clickSelector(".ml-rail-toggle");
+    await sleep(350);
+    const expandedPage = await session.inspectPage();
+    const minimumExpandedHeight = Math.min(360, viewport.height - 260);
+    assert.equal(
+      expandedPage.railState,
+      "expanded",
+      `${viewport.name}: rail toggle did not enter expanded state.`,
+    );
+    assert.ok(
+      expandedPage.rail?.height >=
+        Math.max(collapsedRailHeight + 80, minimumExpandedHeight),
+      `${viewport.name}: expanded rail is still too short (${expandedPage.rail?.height}px from ${collapsedRailHeight}px).`,
+    );
+    assert.equal(
+      expandedPage.whyNowVisible,
+      true,
+      `${viewport.name}: expanded rail does not visibly reveal the Why Now context.`,
+    );
+    expandedRailScreenshotPath = path.join(
+      OUTPUT_DIR,
+      `${viewport.name}-rail-expanded.png`,
+    );
+    await session.captureScreenshot(expandedRailScreenshotPath);
+    const expandedRailScreenshot = await readFile(expandedRailScreenshotPath);
+    assertPngScreenshot(expandedRailScreenshot, viewport);
+    await session.clickSelector(".ml-rail-toggle");
+    await sleep(200);
+  }
 
   const panBefore = await session.readCameraProbe();
   assert.ok(panBefore, `${viewport.name}: missing camera probe.`);
@@ -1052,6 +1150,7 @@ async function runViewportCheck(session, viewport) {
     },
     panScreenshotPath,
     screenshotPath,
+    expandedRailScreenshotPath,
     westPanScreenshotPath,
   };
 }
@@ -1154,6 +1253,7 @@ async function main() {
   const results = [];
   let storedGameChoice = null;
   const summaryPath = path.join(OUTPUT_DIR, "summary.json");
+  let visualError = null;
 
   try {
     for (const viewport of VIEWPORTS) {
@@ -1200,9 +1300,19 @@ async function main() {
         "",
       ].join("\n"),
     );
+  } catch (error) {
+    visualError = error;
+    process.exitCode = 1;
+    process.stderr.write(
+      `[many-lives] Visual game smoke failed: ${error.stack ?? error.message}\n`,
+    );
   } finally {
     await session.close();
     await closeChildProcess(webServer);
+  }
+
+  if (visualError) {
+    return;
   }
 }
 
