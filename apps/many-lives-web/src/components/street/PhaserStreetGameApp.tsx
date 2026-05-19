@@ -280,6 +280,8 @@ function buildGameSyncKey(game: StreetGameState) {
     game.firstAfternoon?.completedAt ?? "",
     game.rowanAutonomy.key,
     game.rowanAutonomy.label,
+    game.rowanAutonomy.intent?.reason ?? "",
+    game.rowanAutonomy.intent?.signals?.join("|") ?? "",
     game.rowanAutonomy.mode,
     game.rowanAutonomy.stepKind,
     game.rowanAutonomy.targetLocationId ?? "",
@@ -3581,6 +3583,10 @@ function buildMapAgencyDetail({
 
   if (pendingMove?.objectiveText) {
     return compactMapAgencyCopy(`Goal: ${pendingMove.objectiveText}`, 58);
+  }
+
+  if (autonomy.intent?.reason) {
+    return compactMapAgencyCopy(autonomy.intent.reason, 58);
   }
 
   if (autonomy.mode === "moving" && targetLocation) {

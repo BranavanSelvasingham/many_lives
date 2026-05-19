@@ -44,6 +44,12 @@ export function buildStreetBrowserProbeJson({
       : null,
     autonomy: {
       autoContinue: game.rowanAutonomy.autoContinue,
+      intent: game.rowanAutonomy.intent
+        ? {
+            reason: game.rowanAutonomy.intent.reason,
+            signals: game.rowanAutonomy.intent.signals,
+          }
+        : null,
       key: game.rowanAutonomy.key,
       label: game.rowanAutonomy.label,
       mode: game.rowanAutonomy.mode,

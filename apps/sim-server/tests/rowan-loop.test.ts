@@ -69,6 +69,10 @@ describe("Rowan loop primitives", () => {
         step({
           actionId: "work:job-tea-shift",
           effects: ["thought"],
+          intent: {
+            reason: "The shift starts later, so Rowan is waiting nearby.",
+            signals: ["Goal: finish the shift", "Target: Kettle & Lamp"],
+          },
           key: "job-start:job-tea-shift",
           kind: "wait",
           label: "Hold for Cup-and-counter shift",
@@ -79,6 +83,10 @@ describe("Rowan loop primitives", () => {
     ).toMatchObject({
       actionId: "work:job-tea-shift",
       effects: ["thought"],
+      intent: {
+        reason: "The shift starts later, so Rowan is waiting nearby.",
+        signals: ["Goal: finish the shift", "Target: Kettle & Lamp"],
+      },
       key: "job-start:job-tea-shift",
       label: "Hold for Cup-and-counter shift",
       layer: "commitment",

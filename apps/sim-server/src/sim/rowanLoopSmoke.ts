@@ -16,6 +16,8 @@ export interface RowanLoopSmokeTraceEntry {
   autonomyKey: string;
   autonomyLabel: string;
   autonomyLayer?: string;
+  autonomyReason?: string;
+  autonomySignals: string[];
   autonomyStep?: string;
   autonomyTarget?: string;
   money: number;
@@ -51,6 +53,7 @@ export async function runRowanLoopSmoke(
     guardAgainstStall(world, seen, step, trace);
 
     if (isSuccessfulSmokeEndState(world)) {
+      guardAgainstCannedAutonomy(trace);
       return { finalWorld: world, trace };
     }
   }
@@ -74,6 +77,7 @@ export function formatTrace(trace: RowanLoopSmokeTraceEntry[]): string {
         entry.progress ?? "no-progress",
         `${entry.autonomyLayer ?? "no-layer"}/${entry.autonomyStep ?? "no-step"}`,
         entry.autonomyLabel,
+        entry.autonomyReason ? `why=${entry.autonomyReason}` : undefined,
         entry.autonomyTarget ? `target=${entry.autonomyTarget}` : undefined,
         entry.activeConversation
           ? `thread=${entry.activeConversation}`
@@ -104,6 +108,8 @@ function buildTraceEntry(
     autonomyKey: world.rowanAutonomy.key,
     autonomyLabel: world.rowanAutonomy.label,
     autonomyLayer: world.rowanAutonomy.layer,
+    autonomyReason: world.rowanAutonomy.intent?.reason,
+    autonomySignals: world.rowanAutonomy.intent?.signals ?? [],
     autonomyStep: world.rowanAutonomy.stepKind,
     autonomyTarget: world.rowanAutonomy.targetLocationId,
     money: world.player.money,
@@ -127,6 +133,7 @@ function guardAgainstStall(
     world.rowanAutonomy.key,
     world.rowanAutonomy.stepKind,
     world.rowanAutonomy.targetLocationId,
+    world.rowanAutonomy.intent?.reason,
   ].join("|");
   const count = (seen.get(signature) ?? 0) + 1;
   seen.set(signature, count);
@@ -135,6 +142,42 @@ function guardAgainstStall(
     throw new Error(
       [
         `Rowan loop smoke repeated the same progression signature at step ${step}.`,
+        formatTrace(trace),
+      ].join("\n"),
+    );
+  }
+}
+
+function guardAgainstCannedAutonomy(trace: RowanLoopSmokeTraceEntry[]): void {
+  const meaningfulEntries = trace.filter(
+    (entry) => entry.autonomyStep && entry.autonomyStep !== "idle",
+  );
+  const reasons = new Set(
+    meaningfulEntries
+      .map((entry) => entry.autonomyReason?.trim())
+      .filter((reason): reason is string => Boolean(reason)),
+  );
+  const signalCounts = meaningfulEntries.map(
+    (entry) => entry.autonomySignals.length,
+  );
+
+  if (meaningfulEntries.length === 0) {
+    throw new Error(`Rowan loop smoke saw no active autonomy steps.\n${formatTrace(trace)}`);
+  }
+
+  if (reasons.size < Math.min(3, meaningfulEntries.length)) {
+    throw new Error(
+      [
+        "Rowan autonomy did not expose enough distinct state-based reasons.",
+        formatTrace(trace),
+      ].join("\n"),
+    );
+  }
+
+  if (signalCounts.some((count) => count < 2)) {
+    throw new Error(
+      [
+        "Rowan autonomy reasons need at least two state signals per active step.",
         formatTrace(trace),
       ].join("\n"),
     );

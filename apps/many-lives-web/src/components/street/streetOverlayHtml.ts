@@ -149,6 +149,8 @@ export function buildRowanStoryCardHtml(
   kicker: string,
   card: {
     detail: string;
+    reason?: string;
+    signals?: string[];
     title: string;
     tone: "conversation" | "info" | "objective";
   },
@@ -165,6 +167,29 @@ export function buildRowanStoryCardHtml(
       <div class="ml-rowan-story-card-copy">${escapeHtml(
         buildNarrativePreview(card.detail, primary ? 176 : 152),
       )}</div>
+      ${
+        primary && card.reason
+          ? `<div class="ml-rowan-story-card-reason">
+              <span>Why now</span>
+              ${escapeHtml(buildNarrativePreview(card.reason, 156))}
+            </div>`
+          : ""
+      }
+      ${
+        primary && card.signals?.length
+          ? `<div class="ml-rowan-signal-row">
+              ${card.signals
+                .slice(0, 3)
+                .map(
+                  (signal) =>
+                    `<span class="ml-rowan-signal">${escapeHtml(
+                      buildNarrativePreview(signal, 54),
+                    )}</span>`,
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
     </div>
   `;
 }
