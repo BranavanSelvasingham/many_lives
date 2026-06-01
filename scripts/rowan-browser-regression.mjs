@@ -58,8 +58,12 @@ const OUTPUT_DIR =
   process.env.MANY_LIVES_BROWSER_PLAYTEST_DIR ??
   path.join(tmpdir(), `manylives-rowan-browser-${Date.now()}`);
 const WINDOW_SIZE = process.env.MANY_LIVES_BROWSER_WINDOW ?? "1365,768";
-const DEVTOOLS_PORT = Number(process.env.MANY_LIVES_BROWSER_DEVTOOLS_PORT ?? "9222");
-const CDP_WAIT_TIMEOUT_MS = 12_000;
+const FIXED_DEVTOOLS_PORT = process.env.MANY_LIVES_BROWSER_DEVTOOLS_PORT
+  ? Number(process.env.MANY_LIVES_BROWSER_DEVTOOLS_PORT)
+  : null;
+const CDP_WAIT_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_CDP_WAIT_TIMEOUT_MS ?? "30000",
+);
 const SIM_WAIT_TIMEOUT_MS = 15_000;
 const WEB_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_WEB_START_TIMEOUT_MS ?? "45000",
@@ -946,16 +950,21 @@ class CdpSession {
 
 async function launchBrowserSession(url) {
   const userDataDir = path.join(OUTPUT_DIR, "chrome-session");
+  const devtoolsPort = FIXED_DEVTOOLS_PORT ?? (await reserveAvailablePort());
   const browser = spawn(
     CHROME_BIN,
     [
       "--headless=new",
       "--no-sandbox",
       "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--no-first-run",
+      "--no-default-browser-check",
       "--hide-scrollbars",
       "--run-all-compositor-stages-before-draw",
       `--window-size=${WINDOW_SIZE}`,
-      `--remote-debugging-port=${DEVTOOLS_PORT}`,
+      "--remote-debugging-address=127.0.0.1",
+      `--remote-debugging-port=${devtoolsPort}`,
       `--user-data-dir=${userDataDir}`,
       "about:blank",
     ],
@@ -975,19 +984,31 @@ async function launchBrowserSession(url) {
     browserStderr += chunk.toString();
   });
 
-  const pageWsUrl = await waitFor(async () => {
-    if (browserStartError) {
-      throw browserStartError;
-    }
+  let pageWsUrl;
+  try {
+    pageWsUrl = await waitFor(
+      async () => {
+        if (browserStartError) {
+          throw browserStartError;
+        }
 
-    try {
-      const targets = await fetchJson(`http://127.0.0.1:${DEVTOOLS_PORT}/json/list`);
-      const page = targets.find((target) => target.type === "page");
-      return page?.webSocketDebuggerUrl ?? null;
-    } catch {
-      return null;
-    }
-  }, CDP_WAIT_TIMEOUT_MS, `Timed out waiting for Chrome DevTools on port ${DEVTOOLS_PORT}. ${browserStderr}`);
+        try {
+          const targets = await fetchJson(
+            `http://127.0.0.1:${devtoolsPort}/json/list`,
+          );
+          const page = targets.find((target) => target.type === "page");
+          return page?.webSocketDebuggerUrl ?? null;
+        } catch {
+          return null;
+        }
+      },
+      CDP_WAIT_TIMEOUT_MS,
+      `Timed out waiting for Chrome DevTools on port ${devtoolsPort}. ${browserStderr}`,
+    );
+  } catch (error) {
+    await closeChildProcess(browser);
+    throw error;
+  }
 
   const session = new CdpSession({
     browser,
