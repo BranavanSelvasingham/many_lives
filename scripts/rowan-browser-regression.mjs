@@ -2,19 +2,46 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const CHROME_BIN =
-  process.env.MANY_LIVES_CHROME_BIN ??
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+function findChromeBin() {
+  const candidates = [
+    process.env.MANY_LIVES_CHROME_BIN,
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary",
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+  ].filter(Boolean);
+
+  const chromeBin = candidates.find((candidate) => {
+    if (!path.isAbsolute(candidate)) {
+      return true;
+    }
+
+    return existsSync(candidate);
+  });
+
+  if (!chromeBin) {
+    throw new Error(
+      "Could not find Chrome. Set MANY_LIVES_CHROME_BIN to run the browser regression.",
+    );
+  }
+
+  return chromeBin;
+}
+
 const FFMPEG_BIN = process.env.MANY_LIVES_FFMPEG_BIN ?? "ffmpeg";
 const BROWSER_DRIVER = (process.env.MANY_LIVES_BROWSER_DRIVER ?? "probe")
   .trim()
   .toLowerCase();
 const USE_CHROME_DRIVER = BROWSER_DRIVER === "chrome";
+const CHROME_BIN = USE_CHROME_DRIVER ? findChromeBin() : null;
 const CAPTURE_ALL_CHROME_STEPS =
   USE_CHROME_DRIVER && process.env.MANY_LIVES_BROWSER_CAPTURE_ALL !== "0";
 const REQUIRE_SCREENSHOTS =
@@ -129,11 +156,11 @@ async function buildAvailableFallbackWebBase(baseUrl) {
 }
 
 async function closeChildProcess(child) {
-  if (!child || child.exitCode !== null) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
     return;
   }
 
-  child.kill("SIGTERM");
+  signalChildProcess(child, "SIGTERM");
   await Promise.race([
     once(child, "close").catch(() => undefined),
     sleep(1_500),
@@ -141,9 +168,28 @@ async function closeChildProcess(child) {
 
   if (child.exitCode === null) {
     const closed = once(child, "close").catch(() => undefined);
-    child.kill("SIGKILL");
+    signalChildProcess(child, "SIGKILL");
     await Promise.race([closed, sleep(1_500)]);
   }
+
+  if (child.exitCode === null && child.signalCode === null) {
+    child.unref?.();
+  }
+}
+
+function signalChildProcess(child, signal) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  if (child.manyLivesKillGroup && child.pid && process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {}
+  }
+
+  child.kill(signal);
 }
 
 async function runProcess(command, args, errorPrefix) {
@@ -188,6 +234,7 @@ async function startWebServer(baseUrl) {
     ],
     {
       cwd: process.cwd(),
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         AI_PROVIDER: "mock",
@@ -198,6 +245,7 @@ async function startWebServer(baseUrl) {
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  server.manyLivesKillGroup = process.platform !== "win32";
 
   let logs = "";
   let exitCode = null;
@@ -388,16 +436,10 @@ class CdpSession {
 
   async close() {
     try {
-      this.socket?.end();
+      this.socket?.destroy();
     } catch {}
 
-    if (this.browser) {
-      const closed = once(this.browser, "close").catch(() => undefined);
-      if (this.browser.exitCode === null && this.browser.signalCode === null) {
-        this.browser.kill("SIGKILL");
-      }
-      await Promise.race([closed, sleep(1_500)]);
-    }
+    await closeChildProcess(this.browser);
   }
 
   async evaluate(expression) {
@@ -918,16 +960,26 @@ async function launchBrowserSession(url) {
       "about:blank",
     ],
     {
+      detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "pipe"],
     },
   );
+  browser.manyLivesKillGroup = process.platform !== "win32";
 
   let browserStderr = "";
+  let browserStartError = null;
+  browser.once("error", (error) => {
+    browserStartError = error;
+  });
   browser.stderr?.on("data", (chunk) => {
     browserStderr += chunk.toString();
   });
 
   const pageWsUrl = await waitFor(async () => {
+    if (browserStartError) {
+      throw browserStartError;
+    }
+
     try {
       const targets = await fetchJson(`http://127.0.0.1:${DEVTOOLS_PORT}/json/list`);
       const page = targets.find((target) => target.type === "page");
