@@ -484,6 +484,10 @@ export function buildStreetOverlayStyle({
         text-transform: uppercase;
         color: rgba(141, 208, 205, 0.72);
       }
+      .ml-rail-head-reason {
+        max-width: 34ch;
+        background: rgba(9, 25, 29, 0.34);
+      }
       .ml-planner-trace {
         margin-top: 11px;
         border-radius: 14px;

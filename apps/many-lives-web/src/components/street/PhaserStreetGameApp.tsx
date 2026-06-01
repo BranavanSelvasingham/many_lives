@@ -4233,6 +4233,13 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       </button>
     `
     : "";
+  const compactRailWhyNowHtml =
+    railViewport !== "desktop" && railExpanded && rowanRail.now.reason
+      ? `<div class="ml-rowan-story-card-reason ml-rail-head-reason">
+          <span>Why now</span>
+          ${escapeHtml(buildNarrativePreview(rowanRail.now.reason, 148))}
+        </div>`
+      : "";
   const browserProbeJson = buildStreetBrowserProbeJson({
     activeConversation: railActiveConversation,
     conversationNpcName: railConversationNpc?.name,
@@ -4365,6 +4372,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
               </div>
               <div class="ml-rail-peek-label">${escapeHtml(railPeekLabel)}</div>
               <div class="ml-rail-thought">${escapeHtml(railThought)}</div>
+              ${compactRailWhyNowHtml}
               ${compactPrimaryActionHtml}
             </div>
             ${
