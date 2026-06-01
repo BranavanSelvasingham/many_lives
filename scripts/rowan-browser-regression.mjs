@@ -1,20 +1,32 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdir, writeFile } from "node:fs/promises";
-import { createConnection } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 const CHROME_BIN =
   process.env.MANY_LIVES_CHROME_BIN ??
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const FFMPEG_BIN = process.env.MANY_LIVES_FFMPEG_BIN ?? "ffmpeg";
 const BROWSER_DRIVER = (process.env.MANY_LIVES_BROWSER_DRIVER ?? "probe")
   .trim()
   .toLowerCase();
+const USE_CHROME_DRIVER = BROWSER_DRIVER === "chrome";
+const CAPTURE_ALL_CHROME_STEPS =
+  USE_CHROME_DRIVER && process.env.MANY_LIVES_BROWSER_CAPTURE_ALL !== "0";
+const REQUIRE_SCREENSHOTS =
+  USE_CHROME_DRIVER && process.env.MANY_LIVES_BROWSER_REQUIRE_SCREENSHOTS !== "0";
+const REQUIRE_RECORDING =
+  USE_CHROME_DRIVER && process.env.MANY_LIVES_BROWSER_REQUIRE_RECORDING !== "0";
+const TRACE_REGRESSION =
+  process.env.MANY_LIVES_BROWSER_TRACE === "1";
 const DEFAULT_WEB_BASE =
-  process.env.MANY_LIVES_WEB_BASE_URL ?? "http://localhost:3001";
+  process.env.MANY_LIVES_WEB_BASE_URL ?? "http://127.0.0.1:3001";
+const FORCE_LOCAL_WEB =
+  process.env.MANY_LIVES_BROWSER_FORCE_LOCAL_WEB !== "0";
 const OUTPUT_DIR =
   process.env.MANY_LIVES_BROWSER_PLAYTEST_DIR ??
   path.join(tmpdir(), `manylives-rowan-browser-${Date.now()}`);
@@ -22,13 +34,21 @@ const WINDOW_SIZE = process.env.MANY_LIVES_BROWSER_WINDOW ?? "1365,768";
 const DEVTOOLS_PORT = Number(process.env.MANY_LIVES_BROWSER_DEVTOOLS_PORT ?? "9222");
 const CDP_WAIT_TIMEOUT_MS = 12_000;
 const SIM_WAIT_TIMEOUT_MS = 15_000;
-const WEB_START_TIMEOUT_MS = 20_000;
+const WEB_START_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_WEB_START_TIMEOUT_MS ?? "45000",
+);
 const PROBE_POLL_INTERVAL_MS = 250;
 const FALLBACK_WEB_PORT = Number(
   process.env.MANY_LIVES_BROWSER_WEB_FALLBACK_PORT ?? "3101",
 );
 
 let activeWebBase = DEFAULT_WEB_BASE;
+
+function traceRegression(message) {
+  if (TRACE_REGRESSION) {
+    process.stderr.write(`[many-lives:trace] ${message}\n`);
+  }
+}
 
 function getWebBase() {
   return activeWebBase;
@@ -67,10 +87,45 @@ async function readWebStackHealth(baseUrl) {
   };
 }
 
-function buildFallbackWebBase(baseUrl) {
+function buildFallbackWebBase(baseUrl, port = FALLBACK_WEB_PORT) {
   const url = new URL(baseUrl);
-  url.port = String(FALLBACK_WEB_PORT);
+  url.port = String(port);
   return url.toString().replace(/\/$/, "");
+}
+
+async function canListenOnPort(port) {
+  return new Promise((resolve) => {
+    const server = createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
+    });
+  });
+}
+
+async function reserveAvailablePort() {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Could not reserve a browser regression port."));
+        return;
+      }
+
+      const { port } = address;
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+async function buildAvailableFallbackWebBase(baseUrl) {
+  const port = (await canListenOnPort(FALLBACK_WEB_PORT))
+    ? FALLBACK_WEB_PORT
+    : await reserveAvailablePort();
+  return buildFallbackWebBase(baseUrl, port);
 }
 
 async function closeChildProcess(child) {
@@ -85,8 +140,33 @@ async function closeChildProcess(child) {
   ]);
 
   if (child.exitCode === null) {
+    const closed = once(child, "close").catch(() => undefined);
     child.kill("SIGKILL");
-    await once(child, "close").catch(() => undefined);
+    await Promise.race([closed, sleep(1_500)]);
+  }
+}
+
+async function runProcess(command, args, errorPrefix) {
+  const child = spawn(command, args, {
+    cwd: process.cwd(),
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+
+  child.stderr?.on("data", (chunk) => {
+    stderr += chunk.toString();
+    if (stderr.length > 12_000) {
+      stderr = stderr.slice(-12_000);
+    }
+  });
+
+  const exitCode = await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+
+  if (exitCode !== 0) {
+    throw new Error(`${errorPrefix} exited with ${exitCode}.\n${stderr}`);
   }
 }
 
@@ -110,6 +190,9 @@ async function startWebServer(baseUrl) {
       cwd: process.cwd(),
       env: {
         ...process.env,
+        AI_PROVIDER: "mock",
+        MANY_LIVES_API_BASE_URL:
+          process.env.MANY_LIVES_BROWSER_SIM_BASE_URL ?? "http://127.0.0.1:9",
         MANY_LIVES_ALLOW_IN_PROCESS_SIM_FALLBACK: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -117,6 +200,7 @@ async function startWebServer(baseUrl) {
   );
 
   let logs = "";
+  let exitCode = null;
   const appendLogs = (chunk) => {
     logs += chunk.toString();
     if (logs.length > 12_000) {
@@ -127,6 +211,7 @@ async function startWebServer(baseUrl) {
   server.stderr?.on("data", appendLogs);
 
   server.on("exit", (code) => {
+    exitCode = code;
     if (code !== 0) {
       logs += `\n[next-exit:${code}]`;
     }
@@ -135,6 +220,12 @@ async function startWebServer(baseUrl) {
   try {
     await waitFor(
       async () => {
+        if (exitCode !== null) {
+          throw new Error(
+            `The local web stack exited before it became healthy at ${baseUrl}.\n${logs}`,
+          );
+        }
+
         try {
           await readWebStackHealth(baseUrl);
           return true;
@@ -154,22 +245,26 @@ async function startWebServer(baseUrl) {
 }
 
 async function ensureStack() {
-  try {
-    await readWebStackHealth(getWebBase());
-    return {
-      webBase: getWebBase(),
-      webServer: null,
-    };
-  } catch {
-    activeWebBase = buildFallbackWebBase(DEFAULT_WEB_BASE);
-    const webServer = await startWebServer(activeWebBase);
-    await readWebStackHealth(activeWebBase);
-
-    return {
-      webBase: activeWebBase,
-      webServer,
-    };
+  if (!FORCE_LOCAL_WEB) {
+    try {
+      await readWebStackHealth(getWebBase());
+      return {
+        webBase: getWebBase(),
+        webServer: null,
+      };
+    } catch {
+      // Fall through to a controlled local stack.
+    }
   }
+
+  activeWebBase = await buildAvailableFallbackWebBase(DEFAULT_WEB_BASE);
+  const webServer = await startWebServer(activeWebBase);
+  await readWebStackHealth(activeWebBase);
+
+  return {
+    webBase: activeWebBase,
+    webServer,
+  };
 }
 
 async function createGame() {
@@ -244,6 +339,7 @@ class CdpSession {
     this.messageId = 0;
     this.pending = new Map();
     this.eventListeners = new Map();
+    this.pageErrors = [];
     this.buffer = Buffer.alloc(0);
     this.handshakeComplete = false;
   }
@@ -278,6 +374,7 @@ class CdpSession {
 
     await this.send("Page.enable");
     await this.send("Runtime.enable");
+    await this.send("Log.enable");
     await this.send("Page.setLifecycleEventsEnabled", { enabled: true });
     await this.navigate(this.url);
   }
@@ -339,6 +436,176 @@ class CdpSession {
     }
 
     return probe;
+  }
+
+  async readDomSnapshot() {
+    return this.evaluate(`(() => {
+      const rectFromElement = (element) => {
+        if (!element) {
+          return null;
+        }
+        const rect = element.getBoundingClientRect();
+        return {
+          bottom: Math.round(rect.bottom),
+          height: Math.round(rect.height),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+        };
+      };
+      const rectFor = (selector) => rectFromElement(document.querySelector(selector));
+      const elementLabel = (element) => {
+        if (!element) {
+          return null;
+        }
+        const id = element.id ? "#" + element.id : "";
+        const className =
+          typeof element.className === "string" && element.className.trim()
+            ? "." + element.className.trim().replace(/\\s+/g, ".")
+            : "";
+        return element.tagName.toLowerCase() + id + className;
+      };
+      const clippingAncestorsFor = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) {
+          return [];
+        }
+        const rect = element.getBoundingClientRect();
+        const clippedBy = [];
+
+        for (
+          let ancestor = element.parentElement;
+          ancestor;
+          ancestor = ancestor.parentElement
+        ) {
+          const style = window.getComputedStyle(ancestor);
+          const clips = [style.overflow, style.overflowX, style.overflowY]
+            .some((value) => ["hidden", "clip", "scroll", "auto"].includes(value));
+          if (!clips) {
+            continue;
+          }
+
+          const ancestorRect = ancestor.getBoundingClientRect();
+          const isClipped =
+            rect.left < ancestorRect.left - 1 ||
+            rect.right > ancestorRect.right + 1 ||
+            rect.top < ancestorRect.top - 1 ||
+            rect.bottom > ancestorRect.bottom + 1;
+          if (isClipped) {
+            clippedBy.push({
+              element: elementLabel(ancestor),
+              overflow: {
+                x: style.overflowX,
+                y: style.overflowY,
+              },
+              rect: {
+                bottom: Math.round(ancestorRect.bottom),
+                height: Math.round(ancestorRect.height),
+                left: Math.round(ancestorRect.left),
+                right: Math.round(ancestorRect.right),
+                top: Math.round(ancestorRect.top),
+                width: Math.round(ancestorRect.width),
+              },
+            });
+          }
+        }
+
+        return clippedBy;
+      };
+      const bodyText = document.body?.innerText ?? "";
+      const canvas = document.querySelector("canvas");
+      const canvasRect = canvas?.getBoundingClientRect();
+      const rail = document.querySelector('[data-rail-root="rowan"]');
+      const frameworkErrorText = [
+        document.body?.textContent ?? "",
+        ...Array.from(document.querySelectorAll("nextjs-portal")).map(
+          (element) => element.shadowRoot?.textContent ?? element.textContent ?? ""
+        ),
+      ].join(" ");
+      const activeTab = Array.from(document.querySelectorAll("[data-tab]"))
+        .find((element) =>
+          element.classList.contains("is-active") ||
+          element.getAttribute("aria-pressed") === "true" ||
+          element.getAttribute("aria-selected") === "true"
+        );
+      const fieldNotes = Array.from(document.querySelectorAll("[data-field-note]"));
+      const fieldNote = document.querySelector('[data-field-note="first-afternoon"]');
+      const activeConversation = document.querySelector("[data-conversation-panel]");
+
+      return {
+        actionLabels: Array.from(document.querySelectorAll("[data-action-id]"))
+          .map((element) => element.textContent?.replace(/\\s+/g, " ").trim() ?? "")
+          .filter(Boolean),
+        activeTab: activeTab?.getAttribute("data-tab") ?? null,
+        bodyText,
+        bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 1600),
+        canvasRect: canvasRect
+          ? {
+              height: Math.round(canvasRect.height),
+              width: Math.round(canvasRect.width),
+            }
+          : null,
+        conversationText: activeConversation?.textContent?.replace(/\\s+/g, " ").trim() ?? null,
+        fieldNoteText: fieldNote?.textContent?.replace(/\\s+/g, " ").trim() ?? null,
+        fieldNotes: fieldNotes.map((element) => ({
+          key: element.getAttribute("data-field-note"),
+          text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+        })),
+        hasCanvas: Boolean(canvas),
+        hasFieldNote: Boolean(fieldNote),
+        hasFrameworkErrorOverlay: /Unhandled Runtime Error|Runtime Error|Build Error|Failed to compile|Application error/i.test(
+          frameworkErrorText
+        ),
+        hasRail: Boolean(rail),
+        layout: {
+          clippingAncestors: {
+            dockPanel: clippingAncestorsFor(".ml-dock-panel"),
+            focusWindow: clippingAncestorsFor(".ml-inline-focus-window"),
+            rightStack: clippingAncestorsFor(".ml-right-stack"),
+            timePill: clippingAncestorsFor(".ml-time-pill"),
+          },
+          dock: rectFor(".ml-dock"),
+          dockPanel: rectFor(".ml-dock-panel"),
+          fieldNotes: fieldNotes.map((element) => ({
+            key: element.getAttribute("data-field-note"),
+            rect: rectFromElement(element),
+          })),
+          focusBody: rectFor(".ml-focus-body"),
+          focusWindow: rectFor(".ml-inline-focus-window"),
+          document: {
+            clientHeight: document.documentElement.clientHeight,
+            clientWidth: document.documentElement.clientWidth,
+            scrollHeight: document.documentElement.scrollHeight,
+            scrollWidth: document.documentElement.scrollWidth,
+          },
+          rightStack: rectFor(".ml-right-stack"),
+          timePill: rectFor(".ml-time-pill"),
+          viewport: {
+            height: window.innerHeight,
+            width: window.innerWidth,
+          },
+        },
+        tabLabels: Array.from(document.querySelectorAll("[data-tab]"))
+          .map((element) => element.textContent?.replace(/\\s+/g, " ").trim() ?? "")
+          .filter(Boolean),
+      };
+    })()`);
+  }
+
+  async clickSelector(selector) {
+    return this.evaluate(`(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!element) {
+        return false;
+      }
+      element.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      }));
+      return true;
+    })()`);
   }
 
   async waitForProbe() {
@@ -508,6 +775,24 @@ class CdpSession {
       }
 
       const message = JSON.parse(frame.payload.toString("utf8"));
+      if (message.method === "Runtime.exceptionThrown") {
+        this.pageErrors.push({
+          method: message.method,
+          text:
+            message.params?.exceptionDetails?.exception?.description ??
+            message.params?.exceptionDetails?.text ??
+            "Runtime exception",
+        });
+      } else if (
+        message.method === "Log.entryAdded" &&
+        message.params?.entry?.level === "error"
+      ) {
+        this.pageErrors.push({
+          method: message.method,
+          text: message.params.entry.text ?? "Browser log error",
+        });
+      }
+
       if (message.id) {
         const deferred = this.pending.get(message.id);
         if (deferred) {
@@ -663,13 +948,23 @@ async function launchBrowserSession(url) {
 }
 
 function shouldCaptureScreenshot(label) {
+  if (CAPTURE_ALL_CHROME_STEPS) {
+    return true;
+  }
+
   return new Set([
     "initial-mara-open",
     "mara-live-thread",
+    "head-to-cafe-plan",
+    "stage-cafe-move",
     "ada-live-thread",
+    "ada-thread-landed",
     "hold-for-shift",
+    "lunch-rush",
+    "finish-shift",
+    "head-home",
     "arrive-home",
-    "post-rest-next-beat",
+    "first-afternoon-complete",
   ]).has(label);
 }
 
@@ -714,6 +1009,7 @@ function buildProbeFromGame(game) {
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
     },
+    cityEvents: activeCityEvents(game),
     clock: {
       iso: game.currentTime,
       label: game.clock.label,
@@ -754,6 +1050,31 @@ function buildProbeFromGame(game) {
       useConversationTranscript: Boolean(activeConversation),
     },
   };
+}
+
+function activeCityEvents(game) {
+  return (game.cityEvents ?? [])
+    .filter((event) => event.status === "active")
+    .map((event) => ({
+      id: event.id,
+      locationId: event.locationId,
+      progress: event.progress ?? null,
+      visibleLabel: event.visibleLabel,
+    }));
+}
+
+function simCityEventSnapshot(game) {
+  return (game.cityEvents ?? []).map((event) => ({
+    id: event.id,
+    locationId: event.locationId,
+    progress: event.progress ?? null,
+    status: event.status,
+    visibleLabel: event.visibleLabel,
+  }));
+}
+
+function findCityEvent(game, id) {
+  return (game.cityEvents ?? []).find((event) => event.id === id) ?? null;
 }
 
 function assertBrowserProbeMatchesGame(label, game, probe) {
@@ -798,6 +1119,11 @@ function assertBrowserProbeMatchesGame(label, game, probe) {
     game.activeConversation?.npcId ?? null,
     `${label}: browser conversation target diverged from sim.`,
   );
+  assert.deepEqual(
+    probe.cityEvents ?? [],
+    activeCityEvents(game),
+    `${label}: browser active city events diverged from sim.`,
+  );
   assert.equal(
     probe.visualPlayer?.isMovingToServerState ?? false,
     false,
@@ -805,7 +1131,274 @@ function assertBrowserProbeMatchesGame(label, game, probe) {
   );
 }
 
+function assertGameplayDom(label, game, probe, dom) {
+  assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
+  assert.equal(
+    dom.hasFrameworkErrorOverlay,
+    false,
+    `${label}: browser rendered a framework/runtime error overlay.`,
+  );
+  assert.equal(dom.hasCanvas, true, `${label}: game canvas is missing.`);
+  assert.ok(
+    (dom.canvasRect?.width ?? 0) >= 900,
+    `${label}: game canvas width is unexpectedly small (${dom.canvasRect?.width ?? "missing"}).`,
+  );
+  assert.ok(
+    (dom.canvasRect?.height ?? 0) >= 500,
+    `${label}: game canvas height is unexpectedly small (${dom.canvasRect?.height ?? "missing"}).`,
+  );
+  assert.equal(dom.hasRail, true, `${label}: Rowan rail is missing.`);
+  assert.match(
+    dom.bodyText,
+    /Rowan/i,
+    `${label}: rendered UI does not mention Rowan.`,
+  );
+  assert.match(
+    dom.bodyText,
+    new RegExp(escapeRegExp(probe.autonomy.label.slice(0, 28)), "i"),
+    `${label}: rendered UI does not show the current Rowan beat.`,
+  );
+
+  if (game.activeConversation) {
+    const npcName =
+      game.npcs.find((npc) => npc.id === game.activeConversation.npcId)?.name ??
+      game.activeConversation.npcId;
+    assert.match(
+      dom.bodyText,
+      new RegExp(escapeRegExp(npcName), "i"),
+      `${label}: rendered UI does not show the active conversation NPC.`,
+    );
+  }
+
+  if (label === "lunch-rush" || label === "finish-shift") {
+    assert.match(
+      dom.bodyText,
+      /lunch rush|cup-and-counter|counter/i,
+      `${label}: rendered UI does not surface the cafe shift context.`,
+    );
+  }
+
+  if (label === "first-afternoon-complete") {
+    assert.ok(
+      game.firstAfternoon?.fieldNote,
+      `${label}: first-afternoon field note was not persisted by the sim.`,
+    );
+  }
+
+  assertCriticalVisualCoherence(label, dom);
+}
+
+function assertCityEventState(label, game) {
+  const cafePrep = findCityEvent(game, "event-cafe-prep");
+  const lunchRush = findCityEvent(game, "event-lunch-rush");
+  const marketCrossing = findCityEvent(game, "event-market-crossing");
+
+  assert.ok(cafePrep, `${label}: missing cafe-prep city event.`);
+  assert.ok(lunchRush, `${label}: missing lunch-rush city event.`);
+  assert.ok(marketCrossing, `${label}: missing market-crossing city event.`);
+
+  if (label === "initial-mara-open") {
+    assert.equal(
+      cafePrep.status,
+      "active",
+      `${label}: cafe-prep event should be active at the start.`,
+    );
+    assert.equal(
+      marketCrossing.status,
+      "active",
+      `${label}: market-crossing event should be active at the start.`,
+    );
+  }
+
+  if (label === "lunch-rush") {
+    assert.equal(
+      lunchRush.status,
+      "active",
+      `${label}: lunch-rush event should be active during the rush.`,
+    );
+    assert.equal(
+      lunchRush.progress,
+      "rush",
+      `${label}: lunch-rush event should be at the rush progress marker.`,
+    );
+  }
+
+  if (label === "finish-shift") {
+    assert.equal(
+      lunchRush.status,
+      "active",
+      `${label}: lunch-rush event should stay active until the paid beat lands.`,
+    );
+    assert.equal(
+      lunchRush.progress,
+      "counter",
+      `${label}: lunch-rush event should reach the counter progress marker.`,
+    );
+  }
+
+  if (label === "first-afternoon-complete") {
+    assert.equal(
+      lunchRush.status,
+      "resolved",
+      `${label}: lunch-rush event should resolve by the end of the regression.`,
+    );
+    assert.equal(
+      lunchRush.progress,
+      "paid",
+      `${label}: lunch-rush event should end at the paid progress marker.`,
+    );
+  }
+}
+
+function assertRectsDoNotOverlap(label, firstRect, secondRect, firstName, secondName) {
+  assert.ok(firstRect, `${label}: missing ${firstName} layout bounds.`);
+  assert.ok(secondRect, `${label}: missing ${secondName} layout bounds.`);
+
+  const overlaps =
+    firstRect.left < secondRect.right &&
+    firstRect.right > secondRect.left &&
+    firstRect.top < secondRect.bottom &&
+    firstRect.bottom > secondRect.top;
+
+  assert.equal(
+    overlaps,
+    false,
+    `${label}: ${firstName} overlaps ${secondName}. ${firstName}=${JSON.stringify(
+      firstRect,
+    )} ${secondName}=${JSON.stringify(secondRect)}`,
+  );
+}
+
+function assertRectInsideViewport(label, rect, name, viewport) {
+  assert.ok(rect, `${label}: missing ${name} layout bounds.`);
+  assert.ok(viewport, `${label}: missing viewport bounds.`);
+
+  assert.ok(
+    rect.left >= -1 &&
+      rect.top >= -1 &&
+      rect.right <= viewport.width + 1 &&
+      rect.bottom <= viewport.height + 1,
+    `${label}: ${name} is cut off by the viewport. ${name}=${JSON.stringify(
+      rect,
+    )} viewport=${JSON.stringify(viewport)}`,
+  );
+}
+
+function assertRectInsideRect(label, rect, containerRect, name, containerName) {
+  assert.ok(rect, `${label}: missing ${name} layout bounds.`);
+  assert.ok(containerRect, `${label}: missing ${containerName} layout bounds.`);
+
+  assert.ok(
+    rect.left >= containerRect.left - 1 &&
+      rect.top >= containerRect.top - 1 &&
+      rect.right <= containerRect.right + 1 &&
+      rect.bottom <= containerRect.bottom + 1,
+    `${label}: ${name} is cut off by ${containerName}. ${name}=${JSON.stringify(
+      rect,
+    )} ${containerName}=${JSON.stringify(containerRect)}`,
+  );
+}
+
+function assertNoAncestorClipping(label, clippedBy, name) {
+  assert.deepEqual(
+    clippedBy ?? [],
+    [],
+    `${label}: ${name} is cut off by an ancestor container: ${JSON.stringify(
+      clippedBy,
+    )}`,
+  );
+}
+
+function assertNoDocumentOverflow(label, documentLayout) {
+  assert.ok(documentLayout, `${label}: missing document layout bounds.`);
+  assert.ok(
+    documentLayout.scrollWidth <= documentLayout.clientWidth + 1,
+    `${label}: document has horizontal overflow (${documentLayout.scrollWidth} > ${documentLayout.clientWidth}).`,
+  );
+  assert.ok(
+    documentLayout.scrollHeight <= documentLayout.clientHeight + 1,
+    `${label}: document has vertical overflow (${documentLayout.scrollHeight} > ${documentLayout.clientHeight}).`,
+  );
+}
+
+function assertCriticalVisualCoherence(label, dom, options = {}) {
+  const layout = dom.layout ?? {};
+  const viewport = layout.viewport;
+
+  assertNoDocumentOverflow(label, layout.document);
+  assertRectInsideViewport(label, layout.timePill, "time HUD", viewport);
+  assertRectInsideViewport(label, layout.dockPanel, "dock panel", viewport);
+  assertRectInsideViewport(label, layout.rightStack, "right rail", viewport);
+  assertNoAncestorClipping(
+    label,
+    layout.clippingAncestors?.timePill,
+    "time HUD",
+  );
+  assertNoAncestorClipping(
+    label,
+    layout.clippingAncestors?.dockPanel,
+    "dock panel",
+  );
+  assertNoAncestorClipping(
+    label,
+    layout.clippingAncestors?.rightStack,
+    "right rail",
+  );
+  assertRectsDoNotOverlap(
+    label,
+    layout.timePill,
+    layout.dockPanel,
+    "time HUD",
+    "dock panel",
+  );
+
+  if (options.expectFocusWindow) {
+    assertRectInsideViewport(label, layout.focusWindow, "focus panel", viewport);
+    assertNoAncestorClipping(
+      label,
+      layout.clippingAncestors?.focusWindow,
+      "focus panel",
+    );
+    assertRectsDoNotOverlap(
+      label,
+      layout.timePill,
+      layout.focusWindow,
+      "time HUD",
+      "focus panel",
+    );
+    assertRectsDoNotOverlap(
+      label,
+      layout.focusWindow,
+      layout.dockPanel,
+      "focus panel",
+      "dock panel",
+    );
+    assertRectsDoNotOverlap(
+      label,
+      layout.focusWindow,
+      layout.rightStack,
+      "focus panel",
+      "right rail",
+    );
+
+    for (const fieldNote of layout.fieldNotes ?? []) {
+      assertRectInsideRect(
+        label,
+        fieldNote.rect,
+        layout.focusWindow,
+        `field note ${fieldNote.key ?? "unknown"}`,
+        "focus panel",
+      );
+    }
+  }
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function buildTimelineEntry({
+  dom,
   game,
   label,
   probe,
@@ -815,7 +1408,24 @@ function buildTimelineEntry({
   return {
     activeConversation: probe.activeConversation,
     autonomy: probe.autonomy,
+    cityEvents: {
+      active: probe.cityEvents ?? [],
+      sim: simCityEventSnapshot(game),
+    },
     clock: probe.clock,
+    dom: dom
+      ? {
+          activeTab: dom.activeTab,
+          actionLabels: dom.actionLabels,
+          bodyTextSample: dom.bodyTextSample,
+          canvasRect: dom.canvasRect,
+          fieldNotes: dom.fieldNotes,
+          fieldNoteText: dom.fieldNoteText,
+          hasFieldNote: dom.hasFieldNote,
+          layout: dom.layout,
+          tabLabels: dom.tabLabels,
+        }
+      : null,
     label,
     location: probe.location,
     objective: probe.objective,
@@ -826,6 +1436,8 @@ function buildTimelineEntry({
     sim: {
       currentTime: game.currentTime,
       energy: game.player.energy,
+      fieldNote: game.firstAfternoon?.fieldNote ?? null,
+      leadFieldNote: game.firstAfternoon?.leadFieldNote ?? null,
       locationId: game.player.currentLocationId,
       money: game.player.money,
     },
@@ -835,6 +1447,9 @@ function buildTimelineEntry({
 async function captureBrowserState({ game, index, label, session }) {
   const probe = await session.waitForGame(game);
   assertBrowserProbeMatchesGame(label, game, probe);
+  assertCityEventState(label, game);
+  const dom = await session.readDomSnapshot();
+  assertGameplayDom(label, game, probe, dom);
 
   const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
   const screenshotPath = path.join(OUTPUT_DIR, `${key}.png`);
@@ -853,10 +1468,14 @@ async function captureBrowserState({ game, index, label, session }) {
         `${screenshotError}\n`,
         "utf8",
       );
+      if (REQUIRE_SCREENSHOTS) {
+        throw error;
+      }
     }
   }
 
   return {
+    dom,
     probe,
     screenshot,
     screenshotError,
@@ -866,12 +1485,176 @@ async function captureBrowserState({ game, index, label, session }) {
 async function captureProbeState({ game, label }) {
   const probe = buildProbeFromGame(game);
   assertBrowserProbeMatchesGame(label, game, probe);
+  assertCityEventState(label, game);
 
   return {
+    dom: null,
     probe,
     screenshot: null,
     screenshotError: null,
   };
+}
+
+async function runOverlayPanelChecks(session) {
+  const checks = [];
+
+  const panels = [
+    {
+      label: "overlay-notebook",
+      selector: '[data-tab="mind"]',
+      expectedTab: "mind",
+      expectedText: [/Rowan's Notebook/i, /Current Belief/i, /Current Plan/i],
+    },
+    {
+      label: "overlay-journal",
+      selector: '[data-tab="journal"]',
+      expectedTab: "journal",
+      expectedText: [
+        /Journal/i,
+        /Field Note/i,
+        /Mara's lead verified/i,
+        /First afternoon settled/i,
+      ],
+    },
+  ];
+
+  for (const panel of panels) {
+    const clicked = await session.clickSelector(panel.selector);
+    assert.equal(
+      clicked,
+      true,
+      `${panel.label}: expected ${panel.selector} to be clickable.`,
+    );
+    await sleep(300);
+
+    const dom = await session.readDomSnapshot();
+    assert.equal(
+      dom.activeTab,
+      panel.expectedTab,
+      `${panel.label}: expected ${panel.expectedTab} tab to be active.`,
+    );
+    for (const expectedText of panel.expectedText) {
+      assert.match(
+        dom.bodyText,
+        expectedText,
+        `${panel.label}: expected panel content was not rendered.`,
+      );
+    }
+    assertCriticalVisualCoherence(panel.label, dom, {
+      expectFocusWindow: true,
+    });
+
+    const screenshot = path.join(OUTPUT_DIR, `${panel.label}.png`);
+    await session.captureScreenshot(screenshot);
+    checks.push({
+      activeTab: dom.activeTab,
+      bodyTextSample: dom.bodyTextSample,
+      label: panel.label,
+      layout: dom.layout,
+      screenshot,
+    });
+  }
+
+  return checks;
+}
+
+async function createVisualEvidence({ overlayChecks, timeline }) {
+  const screenshots = timeline
+    .filter((entry) => entry.screenshot)
+    .map((entry) => ({
+      label: entry.label,
+      path: entry.screenshot,
+      type: "gameplay",
+    }));
+  const overlays = overlayChecks.map((entry) => ({
+    label: entry.label,
+    path: entry.screenshot,
+    type: "overlay",
+  }));
+  const frames = [...screenshots, ...overlays];
+
+  if (!USE_CHROME_DRIVER) {
+    return {
+      manifestPath: null,
+      recordingPath: null,
+      screenshots,
+      overlays,
+    };
+  }
+
+  assert.ok(
+    screenshots.length >= 14,
+    `Expected at least 14 gameplay screenshots for visual evidence, got ${screenshots.length}.`,
+  );
+  assert.ok(
+    overlays.length >= 2,
+    `Expected notebook and journal overlay screenshots for visual evidence, got ${overlays.length}.`,
+  );
+
+  const recordingPath = path.join(OUTPUT_DIR, "rowan-gameplay-regression.mp4");
+  const frameListPath = path.join(OUTPUT_DIR, "rowan-gameplay-regression.frames.txt");
+  const manifestPath = path.join(OUTPUT_DIR, "visual-evidence.json");
+  const concatLines = [];
+
+  for (const frame of frames) {
+    concatLines.push(`file '${escapeFfmpegConcatPath(frame.path)}'`);
+    concatLines.push(`duration ${frame.type === "overlay" ? "1.4" : "0.8"}`);
+  }
+  concatLines.push(`file '${escapeFfmpegConcatPath(frames.at(-1).path)}'`);
+  await writeFile(frameListPath, `${concatLines.join("\n")}\n`, "utf8");
+
+  try {
+    await runProcess(
+      FFMPEG_BIN,
+      [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        frameListPath,
+        "-vf",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=2,format=yuv420p",
+        "-movflags",
+        "+faststart",
+        recordingPath,
+      ],
+      "ffmpeg visual evidence recording",
+    );
+  } catch (error) {
+    if (REQUIRE_RECORDING) {
+      throw error;
+    }
+    await writeFile(
+      path.join(OUTPUT_DIR, "rowan-gameplay-regression.recording-error.txt"),
+      `${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
+      "utf8",
+    );
+  }
+
+  const evidence = {
+    createdAt: new Date().toISOString(),
+    frameListPath,
+    overlays,
+    recordingPath,
+    screenshots,
+  };
+  await writeFile(manifestPath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+
+  return {
+    manifestPath,
+    recordingPath,
+    screenshots,
+    overlays,
+  };
+}
+
+function escapeFfmpegConcatPath(filePath) {
+  return filePath.replace(/'/g, "'\\''");
 }
 
 function buildRegressionSteps(gameRef) {
@@ -939,27 +1722,34 @@ async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
   const { webServer } = await ensureStack();
 
+  const summaryPath = path.join(OUTPUT_DIR, "summary.json");
   const timelinePath = path.join(OUTPUT_DIR, "timeline.json");
   const timeline = [];
   let game = await createGame();
   const gameRef = { current: game };
-  const useChromeDriver = BROWSER_DRIVER === "chrome";
-  const session = useChromeDriver
+  let overlayChecks = [];
+  const session = USE_CHROME_DRIVER
     ? await launchBrowserSession(browserUrl(game.id))
     : null;
 
   try {
     const steps = buildRegressionSteps(gameRef);
+    traceRegression(`steps:${steps.map((step) => step.label).join(",")}`);
 
     for (let index = 0; index < steps.length; index += 1) {
       const step = steps[index];
+      traceRegression(`step-start:${index}:${step.label}`);
       const previousGame = gameRef.current;
       game = await step.mutate();
+      traceRegression(
+        `step-mutated:${index}:${step.label}:${game.currentTime}:${game.rowanAutonomy.label}`,
+      );
       if (
         session !== null &&
         previousGame &&
         playerPositionChanged(previousGame, game)
       ) {
+        traceRegression(`step-visual-move:${index}:${step.label}`);
         await session.waitForVisualMove(previousGame, game);
       }
       gameRef.current = game;
@@ -977,6 +1767,7 @@ async function main() {
             });
       timeline.push(
         buildTimelineEntry({
+          dom: capture.dom,
           game,
           label: step.label,
           probe: capture.probe,
@@ -985,10 +1776,25 @@ async function main() {
         }),
       );
       await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+      traceRegression(`step-written:${index}:${step.label}`);
+    }
+
+    if (session !== null) {
+      traceRegression("overlay-start");
+      overlayChecks = await runOverlayPanelChecks(session);
+      traceRegression("overlay-done");
+      assert.deepEqual(
+        session.pageErrors,
+        [],
+        `Browser emitted runtime/log errors: ${JSON.stringify(session.pageErrors, null, 2)}`,
+      );
     }
   } finally {
+    traceRegression("closing-session");
     await session?.close();
+    traceRegression("closing-web-server");
     await closeChildProcess(webServer);
+    traceRegression("closed");
   }
 
   const byLabel = Object.fromEntries(
@@ -1007,8 +1813,8 @@ async function main() {
   );
   assert.match(
     byLabel["mara-thread-landed"]?.autonomy?.label ?? "",
-    /first useful move/i,
-    "Expected Mara's thread to leave Rowan choosing a useful first move.",
+    /ada|lunch work|first useful move/i,
+    "Expected Mara's thread to leave Rowan choosing a useful first move from live options.",
   );
   assert.equal(
     byLabel["head-to-cafe-plan"]?.autonomy?.targetLocationId,
@@ -1029,6 +1835,23 @@ async function main() {
     byLabel["ada-live-thread"]?.activeConversation?.npcId,
     "npc-ada",
     "Expected Rowan to reach Ada at Kettle & Lamp.",
+  );
+  const leadFieldNote =
+    byLabel["ada-live-thread"]?.sim?.leadFieldNote ??
+    byLabel["ada-thread-landed"]?.sim?.leadFieldNote;
+  assert.ok(
+    leadFieldNote,
+    "Expected Rowan to record Mara's Ada lead as grounded knowledge before choosing the next action.",
+  );
+  assert.match(
+    [
+      leadFieldNote.learned,
+      leadFieldNote.evidence,
+      leadFieldNote.next,
+      leadFieldNote.memory,
+    ].join(" "),
+    /Mara|Ada|Kettle & Lamp|choose/i,
+    "Expected the lead field note to connect Mara's lead, Ada's answer, and the unlocked next choice.",
   );
   assert.equal(
     byLabel["hold-for-shift"]?.location?.id,
@@ -1080,9 +1903,57 @@ async function main() {
     /first afternoon complete/i,
     "Expected the browser run to land the complete first-afternoon state.",
   );
+  const finalFieldNote = byLabel["first-afternoon-complete"]?.sim?.fieldNote;
+  assert.ok(
+    finalFieldNote,
+    "Expected the sim to persist the first-afternoon field note.",
+  );
+  assert.match(
+    [
+      finalFieldNote.learned,
+      finalFieldNote.evidence,
+      finalFieldNote.next,
+      finalFieldNote.memory,
+    ].join(" "),
+    /Ada|Kettle & Lamp|rush/i,
+    "Expected the persisted field note to describe the resolved cafe thread.",
+  );
+
+  const screenshotCount = timeline.filter((entry) => entry.screenshot).length;
+  const evidence = await createVisualEvidence({
+    overlayChecks,
+    timeline,
+  });
+  const summary = {
+    browserDriver: BROWSER_DRIVER,
+    evidence,
+    finalGameId: game.id,
+    finalState: {
+      clock: game.currentTime,
+      energy: game.player.energy,
+      fieldNote: game.firstAfternoon?.fieldNote ?? null,
+      leadFieldNote: game.firstAfternoon?.leadFieldNote ?? null,
+      locationId: game.player.currentLocationId,
+      money: game.player.money,
+      objective: game.player.objective?.text ?? null,
+    },
+    outputDir: OUTPUT_DIR,
+    overlayChecks,
+    screenshotCount,
+    steps: timeline.map((entry) => ({
+      activeConversation: entry.activeConversation?.npcId ?? null,
+      activeEvents: entry.cityEvents.active.map((event) => event.id),
+      clock: entry.clock.label,
+      label: entry.label,
+      locationId: entry.location.id,
+      screenshot: entry.screenshot,
+    })),
+    timelinePath,
+  };
+  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
 
   process.stdout.write(
-    `[many-lives] Rowan ${useChromeDriver ? "Chrome" : "in-app probe"} regression passed.\n[many-lives] Web base: ${getWebBase()}\n[many-lives] Game URL: ${browserUrl(game.id)}\n[many-lives] Output: ${OUTPUT_DIR}\n[many-lives] Timeline: ${timelinePath}\n`,
+    `[many-lives] Rowan ${USE_CHROME_DRIVER ? "Chrome" : "in-app probe"} regression passed.\n[many-lives] Web base: ${getWebBase()}\n[many-lives] Game URL: ${browserUrl(game.id)}\n[many-lives] Output: ${OUTPUT_DIR}\n[many-lives] Timeline: ${timelinePath}\n[many-lives] Summary: ${summaryPath}\n${evidence.recordingPath ? `[many-lives] Recording: ${evidence.recordingPath}\n` : ""}`,
   );
 }
 

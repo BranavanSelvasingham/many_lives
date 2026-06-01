@@ -1,5 +1,11 @@
-import type { AIProvider } from "../ai/provider.js";
+import type {
+  AIProvider,
+  StreetPlanningAllowedAction,
+  StreetPlanningObjectiveOutcome,
+  StreetPlanningResult,
+} from "../ai/provider.js";
 import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
+import { syncCityEvents } from "../street-sim/cityEvents.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
 import { getNpcNarrative } from "../street-sim/npcNarratives.js";
 import {
@@ -28,6 +34,8 @@ import type {
   RowanAutonomyEffect,
   RowanAutonomyIntent,
   RowanAutonomyStepKind,
+  RowanPlanningTrace,
+  RowanPlanningTraceOption,
   SceneNote,
   StreetGameState,
 } from "../street-sim/types.js";
@@ -40,6 +48,7 @@ import type {
 export const STEP_MINUTES = 30;
 
 const MINUTES_PER_MOVEMENT_TILE = 1.5;
+const MIN_STREET_PLANNER_CONFIDENCE = 0.55;
 
 const BASE_DAY = "2026-03-21T00:00:00.000Z";
 
@@ -50,6 +59,11 @@ type ObjectivePlan = {
   actionId?: string;
   npcId?: string;
   speech?: string;
+  waitUntilMinutes?: number;
+};
+
+type ObjectivePlanChoice = ObjectivePlan & {
+  plannerAction: StreetPlanningAllowedAction;
 };
 
 type ConversationResolution = {
@@ -188,10 +202,12 @@ async function refreshWorld(
   world.conversations ??= [];
   world.conversationThreads ??= {};
   world.firstAfternoon ??= {};
+  world.cityEvents ??= [];
   world.currentTime = isoFor(world.clock.totalMinutes);
   updateNpcLocations(world);
   updatePlayerLocation(world);
   resolvePassiveState(world);
+  syncCityEvents(world);
   world.player.objective = buildPlayerObjectiveState(world, {
     previous: world.player.objective,
   });
@@ -227,6 +243,7 @@ function advanceWorld(world: StreetGameState, minutes: number): void {
     updateNpcLocations(world);
     updatePlayerLocation(world);
     resolvePassiveState(world);
+    syncCityEvents(world);
     remainingMinutes -= chunkMinutes;
   }
 }
@@ -430,6 +447,10 @@ async function performAction(
     case "reflect":
       if (targetId === "first-afternoon-plan") {
         settleFirstAfternoonPlan(world);
+      } else if (targetId === "first-afternoon-pump") {
+        chooseFirstAfternoonPumpPlan(world);
+      } else if (targetId === "first-afternoon-compare") {
+        compareFirstAfternoonOptions(world);
       } else if (targetId === "first-afternoon") {
         completeFirstAfternoon(world);
       }
@@ -543,17 +564,14 @@ function currentObjectiveDirective(
   }
 
   const nextStep = objective.trail.find((step) => !step.done);
-  const nextStepText = nextStep?.title ?? objective.text;
-  const text =
-    objective.source === "conversation" &&
-    normalizeObjectiveText(objective.text) !==
-      normalizeObjectiveText(nextStepText)
-      ? objective.text
-      : nextStepText;
+  const text = objective.text || nextStep?.title;
+  if (!text) {
+    return undefined;
+  }
 
   return {
     text,
-    focus: classifyObjective(text),
+    focus: objective.focus ?? classifyObjective(text),
     routeKey: objective.routeKey,
   };
 }
@@ -575,7 +593,13 @@ async function advanceObjective(
 ): Promise<ThoughtRefreshMode | void> {
   const allowTimeSkip = options.allowTimeSkip ?? true;
   syncNpcInnerState(world);
-  const loopStep = resolveRowanLoopStep(world);
+  const deterministicLoopStep = resolveRowanLoopStep(world);
+  const loopStep =
+    (await resolveAiPlannedObjectiveLoopStep(
+      world,
+      aiProvider,
+      deterministicLoopStep,
+    )) ?? deterministicLoopStep;
 
   return executeRowanLoopStep<ThoughtRefreshMode | void>(loopStep, {
     idle: () => {
@@ -925,8 +949,8 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
     };
   }
 
-  const plan = chooseObjectivePlan(world);
-  if (!plan) {
+  const planning = chooseObjectivePlan(world);
+  if (!planning.plan) {
     return {
       autoContinue: false,
       detail:
@@ -936,9 +960,73 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
       label: "Needs a fresher lead",
       layer: "objective",
       objective,
+      planningTrace: planning.trace,
     };
   }
 
+  return objectivePlanToLoopStep(world, objective, planning.plan, planning.trace);
+}
+
+async function resolveAiPlannedObjectiveLoopStep(
+  world: StreetGameState,
+  aiProvider: AIProvider,
+  deterministicLoopStep: RowanLoopStep,
+): Promise<RowanLoopStep | undefined> {
+  if (!shouldUseStreetPlanner(aiProvider, deterministicLoopStep)) {
+    return undefined;
+  }
+
+  const objective = currentObjectiveDirective(world);
+  if (!objective) {
+    return undefined;
+  }
+
+  const choices = buildStreetPlannerChoices(world, deterministicLoopStep, objective);
+  if (choices.length === 0) {
+    return undefined;
+  }
+
+  const allowedActions = dedupePlannerActions(
+    choices.map((choice) => choice.plannerAction),
+  );
+  const planned = await aiProvider.planStreetNextAction({
+    allowedActions: structuredClone(allowedActions),
+    desiredOutcomes: buildStreetPlanningOutcomes(world, objective),
+    game: cloneWorld(world),
+    objective,
+  });
+  const choice = selectPlannerChoice(planned, choices);
+  if (!choice) {
+    return undefined;
+  }
+
+  return objectivePlanToLoopStep(
+    world,
+    objective,
+    choice,
+    buildObjectivePlanningTrace(world, objective, choice, choices),
+  );
+}
+
+function shouldUseStreetPlanner(
+  aiProvider: AIProvider,
+  loopStep: RowanLoopStep,
+) {
+  return (
+    aiProvider.name === "openai" &&
+    loopStep.layer === "objective" &&
+    loopStep.autoContinue &&
+    loopStep.kind !== "idle" &&
+    loopStep.kind !== "blocked"
+  );
+}
+
+function objectivePlanToLoopStep(
+  world: StreetGameState,
+  objective: ObjectiveDirective,
+  plan: ObjectivePlan,
+  planningTrace?: RowanPlanningTrace,
+): RowanLoopStep {
   const targetLocation =
     plan.targetLocationId !== undefined
       ? findLocation(world, plan.targetLocationId)
@@ -950,6 +1038,7 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
     plan.targetLocationId ?? "here",
     plan.actionId ?? "no-action",
     plan.npcId ?? "no-npc",
+    plan.waitUntilMinutes ?? "no-wait",
     loopKindForObjectivePlan(world, plan),
   ].join(":")}`;
 
@@ -964,6 +1053,7 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
       layer: "objective",
       npcId: plan.npcId,
       objective,
+      planningTrace,
       speech: plan.speech,
       targetLocationId: plan.targetLocationId,
     };
@@ -981,8 +1071,26 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
       layer: "objective",
       npcId: plan.npcId,
       objective,
+      planningTrace,
       speech: plan.speech,
       targetLocationId: plan.targetLocationId,
+    };
+  }
+
+  if (plan.waitUntilMinutes !== undefined) {
+    return {
+      actionId: plan.actionId,
+      autoContinue: true,
+      detail,
+      effects: ["thought"],
+      key,
+      kind: "wait",
+      label,
+      layer: "objective",
+      objective,
+      planningTrace,
+      targetLocationId: plan.targetLocationId,
+      waitUntilMinutes: plan.waitUntilMinutes,
     };
   }
 
@@ -997,6 +1105,7 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
       label,
       layer: "objective",
       objective,
+      planningTrace,
       targetLocationId: plan.targetLocationId,
     };
   }
@@ -1010,7 +1119,155 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
     label,
     layer: "objective",
     objective,
+    planningTrace,
     targetLocationId: plan.targetLocationId,
+  };
+}
+
+function buildStreetPlannerChoices(
+  world: StreetGameState,
+  deterministicLoopStep: RowanLoopStep,
+  objective: ObjectiveDirective,
+): ObjectivePlanChoice[] {
+  const choices: ObjectivePlanChoice[] = [];
+
+  for (const plan of buildObjectiveAgentPlanCandidates(world, objective, {
+    includeLowScoringActions: true,
+  })) {
+    addPlannerChoice(world, choices, plan);
+  }
+
+  addPlannerChoice(
+    world,
+    choices,
+    loopStepToObjectivePlan(deterministicLoopStep),
+  );
+
+  return choices;
+}
+
+function addPlannerChoice(
+  world: StreetGameState,
+  choices: ObjectivePlanChoice[],
+  plan: ObjectivePlan | undefined,
+) {
+  const plannerAction = plan ? plannerActionForPlan(world, plan) : undefined;
+  if (!plan || !plannerAction) {
+    return;
+  }
+
+  if (
+    choices.some(
+      (choice) => choice.plannerAction.actionId === plannerAction.actionId,
+    )
+  ) {
+    return;
+  }
+
+  choices.push({
+    ...plan,
+    plannerAction,
+  });
+}
+
+function plannerActionForPlan(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+): StreetPlanningAllowedAction | undefined {
+  const actionId = plannerActionIdForPlan(plan);
+  if (!actionId) {
+    return undefined;
+  }
+
+  return {
+    actionId,
+    description: plan.rationale,
+    kind: plannerKindForPlan(plan),
+    label: autonomyLabelForNextBeat(world, plan),
+    npcId: plan.npcId,
+    targetLocationId: plan.targetLocationId,
+  };
+}
+
+function plannerActionIdForPlan(plan: ObjectivePlan) {
+  if (plan.actionId) {
+    return plan.actionId;
+  }
+
+  if (plan.waitUntilMinutes !== undefined) {
+    return `wait:${plan.waitUntilMinutes}`;
+  }
+
+  if (plan.npcId) {
+    return `talk:${plan.npcId}`;
+  }
+
+  if (plan.targetLocationId) {
+    return `move:${plan.targetLocationId}`;
+  }
+
+  return undefined;
+}
+
+function plannerKindForPlan(
+  plan: ObjectivePlan,
+): StreetPlanningAllowedAction["kind"] {
+  if (plan.waitUntilMinutes !== undefined) {
+    return "wait";
+  }
+
+  if (!plan.actionId) {
+    return plan.npcId ? "talk" : plan.targetLocationId ? "move" : "observe";
+  }
+
+  const [kind] = plan.actionId.split(":");
+  switch (kind) {
+    case "talk":
+      return "talk";
+    case "accept":
+      return "accept_job";
+    case "work":
+    case "resume":
+      return "work_job";
+    case "solve":
+      return "solve";
+    case "inspect":
+      return "inspect";
+    case "buy":
+      return "buy";
+    case "contribute":
+      return "contribute";
+    case "rest":
+      return "rest";
+    case "reflect":
+      return "reflect";
+    default:
+      return "observe";
+  }
+}
+
+function dedupePlannerActions(actions: StreetPlanningAllowedAction[]) {
+  return [...new Map(actions.map((action) => [action.actionId, action])).values()];
+}
+
+function selectPlannerChoice(
+  planned: StreetPlanningResult | null,
+  choices: ObjectivePlanChoice[],
+): ObjectivePlanChoice | undefined {
+  if (!planned || planned.confidence < MIN_STREET_PLANNER_CONFIDENCE) {
+    return undefined;
+  }
+
+  const choice = choices.find(
+    (candidate) => candidate.plannerAction.actionId === planned.actionId,
+  );
+  if (!choice) {
+    return undefined;
+  }
+
+  return {
+    ...choice,
+    rationale: planned.rationale || choice.rationale,
   };
 }
 
@@ -1157,6 +1414,7 @@ function loopStepToObjectivePlan(loopStep: RowanLoopStep): ObjectivePlan {
     score: 0,
     speech: loopStep.speech,
     targetLocationId: loopStep.targetLocationId,
+    waitUntilMinutes: loopStep.waitUntilMinutes,
   };
 }
 
@@ -1175,6 +1433,10 @@ function loopKindForObjectivePlan(
 
   if (plan.npcId) {
     return "talk";
+  }
+
+  if (plan.waitUntilMinutes !== undefined) {
+    return "wait";
   }
 
   if (plan.actionId) {
@@ -1694,9 +1956,9 @@ function buildFirstAfternoonScriptedReply(
     ) {
       return {
         reply:
-          "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. Ada at Kettle & Lamp may still need calm hands before lunch.",
+          "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before lunch.",
         followupThought:
-          "Rowan listened like someone who wants the room to become less temporary.",
+          "Rowan heard two live pressures at once: prove useful at the house, or chase Ada's lunch work before it closes.",
       };
     }
   }
@@ -1831,6 +2093,10 @@ function applyConversationResolution(
     }
   }
 
+  if (npc.id === "npc-ada") {
+    ensureFirstAfternoonLeadFieldNote(world);
+  }
+
   const objectiveUpdated =
     Boolean(resolution.objectiveText) &&
     normalizeObjectiveText(resolution.objectiveText ?? "") !==
@@ -1896,7 +2162,10 @@ function syncRowanAutonomy(world: StreetGameState) {
 
 function autonomyLabelForNextBeat(
   world: StreetGameState,
-  plan: Pick<ObjectivePlan, "actionId" | "npcId" | "targetLocationId">,
+  plan: Pick<
+    ObjectivePlan,
+    "actionId" | "npcId" | "targetLocationId" | "waitUntilMinutes"
+  >,
 ) {
   const targetLocation =
     plan.targetLocationId !== undefined
@@ -1910,6 +2179,10 @@ function autonomyLabelForNextBeat(
   if (plan.npcId) {
     const npc = npcById(world, plan.npcId);
     return `Talk to ${npc?.name ?? "someone nearby"}`;
+  }
+
+  if (plan.waitUntilMinutes !== undefined) {
+    return `Wait until ${formatClockAt(world, plan.waitUntilMinutes)}`;
   }
 
   if (plan.actionId) {
@@ -1986,6 +2259,13 @@ function autonomyDetailForObjectivePlan(
   if (plan.npcId) {
     const npc = npcById(world, plan.npcId);
     return `Rowan is ready to talk to ${npc?.name ?? "someone nearby"}: ${rationale}.`;
+  }
+
+  if (plan.waitUntilMinutes !== undefined) {
+    return `Rowan is letting the clock move until ${formatClockAt(
+      world,
+      plan.waitUntilMinutes,
+    )}: ${rationale}.`;
   }
 
   if (plan.actionId) {
@@ -2193,126 +2473,1001 @@ function normalizeAutonomyRationale(text: string) {
   return text.trim().replace(/[.?!]+$/g, "");
 }
 
-function chooseObjectivePlan(
-  world: StreetGameState,
-): ObjectivePlan | undefined {
+function chooseObjectivePlan(world: StreetGameState): {
+  plan?: ObjectivePlan;
+  trace: RowanPlanningTrace;
+} {
   const objective = currentObjectiveDirective(world);
   if (!objective) {
-    return undefined;
+    return {
+      trace: emptyObjectivePlanningTrace(world),
+    };
   }
 
-  const directRoutePlan = directObjectiveRoutePlan(world, objective);
-  if (directRoutePlan) {
-    return directRoutePlan;
+  const selectableCandidates = buildObjectiveAgentPlanCandidates(world, objective, {
+    includeLowScoringActions: false,
+  });
+  const traceCandidates = buildObjectiveAgentPlanCandidates(world, objective, {
+    includeLowScoringActions: true,
+  });
+  selectableCandidates.sort((left, right) => right.score - left.score);
+  const plan = selectableCandidates[0];
+
+  return {
+    plan,
+    trace: buildObjectivePlanningTrace(world, objective, plan, traceCandidates),
+  };
+}
+
+function emptyObjectivePlanningTrace(world: StreetGameState): RowanPlanningTrace {
+  return {
+    blockers: objectivePlanningBlockers(world),
+    considered: [],
+    outcomes: objectivePlanningTraceOutcomes(world),
+    rejected: [],
+  };
+}
+
+function buildObjectivePlanningTrace(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  selected: ObjectivePlan | undefined,
+  candidates: ObjectivePlan[],
+): RowanPlanningTrace {
+  const selectedActionId = selected
+    ? plannerActionIdForPlan(selected)
+    : undefined;
+  const selectedLabel = selected
+    ? autonomyLabelForNextBeat(world, selected)
+    : undefined;
+  const sortedCandidates = dedupeObjectivePlans([
+    ...(selected ? [selected] : []),
+    ...candidates,
+  ]).sort((left, right) => {
+    if (selectedActionId) {
+      const leftSelected = plannerActionIdForPlan(left) === selectedActionId;
+      const rightSelected = plannerActionIdForPlan(right) === selectedActionId;
+      if (leftSelected !== rightSelected) {
+        return Number(rightSelected) - Number(leftSelected);
+      }
+    }
+
+    return right.score - left.score;
+  });
+  const considered = sortedCandidates
+    .slice(0, 5)
+    .map((plan) =>
+      planningTraceOptionForPlan(world, plan, selectedActionId, selected?.score),
+    );
+  const rejected = sortedCandidates
+    .filter((plan) => plannerActionIdForPlan(plan) !== selectedActionId)
+    .slice(0, 4)
+    .map((plan) =>
+      planningTraceOptionForPlan(
+        world,
+        plan,
+        selectedActionId,
+        selected?.score,
+        "rejected",
+      ),
+    );
+
+  return {
+    blockers: objectivePlanningBlockers(world),
+    considered,
+    outcomes: objectivePlanningTraceOutcomes(world),
+    rejected,
+    selectedActionId,
+    selectedLabel,
+  };
+}
+
+function planningTraceOptionForPlan(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  selectedActionId: string | undefined,
+  selectedScore: number | undefined,
+  forcedStatus?: RowanPlanningTraceOption["status"],
+): RowanPlanningTraceOption {
+  const actionId = plannerActionIdForPlan(plan);
+  const selected = Boolean(actionId && actionId === selectedActionId);
+  return {
+    actionId,
+    label: autonomyLabelForNextBeat(world, plan),
+    npcId: plan.npcId,
+    rationale: compactIntentText(plan.rationale, 140),
+    reason:
+      forcedStatus === "rejected" || !selected
+        ? rejectedPlanningReason(world, plan, selectedScore)
+        : undefined,
+    score: Math.round(plan.score * 10) / 10,
+    status: forcedStatus ?? (selected ? "selected" : "rejected"),
+    targetLocationId: plan.targetLocationId,
+  };
+}
+
+function rejectedPlanningReason(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  selectedScore: number | undefined,
+) {
+  if (plan.score <= 0) {
+    return "Legal, but it does not move the current desired outcomes enough.";
   }
 
-  const planningText = objectivePlanningText(world, objective);
+  if (
+    plan.targetLocationId &&
+    plan.targetLocationId !== world.player.currentLocationId
+  ) {
+    return "Possible, but it costs travel time before it changes the live state.";
+  }
 
-  const candidates: ObjectivePlan[] = [];
-  const currentLocationId = world.player.currentLocationId;
-  const knownLocationIds = new Set(world.player.knownLocationIds);
-  const leadLocationIds = new Set(knownLeadLocationIds(world));
-  const candidateLocations = world.locations.filter(
-    (location) =>
-      location.id === currentLocationId ||
-      knownLocationIds.has(location.id) ||
-      leadLocationIds.has(location.id),
+  if (selectedScore !== undefined && plan.score < selectedScore) {
+    return "Lower priority than the selected live-state move.";
+  }
+
+  return "Possible, but not the best fit for the current blockers.";
+}
+
+function objectivePlanningBlockers(world: StreetGameState) {
+  return (
+    world.player.objective?.outcomes
+      .flatMap((outcome) => outcome.blockers ?? [])
+      .filter(Boolean)
+      .slice(0, 5) ?? []
   );
+}
 
-  for (const location of candidateLocations) {
+function objectivePlanningTraceOutcomes(world: StreetGameState) {
+  return (
+    world.player.objective?.outcomes.map((outcome) => ({
+      blockers: outcome.blockers,
+      evidence: outcome.evidence,
+      id: outcome.id,
+      label: outcome.label,
+      status: outcome.status,
+      urgency: outcome.urgency,
+    })) ?? []
+  );
+}
+
+function buildObjectiveAgentPlanCandidates(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  options: { includeLowScoringActions?: boolean } = {},
+): ObjectivePlan[] {
+  const desiredOutcomes = buildStreetPlanningOutcomes(world, objective);
+  const planningText = objectivePlanningText(world, objective);
+  const routeHint = directObjectiveRoutePlan(world, objective);
+  const candidates: ObjectivePlan[] = [];
+
+  for (const location of objectiveCandidateLocations(
+    world,
+    objective,
+    routeHint,
+  )) {
     const preview = previewWorldAtLocation(world, location.id);
     const actions = buildAvailableActions(preview);
 
     for (const action of actions) {
-      if (!canAutoPlanAction(world, location.id, action, preview)) {
+      if (
+        action.disabled ||
+        !canAutoPlanAction(world, location.id, action, preview)
+      ) {
         continue;
       }
 
-      if (action.disabled) {
-        continue;
-      }
-
-      const score = scoreAutoActionForObjective(
+      const plan = objectivePlanForActionAtLocation(
+        world,
         preview,
+        location,
         action,
-        planningText,
-        objective.focus,
+        objective,
       );
-      if (score <= 0) {
+      if (!plan) {
         continue;
       }
 
-      const distancePenalty =
-        currentLocationId === location.id
-          ? 0
-          : distanceToLocation(world, location.id) * 0.75;
-      const totalScore = score - distancePenalty;
-      if (totalScore <= 0) {
-        continue;
-      }
-
-      if (action.kind === "talk") {
-        const npcId = extractActionTargetId(action.id);
-        const npc = npcId ? npcById(preview, npcId) : undefined;
-        if (!npc || !npcId) {
-          continue;
-        }
-
-        candidates.push({
-          score: totalScore,
-          rationale: `Speak with ${npc.name} at ${location.name}.`,
-          targetLocationId: location.id,
-          npcId,
-          speech: buildAutonomousSpeech(world, npc, objective),
-        });
-        continue;
-      }
-
-      candidates.push({
-        score: totalScore,
-        rationale: `${action.label} at ${location.name}.`,
-        targetLocationId: location.id,
-        actionId: action.id,
+      plan.score = scoreObjectiveAgentPlan(world, preview, {
+        action,
+        desiredOutcomes,
+        objective,
+        plan,
+        planningText,
+        routeHint,
       });
+      if (scoreRouteAlignment(plan, routeHint) > 0 && routeHint?.rationale) {
+        plan.rationale = routeHint.rationale;
+      }
+
+      if (options.includeLowScoringActions || plan.score > 0) {
+        candidates.push(plan);
+      }
+    }
+
+    if (location.id !== world.player.currentLocationId) {
+      const matchingRouteHint =
+        routeHint?.targetLocationId === location.id ? routeHint : undefined;
+      const plan: ObjectivePlan = {
+        actionId: matchingRouteHint?.actionId,
+        npcId: matchingRouteHint?.npcId,
+        score: 0,
+        rationale:
+          matchingRouteHint?.rationale ??
+          `Walk to ${location.name} and read what opens from there.`,
+        speech: matchingRouteHint?.speech,
+        targetLocationId: location.id,
+      };
+      plan.score = scoreObjectiveAgentMovePlan(world, {
+        desiredOutcomes,
+        location,
+        objective,
+        plan,
+        planningText,
+        routeHint,
+      });
+      if (options.includeLowScoringActions || plan.score > 0) {
+        candidates.push(plan);
+      }
     }
   }
 
-  if (objective.focus === "explore") {
-    for (const location of explorationFrontier(world)) {
-      candidates.push({
-        score: 8 - distanceToLocation(world, location.id) * 0.4,
-        rationale: `Walk farther into the block and get your bearings.`,
-        targetLocationId: location.id,
-      });
+  for (const waitPlan of buildObjectiveWaitPlans(
+    world,
+    objective,
+    desiredOutcomes,
+  )) {
+    if (options.includeLowScoringActions || waitPlan.score > 0) {
+      candidates.push(waitPlan);
     }
   }
 
-  if (objective.focus === "settle") {
-    for (const location of explorationFrontier(world)) {
-      candidates.push({
-        score: 7 - distanceToLocation(world, location.id) * 0.4,
-        rationale: `Walk farther into the block and see whether it helps you get established.`,
-        targetLocationId: location.id,
-      });
+  if (routeHint) {
+    candidates.push({
+      ...routeHint,
+      score: Math.max(
+        scoreObjectiveRouteHint(world, objective, routeHint, desiredOutcomes),
+        1,
+      ),
+    });
+  }
+
+  return dedupeObjectivePlans(candidates);
+}
+
+function buildStreetPlanningOutcomes(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+): StreetPlanningObjectiveOutcome[] {
+  const outcomes: StreetPlanningObjectiveOutcome[] = [];
+  const text = objectivePlanningText(world, objective).toLowerCase();
+  const addOutcome = (
+    id: string,
+    label: string,
+    priority: number,
+    status: StreetPlanningObjectiveOutcome["status"],
+    evidence?: string,
+  ) => {
+    const existing = outcomes.find((outcome) => outcome.id === id);
+    if (existing) {
+      existing.priority = Math.max(existing.priority, priority);
+      if (existing.status !== "at_risk") {
+        existing.status = status;
+      }
+      existing.evidence ??= evidence;
+      return;
+    }
+
+    outcomes.push({ id, label, priority, status, evidence });
+  };
+
+  const completedJobs = world.jobs.filter((job) => job.completed).length;
+  const activeJob = activeJobForIntent(world);
+  const knownPeople = world.player.knownNpcIds.length;
+  const trustedPeople = world.npcs.filter((npc) => npc.trust >= 2).length;
+  const solvedProblems = world.problems.filter(
+    (problem) => problem.status === "solved",
+  ).length;
+
+  if (objective.focus === "settle" || /room|stay|bed|home|foothold/.test(text)) {
+    addOutcome(
+      "shelter-stability",
+      "Keep tonight's room and improve Rowan's standing at Morrow House.",
+      9,
+      (world.player.reputation.morrow_house ?? 0) >= 2 ? "met" : "open",
+      `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
+    );
+    addOutcome(
+      "income",
+      "Turn one real lead into money or a live work commitment.",
+      8,
+      completedJobs > 0 || activeJob ? "met" : "open",
+      `$${world.player.money} on hand`,
+    );
+    addOutcome(
+      "social-anchors",
+      "Build enough local ties that Rowan is not only passing through.",
+      5,
+      trustedPeople >= 2 ? "met" : "open",
+      `${knownPeople} known people`,
+    );
+  }
+
+  if (objective.focus === "work" || /work|job|money|earn|pay|shift/.test(text)) {
+    addOutcome(
+      "income",
+      "Earn money or secure a credible work commitment.",
+      10,
+      completedJobs > 0 || activeJob ? "met" : "open",
+      `$${world.player.money} on hand`,
+    );
+  }
+
+  if (activeJob) {
+    const endMinutes = totalMinutesForDayHour(world.clock.day, activeJob.endHour);
+    addOutcome(
+      "active-commitment",
+      `Follow through on ${activeJob.title}.`,
+      12,
+      endMinutes - world.clock.totalMinutes <= 45 ? "at_risk" : "open",
+      `Window ends around ${formatHour(activeJob.endHour)}`,
+    );
+  }
+
+  if (
+    objective.focus === "help" ||
+    /help|fix|solve|repair|problem|pump|cart/.test(text)
+  ) {
+    const activeProblem = mostRelevantProblem(world, text);
+    addOutcome(
+      "useful-help",
+      activeProblem
+        ? `Resolve ${activeProblem.title.toLowerCase()} before it spreads.`
+        : "Find and resolve a concrete local problem.",
+      9,
+      activeProblem?.status === "solved" || solvedProblems > 0 ? "met" : "open",
+      activeProblem?.summary,
+    );
+  }
+
+  if (objective.focus === "tool" || /tool|wrench|buy/.test(text)) {
+    addOutcome(
+      "tool-ready",
+      "Get the tool Rowan needs before trying the repair.",
+      8,
+      hasItem(world, "item-wrench") ? "met" : "open",
+      hasItem(world, "item-wrench") ? "Wrench in inventory" : "No wrench yet",
+    );
+  }
+
+  if (
+    objective.focus === "rest" ||
+    /rest|recover|sleep|tired|energy/.test(text) ||
+    world.player.energy < 35
+  ) {
+    addOutcome(
+      "recover",
+      "Recover enough energy to make the next commitment safely.",
+      world.player.energy < 35 ? 10 : 7,
+      world.player.energy < 45 ? "open" : "met",
+      `${world.player.energy} energy`,
+    );
+  }
+
+  if (objective.focus === "people" || /people|friend|trust|meet/.test(text)) {
+    addOutcome(
+      "social-anchors",
+      "Meet and deepen real local connections.",
+      9,
+      trustedPeople >= 2 ? "met" : "open",
+      `${knownPeople} known people, ${trustedPeople} trusted`,
+    );
+  }
+
+  if (objective.focus === "explore" || /explore|map|learn|district|bearings/.test(text)) {
+    addOutcome(
+      "map-knowledge",
+      "Make South Quay more legible by visiting places and asking locals.",
+      8,
+      world.player.knownLocationIds.length >= 4 ? "met" : "open",
+      `${world.player.knownLocationIds.length} known places`,
+    );
+  }
+
+  return outcomes
+    .filter((outcome) => outcome.status !== "met")
+    .sort((left, right) => right.priority - left.priority);
+}
+
+function objectiveCandidateLocations(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  routeHint?: ObjectivePlan,
+) {
+  const locationIds = new Set<string>();
+
+  if (world.player.currentLocationId) {
+    locationIds.add(world.player.currentLocationId);
+  }
+
+  for (const locationId of world.player.knownLocationIds) {
+    locationIds.add(locationId);
+  }
+
+  for (const locationId of knownLeadLocationIds(world)) {
+    locationIds.add(locationId);
+  }
+
+  if (routeHint?.targetLocationId) {
+    locationIds.add(routeHint.targetLocationId);
+  }
+
+  for (const event of world.cityEvents ?? []) {
+    if (
+      event.status === "active" ||
+      event.tone === "lead" ||
+      event.tone === "warning"
+    ) {
+      locationIds.add(event.locationId);
     }
   }
 
   if (
-    objective.focus === "rest" &&
-    world.player.currentLocationId !== world.player.homeLocationId
+    objective.focus === "settle" ||
+    objective.focus === "explore" ||
+    objective.focus === "people"
   ) {
-    const home = findLocation(world, world.player.homeLocationId);
-    if (home) {
-      candidates.push({
-        score: 10,
-        rationale: `Get back to ${home.name} and recover.`,
-        targetLocationId: home.id,
+    for (const location of explorationFrontier(world)) {
+      locationIds.add(location.id);
+    }
+  }
+
+  if (objective.focus === "rest") {
+    locationIds.add(world.player.homeLocationId);
+  }
+
+  return [...locationIds]
+    .map((locationId) => findLocation(world, locationId))
+    .filter((location): location is LocationState => Boolean(location));
+}
+
+function objectivePlanForActionAtLocation(
+  world: StreetGameState,
+  preview: StreetGameState,
+  location: LocationState,
+  action: ActionOption,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+): ObjectivePlan | undefined {
+  const targetId = extractActionTargetId(action.id);
+  const npc =
+    action.kind === "talk" && targetId ? npcById(preview, targetId) : undefined;
+
+  if (action.kind === "talk" && (!npc || !targetId)) {
+    return undefined;
+  }
+
+  return {
+    actionId: npc ? undefined : action.id,
+    npcId: npc?.id,
+    rationale: npc
+      ? `Speak with ${npc.name} at ${location.name}.`
+      : `${action.label} at ${location.name}.`,
+    score: 0,
+    speech: npc ? buildAutonomousSpeech(world, npc, objective) : undefined,
+    targetLocationId: location.id,
+  };
+}
+
+function scoreObjectiveAgentPlan(
+  world: StreetGameState,
+  preview: StreetGameState,
+  input: {
+    action: ActionOption;
+    desiredOutcomes: StreetPlanningObjectiveOutcome[];
+    objective: { text: string; focus: ObjectiveFocus; routeKey: string };
+    plan: ObjectivePlan;
+    planningText: string;
+    routeHint?: ObjectivePlan;
+  },
+) {
+  const distancePenalty =
+    !input.plan.targetLocationId ||
+    input.plan.targetLocationId === world.player.currentLocationId
+      ? 0
+      : distanceToLocation(world, input.plan.targetLocationId) * 0.75;
+  const currentLocationBonus =
+    input.plan.targetLocationId === world.player.currentLocationId ? 14 : 0;
+  const liveStatePressureBonus = scoreLiveStatePressureForAction(world, input);
+  const staleConversationPenalty = scoreRecentConversationRepeatPenalty(
+    world,
+    input.action,
+    input.routeHint,
+  );
+  const routeDistractionPenalty = scoreRouteDistractionPenalty(world, input);
+
+  return (
+    scoreAutoActionForObjective(
+      preview,
+      input.action,
+      input.planningText,
+      input.objective.focus,
+    ) +
+    scorePlanForDesiredOutcomes(world, input.plan, input.desiredOutcomes) +
+    scoreRouteAlignment(input.plan, input.routeHint) -
+    distancePenalty +
+    currentLocationBonus +
+    liveStatePressureBonus +
+    staleConversationPenalty +
+    routeDistractionPenalty
+  );
+}
+
+function scoreRouteDistractionPenalty(
+  world: StreetGameState,
+  input: {
+    action: ActionOption;
+    objective: { text: string; focus: ObjectiveFocus; routeKey: string };
+    routeHint?: ObjectivePlan;
+  },
+) {
+  if (
+    input.objective.focus !== "explore" ||
+    input.action.kind !== "talk" ||
+    !input.routeHint?.targetLocationId ||
+    input.routeHint.targetLocationId === world.player.currentLocationId
+  ) {
+    return 0;
+  }
+
+  const npcId = extractActionTargetId(input.action.id);
+  if (input.routeHint.npcId && input.routeHint.npcId === npcId) {
+    return 0;
+  }
+
+  return -60;
+}
+
+function scoreRecentConversationRepeatPenalty(
+  world: StreetGameState,
+  action: ActionOption,
+  routeHint?: ObjectivePlan,
+) {
+  if (action.kind !== "talk") {
+    return 0;
+  }
+
+  const npcId = extractActionTargetId(action.id);
+  const npc = npcId ? npcById(world, npcId) : undefined;
+  if (!npc || countPlayerConversationsWithNpc(world, npc.id) === 0) {
+    return 0;
+  }
+
+  const routeStillWantsNpc =
+    routeHint?.npcId === npc.id || routeHint?.actionId === action.id;
+  if (routeStillWantsNpc) {
+    return 0;
+  }
+
+  return minutesSinceLastNpcConversation(world, npc) < 15 ? -80 : -20;
+}
+
+function scoreLiveStatePressureForAction(
+  world: StreetGameState,
+  input: {
+    action: ActionOption;
+    objective: { text: string; focus: ObjectiveFocus; routeKey: string };
+    plan: ObjectivePlan;
+  },
+) {
+  if (
+    input.objective.routeKey === "first-afternoon" &&
+    !world.firstAfternoon?.planSettledAt
+  ) {
+    if (input.action.id === "reflect:first-afternoon-plan") {
+      return 42;
+    }
+
+    if (input.action.id === "contribute:boarding-house") {
+      return -28;
+    }
+  }
+
+  if (
+    input.objective.routeKey === "first-afternoon" &&
+    world.firstAfternoon?.planSettledAt &&
+    countPlayerConversationsWithNpc(world, "npc-ada") === 0
+  ) {
+    const targetId = extractActionTargetId(input.action.id);
+    if (input.action.kind === "talk" && targetId === "npc-ada") {
+      return 92;
+    }
+
+    if (input.action.id === "accept:job-tea-shift") {
+      return -36;
+    }
+
+    if (input.plan.targetLocationId === "tea-house") {
+      return 34;
+    }
+
+    if (
+      input.action.id === "contribute:boarding-house" ||
+      input.action.id === "rest:home"
+    ) {
+      return -34;
+    }
+  }
+
+  if (input.objective.focus === "tool") {
+    if (input.action.id === "buy:item-wrench") {
+      return 36;
+    }
+
+    if (input.action.kind === "talk") {
+      return -18;
+    }
+  }
+
+  if (
+    input.objective.focus === "explore" &&
+    input.plan.targetLocationId &&
+    input.plan.targetLocationId !== world.player.currentLocationId &&
+    input.action.kind === "talk"
+  ) {
+    return -42;
+  }
+
+  if (input.plan.targetLocationId !== world.player.currentLocationId) {
+    return 0;
+  }
+
+  const targetId = extractActionTargetId(input.action.id);
+  if (!targetId) {
+    return 0;
+  }
+
+  const problem = problemById(world, targetId);
+  if (
+    problem?.status === "active" &&
+    problem.locationId === world.player.currentLocationId
+  ) {
+    if (input.action.kind === "solve" && !input.action.disabled) {
+      return 42;
+    }
+
+    if (input.action.kind === "inspect") {
+      return 24;
+    }
+  }
+
+  const job = jobById(world, targetId);
+  if (
+    job?.accepted &&
+    !job.completed &&
+    !job.missed &&
+    job.locationId === world.player.currentLocationId &&
+    (input.action.kind === "work_job" || input.action.id.startsWith("resume:"))
+  ) {
+    return 34;
+  }
+
+  return 0;
+}
+
+function scoreObjectiveAgentMovePlan(
+  world: StreetGameState,
+  input: {
+    desiredOutcomes: StreetPlanningObjectiveOutcome[];
+    location: LocationState;
+    objective: { text: string; focus: ObjectiveFocus; routeKey: string };
+    plan: ObjectivePlan;
+    planningText: string;
+    routeHint?: ObjectivePlan;
+  },
+) {
+  const known = world.player.knownLocationIds.includes(input.location.id);
+  const hasActiveEvent = (world.cityEvents ?? []).some(
+    (event) =>
+      event.locationId === input.location.id && event.status === "active",
+  );
+  const hasLead = knownLeadLocationIds(world).includes(input.location.id);
+  let score = known ? 2 : 0;
+
+  if (hasLead) {
+    score += 8;
+  }
+
+  if (hasActiveEvent) {
+    score += 6;
+  }
+
+  if (
+    input.objective.focus === "explore" &&
+    !world.player.knownLocationIds.includes(input.location.id)
+  ) {
+    score += 14;
+  }
+
+  if (
+    input.objective.focus === "settle" &&
+    !world.player.knownLocationIds.includes(input.location.id)
+  ) {
+    score += 5;
+  }
+
+  score += scorePlanForDesiredOutcomes(
+    world,
+    input.plan,
+    input.desiredOutcomes,
+  );
+  score += scoreRouteAlignment(input.plan, input.routeHint);
+  score -= distanceToLocation(world, input.location.id) * 0.45;
+  return score;
+}
+
+function scorePlanForDesiredOutcomes(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  outcomes: StreetPlanningObjectiveOutcome[],
+) {
+  const actionId = plan.actionId ?? "";
+  const [kind, targetId] = actionId.split(":");
+  const job =
+    targetId && (kind === "accept" || kind === "work" || kind === "resume")
+      ? jobById(world, targetId)
+      : undefined;
+  const locationId = plan.targetLocationId;
+  const npcId = plan.npcId;
+  let score = 0;
+
+  for (const outcome of outcomes) {
+    const priority = outcome.priority;
+
+    switch (outcome.id) {
+      case "active-commitment":
+        if (job?.id === world.player.activeJobId && kind === "work") {
+          score += priority * 3;
+        } else if (job?.id === world.player.activeJobId && kind === "resume") {
+          score += priority * 2;
+        } else if (locationId && job?.locationId === locationId) {
+          score += priority;
+        } else if (plan.waitUntilMinutes !== undefined) {
+          score += priority;
+        }
+        break;
+      case "income":
+        if (kind === "work") {
+          score += priority * 2.6;
+        } else if (kind === "accept") {
+          score += priority * 2.1;
+        } else if (npcId === "npc-ada" || npcId === "npc-tomas") {
+          score += priority * 1.4;
+        } else if (
+          locationId &&
+          world.jobs.some(
+            (candidate) =>
+              candidate.locationId === locationId &&
+              !candidate.completed &&
+              !candidate.missed,
+          )
+        ) {
+          score += priority;
+        }
+        break;
+      case "shelter-stability":
+        if (kind === "contribute") {
+          score += priority * 2.5;
+        } else if (npcId === "npc-mara") {
+          score += priority * 1.8;
+        } else if (locationId === world.player.homeLocationId) {
+          score += priority * 0.7;
+        }
+        break;
+      case "social-anchors":
+        if (npcId) {
+          const npc = npcById(world, npcId);
+          score += priority * (npc?.known ? 1.2 : 1.8);
+        }
+        break;
+      case "useful-help":
+        if (kind === "solve") {
+          score += priority * 4.2;
+        } else if (kind === "inspect") {
+          score += priority * 2.2;
+        } else if (kind === "buy") {
+          score += priority * 1.2;
+        } else if (
+          locationId &&
+          world.problems.some(
+            (candidate) =>
+              candidate.locationId === locationId &&
+              (candidate.status === "active" || candidate.discovered),
+          )
+        ) {
+          score += priority;
+        } else if (npcId === "npc-mara" || npcId === "npc-jo" || npcId === "npc-nia") {
+          score += priority * 0.9;
+        }
+        break;
+      case "tool-ready":
+        if (kind === "buy") {
+          score += priority * 2.8;
+        } else if (npcId === "npc-jo" || locationId === "repair-stall") {
+          score += priority * 1.3;
+        }
+        break;
+      case "recover":
+        if (kind === "rest") {
+          score += priority * 2.7;
+        } else if (locationId === world.player.homeLocationId) {
+          score += priority;
+        }
+        break;
+      case "map-knowledge":
+        if (locationId && !world.player.knownLocationIds.includes(locationId)) {
+          score += priority * 1.7;
+        } else if (npcId || kind === "inspect") {
+          score += priority;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  return score;
+}
+
+function scoreRouteAlignment(plan: ObjectivePlan, routeHint?: ObjectivePlan) {
+  if (!routeHint) {
+    return 0;
+  }
+
+  let score = 0;
+  const matchesAction = Boolean(
+    plan.actionId && plan.actionId === routeHint.actionId,
+  );
+  const matchesNpc = Boolean(plan.npcId && plan.npcId === routeHint.npcId);
+
+  if (matchesAction) {
+    score += 8;
+    if (plan.actionId?.startsWith("reflect:")) {
+      score += 3;
+    }
+  }
+  if (matchesNpc) {
+    score += 5;
+  }
+  if (
+    plan.targetLocationId &&
+    plan.targetLocationId === routeHint.targetLocationId
+  ) {
+    score +=
+      !plan.actionId && !plan.npcId
+        ? 9
+        : matchesAction || matchesNpc
+          ? 5
+          : 2;
+  }
+  if (
+    plan.waitUntilMinutes !== undefined &&
+    plan.waitUntilMinutes === routeHint.waitUntilMinutes
+  ) {
+    score += 3;
+  }
+
+  return score;
+}
+
+function scoreObjectiveRouteHint(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  plan: ObjectivePlan,
+  desiredOutcomes: StreetPlanningObjectiveOutcome[],
+) {
+  const distancePenalty =
+    !plan.targetLocationId ||
+    plan.targetLocationId === world.player.currentLocationId
+      ? 0
+      : distanceToLocation(world, plan.targetLocationId) * 0.45;
+
+  return (
+    4 +
+    scorePlanForDesiredOutcomes(world, plan, desiredOutcomes) -
+    distancePenalty +
+    (objective.routeKey === "first-afternoon" ? 2 : 0)
+  );
+}
+
+function buildObjectiveWaitPlans(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  desiredOutcomes: StreetPlanningObjectiveOutcome[],
+): ObjectivePlan[] {
+  const plans: ObjectivePlan[] = [];
+  const currentTotal = world.clock.totalMinutes;
+  const activeJob = activeJobForIntent(world);
+
+  if (activeJob) {
+    const startTotal = totalMinutesForDayHour(world.clock.day, activeJob.startHour);
+    if (
+      currentTotal < startTotal &&
+      startTotal - currentTotal <= 90 &&
+      world.player.currentLocationId === activeJob.locationId
+    ) {
+      plans.push({
+        actionId: `wait:${startTotal}`,
+        rationale: `Hold here until ${activeJob.title.toLowerCase()} opens.`,
+        score: 14 + scorePlanForDesiredOutcomes(world, { score: 0, rationale: "", waitUntilMinutes: startTotal }, desiredOutcomes),
+        targetLocationId: activeJob.locationId,
+        waitUntilMinutes: startTotal,
       });
     }
   }
 
-  candidates.sort((left, right) => right.score - left.score);
-  return candidates[0];
+  for (const event of world.cityEvents ?? []) {
+    const eventStartTotal =
+      Math.max(0, world.clock.day - 1) * 24 * 60 + event.startMinute;
+    const startsSoon =
+      event.status === "upcoming" &&
+      eventStartTotal > currentTotal &&
+      eventStartTotal - currentTotal <= 60;
+    if (
+      !startsSoon ||
+      event.locationId !== world.player.currentLocationId ||
+      (event.tone !== "lead" && event.tone !== "warning")
+    ) {
+      continue;
+    }
+
+    const plan: ObjectivePlan = {
+      actionId: `wait:${eventStartTotal}`,
+      rationale: `${event.title} is about to change what is available here.`,
+      score: 7 + (objective.focus === "work" ? 4 : 0),
+      targetLocationId: event.locationId,
+      waitUntilMinutes: eventStartTotal,
+    };
+    plan.score += scorePlanForDesiredOutcomes(world, plan, desiredOutcomes);
+    plans.push(plan);
+  }
+
+  return plans;
+}
+
+function dedupeObjectivePlans(plans: ObjectivePlan[]) {
+  const byAction = new Map<string, ObjectivePlan>();
+
+  for (const plan of plans) {
+    const key =
+      plannerActionIdForPlan(plan) ??
+      [
+        plan.targetLocationId ?? "here",
+        plan.npcId ?? "no-npc",
+        plan.actionId ?? "no-action",
+        plan.waitUntilMinutes ?? "no-wait",
+      ].join(":");
+    const existing = byAction.get(key);
+    if (!existing || plan.score > existing.score) {
+      byAction.set(key, plan);
+    }
+  }
+
+  return [...byAction.values()];
+}
+
+function mostRelevantProblem(world: StreetGameState, planningText: string) {
+  const normalized = planningText.toLowerCase();
+  if (normalized.includes("cart")) {
+    return problemById(world, "problem-cart");
+  }
+
+  if (normalized.includes("pump") || normalized.includes("wrench")) {
+    return problemById(world, "problem-pump");
+  }
+
+  return world.problems
+    .filter((problem) => problem.status === "active" || problem.discovered)
+    .sort((left, right) => right.urgency - left.urgency)[0];
 }
 
 function directObjectiveRoutePlan(
@@ -2844,6 +3999,13 @@ async function generateAutonomousSpeech(
   aiProvider: AIProvider,
 ) {
   syncRowanAutonomy(world);
+  if (
+    objective.routeKey === "first-afternoon" &&
+    (npc.id === "npc-mara" || npc.id === "npc-ada")
+  ) {
+    return buildAutonomousSpeech(world, npc, objective);
+  }
+
   const generated = await aiProvider.generateStreetAutonomousLine({
     game: world,
     npcId: npc.id,
@@ -2958,7 +4120,8 @@ function buildAutonomousSpeech(
       if (npc.id === "npc-mara") {
         if (
           objective.routeKey === "first-afternoon" &&
-          /\broom\b|\btonight\b|\bmorrow house\b|\bstay\b/.test(text)
+          (playerConversationCount === 0 ||
+            /\broom\b|\btonight\b|\bmorrow house\b|\bstay\b/.test(text))
         ) {
           return "I'm Rowan. I've got tonight at Morrow House, and I'd like to do this right. What do I need to know about keeping the room?";
         }
@@ -2974,6 +4137,10 @@ function buildAutonomousSpeech(
         return "I'm Rowan. New in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where should I start?";
       }
       if (npc.id === "npc-ada") {
+        if (objective.routeKey === "first-afternoon") {
+          return "I'm Rowan. Mara said lunch might need calm hands. Is there still work I can do before the room fills?";
+        }
+
         if (teaLeadKnown) {
           return "I'm Rowan. I heard lunch might still need hands. Is that still true?";
         }
@@ -3423,6 +4590,7 @@ function workJob(world: StreetGameState, jobId: string): void {
   world.player.activeJobId = undefined;
   job.accepted = false;
   job.completed = true;
+  job.missed = false;
   job.deferredUntilMinutes = undefined;
 
   const npc = npcById(world, job.giverNpcId);
@@ -3692,16 +4860,62 @@ function settleFirstAfternoonPlan(world: StreetGameState): void {
 
   world.firstAfternoon.planSettledAt = world.currentTime;
   world.player.currentThought =
-    "Mara gave me three ways to spend the afternoon: drift, rest, or ask Ada. Ada turns the room into something earned.";
+    "Mara gave me live choices: chase Ada's lunch work, deal with the pump, rest, or make myself useful here. Ada is the best first bet before the noon window closes.";
   addFeed(
     world,
     "memory",
-    "Rowan weighs the first move and chooses Ada over drifting or hiding from the day.",
+    "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
   );
   rememberIfNew(
     world,
     "self",
-    "When the first afternoon opened up, Rowan chose the useful errand instead of wandering until the day spent itself.",
+    "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
+  );
+}
+
+function chooseFirstAfternoonPumpPlan(world: StreetGameState): void {
+  world.firstAfternoon ??= {};
+  world.firstAfternoon.planSettledAt ??= world.currentTime;
+  discoverProblem(world, "problem-pump");
+  world.player.currentThought =
+    "The pump is not glamorous, but solving house trouble is one way to make tonight's bed feel less borrowed.";
+  world.player.objective = buildPlayerObjectiveState(world, {
+    focus: "help",
+    previous: world.player.objective,
+    source: "manual",
+    text: "Fix the leaking pump in Morrow Yard before it spreads.",
+  });
+  addFeed(
+    world,
+    "problem",
+    "Rowan chooses the Morrow Yard pump as the first proof that he notices what the house needs.",
+  );
+  rememberIfNew(
+    world,
+    "self",
+    "Rowan chose the pump over the obvious work lead because the house itself had a live problem.",
+  );
+}
+
+function compareFirstAfternoonOptions(world: StreetGameState): void {
+  discoverProblem(world, "problem-pump");
+  world.player.currentThought =
+    "Ada's shift is real, but it sits beside the pump, the house, and whatever else is moving through the square.";
+  world.player.objective = buildPlayerObjectiveState(world, {
+    focus: "explore",
+    previous: world.player.objective,
+    source: "manual",
+    text: "Compare the live work offer with the pump, the square, and any better lead before committing.",
+  });
+  addFeed(
+    world,
+    "info",
+    "Rowan keeps Ada's offer in view while checking whether another live pressure should come first.",
+  );
+  rememberIfNew(
+    world,
+    "self",
+    "Rowan did not treat Ada's offer as a script; he paused to compare it against the live state of the block.",
   );
 }
 
@@ -3733,6 +4947,10 @@ function completeFirstAfternoon(world: StreetGameState): void {
   }
 
   world.firstAfternoon.completedAt = world.currentTime;
+  world.firstAfternoon.fieldNote = buildFirstAfternoonFieldNote(
+    world,
+    teaShift,
+  );
   world.player.currentThought =
     "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and tomorrow has a lead. That is enough for a first afternoon.";
   addFeed(
@@ -3744,6 +4962,85 @@ function completeFirstAfternoon(world: StreetGameState): void {
     world,
     "self",
     "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay.",
+  );
+}
+
+function buildFirstAfternoonFieldNote(
+  world: StreetGameState,
+  teaShift: JobState,
+) {
+  const adaQuestion = world.conversations.find(
+    (entry) =>
+      entry.npcId === "npc-ada" &&
+      entry.speaker === "player" &&
+      /lunch|work|hands/i.test(entry.text),
+  );
+  const adaAnswer = world.conversations.find(
+    (entry) => entry.npcId === "npc-ada" && entry.speaker === "npc",
+  );
+  const askedAt = adaQuestion?.time
+    ? formatClockAt(world, totalMinutesForIso(adaQuestion.time))
+    : "late morning";
+  const evidence = adaAnswer
+    ? `Asked Ada at Kettle & Lamp at ${askedAt}; she offered ${teaShift.title.toLowerCase()} for $${teaShift.pay}.`
+    : `Worked ${teaShift.title.toLowerCase()} at Kettle & Lamp and got paid $${teaShift.pay}.`;
+
+  return {
+    createdAt: world.currentTime,
+    evidence,
+    learned:
+      "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+    memory:
+      "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
+    next:
+      "Sleep on the first foothold, then decide whether tomorrow starts with Ada's lead or the dock board.",
+  };
+}
+
+function ensureFirstAfternoonLeadFieldNote(world: StreetGameState): void {
+  world.firstAfternoon ??= {};
+  if (world.firstAfternoon.leadFieldNote) {
+    return;
+  }
+
+  const teaShift = jobById(world, "job-tea-shift");
+  if (!teaShift?.discovered) {
+    return;
+  }
+
+  const adaQuestion = world.conversations.find(
+    (entry) =>
+      entry.npcId === "npc-ada" &&
+      entry.speaker === "player" &&
+      /lunch|work|hands|shift|help/i.test(entry.text),
+  );
+  const adaAnswer = world.conversations.find(
+    (entry) => entry.npcId === "npc-ada" && entry.speaker === "npc",
+  );
+  if (!adaQuestion || !adaAnswer) {
+    return;
+  }
+
+  const askedAt = formatClockAt(world, totalMinutesForIso(adaQuestion.time));
+  world.firstAfternoon.leadFieldNote = {
+    createdAt: world.currentTime,
+    evidence: `Asked Ada at Kettle & Lamp at ${askedAt}; she offered ${teaShift.title.toLowerCase()} for $${teaShift.pay}.`,
+    learned:
+      "Mara's Kettle & Lamp lead is real: Ada needs steady lunch help today.",
+    memory:
+      "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
+    next:
+      "Choose whether to take the cup-and-counter shift now, check another lead, return later, or keep exploring.",
+  };
+  addFeed(
+    world,
+    "memory",
+    "Rowan records the lead as grounded knowledge: Ada at Kettle & Lamp has real lunch work on the table.",
+  );
+  rememberIfNew(
+    world,
+    "job",
+    "You verified Mara's lead at Kettle & Lamp: Ada needs steady lunch help and offered the cup-and-counter shift.",
   );
 }
 
@@ -3812,6 +5109,29 @@ function updatePlayerLocation(world: StreetGameState): void {
   world.player.currentLocationId = location?.id;
 }
 
+function cityEventsForScene(world: StreetGameState, locationId: string) {
+  return (world.cityEvents ?? [])
+    .filter((event) => event.locationId === locationId)
+    .filter(
+      (event) =>
+        event.status === "active" ||
+        (event.status === "upcoming" &&
+          (event.tone === "lead" ||
+            event.tone === "warning" ||
+            event.kind === "lunch_rush")),
+    )
+    .sort((left, right) => cityEventPriority(right) - cityEventPriority(left))
+    .slice(0, 2);
+}
+
+function cityEventPriority(event: StreetGameState["cityEvents"][number]) {
+  const statusScore =
+    event.status === "active" ? 4 : event.status === "upcoming" ? 2 : 0;
+  const toneScore =
+    event.tone === "warning" ? 3 : event.tone === "lead" ? 2 : 1;
+  return statusScore + toneScore;
+}
+
 function buildScene(world: StreetGameState) {
   const location = currentLocation(world);
   const activeJob =
@@ -3837,6 +5157,14 @@ function buildScene(world: StreetGameState) {
         : `${location.name} is quiet or closed at this hour.`,
       tone: isLocationOpen(world, location) ? "info" : "warning",
     });
+
+    for (const event of cityEventsForScene(world, location.id)) {
+      notes.push({
+        id: `note-city-${event.id}`,
+        text: event.summary,
+        tone: event.tone,
+      });
+    }
   }
 
   if (
@@ -4065,11 +5393,42 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
   ) {
     actions.push({
       id: "reflect:first-afternoon-plan",
-      label: "Choose the first useful move",
+      label: "Ask Ada about lunch work",
       description:
-        "Rowan could wander, rest, or ask Ada. Ada is the move that turns the room into something earned.",
+        "Take Mara's Kettle & Lamp lead before the noon room gets away from Ada.",
       kind: "reflect",
       emphasis: "high",
+    });
+
+    const pumpProblem = problemById(world, "problem-pump");
+    if (pumpProblem?.status === "active") {
+      actions.push({
+        id: "reflect:first-afternoon-pump",
+        label: "Check the Morrow Yard pump",
+        description:
+          "Treat the leaking pump as the first proof that Rowan notices what the house needs.",
+        kind: "reflect",
+        emphasis: "medium",
+      });
+    }
+  }
+
+  const teaJob = jobById(world, "job-tea-shift");
+  if (
+    location?.id === "tea-house" &&
+    world.firstAfternoon?.leadFieldNote &&
+    teaJob?.discovered &&
+    !teaJob.accepted &&
+    !teaJob.completed &&
+    !teaJob.missed
+  ) {
+    actions.push({
+      id: "reflect:first-afternoon-compare",
+      label: "Compare other live leads",
+      description:
+        "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.",
+      kind: "reflect",
+      emphasis: "low",
     });
   }
 
@@ -4121,7 +5480,6 @@ function buildSummary(world: StreetGameState): string {
   ).length;
   const knownPlaces = world.player.knownLocationIds.length;
   const objective = world.player.objective;
-  const nextObjectiveStep = objective?.trail.find((step) => !step.done);
   const activeJob =
     world.player.activeJobId !== undefined
       ? jobById(world, world.player.activeJobId)
@@ -4143,8 +5501,8 @@ function buildSummary(world: StreetGameState): string {
         ? ` I'm still trying to ${objectiveClause(objective.text)}.`
         : "";
   const nextStepTail =
-    !objectiveComplete && nextObjectiveStep
-      ? ` Right now the next thing is to ${objectiveClause(nextObjectiveStep.title)}.`
+    !objectiveComplete && world.rowanAutonomy?.autoContinue
+      ? ` Right now Rowan is choosing ${objectiveClause(world.rowanAutonomy.label)}.`
       : "";
   const objectiveProgressTail = objective?.progress
     ? ` ${objective.progress.label}.`
@@ -4550,12 +5908,12 @@ function shouldAskAutonomousFollowup(
   discussedTopics: Set<string>,
   initialResolution: ConversationResolution,
 ) {
-  if (shouldForceAutonomousFollowup(world, npc, objective, lastNpcReply)) {
-    return true;
-  }
-
   if (initialResolution.decision || initialResolution.objectiveText) {
     return false;
+  }
+
+  if (shouldForceAutonomousFollowup(world, npc, objective, lastNpcReply)) {
+    return true;
   }
 
   if (objective.focus === "people" || objective.focus === "explore") {
@@ -4624,7 +5982,22 @@ function deriveConversationResolution(
   const objectiveAboutPump = /\bpump\b|\bleak\b|\bwrench\b/.test(
     normalizedObjective,
   );
-  const discussedPump = discussedTopics.has("pump") || objectiveAboutPump;
+  const latestPlayerLine = [...world.conversations]
+    .reverse()
+    .find((entry) => entry.npcId === npc.id && entry.speaker === "player")
+    ?.text.toLowerCase();
+  const playerAskedPump = /\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(
+    latestPlayerLine ?? "",
+  );
+  const firstMaraRoomHandoff =
+    npc.id === "npc-mara" &&
+    objective.routeKey === "first-afternoon" &&
+    !world.firstAfternoon?.planSettledAt &&
+    !playerAskedPump;
+  const discussedPump =
+    objectiveAboutPump ||
+    playerAskedPump ||
+    (discussedTopics.has("pump") && !firstMaraRoomHandoff);
 
   if (socialLoopObjective && nextNpc) {
     return {
@@ -5176,6 +6549,16 @@ function phaseForHour(hour: number) {
 function isoFor(totalMinutes: number) {
   const timestamp = new Date(BASE_DAY).getTime() + totalMinutes * 60_000;
   return new Date(timestamp).toISOString();
+}
+
+function totalMinutesForIso(value: string) {
+  const timestamp = new Date(value).getTime();
+  const baseTimestamp = new Date(BASE_DAY).getTime();
+  if (!Number.isFinite(timestamp)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((timestamp - baseTimestamp) / 60_000));
 }
 
 function formatHour(hour: number) {

@@ -5,6 +5,7 @@ import type {
   RowanAutonomyLayer,
   RowanAutonomyState,
   RowanAutonomyStepKind,
+  RowanPlanningTrace,
   StreetGameState,
 } from "../street-sim/types.js";
 
@@ -26,6 +27,7 @@ export type RowanLoopStep = {
   layer: RowanAutonomyLayer;
   npcId?: string;
   objective?: RowanLoopObjectiveDirective;
+  planningTrace?: RowanPlanningTrace;
   speech?: string;
   targetLocationId?: string;
   waitUntilMinutes?: number;
@@ -92,6 +94,7 @@ export function rowanAutonomyFromLoopStep(
     layer: loopStep.layer,
     mode: rowanLoopModeForStep(loopStep),
     npcId: loopStep.npcId,
+    planningTrace: loopStep.planningTrace,
     stepKind: loopStep.kind,
     targetLocationId: loopStep.targetLocationId,
   };

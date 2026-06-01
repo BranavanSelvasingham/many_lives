@@ -201,6 +201,22 @@ export interface ObjectiveProgressState {
   label: string;
 }
 
+export type ObjectiveOutcomeStatus =
+  | "open"
+  | "blocked"
+  | "at_risk"
+  | "met"
+  | "failed";
+
+export interface ObjectiveOutcomeState {
+  id: string;
+  label: string;
+  status: ObjectiveOutcomeStatus;
+  urgency: number;
+  blockers?: string[];
+  evidence?: string;
+}
+
 export interface PlayerObjective {
   id: string;
   text: string;
@@ -209,6 +225,7 @@ export interface PlayerObjective {
   focus: ObjectiveFocus;
   source: ObjectiveSource;
   routeKey: string;
+  outcomes: ObjectiveOutcomeState[];
   trail: ObjectiveTrailItem[];
   completedTrail: ObjectiveTrailItem[];
   progress: ObjectiveProgressState;
@@ -309,6 +326,31 @@ export interface ProblemState {
   benefitIfSolved: string;
 }
 
+export type CityEventKind =
+  | "cafe_prep"
+  | "lunch_rush"
+  | "market_crossing"
+  | "square_cart"
+  | "yard_loading";
+
+export type CityEventStatus = "upcoming" | "active" | "resolved";
+
+export interface CityEventState {
+  id: string;
+  kind: CityEventKind;
+  title: string;
+  locationId: string;
+  status: CityEventStatus;
+  startMinute: number;
+  endMinute: number;
+  summary: string;
+  visibleLabel: string;
+  tone: "info" | "lead" | "warning";
+  participants?: string[];
+  progress?: string;
+  updatedAt: string;
+}
+
 export interface FeedEntry {
   id: string;
   time: string;
@@ -390,6 +432,35 @@ export interface RowanAutonomyIntent {
   signals: string[];
 }
 
+export interface RowanPlanningTraceOption {
+  actionId?: string;
+  label: string;
+  rationale: string;
+  reason?: string;
+  score: number;
+  status: "selected" | "rejected";
+  targetLocationId?: string;
+  npcId?: string;
+}
+
+export interface RowanPlanningTraceOutcome {
+  id: string;
+  label: string;
+  status: ObjectiveOutcomeStatus;
+  urgency: number;
+  blockers?: string[];
+  evidence?: string;
+}
+
+export interface RowanPlanningTrace {
+  blockers: string[];
+  considered: RowanPlanningTraceOption[];
+  outcomes: RowanPlanningTraceOutcome[];
+  rejected: RowanPlanningTraceOption[];
+  selectedActionId?: string;
+  selectedLabel?: string;
+}
+
 export interface RowanAutonomyState {
   actionId?: string;
   autoContinue: boolean;
@@ -401,6 +472,7 @@ export interface RowanAutonomyState {
   layer?: RowanAutonomyLayer;
   mode: "acting" | "blocked" | "conversation" | "idle" | "moving" | "waiting";
   npcId?: string;
+  planningTrace?: RowanPlanningTrace;
   stepKind?: RowanAutonomyStepKind;
   targetLocationId?: string;
 }
@@ -421,8 +493,23 @@ export interface StreetGameState {
   npcs: NpcState[];
   jobs: JobState[];
   problems: ProblemState[];
+  cityEvents: CityEventState[];
   firstAfternoon?: {
     completedAt?: string;
+    leadFieldNote?: {
+      createdAt: string;
+      evidence: string;
+      learned: string;
+      memory: string;
+      next: string;
+    };
+    fieldNote?: {
+      createdAt: string;
+      evidence: string;
+      learned: string;
+      memory: string;
+      next: string;
+    };
     planSettledAt?: string;
     teaShiftStage?: "rush" | "counter" | "paid";
   };

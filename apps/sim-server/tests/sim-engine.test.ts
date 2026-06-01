@@ -1,9 +1,30 @@
 import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
+import type {
+  StreetPlanningRequest,
+  StreetPlanningResult,
+} from "../src/ai/provider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
 import { buildRowanCognition } from "../src/sim/rowanCognition.js";
 import { runRowanLoopSmoke } from "../src/sim/rowanLoopSmoke.js";
-import type { StreetGameState } from "../src/street-sim/types.js";
+import type {
+  PlayerObjective,
+  StreetGameState,
+} from "../src/street-sim/types.js";
+
+class PlanningAIProvider extends MockAIProvider {
+  override readonly name = "openai";
+  readonly requests: StreetPlanningRequest[] = [];
+
+  constructor(private readonly result: StreetPlanningResult | null) {
+    super();
+  }
+
+  override async planStreetNextAction(input: StreetPlanningRequest) {
+    this.requests.push(input);
+    return this.result;
+  }
+}
 
 function expectCognitionToMirrorAutonomy(world: StreetGameState) {
   const nextMove = buildRowanCognition(world).nextMove;
@@ -79,6 +100,17 @@ describe("SimulationEngine street slice", () => {
     while (world.clock.hour + world.clock.minute / 60 < 12) {
       world = await engine.tick(world, 1);
     }
+    expect(
+      world.cityEvents.find((event) => event.id === "event-cafe-prep"),
+    ).toMatchObject({
+      status: "resolved",
+    });
+    expect(
+      world.cityEvents.find((event) => event.id === "event-lunch-rush"),
+    ).toMatchObject({
+      status: "active",
+      progress: "rush",
+    });
 
     world = await engine.runCommand(world, {
       type: "act",
@@ -86,8 +118,19 @@ describe("SimulationEngine street slice", () => {
     });
     expect(world.firstAfternoon?.teaShiftStage).toBe("rush");
     expect(world.player.currentThought).toBe(
-      "Cups, tables, counter. Keep it simple.",
+      "The room is filling. Cups first, tables second, keep moving.",
     );
+    expect(
+      world.cityEvents.find((event) => event.id === "event-lunch-rush"),
+    ).toMatchObject({
+      status: "active",
+      progress: "rush",
+    });
+    expect(
+      world.currentScene.notes.some((note) =>
+        note.text.includes("Kettle & Lamp"),
+      ),
+    ).toBe(true);
     expect(world.jobs.find((job) => job.id === "job-tea-shift")?.completed).toBe(
       false,
     );
@@ -102,8 +145,14 @@ describe("SimulationEngine street slice", () => {
     });
     expect(world.firstAfternoon?.teaShiftStage).toBe("counter");
     expect(world.player.currentThought).toBe(
-      "One last counter pass, then Ada can pay me.",
+      "Ada is not watching every step now. That probably means I am keeping up.",
     );
+    expect(
+      world.cityEvents.find((event) => event.id === "event-lunch-rush"),
+    ).toMatchObject({
+      status: "active",
+      progress: "counter",
+    });
     expect(world.rowanAutonomy).toMatchObject({
       actionId: "work:job-tea-shift",
       label: "Finish the cup-and-counter shift",
@@ -117,6 +166,12 @@ describe("SimulationEngine street slice", () => {
     expect(world.jobs.find((job) => job.id === "job-tea-shift")?.completed).toBe(
       true,
     );
+    expect(
+      world.cityEvents.find((event) => event.id === "event-lunch-rush"),
+    ).toMatchObject({
+      status: "resolved",
+      progress: "paid",
+    });
     expect(world.player.money).toBeGreaterThan(12);
   });
 
@@ -302,6 +357,322 @@ describe("SimulationEngine street slice", () => {
     expect(playerLine?.text).not.toMatch(/hands|lunch|work lead/i);
     expect(maraLine?.text).toMatch(/Morrow House|room|Ada|Kettle & Lamp/i);
     expect(world.activeConversation?.objectiveText).toContain("Ada");
+  });
+
+  it("lets an OpenAI planner choose a validated objective action", async () => {
+    const provider = new PlanningAIProvider({
+      actionId: "rest:home",
+      confidence: 0.91,
+      rationale: "Rowan has energy to recover before choosing a lead.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-ai-planner-valid");
+    const startMinutes = world.clock.totalMinutes;
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(provider.requests).toHaveLength(1);
+    expect(provider.requests[0]).toMatchObject({
+      objective: {
+        routeKey: "first-afternoon",
+      },
+    });
+    expect(provider.requests[0].allowedActions.map((action) => action.actionId)).toContain(
+      "rest:home",
+    );
+    expect(provider.requests[0].desiredOutcomes.map((outcome) => outcome.id)).toEqual(
+      expect.arrayContaining(["shelter-stability", "income"]),
+    );
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.clock.totalMinutes).toBe(startMinutes + 60);
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "You rested, but the house never quite stopped sounding busy and unfinished.",
+    );
+  });
+
+  it("falls back when an OpenAI planner chooses an invalid action", async () => {
+    const provider = new PlanningAIProvider({
+      actionId: "solve:problem-that-does-not-exist",
+      confidence: 0.99,
+      rationale: "Invent a shortcut.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-ai-planner-invalid");
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(provider.requests).toHaveLength(1);
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+  });
+
+  it("falls back when an OpenAI planner is low confidence", async () => {
+    const provider = new PlanningAIProvider({
+      actionId: "rest:home",
+      confidence: 0.24,
+      rationale: "Maybe rest.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-ai-planner-low-confidence");
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(provider.requests).toHaveLength(1);
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+  });
+
+  it("keeps no-OpenAI objective advance deterministic", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-no-ai-planner");
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(world.activeConversation?.lines.find((line) => line.speaker === "player")?.text).toMatch(
+      /room|Morrow House|tonight/i,
+    );
+  });
+
+  it("exposes the first afternoon as competing live choices with a planner trace", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-live-fork");
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.availableActions.map((action) => action.id)).toEqual(
+      expect.arrayContaining([
+        "reflect:first-afternoon-plan",
+        "reflect:first-afternoon-pump",
+        "rest:home",
+      ]),
+    );
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedActionId: expect.any(String),
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.map(
+        (option) => option.actionId,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "reflect:first-afternoon-plan",
+        "reflect:first-afternoon-pump",
+      ]),
+    );
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.actionId === "reflect:first-afternoon-pump",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps Ada's verified offer as a fork instead of forcing immediate acceptance", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-post-ada-fork");
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "reflect:first-afternoon-plan",
+    });
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.firstAfternoon?.leadFieldNote).toBeDefined();
+    expect(world.availableActions.map((action) => action.id)).toEqual(
+      expect.arrayContaining([
+        "accept:job-tea-shift",
+        "reflect:first-afternoon-compare",
+      ]),
+    );
+  });
+
+  it("lets deterministic fallback choose objective outcomes over a scripted route hint", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-agent-outcome-over-route");
+    const startMinutes = world.clock.totalMinutes;
+
+    world.player.energy = 18;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      focus: "rest",
+      routeKey: "scripted-test-route",
+      source: "manual",
+      text: "Rest until Rowan can think clearly.",
+      trail: [
+        {
+          id: "scripted-wrong-next-step",
+          title: "Talk to Ada even though Rowan is exhausted.",
+          done: false,
+          npcId: "npc-ada",
+          targetLocationId: "tea-house",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 checked off",
+        total: 1,
+      },
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.clock.totalMinutes).toBe(startMinutes + 60);
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "You rested, but the house never quite stopped sounding busy and unfinished.",
+    );
+  });
+
+  it("lets active problems outrank a scripted talk route", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-agent-problem-over-route");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+
+    world.player.x = 3;
+    world.player.y = 11;
+    world.player.currentLocationId = "courtyard";
+    world.player.inventory.push({
+      id: "item-wrench",
+      name: "Old wrench",
+      description: "A tool for the pump.",
+    });
+    if (pump) {
+      pump.discovered = true;
+      pump.status = "active";
+    }
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      focus: "help",
+      routeKey: "scripted-talk-route",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+      trail: [
+        {
+          id: "scripted-talk-instead-of-fix",
+          title: "Ask Mara about the pump instead of using the wrench.",
+          done: false,
+          npcId: "npc-mara",
+          targetLocationId: "boarding-house",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 checked off",
+        total: 1,
+      },
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
+      status: "solved",
+    });
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "You tightened the pump in Morrow Yard, slowed the leak, and Mara pressed $12 into your hand before the stones flooded again.",
+    );
+  });
+
+  it("lets a no-trail objective complete through legal actions and predicates", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-agent-no-trail-pump");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+
+    world.player.x = 3;
+    world.player.y = 11;
+    world.player.currentLocationId = "courtyard";
+    world.player.inventory.push({
+      id: "item-wrench",
+      name: "Old wrench",
+      description: "A tool for the pump.",
+    });
+    if (pump) {
+      pump.discovered = true;
+      pump.status = "active";
+    }
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "help",
+      outcomes: [],
+      progress: {
+        completed: 0,
+        label: "0/0 no trail",
+        total: 0,
+      },
+      routeKey: "help-pump",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+      trail: [],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
+      status: "solved",
+    });
+    expect(world.player.objective).toMatchObject({
+      routeKey: "help-pump",
+      progress: {
+        completed: 3,
+        total: 3,
+      },
+    });
+    expect(world.player.objective?.outcomes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "help-pump-fix",
+          status: "met",
+        }),
+      ]),
+    );
   });
 
   it("lets Rowan resolve a manual conversation into a concrete next beat", async () => {
@@ -593,6 +964,70 @@ describe("SimulationEngine street slice", () => {
       mode: "acting",
       stepKind: "act",
       targetLocationId: "boarding-house",
+    });
+    expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("completes Mara's Ada lead loop once Rowan has grounded evidence and a next choice", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-mara-ada-lead-loop");
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Verify Mara's lead by walking to Kettle & Lamp, asking Ada about lunch work, and recording what Rowan learns.",
+    });
+
+    expect(world.player.objective).toMatchObject({
+      focus: "work",
+      routeKey: "mara-ada-lead",
+    });
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      if (
+        world.player.objective?.progress.completed ===
+          world.player.objective?.progress.total &&
+        !world.activeConversation
+      ) {
+        break;
+      }
+
+      world = await engine.runCommand(world, {
+        type: "advance_objective",
+        allowTimeSkip: true,
+      });
+    }
+
+    const teaShift = world.jobs.find((job) => job.id === "job-tea-shift");
+    expect(world.player.currentLocationId).toBe("tea-house");
+    expect(teaShift).toMatchObject({
+      accepted: false,
+      completed: false,
+      discovered: true,
+    });
+    expect(world.firstAfternoon?.leadFieldNote).toMatchObject({
+      evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
+      learned: expect.stringContaining("Mara's Kettle & Lamp lead is real"),
+      next: expect.stringContaining("Choose whether to take"),
+    });
+    expect(world.firstAfternoon?.fieldNote).toBeUndefined();
+    expect(
+      world.availableActions.find(
+        (action) => action.id === "accept:job-tea-shift",
+      ),
+    ).toMatchObject({
+      label: "Take Cup-and-counter shift",
+    });
+    expect(world.player.objective).toMatchObject({
+      routeKey: "mara-ada-lead",
+      progress: {
+        completed: 6,
+        total: 6,
+      },
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: false,
+      label: "Objective complete",
+      stepKind: "idle",
     });
     expectCognitionToMirrorAutonomy(world);
   });
@@ -889,14 +1324,30 @@ describe("SimulationEngine street slice", () => {
     });
     expect(result.finalWorld.player.currentLocationId).toBe("boarding-house");
     expect(result.finalWorld.firstAfternoon?.completedAt).toBeDefined();
+    expect(result.finalWorld.firstAfternoon?.fieldNote).toMatchObject({
+      evidence: expect.stringContaining("Kettle & Lamp"),
+      learned: expect.stringContaining("Ada"),
+    });
+    expect(result.finalWorld.firstAfternoon?.leadFieldNote).toMatchObject({
+      evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
+      learned: expect.stringContaining("Mara's Kettle & Lamp lead is real"),
+    });
+    expect(
+      result.finalWorld.cityEvents.find(
+        (event) => event.id === "event-lunch-rush",
+      ),
+    ).toMatchObject({
+      progress: "paid",
+      status: "resolved",
+    });
     expect(result.finalWorld.player.currentThought).toContain(
       "Tonight's bed holds",
     );
     expect(result.finalWorld.player.objective).toMatchObject({
       routeKey: "first-afternoon",
       progress: {
-        completed: 7,
-        total: 7,
+        completed: 8,
+        total: 8,
       },
     });
     expect(result.finalWorld.rowanAutonomy).toMatchObject({

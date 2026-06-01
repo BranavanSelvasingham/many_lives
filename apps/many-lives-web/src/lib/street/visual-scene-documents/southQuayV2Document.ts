@@ -475,6 +475,20 @@ const SOUTH_QUAY_V2_DOCUMENT = {
           "x": 1396,
           "y": 612
         }
+      ],
+      "playerApproaches": [
+        {
+          "x": 1262,
+          "y": 656
+        },
+        {
+          "x": 1338,
+          "y": 656
+        },
+        {
+          "x": 1410,
+          "y": 650
+        }
       ]
     },
     "boarding-house": {
@@ -506,6 +520,16 @@ const SOUTH_QUAY_V2_DOCUMENT = {
           "x": 404,
           "y": 786
         }
+      ],
+      "playerApproaches": [
+        {
+          "x": 354,
+          "y": 806
+        },
+        {
+          "x": 430,
+          "y": 804
+        }
       ]
     },
     "repair-stall": {
@@ -536,6 +560,16 @@ const SOUTH_QUAY_V2_DOCUMENT = {
         {
           "x": 1360,
           "y": 628
+        }
+      ],
+      "playerApproaches": [
+        {
+          "x": 1280,
+          "y": 666
+        },
+        {
+          "x": 1366,
+          "y": 662
         }
       ]
     },
@@ -572,6 +606,20 @@ const SOUTH_QUAY_V2_DOCUMENT = {
           "x": 856,
           "y": 806
         }
+      ],
+      "playerApproaches": [
+        {
+          "x": 780,
+          "y": 820
+        },
+        {
+          "x": 910,
+          "y": 824
+        },
+        {
+          "x": 1000,
+          "y": 780
+        }
       ]
     },
     "freight-yard": {
@@ -602,6 +650,16 @@ const SOUTH_QUAY_V2_DOCUMENT = {
         {
           "x": 752,
           "y": 890
+        }
+      ],
+      "playerApproaches": [
+        {
+          "x": 626,
+          "y": 932
+        },
+        {
+          "x": 736,
+          "y": 932
         }
       ]
     },
@@ -634,6 +692,16 @@ const SOUTH_QUAY_V2_DOCUMENT = {
           "x": 1542,
           "y": 1096
         }
+      ],
+      "playerApproaches": [
+        {
+          "x": 1306,
+          "y": 1108
+        },
+        {
+          "x": 1446,
+          "y": 1124
+        }
       ]
     },
     "courtyard": {
@@ -664,6 +732,16 @@ const SOUTH_QUAY_V2_DOCUMENT = {
         {
           "x": 382,
           "y": 966
+        }
+      ],
+      "playerApproaches": [
+        {
+          "x": 326,
+          "y": 1008
+        },
+        {
+          "x": 414,
+          "y": 1006
         }
       ]
     }

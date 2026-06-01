@@ -1,5 +1,7 @@
 import type {
   ObjectiveFocus,
+  ObjectiveOutcomeState,
+  ObjectiveOutcomeStatus,
   ObjectiveProgressState,
   ObjectiveSource,
   ObjectiveTrailItem,
@@ -30,6 +32,12 @@ interface ConversationObjectiveRoute {
   route: ObjectiveRoute;
 }
 
+interface ObjectiveOutcomeEvaluation {
+  status: ObjectiveOutcomeStatus;
+  blockers?: string[];
+  evidence?: string;
+}
+
 const OBJECTIVE_TRAIL_LIMIT = 10;
 
 export function buildPlayerObjectiveState(
@@ -58,6 +66,19 @@ export function buildPlayerObjectiveState(
     return composeObjective(world, previous.text, route, previous);
   }
 
+  if (
+    previous &&
+    explicitText &&
+    explicitSource === "conversation" &&
+    shouldKeepMaraAdaLeadRoute(previous) &&
+    shouldMaraAdaLeadAbsorbConversationRoute(
+      explicitFocus ?? classifyObjective(explicitText),
+    )
+  ) {
+    const route = buildMaraAdaLeadRoute(world, previous.source);
+    return composeObjective(world, previous.text, route, previous);
+  }
+
   if (explicitText) {
     const route = buildRouteForObjectiveText(
       world,
@@ -78,6 +99,16 @@ export function buildPlayerObjectiveState(
       ))
   ) {
     const previousRoute = buildFirstAfternoonRoute(world, previous.source);
+    return composeObjective(world, previous.text, previousRoute, previous);
+  }
+
+  if (
+    previous &&
+    shouldKeepMaraAdaLeadRoute(previous) &&
+    (!conversationRoute ||
+      shouldMaraAdaLeadAbsorbConversationRoute(conversationRoute.route.focus))
+  ) {
+    const previousRoute = buildMaraAdaLeadRoute(world, previous.source);
     return composeObjective(world, previous.text, previousRoute, previous);
   }
 
@@ -105,8 +136,17 @@ export function buildPlayerObjectiveState(
       previous.source,
       previous,
     );
+    const previousRouteCompleted = routeCompleted(
+      world,
+      previous.text,
+      previousRoute,
+    );
+    if (previous.source === "manual" && previousRouteCompleted) {
+      return composeObjective(world, previous.text, previousRoute, previous);
+    }
+
     if (
-      !routeCompleted(previousRoute) &&
+      !previousRouteCompleted &&
       !shouldInterruptCurrentObjective(world, previous)
     ) {
       return composeObjective(world, previous.text, previousRoute, previous);
@@ -129,16 +169,18 @@ function composeObjective(
   previous?: PlayerObjective,
 ): PlayerObjective | undefined {
   const completedTrail = buildCompletedTrail(world, previous, route.steps);
-  const progress = buildProgress(route.steps);
+  const outcomes = buildObjectiveOutcomes(world, objectiveText, route);
+  const progress = buildProgress(outcomes, route.steps);
   const currentStep = route.steps.find((step) => !step.done) ?? route.steps[0];
 
-  if (!currentStep) {
+  if (!currentStep && outcomes.length === 0) {
     return undefined;
   }
 
   const updatedAt = shouldUpdateObjective(
     previous,
     route,
+    outcomes,
     progress,
     completedTrail,
   )
@@ -165,12 +207,17 @@ function composeObjective(
     focus: route.focus,
     source: route.source,
     routeKey: route.key,
+    outcomes,
     trail: route.steps,
     completedTrail,
     progress,
   };
 
-  if (progress.completed >= progress.total && !route.terminal) {
+  if (
+    progress.completed >= progress.total &&
+    !route.terminal &&
+    route.source !== "manual"
+  ) {
     const nextRoute = chooseDynamicRoute(world, {
       routeKey: route.key,
       focus: route.focus,
@@ -192,6 +239,7 @@ function composeObjective(
 function shouldUpdateObjective(
   previous: PlayerObjective | undefined,
   route: ObjectiveRoute,
+  outcomes: ObjectiveOutcomeState[],
   progress: ObjectiveProgressState,
   completedTrail: ObjectiveTrailItem[],
 ) {
@@ -216,6 +264,25 @@ function shouldUpdateObjective(
     previous.progress.total !== progress.total
   ) {
     return true;
+  }
+
+  const previousOutcomes = previous.outcomes ?? [];
+  if (previousOutcomes.length !== outcomes.length) {
+    return true;
+  }
+
+  for (let index = 0; index < outcomes.length; index += 1) {
+    const previousOutcome = previousOutcomes[index];
+    const outcome = outcomes[index];
+    if (
+      !previousOutcome ||
+      previousOutcome.id !== outcome.id ||
+      previousOutcome.status !== outcome.status ||
+      previousOutcome.evidence !== outcome.evidence ||
+      previousOutcome.blockers?.join("|") !== outcome.blockers?.join("|")
+    ) {
+      return true;
+    }
   }
 
   if (previous.completedTrail.length !== completedTrail.length) {
@@ -251,24 +318,469 @@ function buildCompletedTrail(
   return completed.slice(0, OBJECTIVE_TRAIL_LIMIT);
 }
 
-function buildProgress(steps: ObjectiveTrailItem[]): ObjectiveProgressState {
-  const completed = steps.filter((step) => step.done).length;
+function buildObjectiveOutcomes(
+  world: StreetGameState,
+  objectiveText: string,
+  route: ObjectiveRoute,
+): ObjectiveOutcomeState[] {
+  return route.steps.map((step, index) => {
+    const evaluation =
+      evaluateObjectiveOutcome(world, objectiveText, route, step) ??
+      outcomeEvaluation(Boolean(step.done), {
+        evidence: step.progress,
+      });
+
+    return {
+      id: step.id,
+      label: step.title,
+      status: evaluation.status,
+      urgency: route.steps.length - index,
+      blockers: evaluation.blockers,
+      evidence: evaluation.evidence ?? step.progress,
+    };
+  });
+}
+
+function buildProgress(
+  outcomes: ObjectiveOutcomeState[],
+  fallbackSteps: ObjectiveTrailItem[],
+): ObjectiveProgressState {
+  if (outcomes.length > 0) {
+    const completed = outcomes.filter((outcome) => outcome.status === "met")
+      .length;
+    return {
+      completed,
+      total: outcomes.length,
+      label: `${completed}/${outcomes.length} outcomes met`,
+    };
+  }
+
+  const completed = fallbackSteps.filter((step) => step.done).length;
   return {
     completed,
-    total: steps.length,
-    label: `${completed}/${steps.length} checked off`,
+    total: fallbackSteps.length,
+    label: `${completed}/${fallbackSteps.length} checked off`,
   };
 }
 
-function routeCompleted(route: ObjectiveRoute) {
+function routeCompleted(
+  world: StreetGameState,
+  objectiveText: string,
+  route: ObjectiveRoute,
+) {
+  const outcomes = buildObjectiveOutcomes(world, objectiveText, route);
+  if (outcomes.length > 0) {
+    return outcomes.every((outcome) => outcome.status === "met");
+  }
+
   return route.steps.every((step) => step.done);
+}
+
+function evaluateObjectiveOutcome(
+  world: StreetGameState,
+  objectiveText: string,
+  route: ObjectiveRoute,
+  step: ObjectiveTrailItem,
+): ObjectiveOutcomeEvaluation | undefined {
+  const teaJob = jobById(world, "job-tea-shift");
+  const pumpProblem = problemById(world, "problem-pump");
+  const cartProblem = problemById(world, "problem-cart");
+  const hasWrench = hasItem(world, "item-wrench");
+  const atHome = world.player.currentLocationId === world.player.homeLocationId;
+
+  switch (step.id) {
+    case "mara-ada-hear-lead":
+    case "first-afternoon-room":
+      return outcomeEvaluation(countPlayerConversationsWithNpc(world, "npc-mara") > 0, {
+        evidence: "Mara has explained what tonight's room and first lead require.",
+      });
+    case "mara-ada-form-intent":
+    case "first-afternoon-choose-move":
+      return outcomeEvaluation(Boolean(world.firstAfternoon?.planSettledAt), {
+        blockers: ["Rowan has not chosen the useful first move yet."],
+        evidence: world.firstAfternoon?.planSettledAt,
+      });
+    case "mara-ada-walk-route":
+      return outcomeEvaluation(
+        world.player.currentLocationId === "tea-house" ||
+          countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
+          Boolean(world.firstAfternoon?.leadFieldNote),
+        { evidence: world.player.currentLocationId },
+      );
+    case "mara-ada-ask-directly":
+    case "first-afternoon-ada-lead":
+      return outcomeEvaluation(
+        countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
+          Boolean(teaJob?.accepted || teaJob?.completed),
+        {
+          blockers: ["Ada has not confirmed the Kettle & Lamp lead yet."],
+          evidence: teaJob?.discovered ? "Kettle & Lamp work is discovered." : undefined,
+        },
+      );
+    case "mara-ada-record-evidence":
+    case "first-afternoon-record-lead":
+      return outcomeEvaluation(Boolean(world.firstAfternoon?.leadFieldNote), {
+        blockers: ["The lead has not been recorded as grounded evidence."],
+        evidence: world.firstAfternoon?.leadFieldNote?.evidence,
+      });
+    case "mara-ada-open-choice":
+      return outcomeEvaluation(
+        Boolean(
+          world.firstAfternoon?.leadFieldNote &&
+            teaJob?.discovered &&
+            !teaJob.missed,
+        ),
+        {
+          blockers: ["The lead has not opened a legal work choice yet."],
+          evidence: teaJob?.discovered ? "Cup-and-counter shift is available." : undefined,
+        },
+      );
+    case "first-afternoon-take-shift":
+      return outcomeEvaluation(
+        Boolean(
+          teaJob?.accepted ||
+            teaJob?.completed ||
+            world.player.activeJobId === "job-tea-shift",
+        ),
+        {
+          blockers: teaJob?.missed
+            ? ["The cup-and-counter shift window has slipped."]
+            : ["Rowan has not committed to the cup-and-counter shift."],
+          evidence: teaJob?.accepted ? "Shift accepted." : undefined,
+          failed: Boolean(teaJob?.missed && !teaJob.completed),
+        },
+      );
+    case "first-afternoon-start-shift":
+      return outcomeEvaluation(
+        Boolean(
+          world.firstAfternoon?.teaShiftStage === "rush" ||
+            world.firstAfternoon?.teaShiftStage === "counter" ||
+            world.firstAfternoon?.teaShiftStage === "paid" ||
+            teaJob?.completed,
+        ),
+        {
+          blockers: ["The lunch rush has not started for Rowan yet."],
+          evidence: world.firstAfternoon?.teaShiftStage,
+        },
+      );
+    case "first-afternoon-finish-shift":
+      return outcomeEvaluation(Boolean(teaJob?.completed), {
+        blockers: teaJob?.missed
+          ? ["The cup-and-counter shift was missed."]
+          : ["The cup-and-counter shift is not finished yet."],
+        evidence: teaJob?.completed ? "Ada paid Rowan for the shift." : undefined,
+        failed: Boolean(teaJob?.missed && !teaJob.completed),
+      });
+    case "first-afternoon-take-stock":
+      return outcomeEvaluation(Boolean(world.firstAfternoon?.completedAt), {
+        blockers: atHome
+          ? ["Rowan has not taken stock yet."]
+          : ["Rowan is not back at Morrow House yet."],
+        evidence: world.firstAfternoon?.fieldNote?.evidence,
+      });
+    case "settle-terms": {
+      const maraTopics = npcReplyTopics(world, "npc-mara");
+      return outcomeEvaluation(
+        (world.player.reputation.morrow_house ?? 0) >= 2 ||
+          hasAnyTopic(maraTopics, ["home", "stay"]),
+        {
+          blockers: ["Rowan does not know the room terms yet."],
+          evidence: `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
+        },
+      );
+    }
+    case "settle-standing":
+      return outcomeEvaluation((world.player.reputation.morrow_house ?? 0) >= 2, {
+        blockers: ["Morrow House does not see Rowan as dependable yet."],
+        evidence: `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
+      });
+    case "settle-lead":
+      return outcomeEvaluation(hasConfirmedWorkLead(world), {
+        blockers: ["No work lead has been confirmed yet."],
+      });
+    case "settle-income":
+      return outcomeEvaluation(hasCommittedOrCompletedJob(world), {
+        blockers: ["Rowan has not committed to paid work yet."],
+      });
+    case "settle-people":
+      return outcomeEvaluation(familiarNpcCount(world) >= 2, {
+        blockers: ["Rowan does not have two real local connections yet."],
+        evidence: `${familiarNpcCount(world)} familiar people`,
+      });
+    case "work-lead-tea":
+    case "work-lead-yard": {
+      const lead = step.id === "work-lead-yard" ? "yard" : "tea";
+      return outcomeEvaluation(confirmedWorkLeadFor(world, lead), {
+        blockers: [`The ${lead} work lead is not confirmed yet.`],
+      });
+    }
+    case "work-commit": {
+      const leadJob = workLeadJob(world, route, objectiveText);
+      return outcomeEvaluation(Boolean(leadJob?.accepted || leadJob?.completed), {
+        blockers: leadJob?.missed
+          ? [`${leadJob.title} was missed.`]
+          : [`${leadJob?.title ?? "The job"} has not been accepted yet.`],
+        evidence: leadJob?.accepted ? `${leadJob.title} accepted.` : undefined,
+        failed: Boolean(leadJob?.missed && !leadJob.completed),
+      });
+    }
+    case "work-finish": {
+      const leadJob = workLeadJob(world, route, objectiveText);
+      return outcomeEvaluation(Boolean(leadJob?.completed), {
+        blockers: leadJob?.missed
+          ? [`${leadJob.title} was missed.`]
+          : [`${leadJob?.title ?? "The job"} is not finished yet.`],
+        evidence: leadJob?.completed ? `${leadJob.title} completed.` : undefined,
+        failed: Boolean(leadJob?.missed && !leadJob.completed),
+      });
+    }
+    case "work-pay":
+      return outcomeEvaluation(
+        world.player.money >= 20 || world.jobs.some((job) => job.completed),
+        {
+          blockers: ["Paid work has not turned into breathing room yet."],
+          evidence: `$${world.player.money} on hand`,
+        },
+      );
+    case "help-cart-inspect":
+      return outcomeEvaluation(Boolean(cartProblem?.discovered), {
+        blockers: ["The jammed cart has not been inspected yet."],
+      });
+    case "help-cart-solve":
+      return outcomeEvaluation(cartProblem?.status === "solved", {
+        blockers: ["The jammed cart is still active."],
+        evidence: cartProblem?.status,
+      });
+    case "help-pump-inspect":
+      return outcomeEvaluation(Boolean(pumpProblem?.discovered), {
+        blockers: ["The pump problem has not been inspected yet."],
+      });
+    case "help-pump-tool":
+    case "tool-buy":
+      return outcomeEvaluation(hasWrench, {
+        blockers: ["Rowan does not have a wrench yet."],
+        evidence: hasWrench ? "Wrench in inventory." : undefined,
+      });
+    case "help-pump-fix":
+      return outcomeEvaluation(pumpProblem?.status === "solved", {
+        blockers: hasWrench
+          ? ["The pump is still active."]
+          : ["The pump needs a wrench before Rowan can solve it."],
+        evidence: pumpProblem?.status,
+      });
+    case "tool-return": {
+      const target = objectiveTargetProblem(world, objectiveText);
+      return outcomeEvaluation(
+        hasWrench &&
+          Boolean(
+            target &&
+              (world.player.currentLocationId === target.locationId ||
+                target.status === "solved"),
+          ),
+        {
+          blockers: hasWrench
+            ? ["The tool has not reached the problem yet."]
+            : ["Rowan does not have a wrench yet."],
+          evidence: target?.locationId,
+        },
+      );
+    }
+    case "tool-use": {
+      const target = objectiveTargetProblem(world, objectiveText);
+      return outcomeEvaluation(target?.status === "solved", {
+        blockers: hasWrench
+          ? ["The target problem is still active."]
+          : ["The target problem needs the right tool first."],
+        evidence: target?.status,
+      });
+    }
+    case "rest-return":
+      return outcomeEvaluation(atHome, {
+        blockers: ["Rowan is not somewhere familiar enough to rest."],
+        evidence: world.player.currentLocationId,
+      });
+    case "rest-hour":
+      return outcomeEvaluation(hasRecentRest(world), {
+        blockers: ["Rowan has not rested recently."],
+        evidence: world.player.lastRestAt,
+      });
+    case "people-talk": {
+      const targetNpcId = step.npcId;
+      return outcomeEvaluation(
+        targetNpcId
+          ? countPlayerConversationsWithNpc(world, targetNpcId) > 0
+          : familiarNpcCount(world) > 0,
+        {
+          blockers: ["Rowan has not started that local relationship yet."],
+        },
+      );
+    }
+    case "people-open":
+      return outcomeEvaluation(familiarNpcCount(world) >= 1, {
+        blockers: ["No local connection has opened up yet."],
+        evidence: `${familiarNpcCount(world)} familiar people`,
+      });
+    case "people-friend":
+      return outcomeEvaluation(trustedNpcCount(world) >= 2, {
+        blockers: ["Rowan does not have two trusted local ties yet."],
+        evidence: `${trustedNpcCount(world)} trusted people`,
+      });
+    case "explore-go":
+      return outcomeEvaluation(
+        Boolean(
+          step.targetLocationId &&
+            world.player.knownLocationIds.includes(step.targetLocationId),
+        ),
+        {
+          blockers: ["The target place is not known yet."],
+          evidence: step.targetLocationId,
+        },
+      );
+    case "explore-talk": {
+      const targetPeople = step.targetLocationId
+        ? world.npcs.filter((npc) => npc.currentLocationId === step.targetLocationId)
+        : [];
+      return outcomeEvaluation(
+        targetPeople.some(
+          (npc) => countPlayerConversationsWithNpc(world, npc.id) > 0,
+        ),
+        {
+          blockers: ["Nobody at the explored place has explained it yet."],
+          evidence: `${targetPeople.length} people nearby`,
+        },
+      );
+    }
+    case "explore-learn":
+      return outcomeEvaluation(world.player.knownLocationIds.length >= 4, {
+        blockers: ["South Quay still has too many unknown corners."],
+        evidence: `${world.player.knownLocationIds.length} known places`,
+      });
+    default:
+      break;
+  }
+
+  if (step.id.startsWith("commitment-go-")) {
+    const job = jobById(world, step.id.replace("commitment-go-", ""));
+    return outcomeEvaluation(
+      Boolean(job?.completed || world.player.currentLocationId === job?.locationId),
+      {
+        blockers: [`Rowan is not at ${job?.title ?? "the job"} yet.`],
+        evidence: world.player.currentLocationId,
+      },
+    );
+  }
+
+  if (step.id.startsWith("commitment-window-")) {
+    const job = jobById(world, step.id.replace("commitment-window-", ""));
+    const inWindow = Boolean(
+      job && currentHour(world) >= job.startHour && currentHour(world) < job.endHour,
+    );
+    return outcomeEvaluation(Boolean(job?.completed || inWindow), {
+      atRisk: Boolean(job && currentHour(world) >= job.endHour - 0.75),
+      blockers: [`${job?.title ?? "The job"} is not open right now.`],
+      evidence: inWindow ? "Shift window open." : undefined,
+      failed: Boolean(job?.missed && !job.completed),
+    });
+  }
+
+  if (step.id.startsWith("commitment-finish-")) {
+    const job = jobById(world, step.id.replace("commitment-finish-", ""));
+    return outcomeEvaluation(Boolean(job?.completed), {
+      blockers: job?.missed
+        ? [`${job.title} was missed.`]
+        : [`${job?.title ?? "The job"} is not finished yet.`],
+      evidence: job?.completed ? `${job.title} completed.` : undefined,
+      failed: Boolean(job?.missed && !job.completed),
+    });
+  }
+
+  return undefined;
+}
+
+function outcomeEvaluation(
+  met: boolean,
+  options: {
+    atRisk?: boolean;
+    blockers?: string[];
+    evidence?: string;
+    failed?: boolean;
+  } = {},
+): ObjectiveOutcomeEvaluation {
+  if (met) {
+    return {
+      status: "met",
+      evidence: options.evidence,
+    };
+  }
+
+  if (options.failed) {
+    return {
+      status: "failed",
+      blockers: options.blockers,
+      evidence: options.evidence,
+    };
+  }
+
+  if (options.atRisk) {
+    return {
+      status: "at_risk",
+      blockers: options.blockers,
+      evidence: options.evidence,
+    };
+  }
+
+  return {
+    status: options.blockers?.length ? "blocked" : "open",
+    blockers: options.blockers,
+    evidence: options.evidence,
+  };
+}
+
+function workLeadJob(
+  world: StreetGameState,
+  route: ObjectiveRoute,
+  objectiveText: string,
+) {
+  const lead =
+    route.key === "work-yard" ||
+    route.steps.some((step) => step.id === "work-lead-yard") ||
+    /\btomas\b|\byard\b|\bcrane\b/.test(objectiveText.toLowerCase())
+      ? "yard"
+      : "tea";
+  return lead === "yard"
+    ? jobById(world, "job-yard-shift")
+    : jobById(world, "job-tea-shift");
+}
+
+function objectiveTargetProblem(world: StreetGameState, objectiveText: string) {
+  const normalized = objectiveText.toLowerCase();
+  if (normalized.includes("cart")) {
+    return problemById(world, "problem-cart");
+  }
+
+  if (normalized.includes("pump") || normalized.includes("wrench")) {
+    return problemById(world, "problem-pump");
+  }
+
+  return (
+    world.problems.find((problem) => problem.status === "active") ??
+    world.problems[0]
+  );
 }
 
 function shouldKeepFirstAfternoonRoute(previous: PlayerObjective) {
   return previous.routeKey === "first-afternoon";
 }
 
+function shouldKeepMaraAdaLeadRoute(previous: PlayerObjective) {
+  return previous.routeKey === "mara-ada-lead";
+}
+
 function shouldFirstAfternoonAbsorbConversationRoute(focus: ObjectiveFocus) {
+  return focus === "settle" || focus === "work";
+}
+
+function shouldMaraAdaLeadAbsorbConversationRoute(focus: ObjectiveFocus) {
   return focus === "settle" || focus === "work";
 }
 
@@ -439,6 +951,10 @@ function buildRouteForObjectiveText(
   source: ObjectiveSource,
   previous?: PlayerObjective,
 ): ObjectiveRoute {
+  if (isMaraAdaLeadObjectiveText(text)) {
+    return buildMaraAdaLeadRoute(world, source);
+  }
+
   if (
     normalizedIncludes(text, "first afternoon") ||
     (previous?.routeKey === "first-afternoon" &&
@@ -468,6 +984,113 @@ function buildRouteForObjectiveText(
   }
 }
 
+function buildMaraAdaLeadRoute(
+  world: StreetGameState,
+  source: ObjectiveSource,
+): ObjectiveRoute {
+  const home = findLocation(world, world.player.homeLocationId);
+  const teaJob = jobById(world, "job-tea-shift");
+  const hasTalkedToMara =
+    countPlayerConversationsWithNpc(world, "npc-mara") > 0;
+  const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
+  const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
+  const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
+  const hasGroundedOffer = Boolean(
+    hasLeadFieldNote &&
+      teaJob?.discovered &&
+      !teaJob.missed &&
+      (confirmedWorkLeadFor(world, "tea") ||
+        teaJob.accepted ||
+        teaJob.completed),
+  );
+
+  return {
+    key: "mara-ada-lead",
+    focus: "work",
+    source,
+    terminal: true,
+    steps: [
+      makeStep({
+        id: "mara-ada-hear-lead",
+        title: "Hear Mara's Kettle & Lamp lead.",
+        detail: hasTalkedToMara
+          ? "Mara pointed Rowan toward Ada instead of letting the afternoon drift."
+          : "Ask Mara who can turn tonight's room into real footing.",
+        progress: hasTalkedToMara ? "Lead heard" : "Talk to Mara",
+        done: hasTalkedToMara,
+        npcId: "npc-mara",
+        targetLocationId: home?.id,
+      }),
+      makeStep({
+        id: "mara-ada-form-intent",
+        title: "Form the plan to verify it directly.",
+        detail: hasSettledPlan
+          ? "Rowan chose to ask Ada rather than wander, rest, or wait for work to find him."
+          : "Make the plan explicit: walk to Kettle & Lamp and ask Ada about lunch work.",
+        progress: hasSettledPlan ? "Intent clear" : "Choose the useful move",
+        done: hasSettledPlan,
+        actionId:
+          hasTalkedToMara && !hasSettledPlan
+            ? "reflect:first-afternoon-plan"
+            : undefined,
+        targetLocationId: home?.id,
+      }),
+      makeStep({
+        id: "mara-ada-walk-route",
+        title: "Walk to Kettle & Lamp.",
+        detail:
+          "The knowledge only counts if Rowan gets there in person and asks the right person.",
+        progress:
+          world.player.currentLocationId === "tea-house" ||
+          hasTalkedToAda ||
+          hasLeadFieldNote
+            ? "At Kettle & Lamp"
+            : "On the way",
+        done:
+          world.player.currentLocationId === "tea-house" ||
+          hasTalkedToAda ||
+          hasLeadFieldNote,
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
+        id: "mara-ada-ask-directly",
+        title: "Ask Ada about lunch work.",
+        detail: hasTalkedToAda
+          ? "Ada answered the lead directly."
+          : "Ask Ada whether lunch actually needs help today.",
+        progress: hasTalkedToAda ? "Ada asked" : "Ask Ada",
+        done: hasTalkedToAda,
+        npcId: "npc-ada",
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
+        id: "mara-ada-record-evidence",
+        title: "Record what Rowan learned.",
+        detail: hasLeadFieldNote
+          ? "Rowan has a field note tying the claim to Ada, Kettle & Lamp, and the time."
+          : "Capture the learned fact, the source, the place, and what remains uncertain.",
+        progress: hasLeadFieldNote ? "Field note made" : "Needs evidence",
+        done: hasLeadFieldNote,
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
+        id: "mara-ada-open-choice",
+        title: "Open the next choice from that knowledge.",
+        detail: hasGroundedOffer
+          ? "The offer is now actionable: take the shift, check another lead, return later, or keep exploring."
+          : "The loop should end with an actual choice, not a vague lead.",
+        progress: hasGroundedOffer ? "Choice unlocked" : "No offer yet",
+        done: hasGroundedOffer,
+        actionId:
+          hasGroundedOffer && !teaJob?.accepted && !teaJob?.completed
+            ? "accept:job-tea-shift"
+            : undefined,
+        targetLocationId: "tea-house",
+      }),
+    ],
+  };
+}
+
 function buildFirstAfternoonRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -478,6 +1101,7 @@ function buildFirstAfternoonRoute(
     countPlayerConversationsWithNpc(world, "npc-mara") > 0;
   const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
   const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
+  const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
   const hasTakenTeaShift = Boolean(
     teaJob?.accepted ||
     teaJob?.completed ||
@@ -534,6 +1158,16 @@ function buildFirstAfternoonRoute(
         progress: hasTalkedToAda ? "Ada asked" : "Find Ada",
         done: hasTalkedToAda || hasTakenTeaShift || hasFinishedTeaShift,
         npcId: "npc-ada",
+        targetLocationId: "tea-house",
+      }),
+      makeStep({
+        id: "first-afternoon-record-lead",
+        title: "Record what Ada confirmed.",
+        detail: hasLeadFieldNote
+          ? "Rowan turned Mara's lead into a field note with evidence."
+          : "Write down what Ada said, where it happened, and what choice it opened.",
+        progress: hasLeadFieldNote ? "Lead grounded" : "Needs field note",
+        done: hasLeadFieldNote,
         targetLocationId: "tea-house",
       }),
       makeStep({
@@ -1043,13 +1677,11 @@ function buildRestRoute(
   world: StreetGameState,
   source: ObjectiveSource,
   textHint = "",
-  previous?: PlayerObjective,
+  _previous?: PlayerObjective,
 ): ObjectiveRoute {
   const home = findLocation(world, world.player.homeLocationId);
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
-  const restLanded =
-    previous?.routeKey === "rest-home" &&
-    previous.completedTrail.some((step) => step.id === "rest-hour");
+  const restLanded = hasRecentRest(world);
   return {
     key: "rest-home",
     focus: "rest",
@@ -1287,7 +1919,7 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
     return "yard" as const;
   }
 
-  if (hint.includes("ada") || hint.includes("tea")) {
+  if (hint.includes("ada") || hint.includes("tea") || hint.includes("kettle")) {
     return "tea" as const;
   }
 
@@ -1581,6 +2213,24 @@ function hasConfirmedWorkLead(world: StreetGameState) {
 
 function normalizedIncludes(text: string, needle: string) {
   return text.toLowerCase().includes(needle.toLowerCase());
+}
+
+function isMaraAdaLeadObjectiveText(text: string) {
+  const normalized = text.toLowerCase();
+  const pointsToMaraLead =
+    /\bmara\b/.test(normalized) &&
+    /\blead\b|\bverify\b|\bgrounded knowledge\b|\bgrounded\b/.test(
+      normalized,
+    );
+  const pointsToAdaWork =
+    /\bada\b|\bkettle & lamp\b|\btea[- ]house\b/.test(normalized) &&
+    /\bwork\b|\blunch\b|\bshift\b|\bhands?\b|\bask\b/.test(normalized);
+  const asksForFieldNote =
+    /\brecord\b|\bfield note\b|\bwhat rowan learns\b|\bevidence\b/.test(
+      normalized,
+    );
+
+  return pointsToAdaWork && (pointsToMaraLead || asksForFieldNote);
 }
 
 function detectTopics(text: string) {

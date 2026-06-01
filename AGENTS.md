@@ -31,4 +31,6 @@ Use the narrowest validation that covers the change, but do validate.
 
 The target is a clean first 3 to 5 minutes: the app should load clearly, show Rowan making understandable choices, let the user pan around the city, and never make the run feel like a stale recording or a broken reload.
 
+When reviewing Rowan autonomy, objectives, autoplay, or AI planning, explicitly audit whether objectives are desired outcomes with route hints or whether `advance_objective` is still primarily following hardcoded trail steps. Flag hardcoded route-following as the core agency gap, even if the resulting path is playable.
+
 When reviewing, lead with functional regressions, then visual or tone regressions, then structural cleanup. Keep unrelated refactors out of fixes unless they are needed to make the current behavior reliable.

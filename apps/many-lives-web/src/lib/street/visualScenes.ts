@@ -93,6 +93,7 @@ export type VisualSceneLocationAnchors = {
   highlight: VisualRect;
   label: VisualPoint;
   npcStands?: VisualPoint[];
+  playerApproaches?: VisualPoint[];
 };
 
 export type VisualSceneLandmark = {
@@ -664,6 +665,10 @@ function locationAnchorPoints(anchors: VisualSceneLocationAnchors) {
   return [
     { label: "door", point: anchors.door },
     { label: "frontage", point: anchors.frontage },
+    ...((anchors.playerApproaches ?? []).map((point, index) => ({
+      label: `player approach ${index + 1}`,
+      point,
+    })) as Array<{ label: string; point: VisualPoint }>),
     ...((anchors.npcStands ?? []).map((point, index) => ({
       label: `npc stand ${index + 1}`,
       point,

@@ -10,6 +10,7 @@
     "dev:health": "node scripts/check-local-dev-stack.mjs",
     "playtest:rowan": "corepack pnpm --filter @many-lives/sim-server playtest:rowan",
     "playtest:rowan:browser": "node scripts/rowan-browser-regression.mjs",
+    "playtest:gameplay:browser": "MANY_LIVES_BROWSER_DRIVER=chrome node scripts/rowan-browser-regression.mjs",
     "visual:game": "node scripts/visual-game-smoke.mjs",
     "harness": "node scripts/app-harness.mjs",
     "harness:quick": "node scripts/app-harness.mjs --profile quick",

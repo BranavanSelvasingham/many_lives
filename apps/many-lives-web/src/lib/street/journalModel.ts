@@ -1,4 +1,8 @@
-import type { StreetGameState } from "@/lib/street/types";
+import type { StreetGameState } from "./types";
+
+type ObjectiveOutcome = NonNullable<
+  StreetGameState["player"]["objective"]
+>["outcomes"][number];
 
 export type ObjectivePlanItem = {
   id: string;
@@ -19,13 +23,13 @@ export function buildObjectivePlanRows(
   game: StreetGameState,
   locationById: Map<string, StreetGameState["locations"][number]>,
 ): ObjectivePlanItem[] {
-  if (game.player.objective?.trail?.length) {
-    return game.player.objective.trail.map((item) => ({
-      detail: item.detail ?? item.progress ?? "Active",
-      done: Boolean(item.done),
-      id: item.id,
-      progress: item.progress,
-      title: item.title,
+  if (game.player.objective?.outcomes?.length) {
+    return game.player.objective.outcomes.map((outcome) => ({
+      detail: objectiveOutcomeDetail(outcome),
+      done: outcome.status === "met",
+      id: outcome.id,
+      progress: objectiveOutcomeStatusLabel(outcome.status),
+      title: outcome.label,
     }));
   }
 
@@ -36,6 +40,19 @@ export function buildObjectiveCompletionRows(
   game: StreetGameState,
   locationById: Map<string, StreetGameState["locations"][number]>,
 ): ObjectivePlanItem[] {
+  const metOutcomes = game.player.objective?.outcomes?.filter(
+    (outcome) => outcome.status === "met",
+  );
+  if (metOutcomes?.length) {
+    return metOutcomes.map((outcome) => ({
+      detail: objectiveOutcomeDetail(outcome),
+      done: true,
+      id: outcome.id,
+      progress: "Met",
+      title: outcome.label,
+    }));
+  }
+
   if (game.player.objective?.completedTrail?.length) {
     return game.player.objective.completedTrail.map((item) => ({
       detail: item.detail ?? item.progress ?? "Done",
@@ -47,6 +64,34 @@ export function buildObjectiveCompletionRows(
   }
 
   return buildObjectiveCompletedItems(game, locationById);
+}
+
+function objectiveOutcomeDetail(outcome: ObjectiveOutcome) {
+  if (outcome.blockers?.length) {
+    return outcome.blockers.join(" ");
+  }
+
+  if (outcome.evidence) {
+    return outcome.evidence;
+  }
+
+  return objectiveOutcomeStatusLabel(outcome.status);
+}
+
+function objectiveOutcomeStatusLabel(status: ObjectiveOutcome["status"]) {
+  switch (status) {
+    case "met":
+      return "Met";
+    case "blocked":
+      return "Blocked";
+    case "at_risk":
+      return "At risk";
+    case "failed":
+      return "Failed";
+    case "open":
+    default:
+      return "Open";
+  }
 }
 
 export function buildObjectiveSuggestions(game: StreetGameState) {
