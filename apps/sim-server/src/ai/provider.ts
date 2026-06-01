@@ -2,6 +2,7 @@ import type { Character } from "../domain/character.js";
 import type { EventRecord } from "../domain/event.js";
 import type { InboxMessageType, InboxPriority } from "../domain/inbox.js";
 import type {
+  ActionOption,
   MemoryEntry,
   ObjectiveFocus,
   StreetGameState,
@@ -75,6 +76,40 @@ export interface StreetConversationInterpretationResult {
   summary?: string;
 }
 
+export interface StreetPlanningAllowedAction {
+  actionId: string;
+  description: string;
+  kind: ActionOption["kind"] | "move" | "observe" | "wait";
+  label: string;
+  npcId?: string;
+  targetLocationId?: string;
+}
+
+export interface StreetPlanningObjectiveOutcome {
+  id: string;
+  label: string;
+  priority: number;
+  status: "met" | "open" | "at_risk";
+  evidence?: string;
+}
+
+export interface StreetPlanningRequest {
+  allowedActions: StreetPlanningAllowedAction[];
+  desiredOutcomes: StreetPlanningObjectiveOutcome[];
+  game: StreetGameState;
+  objective: {
+    focus: ObjectiveFocus;
+    routeKey: string;
+    text: string;
+  };
+}
+
+export interface StreetPlanningResult {
+  actionId: string;
+  confidence: number;
+  rationale: string;
+}
+
 export interface AIProvider {
   readonly name: string;
   summarizeState(world: WorldState): Promise<string>;
@@ -96,6 +131,9 @@ export interface AIProvider {
   interpretStreetConversation(
     input: StreetConversationInterpretationRequest,
   ): Promise<StreetConversationInterpretationResult>;
+  planStreetNextAction(
+    input: StreetPlanningRequest,
+  ): Promise<StreetPlanningResult | null>;
 }
 
 export function createAIProvider(

@@ -216,7 +216,17 @@ export function buildStreetOverlayStyle({
         width: min(calc(100% - var(--ml-inset) * 2), var(--ml-dock-width));
         display: flex;
         flex-direction: column;
+        justify-content: flex-end;
         gap: 10px;
+      }
+      .ml-root:not(.is-collapsible-rail) .ml-dock {
+        top: calc(var(--ml-inset) + 64px);
+      }
+      .ml-root:not(.is-collapsible-rail) .ml-dock:has(.ml-inline-focus-window) {
+        justify-content: flex-start;
+      }
+      .ml-root:not(.is-collapsible-rail) .ml-dock:has(.ml-inline-focus-window) > .ml-dock-panel {
+        display: none;
       }
       .ml-panel {
         pointer-events: auto;
@@ -353,6 +363,7 @@ export function buildStreetOverlayStyle({
         border-radius: 999px;
       }
       .ml-dock-panel {
+        flex: 0 0 auto;
         padding: 12px 14px;
       }
       .ml-dock-identity {
@@ -472,6 +483,81 @@ export function buildStreetOverlayStyle({
         letter-spacing: 0.18em;
         text-transform: uppercase;
         color: rgba(141, 208, 205, 0.72);
+      }
+      .ml-planner-trace {
+        margin-top: 11px;
+        border-radius: 14px;
+        border: 1px solid rgba(138, 151, 161, 0.14);
+        background: rgba(6, 16, 22, 0.24);
+        padding: 9px;
+      }
+      .ml-planner-trace-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 9px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(141, 208, 205, 0.72);
+      }
+      .ml-planner-trace-head strong {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 10px;
+        letter-spacing: 0;
+        text-transform: none;
+        color: rgba(239, 246, 248, 0.9);
+      }
+      .ml-planner-trace-list {
+        display: grid;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .ml-planner-trace-option {
+        border-left: 2px solid rgba(138, 151, 161, 0.2);
+        padding-left: 8px;
+      }
+      .ml-planner-trace-option[data-status="selected"] {
+        border-left-color: rgba(205, 174, 115, 0.62);
+      }
+      .ml-planner-trace-option span,
+      .ml-planner-trace-option em {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ml-planner-trace-option span {
+        font-size: 11px;
+        font-weight: 700;
+        color: rgba(241, 246, 248, 0.9);
+      }
+      .ml-planner-trace-option em {
+        margin-top: 2px;
+        font-size: 10px;
+        line-height: 1.35;
+        font-style: normal;
+        color: rgba(216, 226, 231, 0.66);
+      }
+      .ml-planner-trace-foot {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 8px;
+      }
+      .ml-planner-trace-foot span {
+        max-width: 100%;
+        border-radius: 999px;
+        border: 1px solid rgba(138, 151, 161, 0.12);
+        background: rgba(10, 20, 26, 0.34);
+        padding: 4px 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 9px;
+        color: rgba(219, 228, 233, 0.68);
       }
       .ml-rowan-signal-row {
         display: flex;
@@ -1011,6 +1097,91 @@ export function buildStreetOverlayStyle({
         background: rgba(17, 25, 31, 0.84);
         padding: 12px;
       }
+      .ml-notebook-card {
+        border-color: rgba(205, 174, 115, 0.24);
+        background:
+          radial-gradient(circle at 12% 0%, rgba(205, 174, 115, 0.16), transparent 36%),
+          linear-gradient(180deg, rgba(34, 29, 23, 0.88), rgba(15, 22, 27, 0.9));
+      }
+      .ml-notebook-grid,
+      .ml-field-note-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .ml-notebook-line,
+      .ml-field-note-line {
+        border-radius: 14px;
+        border: 1px solid rgba(205, 174, 115, 0.14);
+        background: rgba(15, 21, 25, 0.68);
+        padding: 10px;
+      }
+      .ml-notebook-line.is-wide {
+        grid-column: 1 / -1;
+      }
+      .ml-field-note-card {
+        margin-bottom: 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(205, 174, 115, 0.28);
+        background:
+          linear-gradient(135deg, rgba(241, 218, 176, 0.12), transparent 34%),
+          linear-gradient(180deg, rgba(37, 31, 23, 0.92), rgba(18, 24, 28, 0.9));
+        box-shadow: inset 0 0 0 1px rgba(255, 242, 214, 0.04);
+        padding: 14px;
+      }
+      .ml-field-note-ledger {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+      .ml-field-note-ledger .ml-field-note-card {
+        margin-bottom: 0;
+      }
+      .ml-focus-body .ml-field-note-card {
+        padding: 12px;
+      }
+      .ml-focus-body .ml-field-note-ledger {
+        display: grid;
+        grid-template-columns: minmax(0, 1.45fr) minmax(220px, 0.75fr);
+        align-items: stretch;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .ml-focus-body .ml-field-note-ledger .ml-field-note-card:first-child:last-child {
+        grid-column: 1 / -1;
+      }
+      .ml-field-note-card.is-compact {
+        padding: 12px 14px;
+      }
+      .ml-field-note-stamp {
+        display: inline-flex;
+        border-radius: 999px;
+        border: 1px solid rgba(205, 174, 115, 0.26);
+        background: rgba(205, 174, 115, 0.1);
+        padding: 6px 9px;
+        font-size: 10px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(246, 226, 188, 0.92);
+      }
+      .ml-field-note-title {
+        margin-top: 10px;
+        font-size: 20px;
+        line-height: 1.08;
+        font-weight: 800;
+        color: rgba(255, 249, 236, 0.98);
+      }
+      .ml-field-note-compact-copy {
+        margin-top: 8px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: rgba(219, 228, 233, 0.76);
+      }
+      .ml-command-rail .ml-field-note-grid {
+        grid-template-columns: 1fr;
+      }
       .ml-focus-body .ml-card {
         background: rgba(12, 19, 24, 0.8);
       }
@@ -1504,6 +1675,8 @@ export function buildStreetOverlayStyle({
       .ml-inline-focus-window {
         width: min(var(--ml-dock-focus-width), calc(100vw - var(--ml-inset) * 2));
         min-width: min(540px, var(--ml-dock-focus-width));
+        min-height: 0;
+        flex: 1 1 auto;
         align-self: flex-start;
         max-height: min(var(--ml-focus-height), var(--ml-rail-max-height));
         display: flex;
@@ -1559,6 +1732,8 @@ export function buildStreetOverlayStyle({
         cursor: pointer;
       }
       .ml-focus-body {
+        min-height: 0;
+        flex: 1 1 auto;
         overflow-y: auto;
         padding: 18px 20px 20px;
       }
@@ -1604,6 +1779,9 @@ export function buildStreetOverlayStyle({
           grid-template-columns: 1fr;
         }
         .ml-focus-grid.is-live-conversation {
+          grid-template-columns: 1fr;
+        }
+        .ml-focus-body .ml-field-note-ledger {
           grid-template-columns: 1fr;
         }
         .ml-focus-header {
@@ -1757,6 +1935,14 @@ export function buildStreetOverlayStyle({
         }
         .ml-focus-stack {
           gap: 10px;
+        }
+        .ml-notebook-grid,
+        .ml-field-note-grid {
+          grid-template-columns: 1fr;
+        }
+        .ml-field-note-card {
+          margin-bottom: 10px;
+          padding: 12px;
         }
         .ml-right-stack {
           gap: 10px;

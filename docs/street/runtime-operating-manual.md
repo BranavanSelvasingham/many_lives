@@ -58,6 +58,7 @@ Autoplay is a watch mode for Rowan's current autonomy policy. It should feel lik
 - `?autoplay=1` lets Rowan continue through available goals and actions without manual clicks.
 - Autoplay does not choose which game to load; URL and storage rules still decide that.
 - Rowan's behavior should come from current sim state, available actions, objectives, conversations, and local policy helpers. It should not depend on a fixed prerecorded movement list.
+- Objectives describe desired outcomes. They may provide progress scaffolding and route hints, but they must not be the primary source of Rowan's next move. Rowan's next move should come from the current world state and legal action surface, with deterministic validation and fallback.
 - The rail and playback beats explain what Rowan is doing. They are not the source of truth.
 - The map must support user panning while autoplay runs, so the viewer can look around without fighting camera snaps.
 - Ambient citizens should move at believable human scale and speed. They are part of the "living city" read, not tiny decorative markers.
@@ -66,6 +67,18 @@ When autoplay feels wrong, inspect both:
 
 - Game state and available actions from `/sim/game/<id>/state`.
 - UI playback state in [rowanPlayback.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/street/rowanPlayback.ts) and [rowanAutonomy.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/street/rowanAutonomy.ts).
+
+## Living-World Agency Audit
+
+Use this audit whenever reviewing Rowan autonomy, objectives, autoplay, AI planning, or the first 3 to 5 minutes. This is the check that should flag the difference between a seeded living world and a hardcoded route.
+
+- Seeded data may define places, NPCs, jobs, problems, schedules, world events, memories, and objective outcomes.
+- Objective trails may show progress and provide hints, but a review must flag any implementation where `advance_objective` primarily follows the next trail step instead of evaluating current state and legal actions.
+- Objective completion should be evaluated from `player.objective.outcomes`: desired-state predicates with status, evidence, blockers, and urgency. `trail.done` is explanatory scaffolding only and must not be the authoritative completion mechanism.
+- Rowan's decision loop should consider current location, time, money, energy, memory, active conversations, known places, known people, jobs, problems, city events, commitments, and available actions.
+- NPCs, jobs, problems, and city events should keep evolving as time advances whether Rowan acts on them or not.
+- AI planning may choose only from validated allowed actions. The simulator remains authoritative for movement, time, consequences, and state mutation.
+- If a change only makes a scripted path more polished, call that out explicitly. Do not describe it as AI-driven or living-world behavior unless Rowan can choose among state-derived legal actions and the world can change independently.
 
 ## Conversation And Tone Contract
 
@@ -118,6 +131,7 @@ Use this checklist when the user asks whether the app is playable, ready, or dep
 - Resume saved run and confirm the game id matches storage.
 - Start new from the saved-run prompt and confirm the new id differs.
 - Watch autoplay for 3 to 5 minutes or until the first stopping point.
+- Confirm Rowan's objective decisions come from current world state and available legal actions, not just the next hardcoded objective trail item.
 - Pan to each map edge and confirm the user can tell when the edge is reached.
 - Check desktop, tablet, and phone-sized layouts.
 - Inspect screenshots, not only test output.

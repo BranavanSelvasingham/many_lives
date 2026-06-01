@@ -24,6 +24,7 @@ import {
   toFirstPersonText,
 } from "@/components/street/streetFormatting";
 import {
+  buildFirstAfternoonFieldNoteHtml,
   buildJournalTabHtml,
   buildLoadingHtml,
   buildMindTabHtml,
@@ -278,6 +279,18 @@ function buildGameSyncKey(game: StreetGameState) {
     game.firstAfternoon?.planSettledAt ?? "",
     game.firstAfternoon?.teaShiftStage ?? "",
     game.firstAfternoon?.completedAt ?? "",
+    game.firstAfternoon?.leadFieldNote?.createdAt ?? "",
+    game.firstAfternoon?.leadFieldNote?.evidence ?? "",
+    game.firstAfternoon?.fieldNote?.createdAt ?? "",
+    game.firstAfternoon?.fieldNote?.evidence ?? "",
+    ...(game.cityEvents ?? []).map((event) =>
+      [
+        event.id,
+        event.status,
+        event.progress ?? "",
+        event.updatedAt,
+      ].join(":"),
+    ),
     game.rowanAutonomy.key,
     game.rowanAutonomy.label,
     game.rowanAutonomy.intent?.reason ?? "",
@@ -589,6 +602,7 @@ type MapAgencyCue = {
 
 type AmbientCityRoute = {
   accent: number;
+  cityEventIds?: string[];
   color: number;
   id: string;
   path: Point[];
@@ -602,6 +616,7 @@ type AmbientCityRoute = {
 const AMBIENT_CITY_ROUTES: AmbientCityRoute[] = [
   {
     accent: 0xd7bc79,
+    cityEventIds: ["event-cafe-prep", "event-lunch-rush"],
     color: 0x52646c,
     id: "tea-house-front",
     path: [
@@ -635,6 +650,7 @@ const AMBIENT_CITY_ROUTES: AmbientCityRoute[] = [
   },
   {
     accent: 0xb68d5b,
+    cityEventIds: ["event-market-crossing", "event-square-cart"],
     color: 0x43545c,
     id: "market-crossing",
     path: [
@@ -667,6 +683,7 @@ const AMBIENT_CITY_ROUTES: AmbientCityRoute[] = [
   },
   {
     accent: 0xc78c59,
+    cityEventIds: ["event-yard-loading"],
     color: 0x3f4b52,
     id: "yard-shuttle",
     path: [
@@ -1804,6 +1821,28 @@ async function createRuntime(options: {
         overlayDom,
       );
       runtimeState.objects = objects;
+      objects.playerContainer.setSize(78, 126);
+      objects.playerContainer.setInteractive(
+        new Phaser.Geom.Rectangle(-39, -88, 78, 126),
+        Phaser.Geom.Rectangle.Contains,
+      );
+      objects.playerContainer.on(
+        "pointerdown",
+        (
+          _pointer: PhaserType.Input.Pointer,
+          _localX: number,
+          _localY: number,
+          event: PhaserType.Types.Input.EventData,
+        ) => {
+          event.stopPropagation();
+          runtimeState.ui.activeTab = "mind";
+          runtimeState.ui.focusPanel = "mind";
+          if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+            runtimeState.ui.railExpanded = false;
+          }
+          renderOverlay(objects, runtimeState);
+        },
+      );
 
       bindOverlayEvents(objects.overlayDom, runtimeState, options.callbacksRef);
 
@@ -4090,6 +4129,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       ? actions.filter((action) => action.id !== selectedTalkAction.id)
       : actions;
   const firstAfternoonComplete = Boolean(game.firstAfternoon?.completedAt);
+  const firstAfternoonFieldNoteHtml = firstAfternoonComplete && !focusPanel
+    ? buildFirstAfternoonFieldNoteHtml(game)
+    : "";
   const secondaryActions = (
     firstAfternoonComplete ? [] : availableActionsForRail
   ).slice(0, width <= 1080 ? 4 : 5);
@@ -4211,14 +4253,17 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       ? 176
       : 112;
   const compactRailExpandedHeight =
-    railViewport === "phone"
+    railViewport === "phone" && firstAfternoonOpening
+      ? Math.max(400, Math.min(Math.round(height * 0.48), height - 240))
+      : railViewport === "phone"
       ? Math.max(320, Math.min(Math.round(height * 0.58), height - 152))
       : Math.max(340, Math.min(Math.round(height * 0.56), height - 160));
   const compactRailWidth =
     railViewport === "phone"
       ? Math.max(width - overlayInset * 2, 280)
       : Math.min(Math.max(width * 0.4, 320), 360);
-  const compactRailBottomOffset = railViewport === "phone" ? 148 : 168;
+  const compactRailBottomOffset =
+    railViewport === "phone" ? (firstAfternoonOpening ? 28 : 148) : 168;
   return `
     ${buildStreetOverlayStyle({
       compactRailBottomOffset,
@@ -4297,8 +4342,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             focusMeta?.subtitle ??
               upcomingCommitmentLabel ??
               (snapshot.rowanAutoplayEnabled
-                ? "Drag the map to look around. Open Locals, Journal, or Mind when you want details."
-                : "Scroll or drag the map to look around. Click a street tile to move, or open People, Journal, and Mind for details."),
+                ? "Drag the map to look around. Open Locals, Journal, or Notebook when you want details."
+                : "Scroll or drag the map to look around. Click a street tile to move, or open People, Journal, and Notebook for details."),
           )}</div>
         </div>
       </div>
@@ -4346,6 +4391,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             data-rail-root="rowan"
           >
             <div class="ml-command-rail-body">
+              ${firstAfternoonFieldNoteHtml}
               ${buildRowanStoryCardHtml("Now", rowanRail.now, true)}
               ${
                 showPrimaryContinue
@@ -5685,9 +5731,12 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
     location: currentLocation,
     props: runtimeState.indices.propsByLocation.get(currentLocation.id) ?? [],
     visualHints:
-      runtimeState.indices.visualScene?.locationAnchors[
-        currentLocation.id
-      ]?.npcStands?.filter(Boolean) ?? [],
+      [
+        ...(runtimeState.indices.visualScene?.locationAnchors[currentLocation.id]
+          ?.playerApproaches ?? []),
+        ...(runtimeState.indices.visualScene?.locationAnchors[currentLocation.id]
+          ?.npcStands ?? []),
+      ].filter(Boolean),
     walkableRuntimePoints: runtimeState.indices.walkableRuntimePoints,
   });
 
@@ -6069,16 +6118,22 @@ function drawAmbientCityLife(
     return;
   }
 
-  const lunchPulse = hour >= 11 && hour <= 15.4 ? 1 : 0.72;
+  const lunchRushActive = cityEventIsRenderable(game, "event-lunch-rush", {
+    includeUpcoming: true,
+  });
+  const lunchPulse = lunchRushActive || (hour >= 11 && hour <= 15.4) ? 1 : 0.72;
   const cityAlpha = runtimeState.snapshot.rowanAutoplayEnabled ? 0.9 : 0.74;
 
+  drawCafeWarmWindowEvent(layer, runtimeState, now, hour);
+  drawDockCartEvent(layer, runtimeState, now, hour);
+
   for (const route of AMBIENT_CITY_ROUTES) {
-    if (!ambientRouteIsActive(route, hour)) {
+    if (!ambientRouteIsActive(route, hour, game)) {
       continue;
     }
 
     const crowdCount =
-      route.id === "tea-house-front" && hour >= 11 && hour <= 15.4
+      route.id === "tea-house-front" && lunchRushActive
         ? 3
         : route.id === "market-crossing" || route.id === "yard-shuttle"
           ? 2
@@ -6122,12 +6177,202 @@ function drawAmbientCityLife(
       });
     }
   }
+
+  drawSquarePasserbyBeat(layer, runtimeState, now, hour);
 }
 
-function ambientRouteIsActive(route: AmbientCityRoute, hour: number) {
+function ambientRouteIsActive(
+  route: AmbientCityRoute,
+  hour: number,
+  game: StreetGameState,
+) {
+  if (route.cityEventIds?.length && game.cityEvents?.length) {
+    return route.cityEventIds.some((eventId) =>
+      cityEventIsRenderable(game, eventId, {
+        includeUpcoming: route.id === "tea-house-front",
+      }),
+    );
+  }
+
   const startHour = route.startHour ?? 0;
   const endHour = route.endHour ?? 24;
   return hour >= startHour && hour <= endHour;
+}
+
+function cityEventIsRenderable(
+  game: StreetGameState,
+  eventId: string,
+  options: { includeResolved?: boolean; includeUpcoming?: boolean } = {},
+) {
+  const event = game.cityEvents?.find((candidate) => candidate.id === eventId);
+  if (!event) {
+    return false;
+  }
+
+  return (
+    event.status === "active" ||
+    (options.includeUpcoming && event.status === "upcoming") ||
+    (options.includeResolved && event.status === "resolved")
+  );
+}
+
+function drawCafeWarmWindowEvent(
+  layer: PhaserType.GameObjects.Graphics,
+  runtimeState: RuntimeState,
+  now: number,
+  hour: number,
+) {
+  const game = runtimeState.snapshot.game;
+  const anchors = runtimeState.indices.visualScene?.locationAnchors["tea-house"];
+  const eventDriven =
+    game &&
+    (cityEventIsRenderable(game, "event-cafe-prep", {
+      includeResolved: true,
+    }) ||
+      cityEventIsRenderable(game, "event-lunch-rush", {
+        includeResolved: true,
+        includeUpcoming: true,
+      }));
+
+  if (!anchors || hour < 7 || hour > 16.5 || (!eventDriven && hour > 16)) {
+    return;
+  }
+
+  const rect = anchors.highlight;
+  const lunchActive = game
+    ? cityEventIsRenderable(game, "event-lunch-rush")
+    : hour >= 12 && hour <= 15;
+  const pulseBase = lunchActive ? 0.68 : 0.58;
+  const pulse = pulseBase + (Math.sin(now / 720) + 1) * 0.18;
+  const doorPulse = 0.56 + (Math.sin(now / 520 + 0.8) + 1) * 0.16;
+  const windowY = rect.y + rect.height * 0.56;
+  const windowWidth = rect.width * 0.18;
+  const startX = rect.x + rect.width * 0.18;
+
+  layer.fillStyle(0xf3dfa6, 0.1 * pulse);
+  layer.fillRoundedRect(
+    rect.x + rect.width * 0.1,
+    windowY - 12,
+    rect.width * 0.8,
+    42,
+    16,
+  );
+
+  for (let index = 0; index < 3; index += 1) {
+    const x = startX + index * (windowWidth + rect.width * 0.08);
+    const localPulse = pulse + Math.sin(now / 420 + index * 0.7) * 0.08;
+    layer.fillStyle(0xffedbd, 0.22 * localPulse);
+    layer.fillRoundedRect(x - 5, windowY - 5, windowWidth + 10, 24, 8);
+    layer.fillStyle(0xffd990, 0.38 * localPulse);
+    layer.fillRoundedRect(x, windowY, windowWidth, 14, 4);
+  }
+
+  layer.fillStyle(0xf0cf8c, 0.2 * doorPulse);
+  layer.fillCircle(anchors.door.x, anchors.door.y - 28, 18);
+  layer.lineStyle(2, 0xf6dfaa, 0.38 * doorPulse);
+  layer.strokeCircle(anchors.door.x, anchors.door.y - 28, 11);
+}
+
+function drawDockCartEvent(
+  layer: PhaserType.GameObjects.Graphics,
+  runtimeState: RuntimeState,
+  now: number,
+  hour: number,
+) {
+  const game = runtimeState.snapshot.game;
+  const anchors =
+    runtimeState.indices.visualScene?.locationAnchors["market-square"];
+  const eventDriven =
+    game &&
+    cityEventIsRenderable(game, "event-square-cart", {
+      includeUpcoming: true,
+    });
+
+  if (!anchors || (!eventDriven && (hour < 11.5 || hour > 17))) {
+    return;
+  }
+
+  const rect = anchors.highlight;
+  const progress = positiveModulo(
+    now / 15000 + (runtimeState.snapshot.game?.clock.totalMinutes ?? 0) * 0.003,
+    1,
+  );
+  const eased =
+    progress < 0.5
+      ? easeInOutCubic(progress * 2)
+      : easeInOutCubic((1 - progress) * 2);
+  const x = rect.x + rect.width * (0.18 + eased * 0.5);
+  const y = rect.y + rect.height * 0.54;
+  const lift = Math.sin(now / 180) * 1.2;
+
+  layer.fillStyle(0x071016, 0.18);
+  layer.fillEllipse(x, y + 16, 58, 13);
+  layer.fillStyle(0x7f6040, 0.78);
+  layer.fillRoundedRect(x - 24, y - 2 + lift, 48, 20, 5);
+  layer.fillStyle(0xc7b38c, 0.86);
+  layer.fillRoundedRect(x - 17, y - 15 + lift, 17, 14, 4);
+  layer.fillRoundedRect(x + 3, y - 14 + lift, 18, 13, 4);
+  layer.lineStyle(3, 0x4a3423, 0.68);
+  layer.lineBetween(x + 21, y + 3 + lift, x + 37, y - 5 + lift);
+  layer.fillStyle(0x1b252b, 0.82);
+  layer.fillCircle(x - 16, y + 18 + lift, 5.5);
+  layer.fillCircle(x + 15, y + 18 + lift, 5.5);
+  layer.fillStyle(0xf0cf8c, 0.52);
+  layer.fillCircle(x - 16, y + 18 + lift, 2.4);
+  layer.fillCircle(x + 15, y + 18 + lift, 2.4);
+}
+
+function drawSquarePasserbyBeat(
+  layer: PhaserType.GameObjects.Graphics,
+  runtimeState: RuntimeState,
+  now: number,
+  hour: number,
+) {
+  const game = runtimeState.snapshot.game;
+  const anchors =
+    runtimeState.indices.visualScene?.locationAnchors["market-square"];
+  const eventDriven =
+    game &&
+    (cityEventIsRenderable(game, "event-market-crossing") ||
+      cityEventIsRenderable(game, "event-square-cart", {
+        includeUpcoming: true,
+      }));
+
+  if (!anchors || (!eventDriven && (hour < 8 || hour > 18))) {
+    return;
+  }
+
+  const rect = anchors.highlight;
+  const progress = positiveModulo(now / 11000 + 0.18, 1);
+  const pausing = progress > 0.36 && progress < 0.68;
+  const x = rect.x + rect.width * (0.28 + Math.min(progress, 0.68) * 0.36);
+  const y = rect.y + rect.height * 0.62 + Math.sin(now / 220) * 1.2;
+
+  drawAmbientPedestrian(layer, {
+    accent: 0xf0cf8c,
+    alpha: pausing ? 0.9 : 0.76,
+    color: 0x455b5f,
+    facing: progress < 0.52 ? 1 : -1,
+    scale: 0.96,
+    step: pausing ? 0.08 : Math.sin(progress * Math.PI * 2),
+    x,
+    y,
+  });
+
+  if (!pausing) {
+    return;
+  }
+
+  layer.fillStyle(0xf7e5bd, 0.84);
+  layer.fillRoundedRect(x + 17, y - 55, 34, 19, 7);
+  layer.fillTriangle(x + 20, y - 37, x + 16, y - 29, x + 29, y - 37);
+  layer.fillStyle(0x4a5961, 0.62);
+  layer.fillCircle(x + 28, y - 45, 2.1);
+  layer.fillCircle(x + 35, y - 45, 2.1);
+  layer.fillCircle(x + 42, y - 45, 2.1);
+  layer.lineStyle(2.4, 0xf0cf8c, 0.72);
+  layer.lineBetween(x - 9, y - 7, x - 21, y - 22);
+  layer.lineBetween(x - 21, y - 22, x - 17, y - 30);
 }
 
 function drawAmbientPedestrian(
@@ -7089,7 +7334,7 @@ function buildPlayerMotionWorldPath(
   const targetLocationId = runtimeState.snapshot.optimisticPlayerPosition
     ? runtimeState.snapshot.optimisticPlayerLocationId
     : runtimeState.snapshot.game?.player.currentLocationId;
-  const targetWorldPoint = resolveAuthoredLocationWorldPoint({
+  const targetWorldPath = resolveAuthoredPlayerArrivalWorldPath({
     conversationLocationId:
       runtimeState.snapshot.optimisticPlayerConversationLocationId ??
       runtimeState.snapshot.game?.activeConversation?.locationId,
@@ -7101,7 +7346,55 @@ function buildPlayerMotionWorldPath(
   return dedupePointSequence([
     fromWorldPoint,
     ...projectedPath.slice(1, -1),
-    targetWorldPoint ?? projectedPath[projectedPath.length - 1],
+    ...(targetWorldPath ?? [projectedPath[projectedPath.length - 1]]),
+  ]);
+}
+
+function resolveAuthoredPlayerArrivalWorldPath({
+  conversationLocationId,
+  indices,
+  locationId,
+  point,
+}: {
+  conversationLocationId?: string | null;
+  indices: RuntimeIndices;
+  locationId?: string | null;
+  point: Point;
+}) {
+  if (!locationId) {
+    return null;
+  }
+
+  const anchors = indices.visualScene?.locationAnchors[locationId];
+  if (!anchors) {
+    return null;
+  }
+
+  const targetWorldPoint = resolveAuthoredLocationWorldPoint({
+    conversationLocationId,
+    indices,
+    locationId,
+    point,
+  });
+  if (!targetWorldPoint) {
+    return null;
+  }
+
+  const entryPoints = dedupePointSequence([
+    { x: anchors.frontage.x, y: anchors.frontage.y },
+    { x: anchors.door.x, y: anchors.door.y },
+  ]);
+  const nearestEntryPoint = entryPoints
+    .filter((entryPoint) => distanceBetween(entryPoint, targetWorldPoint) > 30)
+    .sort(
+      (left, right) =>
+        distanceBetween(left, targetWorldPoint) -
+        distanceBetween(right, targetWorldPoint),
+    )[0];
+
+  return dedupePointSequence([
+    ...(nearestEntryPoint ? [nearestEntryPoint] : []),
+    targetWorldPoint,
   ]);
 }
 
@@ -7126,7 +7419,7 @@ function resolveAuthoredLocationWorldPoint({
   }
 
   const candidatePoints = dedupePointSequence([
-    ...(anchors.npcStands ?? []).map((candidate) => ({
+    ...(anchors.playerApproaches ?? []).map((candidate) => ({
       x: candidate.x,
       y: candidate.y,
     })),
@@ -7145,6 +7438,7 @@ function resolveAuthoredLocationWorldPoint({
 
   if (
     conversationLocationId === locationId &&
+    anchors.playerApproaches?.length &&
     candidatePoints.length > 1
   ) {
     return candidatePoints[0];
@@ -7231,15 +7525,15 @@ function focusPanelMeta(
       return {
         kicker: "Field Notes",
         subtitle:
-          "Objectives, feed, and what Rowan should do next.",
+          "Objectives, field notes, and what Rowan should do next.",
         title: "Journal",
       };
     case "mind":
       return {
-        kicker: "Working Memory",
+        kicker: "Rowan's Notebook",
         subtitle:
-          "Places, people, and unfinished business Rowan is keeping in view.",
-        title: "Mind",
+          "Beliefs, plans, remembered clues, and unfinished questions.",
+        title: "Notebook",
       };
   }
 }

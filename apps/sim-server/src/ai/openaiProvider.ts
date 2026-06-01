@@ -7,6 +7,8 @@ import type {
   StreetAutonomousLineResult,
   StreetConversationInterpretationRequest,
   StreetConversationInterpretationResult,
+  StreetPlanningRequest,
+  StreetPlanningResult,
 } from "./provider.js";
 import { MockAIProvider } from "./mockProvider.js";
 import { buildClassifyEscalationPrompt } from "./prompts/classifyEscalation.js";
@@ -15,6 +17,7 @@ import { buildGenerateStreetReplyPrompt } from "./prompts/generateStreetReply.js
 import { buildGenerateStreetThoughtsPrompt } from "./prompts/generateStreetThoughts.js";
 import { buildGenerateInboxMessagePrompt } from "./prompts/generateInboxMessage.js";
 import { buildInterpretStreetConversationPrompt } from "./prompts/interpretStreetConversation.js";
+import { buildPlanStreetNextActionPrompt } from "./prompts/planStreetNextAction.js";
 import { buildProposeNextActionPrompt } from "./prompts/proposeNextAction.js";
 import { buildSummarizeStatePrompt } from "./prompts/summarizeState.js";
 import {
@@ -174,6 +177,17 @@ export class OpenAIProvider implements AIProvider {
       const output = await this.createTextResponse(prompt, 220);
       return normalizeStreetConversationInterpretation(output);
     }, () => this.fallback.interpretStreetConversation(input));
+  }
+
+  async planStreetNextAction(
+    input: StreetPlanningRequest,
+  ): Promise<StreetPlanningResult | null> {
+    const prompt = buildPlanStreetNextActionPrompt(input);
+
+    return this.callOrFallback(async () => {
+      const output = await this.createTextResponse(prompt, 160);
+      return normalizeStreetPlanningResult(output, input);
+    }, () => this.fallback.planStreetNextAction(input));
   }
 
   private async callOrFallback<T>(
@@ -347,6 +361,33 @@ function normalizeStreetConversationInterpretation(
   };
 }
 
+function normalizeStreetPlanningResult(
+  rawText: string,
+  input: StreetPlanningRequest,
+): StreetPlanningResult | null {
+  const parsed = safeParseStreetPlanningJson(rawText);
+  if (!parsed || typeof parsed.actionId !== "string") {
+    return null;
+  }
+
+  const actionId = parsed.actionId.trim();
+  if (!input.allowedActions.some((action) => action.actionId === actionId)) {
+    return null;
+  }
+
+  const confidence =
+    typeof parsed.confidence === "number" && Number.isFinite(parsed.confidence)
+      ? Math.min(Math.max(parsed.confidence, 0), 1)
+      : 0;
+  const rationale = sanitizeOptionalNarrativeField(parsed.rationale) ?? "";
+
+  return {
+    actionId,
+    confidence,
+    rationale,
+  };
+}
+
 function safeParseThoughtsJson(rawText: string): {
   playerThought?: string;
   npcThoughts?: Record<string, string>;
@@ -407,6 +448,28 @@ function safeParseConversationInterpretationJson(rawText: string): {
       npcImpression?: string;
       objectiveText?: string;
       summary?: string;
+    };
+  } catch {
+    return null;
+  }
+}
+
+function safeParseStreetPlanningJson(rawText: string): {
+  actionId?: string;
+  confidence?: number;
+  rationale?: string;
+} | null {
+  const trimmed = rawText.trim();
+  const withoutFence = trimmed
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/, "");
+
+  try {
+    return JSON.parse(withoutFence) as {
+      actionId?: string;
+      confidence?: number;
+      rationale?: string;
     };
   } catch {
     return null;

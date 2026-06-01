@@ -60,6 +60,7 @@ export type RowanPlaybackState = {
 
 export type RowanRailCard = {
   detail: string;
+  planningTrace?: StreetGameState["rowanAutonomy"]["planningTrace"];
   reason?: string;
   signals?: string[];
   title: string;
@@ -502,6 +503,10 @@ export function buildRowanRailViewModel({
     reason:
       game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
         ? game.rowanAutonomy.intent?.reason
+        : undefined,
+    planningTrace:
+      game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
+        ? game.rowanAutonomy.planningTrace
         : undefined,
     signals:
       game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy

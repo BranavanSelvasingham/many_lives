@@ -1,4 +1,5 @@
 import { addLabel, createCityMap, paintRect } from "./mapBuilder.js";
+import { createInitialCityEvents } from "./cityEvents.js";
 import { getNpcNarrative } from "./npcNarratives.js";
 import {
   CITY_NARRATIVE,
@@ -91,6 +92,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
         focus: "settle",
         source: "seed",
         routeKey: "first-afternoon",
+        outcomes: [],
         trail: [],
         completedTrail: [],
         progress: {
@@ -118,6 +120,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
     npcs: buildNpcs(),
     jobs: buildJobs(),
     problems: buildProblems(),
+    cityEvents: createInitialCityEvents(),
     firstAfternoon: {},
     feed,
     conversations: [],

@@ -7,6 +7,8 @@ import type {
   StreetAutonomousLineResult,
   StreetConversationInterpretationRequest,
   StreetConversationInterpretationResult,
+  StreetPlanningRequest,
+  StreetPlanningResult,
 } from "./provider.js";
 import { buildClassifyEscalationPrompt } from "./prompts/classifyEscalation.js";
 import { buildGenerateStreetAutonomousLinePrompt } from "./prompts/generateStreetAutonomousLine.js";
@@ -27,7 +29,7 @@ import {
 } from "./streetThoughts.js";
 
 export class MockAIProvider implements AIProvider {
-  readonly name = "mock";
+  readonly name: string = "mock";
 
   async summarizeState(world: AIContext["world"]): Promise<string> {
     buildSummarizeStatePrompt(world);
@@ -246,6 +248,12 @@ export class MockAIProvider implements AIProvider {
           }, with room for him to follow it at his own pace.`
         : undefined,
     };
+  }
+
+  async planStreetNextAction(
+    _input: StreetPlanningRequest,
+  ): Promise<StreetPlanningResult | null> {
+    return null;
   }
 }
 

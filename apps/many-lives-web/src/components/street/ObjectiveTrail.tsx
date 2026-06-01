@@ -41,7 +41,7 @@ export function ObjectiveTrail({
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[rgba(134,145,154,0.18)] pb-4">
         <div className="space-y-1">
           <div className="text-[0.76rem] uppercase tracking-[0.24em] text-[color:var(--text-dim)]">
-            Objective Trail
+            Objective Outcomes
           </div>
           <div className="text-[1.02rem] leading-6 text-[color:var(--text-main)]">
             Rowan&apos;s known objectives and what he has already pulled off.

@@ -53,6 +53,28 @@ export function buildStreetBrowserProbeJson({
       key: game.rowanAutonomy.key,
       label: game.rowanAutonomy.label,
       mode: game.rowanAutonomy.mode,
+      planningTrace: game.rowanAutonomy.planningTrace
+        ? {
+            blockers: game.rowanAutonomy.planningTrace.blockers,
+            considered: game.rowanAutonomy.planningTrace.considered.map(
+              (option) => ({
+                actionId: option.actionId ?? null,
+                label: option.label,
+                status: option.status,
+              }),
+            ),
+            rejected: game.rowanAutonomy.planningTrace.rejected.map(
+              (option) => ({
+                actionId: option.actionId ?? null,
+                label: option.label,
+                reason: option.reason ?? null,
+              }),
+            ),
+            selectedActionId:
+              game.rowanAutonomy.planningTrace.selectedActionId ?? null,
+            selectedLabel: game.rowanAutonomy.planningTrace.selectedLabel ?? null,
+          }
+        : null,
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
     },
@@ -69,9 +91,23 @@ export function buildStreetBrowserProbeJson({
       y: game.player.y,
     },
     objective: {
+      outcomes:
+        game.player.objective?.outcomes.map((outcome) => ({
+          id: outcome.id,
+          status: outcome.status,
+          urgency: outcome.urgency,
+        })) ?? [],
       routeKey: game.player.objective?.routeKey ?? null,
       text: game.player.objective?.text ?? null,
     },
+    cityEvents: (game.cityEvents ?? [])
+      .filter((event) => event.status === "active")
+      .map((event) => ({
+        id: event.id,
+        locationId: event.locationId,
+        progress: event.progress ?? null,
+        visibleLabel: event.visibleLabel,
+      })),
     visualPlayer: {
       isMovingToServerState: Boolean(snapshot.optimisticPlayerPosition),
       targetX: snapshot.optimisticPlayerPosition?.x ?? game.player.x,

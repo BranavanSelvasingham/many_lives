@@ -149,6 +149,7 @@ export function buildRowanStoryCardHtml(
   kicker: string,
   card: {
     detail: string;
+    planningTrace?: StreetGameState["rowanAutonomy"]["planningTrace"];
     reason?: string;
     signals?: string[];
     title: string;
@@ -175,6 +176,7 @@ export function buildRowanStoryCardHtml(
             </div>`
           : ""
       }
+      ${primary ? buildPlanningTraceHtml(card.planningTrace) : ""}
       ${
         primary && card.signals?.length
           ? `<div class="ml-rowan-signal-row">
@@ -184,6 +186,66 @@ export function buildRowanStoryCardHtml(
                   (signal) =>
                     `<span class="ml-rowan-signal">${escapeHtml(
                       buildNarrativePreview(signal, 54),
+                    )}</span>`,
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+    </div>
+  `;
+}
+
+function buildPlanningTraceHtml(
+  trace?: StreetGameState["rowanAutonomy"]["planningTrace"],
+) {
+  if (!trace || trace.considered.length === 0) {
+    return "";
+  }
+
+  const selected =
+    trace.selectedLabel ??
+    trace.considered.find((option) => option.status === "selected")?.label;
+  const considered = trace.considered.slice(0, 3);
+  const rejected = trace.rejected.slice(0, 2);
+  const blockers = trace.blockers.slice(0, 2);
+
+  return `
+    <div class="ml-planner-trace">
+      <div class="ml-planner-trace-head">
+        <span>Planner trace</span>
+        ${selected ? `<strong>${escapeHtml(buildNarrativePreview(selected, 48))}</strong>` : ""}
+      </div>
+      <div class="ml-planner-trace-list">
+        ${considered
+          .map(
+            (option) => `
+              <div class="ml-planner-trace-option" data-status="${escapeHtml(
+                option.status,
+              )}">
+                <span>${escapeHtml(buildNarrativePreview(option.label, 44))}</span>
+                <em>${escapeHtml(buildNarrativePreview(option.rationale, 72))}</em>
+              </div>
+            `,
+          )
+          .join("")}
+      </div>
+      ${
+        rejected.length || blockers.length
+          ? `<div class="ml-planner-trace-foot">
+              ${rejected
+                .map(
+                  (option) =>
+                    `<span>Rejected: ${escapeHtml(
+                      buildNarrativePreview(option.label, 36),
+                    )}</span>`,
+                )
+                .join("")}
+              ${blockers
+                .map(
+                  (blocker) =>
+                    `<span>Blocked: ${escapeHtml(
+                      buildNarrativePreview(blocker, 44),
                     )}</span>`,
                 )
                 .join("")}
@@ -228,8 +290,12 @@ export function buildJournalTabHtml(options: {
     objectiveSuggestions,
     recentFeed,
   } = options;
+  const fieldNoteHtml = buildFirstAfternoonFieldNoteHtml(game, {
+    compactAfterFirst: true,
+  });
 
   return `
+    ${fieldNoteHtml}
     <div class="ml-focus-grid">
       <div class="ml-focus-stack">
         <div class="ml-card">
@@ -256,7 +322,7 @@ export function buildJournalTabHtml(options: {
           }
         </div>
         <div class="ml-card">
-          <div class="ml-kicker">Objective Trail</div>
+          <div class="ml-kicker">Objective Outcomes</div>
           <div class="ml-list" style="margin-top: 12px;">
             ${
               objectivePlanItems.length > 0
@@ -276,7 +342,7 @@ export function buildJournalTabHtml(options: {
                     `,
                     )
                     .join("")
-                : `<div class="ml-row"><div class="ml-row-copy">No active objective checklist yet.</div></div>`
+                : `<div class="ml-row"><div class="ml-row-copy">No active objective outcomes yet.</div></div>`
             }
           </div>
         </div>
@@ -346,9 +412,43 @@ export function buildMindTabHtml(options: {
     primaryThread,
     primaryTool,
   } = options;
+  const notebook = buildRowanNotebookModel({
+    game,
+    primaryPerson,
+    primaryPlace,
+    primaryThread,
+  });
 
   return `
     <div class="ml-focus-stack">
+      <div class="ml-card ml-notebook-card">
+        <div class="ml-kicker">Rowan's Notebook</div>
+        <div class="ml-card-title" style="margin-top: 8px;">${escapeHtml(
+          notebook.title,
+        )}</div>
+        <div class="ml-notebook-grid">
+          <div class="ml-notebook-line">
+            <div class="ml-row-meta">Current Belief</div>
+            <div class="ml-row-copy">${escapeHtml(notebook.belief)}</div>
+          </div>
+          <div class="ml-notebook-line">
+            <div class="ml-row-meta">Current Plan</div>
+            <div class="ml-row-copy">${escapeHtml(notebook.plan)}</div>
+          </div>
+          <div class="ml-notebook-line">
+            <div class="ml-row-meta">Confidence</div>
+            <div class="ml-row-copy">${escapeHtml(notebook.confidence)}</div>
+          </div>
+          <div class="ml-notebook-line">
+            <div class="ml-row-meta">Remembered Clue</div>
+            <div class="ml-row-copy">${escapeHtml(notebook.clue)}</div>
+          </div>
+          <div class="ml-notebook-line is-wide">
+            <div class="ml-row-meta">Next Uncertainty</div>
+            <div class="ml-row-copy">${escapeHtml(notebook.uncertainty)}</div>
+          </div>
+        </div>
+      </div>
       <div class="ml-card">
         <div class="ml-kicker">Working Memory</div>
         <div class="ml-mini-grid" style="margin-top: 12px;">
@@ -460,6 +560,174 @@ export function buildMindTabHtml(options: {
   `;
 }
 
+export function buildFirstAfternoonFieldNoteHtml(
+  game: StreetGameState,
+  options: { compactAfterFirst?: boolean } = {},
+) {
+  const notes = [
+    {
+      key: "mara-ada-lead",
+      note: game.firstAfternoon?.leadFieldNote,
+      title: "Mara's lead verified",
+    },
+    {
+      key: "first-afternoon",
+      note: game.firstAfternoon?.fieldNote,
+      title: "First afternoon settled",
+    },
+  ].filter((entry) => entry.note);
+
+  if (notes.length === 0) {
+    return "";
+  }
+
+  const cardsHtml = notes
+    .map(({ key, note, title }, index) => {
+      const compact = Boolean(options.compactAfterFirst && index > 0);
+
+      return `
+    <div class="ml-field-note-card ${compact ? "is-compact" : ""}" data-field-note="${escapeHtml(key)}">
+      <div class="ml-field-note-stamp">Field Note • ${escapeHtml(
+        formatClock(note!.createdAt),
+      )}</div>
+      <div class="ml-field-note-title">${escapeHtml(title)}</div>
+      ${
+        compact
+          ? `<div class="ml-field-note-compact-copy">${escapeHtml(note!.learned)}</div>`
+          : `<div class="ml-field-note-grid">
+        <div class="ml-field-note-line">
+          <div class="ml-row-meta">Learned</div>
+          <div class="ml-row-copy">${escapeHtml(note!.learned)}</div>
+        </div>
+        <div class="ml-field-note-line">
+          <div class="ml-row-meta">Evidence</div>
+          <div class="ml-row-copy">${escapeHtml(note!.evidence)}</div>
+        </div>
+        <div class="ml-field-note-line">
+          <div class="ml-row-meta">Next</div>
+          <div class="ml-row-copy">${escapeHtml(note!.next)}</div>
+        </div>
+        <div class="ml-field-note-line">
+          <div class="ml-row-meta">Memory Created</div>
+          <div class="ml-row-copy">${escapeHtml(note!.memory)}</div>
+        </div>
+      </div>`
+      }
+    </div>
+  `;
+    })
+    .join("");
+
+  return `<div class="ml-field-note-ledger">${cardsHtml}</div>`;
+}
+
+function buildRowanNotebookModel({
+  game,
+  primaryPerson,
+  primaryPlace,
+  primaryThread,
+}: {
+  game: StreetGameState;
+  primaryPerson?: StreetGameState["npcs"][number];
+  primaryPlace?: StreetGameState["locations"][number];
+  primaryThread?: MemoryThread;
+}) {
+  const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
+  const currentPlanHint =
+    game.rowanAutonomy?.label ??
+    game.player.objective?.outcomes.find((outcome) => outcome.status !== "met")
+      ?.label;
+  const completed = Boolean(game.firstAfternoon?.completedAt);
+  const activeJob = game.player.activeJobId
+    ? game.jobs.find((job) => job.id === game.player.activeJobId)
+    : undefined;
+
+  if (completed) {
+    return {
+      belief:
+        "Tonight's bed holds, Ada has seen Rowan keep up, and the first real money is in hand.",
+      clue:
+        game.firstAfternoon?.fieldNote?.memory ??
+        "Kettle & Lamp now has a memory of Rowan following through.",
+      confidence: "Earned.",
+      plan: "Rest at Morrow House and decide which lead deserves tomorrow morning.",
+      title: "A foothold, finally",
+      uncertainty:
+        "Whether tomorrow starts with Ada's lead, the dock board, or another person who noticed the shift.",
+    };
+  }
+
+  if (teaJob?.completed) {
+    return {
+      belief:
+        "The lunch shift paid, and Ada has enough evidence to treat Rowan as useful.",
+      clue: "Morrow House is still the safe place to return to before the day closes.",
+      confidence: "Confirmed by work.",
+      plan: currentPlanHint ?? "Head back to Morrow House and take stock.",
+      title: "Paid work in the pocket",
+      uncertainty:
+        "What the earned money changes about tonight, and what Rowan should carry into tomorrow.",
+    };
+  }
+
+  if (activeJob?.id === "job-tea-shift" || teaJob?.accepted) {
+    return {
+      belief:
+        "Ada gave Rowan a real chance at lunch work, and the only proof that matters is keeping up.",
+      clue: "Ada trusts steady hands more than big promises.",
+      confidence: "Committed.",
+      plan: currentPlanHint ?? "Keep Kettle & Lamp moving through lunch.",
+      title: "In the rush now",
+      uncertainty:
+        "Whether Rowan can stay steady when the room gets hot and crowded.",
+    };
+  }
+
+  if (game.firstAfternoon?.leadFieldNote) {
+    return {
+      belief:
+        "Mara's lead is verified: Ada at Kettle & Lamp has real lunch work on the table.",
+      clue: game.firstAfternoon.leadFieldNote.memory,
+      confidence: "Confirmed by asking Ada directly.",
+      plan:
+        currentPlanHint ?? "Choose whether to take the cup-and-counter shift.",
+      title: "Lead verified",
+      uncertainty:
+        "Whether Rowan should take the shift now, check another lead, return later, or keep exploring.",
+    };
+  }
+
+  if (teaJob?.discovered || game.firstAfternoon?.planSettledAt) {
+    return {
+      belief:
+        "Mara's lead points to Ada at Kettle & Lamp; lunch work is the best first bet.",
+      clue:
+        primaryPerson?.id === "npc-mara"
+          ? "Mara says follow-through matters more than worry."
+          : "Morrow House is safe to return to if Rowan brings back something real.",
+      confidence: teaJob?.discovered ? "Confirmed lead." : "Unconfirmed.",
+      plan:
+        currentPlanHint ?? "Walk to Kettle & Lamp and ask Ada directly.",
+      title: "A useful lead",
+      uncertainty: "Does Ada actually need help today?",
+    };
+  }
+
+  return {
+    belief:
+      primaryPlace?.id === "boarding-house"
+        ? "Morrow House is tonight's foothold, but it is not yet something Rowan has earned."
+        : "South Quay is still mostly unknown, and Rowan needs one reliable person to ask.",
+    clue:
+      primaryThread?.detail ??
+      "The room at Morrow House is safe for tonight, but not a future by itself.",
+    confidence: "Unconfirmed.",
+    plan: currentPlanHint ?? "Ask the first useful question.",
+    title: "First page of the morning",
+    uncertainty: "Who can turn tonight's room into tomorrow's foothold?",
+  };
+}
+
 export function joinNarrativeFragments(parts: Array<string | undefined>) {
   return parts
     .map((part) => part?.trim())
@@ -538,7 +806,7 @@ function tabLabel(tab: OverlayActiveTab) {
     case "journal":
       return "Journal";
     case "mind":
-      return "Mind";
+      return "Notebook";
     default:
       return "World";
   }

@@ -139,14 +139,14 @@ function buildPlayerThought(game: StreetGameState) {
     game.player.objective?.routeKey === "first-afternoon" &&
     game.firstAfternoon?.teaShiftStage === "counter"
   ) {
-    return "One last counter pass, then Ada can pay me.";
+    return "Ada is not watching every step now. That probably means I am keeping up.";
   }
 
   if (
     game.player.objective?.routeKey === "first-afternoon" &&
     game.firstAfternoon?.teaShiftStage === "rush"
   ) {
-    return "Cups, tables, counter. Keep it simple.";
+    return "The room is filling. Cups first, tables second, keep moving.";
   }
 
   const immediateObjectiveThought = buildImmediateObjectiveThought(
@@ -238,9 +238,9 @@ function buildActiveCommitmentThought(
     if (job.id === "job-tea-shift" && onSite && game.player.energy >= 28) {
       switch (game.firstAfternoon?.teaShiftStage) {
         case "rush":
-          return "Cups, tables, counter. Keep it simple.";
+          return "The room is filling. Cups first, tables second, keep moving.";
         case "counter":
-          return "One last counter pass, then Ada can pay me.";
+          return "Ada is not watching every step now. That probably means I am keeping up.";
         default:
           return "Lunch is filling up. Start with cups and tables.";
       }

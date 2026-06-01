@@ -13,15 +13,25 @@ export interface RowanLoopSmokeTraceEntry {
   progress?: string;
   routeKey?: string;
   activeConversation?: string;
+  activeCityEvents: string[];
   autonomyKey: string;
+  autonomyActionId?: string;
   autonomyLabel: string;
   autonomyLayer?: string;
   autonomyReason?: string;
   autonomySignals: string[];
   autonomyStep?: string;
   autonomyTarget?: string;
+  availableActionIds: string[];
+  completedJobIds: string[];
   money: number;
   energy: number;
+  nextTrailActionId?: string;
+  nextTrailNpcId?: string;
+  nextTrailStepId?: string;
+  nextTrailTargetLocationId?: string;
+  openJobIds: string[];
+  openProblemIds: string[];
 }
 
 export interface RowanLoopSmokeResult {
@@ -51,9 +61,11 @@ export async function runRowanLoopSmoke(
     world = await engine.runCommand(world, command);
     trace.push(buildTraceEntry(step, "advance_objective", world));
     guardAgainstStall(world, seen, step, trace);
+    guardCompletedJobsAreNotMissed(world, trace);
 
     if (isSuccessfulSmokeEndState(world)) {
       guardAgainstCannedAutonomy(trace);
+      guardObjectiveAutonomyIsStateGrounded(trace);
       return { finalWorld: world, trace };
     }
   }
@@ -77,6 +89,7 @@ export function formatTrace(trace: RowanLoopSmokeTraceEntry[]): string {
         entry.progress ?? "no-progress",
         `${entry.autonomyLayer ?? "no-layer"}/${entry.autonomyStep ?? "no-step"}`,
         entry.autonomyLabel,
+        entry.autonomyActionId ? `action=${entry.autonomyActionId}` : undefined,
         entry.autonomyReason ? `why=${entry.autonomyReason}` : undefined,
         entry.autonomyTarget ? `target=${entry.autonomyTarget}` : undefined,
         entry.activeConversation
@@ -96,6 +109,10 @@ function buildTraceEntry(
   command: string,
   world: StreetGameState,
 ): RowanLoopSmokeTraceEntry {
+  const nextTrailStep = world.player.objective?.trail.find(
+    (step) => !step.done,
+  );
+
   return {
     step,
     command,
@@ -105,15 +122,37 @@ function buildTraceEntry(
     progress: world.player.objective?.progress.label,
     routeKey: world.player.objective?.routeKey,
     activeConversation: world.activeConversation?.npcId,
+    activeCityEvents: world.cityEvents
+      .filter((event) => event.status === "active")
+      .map((event) => event.id),
     autonomyKey: world.rowanAutonomy.key,
+    autonomyActionId: world.rowanAutonomy.actionId,
     autonomyLabel: world.rowanAutonomy.label,
     autonomyLayer: world.rowanAutonomy.layer,
     autonomyReason: world.rowanAutonomy.intent?.reason,
     autonomySignals: world.rowanAutonomy.intent?.signals ?? [],
     autonomyStep: world.rowanAutonomy.stepKind,
     autonomyTarget: world.rowanAutonomy.targetLocationId,
+    availableActionIds: world.availableActions
+      .filter((action) => !action.disabled)
+      .map((action) => action.id),
+    completedJobIds: world.jobs
+      .filter((job) => job.completed)
+      .map((job) => job.id),
     money: world.player.money,
     energy: world.player.energy,
+    nextTrailActionId: nextTrailStep?.actionId,
+    nextTrailNpcId: nextTrailStep?.npcId,
+    nextTrailStepId: nextTrailStep?.id,
+    nextTrailTargetLocationId: nextTrailStep?.targetLocationId,
+    openJobIds: world.jobs
+      .filter((job) => job.discovered && !job.completed && !job.missed)
+      .map((job) => job.id),
+    openProblemIds: world.problems
+      .filter(
+        (problem) => problem.discovered && problem.status === "active",
+      )
+      .map((problem) => problem.id),
   };
 }
 
@@ -184,11 +223,106 @@ function guardAgainstCannedAutonomy(trace: RowanLoopSmokeTraceEntry[]): void {
   }
 }
 
+function guardObjectiveAutonomyIsStateGrounded(
+  trace: RowanLoopSmokeTraceEntry[],
+): void {
+  const objectiveEntries = trace.filter(
+    (entry) =>
+      entry.autonomyLayer === "objective" &&
+      entry.autonomyStep &&
+      entry.autonomyStep !== "idle" &&
+      entry.autonomyStep !== "blocked",
+  );
+
+  if (objectiveEntries.length === 0) {
+    throw new Error(
+      `Rowan loop smoke saw no objective-layer autonomy.\n${formatTrace(trace)}`,
+    );
+  }
+
+  const groundedEntries = objectiveEntries.filter(hasStateGroundingEvidence);
+  if (groundedEntries.length < Math.min(3, objectiveEntries.length)) {
+    throw new Error(
+      [
+        "Rowan objective autonomy is not sufficiently grounded in legal actions or evolving state.",
+        formatTrace(trace),
+      ].join("\n"),
+    );
+  }
+
+  const unsupportedRouteMirrors = objectiveEntries.filter(
+    (entry) =>
+      mirrorsNextTrailStep(entry) && !hasStateGroundingEvidence(entry),
+  );
+  if (unsupportedRouteMirrors.length > 0) {
+    throw new Error(
+      [
+        "Rowan objective autonomy is mirroring objective trail steps without state-derived evidence.",
+        formatTrace(trace),
+      ].join("\n"),
+    );
+  }
+}
+
+function hasStateGroundingEvidence(entry: RowanLoopSmokeTraceEntry): boolean {
+  const selectedLegalAction = Boolean(
+    entry.autonomyActionId &&
+      entry.availableActionIds.includes(entry.autonomyActionId),
+  );
+  const liveWorldPressure =
+    entry.activeCityEvents.length > 0 ||
+    entry.openJobIds.length > 0 ||
+    entry.openProblemIds.length > 0 ||
+    entry.completedJobIds.length > 0;
+  const stateSignals = entry.autonomySignals.filter((signal) =>
+    /^(Here|Target|Person|Action|Timing|Resources|Commitment):/.test(signal),
+  );
+
+  return selectedLegalAction || liveWorldPressure || stateSignals.length >= 2;
+}
+
+function mirrorsNextTrailStep(entry: RowanLoopSmokeTraceEntry): boolean {
+  if (!entry.nextTrailStepId) {
+    return false;
+  }
+
+  return Boolean(
+    (entry.autonomyActionId &&
+      entry.autonomyActionId === entry.nextTrailActionId) ||
+      (entry.autonomyTarget &&
+        entry.autonomyTarget === entry.nextTrailTargetLocationId) ||
+      (entry.autonomyStep === "talk" &&
+        entry.autonomyTarget === entry.nextTrailTargetLocationId &&
+        entry.nextTrailNpcId),
+  );
+}
+
+function guardCompletedJobsAreNotMissed(
+  world: StreetGameState,
+  trace: RowanLoopSmokeTraceEntry[],
+) {
+  const invalidJobs = world.jobs.filter((job) => job.completed && job.missed);
+  if (invalidJobs.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    [
+      `Completed jobs cannot also be missed: ${invalidJobs
+        .map((job) => job.id)
+        .join(", ")}.`,
+      formatTrace(trace),
+    ].join("\n"),
+  );
+}
+
 function isSuccessfulSmokeEndState(world: StreetGameState): boolean {
   const teaShift = world.jobs.find((job) => job.id === "job-tea-shift");
 
   return Boolean(
     teaShift?.completed &&
+    !teaShift.missed &&
+    world.firstAfternoon?.fieldNote &&
     world.firstAfternoon?.completedAt &&
     world.clock.label === "Afternoon" &&
     world.player.currentLocationId === world.player.homeLocationId &&

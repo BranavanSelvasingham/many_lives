@@ -141,19 +141,11 @@ function buildSteps() {
       allSteps.push(
         commandStep("rowan browser playtest", "corepack", [
           "pnpm",
-          "playtest:rowan:browser",
+          "playtest:gameplay:browser",
         ], {
           MANY_LIVES_BROWSER_PLAYTEST_DIR: BROWSER_PLAYTEST_DIR,
         }),
-        inlineStep("rowan browser artifact check", (logLine) =>
-          assertArtifacts(logLine, [
-            {
-              filePath: path.join(BROWSER_PLAYTEST_DIR, "timeline.json"),
-              minBytes: 1_000,
-              parseJson: true,
-            },
-          ]),
-        ),
+        inlineStep("rowan browser artifact check", assertRowanBrowserArtifacts),
       );
     }
 
@@ -394,6 +386,91 @@ async function assertArtifacts(logLine, artifacts) {
       `[many-lives:harness] artifact ok: ${relativePath} (${fileStat.size} bytes)`,
     );
   }
+}
+
+async function assertRowanBrowserArtifacts(logLine) {
+  await assertArtifacts(logLine, [
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "timeline.json"),
+      minBytes: 20_000,
+      parseJson: true,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "summary.json"),
+      minBytes: 4_000,
+      parseJson: true,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "visual-evidence.json"),
+      minBytes: 1_000,
+      parseJson: true,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "rowan-gameplay-regression.mp4"),
+      minBytes: 100_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "00-initial-mara-open.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "08-lunch-rush.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "13-first-afternoon-complete.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "overlay-notebook.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "overlay-journal.png"),
+      minBytes: 120_000,
+    },
+  ]);
+
+  const summary = JSON.parse(
+    await readFile(path.join(BROWSER_PLAYTEST_DIR, "summary.json"), "utf8"),
+  );
+  const overlayLabels = new Set(
+    (summary.overlayChecks ?? []).map((check) => check.label),
+  );
+
+  if (summary.browserDriver !== "chrome") {
+    throw new Error(
+      `Rowan browser playtest must use Chrome in the harness; got ${summary.browserDriver}.`,
+    );
+  }
+
+  if (summary.screenshotCount < 14) {
+    throw new Error(
+      `Rowan browser playtest captured too few gameplay screenshots: ${summary.screenshotCount}.`,
+    );
+  }
+
+  if (!summary.evidence?.recordingPath) {
+    throw new Error("Rowan browser playtest did not report a recording artifact.");
+  }
+
+  if ((summary.evidence?.screenshots ?? []).length < 14) {
+    throw new Error("Rowan browser playtest did not report enough screenshot evidence.");
+  }
+
+  if (!summary.finalState?.leadFieldNote) {
+    throw new Error("Rowan browser playtest did not persist the Mara-to-Ada lead field note.");
+  }
+
+  for (const label of ["overlay-notebook", "overlay-journal"]) {
+    if (!overlayLabels.has(label)) {
+      throw new Error(`Rowan browser playtest missing overlay check: ${label}.`);
+    }
+  }
+
+  logLine(
+    `[many-lives:harness] rowan browser summary ok: ${summary.screenshotCount} gameplay screenshots, ${overlayLabels.size} overlay checks, recording ${summary.evidence.recordingPath}.`,
+  );
 }
 
 async function* walkTextFiles(directory) {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenAIProvider } from "../src/ai/openaiProvider.js";
+import type { StreetPlanningRequest } from "../src/ai/provider.js";
 import {
   buildDeterministicStreetReply,
   generatedReplyLooksInvalid,
@@ -59,4 +60,123 @@ describe("OpenAIProvider street fallback", () => {
       ),
     ).toBe(true);
   });
+
+  it("returns a constrained planner action when the model chooses an allowed action", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          output_text: JSON.stringify({
+            actionId: "talk:npc-mara",
+            confidence: 0.82,
+            rationale: "Mara is here and can clarify the room before Rowan wanders.",
+          }),
+        }),
+      ),
+    );
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      timeoutMs: 50,
+    });
+    const result = await provider.planStreetNextAction(buildPlanningRequest());
+
+    expect(result).toEqual({
+      actionId: "talk:npc-mara",
+      confidence: 0.82,
+      rationale: "Mara is here and can clarify the room before Rowan wanders.",
+    });
+  });
+
+  it("returns null when the planner times out", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string | URL | Request, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("Request timed out", "AbortError"));
+            });
+          }),
+      ),
+    );
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      timeoutMs: 5,
+    });
+    const startedAt = Date.now();
+    const result = await provider.planStreetNextAction(buildPlanningRequest());
+
+    expect(result).toBeNull();
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
+
+  it("returns null when planner output is malformed or not allowed", async () => {
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      timeoutMs: 50,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          output_text: "not json",
+        }),
+      ),
+    );
+    await expect(provider.planStreetNextAction(buildPlanningRequest())).resolves.toBeNull();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          output_text: JSON.stringify({
+            actionId: "solve:problem-that-does-not-exist",
+            confidence: 0.93,
+            rationale: "Invent a shortcut.",
+          }),
+        }),
+      ),
+    );
+    await expect(provider.planStreetNextAction(buildPlanningRequest())).resolves.toBeNull();
+  });
 });
+
+function buildPlanningRequest(): StreetPlanningRequest {
+  const game = seedStreetGame("game-openai-planner");
+  return {
+    allowedActions: [
+      {
+        actionId: "talk:npc-mara",
+        description: "Ask Mara about the room.",
+        kind: "talk",
+        label: "Talk to Mara",
+        npcId: "npc-mara",
+        targetLocationId: "boarding-house",
+      },
+      {
+        actionId: "move:tea-house",
+        description: "Walk to Kettle & Lamp.",
+        kind: "move",
+        label: "Head to Kettle & Lamp",
+        targetLocationId: "tea-house",
+      },
+    ],
+    desiredOutcomes: [
+      {
+        id: "shelter-stability",
+        label: "Keep tonight's room and improve Rowan's standing.",
+        priority: 9,
+        status: "open",
+      },
+    ],
+    game,
+    objective: {
+      focus: "settle",
+      routeKey: "first-afternoon",
+      text: "Make Rowan's first afternoon count.",
+    },
+  };
+}
