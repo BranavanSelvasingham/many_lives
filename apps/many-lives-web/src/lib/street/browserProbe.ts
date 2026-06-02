@@ -4,7 +4,51 @@ import type {
 } from "./rowanPlayback";
 import type { StreetGameState } from "./types";
 
+export type StreetBrowserMovementDiagnostics = {
+  npcPatrols: Array<{
+    droppedWaypoints: number;
+    key: string;
+    locationId: string;
+    nextLocationId: string | null;
+    pathLength: number;
+    requestedWaypoints: number;
+    routed: boolean;
+    snappedWaypoints: number;
+    unreachableSegments: number;
+    usedVisualHints: boolean;
+  }>;
+  playerRoute: {
+    active: boolean;
+    diagnostics: {
+      blockedByVisualScene: number;
+      legal: boolean;
+      reachesDestination: boolean;
+      sampledPointsLegal: boolean;
+      snappedEnd: boolean;
+      snappedStart: boolean;
+    };
+    durationMs: number;
+    legal: boolean;
+    progress: number;
+    reachesDestination: boolean;
+    sampledPointsLegal: boolean;
+    target: {
+      x: number;
+      y: number;
+    };
+    tilePath: Array<{
+      x: number;
+      y: number;
+    }>;
+    worldPath: Array<{
+      x: number;
+      y: number;
+    }>;
+  } | null;
+};
+
 export type StreetBrowserProbeSnapshot = {
+  movement?: StreetBrowserMovementDiagnostics;
   optimisticPlayerPosition?: {
     x: number;
     y: number;
@@ -14,6 +58,170 @@ export type StreetBrowserProbeSnapshot = {
     "activeBeat" | "lastCompletedBeat" | "queuedBeats"
   >;
 };
+
+function objectiveProbePayload(game: StreetGameState) {
+  const objective = game.player.objective;
+  return {
+    focus: objective?.focus ?? null,
+    outcomes:
+      objective?.outcomes.map((outcome) => ({
+        actionId: outcome.actionId ?? null,
+        authority: outcome.authority ?? null,
+        blockers: outcome.blockers ?? [],
+        evidence: outcome.evidence ?? null,
+        id: outcome.id,
+        label: outcome.label,
+        npcId: outcome.npcId ?? null,
+        status: outcome.status,
+        targetLocationId: outcome.targetLocationId ?? null,
+        urgency: outcome.urgency,
+      })) ?? [],
+    progress: objective?.progress ?? null,
+    routeKey: objective?.routeKey ?? null,
+    source: objective?.source ?? null,
+    text: objective?.text ?? null,
+    trailHints:
+      objective?.trail.map((hint) => ({
+        actionId: hint.actionId ?? null,
+        done: Boolean(hint.done),
+        id: hint.id,
+        npcId: hint.npcId ?? null,
+        targetLocationId: hint.targetLocationId ?? null,
+        title: hint.title,
+      })) ?? [],
+  };
+}
+
+function planningTraceProbePayload(game: StreetGameState) {
+  const trace = game.rowanAutonomy.planningTrace;
+  if (!trace) {
+    return null;
+  }
+
+  const optionPayload = (option: (typeof trace.considered)[number]) => ({
+    actionId: option.actionId ?? null,
+    label: option.label,
+    npcId: option.npcId ?? null,
+    rationale: option.rationale,
+    reason: option.reason ?? null,
+    score: option.score,
+    status: option.status,
+    targetLocationId: option.targetLocationId ?? null,
+  });
+
+  return {
+    blockers: trace.blockers,
+    considered: trace.considered.map(optionPayload),
+    nextSteps: (trace.nextSteps ?? []).map((step) => ({
+      actionId: step.actionId ?? null,
+      kind: step.kind,
+      label: step.label,
+      legal: step.legal,
+      npcId: step.npcId ?? null,
+      rationale: step.rationale,
+      targetLocationId: step.targetLocationId ?? null,
+      validation: step.validation,
+    })),
+    outcomes: trace.outcomes.map((outcome) => ({
+      blockers: outcome.blockers ?? [],
+      evidence: outcome.evidence ?? null,
+      id: outcome.id,
+      label: outcome.label,
+      status: outcome.status,
+      urgency: outcome.urgency,
+    })),
+    rejected: trace.rejected.map(optionPayload),
+    selectedActionId: trace.selectedActionId ?? null,
+    selectedLabel: trace.selectedLabel ?? null,
+  };
+}
+
+function worldPressureProbePayload(game: StreetGameState) {
+  const currentTotalMinutes = game.clock.totalMinutes;
+  return {
+    cityEvents: (game.cityEvents ?? []).map((event) => {
+      const startTotal =
+        Math.max(0, game.clock.day - 1) * 24 * 60 + event.startMinute;
+      const endTotal =
+        Math.max(0, game.clock.day - 1) * 24 * 60 + event.endMinute;
+      return {
+        endsInMinutes:
+          event.status === "active"
+            ? Math.max(0, endTotal - currentTotalMinutes)
+            : null,
+        id: event.id,
+        locationId: event.locationId,
+        outcome: event.outcome ?? null,
+        progress: event.progress ?? null,
+        resolvedAt: event.resolvedAt ?? null,
+        startsInMinutes:
+          event.status === "upcoming"
+            ? Math.max(0, startTotal - currentTotalMinutes)
+            : null,
+        status: event.status,
+        tone: event.tone,
+        visibleLabel: event.visibleLabel,
+      };
+    }),
+    jobWindows: (game.jobs ?? []).map((job) => {
+      const startTotal =
+        Math.max(0, game.clock.day - 1) * 24 * 60 + Math.round(job.startHour * 60);
+      const endTotal =
+        Math.max(0, game.clock.day - 1) * 24 * 60 + Math.round(job.endHour * 60);
+      const inWindow =
+        currentTotalMinutes >= startTotal && currentTotalMinutes < endTotal;
+      return {
+        accepted: job.accepted,
+        completed: job.completed,
+        deferredUntilMinutes: job.deferredUntilMinutes ?? null,
+        discovered: job.discovered,
+        endsInMinutes: inWindow
+          ? Math.max(0, endTotal - currentTotalMinutes)
+          : null,
+        id: job.id,
+        inWindow,
+        locationId: job.locationId,
+        missed: job.missed,
+        startsInMinutes:
+          currentTotalMinutes < startTotal
+            ? Math.max(0, startTotal - currentTotalMinutes)
+            : null,
+        title: job.title,
+      };
+    }),
+    npcSchedules: (game.npcs ?? []).map((npc) => {
+      const currentHour = game.clock.hour + game.clock.minute / 60;
+      const currentSchedule =
+        npc.schedule.find(
+          (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+        ) ?? null;
+      const nextSchedule =
+        npc.schedule
+          .filter((entry) => entry.fromHour > currentHour)
+          .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
+      return {
+        currentLocationId: npc.currentLocationId,
+        currentScheduleLocationId: currentSchedule?.locationId ?? null,
+        id: npc.id,
+        nextScheduleLocationId: nextSchedule?.locationId ?? null,
+        nextScheduleStartsInMinutes: nextSchedule
+          ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
+          : null,
+      };
+    }),
+    problems: (game.problems ?? []).map((problem) => ({
+      discovered: problem.discovered,
+      escalatedAt: problem.escalatedAt ?? null,
+      escalationLevel: problem.escalationLevel ?? 0,
+      id: problem.id,
+      locationId: problem.locationId,
+      requiredItemId: problem.requiredItemId ?? null,
+      status: problem.status,
+      title: problem.title,
+      urgency: problem.urgency,
+    })),
+  };
+}
 
 type BuildStreetBrowserProbeJsonOptions = {
   activeConversation: StreetGameState["activeConversation"];
@@ -54,26 +262,7 @@ export function buildStreetBrowserProbeJson({
       label: game.rowanAutonomy.label,
       mode: game.rowanAutonomy.mode,
       planningTrace: game.rowanAutonomy.planningTrace
-        ? {
-            blockers: game.rowanAutonomy.planningTrace.blockers,
-            considered: game.rowanAutonomy.planningTrace.considered.map(
-              (option) => ({
-                actionId: option.actionId ?? null,
-                label: option.label,
-                status: option.status,
-              }),
-            ),
-            rejected: game.rowanAutonomy.planningTrace.rejected.map(
-              (option) => ({
-                actionId: option.actionId ?? null,
-                label: option.label,
-                reason: option.reason ?? null,
-              }),
-            ),
-            selectedActionId:
-              game.rowanAutonomy.planningTrace.selectedActionId ?? null,
-            selectedLabel: game.rowanAutonomy.planningTrace.selectedLabel ?? null,
-          }
+        ? planningTraceProbePayload(game)
         : null,
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
@@ -90,29 +279,24 @@ export function buildStreetBrowserProbeJson({
       x: game.player.x,
       y: game.player.y,
     },
-    objective: {
-      outcomes:
-        game.player.objective?.outcomes.map((outcome) => ({
-          id: outcome.id,
-          status: outcome.status,
-          urgency: outcome.urgency,
-        })) ?? [],
-      routeKey: game.player.objective?.routeKey ?? null,
-      text: game.player.objective?.text ?? null,
-    },
+    objective: objectiveProbePayload(game),
     cityEvents: (game.cityEvents ?? [])
       .filter((event) => event.status === "active")
       .map((event) => ({
         id: event.id,
         locationId: event.locationId,
+        outcome: event.outcome ?? null,
         progress: event.progress ?? null,
+        resolvedAt: event.resolvedAt ?? null,
         visibleLabel: event.visibleLabel,
       })),
+    worldPressure: worldPressureProbePayload(game),
     visualPlayer: {
       isMovingToServerState: Boolean(snapshot.optimisticPlayerPosition),
       targetX: snapshot.optimisticPlayerPosition?.x ?? game.player.x,
       targetY: snapshot.optimisticPlayerPosition?.y ?? game.player.y,
     },
+    movement: snapshot.movement ?? null,
     playback: {
       activeKind: snapshot.rowanPlayback?.activeBeat?.kind ?? null,
       activeTitle: snapshot.rowanPlayback?.activeBeat?.title ?? null,

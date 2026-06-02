@@ -15,7 +15,18 @@ interface ObjectiveRoute {
   focus: ObjectiveFocus;
   source: ObjectiveSource;
   steps: ObjectiveTrailItem[];
+  outcomes?: ObjectiveOutcomeDefinition[];
   terminal?: boolean;
+}
+
+interface ObjectiveOutcomeDefinition {
+  id: string;
+  label: string;
+  urgency?: number;
+  fallbackEvidence?: string;
+  targetLocationId?: string;
+  npcId?: string;
+  actionId?: string;
 }
 
 interface BuildObjectiveOptions {
@@ -278,8 +289,12 @@ function shouldUpdateObjective(
       !previousOutcome ||
       previousOutcome.id !== outcome.id ||
       previousOutcome.status !== outcome.status ||
+      previousOutcome.authority !== outcome.authority ||
       previousOutcome.evidence !== outcome.evidence ||
-      previousOutcome.blockers?.join("|") !== outcome.blockers?.join("|")
+      previousOutcome.blockers?.join("|") !== outcome.blockers?.join("|") ||
+      previousOutcome.targetLocationId !== outcome.targetLocationId ||
+      previousOutcome.npcId !== outcome.npcId ||
+      previousOutcome.actionId !== outcome.actionId
     ) {
       return true;
     }
@@ -323,22 +338,55 @@ function buildObjectiveOutcomes(
   objectiveText: string,
   route: ObjectiveRoute,
 ): ObjectiveOutcomeState[] {
-  return route.steps.map((step, index) => {
+  const stepById = new Map(route.steps.map((step) => [step.id, step]));
+  const hasExplicitOutcomes = Boolean(route.outcomes);
+  const definitions = route.outcomes ?? route.steps.map((step, index) =>
+    objectiveOutcomeDefinitionFromTrailStep(
+      step,
+      route.steps.length - index,
+    ),
+  );
+
+  return definitions.map((definition, index) => {
+    const matchingStep = stepById.get(definition.id);
     const evaluation =
-      evaluateObjectiveOutcome(world, objectiveText, route, step) ??
-      outcomeEvaluation(Boolean(step.done), {
-        evidence: step.progress,
-      });
+      evaluateObjectiveOutcome(world, objectiveText, route, definition) ??
+      (matchingStep
+        ? outcomeEvaluation(Boolean(matchingStep.done), {
+            evidence: matchingStep.progress,
+          })
+        : outcomeEvaluation(false, {
+            evidence: definition.fallbackEvidence,
+          }));
 
     return {
-      id: step.id,
-      label: step.title,
+      id: definition.id,
+      label: definition.label,
       status: evaluation.status,
-      urgency: route.steps.length - index,
+      urgency: definition.urgency ?? definitions.length - index,
+      authority: hasExplicitOutcomes ? "predicate" : "trail",
       blockers: evaluation.blockers,
-      evidence: evaluation.evidence ?? step.progress,
+      evidence: evaluation.evidence ?? definition.fallbackEvidence,
+      targetLocationId: definition.targetLocationId,
+      npcId: definition.npcId,
+      actionId: definition.actionId,
     };
   });
+}
+
+function objectiveOutcomeDefinitionFromTrailStep(
+  step: ObjectiveTrailItem,
+  urgency: number,
+): ObjectiveOutcomeDefinition {
+  return {
+    id: step.id,
+    label: step.title,
+    urgency,
+    fallbackEvidence: step.progress,
+    targetLocationId: step.targetLocationId,
+    npcId: step.npcId,
+    actionId: step.actionId,
+  };
 }
 
 function buildProgress(
@@ -380,7 +428,7 @@ function evaluateObjectiveOutcome(
   world: StreetGameState,
   objectiveText: string,
   route: ObjectiveRoute,
-  step: ObjectiveTrailItem,
+  definition: ObjectiveOutcomeDefinition,
 ): ObjectiveOutcomeEvaluation | undefined {
   const teaJob = jobById(world, "job-tea-shift");
   const pumpProblem = problemById(world, "problem-pump");
@@ -388,13 +436,27 @@ function evaluateObjectiveOutcome(
   const hasWrench = hasItem(world, "item-wrench");
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
 
-  switch (step.id) {
+  switch (definition.id) {
     case "mara-ada-hear-lead":
     case "first-afternoon-room":
-      return outcomeEvaluation(countPlayerConversationsWithNpc(world, "npc-mara") > 0, {
-        evidence: "Mara has explained what tonight's room and first lead require.",
-      });
+      return outcomeEvaluation(
+        countPlayerConversationsWithNpc(world, "npc-mara") > 0 ||
+          Boolean(
+            world.firstAfternoon?.planSettledAt ||
+              world.firstAfternoon?.leadFieldNote,
+          ),
+        {
+          evidence: "Mara has explained what tonight's room and first lead require.",
+        },
+      );
     case "mara-ada-form-intent":
+      return outcomeEvaluation(route.key === "mara-ada-lead", {
+        blockers: ["Rowan has not made the verification intent explicit yet."],
+        evidence:
+          route.key === "mara-ada-lead"
+            ? "The current objective is explicitly to verify Mara's Ada lead."
+            : undefined,
+      });
     case "first-afternoon-choose-move":
       return outcomeEvaluation(Boolean(world.firstAfternoon?.planSettledAt), {
         blockers: ["Rowan has not chosen the useful first move yet."],
@@ -509,7 +571,7 @@ function evaluateObjectiveOutcome(
       });
     case "work-lead-tea":
     case "work-lead-yard": {
-      const lead = step.id === "work-lead-yard" ? "yard" : "tea";
+      const lead = definition.id === "work-lead-yard" ? "yard" : "tea";
       return outcomeEvaluation(confirmedWorkLeadFor(world, lead), {
         blockers: [`The ${lead} work lead is not confirmed yet.`],
       });
@@ -543,25 +605,30 @@ function evaluateObjectiveOutcome(
         },
       );
     case "help-cart-inspect":
+    case "cart-discovered":
       return outcomeEvaluation(Boolean(cartProblem?.discovered), {
         blockers: ["The jammed cart has not been inspected yet."],
       });
     case "help-cart-solve":
+    case "cart-solved":
       return outcomeEvaluation(cartProblem?.status === "solved", {
         blockers: ["The jammed cart is still active."],
         evidence: cartProblem?.status,
       });
     case "help-pump-inspect":
+    case "pump-discovered":
       return outcomeEvaluation(Boolean(pumpProblem?.discovered), {
         blockers: ["The pump problem has not been inspected yet."],
       });
     case "help-pump-tool":
     case "tool-buy":
+    case "wrench-in-inventory":
       return outcomeEvaluation(hasWrench, {
         blockers: ["Rowan does not have a wrench yet."],
         evidence: hasWrench ? "Wrench in inventory." : undefined,
       });
     case "help-pump-fix":
+    case "pump-solved":
       return outcomeEvaluation(pumpProblem?.status === "solved", {
         blockers: hasWrench
           ? ["The pump is still active."]
@@ -605,7 +672,7 @@ function evaluateObjectiveOutcome(
         evidence: world.player.lastRestAt,
       });
     case "people-talk": {
-      const targetNpcId = step.npcId;
+      const targetNpcId = definition.npcId;
       return outcomeEvaluation(
         targetNpcId
           ? countPlayerConversationsWithNpc(world, targetNpcId) > 0
@@ -628,17 +695,17 @@ function evaluateObjectiveOutcome(
     case "explore-go":
       return outcomeEvaluation(
         Boolean(
-          step.targetLocationId &&
-            world.player.knownLocationIds.includes(step.targetLocationId),
+          definition.targetLocationId &&
+            world.player.knownLocationIds.includes(definition.targetLocationId),
         ),
         {
           blockers: ["The target place is not known yet."],
-          evidence: step.targetLocationId,
+          evidence: definition.targetLocationId,
         },
       );
     case "explore-talk": {
-      const targetPeople = step.targetLocationId
-        ? world.npcs.filter((npc) => npc.currentLocationId === step.targetLocationId)
+      const targetPeople = definition.targetLocationId
+        ? world.npcs.filter((npc) => npc.currentLocationId === definition.targetLocationId)
         : [];
       return outcomeEvaluation(
         targetPeople.some(
@@ -659,8 +726,8 @@ function evaluateObjectiveOutcome(
       break;
   }
 
-  if (step.id.startsWith("commitment-go-")) {
-    const job = jobById(world, step.id.replace("commitment-go-", ""));
+  if (definition.id.startsWith("commitment-go-")) {
+    const job = jobById(world, definition.id.replace("commitment-go-", ""));
     return outcomeEvaluation(
       Boolean(job?.completed || world.player.currentLocationId === job?.locationId),
       {
@@ -670,8 +737,8 @@ function evaluateObjectiveOutcome(
     );
   }
 
-  if (step.id.startsWith("commitment-window-")) {
-    const job = jobById(world, step.id.replace("commitment-window-", ""));
+  if (definition.id.startsWith("commitment-window-")) {
+    const job = jobById(world, definition.id.replace("commitment-window-", ""));
     const inWindow = Boolean(
       job && currentHour(world) >= job.startHour && currentHour(world) < job.endHour,
     );
@@ -683,8 +750,8 @@ function evaluateObjectiveOutcome(
     });
   }
 
-  if (step.id.startsWith("commitment-finish-")) {
-    const job = jobById(world, step.id.replace("commitment-finish-", ""));
+  if (definition.id.startsWith("commitment-finish-")) {
+    const job = jobById(world, definition.id.replace("commitment-finish-", ""));
     return outcomeEvaluation(Boolean(job?.completed), {
       blockers: job?.missed
         ? [`${job.title} was missed.`]
@@ -936,7 +1003,7 @@ function buildRouteForFocus(
     case "people":
       return buildPeopleRoute(world, source);
     case "explore":
-      return buildExploreRoute(world, source);
+      return buildExploreRoute(world, source, "", previous);
     case "settle":
     case "custom":
     default:
@@ -976,7 +1043,7 @@ function buildRouteForObjectiveText(
     case "people":
       return buildPeopleRoute(world, source, text);
     case "explore":
-      return buildExploreRoute(world, source, text);
+      return buildExploreRoute(world, source, text, previous);
     case "settle":
     case "custom":
     default:
@@ -993,22 +1060,32 @@ function buildMaraAdaLeadRoute(
   const hasTalkedToMara =
     countPlayerConversationsWithNpc(world, "npc-mara") > 0;
   const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
+  const hasFormedVerificationIntent = hasSettledPlan || source !== "seed";
   const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
   const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
-  const hasGroundedOffer = Boolean(
-    hasLeadFieldNote &&
-      teaJob?.discovered &&
-      !teaJob.missed &&
-      (confirmedWorkLeadFor(world, "tea") ||
-        teaJob.accepted ||
-        teaJob.completed),
+  const hasOpenWorkChoice = Boolean(
+    hasLeadFieldNote && teaJob?.discovered && !teaJob.missed,
   );
+  const hasReachedTeaHouse =
+    world.player.currentLocationId === "tea-house" ||
+    hasTalkedToAda ||
+    hasLeadFieldNote;
+  const outcomes = buildMaraAdaLeadOutcomeDefinitions({
+    hasFormedVerificationIntent,
+    hasLeadFieldNote,
+    hasOpenWorkChoice,
+    hasReachedTeaHouse,
+    hasTalkedToAda,
+    hasTalkedToMara,
+    homeLocationId: home?.id,
+  });
 
   return {
     key: "mara-ada-lead",
     focus: "work",
     source,
     terminal: true,
+    outcomes,
     steps: [
       makeStep({
         id: "mara-ada-hear-lead",
@@ -1024,13 +1101,15 @@ function buildMaraAdaLeadRoute(
       makeStep({
         id: "mara-ada-form-intent",
         title: "Form the plan to verify it directly.",
-        detail: hasSettledPlan
+        detail: hasFormedVerificationIntent
           ? "Rowan chose to ask Ada rather than wander, rest, or wait for work to find him."
           : "Make the plan explicit: walk to Kettle & Lamp and ask Ada about lunch work.",
-        progress: hasSettledPlan ? "Intent clear" : "Choose the useful move",
-        done: hasSettledPlan,
+        progress: hasFormedVerificationIntent
+          ? "Intent clear"
+          : "Choose the useful move",
+        done: hasFormedVerificationIntent,
         actionId:
-          hasTalkedToMara && !hasSettledPlan
+          hasTalkedToMara && !hasFormedVerificationIntent
             ? "reflect:first-afternoon-plan"
             : undefined,
         targetLocationId: home?.id,
@@ -1040,16 +1119,8 @@ function buildMaraAdaLeadRoute(
         title: "Walk to Kettle & Lamp.",
         detail:
           "The knowledge only counts if Rowan gets there in person and asks the right person.",
-        progress:
-          world.player.currentLocationId === "tea-house" ||
-          hasTalkedToAda ||
-          hasLeadFieldNote
-            ? "At Kettle & Lamp"
-            : "On the way",
-        done:
-          world.player.currentLocationId === "tea-house" ||
-          hasTalkedToAda ||
-          hasLeadFieldNote,
+        progress: hasReachedTeaHouse ? "At Kettle & Lamp" : "On the way",
+        done: hasReachedTeaHouse,
         targetLocationId: "tea-house",
       }),
       makeStep({
@@ -1076,19 +1147,82 @@ function buildMaraAdaLeadRoute(
       makeStep({
         id: "mara-ada-open-choice",
         title: "Open the next choice from that knowledge.",
-        detail: hasGroundedOffer
+        detail: hasOpenWorkChoice
           ? "The offer is now actionable: take the shift, check another lead, return later, or keep exploring."
           : "The loop should end with an actual choice, not a vague lead.",
-        progress: hasGroundedOffer ? "Choice unlocked" : "No offer yet",
-        done: hasGroundedOffer,
-        actionId:
-          hasGroundedOffer && !teaJob?.accepted && !teaJob?.completed
-            ? "accept:job-tea-shift"
-            : undefined,
+        progress: hasOpenWorkChoice ? "Choice unlocked" : "No offer yet",
+        done: hasOpenWorkChoice,
         targetLocationId: "tea-house",
       }),
     ],
   };
+}
+
+function buildMaraAdaLeadOutcomeDefinitions(input: {
+  hasFormedVerificationIntent: boolean;
+  hasLeadFieldNote: boolean;
+  hasOpenWorkChoice: boolean;
+  hasReachedTeaHouse: boolean;
+  hasTalkedToAda: boolean;
+  hasTalkedToMara: boolean;
+  homeLocationId: string | undefined;
+}): ObjectiveOutcomeDefinition[] {
+  return [
+    {
+      id: "mara-ada-hear-lead",
+      label: "Mara's lead heard",
+      urgency: 6,
+      npcId:
+        input.hasTalkedToMara || input.hasLeadFieldNote ? undefined : "npc-mara",
+      targetLocationId:
+        input.hasTalkedToMara || input.hasLeadFieldNote
+          ? undefined
+          : input.homeLocationId,
+    },
+    {
+      id: "mara-ada-form-intent",
+      label: "Ada verification intent formed",
+      urgency: 5,
+      actionId:
+        input.hasTalkedToMara && !input.hasFormedVerificationIntent
+          ? "reflect:first-afternoon-plan"
+          : undefined,
+      targetLocationId: input.hasFormedVerificationIntent
+        ? undefined
+        : input.homeLocationId,
+    },
+    {
+      id: "mara-ada-walk-route",
+      label: "Kettle & Lamp reached",
+      urgency: 4,
+      targetLocationId: input.hasReachedTeaHouse ? undefined : "tea-house",
+    },
+    {
+      id: "mara-ada-ask-directly",
+      label: "Ada lead verified directly",
+      urgency: 3,
+      npcId:
+        input.hasTalkedToAda || input.hasLeadFieldNote ? undefined : "npc-ada",
+      targetLocationId:
+        input.hasTalkedToAda || input.hasLeadFieldNote ? undefined : "tea-house",
+    },
+    {
+      id: "mara-ada-record-evidence",
+      label: "Ada lead recorded as evidence",
+      urgency: 2,
+      targetLocationId:
+        input.hasTalkedToAda && !input.hasLeadFieldNote ? "tea-house" : undefined,
+    },
+    {
+      id: "mara-ada-open-choice",
+      label: "Lead opened a real choice",
+      urgency: 1,
+      targetLocationId:
+        input.hasLeadFieldNote && !input.hasOpenWorkChoice
+          ? "tea-house"
+          : undefined,
+    },
+  ];
 }
 
 function buildFirstAfternoonRoute(
@@ -1102,6 +1236,8 @@ function buildFirstAfternoonRoute(
   const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
   const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
   const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
+  const hasRoomTerms =
+    hasTalkedToMara || hasSettledPlan || hasLeadFieldNote;
   const hasTakenTeaShift = Boolean(
     teaJob?.accepted ||
     teaJob?.completed ||
@@ -1123,6 +1259,103 @@ function buildFirstAfternoonRoute(
     focus: "settle",
     source,
     terminal: true,
+    outcomes: [
+      {
+        id: "first-afternoon-room",
+        label: "Room terms understood",
+        urgency: 8,
+        npcId: hasRoomTerms ? undefined : "npc-mara",
+        targetLocationId: hasRoomTerms ? undefined : home?.id,
+      },
+      {
+        id: "first-afternoon-choose-move",
+        label: "Useful first move chosen",
+        urgency: 7,
+        actionId:
+          hasTalkedToMara && !hasSettledPlan
+            ? "reflect:first-afternoon-plan"
+            : undefined,
+        targetLocationId:
+          hasTalkedToMara && !hasSettledPlan ? home?.id : undefined,
+      },
+      {
+        id: "first-afternoon-ada-lead",
+        label: "Ada lead verified",
+        urgency: 6,
+        npcId:
+          hasSettledPlan &&
+          !hasTalkedToAda &&
+          !hasTakenTeaShift &&
+          !hasFinishedTeaShift
+            ? "npc-ada"
+            : undefined,
+        targetLocationId:
+          hasSettledPlan &&
+          !hasTalkedToAda &&
+          !hasTakenTeaShift &&
+          !hasFinishedTeaShift
+            ? "tea-house"
+            : undefined,
+      },
+      {
+        id: "first-afternoon-record-lead",
+        label: "Ada lead recorded as evidence",
+        urgency: 5,
+        targetLocationId: hasTalkedToAda && !hasLeadFieldNote ? "tea-house" : undefined,
+      },
+      {
+        id: "first-afternoon-take-shift",
+        label: "Cup-and-counter shift accepted",
+        urgency: 4,
+        actionId:
+          hasLeadFieldNote && teaJob && !hasTakenTeaShift && !teaJob.missed
+            ? teaJob.discovered
+              ? `accept:${teaJob.id}`
+              : undefined
+            : undefined,
+        targetLocationId:
+          hasLeadFieldNote && !hasTakenTeaShift && !teaJob?.missed
+            ? "tea-house"
+            : undefined,
+      },
+      {
+        id: "first-afternoon-start-shift",
+        label: "Lunch rush started",
+        urgency: 3,
+        actionId:
+          teaJob && teaJob.accepted && !hasStartedTeaShift && !teaJob.missed
+            ? `work:${teaJob.id}`
+            : undefined,
+        targetLocationId:
+          teaJob && teaJob.accepted && !hasStartedTeaShift && !teaJob.missed
+            ? "tea-house"
+            : undefined,
+      },
+      {
+        id: "first-afternoon-finish-shift",
+        label: "Shift finished and paid",
+        urgency: 2,
+        actionId:
+          teaJob && hasStartedTeaShift && !hasFinishedTeaShift && !teaJob.missed
+            ? `work:${teaJob.id}`
+            : undefined,
+        targetLocationId:
+          teaJob && hasStartedTeaShift && !hasFinishedTeaShift && !teaJob.missed
+            ? "tea-house"
+            : undefined,
+      },
+      {
+        id: "first-afternoon-take-stock",
+        label: "First afternoon taken stock",
+        urgency: 1,
+        actionId:
+          atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
+            ? "reflect:first-afternoon"
+            : undefined,
+        targetLocationId:
+          hasFinishedTeaShift && !wrappedFirstAfternoon ? home?.id : undefined,
+      },
+    ],
     steps: [
       makeStep({
         id: "first-afternoon-room",
@@ -1268,11 +1501,26 @@ function buildSettleRoute(
   const settleLeadLocationId = lead === "yard" ? "freight-yard" : "tea-house";
   const settleLeadJob = lead === "yard" ? yardJob : teaJob;
   const settlePeopleTarget = nextUntalkedNpc(world);
+  const outcomes = buildSettleOutcomeDefinitions({
+    familiarPeople,
+    hasCommittedIncome,
+    hasStayTerms,
+    hasTalkedToMara,
+    hasWorkLead,
+    homeLocationId: home?.id,
+    houseStanding,
+    lead,
+    settleLeadJob,
+    settleLeadLocationId,
+    settleLeadNpcId,
+    settlePeopleTarget,
+  });
 
   return {
     key: "settle-core",
     focus: "settle",
     source,
+    outcomes,
     steps: [
       makeStep({
         id: "settle-terms",
@@ -1372,6 +1620,86 @@ function buildSettleRoute(
   };
 }
 
+function buildSettleOutcomeDefinitions(input: {
+  familiarPeople: number;
+  hasCommittedIncome: boolean;
+  hasStayTerms: boolean;
+  hasTalkedToMara: boolean;
+  hasWorkLead: boolean;
+  homeLocationId: string | undefined;
+  houseStanding: number;
+  lead: "tea" | "yard";
+  settleLeadJob: JobState | undefined;
+  settleLeadLocationId: string;
+  settleLeadNpcId: string;
+  settlePeopleTarget: StreetGameState["npcs"][number] | undefined;
+}): ObjectiveOutcomeDefinition[] {
+  const incomeActionId =
+    input.settleLeadJob &&
+    !input.settleLeadJob.completed &&
+    !input.settleLeadJob.missed
+      ? input.settleLeadJob.accepted
+        ? `work:${input.settleLeadJob.id}`
+        : input.settleLeadJob.discovered
+          ? `accept:${input.settleLeadJob.id}`
+          : undefined
+      : undefined;
+
+  return [
+    {
+      id: "settle-terms",
+      label: "Room terms understood",
+      urgency: 5,
+      npcId: input.hasStayTerms ? undefined : "npc-mara",
+      targetLocationId: input.hasStayTerms ? undefined : input.homeLocationId,
+    },
+    {
+      id: "settle-standing",
+      label: "Morrow House standing built",
+      urgency: 4,
+      actionId:
+        (input.hasStayTerms || input.hasTalkedToMara) &&
+        input.houseStanding < 2 &&
+        input.homeLocationId
+          ? `contribute:${input.homeLocationId}`
+          : undefined,
+      targetLocationId:
+        input.houseStanding >= 2 ? undefined : input.homeLocationId,
+    },
+    {
+      id: "settle-lead",
+      label:
+        input.lead === "yard"
+          ? "Yard work lead confirmed"
+          : "Tea-house work lead confirmed",
+      urgency: 3,
+      npcId: input.hasWorkLead ? undefined : input.settleLeadNpcId,
+      targetLocationId: input.hasWorkLead
+        ? undefined
+        : input.settleLeadLocationId,
+    },
+    {
+      id: "settle-income",
+      label: "Income committed or completed",
+      urgency: 2,
+      actionId: input.hasCommittedIncome ? undefined : incomeActionId,
+      targetLocationId:
+        input.hasCommittedIncome ? undefined : input.settleLeadJob?.locationId,
+    },
+    {
+      id: "settle-people",
+      label: "Two local connections built",
+      urgency: 1,
+      npcId:
+        input.familiarPeople >= 2 ? undefined : input.settlePeopleTarget?.id,
+      targetLocationId:
+        input.familiarPeople >= 2
+          ? undefined
+          : input.settlePeopleTarget?.currentLocationId,
+    },
+  ];
+}
+
 function buildWorkRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -1388,11 +1716,18 @@ function buildWorkRoute(
       : findLocation(world, "tea-house");
   const leadJob = lead === "yard" ? yardJob : teaJob;
   const anyCompletedWork = world.jobs.some((job) => job.completed);
+  const outcomes = buildWorkOutcomeDefinitions(
+    lead,
+    leadNpc?.id,
+    leadLocation?.id,
+    leadJob,
+  );
 
   return {
     key: lead === "yard" ? "work-yard" : "work-tea",
     focus: "work",
     source,
+    outcomes,
     steps: [
       makeStep({
         id: lead === "yard" ? "work-lead-yard" : "work-lead-tea",
@@ -1472,6 +1807,58 @@ function buildWorkRoute(
   };
 }
 
+function buildWorkOutcomeDefinitions(
+  lead: "tea" | "yard",
+  leadNpcId: string | undefined,
+  leadLocationId: string | undefined,
+  leadJob: JobState | undefined,
+): ObjectiveOutcomeDefinition[] {
+  const leadAccepted = Boolean(leadJob?.accepted);
+  const leadCompleted = Boolean(leadJob?.completed);
+  const leadMissed = Boolean(leadJob?.missed);
+  const jobActionId =
+    leadJob && !leadCompleted && !leadMissed
+      ? leadAccepted
+        ? `work:${leadJob.id}`
+        : leadJob.discovered
+          ? `accept:${leadJob.id}`
+          : undefined
+      : undefined;
+  const finishActionId =
+    leadJob && leadAccepted && !leadCompleted && !leadMissed
+      ? `work:${leadJob.id}`
+      : undefined;
+
+  return [
+    {
+      id: lead === "yard" ? "work-lead-yard" : "work-lead-tea",
+      label: lead === "yard" ? "Yard work lead confirmed" : "Tea-house work lead confirmed",
+      urgency: 4,
+      npcId: leadNpcId,
+      targetLocationId: leadLocationId,
+    },
+    {
+      id: "work-commit",
+      label: "Paid work committed",
+      urgency: 3,
+      actionId: jobActionId,
+      targetLocationId: leadLocationId,
+    },
+    {
+      id: "work-finish",
+      label: "Paid work finished",
+      urgency: 2,
+      actionId: finishActionId,
+      targetLocationId: leadLocationId,
+    },
+    {
+      id: "work-pay",
+      label: "Pay turned into breathing room",
+      urgency: 1,
+    },
+  ];
+}
+
 function buildCommittedJobRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -1486,6 +1873,10 @@ function buildCommittedJobRoute(
     key: `commitment-${job.id}`,
     focus: "work",
     source,
+    outcomes: buildCommittedJobOutcomeDefinitions(job, location?.id, {
+      atLocation,
+      inWindow,
+    }),
     steps: [
       makeStep({
         id: `commitment-go-${job.id}`,
@@ -1521,6 +1912,90 @@ function buildCommittedJobRoute(
   };
 }
 
+function buildCommittedJobOutcomeDefinitions(
+  job: JobState,
+  locationId: string | undefined,
+  state: {
+    atLocation: boolean;
+    inWindow: boolean;
+  },
+): ObjectiveOutcomeDefinition[] {
+  const jobOpen = !job.completed && !job.missed;
+  const canWork = jobOpen && state.atLocation && state.inWindow;
+
+  return [
+    {
+      id: `commitment-go-${job.id}`,
+      label: `${job.title} site reached`,
+      urgency: 3,
+      targetLocationId: jobOpen && !state.atLocation ? locationId : undefined,
+    },
+    {
+      id: `commitment-window-${job.id}`,
+      label: `${job.title} window open`,
+      urgency: 2,
+      targetLocationId: jobOpen && !state.atLocation ? locationId : undefined,
+    },
+    {
+      id: `commitment-finish-${job.id}`,
+      label: `${job.title} finished`,
+      urgency: 1,
+      actionId: canWork ? `work:${job.id}` : undefined,
+      targetLocationId: jobOpen && !canWork ? locationId : undefined,
+    },
+  ];
+}
+
+function buildCartOutcomeDefinitions(
+  problem: ReturnType<typeof problemById>,
+): ObjectiveOutcomeDefinition[] {
+  return [
+    {
+      id: "cart-discovered",
+      label: "Cart problem understood",
+      urgency: 2,
+      actionId: "inspect:problem-cart",
+      targetLocationId: problem?.locationId,
+    },
+    {
+      id: "cart-solved",
+      label: "Cart cleared",
+      urgency: 1,
+      actionId: "solve:problem-cart",
+      targetLocationId: problem?.locationId,
+    },
+  ];
+}
+
+function buildPumpOutcomeDefinitions(
+  problem: ReturnType<typeof problemById>,
+  hasWrench: boolean,
+): ObjectiveOutcomeDefinition[] {
+  return [
+    {
+      id: "pump-discovered",
+      label: "Pump problem understood",
+      urgency: 3,
+      actionId: "inspect:problem-pump",
+      targetLocationId: problem?.locationId,
+    },
+    {
+      id: "wrench-in-inventory",
+      label: "Wrench secured",
+      urgency: 2,
+      actionId: hasWrench ? undefined : "buy:item-wrench",
+      targetLocationId: hasWrench ? problem?.locationId : "repair-stall",
+    },
+    {
+      id: "pump-solved",
+      label: "Pump solved",
+      urgency: 1,
+      actionId: "solve:problem-pump",
+      targetLocationId: problem?.locationId,
+    },
+  ];
+}
+
 function buildHelpRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -1544,6 +2019,7 @@ function buildHelpRoute(
       key: "help-cart",
       focus: hasWrench ? "help" : "tool",
       source,
+      outcomes: buildCartOutcomeDefinitions(problem),
       steps: [
         makeStep({
           id: "help-cart-inspect",
@@ -1573,6 +2049,7 @@ function buildHelpRoute(
     key: hasWrench ? "help-pump" : "tool-pump",
     focus: hasWrench ? "help" : "tool",
     source,
+    outcomes: buildPumpOutcomeDefinitions(problem, hasWrench),
     steps: [
       makeStep({
         id: "help-pump-inspect",
@@ -1632,6 +2109,7 @@ function buildToolRoute(
     key: target?.id === "problem-cart" ? "tool-cart" : "tool-wrench",
     focus: "tool",
     source,
+    outcomes: buildToolOutcomeDefinitions(target, hasWrench, world),
     steps: [
       makeStep({
         id: "tool-buy",
@@ -1673,6 +2151,48 @@ function buildToolRoute(
   };
 }
 
+function buildToolOutcomeDefinitions(
+  target: ReturnType<typeof problemById>,
+  hasWrench: boolean,
+  world: StreetGameState,
+): ObjectiveOutcomeDefinition[] {
+  const toolAtProblem =
+    hasWrench &&
+    Boolean(
+      target &&
+        (world.player.currentLocationId === target.locationId ||
+          target.status === "solved"),
+    );
+  const problemOpen = Boolean(target && target.status !== "solved");
+
+  return [
+    {
+      id: "tool-buy",
+      label: "Required tool secured",
+      urgency: 3,
+      actionId: hasWrench ? undefined : "buy:item-wrench",
+      targetLocationId: hasWrench ? undefined : "repair-stall",
+    },
+    {
+      id: "tool-return",
+      label: "Tool brought to the problem",
+      urgency: 2,
+      targetLocationId:
+        hasWrench && problemOpen && !toolAtProblem
+          ? target?.locationId
+          : undefined,
+    },
+    {
+      id: "tool-use",
+      label: "Tool used to solve the problem",
+      urgency: 1,
+      actionId: hasWrench && problemOpen ? `solve:${target?.id}` : undefined,
+      targetLocationId:
+        hasWrench && problemOpen ? target?.locationId : undefined,
+    },
+  ];
+}
+
 function buildRestRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -1686,6 +2206,10 @@ function buildRestRoute(
     key: "rest-home",
     focus: "rest",
     source,
+    outcomes: buildRestOutcomeDefinitions(home?.id, {
+      atHome,
+      restLanded,
+    }),
     steps: [
       makeStep({
         id: "rest-return",
@@ -1711,6 +2235,32 @@ function buildRestRoute(
   };
 }
 
+function buildRestOutcomeDefinitions(
+  homeLocationId: string | undefined,
+  state: {
+    atHome: boolean;
+    restLanded: boolean;
+  },
+): ObjectiveOutcomeDefinition[] {
+  return [
+    {
+      id: "rest-return",
+      label: "Returned somewhere safe to rest",
+      urgency: 2,
+      targetLocationId:
+        !state.atHome && !state.restLanded ? homeLocationId : undefined,
+    },
+    {
+      id: "rest-hour",
+      label: "Recovered with an hour of rest",
+      urgency: 1,
+      actionId:
+        state.atHome && !state.restLanded ? "rest:home" : undefined,
+      targetLocationId: state.restLanded ? undefined : homeLocationId,
+    },
+  ];
+}
+
 function buildPeopleRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -1726,6 +2276,11 @@ function buildPeopleRoute(
     key: `people-${target?.id ?? "locals"}`,
     focus: "people",
     source,
+    outcomes: buildPeopleOutcomeDefinitions(world, target, {
+      familiarPeople,
+      secondConnectionTarget,
+      trustedPeople,
+    }),
     steps: [
       makeStep({
         id: "people-talk",
@@ -1776,13 +2331,57 @@ function buildPeopleRoute(
   };
 }
 
+function buildPeopleOutcomeDefinitions(
+  world: StreetGameState,
+  target: ReturnType<typeof choosePeopleTarget>,
+  state: {
+    familiarPeople: number;
+    secondConnectionTarget: ReturnType<typeof nextUntalkedNpc> | undefined;
+    trustedPeople: number;
+  },
+): ObjectiveOutcomeDefinition[] {
+  const talkedToTarget = target
+    ? countPlayerConversationsWithNpc(world, target.id) > 0
+    : state.familiarPeople > 0;
+
+  return [
+    {
+      id: "people-talk",
+      label: "Local introduction made",
+      urgency: 3,
+      npcId: talkedToTarget ? undefined : target?.id,
+      targetLocationId: talkedToTarget ? undefined : target?.currentLocationId,
+    },
+    {
+      id: "people-open",
+      label: "A local connection opened up",
+      urgency: 2,
+      npcId: state.familiarPeople >= 1 ? undefined : target?.id,
+      targetLocationId:
+        state.familiarPeople >= 1 ? undefined : target?.currentLocationId,
+    },
+    {
+      id: "people-friend",
+      label: "Two trusted local ties built",
+      urgency: 1,
+      npcId:
+        state.trustedPeople >= 2 ? undefined : state.secondConnectionTarget?.id,
+      targetLocationId:
+        state.trustedPeople >= 2
+          ? undefined
+          : state.secondConnectionTarget?.currentLocationId,
+    },
+  ];
+}
+
 function buildExploreRoute(
   world: StreetGameState,
   source: ObjectiveSource,
   textHint = "",
+  previous?: PlayerObjective,
 ): ObjectiveRoute {
   const target =
-    preservedExploreTargetLocation(world, textHint) ??
+    activeExploreOutcomeTargetLocation(world, previous, textHint) ??
     chooseExploreTargetLocation(world, textHint);
   const hasVisitedTarget = target
     ? world.player.knownLocationIds.includes(target.id)
@@ -1796,6 +2395,11 @@ function buildExploreRoute(
     key: `explore-${target?.id ?? "district"}`,
     focus: "explore",
     source,
+    outcomes: buildExploreOutcomeDefinitions(world, target, {
+      hasVisitedTarget,
+      targetGuide,
+      targetPeople,
+    }),
     steps: [
       makeStep({
         id: "explore-go",
@@ -1842,6 +2446,50 @@ function buildExploreRoute(
       }),
     ],
   };
+}
+
+function buildExploreOutcomeDefinitions(
+  world: StreetGameState,
+  target: ReturnType<typeof chooseExploreTargetLocation>,
+  state: {
+    hasVisitedTarget: boolean;
+    targetGuide: ReturnType<typeof chooseExploreGuide> | undefined;
+    targetPeople: StreetGameState["npcs"];
+  },
+): ObjectiveOutcomeDefinition[] {
+  const talkedAtTarget = target
+    ? state.targetPeople.some(
+        (npc) => countPlayerConversationsWithNpc(world, npc.id) > 0,
+      )
+    : false;
+
+  return [
+    {
+      id: "explore-go",
+      label: "Unknown place visited",
+      urgency: 3,
+      targetLocationId:
+        target && !state.hasVisitedTarget ? target.id : undefined,
+    },
+    {
+      id: "explore-talk",
+      label: "Local guide heard from",
+      urgency: 2,
+      npcId:
+        state.hasVisitedTarget && !talkedAtTarget
+          ? state.targetGuide?.id
+          : undefined,
+      targetLocationId:
+        target && state.hasVisitedTarget && !talkedAtTarget
+          ? target.id
+          : undefined,
+    },
+    {
+      id: "explore-learn",
+      label: "South Quay map knowledge improved",
+      urgency: 1,
+    },
+  ];
 }
 
 function chooseConversationRoute(
@@ -1979,29 +2627,31 @@ function chooseExploreTargetLocation(world: StreetGameState, textHint = "") {
   );
 }
 
-function preservedExploreTargetLocation(world: StreetGameState, textHint = "") {
+function activeExploreOutcomeTargetLocation(
+  world: StreetGameState,
+  previous: PlayerObjective | undefined,
+  textHint = "",
+) {
   if (
+    !previous ||
+    previous.focus !== "explore" ||
     npcMentionedInText(world, textHint) ||
     locationMentionedInText(world, textHint)
   ) {
     return undefined;
   }
 
-  const currentObjective = world.player.objective;
-  if (!currentObjective || currentObjective.focus !== "explore") {
+  const targetLocationId = previous.outcomes.find(
+    (outcome) =>
+      (outcome.id === "explore-go" || outcome.id === "explore-talk") &&
+      outcome.status !== "met" &&
+      outcome.targetLocationId,
+  )?.targetLocationId;
+  if (!targetLocationId) {
     return undefined;
   }
 
-  const nextStep = currentObjective.trail.find((step) => !step.done);
-  if (
-    !nextStep ||
-    (nextStep.id !== "explore-go" && nextStep.id !== "explore-talk") ||
-    !nextStep.targetLocationId
-  ) {
-    return undefined;
-  }
-
-  return findLocation(world, nextStep.targetLocationId);
+  return findLocation(world, targetLocationId);
 }
 
 function chooseExploreGuide(world: StreetGameState, locationId: string) {
@@ -2520,10 +3170,39 @@ function routeHeadline(route: ObjectiveRoute) {
     return "First afternoon complete.";
   }
 
-  return (
-    route.steps.find((step) => !step.done)?.title ??
-    defaultObjectiveTextForFocus(route.focus)
-  );
+  if (route.key === "first-afternoon") {
+    return "Make Rowan's first afternoon count: understand the room, earn a little money, and end with a real foothold.";
+  }
+
+  if (route.key === "mara-ada-lead") {
+    return "Verify Mara's Kettle & Lamp lead and turn it into a real choice.";
+  }
+
+  if (route.key === "work-tea") {
+    return "Secure paid work at Kettle & Lamp and follow through.";
+  }
+
+  if (route.key === "work-yard") {
+    return "Secure paid yard work and follow through.";
+  }
+
+  if (route.key === "help-pump") {
+    return "Fix the leaking pump in Morrow Yard before it spreads.";
+  }
+
+  if (route.key === "help-cart") {
+    return "Clear the jammed cart before it snarls the square.";
+  }
+
+  if (route.key === "rest-home") {
+    return "Recover enough at Morrow House to move cleanly again.";
+  }
+
+  if (route.key.startsWith("commitment-")) {
+    return "Follow through on accepted work before the window closes.";
+  }
+
+  return defaultObjectiveTextForFocus(route.focus);
 }
 
 function defaultObjectiveTextForFocus(focus: ObjectiveFocus) {

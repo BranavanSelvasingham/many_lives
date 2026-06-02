@@ -72,6 +72,8 @@ When autoplay feels wrong, inspect both:
 
 Use this audit whenever reviewing Rowan autonomy, objectives, autoplay, AI planning, or the first 3 to 5 minutes. This is the check that should flag the difference between a seeded living world and a hardcoded route.
 
+For planning work on this axis, use [docs/street/living-world-simulation-plan.md](/Users/branavan/GitHub/many_lives/docs/street/living-world-simulation-plan.md) as the source contract and the web app's `/plan` route as the visible project `/plan`. They define the authority chain, acceptance criteria, evidence ledger, and required validation loop for moving from authored-route playback toward a living-world agent loop.
+
 - Seeded data may define places, NPCs, jobs, problems, schedules, world events, memories, and objective outcomes.
 - Objective trails may show progress and provide hints, but a review must flag any implementation where `advance_objective` primarily follows the next trail step instead of evaluating current state and legal actions.
 - Objective completion should be evaluated from `player.objective.outcomes`: desired-state predicates with status, evidence, blockers, and urgency. `trail.done` is explanatory scaffolding only and must not be the authoritative completion mechanism.

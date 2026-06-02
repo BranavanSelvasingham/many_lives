@@ -21,7 +21,7 @@ type CityEventDefinition = Pick<
 
 type CityEventResolution = Pick<
   CityEventState,
-  "progress" | "status" | "summary" | "tone" | "visibleLabel"
+  "outcome" | "progress" | "status" | "summary" | "tone" | "visibleLabel"
 >;
 
 const CITY_EVENT_DEFINITIONS: CityEventDefinition[] = [
@@ -96,13 +96,20 @@ function buildCityEvent(
     previous &&
     previous.status === resolved.status &&
     previous.progress === resolved.progress &&
+    previous.outcome === resolved.outcome &&
+    previous.tone === resolved.tone &&
     previous.summary === resolved.summary
       ? previous.updatedAt
       : (world?.currentTime ?? SCENARIO_START);
+  const resolvedAt =
+    resolved.status === "resolved"
+      ? (previous?.resolvedAt ?? world?.currentTime ?? SCENARIO_START)
+      : undefined;
 
   return {
     ...definition,
     ...resolved,
+    resolvedAt,
     updatedAt,
   };
 }
@@ -118,15 +125,18 @@ function resolveCityEvent(
       return resolveCafePrep(definition, world, minute);
     case "lunch_rush":
       return resolveLunchRush(definition, world, minute);
-    case "market_crossing":
+    case "market_crossing": {
+      const status = windowStatus(definition, minute);
       return {
+        outcome: status === "resolved" ? "passed" : "pending",
         progress: "steady",
-        status: windowStatus(definition, minute),
+        status,
         summary:
           "Porters, neighbors, and lunch-bound regulars keep cutting across the square instead of leaving it empty.",
         tone: "info",
         visibleLabel: "Foot traffic",
       };
+    }
     case "square_cart":
       return resolveSquareCart(definition, world, minute);
     case "yard_loading":
@@ -147,6 +157,7 @@ function resolveCafePrep(
 
   if (status === "active") {
     return {
+      outcome: "pending",
       progress: "setting-up",
       status,
       summary:
@@ -157,6 +168,7 @@ function resolveCafePrep(
   }
 
   return {
+    outcome: status === "resolved" ? "passed" : "pending",
     progress: status === "resolved" ? "handed-to-rush" : "waiting",
     status,
     summary:
@@ -178,6 +190,7 @@ function resolveLunchRush(
 
   if (teaJob?.missed) {
     return {
+      outcome: "missed",
       progress: "missed",
       status: "resolved",
       summary:
@@ -189,6 +202,7 @@ function resolveLunchRush(
 
   if (teaStage === "paid" || teaJob?.completed) {
     return {
+      outcome: "handled",
       progress: "paid",
       status: "resolved",
       summary:
@@ -200,6 +214,7 @@ function resolveLunchRush(
 
   if (teaStage === "counter") {
     return {
+      outcome: "pending",
       progress: "counter",
       status: "active",
       summary:
@@ -211,6 +226,7 @@ function resolveLunchRush(
 
   if (teaStage === "rush" || teaJob?.accepted) {
     return {
+      outcome: "pending",
       progress: "rush",
       status: "active",
       summary:
@@ -222,6 +238,7 @@ function resolveLunchRush(
 
   const status = windowStatus(definition, minute);
   return {
+    outcome: status === "resolved" ? "missed" : "pending",
     progress: status === "active" ? "open" : "waiting",
     status,
     summary:
@@ -244,6 +261,7 @@ function resolveSquareCart(
 
   if (cartProblem?.status === "solved") {
     return {
+      outcome: "handled",
       progress: "rolling",
       status: "resolved",
       summary:
@@ -255,6 +273,7 @@ function resolveSquareCart(
 
   if (cartProblem?.status === "expired") {
     return {
+      outcome: "worsened",
       progress: "missed",
       status: "resolved",
       summary:
@@ -271,6 +290,7 @@ function resolveSquareCart(
 
   if (status === "active") {
     return {
+      outcome: "pending",
       progress: "jammed",
       status,
       summary:
@@ -281,6 +301,7 @@ function resolveSquareCart(
   }
 
   return {
+    outcome: status === "resolved" ? "passed" : "pending",
     progress: "approaching",
     status,
     summary:
@@ -299,6 +320,7 @@ function resolveYardLoading(
 
   if (yardJob?.completed) {
     return {
+      outcome: "handled",
       progress: "loaded",
       status: "resolved",
       summary:
@@ -308,8 +330,21 @@ function resolveYardLoading(
     };
   }
 
+  if (yardJob?.missed) {
+    return {
+      outcome: "missed",
+      progress: "missed",
+      status: "resolved",
+      summary:
+        "The loading block moved without Rowan; Tomas has no reason to hold today's work open.",
+      tone: "warning",
+      visibleLabel: "Yard missed",
+    };
+  }
+
   if (yardJob?.accepted) {
     return {
+      outcome: "pending",
       progress: "committed",
       status: "active",
       summary:
@@ -321,6 +356,7 @@ function resolveYardLoading(
 
   const status = windowStatus(definition, minute);
   return {
+    outcome: status === "resolved" ? "passed" : "pending",
     progress: yardJob?.discovered ? "posted" : "background",
     status,
     summary: yardJob?.discovered

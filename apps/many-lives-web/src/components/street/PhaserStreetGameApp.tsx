@@ -105,11 +105,11 @@ import {
 } from "@/lib/street/rowanAutonomy";
 import {
   buildStreetBrowserProbeJson,
+  type StreetBrowserMovementDiagnostics,
 } from "@/lib/street/browserProbe";
 import { buildStreetOverlayStyle } from "@/lib/street/streetOverlayStyles";
 import {
-  buildNpcPatrolPath,
-  createRouteFinder,
+  buildNpcPatrolRoute,
   dedupePointSequence,
   distanceBetween,
   findNearestWalkablePointByWorldHint,
@@ -124,8 +124,17 @@ import {
   samplePathPoint,
   type Point,
   type RouteFinder,
+  type NpcPatrolPathDiagnostics,
   type WalkableRuntimePoint,
 } from "@/lib/street/navigation";
+import {
+  buildVisualNavigationSurface,
+  buildVisualNavigationTiles,
+  isVisualWorldPathLegal,
+  projectVisualNavigationTileCenter,
+  resolveVisualRoute,
+  type VisualRouteDiagnostics,
+} from "@/lib/street/visualNavigation";
 import {
   captureOverlayRenderState,
   isOverlayEventTarget,
@@ -140,7 +149,7 @@ import {
   createEmptyRowanPlaybackState,
   deriveRowanPlaybackBeats,
   estimateLiveConversationBeatMs,
-  isBlockingRowanPlayback,
+  isBlockingRowanPlaybackForGame,
   isFirstAfternoonOpening,
   ROWAN_PLAYBACK_TIMING_MS,
   startNextRowanPlaybackBeat,
@@ -181,7 +190,6 @@ import {
   getCompactCameraHorizontalRange,
   getMapWorldOrigin,
   getWorldBoundsForRuntime,
-  mapPointToWorld,
   mapTileToWorldCenter,
   mapTileToWorldOrigin,
   projectRuntimePoint,
@@ -201,7 +209,6 @@ import {
   getVisualScene,
   getVisualSceneDocument,
   getVisualSceneRuntimeRevision,
-  projectVisualScenePoint,
   validateVisualSceneAgainstGame,
   VISUAL_SCENE_RUNTIME_OVERRIDE_EVENT,
   type VisualRect,
@@ -515,9 +522,17 @@ type RuntimeCallbacks = Pick<
 type PlayerMotionState = {
   durationMs: number;
   path: Point[];
+  routeDiagnostics?: VisualRouteDiagnostics;
   startedAt: number;
   to: Point;
   worldPath?: Point[];
+};
+
+type RuntimePatrolDiagnostics = NpcPatrolPathDiagnostics & {
+  key: string;
+  locationId: string;
+  nextLocationId: string | null;
+  pathLength: number;
 };
 
 type PendingVisualGameUpdate = {
@@ -528,9 +543,11 @@ type PendingVisualGameUpdate = {
 
 type RuntimeIndices = {
   animatedSurfaceTiles: Array<Pick<MapTile, "kind" | "x" | "y">>;
+  blockedNavigationTileCount: number;
   footprintByLocationId: Map<string, MapFootprint>;
   locationsById: Map<string, LocationState>;
   patrolDistanceByKey: Map<string, number>;
+  patrolDiagnosticsByKey: Map<string, RuntimePatrolDiagnostics>;
   patrolPathByKey: Map<string, Point[]>;
   primaryDoorByLocation: Map<string, MapDoor>;
   propsByLocation: Map<string, MapProp[]>;
@@ -880,9 +897,10 @@ export function PhaserStreetGameApp() {
     }
 
     routeFinderMapKeyRef.current = mapKey;
-    routeFinderRef.current = createRouteFinder(
-      buildNavigationTiles(game, getPlayableVisualScene(game)),
-    );
+    routeFinderRef.current = buildVisualNavigationSurface(
+      game,
+      getPlayableVisualScene(game),
+    ).routeFinder;
   }, [game]);
 
   const nextRequestId = useCallback(() => {
@@ -966,7 +984,7 @@ export function PhaserStreetGameApp() {
           previousGame,
           nextGame,
           visualRoute,
-          { watchMode: rowanAutoplayEnabled },
+          { watchMode: rowanAutoplayEnabled || boundGameObserverEnabled },
         );
         const deferredPlaybackBeats = nextPlaybackBeats.map((beat) =>
           beat.kind === "move" ? { ...beat, durationMs: transitionMs } : beat,
@@ -1028,7 +1046,12 @@ export function PhaserStreetGameApp() {
 
       return true;
     },
-    [clearPendingVisualGameUpdate, publishWaypoint, rowanAutoplayEnabled],
+    [
+      boundGameObserverEnabled,
+      clearPendingVisualGameUpdate,
+      publishWaypoint,
+      rowanAutoplayEnabled,
+    ],
   );
 
   const loadGame = useCallback(async (options: LoadGameOptions = {}) => {
@@ -1259,7 +1282,7 @@ export function PhaserStreetGameApp() {
         !activeGame ||
         busyLabelRef.current ||
         pendingVisualGameUpdateRef.current ||
-        isBlockingRowanPlayback(rowanPlaybackRef.current)
+        isBlockingRowanPlaybackForGame(rowanPlaybackRef.current, activeGame)
       ) {
         return false;
       }
@@ -1283,9 +1306,10 @@ export function PhaserStreetGameApp() {
       const mapKey = createMapKey(activeGame);
       if (routeFinderMapKeyRef.current !== mapKey || !routeFinderRef.current) {
         routeFinderMapKeyRef.current = mapKey;
-        routeFinderRef.current = createRouteFinder(
-          buildNavigationTiles(activeGame, visualScene),
-        );
+        routeFinderRef.current = buildVisualNavigationSurface(
+          activeGame,
+          visualScene,
+        ).routeFinder;
       }
       const candidateRoute = routeFinderRef.current(
         currentVisualPosition,
@@ -1468,7 +1492,7 @@ export function PhaserStreetGameApp() {
       !autonomy?.autoContinue ||
       busyLabel ||
       optimisticPlayerPosition ||
-      isBlockingRowanPlayback(rowanPlayback)
+      isBlockingRowanPlaybackForGame(rowanPlayback, game)
     ) {
       return;
     }
@@ -1495,7 +1519,7 @@ export function PhaserStreetGameApp() {
         !activeAutonomy?.autoContinue ||
         busyLabelRef.current ||
         optimisticPlayerRef.current ||
-        isBlockingRowanPlayback(rowanPlaybackRef.current)
+        isBlockingRowanPlaybackForGame(rowanPlaybackRef.current, activeGame)
       ) {
         return;
       }
@@ -2654,6 +2678,7 @@ function renderDynamicScene(
     now,
   );
   syncBrowserCameraProbe(objects.overlayDom, runtimeState, camera, sceneViewport);
+  syncBrowserMovementProbe(objects.overlayDom, runtimeState);
 }
 
 function renderOverlay(objects: RuntimeObjects, runtimeState: RuntimeState) {
@@ -2668,6 +2693,27 @@ function renderOverlay(objects: RuntimeObjects, runtimeState: RuntimeState) {
   root.innerHTML = buildOverlayHtml(runtimeState);
   restoreOverlayRenderState(root, overlayState);
   syncCommandRailDiagnostics(root);
+}
+
+function syncBrowserMovementProbe(
+  root: HTMLElement,
+  runtimeState: RuntimeState,
+) {
+  const probeElement = root.querySelector<HTMLScriptElement>("#ml-browser-probe");
+  if (!probeElement?.textContent) {
+    return;
+  }
+
+  try {
+    const payload = JSON.parse(probeElement.textContent) as Record<
+      string,
+      unknown
+    >;
+    payload.movement = buildBrowserMovementDiagnostics(runtimeState);
+    probeElement.textContent = JSON.stringify(payload).replace(/</g, "\\u003c");
+  } catch {
+    // Keep the visual runtime moving if the debug probe is temporarily absent.
+  }
 }
 
 function clearConversationReplayTimer(runtimeState: RuntimeState) {
@@ -3663,6 +3709,106 @@ function compactMapAgencyCopy(text: string, maxLength: number) {
   return `${normalized.slice(0, cutAt > 28 ? cutAt : maxLength - 3).trim()}...`;
 }
 
+function buildBrowserMovementDiagnostics(
+  runtimeState: RuntimeState,
+): StreetBrowserMovementDiagnostics {
+  warmBrowserPatrolDiagnostics(runtimeState);
+
+  const now = getRuntimeNow();
+  const motion = runtimeState.playerMotion;
+  const routeWorldPath =
+    motion.worldPath && motion.worldPath.length > 1
+      ? motion.worldPath
+      : motion.path.length > 1
+        ? motion.path.map((point) =>
+            projectVisualNavigationTileCenter(
+              runtimeState.indices.visualScene,
+              Math.round(point.x),
+              Math.round(point.y),
+            ),
+          )
+        : [];
+  const routeSettled = isPlayerMotionSettled(motion, now);
+  const sampledPointsLegal =
+    routeWorldPath.length > 1
+      ? isVisualWorldPathLegal(
+          routeWorldPath,
+          runtimeState.indices.walkableRuntimePoints,
+        )
+      : false;
+  const diagnostics = motion.routeDiagnostics ?? {
+    blockedByVisualScene: runtimeState.indices.blockedNavigationTileCount,
+    legal: sampledPointsLegal,
+    reachesDestination: routeWorldPath.length > 1,
+    sampledPointsLegal,
+    snappedEnd: false,
+    snappedStart: false,
+  };
+
+  return {
+    npcPatrols: Array.from(runtimeState.indices.patrolDiagnosticsByKey.values())
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .map((entry) => ({
+        droppedWaypoints: entry.droppedWaypoints,
+        key: entry.key,
+        locationId: entry.locationId,
+        nextLocationId: entry.nextLocationId,
+        pathLength: entry.pathLength,
+        requestedWaypoints: entry.requestedWaypoints,
+        routed: entry.routed,
+        snappedWaypoints: entry.snappedWaypoints,
+        unreachableSegments: entry.unreachableSegments,
+        usedVisualHints: entry.usedVisualHints,
+    })),
+    playerRoute:
+      !routeSettled && routeWorldPath.length > 1 && motion.path.length > 1
+        ? {
+            active: !routeSettled,
+            diagnostics,
+            durationMs: Math.round(motion.durationMs),
+            legal: diagnostics.legal,
+            progress: roundBrowserNumber(
+              clamp((now - motion.startedAt) / motion.durationMs, 0, 1),
+            ),
+            reachesDestination: diagnostics.reachesDestination,
+            sampledPointsLegal: diagnostics.sampledPointsLegal,
+            target: roundBrowserPoint(motion.to),
+            tilePath: motion.path.map(roundBrowserPoint),
+            worldPath: routeWorldPath.map(roundBrowserPoint),
+          }
+        : null,
+  };
+}
+
+function warmBrowserPatrolDiagnostics(runtimeState: RuntimeState) {
+  const game = runtimeState.snapshot.game;
+  if (!game) {
+    return;
+  }
+
+  for (const location of game.locations) {
+    getCachedPatrolPath(runtimeState.indices, {
+      door: runtimeState.indices.primaryDoorByLocation.get(location.id),
+      findRoute: runtimeState.indices.routeFinder,
+      location,
+      props: runtimeState.indices.propsByLocation.get(location.id) ?? [],
+      visualHints: getVisualPatrolHints(runtimeState.indices, location.id),
+      walkableRuntimePoints: runtimeState.indices.walkableRuntimePoints,
+    });
+  }
+}
+
+function roundBrowserPoint(point: Point) {
+  return {
+    x: roundBrowserNumber(point.x),
+    y: roundBrowserNumber(point.y),
+  };
+}
+
+function roundBrowserNumber(value: number) {
+  return Math.round(value * 1000) / 1000;
+}
+
 function buildOverlayHtml(runtimeState: RuntimeState) {
   const { snapshot, ui } = runtimeState;
   const { width, height } = snapshot.viewport;
@@ -3952,7 +4098,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const visualMovePending = Boolean(snapshot.optimisticPlayerPosition);
   const canAdvanceObjectiveManually =
     (!game.activeConversation || Boolean(game.rowanAutonomy?.autoContinue)) &&
-    (!isBlockingRowanPlayback(snapshot.rowanPlayback) ||
+    (!isBlockingRowanPlaybackForGame(snapshot.rowanPlayback, game) ||
       conversationCanAdvanceDuringReplay) &&
     (!conversationReplayActive || conversationCanAdvanceDuringReplay) &&
     !visualMovePending;
@@ -4191,7 +4337,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const showManualTimeControls =
     !firstAfternoonComplete &&
     !railActiveConversation &&
-    !isBlockingRowanPlayback(snapshot.rowanPlayback);
+    !isBlockingRowanPlaybackForGame(snapshot.rowanPlayback, game);
   const hasRailMore =
     railContextEntries.length > 0 ||
     secondaryActions.length > 0 ||
@@ -4245,7 +4391,10 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     conversationNpcName: railConversationNpc?.name,
     game,
     rowanRail,
-    snapshot,
+    snapshot: {
+      ...snapshot,
+      movement: buildBrowserMovementDiagnostics(runtimeState),
+    },
   });
   const dockActiveTab = focusPanel ?? "actions";
   const clockLabel = formatClock(game.currentTime);
@@ -4858,7 +5007,7 @@ function maybeAutostartConversation(
     !runtimeState.snapshot.rowanAutoplayEnabled ||
     runtimeState.snapshot.busyLabel ||
     game.activeConversation ||
-    isBlockingRowanPlayback(runtimeState.snapshot.rowanPlayback)
+    isBlockingRowanPlaybackForGame(runtimeState.snapshot.rowanPlayback, game)
   ) {
     clearConversationAutostartTimer(runtimeState);
     return;
@@ -4914,7 +5063,10 @@ function maybeAutostartConversation(
       !activeGame ||
       runtimeState.snapshot.busyLabel ||
       activeGame.activeConversation ||
-      isBlockingRowanPlayback(runtimeState.snapshot.rowanPlayback) ||
+      isBlockingRowanPlaybackForGame(
+        runtimeState.snapshot.rowanPlayback,
+        activeGame,
+      ) ||
       !nextAutoStartPlan ||
       nextAutoStartPlan.autoStartKey !== autoStartKey ||
       !activeSelectedNpc ||
@@ -5177,111 +5329,16 @@ function normalizeCameraWheelDelta(
   };
 }
 
-const BLOCKING_LANDMARK_INSET_BY_STYLE: Partial<
-  Record<VisualScene["landmarks"][number]["style"], number>
-> = {
-  "boarding-house": 12,
-  cafe: 18,
-  workshop: 18,
-  yard: 14,
-};
-
-const BLOCKING_LANDMARK_MODULE_KINDS = new Set([
-  "entry",
-  "service_bay",
-  "wall_band",
-]);
-
-function buildNavigationTiles(
-  game: StreetGameState,
-  visualScene: VisualScene | null,
-) {
-  if (!visualScene) {
-    return game.map.tiles;
-  }
-
-  const blockingRects = collectVisualSceneBlockingRects(visualScene);
-  if (blockingRects.length === 0) {
-    return game.map.tiles;
-  }
-
-  return game.map.tiles.map((tile) => {
-    if (!tile.walkable) {
-      return tile;
-    }
-
-    return isNavigationTileBlockedByVisualScene(
-      tile,
-      visualScene,
-      blockingRects,
-    )
-      ? { ...tile, walkable: false }
-      : tile;
-  });
-}
-
-function collectVisualSceneBlockingRects(scene: VisualScene) {
-  return [
-    ...scene.landmarks
-      .filter((landmark) => landmark.style in BLOCKING_LANDMARK_INSET_BY_STYLE)
-      .map((landmark) =>
-        insetVisualRect(
-          landmark.rect,
-          BLOCKING_LANDMARK_INSET_BY_STYLE[landmark.style] ?? 0,
-        ),
-      ),
-    ...scene.landmarkModules
-      .filter((module) => BLOCKING_LANDMARK_MODULE_KINDS.has(module.kind))
-      .map((module) => insetVisualRect(module.rect, 8)),
-  ].filter((rect) => rect.width > 1 && rect.height > 1);
-}
-
-function insetVisualRect(rect: VisualRect, inset: number): VisualRect {
-  const width = Math.max(rect.width - inset * 2, 0);
-  const height = Math.max(rect.height - inset * 2, 0);
-
-  return {
-    ...rect,
-    height,
-    radius: rect.radius ? Math.max(rect.radius - inset, 0) : rect.radius,
-    width,
-    x: rect.x + inset,
-    y: rect.y + inset,
-  };
-}
-
-function isNavigationTileBlockedByVisualScene(
-  tile: MapTile,
-  scene: VisualScene,
-  blockingRects: VisualRect[],
-) {
-  const projectedPoint = projectVisualScenePoint(scene, {
-    x: tile.x + 0.5,
-    y: tile.y + 0.5,
-  });
-
-  return blockingRects.some((rect) =>
-    pointInsideVisualRect(projectedPoint, rect),
-  );
-}
-
-function pointInsideVisualRect(point: Point, rect: VisualRect) {
-  return !(
-    point.x < rect.x ||
-    point.y < rect.y ||
-    point.x > rect.x + rect.width ||
-    point.y > rect.y + rect.height
-  );
-}
-
 function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
   const game = snapshot.game;
   if (!game) {
     return {
       animatedSurfaceTiles: [],
+      blockedNavigationTileCount: 0,
       footprintByLocationId: new Map(),
       locationsById: new Map(),
       patrolDistanceByKey: new Map(),
+      patrolDiagnosticsByKey: new Map(),
       patrolPathByKey: new Map(),
       primaryDoorByLocation: new Map(),
       propsByLocation: new Map(),
@@ -5292,12 +5349,13 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
   }
 
   const visualScene = getPlayableVisualScene(game);
-  const navigationTiles = buildNavigationTiles(game, visualScene);
+  const navigationSurface = buildVisualNavigationSurface(game, visualScene);
 
   return {
     animatedSurfaceTiles: visualScene
       ? []
       : collectAnimatedSurfaceTiles(game.map),
+    blockedNavigationTileCount: navigationSurface.blockedByVisualScene,
     footprintByLocationId: new Map(
       game.map.footprints
         .filter((footprint) => footprint.locationId)
@@ -5307,45 +5365,16 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
       game.locations.map((location) => [location.id, location]),
     ),
     patrolDistanceByKey: new Map(),
+    patrolDiagnosticsByKey: new Map(),
     patrolPathByKey: new Map(),
     primaryDoorByLocation: new Map(
       game.map.doors.map((door) => [door.locationId, door]),
     ),
     propsByLocation: groupPropsByLocation(game.map.props),
-    routeFinder: createRouteFinder(navigationTiles),
+    routeFinder: navigationSurface.routeFinder,
     visualScene,
-    walkableRuntimePoints: buildWalkableRuntimePoints(
-      navigationTiles,
-      visualScene,
-    ),
+    walkableRuntimePoints: navigationSurface.walkableRuntimePoints,
   };
-}
-
-function buildWalkableRuntimePoints(
-  tiles: MapTile[],
-  visualScene: VisualScene | null,
-): WalkableRuntimePoint[] {
-  return tiles
-    .filter((tile) => tile.walkable)
-    .map((tile) => {
-      const tileCenter = {
-        x: tile.x + 0.5,
-        y: tile.y + 0.5,
-      };
-
-      return {
-        kind: tile.kind,
-        locationId: tile.locationId,
-        tile: {
-          x: tile.x,
-          y: tile.y,
-        },
-        tileCenter,
-        world: visualScene
-          ? projectVisualScenePoint(visualScene, tileCenter)
-          : mapPointToWorld(tileCenter),
-      };
-    });
 }
 
 function getWorldBounds(snapshot: StreetAppSnapshot) {
@@ -5594,8 +5623,16 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
 
   const fromPoint = samplePlayerTile(runtimeState.playerMotion, now);
   const fromWorldPoint = samplePlayerWorld(runtimeState, fromPoint, now);
-  const routedPoints = runtimeState.indices.routeFinder(fromPoint, nextPoint);
-  const path = [fromPoint, ...routedPoints.slice(1)];
+  const visualRoute = resolveVisualRoute({
+    blockedByVisualScene: runtimeState.indices.blockedNavigationTileCount,
+    end: nextPoint,
+    routeFinder: runtimeState.indices.routeFinder,
+    start: fromPoint,
+    startWorldPoint: fromWorldPoint,
+    visualScene: runtimeState.indices.visualScene,
+    walkableRuntimePoints: runtimeState.indices.walkableRuntimePoints,
+  });
+  const path = visualRoute.tilePath.length > 0 ? visualRoute.tilePath : [fromPoint];
   const playerMoveMsPerTile = derivePlayerMoveMsPerTile(runtimeState);
   const playerMoveMaxDurationMs = runtimeState.snapshot.rowanAutoplayEnabled
     ? WATCH_PLAYER_MAX_MOVE_DURATION_MS
@@ -5611,14 +5648,13 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   runtimeState.playerMotion = {
     durationMs,
     path,
+    routeDiagnostics: visualRoute.diagnostics,
     startedAt: now,
     to: nextPoint,
-    worldPath: buildPlayerMotionWorldPath(
-      runtimeState,
-      path,
-      fromWorldPoint,
-      nextPoint,
-    ),
+    worldPath:
+      runtimeState.indices.visualScene && visualRoute.worldPath.length > 1
+        ? visualRoute.worldPath
+        : undefined,
   };
 }
 
@@ -5738,13 +5774,10 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
     findRoute: runtimeState.indices.routeFinder,
     location: currentLocation,
     props: runtimeState.indices.propsByLocation.get(currentLocation.id) ?? [],
-    visualHints:
-      [
-        ...(runtimeState.indices.visualScene?.locationAnchors[currentLocation.id]
-          ?.playerApproaches ?? []),
-        ...(runtimeState.indices.visualScene?.locationAnchors[currentLocation.id]
-          ?.npcStands ?? []),
-      ].filter(Boolean),
+    visualHints: getPlayerRouteVisualHints(
+      runtimeState.indices,
+      currentLocation.id,
+    ),
     walkableRuntimePoints: runtimeState.indices.walkableRuntimePoints,
   });
 
@@ -5760,6 +5793,34 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
     runtimeState.snapshot.rowanAutoplayEnabled ? 360 : 300,
     runtimeState.snapshot.rowanAutoplayEnabled ? 880 : 760,
   );
+}
+
+function getPlayerRouteVisualHints(
+  indices: RuntimeIndices,
+  locationId: string,
+) {
+  const anchors = indices.visualScene?.locationAnchors[locationId];
+  if (!anchors) {
+    return [];
+  }
+
+  return [
+    ...(anchors.playerApproaches ?? []),
+    ...getVisualPatrolHints(indices, locationId),
+  ].filter(Boolean);
+}
+
+function getVisualPatrolHints(indices: RuntimeIndices, locationId: string) {
+  const anchors = indices.visualScene?.locationAnchors[locationId];
+  if (!anchors) {
+    return [];
+  }
+
+  return [
+    anchors.frontage,
+    ...(anchors.npcStands ?? []),
+    anchors.door,
+  ].filter(Boolean);
 }
 
 function computeAnimatedNpcs(
@@ -5819,23 +5880,16 @@ function buildAnimatedNpcState({
     currentHour,
     indices.locationsById,
   );
-  const authoredPatrolPath = buildAuthoredNpcPatrolPath(
-    indices.visualScene,
-    location.id,
-  );
   const patrolPath = getCachedPatrolPath(indices, {
     door: indices.primaryDoorByLocation.get(location.id),
     findRoute: indices.routeFinder,
     location,
     nextLocation,
     props: indices.propsByLocation.get(location.id) ?? [],
-    visualHints:
-      indices.visualScene?.locationAnchors[location.id]?.npcStands?.filter(
-        Boolean,
-      ) ?? [],
+    visualHints: getVisualPatrolHints(indices, location.id),
     walkableRuntimePoints: indices.walkableRuntimePoints,
   });
-  const effectivePatrolPath = authoredPatrolPath ?? patrolPath;
+  const effectivePatrolPath = patrolPath;
   const phaseOffset = ((hashString(npc.id) + index * 17) % 997) / 997;
   const cycleSeconds = patrolCycleSeconds(location.type);
   const progress = positiveModulo(
@@ -5877,34 +5931,8 @@ function buildAnimatedNpcState({
       Math.sin(animationBeat * 0.8 + phaseOffset * Math.PI * 2) *
         0.08 *
         personality.motion.idleWave,
-    ...(authoredPatrolPath
-      ? styledPoint
-      : projectRuntimePoint(indices, styledPoint)),
+    ...projectRuntimePoint(indices, styledPoint),
   };
-}
-
-function buildAuthoredNpcPatrolPath(
-  visualScene: VisualScene | null,
-  locationId: string,
-) {
-  const anchors = visualScene?.locationAnchors[locationId];
-  if (!anchors) {
-    return null;
-  }
-
-  const candidatePoints = [
-    anchors.frontage,
-    ...(anchors.npcStands ?? []),
-    anchors.door,
-  ];
-  const patrolPath = dedupePointSequence(
-    candidatePoints.map((point) => ({
-      x: point.x,
-      y: point.y,
-    })),
-  );
-
-  return patrolPath.length > 0 ? patrolPath : null;
 }
 
 function resolveCrowdPositions(
@@ -6799,6 +6827,7 @@ function drawDynamicOverlay(
   if (runtimeState.indices.visualScene) {
     drawAnimatedCitySurface(layer, runtimeState.indices, now);
     drawAnimatedSkyWeather(layer, runtimeState.indices.visualScene, now);
+    drawPlayerRouteBreadcrumb(layer, runtimeState, now);
     if (runtimeState.waypointTarget) {
       drawWaypointBeacon(
         layer,
@@ -6838,6 +6867,7 @@ function drawDynamicOverlay(
   const pulse = 0.55 + Math.sin(now / 320) * 0.12;
 
   drawAnimatedCitySurface(layer, runtimeState.indices, now);
+  drawPlayerRouteBreadcrumb(layer, runtimeState, now);
 
   if (runtimeState.waypointTarget) {
     drawWaypointBeacon(
@@ -6895,6 +6925,32 @@ function drawDynamicOverlay(
         ringRadius,
       );
     }
+  }
+}
+
+function drawPlayerRouteBreadcrumb(
+  layer: PhaserType.GameObjects.Graphics,
+  runtimeState: RuntimeState,
+  now: number,
+) {
+  const routePath = buildPlayerAvoidanceWorldPath(runtimeState, now);
+  if (routePath.length <= 1) {
+    return;
+  }
+
+  const pulse = 0.62 + Math.sin(now / 220) * 0.14;
+  layer.lineStyle(3.2, 0x8dd0cd, 0.38 * pulse);
+  layer.beginPath();
+  layer.moveTo(routePath[0].x, routePath[0].y);
+  for (const point of routePath.slice(1)) {
+    layer.lineTo(point.x, point.y);
+  }
+  layer.strokePath();
+
+  layer.lineStyle(1.5, 0xffefc8, 0.26 * pulse);
+  for (let index = 1; index < routePath.length - 1; index += 1) {
+    const point = routePath[index];
+    layer.strokeCircle(point.x, point.y, 3.2 + pulse * 1.1);
   }
 }
 
@@ -7210,9 +7266,17 @@ function getCachedPatrolPath(
     return cached;
   }
 
-  const nextPath = buildNpcPatrolPath(options);
+  const nextRoute = buildNpcPatrolRoute(options);
+  const nextPath = nextRoute.path;
   indices.patrolPathByKey.set(key, nextPath);
   indices.patrolDistanceByKey.set(key, loopPathDistance(nextPath));
+  indices.patrolDiagnosticsByKey.set(key, {
+    ...nextRoute.diagnostics,
+    key,
+    locationId: options.location.id,
+    nextLocationId: options.nextLocation?.id ?? null,
+    pathLength: nextPath.length,
+  });
   return nextPath;
 }
 
@@ -7326,86 +7390,6 @@ function playerTileToWorld(
   return projectRuntimeTileCenter(indices, point.x, point.y);
 }
 
-function buildPlayerMotionWorldPath(
-  runtimeState: RuntimeState,
-  path: Point[],
-  fromWorldPoint: Point,
-  nextPoint: Point,
-) {
-  if (!runtimeState.indices.visualScene || path.length <= 1) {
-    return undefined;
-  }
-
-  const projectedPath = path.map((point) =>
-    projectRuntimeTileCenter(runtimeState.indices, point.x, point.y),
-  );
-  const targetLocationId = runtimeState.snapshot.optimisticPlayerPosition
-    ? runtimeState.snapshot.optimisticPlayerLocationId
-    : runtimeState.snapshot.game?.player.currentLocationId;
-  const targetWorldPath = resolveAuthoredPlayerArrivalWorldPath({
-    conversationLocationId:
-      runtimeState.snapshot.optimisticPlayerConversationLocationId ??
-      runtimeState.snapshot.game?.activeConversation?.locationId,
-    indices: runtimeState.indices,
-    locationId: targetLocationId,
-    point: nextPoint,
-  });
-
-  return dedupePointSequence([
-    fromWorldPoint,
-    ...projectedPath.slice(1, -1),
-    ...(targetWorldPath ?? [projectedPath[projectedPath.length - 1]]),
-  ]);
-}
-
-function resolveAuthoredPlayerArrivalWorldPath({
-  conversationLocationId,
-  indices,
-  locationId,
-  point,
-}: {
-  conversationLocationId?: string | null;
-  indices: RuntimeIndices;
-  locationId?: string | null;
-  point: Point;
-}) {
-  if (!locationId) {
-    return null;
-  }
-
-  const anchors = indices.visualScene?.locationAnchors[locationId];
-  if (!anchors) {
-    return null;
-  }
-
-  const targetWorldPoint = resolveAuthoredLocationWorldPoint({
-    conversationLocationId,
-    indices,
-    locationId,
-    point,
-  });
-  if (!targetWorldPoint) {
-    return null;
-  }
-
-  const entryPoints = dedupePointSequence([
-    { x: anchors.frontage.x, y: anchors.frontage.y },
-    { x: anchors.door.x, y: anchors.door.y },
-  ]);
-  const nearestEntryPoint = entryPoints
-    .filter((entryPoint) => distanceBetween(entryPoint, targetWorldPoint) > 30)
-    .sort(
-      (left, right) =>
-        distanceBetween(left, targetWorldPoint) -
-        distanceBetween(right, targetWorldPoint),
-    )[0];
-
-  return dedupePointSequence([
-    ...(nearestEntryPoint ? [nearestEntryPoint] : []),
-    targetWorldPoint,
-  ]);
-}
-
 function resolveAuthoredLocationWorldPoint({
   conversationLocationId,
   indices,
@@ -7449,12 +7433,20 @@ function resolveAuthoredLocationWorldPoint({
     anchors.playerApproaches?.length &&
     candidatePoints.length > 1
   ) {
-    return candidatePoints[0];
+    return snapAuthoredLocationWorldPoint(
+      indices,
+      locationId,
+      candidatePoints[0],
+    );
   }
 
   const location = indices.locationsById.get(locationId);
   if (!location || candidatePoints.length === 1) {
-    return candidatePoints[0];
+    return snapAuthoredLocationWorldPoint(
+      indices,
+      locationId,
+      candidatePoints[0],
+    );
   }
 
   const horizontalProgress = clamp(
@@ -7467,7 +7459,29 @@ function resolveAuthoredLocationWorldPoint({
     Math.floor(horizontalProgress * candidatePoints.length),
   );
 
-  return candidatePoints[candidateIndex];
+  return snapAuthoredLocationWorldPoint(
+    indices,
+    locationId,
+    candidatePoints[candidateIndex],
+  );
+}
+
+function snapAuthoredLocationWorldPoint(
+  indices: RuntimeIndices,
+  locationId: string,
+  point: Point,
+) {
+  const nearestPoint = findNearestWalkablePointByWorldHint(
+    indices.walkableRuntimePoints,
+    point,
+    {
+      preferredKinds: PUBLIC_TRAVEL_TILE_KINDS,
+      preferredLocationId: locationId,
+      worldDistanceScale: 46,
+    },
+  );
+
+  return nearestPoint?.world ?? point;
 }
 
 function colorToCssRgba(color: number, alpha: number) {
@@ -7557,7 +7571,7 @@ function findWalkableTile(
   y: number,
   visualScene: VisualScene | null = getPlayableVisualScene(game),
 ) {
-  return buildNavigationTiles(game, visualScene).find(
+  return buildVisualNavigationTiles(game, visualScene).tiles.find(
     (tile) => tile.x === x && tile.y === y && tile.walkable,
   );
 }

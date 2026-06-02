@@ -7,6 +7,7 @@ import {
   createEmptyRowanPlaybackState,
   deriveRowanPlaybackBeats,
   isBlockingRowanPlayback,
+  isBlockingRowanPlaybackForGame,
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
@@ -217,6 +218,30 @@ describe("Rowan playback helpers", () => {
     expect(aligned.lastCompletedBeat).toBeUndefined();
     expect(railView.justHappened).toBeNull();
     expect(railView.now.title).not.toBe("Arrived at Kettle & Lamp");
+  });
+
+  it("does not let stale playback block the live simulation loop", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-stale-blocker");
+    const staleMove: RowanPlaybackBeat = {
+      blocking: true,
+      detail: "Rowan was once crossing toward Kettle & Lamp.",
+      durationMs: 4800,
+      key: "move:stale-tea-house",
+      kind: "move",
+      locationId: "tea-house",
+      title: "Walking to Kettle & Lamp",
+      tone: "objective",
+    };
+    const playback = {
+      activeBeat: staleMove,
+      queuedBeats: [staleMove],
+    };
+
+    expect(isBlockingRowanPlayback(playback)).toBe(true);
+    expect(isBlockingRowanPlaybackForGame(playback, asWebGame(world))).toBe(
+      false,
+    );
   });
 
   it("builds a stripped rail model around now, next, and just happened", async () => {

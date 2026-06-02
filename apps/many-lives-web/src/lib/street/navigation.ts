@@ -21,6 +21,20 @@ export type WalkableRuntimePoint = {
   world: Point;
 };
 
+export type NpcPatrolPathDiagnostics = {
+  droppedWaypoints: number;
+  requestedWaypoints: number;
+  routed: boolean;
+  snappedWaypoints: number;
+  unreachableSegments: number;
+  usedVisualHints: boolean;
+};
+
+export type NpcPatrolPathResult = {
+  diagnostics: NpcPatrolPathDiagnostics;
+  path: Point[];
+};
+
 type WalkablePointSearchOptions = {
   preferredKinds?: TileKind[];
   preferredLocationId?: string;
@@ -235,6 +249,34 @@ export function buildNpcPatrolPath({
   visualHints?: Point[];
   walkableRuntimePoints: WalkableRuntimePoint[];
 }) {
+  return buildNpcPatrolRoute({
+    door,
+    findRoute,
+    location,
+    nextLocation,
+    props,
+    visualHints,
+    walkableRuntimePoints,
+  }).path;
+}
+
+export function buildNpcPatrolRoute({
+  door,
+  findRoute,
+  location,
+  nextLocation,
+  props,
+  visualHints,
+  walkableRuntimePoints,
+}: {
+  door?: MapDoor;
+  findRoute: RouteFinder;
+  location: LocationState;
+  nextLocation?: LocationState;
+  props: MapProp[];
+  visualHints?: Point[];
+  walkableRuntimePoints: WalkableRuntimePoint[];
+}): NpcPatrolPathResult {
   const entryPoint = door
     ? { x: door.x + door.width / 2, y: door.y + door.height / 2 }
     : { x: location.entryX + 0.5, y: location.entryY + 0.5 };
@@ -318,42 +360,50 @@ export function buildNpcPatrolPath({
       break;
   }
 
-  const routedVisualLoop = stitchWalkableTilePath(
+  const visualHintPoints =
+    visualHints?.map((point) =>
+      findNearestWalkablePointByWorldHint(walkableRuntimePoints, point, {
+        preferredKinds,
+        preferredLocationId: location.id,
+      }),
+    ) ?? [];
+  const visualWaypoints = [
+    entryWalkablePoint?.tile,
+    ...visualHintPoints.map((point) => point?.tile),
+  ].filter(isPresent);
+  const visualLoop = stitchWalkableTilePath(
     findRoute,
-    [
-      entryWalkablePoint?.tile,
-      ...(visualHints ?? []).map(
-        (point) =>
-          findNearestWalkablePointByWorldHint(walkableRuntimePoints, point, {
-            preferredKinds,
-            preferredLocationId: location.id,
-          })?.tile,
-      ),
-    ].filter(isPresent),
+    visualWaypoints,
     {
       closed: true,
     },
-  ).map(tilePointToCenter);
+  );
+  const routedVisualLoop = visualLoop.path.map(tilePointToCenter);
 
-  const routedBaseLoop = stitchWalkableTilePath(
+  const baseWaypointPoints = basePath.map((point) =>
+    findNearestWalkablePointByTileHint(walkableRuntimePoints, point, {
+      preferredKinds,
+      preferredLocationId: location.id,
+    }),
+  );
+  const baseWaypoints = [
+    entryWalkablePoint?.tile,
+    ...baseWaypointPoints.map((point) => point?.tile),
+  ].filter(isPresent);
+  const baseLoop = stitchWalkableTilePath(
     findRoute,
-    [
-      entryWalkablePoint?.tile,
-      ...basePath.map(
-        (point) =>
-          findNearestWalkablePointByTileHint(walkableRuntimePoints, point, {
-            preferredKinds,
-            preferredLocationId: location.id,
-          })?.tile,
-      ),
-    ].filter(isPresent),
+    baseWaypoints,
     {
       closed: true,
     },
-  ).map(tilePointToCenter);
+  );
+  const routedBaseLoop = baseLoop.path.map(tilePointToCenter);
+  const requestedVisualWaypoints = 1 + (visualHints?.length ?? 0);
+  const requestedBaseWaypoints = 1 + basePath.length;
+  const useVisualLoop = routedVisualLoop.length > 1;
 
-  const loopPath =
-    routedVisualLoop.length > 1
+  let loopPath =
+    useVisualLoop
       ? routedVisualLoop
       : routedBaseLoop.length > 0
         ? routedBaseLoop
@@ -362,6 +412,24 @@ export function buildNpcPatrolPath({
               ? tilePointToCenter(entryWalkablePoint.tile)
               : entryPoint,
           ];
+  const diagnostics: NpcPatrolPathDiagnostics = {
+    droppedWaypoints:
+      (useVisualLoop
+        ? requestedVisualWaypoints - visualWaypoints.length
+        : requestedBaseWaypoints - baseWaypoints.length) +
+      (useVisualLoop
+        ? visualLoop.unreachableSegments
+        : baseLoop.unreachableSegments),
+    requestedWaypoints: useVisualLoop
+      ? requestedVisualWaypoints
+      : requestedBaseWaypoints,
+    routed: loopPath.length > 1,
+    snappedWaypoints: useVisualLoop ? visualWaypoints.length : baseWaypoints.length,
+    unreachableSegments: useVisualLoop
+      ? visualLoop.unreachableSegments
+      : baseLoop.unreachableSegments,
+    usedVisualHints: useVisualLoop,
+  };
 
   if (nextLocation && nextLocation.id !== location.id) {
     const nextEntryWalkablePoint = findNearestWalkablePointByTileHint(
@@ -388,17 +456,26 @@ export function buildNpcPatrolPath({
           .map(tilePointToCenter);
 
         if (routeOut.length > 1) {
-          return dedupePointSequence([
+          loopPath = dedupePointSequence([
             ...loopPath,
             ...routeOut,
             ...[...routeOut].reverse().slice(1),
           ]);
         }
+      } else {
+        diagnostics.droppedWaypoints += 1;
+        diagnostics.unreachableSegments += 1;
       }
     }
   }
 
-  return loopPath;
+  return {
+    diagnostics: {
+      ...diagnostics,
+      routed: loopPath.length > 1,
+    },
+    path: loopPath,
+  };
 }
 
 export function findNearestWalkablePointByWorldHint(
@@ -648,6 +725,7 @@ function stitchWalkableTilePath(
     closed?: boolean;
   } = {},
 ) {
+  let unreachableSegments = 0;
   const roundedWaypoints = dedupeGridPointSequence(
     waypoints.map((point) => ({
       x: Math.round(point.x),
@@ -656,7 +734,10 @@ function stitchWalkableTilePath(
   );
 
   if (roundedWaypoints.length === 0) {
-    return [];
+    return {
+      path: [],
+      unreachableSegments,
+    };
   }
 
   const targets = options.closed
@@ -673,11 +754,15 @@ function stitchWalkableTilePath(
     }
 
     const route = routeFinder(from, to);
-    const segment = routeReachesDestination(route, to)
-      ? options.closed && index === targets.length - 1
+    if (!routeReachesDestination(route, to)) {
+      unreachableSegments += 1;
+      continue;
+    }
+
+    const segment =
+      options.closed && index === targets.length - 1
         ? route.slice(1, -1)
-        : route.slice(1)
-      : [to];
+        : route.slice(1);
 
     for (const point of segment) {
       pushDistinctGridPoint(path, point);
@@ -688,7 +773,10 @@ function stitchWalkableTilePath(
     pushDistinctGridPoint(path, roundedWaypoints[0]);
   }
 
-  return path;
+  return {
+    path,
+    unreachableSegments,
+  };
 }
 
 function dedupeGridPointSequence(points: Point[]) {
