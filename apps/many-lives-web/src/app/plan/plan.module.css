@@ -1,0 +1,365 @@
+.page {
+  min-height: 100vh;
+  overflow-x: hidden;
+  background:
+    linear-gradient(180deg, rgba(20, 28, 33, 0.86), rgba(16, 22, 26, 0.96)),
+    var(--bg-main);
+  color: var(--text-main);
+}
+
+.page *,
+.page *::before,
+.page *::after {
+  box-sizing: border-box;
+}
+
+.page * {
+  overflow-wrap: anywhere;
+}
+
+.shell {
+  width: min(1180px, calc(100% - 40px));
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 36px 0 56px;
+  min-width: 0;
+}
+
+.hero {
+  display: grid;
+  gap: 18px;
+  padding: 12px 0 28px;
+  min-width: 0;
+}
+
+.nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.nav a {
+  border: 1px solid rgba(196, 160, 106, 0.38);
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: rgba(29, 39, 45, 0.72);
+  color: var(--text-main);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.nav a:hover {
+  border-color: rgba(222, 186, 128, 0.72);
+  background: rgba(42, 56, 64, 0.86);
+}
+
+.kicker {
+  margin: 0;
+  color: var(--accent-brass);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.hero h1,
+.section h2,
+.commandPanel h2 {
+  margin: 0;
+  color: #fff5e5;
+  font-family: var(--font-display), serif;
+  letter-spacing: 0;
+}
+
+.hero h1 {
+  max-width: 960px;
+  font-size: clamp(2.5rem, 5vw, 5rem);
+  line-height: 0.98;
+  overflow-wrap: anywhere;
+}
+
+.lede {
+  max-width: 880px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: clamp(1.05rem, 2vw, 1.34rem);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.commandPanel,
+.section {
+  border: 1px solid rgba(135, 151, 161, 0.24);
+  border-radius: 8px;
+  background: rgba(29, 39, 45, 0.78);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.2);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.commandPanel {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
+  gap: 24px;
+  margin: 8px 0 18px;
+  padding: 22px;
+}
+
+.commandPanel > *,
+.section > *,
+.twoColumn > *,
+.obligationGrid > * {
+  min-width: 0;
+}
+
+.commandPanel h2 {
+  margin-top: 6px;
+  font-size: clamp(1.35rem, 2vw, 1.9rem);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.commandPanel p:last-child {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 1.02rem;
+  line-height: 1.66;
+  overflow-wrap: anywhere;
+}
+
+.section {
+  margin-top: 18px;
+  padding: 22px;
+  min-width: 0;
+}
+
+.sectionHeader {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.section h2 {
+  font-size: clamp(1.55rem, 2vw, 2.25rem);
+  line-height: 1.1;
+}
+
+.authorityList,
+.compactList,
+.checkList {
+  margin: 0;
+  padding-left: 1.3rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.authorityList {
+  columns: 2;
+  column-gap: 38px;
+}
+
+.authorityList li,
+.compactList li,
+.checkList li {
+  padding-left: 4px;
+  margin-bottom: 12px;
+  break-inside: avoid;
+}
+
+.authorityList li::marker,
+.compactList li::marker {
+  color: var(--button-primary);
+  font-weight: 800;
+}
+
+.obligationGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.turnPlanGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.obligation {
+  border: 1px solid rgba(75, 93, 104, 0.7);
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(24, 33, 39, 0.76);
+  min-width: 0;
+}
+
+.turnPlanItem {
+  border: 1px solid rgba(75, 93, 104, 0.7);
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(24, 33, 39, 0.76);
+  min-width: 0;
+}
+
+.obligation h3,
+.turnPlanItem h3 {
+  margin: 0 0 14px;
+  color: #fff5e5;
+  font-size: 1.03rem;
+  letter-spacing: 0;
+}
+
+.turnPlanItem p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.94rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.obligation dl,
+.obligation dd {
+  margin: 0;
+}
+
+.obligation dl {
+  display: grid;
+  gap: 12px;
+}
+
+.obligation dt {
+  margin-bottom: 3px;
+  color: var(--accent-brass);
+  font-family: var(--font-mono), monospace;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.obligation dd {
+  color: var(--text-muted);
+  font-size: 0.94rem;
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+}
+
+.twoColumn {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
+  gap: 18px;
+}
+
+.compactList {
+  display: grid;
+  gap: 2px;
+}
+
+.checkList {
+  list-style: none;
+  padding-left: 0;
+}
+
+.checkList li {
+  position: relative;
+  padding-left: 28px;
+}
+
+.checkList li::before {
+  position: absolute;
+  left: 0;
+  top: 0.2em;
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgba(222, 186, 128, 0.72);
+  border-radius: 3px;
+  background: rgba(196, 160, 106, 0.14);
+  content: "";
+}
+
+.commandGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.commandGrid code {
+  overflow-x: auto;
+  border: 1px solid rgba(75, 93, 104, 0.78);
+  border-radius: 6px;
+  padding: 11px 12px;
+  background: rgba(16, 22, 26, 0.82);
+  color: #f7dcae;
+  font-family: var(--font-mono), monospace;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.note {
+  margin: 14px 0 0;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    width: min(100% - 28px, 760px);
+    padding-top: 24px;
+  }
+
+  .commandPanel,
+  .twoColumn,
+  .obligationGrid,
+  .turnPlanGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .authorityList {
+    columns: 1;
+  }
+
+  .commandGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .shell {
+    width: min(370px, calc(100vw - 20px));
+    max-width: min(370px, calc(100vw - 20px));
+    margin-right: auto;
+    margin-left: 10px;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .hero h1 {
+    font-size: 2.05rem;
+    line-height: 1.04;
+  }
+
+  .commandPanel,
+  .section {
+    width: 100%;
+    max-width: 100%;
+    padding: 16px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nav {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .nav a {
+    min-width: 0;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .commandGrid code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

@@ -444,6 +444,39 @@ describe("SimulationEngine street slice", () => {
     );
   });
 
+  it("ignores a stale trail target when live state exposes the right opening action", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-stale-trail-vs-live-opening");
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      trail: [
+        {
+          id: "stale-ada-route",
+          title: "Ask Ada before checking the room.",
+          detail:
+            "This stale route hint points away from the live legal opener.",
+          done: false,
+          npcId: "npc-ada",
+          targetLocationId: "tea-house",
+        },
+        ...((world.player.objective as PlayerObjective).trail ?? []),
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.currentLocationId).toBe("boarding-house");
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(
+      world.activeConversation?.lines.find((line) => line.speaker === "player")
+        ?.text,
+    ).toMatch(/room|Morrow House|tonight/i);
+  });
+
   it("exposes the first afternoon as competing live choices with a planner trace", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-live-fork");
@@ -616,6 +649,153 @@ describe("SimulationEngine street slice", () => {
     );
   });
 
+  it("lets escalated live pressure redirect a stale home route to a legal tool plan", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-agent-pressure-over-home-route");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+
+    world.player.x = 6;
+    world.player.y = 4;
+    world.player.currentLocationId = "tea-house";
+    world.player.money = 26;
+    world.player.energy = 60;
+    world.player.knownLocationIds = [
+      ...new Set([
+        ...world.player.knownLocationIds,
+        "tea-house",
+        "repair-stall",
+      ]),
+    ];
+    world.player.knownNpcIds = [
+      ...new Set([...world.player.knownNpcIds, "npc-jo"]),
+    ];
+    world.firstAfternoon = {
+      leadFieldNote: {
+        createdAt: world.currentTime,
+        evidence: "Ada already confirmed the work and Rowan completed it.",
+        learned: "The cafe work lead is no longer the open question.",
+        memory: "Ada has already seen Rowan follow through.",
+        next: "Take stock unless live pressure changes the plan.",
+      },
+      planSettledAt: world.currentTime,
+      teaShiftStage: "paid",
+    };
+    world.conversations.push({
+      id: "conversation-ada-pressure-test",
+      locationId: "tea-house",
+      npcId: "npc-ada",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "I finished the shift. I need to decide what matters now.",
+      threadId: "thread-ada-pressure-test",
+      time: world.currentTime,
+    });
+    if (teaJob) {
+      teaJob.discovered = true;
+      teaJob.accepted = true;
+      teaJob.completed = true;
+    }
+    if (pump) {
+      pump.discovered = true;
+      pump.escalatedAt = world.currentTime;
+      pump.escalationLevel = 2;
+      pump.status = "active";
+      pump.urgency = 5;
+    }
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "settle",
+      outcomes: [],
+      progress: {
+        completed: 0,
+        label: "0/1 checked off",
+        total: 1,
+      },
+      routeKey: "first-afternoon",
+      source: "manual",
+      text: "Return to Morrow House and take stock.",
+      trail: [
+        {
+          id: "stale-home-route",
+          title: "Go home and ignore the pump pressure.",
+          done: false,
+          actionId: "reflect:first-afternoon",
+          targetLocationId: "boarding-house",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "buy:item-wrench",
+      autoContinue: true,
+      layer: "objective",
+      targetLocationId: "repair-stall",
+    });
+    expect(world.rowanAutonomy.detail).toContain("escalating");
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedActionId: "buy:item-wrench",
+      selectedLabel: "Head to Mercer Repairs",
+    });
+    const nextSteps = world.rowanAutonomy.planningTrace?.nextSteps ?? [];
+    expect(nextSteps.length).toBeGreaterThanOrEqual(3);
+    expect(nextSteps.every((step) => step.legal)).toBe(true);
+    expect(nextSteps.map((step) => step.actionId)).toEqual(
+      expect.arrayContaining(["buy:item-wrench", "solve:problem-pump"]),
+    );
+    expect(nextSteps.map((step) => step.targetLocationId)).toEqual(
+      expect.arrayContaining(["repair-stall", "courtyard"]),
+    );
+    expect(
+      nextSteps.some((step) =>
+        step.validation.includes("simulator must validate"),
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.targetLocationId === "boarding-house",
+      ),
+    ).toBe(true);
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "buy:item-wrench",
+      targetLocationId: "repair-stall",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.player.currentLocationId).toBe("repair-stall");
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "buy:item-wrench",
+      autoContinue: true,
+      targetLocationId: "repair-stall",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(
+      world.player.inventory.some((item) => item.id === "item-wrench"),
+    ).toBe(true);
+  });
+
   it("lets a no-trail objective complete through legal actions and predicates", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-agent-no-trail-pump");
@@ -668,7 +848,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.player.objective?.outcomes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: "help-pump-fix",
+          id: "pump-solved",
           status: "met",
         }),
       ]),
@@ -1087,6 +1267,17 @@ describe("SimulationEngine street slice", () => {
       kind: "contribute",
       label: "Handle house chores",
     });
+    expect(world.player.objective).toMatchObject({
+      routeKey: "settle-core",
+      outcomes: expect.arrayContaining([
+        expect.objectContaining({
+          actionId: "contribute:boarding-house",
+          authority: "predicate",
+          id: "settle-standing",
+          targetLocationId: "boarding-house",
+        }),
+      ]),
+    });
     expect(world.rowanAutonomy).toMatchObject({
       actionId: "contribute:boarding-house",
       autoContinue: true,
@@ -1206,6 +1397,262 @@ describe("SimulationEngine street slice", () => {
       npcId: "npc-ada",
       targetLocationId: "tea-house",
     });
+  });
+
+  it("ignores a poisoned explore trail target when choosing the next place from live state", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-explore-poisoned-trail");
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Explore the district and get your bearings.",
+    });
+    expect(world.player.objective?.routeKey).toBe("explore-tea-house");
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      routeKey: "explore-freight-yard",
+      trail: [
+        {
+          id: "explore-go",
+          title: "Ignore the nearest unknown place and walk to the freight yard.",
+          detail:
+            "This poisoned trail target should remain explanatory scaffolding, not planner authority.",
+          done: false,
+          targetLocationId: "freight-yard",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.player.objective?.routeKey).toBe("explore-tea-house");
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "tea-house",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("freight-yard");
+    expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("lets open objective predicate targets outrank poisoned route keys", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-predicate-target-over-route-key");
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "explore",
+      outcomes: [
+        {
+          id: "predicate-tea-house-visit",
+          label: "Stand in Kettle & Lamp and learn what opens there.",
+          status: "open",
+          urgency: 12,
+          blockers: ["Rowan has not visited the live predicate target yet."],
+          targetLocationId: "tea-house",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "explore-freight-yard",
+      source: "manual",
+      text: "Explore the district and get your bearings.",
+      trail: [
+        {
+          id: "poisoned-route-key-step",
+          title: "Follow the stale route key to the freight yard.",
+          detail:
+            "This route scaffold contradicts the open predicate target and should lose.",
+          done: false,
+          targetLocationId: "freight-yard",
+        },
+      ],
+    };
+    world.activeConversation = undefined;
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      targetLocationId: "tea-house",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "tea-house",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("freight-yard");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          option.targetLocationId === "tea-house",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("prevents stale route-key scoring from outranking an explicit predicate target", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-predicate-target-over-work-route");
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Verify Tomas's yard opening from current world state.",
+    });
+    world.activeConversation = undefined;
+    world.conversations = [];
+    world.conversationThreads = {};
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "work",
+      outcomes: [
+        {
+          id: "predicate-yard-visit",
+          label: "Reach North Crane Yard and verify the live yard opening.",
+          status: "open",
+          urgency: 1,
+          blockers: ["The yard opening has not been verified from live state."],
+          targetLocationId: "freight-yard",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "work-tea",
+      source: "manual",
+      text: "Verify Tomas's yard opening from current world state.",
+      trail: [
+        {
+          id: "poisoned-work-tea-step",
+          title: "Go to Kettle & Lamp instead.",
+          detail:
+            "This stale route key and trail hint contradict the explicit predicate target.",
+          done: false,
+          targetLocationId: "tea-house",
+        },
+      ],
+    };
+    world.activeConversation = undefined;
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("tea-house");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          option.targetLocationId === "freight-yard",
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.targetLocationId === "tea-house",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("keeps explicit predicate authority when route hints mirror the predicate target", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-mirrored-trail-still-predicate");
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Verify Tomas's yard opening from current world state.",
+    });
+    world.activeConversation = undefined;
+    world.conversations = [];
+    world.conversationThreads = {};
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "work",
+      outcomes: [
+        {
+          id: "predicate-yard-visit",
+          label: "Reach North Crane Yard and verify the live yard opening.",
+          status: "open",
+          urgency: 9,
+          blockers: ["The yard opening has not been verified from live state."],
+          targetLocationId: "freight-yard",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "work-tea",
+      source: "manual",
+      text: "Verify Tomas's yard opening from current world state.",
+      trail: [
+        {
+          id: "predicate-yard-visit",
+          title: "Debug hint: go to the yard.",
+          detail:
+            "This hint happens to mirror the predicate, but it must not be the authority switch.",
+          done: false,
+          targetLocationId: "freight-yard",
+        },
+      ],
+    };
+    world.activeConversation = undefined;
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("tea-house");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          option.targetLocationId === "freight-yard",
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.targetLocationId === "tea-house",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
   });
 
   it("routes a wrench objective to Jo instead of reopening Mara", async () => {

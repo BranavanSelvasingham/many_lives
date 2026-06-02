@@ -72,6 +72,12 @@ const PROBE_POLL_INTERVAL_MS = 250;
 const FALLBACK_WEB_PORT = Number(
   process.env.MANY_LIVES_BROWSER_WEB_FALLBACK_PORT ?? "3101",
 );
+const REQUIRED_NPC_PATROL_LOCATION_IDS = [
+  "boarding-house",
+  "tea-house",
+  "market-square",
+  "freight-yard",
+];
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
@@ -718,7 +724,10 @@ class CdpSession {
             probe.location?.y === previousGame.player.y &&
             probe.visualPlayer?.isMovingToServerState === true &&
             probe.visualPlayer?.targetX === nextGame.player.x &&
-            probe.visualPlayer?.targetY === nextGame.player.y
+            probe.visualPlayer?.targetY === nextGame.player.y &&
+            probe.movement?.playerRoute?.active === true &&
+            probe.movement?.playerRoute?.target?.x === nextGame.player.x &&
+            probe.movement?.playerRoute?.target?.y === nextGame.player.y
           ) {
             return probe;
           }
@@ -728,6 +737,39 @@ class CdpSession {
       },
       SIM_WAIT_TIMEOUT_MS,
       `Timed out waiting for browser session to stage visual movement from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}.`,
+    );
+  }
+
+  async waitForVisualRouteProgress(previousGame, nextGame, minimumProgress) {
+    return waitFor(
+      async () => {
+        try {
+          const probe = await this.readBrowserProbe();
+          const route = probe?.movement?.playerRoute;
+          if (!probe || !route) {
+            return null;
+          }
+
+          if (
+            probe.gameId === previousGame.id &&
+            probe.location?.id ===
+              (previousGame.player.currentLocationId ?? null) &&
+            probe.location?.x === previousGame.player.x &&
+            probe.location?.y === previousGame.player.y &&
+            probe.visualPlayer?.isMovingToServerState === true &&
+            probe.visualPlayer?.targetX === nextGame.player.x &&
+            probe.visualPlayer?.targetY === nextGame.player.y &&
+            route.active === true &&
+            route.progress >= minimumProgress
+          ) {
+            return probe;
+          }
+        } catch {}
+
+        return null;
+      },
+      SIM_WAIT_TIMEOUT_MS,
+      `Timed out waiting for visual route progress >= ${minimumProgress} from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}.`,
     );
   }
 
@@ -1025,6 +1067,10 @@ function shouldCaptureScreenshot(label) {
     return true;
   }
 
+  if (/-route-(start|mid)$/.test(label)) {
+    return true;
+  }
+
   return new Set([
     "initial-mara-open",
     "mara-live-thread",
@@ -1076,9 +1122,16 @@ function buildProbeFromGame(game) {
       : null,
     autonomy: {
       autoContinue: game.rowanAutonomy.autoContinue,
+      intent: game.rowanAutonomy.intent
+        ? {
+            reason: game.rowanAutonomy.intent.reason,
+            signals: game.rowanAutonomy.intent.signals,
+          }
+        : null,
       key: game.rowanAutonomy.key,
       label: game.rowanAutonomy.label,
       mode: game.rowanAutonomy.mode,
+      planningTrace: planningTraceProbeFromGame(game),
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
     },
@@ -1095,10 +1148,8 @@ function buildProbeFromGame(game) {
       x: game.player.x,
       y: game.player.y,
     },
-    objective: {
-      routeKey: game.player.objective?.routeKey ?? null,
-      text: game.player.objective?.text ?? null,
-    },
+    objective: objectiveProbeFromGame(game),
+    worldPressure: worldPressureFromGame(game),
     visualPlayer: {
       isMovingToServerState: false,
       targetX: game.player.x,
@@ -1125,13 +1176,176 @@ function buildProbeFromGame(game) {
   };
 }
 
+function objectiveProbeFromGame(game) {
+  const objective = game.player.objective;
+  return {
+    focus: objective?.focus ?? null,
+    outcomes:
+      objective?.outcomes.map((outcome) => ({
+        actionId: outcome.actionId ?? null,
+        authority: outcome.authority ?? null,
+        blockers: outcome.blockers ?? [],
+        evidence: outcome.evidence ?? null,
+        id: outcome.id,
+        label: outcome.label,
+        npcId: outcome.npcId ?? null,
+        status: outcome.status,
+        targetLocationId: outcome.targetLocationId ?? null,
+        urgency: outcome.urgency,
+      })) ?? [],
+    progress: objective?.progress ?? null,
+    routeKey: objective?.routeKey ?? null,
+    source: objective?.source ?? null,
+    text: objective?.text ?? null,
+    trailHints:
+      objective?.trail.map((hint) => ({
+        actionId: hint.actionId ?? null,
+        done: Boolean(hint.done),
+        id: hint.id,
+        npcId: hint.npcId ?? null,
+        targetLocationId: hint.targetLocationId ?? null,
+        title: hint.title,
+      })) ?? [],
+  };
+}
+
+function planningTraceProbeFromGame(game) {
+  const trace = game.rowanAutonomy.planningTrace;
+  if (!trace) {
+    return null;
+  }
+
+  const optionPayload = (option) => ({
+    actionId: option.actionId ?? null,
+    label: option.label,
+    npcId: option.npcId ?? null,
+    rationale: option.rationale,
+    reason: option.reason ?? null,
+    score: option.score,
+    status: option.status,
+    targetLocationId: option.targetLocationId ?? null,
+  });
+
+  return {
+    blockers: trace.blockers,
+    considered: trace.considered.map(optionPayload),
+    nextSteps: (trace.nextSteps ?? []).map((step) => ({
+      actionId: step.actionId ?? null,
+      kind: step.kind,
+      label: step.label,
+      legal: step.legal,
+      npcId: step.npcId ?? null,
+      rationale: step.rationale,
+      targetLocationId: step.targetLocationId ?? null,
+      validation: step.validation,
+    })),
+    outcomes: trace.outcomes.map((outcome) => ({
+      blockers: outcome.blockers ?? [],
+      evidence: outcome.evidence ?? null,
+      id: outcome.id,
+      label: outcome.label,
+      status: outcome.status,
+      urgency: outcome.urgency,
+    })),
+    rejected: trace.rejected.map(optionPayload),
+    selectedActionId: trace.selectedActionId ?? null,
+    selectedLabel: trace.selectedLabel ?? null,
+  };
+}
+
+function worldPressureFromGame(game) {
+  const currentTotalMinutes = game.clock.totalMinutes;
+  const dayOffsetMinutes = Math.max(0, game.clock.day - 1) * 24 * 60;
+  const currentHour = game.clock.hour + game.clock.minute / 60;
+  return {
+    cityEvents: (game.cityEvents ?? []).map((event) => {
+      const startTotal = dayOffsetMinutes + event.startMinute;
+      const endTotal = dayOffsetMinutes + event.endMinute;
+      return {
+        endsInMinutes:
+          event.status === "active"
+            ? Math.max(0, endTotal - currentTotalMinutes)
+            : null,
+        id: event.id,
+        locationId: event.locationId,
+        outcome: event.outcome ?? null,
+        progress: event.progress ?? null,
+        resolvedAt: event.resolvedAt ?? null,
+        startsInMinutes:
+          event.status === "upcoming"
+            ? Math.max(0, startTotal - currentTotalMinutes)
+            : null,
+        status: event.status,
+        tone: event.tone,
+        visibleLabel: event.visibleLabel,
+      };
+    }),
+    jobWindows: (game.jobs ?? []).map((job) => {
+      const startTotal = dayOffsetMinutes + Math.round(job.startHour * 60);
+      const endTotal = dayOffsetMinutes + Math.round(job.endHour * 60);
+      const inWindow =
+        currentTotalMinutes >= startTotal && currentTotalMinutes < endTotal;
+      return {
+        accepted: job.accepted,
+        completed: job.completed,
+        deferredUntilMinutes: job.deferredUntilMinutes ?? null,
+        discovered: job.discovered,
+        endsInMinutes: inWindow
+          ? Math.max(0, endTotal - currentTotalMinutes)
+          : null,
+        id: job.id,
+        inWindow,
+        locationId: job.locationId,
+        missed: job.missed,
+        startsInMinutes:
+          currentTotalMinutes < startTotal
+            ? Math.max(0, startTotal - currentTotalMinutes)
+            : null,
+        title: job.title,
+      };
+    }),
+    npcSchedules: (game.npcs ?? []).map((npc) => {
+      const currentSchedule =
+        npc.schedule.find(
+          (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+        ) ?? null;
+      const nextSchedule =
+        npc.schedule
+          .filter((entry) => entry.fromHour > currentHour)
+          .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
+      return {
+        currentLocationId: npc.currentLocationId,
+        currentScheduleLocationId: currentSchedule?.locationId ?? null,
+        id: npc.id,
+        nextScheduleLocationId: nextSchedule?.locationId ?? null,
+        nextScheduleStartsInMinutes: nextSchedule
+          ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
+          : null,
+      };
+    }),
+    problems: (game.problems ?? []).map((problem) => ({
+      discovered: problem.discovered,
+      escalatedAt: problem.escalatedAt ?? null,
+      escalationLevel: problem.escalationLevel ?? 0,
+      id: problem.id,
+      locationId: problem.locationId,
+      requiredItemId: problem.requiredItemId ?? null,
+      status: problem.status,
+      title: problem.title,
+      urgency: problem.urgency,
+    })),
+  };
+}
+
 function activeCityEvents(game) {
   return (game.cityEvents ?? [])
     .filter((event) => event.status === "active")
     .map((event) => ({
       id: event.id,
       locationId: event.locationId,
+      outcome: event.outcome ?? null,
       progress: event.progress ?? null,
+      resolvedAt: event.resolvedAt ?? null,
       visibleLabel: event.visibleLabel,
     }));
 }
@@ -1140,7 +1354,9 @@ function simCityEventSnapshot(game) {
   return (game.cityEvents ?? []).map((event) => ({
     id: event.id,
     locationId: event.locationId,
+    outcome: event.outcome ?? null,
     progress: event.progress ?? null,
+    resolvedAt: event.resolvedAt ?? null,
     status: event.status,
     visibleLabel: event.visibleLabel,
   }));
@@ -1150,7 +1366,7 @@ function findCityEvent(game, id) {
   return (game.cityEvents ?? []).find((event) => event.id === id) ?? null;
 }
 
-function assertBrowserProbeMatchesGame(label, game, probe) {
+function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
   assert.equal(probe.gameId, game.id, `${label}: browser loaded the wrong game id.`);
   assert.equal(
     probe.clock.iso,
@@ -1197,10 +1413,132 @@ function assertBrowserProbeMatchesGame(label, game, probe) {
     activeCityEvents(game),
     `${label}: browser active city events diverged from sim.`,
   );
+  assert.deepEqual(
+    probe.objective,
+    objectiveProbeFromGame(game),
+    `${label}: browser objective predicates diverged from sim.`,
+  );
+  const expectedPlanningTrace = planningTraceProbeFromGame(game);
+  if (expectedPlanningTrace) {
+    assert.deepEqual(
+      probe.autonomy.planningTrace,
+      expectedPlanningTrace,
+      `${label}: browser planner trace diverged from sim.`,
+    );
+  } else if (probe.autonomy.planningTrace) {
+    assertPlanningTracePayload(label, probe.autonomy.planningTrace);
+  }
+  assert.deepEqual(
+    probe.worldPressure,
+    worldPressureFromGame(game),
+    `${label}: browser world pressure diverged from sim.`,
+  );
+  assertProbeAuditability(label, game, probe);
   assert.equal(
     probe.visualPlayer?.isMovingToServerState ?? false,
-    false,
+    Boolean(options.allowVisualMove),
     `${label}: browser still thinks the player is in a staged visual move.`,
+  );
+}
+
+function assertPlanningTracePayload(label, planningTrace) {
+  assert.ok(
+    Array.isArray(planningTrace.outcomes),
+    `${label}: planner trace is missing outcome predicates.`,
+  );
+  assert.ok(
+    Array.isArray(planningTrace.nextSteps),
+    `${label}: planner trace is missing short-horizon next steps.`,
+  );
+  assert.ok(
+    planningTrace.nextSteps.every(
+      (step) =>
+        step.label &&
+        step.rationale &&
+        typeof step.legal === "boolean" &&
+        step.kind &&
+        step.validation &&
+        Object.prototype.hasOwnProperty.call(step, "targetLocationId") &&
+        Object.prototype.hasOwnProperty.call(step, "npcId"),
+    ),
+    `${label}: planner trace next steps must expose kind, legality, validation, target, and npc.`,
+  );
+  assert.ok(
+    planningTrace.considered.every(
+      (option) =>
+        typeof option.score === "number" &&
+        option.rationale &&
+        Object.prototype.hasOwnProperty.call(option, "targetLocationId") &&
+        Object.prototype.hasOwnProperty.call(option, "npcId"),
+    ),
+    `${label}: planner trace considered options must expose score, rationale, target, and npc.`,
+  );
+  assert.ok(
+    planningTrace.rejected.every((option) =>
+      Object.prototype.hasOwnProperty.call(option, "reason"),
+    ),
+    `${label}: planner trace rejected options must expose rejection reasons.`,
+  );
+}
+
+function assertProbeAuditability(label, game, probe) {
+  if (game.player.objective?.outcomes?.length) {
+    assert.ok(
+      probe.objective?.progress?.label,
+      `${label}: objective probe is missing progress.`,
+    );
+    assert.ok(
+      probe.objective.outcomes.every(
+        (outcome) =>
+          outcome.label &&
+          Array.isArray(outcome.blockers) &&
+          Object.prototype.hasOwnProperty.call(outcome, "actionId") &&
+          Object.prototype.hasOwnProperty.call(outcome, "authority") &&
+          Object.prototype.hasOwnProperty.call(outcome, "evidence") &&
+          Object.prototype.hasOwnProperty.call(outcome, "npcId") &&
+          Object.prototype.hasOwnProperty.call(outcome, "targetLocationId"),
+      ),
+      `${label}: objective probe must expose labels, authority, blockers, evidence, and predicate intent targets.`,
+    );
+  }
+
+  if (game.player.objective?.routeKey === "first-afternoon") {
+    assert.ok(
+      probe.objective.outcomes.every(
+        (outcome) => outcome.authority === "predicate",
+      ),
+      `${label}: first-afternoon outcomes must be explicit predicates, not trail-derived authority.`,
+    );
+  }
+
+  if (probe.autonomy.planningTrace) {
+    assertPlanningTracePayload(label, probe.autonomy.planningTrace);
+  }
+
+  assert.ok(
+    (probe.worldPressure?.cityEvents ?? []).length >=
+      (game.cityEvents ?? []).length,
+    `${label}: world pressure probe is missing city events.`,
+  );
+  assert.ok(
+    (probe.worldPressure?.cityEvents ?? []).every(
+      (event) =>
+        Object.prototype.hasOwnProperty.call(event, "outcome") &&
+        Object.prototype.hasOwnProperty.call(event, "resolvedAt"),
+    ),
+    `${label}: world pressure city events must expose outcome and resolvedAt.`,
+  );
+  assert.ok(
+    (probe.worldPressure?.jobWindows ?? []).length >= (game.jobs ?? []).length,
+    `${label}: world pressure probe is missing job windows.`,
+  );
+  assert.ok(
+    (probe.worldPressure?.problems ?? []).length >= (game.problems ?? []).length,
+    `${label}: world pressure probe is missing problems.`,
+  );
+  assert.ok(
+    (probe.worldPressure?.npcSchedules ?? []).length >= (game.npcs ?? []).length,
+    `${label}: world pressure probe is missing NPC schedules.`,
   );
 }
 
@@ -1259,6 +1597,201 @@ function assertGameplayDom(label, game, probe, dom) {
   }
 
   assertCriticalVisualCoherence(label, dom);
+}
+
+function assertPlayerRouteDiagnostics(label, probe) {
+  const route = probe.movement?.playerRoute;
+  assert.ok(route, `${label}: expected an active player route diagnostic.`);
+  assert.equal(route.active, true, `${label}: expected route to be active.`);
+  assert.equal(route.legal, true, `${label}: expected route to be legal.`);
+  assert.equal(
+    route.reachesDestination,
+    true,
+    `${label}: expected route to reach its destination.`,
+  );
+  assert.equal(
+    route.sampledPointsLegal,
+    true,
+    `${label}: expected route world points to stay on walkable map points.`,
+  );
+  assert.ok(
+    route.tilePath.length > 2,
+    `${label}: expected a multi-point tile path, got ${route.tilePath.length}.`,
+  );
+  assert.ok(
+    route.worldPath.length > 2,
+    `${label}: expected a multi-point world path, got ${route.worldPath.length}.`,
+  );
+
+  for (const point of route.worldPath) {
+    assert.equal(
+      Number.isFinite(point.x) && Number.isFinite(point.y),
+      true,
+      `${label}: route world path contains a non-finite point.`,
+    );
+  }
+}
+
+function assertRequiredNpcPatrolDiagnostics(label, probe) {
+  const patrols = probe.movement?.npcPatrols ?? [];
+  const patrolByLocationId = new Map(
+    patrols.map((patrol) => [patrol.locationId, patrol]),
+  );
+
+  for (const locationId of REQUIRED_NPC_PATROL_LOCATION_IDS) {
+    const patrol = patrolByLocationId.get(locationId);
+    assert.ok(
+      patrol,
+      `${label}: missing NPC patrol diagnostics for ${locationId}.`,
+    );
+    assert.equal(
+      patrol.routed,
+      true,
+      `${label}: expected ${locationId} patrol to be routed.`,
+    );
+    assert.ok(
+      patrol.pathLength > 1,
+      `${label}: expected ${locationId} patrol to have a non-empty path.`,
+    );
+    assert.equal(
+      patrol.unreachableSegments,
+      0,
+      `${label}: expected ${locationId} patrol to avoid unreachable shortcuts.`,
+    );
+  }
+}
+
+function assertTimelineRoute(byLabel, label, routeName) {
+  const route = byLabel[label]?.movement?.playerRoute;
+  assert.ok(route, `Expected route diagnostics for ${routeName}.`);
+  assert.equal(route.legal, true, `${routeName}: route should be legal.`);
+  assert.equal(
+    route.reachesDestination,
+    true,
+    `${routeName}: route should reach destination.`,
+  );
+  assert.equal(
+    route.sampledPointsLegal,
+    true,
+    `${routeName}: route points should remain on the walkable map graph.`,
+  );
+  assert.ok(
+    route.tilePath.length > 2,
+    `${routeName}: expected more than two tile path points.`,
+  );
+  assert.ok(
+    route.worldPath.length > 2,
+    `${routeName}: expected more than two world path points.`,
+  );
+}
+
+function buildMovementAuditSummary(timeline) {
+  const playerRoutes = timeline
+    .filter((entry) => entry.movement?.playerRoute?.active)
+    .map((entry) => {
+      const route = entry.movement.playerRoute;
+      return {
+        blockedByVisualScene: route.diagnostics?.blockedByVisualScene ?? 0,
+        label: entry.label,
+        legal: Boolean(route.legal),
+        progress: route.progress,
+        reachesDestination: Boolean(route.reachesDestination),
+        sampledPointsLegal: Boolean(route.sampledPointsLegal),
+        snappedEnd: Boolean(route.diagnostics?.snappedEnd),
+        snappedStart: Boolean(route.diagnostics?.snappedStart),
+        target: route.target,
+        tilePathLength: route.tilePath.length,
+        worldPathLength: route.worldPath.length,
+      };
+    });
+
+  const patrolsByLocation = new Map();
+  for (const entry of timeline) {
+    for (const patrol of entry.movement?.npcPatrols ?? []) {
+      const current = patrolsByLocation.get(patrol.locationId) ?? {
+        allRouted: true,
+        labels: [],
+        locationId: patrol.locationId,
+        maxDroppedWaypoints: 0,
+        maxUnreachableSegments: 0,
+        minPathLength: Number.POSITIVE_INFINITY,
+        sampleCount: 0,
+        usedVisualHints: false,
+      };
+      current.allRouted = current.allRouted && Boolean(patrol.routed);
+      current.labels.push(entry.label);
+      current.maxDroppedWaypoints = Math.max(
+        current.maxDroppedWaypoints,
+        patrol.droppedWaypoints ?? 0,
+      );
+      current.maxUnreachableSegments = Math.max(
+        current.maxUnreachableSegments,
+        patrol.unreachableSegments ?? 0,
+      );
+      current.minPathLength = Math.min(current.minPathLength, patrol.pathLength);
+      current.sampleCount += 1;
+      current.usedVisualHints =
+        current.usedVisualHints || Boolean(patrol.usedVisualHints);
+      patrolsByLocation.set(patrol.locationId, current);
+    }
+  }
+
+  const npcPatrols = [...patrolsByLocation.values()]
+    .map((patrol) => ({
+      ...patrol,
+      minPathLength: Number.isFinite(patrol.minPathLength)
+        ? patrol.minPathLength
+        : 0,
+    }))
+    .sort((left, right) => left.locationId.localeCompare(right.locationId));
+
+  return {
+    npcPatrols,
+    playerRoutes,
+  };
+}
+
+function assertMovementAuditSummary(movementAudit) {
+  assert.ok(
+    movementAudit.playerRoutes.length >= 4,
+    "Expected summary route diagnostics for route start and mid-route frames.",
+  );
+  assert.ok(
+    movementAudit.playerRoutes.every(
+      (route) =>
+        route.legal &&
+        route.reachesDestination &&
+        route.sampledPointsLegal &&
+        route.tilePathLength > 2 &&
+        route.worldPathLength > 2,
+    ),
+    "Expected every exported player route diagnostic to be legal and multi-point.",
+  );
+
+  const patrolByLocationId = new Map(
+    movementAudit.npcPatrols.map((patrol) => [patrol.locationId, patrol]),
+  );
+  for (const locationId of REQUIRED_NPC_PATROL_LOCATION_IDS) {
+    const patrol = patrolByLocationId.get(locationId);
+    assert.ok(
+      patrol,
+      `Expected summary NPC diagnostics for ${locationId}.`,
+    );
+    assert.equal(
+      patrol.allRouted,
+      true,
+      `Expected summary NPC diagnostics for ${locationId} to be routed.`,
+    );
+    assert.equal(
+      patrol.maxUnreachableSegments,
+      0,
+      `Expected summary NPC diagnostics for ${locationId} to avoid unreachable shortcuts.`,
+    );
+    assert.ok(
+      patrol.minPathLength > 1,
+      `Expected summary NPC diagnostics for ${locationId} to have a non-empty route.`,
+    );
+  }
 }
 
 function assertCityEventState(label, game) {
@@ -1501,11 +2034,13 @@ function buildTimelineEntry({
       : null,
     label,
     location: probe.location,
+    movement: probe.movement ?? null,
     objective: probe.objective,
     rail: probe.rail,
     screenshot,
     screenshotError: screenshotError ?? null,
     visualPlayer: probe.visualPlayer,
+    worldPressure: probe.worldPressure ?? null,
     sim: {
       currentTime: game.currentTime,
       energy: game.player.energy,
@@ -1549,6 +2084,52 @@ async function captureBrowserState({ game, index, label, session }) {
 
   return {
     dom,
+    probe,
+    screenshot,
+    screenshotError,
+  };
+}
+
+async function captureBrowserMovementState({
+  captureScreenshot = true,
+  game,
+  index,
+  label,
+  probe,
+  session,
+}) {
+  assertBrowserProbeMatchesGame(label, game, probe, {
+    allowVisualMove: true,
+  });
+  assertCityEventState(label, game);
+  assertPlayerRouteDiagnostics(label, probe);
+  assertRequiredNpcPatrolDiagnostics(label, probe);
+
+  const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
+  const screenshotPath = path.join(OUTPUT_DIR, `${key}.png`);
+  let screenshot = null;
+  let screenshotError = null;
+
+  if (captureScreenshot && shouldCaptureScreenshot(label)) {
+    try {
+      await session.captureScreenshot(screenshotPath);
+      screenshot = screenshotPath;
+    } catch (error) {
+      screenshotError =
+        error instanceof Error ? error.message : "Screenshot capture failed.";
+      await writeFile(
+        path.join(OUTPUT_DIR, `${key}.screenshot-error.txt`),
+        `${screenshotError}\n`,
+        "utf8",
+      );
+      if (REQUIRE_SCREENSHOTS) {
+        throw error;
+      }
+    }
+  }
+
+  return {
+    dom: null,
     probe,
     screenshot,
     screenshotError,
@@ -1656,8 +2237,8 @@ async function createVisualEvidence({ overlayChecks, timeline }) {
   }
 
   assert.ok(
-    screenshots.length >= 14,
-    `Expected at least 14 gameplay screenshots for visual evidence, got ${screenshots.length}.`,
+    screenshots.length >= 16,
+    `Expected at least 16 gameplay screenshots including route start/mid/arrival frames, got ${screenshots.length}.`,
   );
   assert.ok(
     overlays.length >= 2,
@@ -1823,7 +2404,54 @@ async function main() {
         playerPositionChanged(previousGame, game)
       ) {
         traceRegression(`step-visual-move:${index}:${step.label}`);
-        await session.waitForVisualMove(previousGame, game);
+        const routeStartProbe = await session.waitForVisualMove(
+          previousGame,
+          game,
+        );
+        const routeStartLabel = `${step.label}-route-start`;
+        const routeStartCapture = await captureBrowserMovementState({
+          game: previousGame,
+          index: `${index}a`,
+          label: routeStartLabel,
+          probe: routeStartProbe,
+          session,
+        });
+        timeline.push(
+          buildTimelineEntry({
+            dom: routeStartCapture.dom,
+            game: previousGame,
+            label: routeStartLabel,
+            probe: routeStartCapture.probe,
+            screenshot: routeStartCapture.screenshot,
+            screenshotError: routeStartCapture.screenshotError,
+          }),
+        );
+        await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+
+        const routeMidProbe = await session.waitForVisualRouteProgress(
+          previousGame,
+          game,
+          0.35,
+        );
+        const routeMidLabel = `${step.label}-route-mid`;
+        const routeMidCapture = await captureBrowserMovementState({
+          game: previousGame,
+          index: `${index}b`,
+          label: routeMidLabel,
+          probe: routeMidProbe,
+          session,
+        });
+        timeline.push(
+          buildTimelineEntry({
+            dom: routeMidCapture.dom,
+            game: previousGame,
+            label: routeMidLabel,
+            probe: routeMidCapture.probe,
+            screenshot: routeMidCapture.screenshot,
+            screenshotError: routeMidCapture.screenshotError,
+          }),
+        );
+        await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
       }
       gameRef.current = game;
       const capture =
@@ -1872,6 +2500,17 @@ async function main() {
 
   const byLabel = Object.fromEntries(
     timeline.map((entry) => [entry.label, entry]),
+  );
+
+  assertTimelineRoute(
+    byLabel,
+    "ada-live-thread-route-start",
+    "Morrow House to Kettle & Lamp",
+  );
+  assertTimelineRoute(
+    byLabel,
+    "arrive-home-route-start",
+    "Kettle & Lamp to Morrow House",
   );
 
   assert.equal(
@@ -1993,6 +2632,8 @@ async function main() {
   );
 
   const screenshotCount = timeline.filter((entry) => entry.screenshot).length;
+  const movementAudit = buildMovementAuditSummary(timeline);
+  assertMovementAuditSummary(movementAudit);
   const evidence = await createVisualEvidence({
     overlayChecks,
     timeline,
@@ -2010,8 +2651,10 @@ async function main() {
       money: game.player.money,
       objective: game.player.objective?.text ?? null,
     },
+    npcDiagnostics: movementAudit.npcPatrols,
     outputDir: OUTPUT_DIR,
     overlayChecks,
+    routeDiagnostics: movementAudit.playerRoutes,
     screenshotCount,
     steps: timeline.map((entry) => ({
       activeConversation: entry.activeConversation?.npcId ?? null,

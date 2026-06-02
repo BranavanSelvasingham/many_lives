@@ -86,10 +86,14 @@ export interface StreetPlanningAllowedAction {
 }
 
 export interface StreetPlanningObjectiveOutcome {
+  actionId?: string;
+  blockers?: string[];
   id: string;
   label: string;
+  npcId?: string;
   priority: number;
   status: "met" | "open" | "at_risk";
+  targetLocationId?: string;
   evidence?: string;
 }
 

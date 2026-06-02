@@ -205,6 +205,17 @@ export function isBlockingRowanPlayback(
   return Boolean(state?.activeBeat || state?.queuedBeats.length);
 }
 
+export function isBlockingRowanPlaybackForGame(
+  state: RowanPlaybackState | null | undefined,
+  game: StreetGameState | null | undefined,
+) {
+  if (!state || !game) {
+    return false;
+  }
+
+  return isBlockingRowanPlayback(alignRowanPlaybackWithGame(state, game));
+}
+
 export function estimateLiveConversationBeatMs(game: StreetGameState): number {
   if (!game.activeConversation?.lines.length) {
     return 0;

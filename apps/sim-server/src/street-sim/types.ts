@@ -217,13 +217,19 @@ export type ObjectiveOutcomeStatus =
   | "met"
   | "failed";
 
+export type ObjectiveOutcomeAuthority = "predicate" | "trail";
+
 export interface ObjectiveOutcomeState {
   id: string;
   label: string;
   status: ObjectiveOutcomeStatus;
   urgency: number;
+  authority?: ObjectiveOutcomeAuthority;
   blockers?: string[];
   evidence?: string;
+  targetLocationId?: string;
+  npcId?: string;
+  actionId?: string;
 }
 
 export interface PlayerObjective {
@@ -266,6 +272,7 @@ export interface PendingObjectiveMove {
   rationale: string;
   npcId?: string;
   actionId?: string;
+  planningTrace?: RowanPlanningTrace;
   speech?: string;
   preparedAt: string;
 }
@@ -351,6 +358,8 @@ export interface ProblemState {
   status: "hidden" | "active" | "solved" | "expired";
   discovered: boolean;
   urgency: number;
+  escalationLevel?: number;
+  escalatedAt?: string;
   rewardMoney: number;
   requiredItemId?: string;
   consequenceIfIgnored: string;
@@ -365,6 +374,12 @@ export type CityEventKind =
   | "yard_loading";
 
 export type CityEventStatus = "upcoming" | "active" | "resolved";
+export type CityEventOutcome =
+  | "handled"
+  | "missed"
+  | "passed"
+  | "pending"
+  | "worsened";
 
 export interface CityEventState {
   id: string;
@@ -379,6 +394,8 @@ export interface CityEventState {
   tone: "info" | "lead" | "warning";
   participants?: string[];
   progress?: string;
+  outcome?: CityEventOutcome;
+  resolvedAt?: string;
   updatedAt: string;
 }
 
@@ -478,6 +495,17 @@ export interface RowanPlanningTraceOption {
   npcId?: string;
 }
 
+export interface RowanPlanningTraceStep {
+  actionId?: string;
+  kind: RowanAutonomyStepKind;
+  label: string;
+  legal: boolean;
+  npcId?: string;
+  rationale: string;
+  targetLocationId?: string;
+  validation: string;
+}
+
 export interface RowanPlanningTraceOutcome {
   id: string;
   label: string;
@@ -490,6 +518,7 @@ export interface RowanPlanningTraceOutcome {
 export interface RowanPlanningTrace {
   blockers: string[];
   considered: RowanPlanningTraceOption[];
+  nextSteps: RowanPlanningTraceStep[];
   outcomes: RowanPlanningTraceOutcome[];
   rejected: RowanPlanningTraceOption[];
   selectedActionId?: string;
