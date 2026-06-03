@@ -1288,6 +1288,7 @@ function worldPressureFromGame(game) {
       return {
         accepted: job.accepted,
         completed: job.completed,
+        consequenceAppliedAt: job.consequenceAppliedAt ?? null,
         deferredUntilMinutes: job.deferredUntilMinutes ?? null,
         discovered: job.discovered,
         endsInMinutes: inWindow
@@ -1297,6 +1298,7 @@ function worldPressureFromGame(game) {
         inWindow,
         locationId: job.locationId,
         missed: job.missed,
+        missedAt: job.missedAt ?? null,
         startsInMinutes:
           currentTotalMinutes < startTotal
             ? Math.max(0, startTotal - currentTotalMinutes)
@@ -1315,8 +1317,10 @@ function worldPressureFromGame(game) {
           .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
       return {
         currentLocationId: npc.currentLocationId,
+        currentConcern: npc.currentConcern,
         currentScheduleLocationId: currentSchedule?.locationId ?? null,
         id: npc.id,
+        mood: npc.mood,
         nextScheduleLocationId: nextSchedule?.locationId ?? null,
         nextScheduleStartsInMinutes: nextSchedule
           ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
@@ -1325,11 +1329,15 @@ function worldPressureFromGame(game) {
     }),
     problems: (game.problems ?? []).map((problem) => ({
       discovered: problem.discovered,
+      consequenceAppliedAt: problem.consequenceAppliedAt ?? null,
       escalatedAt: problem.escalatedAt ?? null,
       escalationLevel: problem.escalationLevel ?? 0,
+      expiredAt: problem.expiredAt ?? null,
       id: problem.id,
       locationId: problem.locationId,
       requiredItemId: problem.requiredItemId ?? null,
+      resolvedAt: problem.resolvedAt ?? null,
+      resolvedByNpcId: problem.resolvedByNpcId ?? null,
       status: problem.status,
       title: problem.title,
       urgency: problem.urgency,
@@ -2169,6 +2177,13 @@ async function runOverlayPanelChecks(session) {
         /Mara's lead verified/i,
         /First afternoon settled/i,
       ],
+      rejectedText: [
+        /Make the rounds and talk to everyone\./i,
+        /Buy a wrench and fix the pump\./i,
+        /Figure out where I can stay beyond tonight\./i,
+        /Learn the lanes and meet people\./i,
+        /Meet people who could become friends in South Quay\./i,
+      ],
     },
   ];
 
@@ -2192,6 +2207,13 @@ async function runOverlayPanelChecks(session) {
         dom.bodyText,
         expectedText,
         `${panel.label}: expected panel content was not rendered.`,
+      );
+    }
+    for (const rejectedText of panel.rejectedText ?? []) {
+      assert.doesNotMatch(
+        dom.bodyText,
+        rejectedText,
+        `${panel.label}: manual objective seeds should not be presented as live objective outcomes.`,
       );
     }
     assertCriticalVisualCoherence(panel.label, dom, {

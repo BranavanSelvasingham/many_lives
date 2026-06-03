@@ -84,10 +84,15 @@ function rankConversationThread(
   const npc = game.npcs.find((candidate) => candidate.id === thread.npcId);
   const isNearby =
     Boolean(playerLocationId) && npc?.currentLocationId === playerLocationId;
+  const isCurrentPlaceContext =
+    Boolean(playerLocationId) &&
+    thread.locationId === playerLocationId &&
+    conversationThreadHasOutcome(thread);
   const updatedAt = Date.parse(thread.updatedAt);
 
   return {
     index,
+    isCurrentPlaceContext,
     isNearby,
     updatedAt: Number.isNaN(updatedAt) ? 0 : updatedAt,
   };
@@ -106,6 +111,15 @@ export function getLatestMeaningfulConversationThread(game: StreetGameState) {
     .sort((left, right) => {
       if (left.rank.isNearby !== right.rank.isNearby) {
         return Number(right.rank.isNearby) - Number(left.rank.isNearby);
+      }
+
+      if (
+        left.rank.isCurrentPlaceContext !== right.rank.isCurrentPlaceContext
+      ) {
+        return (
+          Number(right.rank.isCurrentPlaceContext) -
+          Number(left.rank.isCurrentPlaceContext)
+        );
       }
 
       if (left.rank.updatedAt !== right.rank.updatedAt) {

@@ -283,13 +283,12 @@ export function buildJournalTabHtml(options: {
   recentFeed: StreetGameState["feed"];
 }) {
   const {
-    currentObjectiveText,
-    game,
-    objectiveCompleted,
-    objectivePlanItems,
-    objectiveSuggestions,
-    recentFeed,
-  } = options;
+  currentObjectiveText,
+  game,
+  objectiveCompleted,
+  objectivePlanItems,
+  recentFeed,
+} = options;
   const fieldNoteHtml = buildFirstAfternoonFieldNoteHtml(game, {
     compactAfterFirst: true,
   });
@@ -303,23 +302,6 @@ export function buildJournalTabHtml(options: {
           <div class="ml-card-title" style="margin-top: 8px;">${escapeHtml(
             currentObjectiveText,
           )}</div>
-          ${
-            objectiveSuggestions.length > 0
-              ? `
-              <div class="ml-chip-row">
-                ${objectiveSuggestions
-                  .map(
-                    (suggestion) => `
-                    <div class="ml-chip" aria-disabled="true">
-                      ${escapeHtml(suggestion)}
-                    </div>
-                  `,
-                  )
-                  .join("")}
-              </div>
-            `
-              : ""
-          }
         </div>
         <div class="ml-card">
           <div class="ml-kicker">Objective Outcomes</div>

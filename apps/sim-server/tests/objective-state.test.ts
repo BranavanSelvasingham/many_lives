@@ -311,6 +311,57 @@ describe("objectiveState classification", () => {
     );
   });
 
+  it("closes pump objectives when the world resolves the pump without Rowan", () => {
+    const world = seedStreetGame("objective-pump-world-resolved");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    if (pump) {
+      pump.discovered = true;
+      pump.resolvedAt = world.currentTime;
+      pump.resolvedByNpcId = "npc-mara";
+      pump.status = "resolved";
+    }
+
+    const objective = buildPlayerObjectiveState(world, {
+      focus: "help",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+    });
+
+    expect(objective).toMatchObject({
+      progress: {
+        completed: 3,
+        total: 3,
+      },
+    });
+    expect(objective?.outcomes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionId: undefined,
+          id: "pump-discovered",
+          status: "met",
+        }),
+        expect.objectContaining({
+          actionId: undefined,
+          evidence: "The pump was already contained by the house.",
+          id: "wrench-in-inventory",
+          status: "met",
+        }),
+        expect.objectContaining({
+          actionId: undefined,
+          evidence: "resolved",
+          id: "pump-solved",
+          status: "met",
+        }),
+      ]),
+    );
+    expect(objective?.trail.flatMap((step) => step.actionId ?? [])).not.toContain(
+      "buy:item-wrench",
+    );
+    expect(objective?.trail.flatMap((step) => step.actionId ?? [])).not.toContain(
+      "solve:problem-pump",
+    );
+  });
+
   it("recognizes paid work outcomes without relying on trail completion", () => {
     const world = seedStreetGame("objective-paid-work");
     const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
@@ -384,6 +435,43 @@ describe("objectiveState classification", () => {
       status: "blocked",
       targetLocationId: "freight-yard",
     });
+  });
+
+  it("marks discovered closing job windows as at-risk work predicates", () => {
+    const world = seedStreetGame("objective-work-window-pressure");
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    if (yardJob) {
+      yardJob.discovered = true;
+    }
+    world.clock.totalMinutes = 16 * 60 + 30;
+    world.clock.hour = 16;
+    world.clock.minute = 30;
+    world.clock.label = "Afternoon";
+
+    const objective = buildPlayerObjectiveState(world, {
+      focus: "work",
+      source: "manual",
+      text: "Take the freight yard lift before the window closes.",
+    });
+
+    expect(objective).toMatchObject({
+      routeKey: "work-yard",
+    });
+    expect(objective?.outcomes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionId: "accept:job-yard-shift",
+          blockers: expect.arrayContaining([
+            "Freight yard lift closes soon.",
+          ]),
+          evidence: "Freight yard lift window closes around 5pm.",
+          id: "work-commit",
+          status: "at_risk",
+          targetLocationId: "freight-yard",
+          urgency: 7,
+        }),
+      ]),
+    );
   });
 
   it("exposes active job commitments as desired predicates", () => {

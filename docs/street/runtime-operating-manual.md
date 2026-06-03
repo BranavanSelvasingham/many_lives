@@ -95,12 +95,20 @@ For now, conversation should be plain English.
 
 The right rail should help the player understand the run without covering the whole city.
 
+- Visual, camera, panning, and responsive bugs must be fixed as permanent cross-viewport issues. Do not stop at the viewport where the bug was reported; cover desktop, compact desktop, tablet, Codex browser, tall screenshot, and phone-like sizes as relevant, then add or extend regression coverage so the same failure cannot silently return.
 - Desktop should show a readable map with a right-side rail that avoids hiding important map items.
 - Tablet and narrow desktop widths should preserve the map as the primary surface while keeping actions reachable.
 - Phone layouts may collapse the rail, but the first screen must still communicate who Rowan is, what is happening now, and how to continue watching or acting.
 - Map panning should work by drag, touch, and scroll-like gestures where supported.
+- On compact/tall Codex browser viewports, the playable camera viewport must start below the top HUD. A north pan is not fixed if the map still renders behind the day/time/energy pill.
+- A compact north pan is not fully fixed until the northern road/fringe visibly clears the HUD at the pan limit. Numeric scroll movement is insufficient if the top authored content still feels clipped or pinned to the safe band.
+- Compact panning must use one shared X/Y camera scroll range for both live camera updates and reset framing. Do not reintroduce axis-specific hard clamps such as compact `scrollY >= 0`.
+- Compact camera offset caps must be large enough to actually reach that scroll range; a valid numeric scroll range is not enough if the gesture caps out before north clears the HUD.
+- The visual smoke test must cover the Codex-sized compact viewport, the tall Codex screenshot viewport, and compact/tablet/phone breakpoint viewports. It must assert west, north, east, and south traversal with screenshots, because partial edge checks can miss direction-specific pan failures.
+- Compact camera regressions must cover high-DPR browser windows as well as CSS viewport size. A fix is not complete if it only passes DPR 1 headless screenshots while the in-app browser at DPR 2 still caps north or west panning early.
 - Edge affordances should indicate when there is no more map to pan in a direction.
 - The map should not leave large unexplained black voids around the authored city.
+- NPC objective cues should mark the NPC and route, not draw a full-location translucent footprint halo. Large low-alpha rectangles around landmarks read as render noise unless the target is the location itself.
 - Landmarks should be visually identifiable before labels: cafe, boarding house, square, dock yard, and quay edge should read by shape and props.
 
 Use [docs/street/south-quay-visual-spec.md](/Users/branavan/GitHub/many_lives/docs/street/south-quay-visual-spec.md) for map art direction.

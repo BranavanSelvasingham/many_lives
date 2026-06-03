@@ -3,7 +3,7 @@ import type PhaserType from "phaser";
 import type { Point } from "@/lib/street/navigation";
 import {
   CELL,
-  getCompactCameraHorizontalRange,
+  getCompactCameraScrollRange,
   getWorldBoundsForRuntime,
   type MapSize,
 } from "@/lib/street/runtimeGeometry";
@@ -24,6 +24,10 @@ const CAMERA_OFFSET_RETURN_LERP = 0.006;
 const CAMERA_RECENT_INTERACTION_LERP = 0.68;
 const CAMERA_USER_ZOOM_LERP = 0.16;
 const PLAYER_CAMERA_LERP = 0.08;
+const COMPACT_CAMERA_ANCHOR_Y_INTERACTIVE_RATIO = 0.5;
+const COMPACT_CAMERA_ANCHOR_Y_WATCH_RATIO = 0.48;
+const CAMERA_OFFSET_VERTICAL_WORLD_RATIO = 0.72;
+const COMPACT_CAMERA_OFFSET_VERTICAL_WORLD_RATIO = 1.2;
 
 export const CAMERA_WHEEL_ZOOM_STEP = 0.08;
 
@@ -104,16 +108,20 @@ export function updateCamera(
     ) / effectiveZoom;
   let minScrollX = 0;
   let maxScrollX = Math.max(world.width - visibleWidth, 0);
-  const maxScrollY = Math.max(world.height - visibleHeight, 0);
+  let minScrollY = 0;
+  let maxScrollY = Math.max(world.height - visibleHeight, 0);
   if (isCompactViewport(runtimeState.snapshot.viewport)) {
-    const range = getCompactCameraHorizontalRange({
+    const range = getCompactCameraScrollRange({
       map: runtimeState.snapshot.game?.map,
+      visibleHeight,
       visualScene: runtimeState.indices.visualScene,
       visibleWidth,
       world,
     });
-    minScrollX = range.min;
-    maxScrollX = range.max;
+    minScrollX = range.minX;
+    maxScrollX = range.maxX;
+    minScrollY = range.minY;
+    maxScrollY = range.maxY;
   }
   const playerViewportX = playerPixel.x - camera.scrollX;
   const playerViewportY = playerPixel.y - camera.scrollY;
@@ -148,7 +156,7 @@ export function updateCamera(
       blockedEdges.east = true;
     }
 
-    if (targetScrollY < -0.01) {
+    if (targetScrollY < minScrollY - 0.01) {
       blockedEdges.north = true;
     } else if (targetScrollY > maxScrollY + 0.01) {
       blockedEdges.south = true;
@@ -156,7 +164,7 @@ export function updateCamera(
   }
 
   targetScrollX = clamp(targetScrollX, minScrollX, maxScrollX);
-  targetScrollY = clamp(targetScrollY, 0, maxScrollY);
+  targetScrollY = clamp(targetScrollY, minScrollY, maxScrollY);
 
   if (isExploring && hasBlockedCameraEdge(blockedEdges)) {
     runtimeState.cameraOffset = clampCameraOffset(runtimeState, viewport, {
@@ -202,7 +210,9 @@ export function getRuntimeCameraAnchorYRatio(
       runtimeState.snapshot.game?.rowanAutonomy?.autoContinue,
   );
   if (isCompactPortraitViewport(runtimeState.snapshot.viewport)) {
-    return isWatchingRowan ? 0.32 : 0.36;
+    return isWatchingRowan
+      ? COMPACT_CAMERA_ANCHOR_Y_WATCH_RATIO
+      : COMPACT_CAMERA_ANCHOR_Y_INTERACTIVE_RATIO;
   }
 
   return isWatchingRowan ? 0.46 : 0.42;
@@ -464,7 +474,7 @@ function hasBlockedCameraEdge(edges: CameraEdgeState) {
 
 function clampCameraOffset(
   runtimeState: RuntimeCameraState,
-  viewport: ViewportSize,
+  viewport: SceneViewport,
   offset: Point,
 ) {
   const world = getWorldBoundsForRuntime({
@@ -472,13 +482,21 @@ function clampCameraOffset(
     viewport,
     visualScene: runtimeState.indices.visualScene,
   });
+  const targetZoom = getTargetSceneZoom(runtimeState, viewport, world);
+  // cameraOffset is in rendered pixels. World-sized caps must scale with zoom
+  // on high-DPR canvases or north/west panning caps out before the edge.
+  const worldToRenderedPixels = Math.max(targetZoom, 1);
   const maxX = Math.max(
     clamp(viewport.width * 0.32, CELL * 2.8, CELL * 8.6),
-    world.width * 0.82,
+    world.width * 0.82 * worldToRenderedPixels,
   );
   const maxY = Math.max(
     clamp(viewport.height * 0.26, CELL * 2.2, CELL * 6.4),
-    world.height * 0.72,
+    world.height *
+      (isCompactViewport(runtimeState.snapshot.viewport)
+        ? COMPACT_CAMERA_OFFSET_VERTICAL_WORLD_RATIO
+        : CAMERA_OFFSET_VERTICAL_WORLD_RATIO) *
+      worldToRenderedPixels,
   );
   return {
     x: clamp(offset.x, -maxX, maxX),

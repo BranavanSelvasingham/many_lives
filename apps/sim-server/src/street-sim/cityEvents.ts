@@ -271,6 +271,18 @@ function resolveSquareCart(
     };
   }
 
+  if (cartProblem?.status === "resolved") {
+    return {
+      outcome: "handled",
+      progress: "cleared-by-local",
+      status: "resolved",
+      summary:
+        "Nia got the handcart rolling again before the square spent the whole afternoon bent around it.",
+      tone: "info",
+      visibleLabel: "Cart cleared",
+    };
+  }
+
   if (cartProblem?.status === "expired") {
     return {
       outcome: "worsened",

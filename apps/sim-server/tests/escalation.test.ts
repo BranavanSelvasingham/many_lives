@@ -23,19 +23,238 @@ describe("World time pressure", () => {
     );
   });
 
+  it("applies cascading consequences when a discovered job window is missed", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-missed-job-consequences");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+    world = await engine.tick(world, 10);
+
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const ada = world.npcs.find((npc) => npc.id === "npc-ada");
+
+    expect(teaJob).toMatchObject({
+      accepted: false,
+      completed: false,
+      consequenceAppliedAt: expect.any(String),
+      missed: true,
+      missedAt: expect.any(String),
+    });
+    expect(world.player.activeJobId).toBeUndefined();
+    expect(ada).toMatchObject({
+      currentConcern:
+        "Lunch already had to run without the hands Rowan could have offered.",
+      mood: "cool",
+    });
+    expect(ada?.memory).toContain(
+      "Rowan let the lunch rush move on without committing steady hands.",
+    );
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "Ada's lunch window moved on without Rowan; the room learned to solve the rush without him.",
+    );
+    expect(world.player.memories.map((entry) => entry.text)).toContain(
+      "You missed Ada's lunch window, so that paid foothold is no longer waiting.",
+    );
+  });
+
   it("lets local problems expire if the block gets away from you", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-expiring-problems");
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
 
-    world = await engine.runCommand(world, {
-      type: "act",
-      actionId: "talk:npc-mara",
-    });
+    if (mara) {
+      mara.schedule = [];
+      mara.currentLocationId = "boarding-house";
+    }
     world = await engine.tick(world, 14);
 
     expect(world.problems.find((problem) => problem.id === "problem-pump")?.status).toBe(
       "expired",
     );
+  });
+
+  it("applies NPC and reputation consequences when problems expire without Rowan", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-expired-problem-consequences");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+    const startingStanding = world.player.reputation.morrow_house;
+
+    if (pump) {
+      pump.discovered = true;
+    }
+    if (mara) {
+      mara.schedule = [];
+      mara.currentLocationId = "boarding-house";
+    }
+    world = await engine.tick(world, 14);
+
+    const expiredPump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    const expiredMara = world.npcs.find((npc) => npc.id === "npc-mara");
+
+    expect(expiredPump).toMatchObject({
+      consequenceAppliedAt: expect.any(String),
+      expiredAt: expect.any(String),
+      status: "expired",
+    });
+    expect(world.player.reputation.morrow_house).toBe(
+      Math.max(0, startingStanding - 1),
+    );
+    expect(expiredMara).toMatchObject({
+      currentConcern:
+        "The pump is not a future worry anymore; the house is already paying for it.",
+      mood: "strained",
+    });
+    expect(expiredMara?.memory).toContain(
+      "The Morrow Yard pump was left until evening and turned into house strain.",
+    );
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "By evening the Morrow Yard pump stopped being a small fix and became house strain Rowan has to live with.",
+    );
+  });
+
+  it("lets Mara contain the pump independently before it expires", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-mara-resolves-pump");
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+
+    const standingAfterDiscovery = world.player.reputation.morrow_house;
+    const maraTrustAfterDiscovery =
+      world.npcs.find((npc) => npc.id === "npc-mara")?.trust ?? 0;
+
+    world = await engine.tick(world, 13);
+
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+
+    expect(world.clock.totalMinutes).toBe(17.5 * 60);
+    expect(pump).toMatchObject({
+      resolvedAt: "2026-03-21T17:30:00.000Z",
+      resolvedByNpcId: "npc-mara",
+      status: "resolved",
+    });
+    expect(world.player.reputation.morrow_house).toBe(
+      Math.max(0, standingAfterDiscovery - 1),
+    );
+    expect(mara).toMatchObject({
+      currentConcern:
+        "The pump is contained, but the house had to handle it without Rowan.",
+      mood: "guarded",
+      trust: Math.max(0, maraTrustAfterDiscovery - 1),
+    });
+    expect(mara?.memory).toContain(
+      "Mara contained the pump herself after the house waited as long as it could.",
+    );
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "Mara got the pump contained before evening, but Morrow House had to solve that strain without Rowan.",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-pump",
+    );
+  });
+
+  it("moves NPCs toward live pressure instead of only following static schedules", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-pressure-npc-movement");
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.tick(world, 9);
+
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+    const maraScheduleLocation = mara?.schedule.find(
+      (entry) =>
+        world.clock.hour >= entry.fromHour && world.clock.hour < entry.toHour,
+    )?.locationId;
+
+    expect(
+      world.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({
+      escalationLevel: 2,
+      status: "active",
+    });
+    expect(maraScheduleLocation).toBe("boarding-house");
+    expect(mara).toMatchObject({
+      currentLocationId: "courtyard",
+      currentObjective:
+        "Get eyes on Morrow Yard before the pump turns house strain into rent talk.",
+    });
+
+    world = await engine.createGame("game-pressure-nia-movement");
+    world = await engine.tick(world, 10);
+
+    const nia = world.npcs.find((npc) => npc.id === "npc-nia");
+    const niaScheduleLocation = nia?.schedule.find(
+      (entry) =>
+        world.clock.hour >= entry.fromHour && world.clock.hour < entry.toHour,
+    )?.locationId;
+
+    expect(
+      world.problems.find((problem) => problem.id === "problem-cart"),
+    ).toMatchObject({
+      escalationLevel: 2,
+      status: "active",
+    });
+    expect(niaScheduleLocation).toBe("moss-pier");
+    expect(nia).toMatchObject({
+      currentLocationId: "market-square",
+      currentObjective:
+        "Stay with Quay Square until the jam stops bending everybody's route.",
+    });
+  });
+
+  it("lets NPCs resolve a live problem without crediting Rowan for the work", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-npc-resolves-cart");
+    const startingMoney = world.player.money;
+    const startingStanding = world.player.reputation.south_quay;
+
+    world = await engine.tick(world, 11);
+
+    const cart = world.problems.find((problem) => problem.id === "problem-cart");
+    const nia = world.npcs.find((npc) => npc.id === "npc-nia");
+
+    expect(world.clock.totalMinutes).toBe(16.5 * 60);
+    expect(cart).toMatchObject({
+      resolvedAt: "2026-03-21T16:30:00.000Z",
+      resolvedByNpcId: "npc-nia",
+      status: "resolved",
+    });
+    expect(nia?.memory).toContain(
+      "Nia cleared the handcart after the square got tired of bending around it.",
+    );
+    expect(world.player.money).toBe(startingMoney);
+    expect(world.player.reputation.south_quay).toBe(startingStanding);
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-cart",
+    );
+    expect(
+      world.cityEvents.find((event) => event.id === "event-square-cart"),
+    ).toMatchObject({
+      outcome: "handled",
+      progress: "cleared-by-local",
+      status: "resolved",
+    });
   });
 
   it("escalates discovered problems while Rowan spends time elsewhere", async () => {
@@ -116,11 +335,11 @@ describe("World time pressure", () => {
     expect(
       world.cityEvents.find((event) => event.id === "event-square-cart"),
     ).toMatchObject({
-      outcome: "worsened",
-      progress: "missed",
-      resolvedAt: "2026-03-21T17:00:00.000Z",
+      outcome: "handled",
+      progress: "cleared-by-local",
+      resolvedAt: "2026-03-21T16:30:00.000Z",
       status: "resolved",
-      tone: "warning",
+      tone: "info",
     });
     expect(
       world.cityEvents.find((event) => event.id === "event-yard-loading"),

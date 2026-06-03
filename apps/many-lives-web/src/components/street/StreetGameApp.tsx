@@ -9,10 +9,7 @@ import {
 } from "react";
 
 import { PhaserDistrictMap } from "@/components/street/PhaserDistrictMap";
-import {
-  ObjectiveTrail,
-  type ObjectiveTrailItem,
-} from "@/components/street/ObjectiveTrail";
+import { ObjectiveTrail } from "@/components/street/ObjectiveTrail";
 import {
   ActionCard,
   LogRow,
@@ -37,6 +34,11 @@ import type {
   NpcState,
   StreetGameState,
 } from "@/lib/street/types";
+import {
+  buildObjectiveCompletionRows,
+  buildObjectivePlanRows,
+  buildObjectiveSuggestions,
+} from "@/lib/street/journalModel";
 
 const MOVEMENT_FLUSH_DELAY_MS = 90;
 const REALTIME_CLOCK_INTERVAL_MS = 1000;
@@ -69,13 +71,6 @@ type ConversationTypingState = {
   actor: "rowan" | "npc";
   npcId: string;
 };
-type ObjectivePlanItem = {
-  id: string;
-  title: string;
-  detail: string;
-  progress?: string;
-  done: boolean;
-};
 type CharacterProfileSection = {
   label: string;
   value: string;
@@ -92,16 +87,6 @@ type CharacterProfile = {
   isPlayer?: boolean;
   sections: CharacterProfileSection[];
 };
-
-function objectiveTrailStepToPlanItem(item: ObjectiveTrailItem): ObjectivePlanItem {
-  return {
-    id: item.id,
-    title: item.title,
-    detail: item.detail ?? "",
-    progress: item.progress,
-    done: Boolean(item.done),
-  };
-}
 
 export function StreetGameApp() {
   const [game, setGame] = useState<StreetGameState | null>(null);
@@ -864,14 +849,11 @@ export function StreetGameApp() {
   const hasObjectiveChanges =
     objectiveDraft.replace(/\s+/g, " ").trim() !==
     (game.player.objective?.text ?? "");
-  const objectivePlanItems =
-    game.player.objective?.trail?.length
-      ? game.player.objective.trail.map(objectiveTrailStepToPlanItem)
-      : buildObjectivePlanItems(game, locationById);
-  const objectiveCompletedItems =
-    game.player.objective?.completedTrail?.length
-      ? game.player.objective.completedTrail
-      : buildObjectiveCompletedItems(game, locationById);
+  const objectivePlanItems = buildObjectivePlanRows(game, locationById);
+  const objectiveCompletedItems = buildObjectiveCompletionRows(
+    game,
+    locationById,
+  );
   const rememberedPlaces = game.player.knownLocationIds
     .map((locationId) => locationById.get(locationId))
     .filter(isPresent)
@@ -2382,63 +2364,6 @@ function CompactConversationPanel({
   );
 }
 
-function buildObjectiveSuggestions(game: StreetGameState) {
-  const suggestions = new Set<string>();
-  const activeJob = game.jobs.find(
-    (job) => job.id === game.player.activeJobId && !job.completed,
-  );
-  const pumpProblem = game.problems.find((problem) => problem.id === "problem-pump");
-  const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
-  const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
-  const spokenNpcCount = new Set(
-    game.conversations
-      .filter((entry) => entry.speaker === "player")
-      .map((entry) => entry.npcId),
-  ).size;
-
-  if (spokenNpcCount < game.npcs.length) {
-    suggestions.add("Make the rounds and talk to everyone.");
-  }
-
-  if (activeJob) {
-    suggestions.add(`Finish ${activeJob.title.toLowerCase()}.`);
-  }
-
-  if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
-    suggestions.add("Buy a wrench and fix the pump.");
-  } else if (pumpProblem?.discovered && pumpProblem.status === "active") {
-    suggestions.add("Fix the pump in Morrow Yard.");
-  }
-
-  if (cartProblem?.discovered && cartProblem.status === "active") {
-    suggestions.add("Clear the jammed cart in the square.");
-  }
-
-  if (game.player.money < 18) {
-    suggestions.add("Find steady income before tonight.");
-  }
-
-  if ((game.player.reputation.morrow_house ?? 0) < 2) {
-    suggestions.add("Figure out where I can stay beyond tonight.");
-  }
-
-  if (game.player.knownLocationIds.length < 4) {
-    suggestions.add("Learn the lanes and meet people.");
-  }
-
-  if (game.player.knownNpcIds.length < 3) {
-    suggestions.add("Meet people who could become friends in South Quay.");
-  }
-
-  if (game.player.energy < 38) {
-    suggestions.add("Get somewhere quiet and recover.");
-  }
-
-  suggestions.add("Get settled in Brackenport.");
-
-  return Array.from(suggestions).slice(0, 5);
-}
-
 function buildMemoryThreads(
   game: StreetGameState,
   locationById: Map<string, StreetGameState["locations"][number]>,
@@ -2466,7 +2391,9 @@ function buildMemoryThreads(
           ? 5
           : problem.status === "solved"
             ? 2
-            : problem.status === "expired"
+            : problem.status === "resolved"
+              ? 2
+              : problem.status === "expired"
               ? 1
               : 0,
     }));
@@ -3098,6 +3025,10 @@ function buildProblemMemoryDetail(
     return `I let this spread at ${place}.`;
   }
 
+  if (problem.status === "resolved") {
+    return `This got handled at ${place} while I was elsewhere.`;
+  }
+
   if (problem.status === "active") {
     return `I can deal with this at ${place}. It pays $${problem.rewardMoney}.`;
   }
@@ -3437,369 +3368,4 @@ function LoadingStage({
       </div>
     </div>
   );
-}
-
-function buildObjectiveCompletedItems(
-  game: StreetGameState,
-  locationById: Map<string, StreetGameState["locations"][number]>,
-): ObjectiveTrailItem[] {
-  const completedItems: ObjectiveTrailItem[] = [];
-  const trustedPeople = game.npcs.filter((npc) => npc.trust >= 2);
-  const completedJobs = game.jobs.filter((job) => job.completed);
-  const solvedProblems = game.problems.filter(
-    (problem) => problem.status === "solved",
-  );
-
-  for (const job of completedJobs) {
-    completedItems.push({
-      id: `completed-job-${job.id}`,
-      title: `Finished ${job.title.toLowerCase()}`,
-      detail: `You followed through at ${
-        locationById.get(job.locationId)?.name ?? "the job site"
-      } and got paid.`,
-      progress: `+$${job.pay}`,
-      done: true,
-    });
-  }
-
-  for (const problem of solvedProblems) {
-    completedItems.push({
-      id: `completed-problem-${problem.id}`,
-      title: `Solved ${problem.title.toLowerCase()}`,
-      detail: `You handled this at ${
-        locationById.get(problem.locationId)?.name ?? "the scene"
-      } and made the block a little easier to live in.`,
-      progress: problem.rewardMoney > 0 ? `+$${problem.rewardMoney}` : undefined,
-      done: true,
-    });
-  }
-
-  if (game.player.knownLocationIds.length >= 4) {
-    completedItems.push({
-      id: "completed-lanes",
-      title: "Got the lay of South Quay",
-      detail:
-        "The district has stopped feeling like a blur. Rowan has enough of the lanes in his head to plan ahead.",
-      progress: `${game.player.knownLocationIds.length} places known`,
-      done: true,
-    });
-  }
-
-  if (game.player.knownNpcIds.length >= 3) {
-    completedItems.push({
-      id: "completed-locals",
-      title: "Made first introductions",
-      detail:
-        "Rowan is no longer a stranger to just one face. A few locals know him well enough to place him.",
-      progress: `${game.player.knownNpcIds.length} people known`,
-      done: true,
-    });
-  }
-
-  if (trustedPeople.length >= 1) {
-    completedItems.push({
-      id: "completed-trust",
-      title: "Earned some trust",
-      detail: `${trustedPeople[0]?.name ?? "Someone"} has started answering Rowan like he belongs in the conversation.`,
-      progress: `${trustedPeople.length} trusted`,
-      done: true,
-    });
-  }
-
-  if (game.player.money >= 20) {
-    completedItems.push({
-      id: "completed-breathing-room",
-      title: "Built a little breathing room",
-      detail:
-        "Cash has started feeling like footing instead of the day's last few coins.",
-      progress: `$${game.player.money} on hand`,
-      done: true,
-    });
-  }
-
-  return completedItems.slice(0, 8);
-}
-
-function buildObjectivePlanItems(
-  game: StreetGameState,
-  locationById: Map<string, StreetGameState["locations"][number]>,
-): ObjectivePlanItem[] {
-  const focus = game.player.objective?.focus ?? "settle";
-  const activeJob = game.jobs.find(
-    (job) =>
-      job.id === game.player.activeJobId &&
-      job.accepted &&
-      !job.completed &&
-      !job.missed,
-  );
-  const discoveredJobs = game.jobs.filter((job) => job.discovered);
-  const completedJobs = game.jobs.filter((job) => job.completed).length;
-  const discoveredProblems = game.problems.filter((problem) => problem.discovered);
-  const activeProblems = discoveredProblems.filter(
-    (problem) => problem.status === "active",
-  );
-  const solvedProblems = game.problems.filter(
-    (problem) => problem.status === "solved",
-  ).length;
-  const knownPeople = game.player.knownNpcIds.length;
-  const trustedPeople = game.npcs.filter((npc) => npc.trust >= 2).length;
-  const knownPlaces = game.player.knownLocationIds.length;
-  const houseStanding = game.player.reputation.morrow_house ?? 0;
-  const homeName =
-    locationById.get(game.player.homeLocationId)?.name ?? "Morrow House";
-  const hasWrench = game.player.inventory.some((item) => item.id === "item-wrench");
-  const activeProblem = activeProblems[0];
-  const activeJobLocation = activeJob
-    ? locationById.get(activeJob.locationId)?.name
-    : undefined;
-
-  switch (focus) {
-    case "work":
-      return [
-        {
-          id: "work-lead",
-          title: "Find paying work",
-          detail:
-            discoveredJobs.length > 0
-              ? "There is at least one real work lead on the block now."
-              : "You still need to find out who is actually hiring today.",
-          progress: `${Math.min(discoveredJobs.length, 1)}/1 lead`,
-          done: discoveredJobs.length > 0,
-        },
-        {
-          id: "work-commit",
-          title: "Line up the next shift",
-          detail: activeJob
-            ? `You already have ${activeJob.title.toLowerCase()} lined up at ${activeJobLocation ?? "the job site"}.`
-            : completedJobs > 0
-              ? "You have already proved you can turn a lead into real work."
-              : "You still need to lock one job in instead of only hearing about it.",
-          progress: activeJob || completedJobs > 0 ? "In hand" : "Not lined up",
-          done: Boolean(activeJob || completedJobs > 0),
-        },
-        {
-          id: "work-money",
-          title: "Turn it into breathing room",
-          detail:
-            completedJobs > 0 || game.player.money >= 20
-              ? "Money is starting to feel like footing, not just survival."
-              : "The point is not only work. It is enough cash that the next move gets easier.",
-          progress: `$${game.player.money} on hand`,
-          done: completedJobs > 0 || game.player.money >= 20,
-        },
-      ];
-    case "people":
-      return [
-        {
-          id: "people-meet",
-          title: "Meet a few locals",
-          detail:
-            knownPeople >= 3
-              ? "You know enough people now that the block has stopped feeling faceless."
-              : "You still need to make yourself known to more than one or two people here.",
-          progress: `${knownPeople}/3 people`,
-          done: knownPeople >= 3,
-        },
-        {
-          id: "people-open-up",
-          title: "Get someone to open up",
-          detail:
-            trustedPeople >= 1
-              ? "At least one person is starting to answer you like you belong in the conversation."
-              : "You still need one real conversation that turns into trust.",
-          progress: `${Math.min(trustedPeople, 1)}/1 trust`,
-          done: trustedPeople >= 1,
-        },
-        {
-          id: "people-friends",
-          title: "Find people to come back to",
-          detail:
-            trustedPeople >= 2
-              ? "A couple of people are starting to feel like they could become real friends."
-              : "This is not just about names. It is about finding people you would actually return to.",
-          progress: `${trustedPeople}/2 trusted`,
-          done: trustedPeople >= 2,
-        },
-      ];
-    case "explore":
-      return [
-        {
-          id: "explore-places",
-          title: "Learn the shape of the block",
-          detail:
-            knownPlaces >= 4
-              ? "You know enough places now to move with some intention."
-              : "You still need a better mental map of where this district opens up.",
-          progress: `${knownPlaces}/4 places`,
-          done: knownPlaces >= 4,
-        },
-        {
-          id: "explore-people",
-          title: "Read the people in it",
-          detail:
-            knownPeople >= 2
-              ? "You have started pairing places with the people who matter there."
-              : "A map is not enough. You still need to connect those places to real people.",
-          progress: `${knownPeople}/2 people`,
-          done: knownPeople >= 2,
-        },
-        {
-          id: "explore-lead",
-          title: "Come away with one usable lead",
-          detail:
-            discoveredJobs.length > 0 || activeProblems.length > 0 || solvedProblems > 0
-              ? "The district has already given you at least one thread worth following."
-              : "Learning the lanes should surface one job, problem, or useful opening.",
-          progress:
-            discoveredJobs.length > 0 || activeProblems.length > 0 || solvedProblems > 0
-              ? "Lead found"
-              : "Still looking",
-          done: discoveredJobs.length > 0 || activeProblems.length > 0 || solvedProblems > 0,
-        },
-      ];
-    case "help":
-      return [
-        {
-          id: "help-find",
-          title: "Find the problem clearly",
-          detail:
-            discoveredProblems.length > 0
-              ? "You know what is actually wrong now, not just that something feels off."
-              : "You still need to pin down what needs fixing and where it sits.",
-          progress: `${Math.min(discoveredProblems.length, 1)}/1 problem`,
-          done: discoveredProblems.length > 0,
-        },
-        {
-          id: "help-ready",
-          title: "Get what the fix needs",
-          detail:
-            !activeProblem
-              ? "Once the problem is clear, figure out whether it needs time, hands, or a tool."
-              : activeProblem.requiredItemId
-                ? hasWrench
-                  ? "You have the tool this fix has been waiting on."
-                  : "You know the fix needs a tool before your hands can finish it."
-                : "You already have what you need to handle this.",
-          progress:
-            !activeProblem
-              ? "Waiting on details"
-              : activeProblem.requiredItemId
-                ? hasWrench
-                  ? "Tool ready"
-                  : "Tool needed"
-                : "Ready now",
-          done:
-            Boolean(activeProblem) &&
-            (!activeProblem.requiredItemId || hasWrench),
-        },
-        {
-          id: "help-solve",
-          title: "See it through",
-          detail:
-            solvedProblems > 0
-              ? "You have already turned one local problem into proof that you can help."
-              : "The last step is doing the work, not circling it.",
-          progress: `${Math.min(solvedProblems, 1)}/1 solved`,
-          done: solvedProblems > 0,
-        },
-      ];
-    case "tool":
-      return [
-        {
-          id: "tool-decide",
-          title: "Figure out which tool matters",
-          detail:
-            activeProblem?.requiredItemId || hasWrench
-              ? "You know the block is pointing you toward one concrete tool."
-              : "You still need to hear what tool would actually change the day.",
-          progress:
-            activeProblem?.requiredItemId || hasWrench ? "Clear enough" : "Still asking",
-          done: Boolean(activeProblem?.requiredItemId || hasWrench),
-        },
-        {
-          id: "tool-money",
-          title: "Get the money together",
-          detail:
-            game.player.money >= 8 || hasWrench
-              ? "You have enough coin to stop this at talk and turn it into a purchase."
-              : "You still need enough cash to buy the tool without wrecking your next move.",
-          progress: `$${game.player.money} / $8`,
-          done: game.player.money >= 8 || hasWrench,
-        },
-        {
-          id: "tool-buy",
-          title: "Buy the tool",
-          detail:
-            hasWrench
-              ? "The tool is already in your hands now."
-              : "You still need to go get it.",
-          progress: hasWrench ? "Owned" : "Not bought",
-          done: hasWrench,
-        },
-      ];
-    case "rest":
-      return [
-        {
-          id: "rest-safe",
-          title: "Get somewhere you can actually stop",
-          detail:
-            game.player.currentLocationId === game.player.homeLocationId
-              ? `You are already at ${homeName}, which gives rest a chance to count.`
-              : `You need to get back to ${homeName} or another safe place before resting does much.`,
-          progress:
-            game.player.currentLocationId === game.player.homeLocationId
-              ? "In place"
-              : "Still out",
-          done: game.player.currentLocationId === game.player.homeLocationId,
-        },
-        {
-          id: "rest-hour",
-          title: "Rest for an hour",
-          detail:
-            game.player.energy >= 70
-              ? "Your energy has already come back enough that the edge is off."
-              : "You still need to actually stop long enough for recovery to happen.",
-          progress: `${game.player.energy} energy`,
-          done: game.player.energy >= 70,
-        },
-      ];
-    case "settle":
-    default:
-      return [
-        {
-          id: "settle-income",
-          title: "Find income",
-          detail: game.goals[0] ?? "You still need a real path to money.",
-          progress:
-            activeJob || completedJobs > 0 || discoveredJobs.length > 0
-              ? "Lead found"
-              : "Still looking",
-          done: Boolean(activeJob || completedJobs > 0 || discoveredJobs.length > 0),
-        },
-        {
-          id: "settle-stay",
-          title: "Make the bed situation less shaky",
-          detail: game.goals[1] ?? `You still need better footing at ${homeName}.`,
-          progress: `${houseStanding}/2 footing`,
-          done: houseStanding >= 2,
-        },
-        {
-          id: "settle-people",
-          title: "Find people you might actually keep",
-          detail: game.goals[2] ?? "You still need people who are more than passing faces.",
-          progress: `${Math.max(trustedPeople, knownPeople)}/${trustedPeople > 0 ? 2 : 3}`,
-          done: trustedPeople >= 1 || knownPeople >= 3,
-        },
-        {
-          id: "settle-bearings",
-          title: "Learn enough of the block to plan ahead",
-          detail:
-            knownPlaces >= 4
-              ? "The district is starting to feel like somewhere you can route yourself through."
-              : "You still need a stronger read on where things are and what each place is good for.",
-          progress: `${knownPlaces}/4 places`,
-          done: knownPlaces >= 4,
-        },
-      ];
-  }
 }

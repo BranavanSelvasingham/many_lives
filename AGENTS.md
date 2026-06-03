@@ -21,6 +21,7 @@ The street game does not currently use cookies for game identity. If cookies are
 
 Use the narrowest validation that covers the change, but do validate.
 
+- Treat every confirmed bug as a root-cause hardening task, not a local patch. A fix is not done until it covers the affected behavior across relevant screen sizes, input modes, saved/reloaded states, and runtime modes, with regression tests or smoke coverage that would fail if the bug returns.
 - Run `corepack pnpm visual:game` for visual, camera, panning, reload, stored-run, autoplay, or responsive layout changes.
 - Run `corepack pnpm lint` for TypeScript or route changes.
 - Run `corepack pnpm --filter @many-lives/many-lives-web build` for Next.js routing, Suspense, server/client boundary, or production-readiness changes.

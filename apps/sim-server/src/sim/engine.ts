@@ -51,6 +51,7 @@ export const STEP_MINUTES = 30;
 
 const MINUTES_PER_MOVEMENT_TILE = 1.5;
 const MIN_STREET_PLANNER_CONFIDENCE = 0.55;
+const JOB_WINDOW_PRESSURE_MINUTES = 45;
 
 const BASE_DAY = "2026-03-21T00:00:00.000Z";
 
@@ -279,7 +280,11 @@ async function refreshWorld(
   return world;
 }
 
-function advanceWorld(world: StreetGameState, minutes: number): void {
+function advanceWorld(
+  world: StreetGameState,
+  minutes: number,
+  options: { workingJobId?: string } = {},
+): void {
   const normalizedMinutes = Math.max(0, Math.round(minutes));
 
   if (normalizedMinutes === 0) {
@@ -295,7 +300,7 @@ function advanceWorld(world: StreetGameState, minutes: number): void {
     world.currentTime = isoFor(world.clock.totalMinutes);
     updateNpcLocations(world);
     updatePlayerLocation(world);
-    resolvePassiveState(world);
+    resolvePassiveState(world, { workingJobId: options.workingJobId });
     syncCityEvents(world);
     remainingMinutes -= chunkMinutes;
   }
@@ -2008,6 +2013,10 @@ function buildFirstAfternoonScriptedReply(
   const normalized = playerText.toLowerCase();
   const firstPlayerLineWithNpc =
     countPlayerConversationsWithNpc(world, npc.id) <= 1;
+  const teaJob = jobById(world, "job-tea-shift");
+  const yardJob = jobById(world, "job-yard-shift");
+  const teaWindowClosed = jobWindowClosed(world, teaJob);
+  const yardWindowOpen = jobWindowOpen(world, yardJob);
 
   if (npc.id === "npc-mara" && firstPlayerLineWithNpc) {
     if (
@@ -2015,6 +2024,17 @@ function buildFirstAfternoonScriptedReply(
         normalized,
       )
     ) {
+      if (teaWindowClosed) {
+        return {
+          reply: yardWindowOpen
+            ? "Tonight's bed is still yours if you keep the house easy to live in, but Ada's lunch window already moved on. If you still need coin today, ask Tomas at North Crane before the yard closes."
+            : "Tonight's bed is still yours if you keep the house easy to live in, but today's easy paid windows have closed. Come back to Morrow House and take stock instead of chasing stale work.",
+          followupThought: yardWindowOpen
+            ? "Mara closed the stale lunch lead and pointed Rowan at the live yard window."
+            : "Mara did not pretend the work windows waited for Rowan.",
+        };
+      }
+
       return {
         reply:
           "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before lunch.",
@@ -2030,6 +2050,26 @@ function buildFirstAfternoonScriptedReply(
         normalized,
       )
     ) {
+      if (teaWindowClosed) {
+        return {
+          reply: yardWindowOpen
+            ? "Lunch already moved on. I cannot pay you for a rush that finished without you, but Tomas may still need hands at North Crane before the yard closes."
+            : "Lunch already moved on. I cannot pay you for a rush that finished without you, and today's useful work windows are gone.",
+          followupThought: yardWindowOpen
+            ? "Ada closed her own window and pointed Rowan at the remaining live work."
+            : "Ada made the closed lunch window explicit instead of reopening stale work.",
+        };
+      }
+
+      if (
+        teaJob?.accepted ||
+        teaJob?.completed ||
+        teaJob?.missed ||
+        !jobWindowOpen(world, teaJob)
+      ) {
+        return undefined;
+      }
+
       return {
         reply:
           "Yes. Lunch is about to start. Clear cups, wipe tables, and keep the counter moving. It pays fourteen if you can stay steady.",
@@ -2613,16 +2653,124 @@ function buildObjectivePlanningTrace(
         "rejected",
       ),
     );
+  const staleActionRejected = staleObjectiveActionTraceOptions(
+    world,
+    selectedActionId,
+  );
 
   return {
     blockers: objectivePlanningBlockers(world),
     considered,
     nextSteps: buildObjectivePlanningTraceNextSteps(world, selected),
     outcomes: objectivePlanningTraceOutcomes(world),
-    rejected,
+    rejected: dedupePlanningTraceOptions([
+      ...staleActionRejected,
+      ...rejected,
+    ]).slice(0, 5),
     selectedActionId,
     selectedLabel,
   };
+}
+
+function staleObjectiveActionTraceOptions(
+  world: StreetGameState,
+  selectedActionId: string | undefined,
+): RowanPlanningTraceOption[] {
+  const predicateOptions = openObjectivePredicateOutcomes(world)
+    .filter((outcome) => outcome.actionId)
+    .filter((outcome) => outcome.actionId !== selectedActionId)
+    .filter(
+      (outcome) =>
+        !objectivePredicateActionIsLegal(world, outcome.actionId ?? ""),
+    )
+    .map((outcome) => {
+      const targetLocationId =
+        targetLocationIdForActionId(world, outcome.actionId ?? "") ??
+        outcome.targetLocationId;
+      return {
+        actionId: outcome.actionId,
+        label: outcome.label,
+        rationale:
+          outcome.evidence ??
+          "This predicate action was considered against the current simulator state.",
+        reason:
+          "Rejected because this objective action is no longer legal in the current world state.",
+        score: 0,
+        status: "rejected" as const,
+        targetLocationId,
+        npcId: outcome.npcId,
+      };
+    });
+  const trailOptions = (world.player.objective?.trail ?? [])
+    .filter((step) => step.actionId && !step.done)
+    .filter((step) => step.actionId !== selectedActionId)
+    .filter(
+      (step) => !objectivePredicateActionIsLegal(world, step.actionId ?? ""),
+    )
+    .map((step) => {
+      const targetLocationId =
+        targetLocationIdForActionId(world, step.actionId ?? "") ??
+        step.targetLocationId;
+      return {
+        actionId: step.actionId,
+        label: step.title,
+        rationale:
+          step.detail ??
+          "This route hint was checked against the current simulator state.",
+        reason:
+          "Rejected because this route hint action is no longer legal in the current world state.",
+        score: 0,
+        status: "rejected" as const,
+        targetLocationId,
+        npcId: step.npcId,
+      };
+    });
+
+  return [...predicateOptions, ...trailOptions];
+}
+
+function objectivePredicateActionIsLegal(
+  world: StreetGameState,
+  actionId: string,
+) {
+  if (!actionId) {
+    return false;
+  }
+
+  const targetLocationId =
+    targetLocationIdForActionId(world, actionId) ??
+    world.player.currentLocationId;
+  if (!targetLocationId) {
+    return false;
+  }
+
+  const preview = previewWorldAtLocation(world, targetLocationId);
+  return buildAvailableActions(preview).some(
+    (action) =>
+      action.id === actionId &&
+      !action.disabled &&
+      canAutoPlanAction(world, targetLocationId, action, preview),
+  );
+}
+
+function dedupePlanningTraceOptions(
+  options: RowanPlanningTraceOption[],
+): RowanPlanningTraceOption[] {
+  const seen = new Set<string>();
+  return options.filter((option) => {
+    const key = [
+      option.actionId ?? "no-action",
+      option.targetLocationId ?? "no-location",
+      option.npcId ?? "no-npc",
+      option.label,
+    ].join(":");
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
 }
 
 function buildObjectivePlanningTraceNextSteps(
@@ -2635,6 +2783,7 @@ function buildObjectivePlanningTraceNextSteps(
 
   const steps = [
     traceStepForPlan(world, selected),
+    ...buildProjectedDestinationFollowUpTraceSteps(world, selected),
     ...buildLiveProblemFollowUpTraceSteps(world, selected),
   ];
   const seen = new Set<string>();
@@ -2655,6 +2804,73 @@ function buildObjectivePlanningTraceNextSteps(
       return true;
     })
     .slice(0, 4);
+}
+
+function buildProjectedDestinationFollowUpTraceSteps(
+  world: StreetGameState,
+  selected: ObjectivePlan,
+): RowanPlanningTraceStep[] {
+  if (
+    !selected.targetLocationId ||
+    selected.targetLocationId === world.player.currentLocationId ||
+    (!selected.actionId && !selected.npcId)
+  ) {
+    return [];
+  }
+
+  const location = findLocation(world, selected.targetLocationId);
+  if (!location) {
+    return [];
+  }
+
+  const preview = previewWorldAtLocation(world, selected.targetLocationId);
+
+  if (selected.npcId) {
+    const npc = npcById(preview, selected.npcId);
+    const actionId = `talk:${selected.npcId}`;
+    const action = buildAvailableActions(preview).find(
+      (candidate) => candidate.id === actionId,
+    );
+    const legal = Boolean(action && !action.disabled && npc);
+
+    return [
+      {
+        actionId,
+        kind: "talk",
+        label: action?.label ?? `Talk to ${npc?.name ?? "someone nearby"}`,
+        legal,
+        npcId: selected.npcId,
+        rationale: `After reaching ${location.name}, re-evaluate the legal conversation surface before Rowan asks the next question.`,
+        targetLocationId: location.id,
+        validation: legal
+          ? "Projected from a cloned destination legal action surface; real execution still requires arrival and a fresh simulator validation."
+          : `Projected talk is not currently legal at ${location.name}.`,
+      },
+    ];
+  }
+
+  if (!selected.actionId) {
+    return [];
+  }
+
+  const action = buildAvailableActions(preview).find(
+    (candidate) => candidate.id === selected.actionId,
+  );
+  const legal = Boolean(action && !action.disabled);
+
+  return [
+    {
+      actionId: selected.actionId,
+      kind: isTimeSkippingAction(selected.actionId) ? "wait" : "act",
+      label: action?.label ?? autonomyLabelForAction(preview, selected.actionId),
+      legal,
+      rationale: `After reaching ${location.name}, re-check this action against the destination's legal action surface before applying consequences.`,
+      targetLocationId: location.id,
+      validation: legal
+        ? "Projected from a cloned destination legal action surface; real execution still requires arrival and a fresh simulator validation."
+        : `Projected action is not currently legal at ${location.name}: ${action?.disabledReason ?? "action unavailable"}.`,
+    },
+  ];
 }
 
 function traceStepForPlan(
@@ -2912,7 +3128,8 @@ function objectivePlanningBlockers(world: StreetGameState) {
 }
 
 function objectivePlanningTraceOutcomes(world: StreetGameState) {
-  return (
+  const objective = currentObjectiveDirective(world);
+  const objectiveOutcomes =
     world.player.objective?.outcomes.map((outcome) => ({
       blockers: outcome.blockers,
       evidence: outcome.evidence,
@@ -2920,8 +3137,23 @@ function objectivePlanningTraceOutcomes(world: StreetGameState) {
       label: outcome.label,
       status: outcome.status,
       urgency: outcome.urgency,
-    })) ?? []
-  );
+    })) ?? [];
+  const seen = new Set(objectiveOutcomes.map((outcome) => outcome.id));
+  const planningOutcomes =
+    objective
+      ? buildStreetPlanningOutcomes(world, objective)
+          .filter((outcome) => !seen.has(outcome.id))
+          .map((outcome) => ({
+            blockers: outcome.blockers,
+            evidence: outcome.evidence,
+            id: outcome.id,
+            label: outcome.label,
+            status: outcome.status,
+            urgency: Math.round(outcome.priority),
+          }))
+      : [];
+
+  return [...objectiveOutcomes, ...planningOutcomes].slice(0, 8);
 }
 
 function buildObjectiveAgentPlanCandidates(
@@ -3095,6 +3327,21 @@ function buildStreetPlanningOutcomes(
       12,
       endMinutes - world.clock.totalMinutes <= 45 ? "at_risk" : "open",
       `Window ends around ${formatHour(activeJob.endHour)}`,
+    );
+  }
+
+  for (const job of urgentKnownJobs(world)) {
+    addOutcome(
+      `job-window-${job.id}`,
+      `${job.title} is close to slipping unless Rowan acts now.`,
+      12 + jobWindowPressure(world, job),
+      "at_risk",
+      `Window ends around ${formatHour(job.endHour)}`,
+      {
+        actionId: job.accepted ? `work:${job.id}` : `accept:${job.id}`,
+        blockers: [`${job.title} closes around ${formatHour(job.endHour)}.`],
+        targetLocationId: job.locationId,
+      },
     );
   }
 
@@ -3322,11 +3569,21 @@ function planTargetsUrgentLivePressure(
     ) {
       return true;
     }
+
+    const job = jobById(world, targetId);
+    if (
+      job &&
+      urgentKnownJobs(world).some((entry) => entry.id === job.id) &&
+      (kind === "accept" || kind === "work" || kind === "resume")
+    ) {
+      return true;
+    }
   }
 
   return Boolean(
     plan.targetLocationId &&
       (highestPressureProblemForLocation(world, plan.targetLocationId) ||
+        highestPressureJobForLocation(world, plan.targetLocationId) ||
         urgentKnownProblems(world).some(
           (problem) =>
             toolSourceLocationIdForProblem(problem) === plan.targetLocationId &&
@@ -3524,6 +3781,12 @@ function addLivePressureLocationIds(
       findLocation(world, toolSourceLocationId)
     ) {
       locationIds.add(toolSourceLocationId);
+    }
+  }
+
+  for (const job of urgentKnownJobs(world)) {
+    if (findLocation(world, job.locationId)) {
+      locationIds.add(job.locationId);
     }
   }
 }
@@ -3735,6 +3998,14 @@ function livePressureMoveIntentForLocation(
     };
   }
 
+  const job = highestPressureJobForLocation(world, location.id);
+  if (job) {
+    return {
+      actionId: job.accepted ? `work:${job.id}` : `accept:${job.id}`,
+      rationale: `${job.title} is near closing, so Rowan should act on the live work window before it slips.`,
+    };
+  }
+
   const toolProblem = urgentKnownProblems(world).find(
     (candidate) =>
       toolSourceLocationIdForProblem(candidate) === location.id &&
@@ -3795,6 +4066,16 @@ function objectivePlanRationale(
     if (pressureProblem) {
       return `${pressureProblem.title} is escalating, so Rowan should buy the wrench before returning to the leak.`;
     }
+  }
+
+  const targetId = extractActionTargetId(action.id);
+  const job = targetId ? jobById(world, targetId) : undefined;
+  if (
+    job &&
+    urgentKnownJobs(world).some((candidate) => candidate.id === job.id) &&
+    (action.kind === "accept_job" || action.kind === "work_job")
+  ) {
+    return `${job.title} closes around ${formatHour(job.endHour)}, so Rowan should take the live work before the city moves on.`;
   }
 
   return npc
@@ -3941,6 +4222,15 @@ function scoreLiveStatePressureForAction(
   );
   if (pressureActionScore !== 0) {
     return pressureActionScore;
+  }
+
+  const jobPressureActionScore = scoreLiveJobPressureForAction(
+    world,
+    input.action,
+    input.plan.targetLocationId,
+  );
+  if (jobPressureActionScore !== 0) {
+    return jobPressureActionScore;
   }
 
   if (
@@ -4112,6 +4402,7 @@ function scoreSemanticMovePressure(
   }
 
   score += scoreLiveProblemPressureForMove(world, locationId);
+  score += scoreLiveJobPressureForMove(world, locationId);
 
   if (
     !predicateAuthority &&
@@ -4163,6 +4454,32 @@ function scoreLiveProblemPressureForAction(
   return 0;
 }
 
+function scoreLiveJobPressureForAction(
+  world: StreetGameState,
+  action: ActionOption,
+  targetLocationId?: string,
+) {
+  const [kind, targetId] = action.id.split(":");
+  if (!targetId || (kind !== "accept" && kind !== "work" && kind !== "resume")) {
+    return 0;
+  }
+
+  const job = jobById(world, targetId);
+  if (
+    !job ||
+    job.locationId !== targetLocationId ||
+    !urgentKnownJobs(world).some((entry) => entry.id === job.id)
+  ) {
+    return 0;
+  }
+
+  if (kind === "accept") {
+    return 58 + jobWindowPressure(world, job) * 9;
+  }
+
+  return 64 + jobWindowPressure(world, job) * 10;
+}
+
 function scoreLiveProblemPressureForMove(
   world: StreetGameState,
   locationId: string,
@@ -4184,6 +4501,14 @@ function scoreLiveProblemPressureForMove(
   return toolProblem ? 48 + problemPressure(toolProblem) * 7 : 0;
 }
 
+function scoreLiveJobPressureForMove(
+  world: StreetGameState,
+  locationId: string,
+) {
+  const job = highestPressureJobForLocation(world, locationId);
+  return job ? 50 + jobWindowPressure(world, job) * 8 : 0;
+}
+
 function urgentKnownProblems(world: StreetGameState) {
   return world.problems
     .filter(
@@ -4195,6 +4520,23 @@ function urgentKnownProblems(world: StreetGameState) {
     .sort((left, right) => problemPressure(right) - problemPressure(left));
 }
 
+function urgentKnownJobs(world: StreetGameState) {
+  return world.jobs
+    .filter(
+      (job) =>
+        (job.discovered || job.accepted) &&
+        !job.completed &&
+        !job.missed &&
+        jobWindowMinutesRemaining(world, job) >= 0 &&
+        jobWindowMinutesRemaining(world, job) <= JOB_WINDOW_PRESSURE_MINUTES,
+    )
+    .sort(
+      (left, right) =>
+        jobWindowMinutesRemaining(world, left) -
+        jobWindowMinutesRemaining(world, right),
+    );
+}
+
 function highestPressureProblemForLocation(
   world: StreetGameState,
   locationId: string,
@@ -4204,8 +4546,44 @@ function highestPressureProblemForLocation(
   );
 }
 
+function highestPressureJobForLocation(
+  world: StreetGameState,
+  locationId: string,
+) {
+  return urgentKnownJobs(world).find((job) => job.locationId === locationId);
+}
+
 function problemPressure(problem: ProblemState) {
   return problem.urgency + (problem.escalationLevel ?? 0);
+}
+
+function jobWindowPressure(world: StreetGameState, job: JobState) {
+  const remaining = Math.max(0, jobWindowMinutesRemaining(world, job));
+  return Math.max(
+    1,
+    Math.ceil((JOB_WINDOW_PRESSURE_MINUTES - remaining) / 15) + 1,
+  );
+}
+
+function jobWindowMinutesRemaining(world: StreetGameState, job: JobState) {
+  return totalMinutesForDayHour(world.clock.day, job.endHour) - world.clock.totalMinutes;
+}
+
+function jobWindowOpen(world: StreetGameState, job: JobState | undefined) {
+  return Boolean(
+    job &&
+      !job.completed &&
+      !job.missed &&
+      jobWindowMinutesRemaining(world, job) > 0,
+  );
+}
+
+function jobWindowClosed(world: StreetGameState, job: JobState | undefined) {
+  return Boolean(
+    job &&
+      !job.completed &&
+      (job.missed || jobWindowMinutesRemaining(world, job) <= 0),
+  );
 }
 
 function hasRequiredProblemItem(world: StreetGameState, problem: ProblemState) {
@@ -4255,6 +4633,18 @@ function scorePlanForDesiredOutcomes(
   for (const outcome of outcomes) {
     const priority = outcome.priority;
     score += scorePlanForTargetedOutcome(world, plan, outcome);
+
+    if (outcome.id.startsWith("job-window-")) {
+      const outcomeJobId = outcome.id.slice("job-window-".length);
+      if (
+        job?.id === outcomeJobId &&
+        (kind === "accept" || kind === "work" || kind === "resume")
+      ) {
+        score += priority * 3.5;
+      } else if (locationId === outcome.targetLocationId) {
+        score += priority * 2;
+      }
+    }
 
     switch (outcome.id) {
       case "active-commitment":
@@ -5531,7 +5921,7 @@ function workJob(world: StreetGameState, jobId: string): void {
   if (job.id === "job-tea-shift") {
     world.firstAfternoon ??= {};
     if (!world.firstAfternoon.teaShiftStage) {
-      advanceWorld(world, 20);
+      advanceWorld(world, 20, { workingJobId: job.id });
       world.player.energy = clamp(world.player.energy - 4, 12, 100);
       world.firstAfternoon.teaShiftStage = "rush";
       world.player.currentThought =
@@ -5550,7 +5940,7 @@ function workJob(world: StreetGameState, jobId: string): void {
     }
 
     if (world.firstAfternoon.teaShiftStage === "rush") {
-      advanceWorld(world, 25);
+      advanceWorld(world, 25, { workingJobId: job.id });
       world.player.energy = clamp(world.player.energy - 5, 12, 100);
       world.firstAfternoon.teaShiftStage = "counter";
       world.player.currentThought =
@@ -5579,7 +5969,7 @@ function workJob(world: StreetGameState, jobId: string): void {
         )
       : job.durationMinutes;
 
-  advanceWorld(world, workMinutes);
+  advanceWorld(world, workMinutes, { workingJobId: job.id });
   world.player.money += job.pay;
   world.player.energy = clamp(world.player.energy - 14, 12, 100);
   world.player.activeJobId = undefined;
@@ -6039,23 +6429,28 @@ function ensureFirstAfternoonLeadFieldNote(world: StreetGameState): void {
   );
 }
 
-function resolvePassiveState(world: StreetGameState): void {
+function resolvePassiveState(
+  world: StreetGameState,
+  options: { workingJobId?: string } = {},
+): void {
   const teaJob = jobById(world, "job-tea-shift");
-  if (teaJob && !teaJob.completed && currentHour(world) >= teaJob.endHour) {
-    teaJob.accepted = false;
-    teaJob.missed = true;
-    if (world.player.activeJobId === teaJob.id) {
-      world.player.activeJobId = undefined;
-    }
+  if (
+    teaJob &&
+    !teaJob.completed &&
+    currentHour(world) >= teaJob.endHour &&
+    options.workingJobId !== teaJob.id
+  ) {
+    missJobFromPassiveWorld(world, teaJob);
   }
 
   const yardJob = jobById(world, "job-yard-shift");
-  if (yardJob && !yardJob.completed && currentHour(world) >= yardJob.endHour) {
-    yardJob.accepted = false;
-    yardJob.missed = true;
-    if (world.player.activeJobId === yardJob.id) {
-      world.player.activeJobId = undefined;
-    }
+  if (
+    yardJob &&
+    !yardJob.completed &&
+    currentHour(world) >= yardJob.endHour &&
+    options.workingJobId !== yardJob.id
+  ) {
+    missJobFromPassiveWorld(world, yardJob);
   }
 
   const cartProblem = problemById(world, "problem-cart");
@@ -6074,6 +6469,8 @@ function resolvePassiveState(world: StreetGameState): void {
     currentHour(world) >= 18
   ) {
     pumpProblem.status = "expired";
+    pumpProblem.expiredAt ??= world.currentTime;
+    applyProblemExpiryConsequences(world, pumpProblem);
   }
 
   if (
@@ -6082,10 +6479,219 @@ function resolvePassiveState(world: StreetGameState): void {
     currentHour(world) >= 17
   ) {
     cartProblem.status = "expired";
+    cartProblem.expiredAt ??= world.currentTime;
+    applyProblemExpiryConsequences(world, cartProblem);
   }
 
   resolveProblemEscalation(world, pumpProblem);
   resolveProblemEscalation(world, cartProblem);
+  resolveIndependentNpcActions(world);
+}
+
+function missJobFromPassiveWorld(
+  world: StreetGameState,
+  job: JobState,
+): void {
+  if (job.completed) {
+    return;
+  }
+
+  const wasLiveToRowan = job.discovered || job.accepted;
+  job.accepted = false;
+  job.missed = true;
+  job.missedAt ??= world.currentTime;
+  job.deferredUntilMinutes = undefined;
+  if (world.player.activeJobId === job.id) {
+    world.player.activeJobId = undefined;
+  }
+
+  if (!wasLiveToRowan || job.consequenceAppliedAt) {
+    return;
+  }
+
+  job.consequenceAppliedAt = world.currentTime;
+  const giver = npcById(world, job.giverNpcId);
+  if (giver) {
+    giver.trust = clamp(giver.trust - 1, 0, 10);
+  }
+
+  if (job.id === "job-tea-shift") {
+    if (giver) {
+      rememberNpcIfNew(
+        giver,
+        "Rowan let the lunch rush move on without committing steady hands.",
+      );
+    }
+    addFeed(
+      world,
+      "job",
+      "Ada's lunch window moved on without Rowan; the room learned to solve the rush without him.",
+    );
+    rememberIfNew(
+      world,
+      "job",
+      "You missed Ada's lunch window, so that paid foothold is no longer waiting.",
+    );
+    return;
+  }
+
+  if (job.id === "job-yard-shift") {
+    if (giver) {
+      rememberNpcIfNew(
+        giver,
+        "Rowan missed the loading block after the yard had already made room for him.",
+      );
+    }
+    addFeed(
+      world,
+      "job",
+      "North Crane Yard finished its loading block without Rowan, and Tomas has less reason to hold space for him next time.",
+    );
+    rememberIfNew(
+      world,
+      "job",
+      "You missed the freight yard loading block, closing that work window for the day.",
+    );
+  }
+}
+
+function applyProblemExpiryConsequences(
+  world: StreetGameState,
+  problem: ProblemState,
+): void {
+  if (problem.consequenceAppliedAt) {
+    return;
+  }
+
+  problem.consequenceAppliedAt = world.currentTime;
+
+  if (problem.id === "problem-pump") {
+    world.player.reputation.morrow_house = clamp(
+      (world.player.reputation.morrow_house ?? 0) - 1,
+      0,
+      10,
+    );
+    const mara = npcById(world, "npc-mara");
+    if (mara) {
+      mara.trust = clamp(mara.trust - 1, 0, 10);
+      rememberNpcIfNew(
+        mara,
+        "The Morrow Yard pump was left until evening and turned into house strain.",
+      );
+    }
+    if (problem.discovered) {
+      addFeed(
+        world,
+        "problem",
+        "By evening the Morrow Yard pump stopped being a small fix and became house strain Rowan has to live with.",
+      );
+      rememberIfNew(
+        world,
+        "problem",
+        "Ignoring the pump cost Rowan standing at Morrow House.",
+      );
+    }
+    return;
+  }
+
+  if (problem.id === "problem-cart") {
+    world.player.reputation.south_quay = clamp(
+      (world.player.reputation.south_quay ?? 0) - 1,
+      0,
+      10,
+    );
+    const nia = npcById(world, "npc-nia");
+    if (nia) {
+      rememberNpcIfNew(
+        nia,
+        "The square had to route itself around the jammed cart after nobody cleared it in time.",
+      );
+    }
+    if (problem.discovered) {
+      addFeed(
+        world,
+        "problem",
+        "The handcart jam hardened into a square-wide nuisance before Rowan moved on it.",
+      );
+      rememberIfNew(
+        world,
+        "problem",
+        "The square remembered that the cart problem was left until it slowed everybody down.",
+      );
+    }
+  }
+}
+
+function resolveIndependentNpcActions(world: StreetGameState): void {
+  const pumpProblem = problemById(world, "problem-pump");
+  const mara = npcById(world, "npc-mara");
+  const pumpResolutionMinute = totalMinutesForDayHour(world.clock.day, 17.5);
+
+  if (
+    pumpProblem?.status === "active" &&
+    (pumpProblem.escalationLevel ?? 0) >= 2 &&
+    world.clock.totalMinutes >= pumpResolutionMinute &&
+    mara?.currentLocationId === "courtyard"
+  ) {
+    pumpProblem.status = "resolved";
+    pumpProblem.resolvedAt ??= world.currentTime;
+    pumpProblem.resolvedByNpcId ??= mara.id;
+    pumpProblem.urgency = 0;
+    rememberNpcIfNew(
+      mara,
+      "Mara contained the pump herself after the house waited as long as it could.",
+    );
+    if (pumpProblem.discovered) {
+      world.player.reputation.morrow_house = clamp(
+        (world.player.reputation.morrow_house ?? 0) - 1,
+        0,
+        10,
+      );
+      mara.trust = clamp(mara.trust - 1, 0, 10);
+      addFeed(
+        world,
+        "problem",
+        "Mara got the pump contained before evening, but Morrow House had to solve that strain without Rowan.",
+      );
+      rememberIfNew(
+        world,
+        "problem",
+        "The pump did not wait for Rowan's route. Mara contained it herself, and the house noticed.",
+      );
+    }
+  }
+
+  const cartProblem = problemById(world, "problem-cart");
+  const nia = npcById(world, "npc-nia");
+  const cartResolutionMinute = totalMinutesForDayHour(world.clock.day, 16.5);
+
+  if (
+    cartProblem?.status === "active" &&
+    (cartProblem.escalationLevel ?? 0) >= 2 &&
+    world.clock.totalMinutes >= cartResolutionMinute &&
+    nia?.currentLocationId === "market-square"
+  ) {
+    cartProblem.status = "resolved";
+    cartProblem.resolvedAt ??= world.currentTime;
+    cartProblem.resolvedByNpcId ??= nia.id;
+    cartProblem.urgency = 0;
+    rememberNpcIfNew(
+      nia,
+      "Nia cleared the handcart after the square got tired of bending around it.",
+    );
+    if (cartProblem.discovered) {
+      addFeed(
+        world,
+        "problem",
+        "Nia got the jammed handcart rolling while Rowan was elsewhere; the square solved that one without him.",
+      );
+      rememberIfNew(
+        world,
+        "problem",
+        "The jammed cart did not wait for Rowan. Nia cleared it once the square pressure peaked.",
+      );
+    }
+  }
 }
 
 function resolveProblemEscalation(
@@ -6126,9 +6732,38 @@ function updateNpcLocations(world: StreetGameState): void {
       ) ?? npc.schedule[npc.schedule.length - 1];
 
     if (stop) {
-      npc.currentLocationId = stop.locationId;
+      npc.currentLocationId =
+        pressureLocationForNpc(world, npc, stop.locationId) ?? stop.locationId;
     }
   }
+}
+
+function pressureLocationForNpc(
+  world: StreetGameState,
+  npc: NpcState,
+  scheduledLocationId: string,
+): string | undefined {
+  const pumpProblem = problemById(world, "problem-pump");
+  if (
+    npc.id === "npc-mara" &&
+    scheduledLocationId !== "courtyard" &&
+    pumpProblem?.status === "active" &&
+    (pumpProblem.escalationLevel ?? 0) >= 2
+  ) {
+    return "courtyard";
+  }
+
+  const cartProblem = problemById(world, "problem-cart");
+  if (
+    npc.id === "npc-nia" &&
+    scheduledLocationId !== "market-square" &&
+    cartProblem?.status === "active" &&
+    (cartProblem.escalationLevel ?? 0) >= 2
+  ) {
+    return "market-square";
+  }
+
+  return undefined;
 }
 
 function updatePlayerLocation(world: StreetGameState): void {
@@ -6589,15 +7224,29 @@ function syncNpcInnerState(world: StreetGameState) {
 
     switch (npc.id) {
       case "npc-mara":
-        npc.currentObjective = narrative.objective;
+        npc.currentObjective =
+          pumpProblem?.status === "resolved"
+            ? "Keep the house from turning Rowan's absence into the whole story."
+            : pumpProblem?.status === "active" &&
+                (pumpProblem.escalationLevel ?? 0) >= 2
+              ? "Get eyes on Morrow Yard before the pump turns house strain into rent talk."
+              : narrative.objective;
         npc.currentConcern =
-          pumpProblem?.discovered && pumpProblem.status === "active"
+          pumpProblem?.status === "resolved"
+            ? "The pump is contained, but the house had to handle it without Rowan."
+            : pumpProblem?.status === "expired"
+            ? "The pump is not a future worry anymore; the house is already paying for it."
+            : pumpProblem?.discovered && pumpProblem.status === "active"
             ? "That pump is turning house trouble public."
             : hour < 12
               ? "Keep the house from slipping into rent talk."
               : "Decide whether this newcomer means strain, help, or maybe a future here.";
         npc.mood =
-          pumpProblem?.discovered && pumpProblem.status === "active"
+          pumpProblem?.status === "resolved"
+            ? "guarded"
+            : pumpProblem?.status === "expired"
+            ? "strained"
+            : pumpProblem?.discovered && pumpProblem.status === "active"
             ? "watchful"
             : "measured";
         npc.openness = clamp(npc.openness || 58, 36, 92);
@@ -6605,18 +7254,26 @@ function syncNpcInnerState(world: StreetGameState) {
       case "npc-ada":
         npc.currentObjective = narrative.objective;
         npc.currentConcern =
-          teaJob?.accepted && !teaJob.completed
+          teaJob?.missed
+            ? "Lunch already had to run without the hands Rowan could have offered."
+            : teaJob?.accepted && !teaJob.completed
             ? "The room needs speed, not apologies."
             : hour < 12.5
               ? narrative.context
               : "Keep the room from falling behind the cups.";
-        npc.mood = teaJob?.accepted && !teaJob.completed ? "brisk" : "pressed";
+        npc.mood = teaJob?.missed
+          ? "cool"
+          : teaJob?.accepted && !teaJob.completed
+            ? "brisk"
+            : "pressed";
         npc.openness = clamp(npc.openness || 50, 30, 88);
         break;
       case "npc-jo":
         npc.currentObjective = narrative.objective;
         npc.currentConcern =
-          pumpProblem?.discovered &&
+          pumpProblem?.status === "resolved"
+            ? "Mara already contained the leak; the wrench is no longer the live bottleneck."
+            : pumpProblem?.discovered &&
           pumpProblem.status === "active" &&
           !playerHasWrench
             ? "That wrench should leave the bench before dusk."
@@ -6627,23 +7284,38 @@ function syncNpcInnerState(world: StreetGameState) {
       case "npc-tomas":
         npc.currentObjective = narrative.objective;
         npc.currentConcern =
-          yardJob?.accepted && !yardJob.completed
+          yardJob?.missed
+            ? "The load moved without Rowan, which says plenty in a working yard."
+            : yardJob?.accepted && !yardJob.completed
             ? "That lift needs finishing clean."
             : hour < 14
               ? narrative.context
               : "Keep the yard moving without rushing anyone into a mistake.";
-        npc.mood = "busy";
+        npc.mood = yardJob?.missed ? "guarded" : "busy";
         npc.openness = clamp(npc.openness || 34, 18, 74);
         break;
       case "npc-nia":
-        npc.currentObjective = narrative.objective;
+        npc.currentObjective =
+          cartProblem?.status === "active" &&
+          (cartProblem.escalationLevel ?? 0) >= 2
+            ? "Stay with Quay Square until the jam stops bending everybody's route."
+            : narrative.objective;
         npc.currentConcern =
-          cartProblem?.status === "active"
+          cartProblem?.status === "resolved"
+            ? "The square is moving again, but it had to handle the cart itself."
+            : cartProblem?.status === "expired"
+            ? "The square already spent the afternoon working around a problem that could have moved sooner."
+            : cartProblem?.status === "active"
             ? "That jam in Quay Square is about to become everybody's problem."
             : npc.currentLocationId === "moss-pier"
               ? "Watch what comes off the boats before the story gets retold."
               : narrative.context;
-        npc.mood = "alert";
+        npc.mood =
+          cartProblem?.status === "resolved"
+            ? "satisfied"
+            : cartProblem?.status === "expired"
+              ? "sharp"
+              : "alert";
         npc.openness = clamp(npc.openness || 60, 34, 94);
         break;
       default:
@@ -6701,6 +7373,16 @@ function discoverJob(world: StreetGameState, jobId: string) {
 
   job.discovered = true;
   remember(world, "job", `You found out about ${job.title.toLowerCase()}.`);
+}
+
+function discoverLiveJob(world: StreetGameState, jobId: string) {
+  const job = jobById(world, jobId);
+  if (!job || !jobWindowOpen(world, job)) {
+    return false;
+  }
+
+  discoverJob(world, jobId);
+  return true;
 }
 
 function discoverProblem(world: StreetGameState, problemId: string) {
@@ -7025,6 +7707,13 @@ function deriveConversationResolution(
     objectiveAboutPump ||
     playerAskedPump ||
     (discussedTopics.has("pump") && !firstMaraRoomHandoff);
+  const discussedWork =
+    objective.focus === "work" ||
+    discussedTopics.has("work") ||
+    discussedTopics.has("yard");
+  const teaWindowClosed = jobWindowClosed(world, teaJob);
+  const yardWindowOpen = jobWindowOpen(world, yardJob);
+  const yardWindowClosed = jobWindowClosed(world, yardJob);
 
   if (socialLoopObjective && nextNpc) {
     return {
@@ -7075,6 +7764,7 @@ function deriveConversationResolution(
 
       if (
         teaJob?.discovered &&
+        jobWindowOpen(world, teaJob) &&
         !teaJob.accepted &&
         !teaJob.completed &&
         !teaJob.missed
@@ -7090,10 +7780,43 @@ function deriveConversationResolution(
             : undefined,
         };
       }
+
+      if (discussedWork && teaWindowClosed && yardWindowOpen) {
+        return yardWorkRedirectConversationResolution(shouldSharpenObjective, {
+          memoryText:
+            "Mara did not pretend Ada's lunch window was still alive; she pointed Rowan toward Tomas instead.",
+          sourceName: "Mara",
+        });
+      }
+
+      if (discussedWork && teaWindowClosed && yardWindowClosed) {
+        return closedWorkWindowConversationResolution(shouldSharpenObjective, {
+          memoryText:
+            "Mara made it clear that today's easy work windows had moved on.",
+          sourceName: "Mara",
+        });
+      }
       break;
     case "npc-ada":
+      if (discussedWork && teaWindowClosed && yardWindowOpen) {
+        return yardWorkRedirectConversationResolution(shouldSharpenObjective, {
+          memoryText:
+            "Ada closed the lunch option instead of holding a stale shift open, then pointed Rowan toward the yard.",
+          sourceName: "Ada",
+        });
+      }
+
+      if (discussedWork && teaWindowClosed && yardWindowClosed) {
+        return closedWorkWindowConversationResolution(shouldSharpenObjective, {
+          memoryText:
+            "Ada made it plain that the cup-and-counter shift was already gone for today.",
+          sourceName: "Ada",
+        });
+      }
+
       if (
         teaJob?.discovered &&
+        jobWindowOpen(world, teaJob) &&
         !teaJob.accepted &&
         !teaJob.completed &&
         !teaJob.missed
@@ -7112,6 +7835,7 @@ function deriveConversationResolution(
 
       if (
         yardJob?.discovered &&
+        jobWindowOpen(world, yardJob) &&
         !yardJob.accepted &&
         !yardJob.completed &&
         !yardJob.missed
@@ -7166,8 +7890,17 @@ function deriveConversationResolution(
       }
       break;
     case "npc-tomas":
+      if (discussedWork && yardWindowClosed) {
+        return closedWorkWindowConversationResolution(shouldSharpenObjective, {
+          memoryText:
+            "Tomas did not reopen the loading block after the yard had already moved without Rowan.",
+          sourceName: "Tomas",
+        });
+      }
+
       if (
         yardJob?.discovered &&
+        jobWindowOpen(world, yardJob) &&
         !yardJob.accepted &&
         !yardJob.completed &&
         !yardJob.missed
@@ -7202,6 +7935,14 @@ function deriveConversationResolution(
       break;
   }
 
+  if (discussedWork && teaWindowClosed && yardWindowClosed) {
+    return closedWorkWindowConversationResolution(shouldSharpenObjective, {
+      memoryText:
+        "The block did not keep paid work windows open just because Rowan asked late.",
+      sourceName: npc.name,
+    });
+  }
+
   if (nextNpc) {
     return {
       decision: `talk to ${nextNpc.name} next while there is still time.`,
@@ -7218,6 +7959,44 @@ function deriveConversationResolution(
     memoryKind: "self",
     memoryText:
       "The conversation gave you a clearer feel for where to lean next, even if it didn't hand you the whole answer.",
+  };
+}
+
+function yardWorkRedirectConversationResolution(
+  shouldSharpenObjective: boolean,
+  options: {
+    memoryText: string;
+    sourceName: string;
+  },
+): ConversationResolution {
+  return {
+    decision:
+      "skip the closed lunch lead and ask Tomas while the yard window is still live.",
+    memoryKind: "job",
+    memoryText: options.memoryText,
+    objectiveText: shouldSharpenObjective
+      ? "See if Tomas still needs another set of hands in the yard."
+      : undefined,
+    summary: `${options.sourceName} closed the stale lunch lead and redirected Rowan toward the live yard window.`,
+  };
+}
+
+function closedWorkWindowConversationResolution(
+  shouldSharpenObjective: boolean,
+  options: {
+    memoryText: string;
+    sourceName: string;
+  },
+): ConversationResolution {
+  return {
+    decision:
+      "stop chasing closed work windows and return to Morrow House to take stock.",
+    memoryKind: "job",
+    memoryText: options.memoryText,
+    objectiveText: shouldSharpenObjective
+      ? "Return to Morrow House and take stock."
+      : undefined,
+    summary: `${options.sourceName} made the closed work window explicit instead of reopening a stale route.`,
   };
 }
 
@@ -7364,14 +8143,18 @@ function applyConversationRevelations(
         );
       }
       if (topics.has("work")) {
-        discoverJob(world, "job-tea-shift");
+        if (!discoverLiveJob(world, "job-tea-shift")) {
+          discoverLiveJob(world, "job-yard-shift");
+        }
       }
       break;
     case "npc-ada":
       if (topics.has("work") || firstConversationWithNpc) {
-        discoverJob(world, "job-tea-shift");
-        if (jobById(world, "job-tea-shift")?.completed) {
-          discoverJob(world, "job-yard-shift");
+        if (
+          !discoverLiveJob(world, "job-tea-shift") ||
+          jobById(world, "job-tea-shift")?.completed
+        ) {
+          discoverLiveJob(world, "job-yard-shift");
         }
       }
       rememberIfNew(
@@ -7396,7 +8179,7 @@ function applyConversationRevelations(
         topics.has("yard") ||
         firstConversationWithNpc
       ) {
-        discoverJob(world, "job-yard-shift");
+        discoverLiveJob(world, "job-yard-shift");
       }
       rememberIfNew(
         world,

@@ -187,7 +187,7 @@ import {
 import {
   CELL,
   KENNEY_TILE,
-  getCompactCameraHorizontalRange,
+  getCompactCameraScrollRange,
   getMapWorldOrigin,
   getWorldBoundsForRuntime,
   mapTileToWorldCenter,
@@ -1812,6 +1812,10 @@ async function createRuntime(options: {
     waypointPlacedAt: runtimeNow,
     waypointTarget: initialSnapshot.waypointTarget ?? null,
   };
+  const nativeCameraPanFallback = bindNativeCameraPanFallback(
+    options.mount,
+    runtimeState,
+  );
 
   const sceneConfig = {
     preload(this: PhaserType.Scene) {
@@ -2109,6 +2113,7 @@ async function createRuntime(options: {
     destroy() {
       clearConversationAutostartTimer(runtimeState);
       clearConversationReplayTimer(runtimeState);
+      nativeCameraPanFallback.destroy();
       runtimeState.objects = null;
       game.destroy(true);
       overlayDom.remove();
@@ -2153,6 +2158,425 @@ async function createRuntime(options: {
         renderDynamicScene(runtimeState.objects, runtimeState);
         renderOverlay(runtimeState.objects, runtimeState);
       }
+    },
+  };
+}
+
+function bindNativeCameraPanFallback(
+  mount: HTMLDivElement,
+  runtimeState: RuntimeState,
+) {
+  let activePointerId: number | null = null;
+  let activeStartPointer: PhaserType.Input.Pointer | null = null;
+  let activeTouchId: number | null = null;
+  let activeTouchStartPointer: PhaserType.Input.Pointer | null = null;
+
+  const toRuntimePointerFromClient = (
+    clientX: number,
+    clientY: number,
+    id: number,
+    isDown: boolean,
+  ) => {
+    const rect = mount.getBoundingClientRect();
+    const viewport = getRuntimeViewportSize(runtimeState);
+    const relativeX = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+    const relativeY =
+      rect.height > 0 ? (clientY - rect.top) / rect.height : 0;
+
+    return {
+      id,
+      isDown,
+      x: relativeX * viewport.width,
+      y: relativeY * viewport.height,
+    } as PhaserType.Input.Pointer;
+  };
+
+  const toRuntimePointer = (event: PointerEvent | WheelEvent) =>
+    toRuntimePointerFromClient(
+      event.clientX,
+      event.clientY,
+      "pointerId" in event ? event.pointerId : -1,
+      "buttons" in event ? (event.buttons & 1) === 1 : false,
+    );
+
+  const toTouchPointer = (touch: Touch, isDown: boolean) =>
+    toRuntimePointerFromClient(
+      touch.clientX,
+      touch.clientY,
+      10_000 + touch.identifier,
+      isDown,
+    );
+
+  const isBlockedByOverlay = (event: Event) => {
+    if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
+      return true;
+    }
+
+    return isOverlayEventTarget(
+      runtimeState.objects?.overlayDom ?? null,
+      event.target,
+    );
+  };
+
+  const captureCameraEvent = (event: Event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const beginNativePan = (event: PointerEvent) => {
+    if (
+      activeTouchId !== null ||
+      event.button !== 0 ||
+      !runtimeState.snapshot.game ||
+      isBlockedByOverlay(event)
+    ) {
+      return;
+    }
+
+    const pointer = toRuntimePointer(event);
+    if (
+      !isPointerWithinSceneViewport(
+        pointer,
+        getRuntimeCameraGestureViewport(runtimeState),
+      )
+    ) {
+      return;
+    }
+
+    activePointerId = event.pointerId;
+    activeStartPointer = pointer;
+
+    try {
+      mount.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is best effort; browsers can reject it for synthetic events.
+    }
+  };
+
+  const updateNativePan = (event: PointerEvent) => {
+    if (activePointerId !== event.pointerId) {
+      return;
+    }
+
+    const pointer = toRuntimePointer(event);
+    if (!pointer.isDown) {
+      activePointerId = null;
+      activeStartPointer = null;
+      mount.style.cursor = "grab";
+      finishCameraGesture(runtimeState, pointer, getRuntimeNow());
+      return;
+    }
+
+    const now = getRuntimeNow();
+    if (
+      activeStartPointer &&
+      runtimeState.cameraGesture?.pointerId !== event.pointerId
+    ) {
+      const deltaX = pointer.x - activeStartPointer.x;
+      const deltaY = pointer.y - activeStartPointer.y;
+      if (Math.hypot(deltaX, deltaY) < 10) {
+        return;
+      }
+
+      beginCameraGesture(
+        runtimeState,
+        activeStartPointer,
+        getRuntimeSceneViewport(runtimeState),
+        now,
+        getRuntimeCameraGestureViewport(runtimeState),
+      );
+    }
+
+    const panResult = updateCameraGesture(
+      runtimeState,
+      pointer,
+      getRuntimeSceneViewport(runtimeState),
+      now,
+      getRuntimeCameraGestureViewport(runtimeState),
+    );
+    pulseCameraEdgeCue(runtimeState, panResult.blockedEdges, now);
+
+    if (
+      runtimeState.cameraGesture?.pointerId === event.pointerId &&
+      runtimeState.cameraGesture.dragging
+    ) {
+      mount.style.cursor = "grabbing";
+      captureCameraEvent(event);
+    }
+  };
+
+  const finishNativePan = (event: PointerEvent) => {
+    if (activePointerId !== event.pointerId) {
+      return;
+    }
+
+    const pointer = toRuntimePointer(event);
+    const wasDragging =
+      runtimeState.cameraGesture?.pointerId === event.pointerId &&
+      runtimeState.cameraGesture.dragging;
+    activePointerId = null;
+    activeStartPointer = null;
+    mount.style.cursor = "grab";
+
+    try {
+      mount.releasePointerCapture(event.pointerId);
+    } catch {
+      // Release can fail when capture was not granted.
+    }
+
+    if (wasDragging) {
+      captureCameraEvent(event);
+      finishCameraGesture(runtimeState, pointer, getRuntimeNow());
+      return;
+    }
+
+    window.setTimeout(() => {
+      if (
+        runtimeState.cameraGesture?.pointerId === event.pointerId &&
+        !runtimeState.cameraGesture.dragging
+      ) {
+        finishCameraGesture(runtimeState, pointer, getRuntimeNow());
+      }
+    }, 0);
+  };
+
+  const cancelNativePan = (event: PointerEvent) => {
+    if (activePointerId !== event.pointerId) {
+      return;
+    }
+
+    activePointerId = null;
+    activeStartPointer = null;
+    mount.style.cursor = "grab";
+    finishCameraGesture(runtimeState, toRuntimePointer(event), getRuntimeNow());
+  };
+
+  const findActiveTouch = (touches: TouchList) => {
+    if (activeTouchId === null) {
+      return null;
+    }
+
+    for (let index = 0; index < touches.length; index += 1) {
+      const touch = touches.item(index);
+      if (touch?.identifier === activeTouchId) {
+        return touch;
+      }
+    }
+
+    return null;
+  };
+
+  const beginNativeTouchPan = (event: TouchEvent) => {
+    if (
+      activePointerId !== null ||
+      activeTouchId !== null ||
+      !runtimeState.snapshot.game ||
+      isBlockedByOverlay(event)
+    ) {
+      return;
+    }
+
+    const touch = event.changedTouches.item(0);
+    if (!touch) {
+      return;
+    }
+
+    const pointer = toTouchPointer(touch, true);
+    if (
+      !isPointerWithinSceneViewport(
+        pointer,
+        getRuntimeCameraGestureViewport(runtimeState),
+      )
+    ) {
+      return;
+    }
+
+    activeTouchId = touch.identifier;
+    activeTouchStartPointer = pointer;
+  };
+
+  const updateNativeTouchPan = (event: TouchEvent) => {
+    const touch = findActiveTouch(event.touches) ?? findActiveTouch(event.changedTouches);
+    if (!touch || activeTouchId === null) {
+      return;
+    }
+
+    const pointer = toTouchPointer(touch, true);
+    const now = getRuntimeNow();
+    if (
+      activeTouchStartPointer &&
+      runtimeState.cameraGesture?.pointerId !== pointer.id
+    ) {
+      const deltaX = pointer.x - activeTouchStartPointer.x;
+      const deltaY = pointer.y - activeTouchStartPointer.y;
+      if (Math.hypot(deltaX, deltaY) < 10) {
+        return;
+      }
+
+      beginCameraGesture(
+        runtimeState,
+        activeTouchStartPointer,
+        getRuntimeSceneViewport(runtimeState),
+        now,
+        getRuntimeCameraGestureViewport(runtimeState),
+      );
+    }
+
+    const panResult = updateCameraGesture(
+      runtimeState,
+      pointer,
+      getRuntimeSceneViewport(runtimeState),
+      now,
+      getRuntimeCameraGestureViewport(runtimeState),
+    );
+    pulseCameraEdgeCue(runtimeState, panResult.blockedEdges, now);
+
+    if (
+      runtimeState.cameraGesture?.pointerId === pointer.id &&
+      runtimeState.cameraGesture.dragging
+    ) {
+      captureCameraEvent(event);
+    }
+  };
+
+  const finishNativeTouchPan = (event: TouchEvent) => {
+    const touch = findActiveTouch(event.changedTouches);
+    if (!touch || activeTouchId === null) {
+      return;
+    }
+
+    const pointer = toTouchPointer(touch, false);
+    const wasDragging =
+      runtimeState.cameraGesture?.pointerId === pointer.id &&
+      runtimeState.cameraGesture.dragging;
+    activeTouchId = null;
+    activeTouchStartPointer = null;
+
+    if (wasDragging) {
+      captureCameraEvent(event);
+      finishCameraGesture(runtimeState, pointer, getRuntimeNow());
+      return;
+    }
+
+    window.setTimeout(() => {
+      if (
+        runtimeState.cameraGesture?.pointerId === pointer.id &&
+        !runtimeState.cameraGesture.dragging
+      ) {
+        finishCameraGesture(runtimeState, pointer, getRuntimeNow());
+      }
+    }, 0);
+  };
+
+  const cancelNativeTouchPan = (event: TouchEvent) => {
+    const touch = findActiveTouch(event.changedTouches);
+    if (!touch || activeTouchId === null) {
+      return;
+    }
+
+    activeTouchId = null;
+    activeTouchStartPointer = null;
+    finishCameraGesture(
+      runtimeState,
+      toTouchPointer(touch, false),
+      getRuntimeNow(),
+    );
+  };
+
+  const panFromWheel = (event: WheelEvent) => {
+    if (!runtimeState.snapshot.game || isBlockedByOverlay(event)) {
+      return;
+    }
+
+    const pointer = toRuntimePointer(event);
+    if (
+      !isPointerWithinSceneViewport(
+        pointer,
+        getRuntimeCameraGestureViewport(runtimeState),
+      )
+    ) {
+      return;
+    }
+
+    captureCameraEvent(event);
+    const sceneViewport = getRuntimeSceneViewport(runtimeState);
+    const wheelDelta = normalizeCameraWheelDelta(
+      event.deltaX,
+      event.deltaY,
+      event,
+      sceneViewport,
+    );
+    const shouldZoom = event.ctrlKey || event.metaKey || event.altKey;
+    if (shouldZoom) {
+      adjustCameraZoom(
+        runtimeState,
+        wheelDelta.y > 0 ? -CAMERA_WHEEL_ZOOM_STEP : CAMERA_WHEEL_ZOOM_STEP,
+      );
+      return;
+    }
+
+    const now = getRuntimeNow();
+    const panResult = adjustCameraPan(
+      runtimeState,
+      sceneViewport,
+      wheelDelta,
+      now,
+    );
+    pulseCameraEdgeCue(runtimeState, panResult.blockedEdges, now);
+  };
+
+  mount.addEventListener("pointerdown", beginNativePan, { capture: true });
+  mount.addEventListener("pointermove", updateNativePan, { capture: true });
+  mount.addEventListener("pointerup", finishNativePan, { capture: true });
+  mount.addEventListener("pointercancel", cancelNativePan, { capture: true });
+  mount.addEventListener("touchstart", beginNativeTouchPan, {
+    capture: true,
+    passive: false,
+  });
+  mount.addEventListener("touchmove", updateNativeTouchPan, {
+    capture: true,
+    passive: false,
+  });
+  mount.addEventListener("touchend", finishNativeTouchPan, {
+    capture: true,
+    passive: false,
+  });
+  mount.addEventListener("touchcancel", cancelNativeTouchPan, {
+    capture: true,
+    passive: false,
+  });
+  mount.addEventListener("wheel", panFromWheel, {
+    capture: true,
+    passive: false,
+  });
+
+  return {
+    destroy() {
+      mount.removeEventListener("pointerdown", beginNativePan, {
+        capture: true,
+      });
+      mount.removeEventListener("pointermove", updateNativePan, {
+        capture: true,
+      });
+      mount.removeEventListener("pointerup", finishNativePan, {
+        capture: true,
+      });
+      mount.removeEventListener("pointercancel", cancelNativePan, {
+        capture: true,
+      });
+      mount.removeEventListener("touchstart", beginNativeTouchPan, {
+        capture: true,
+      });
+      mount.removeEventListener("touchmove", updateNativeTouchPan, {
+        capture: true,
+      });
+      mount.removeEventListener("touchend", finishNativeTouchPan, {
+        capture: true,
+      });
+      mount.removeEventListener("touchcancel", cancelNativeTouchPan, {
+        capture: true,
+      });
+      mount.removeEventListener("wheel", panFromWheel, { capture: true });
     },
   };
 }
@@ -5236,6 +5660,24 @@ function syncBrowserCameraProbe(
   if (!probe) {
     return;
   }
+  const effectiveZoom = Math.max(camera.zoom, 0.001);
+  const visibleWidth = sceneViewport.width / effectiveZoom;
+  const visibleHeight = sceneViewport.height / effectiveZoom;
+  const world = getWorldBounds(runtimeState.snapshot);
+  const scrollRange = isCompactViewport(runtimeState.snapshot.viewport)
+    ? getCompactCameraScrollRange({
+        map: runtimeState.snapshot.game?.map,
+        visibleHeight,
+        visibleWidth,
+        visualScene: runtimeState.indices.visualScene,
+        world,
+      })
+    : {
+        maxX: Math.max(world.width - visibleWidth, 0),
+        maxY: Math.max(world.height - visibleHeight, 0),
+        minX: 0,
+        minY: 0,
+      };
 
   probe.textContent = JSON.stringify({
     cameraOffset: {
@@ -5249,9 +5691,30 @@ function syncBrowserCameraProbe(
       x: Math.round(sceneViewport.x),
       y: Math.round(sceneViewport.y),
     },
+    sceneViewportCss: {
+      height: Math.round(sceneViewport.height / runtimeState.renderScale),
+      width: Math.round(sceneViewport.width / runtimeState.renderScale),
+      x: Math.round(sceneViewport.x / runtimeState.renderScale),
+      y: Math.round(sceneViewport.y / runtimeState.renderScale),
+    },
+    renderScale: Number(runtimeState.renderScale.toFixed(4)),
     scroll: {
       x: Number(camera.scrollX.toFixed(2)),
       y: Number(camera.scrollY.toFixed(2)),
+    },
+    scrollRange: {
+      maxX: Number(scrollRange.maxX.toFixed(2)),
+      maxY: Number(scrollRange.maxY.toFixed(2)),
+      minX: Number(scrollRange.minX.toFixed(2)),
+      minY: Number(scrollRange.minY.toFixed(2)),
+    },
+    visibleWorldRect: {
+      bottom: Number((camera.scrollY + visibleHeight).toFixed(2)),
+      height: Number(visibleHeight.toFixed(2)),
+      left: Number(camera.scrollX.toFixed(2)),
+      right: Number((camera.scrollX + visibleWidth).toFixed(2)),
+      top: Number(camera.scrollY.toFixed(2)),
+      width: Number(visibleWidth.toFixed(2)),
     },
     zoom: Number(camera.zoom.toFixed(4)),
   }).replace(/</g, "\\u003c");
@@ -5473,17 +5936,21 @@ function resetRuntimeCameraForGame(
   );
   let minScrollX = 0;
   let maxScrollX = Math.max(world.width - visibleWidth, 0);
+  let minScrollY = 0;
+  let maxScrollY = Math.max(world.height - visibleHeight, 0);
   if (isCompactViewport(runtimeState.snapshot.viewport)) {
-    const range = getCompactCameraHorizontalRange({
+    const range = getCompactCameraScrollRange({
       map: game.map,
+      visibleHeight,
       visibleWidth,
       visualScene: runtimeState.indices.visualScene,
       world,
     });
-    minScrollX = range.min;
-    maxScrollX = range.max;
+    minScrollX = range.minX;
+    maxScrollX = range.maxX;
+    minScrollY = range.minY;
+    maxScrollY = range.maxY;
   }
-  const maxScrollY = Math.max(world.height - visibleHeight, 0);
 
   objects.scene.cameras.main
     .setZoom(targetZoom)
@@ -5497,7 +5964,7 @@ function resetRuntimeCameraForGame(
       clamp(
         playerPixel.y -
           visibleHeight * getRuntimeCameraAnchorYRatio(runtimeState),
-        0,
+        minScrollY,
         maxScrollY,
       ),
     );
@@ -6563,7 +7030,7 @@ function drawMapAgencyOverlay(
     y: cue.targetWorld.y - (cue.targetIsNpc ? 4 : 0),
   };
 
-  if (cue.targetLocationId && distance > CELL * 1.1) {
+  if (cue.targetLocationId && !cue.targetIsNpc && distance > CELL * 1.1) {
     const footprint = getRuntimeLocationHighlightRect(
       runtimeState.indices,
       cue.targetLocationId,

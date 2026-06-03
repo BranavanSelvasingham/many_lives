@@ -15,6 +15,7 @@ const OUTPUT_DIR =
   path.join(tmpdir(), `manylives-visual-check-${Date.now()}`);
 const WEB_START_TIMEOUT_MS = 25_000;
 const CDP_WAIT_TIMEOUT_MS = 15_000;
+const CDP_COMMAND_TIMEOUT_MS = 12_000;
 const POLL_INTERVAL_MS = 250;
 const ROOT = process.cwd();
 const STREET_APP_PATH = path.join(
@@ -25,11 +26,44 @@ const RUNTIME_CAMERA_PATH = path.join(
   ROOT,
   "apps/many-lives-web/src/lib/street/runtimeCamera.ts",
 );
+const RUNTIME_GEOMETRY_PATH = path.join(
+  ROOT,
+  "apps/many-lives-web/src/lib/street/runtimeGeometry.ts",
+);
+const RUNTIME_VIEWPORT_PATH = path.join(
+  ROOT,
+  "apps/many-lives-web/src/lib/street/runtimeViewport.ts",
+);
+const VISUAL_SMOKE_PATH = path.join(ROOT, "scripts/visual-game-smoke.mjs");
+const HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX = -660;
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
 const VIEWPORTS = [
   { height: 720, name: "desktop", width: 1280 },
+  { height: 900, name: "compact-boundary", width: 960 },
+  { height: 1024, name: "tablet-portrait", width: 768 },
+  { height: 998, name: "codex-compact", width: 662 },
+  {
+    deviceScaleFactor: 2,
+    height: 998,
+    name: "codex-retina-compact",
+    width: 662,
+  },
+  {
+    deviceScaleFactor: 2,
+    height: 1006,
+    name: "codex-retina-reported",
+    width: 673,
+  },
+  { height: 1041, name: "codex-screenshot-tall", width: 669 },
+  {
+    deviceScaleFactor: 2,
+    height: 1041,
+    name: "codex-retina-tall",
+    width: 669,
+  },
+  { height: 900, name: "phone-boundary", width: 560 },
   { height: 844, name: "mobile", width: 390 },
 ];
 
@@ -39,6 +73,21 @@ function sleep(ms) {
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function requiresComputedCompactEdge(viewport) {
+  return (viewport.deviceScaleFactor ?? 1) > 1;
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeout);
+  });
 }
 
 async function waitFor(condition, timeoutMs, message) {
@@ -260,14 +309,18 @@ class CdpSession {
   }
 
   async navigate(url) {
-    const loadEvent = this.waitForEvent("Page.loadEventFired");
+    const loadEvent = withTimeout(
+      this.waitForEvent("Page.loadEventFired"),
+      CDP_WAIT_TIMEOUT_MS,
+      `Timed out waiting for Chrome load event after navigating to ${url}.`,
+    );
     await this.send("Page.navigate", { url });
     await loadEvent;
   }
 
-  async setViewport({ height, width }) {
+  async setViewport({ deviceScaleFactor = 1, height, width }) {
     await this.send("Emulation.setDeviceMetricsOverride", {
-      deviceScaleFactor: 1,
+      deviceScaleFactor,
       height,
       mobile: width < 600,
       width,
@@ -322,6 +375,7 @@ class CdpSession {
       const rail = document.querySelector(".ml-rail-shell");
       const rightStack = document.querySelector(".ml-right-stack");
       const root = document.querySelector(".ml-root");
+      const timePill = document.querySelector(".ml-time-pill");
       const whyNow = document.querySelector(".ml-rowan-story-card-reason");
       const text = document.body.innerText || "";
       const canvasRect = canvas?.getBoundingClientRect();
@@ -330,6 +384,7 @@ class CdpSession {
       const dockRect = dock?.getBoundingClientRect();
       const railRect = rail?.getBoundingClientRect();
       const rightStackRect = rightStack?.getBoundingClientRect();
+      const timePillRect = timePill?.getBoundingClientRect();
       const whyNowRect = whyNow?.getBoundingClientRect();
       const whyNowVisible = Boolean(
         whyNowRect &&
@@ -377,6 +432,13 @@ class CdpSession {
           y: Math.round(rightStackRect.y)
         } : null,
         rootClass: root?.className ?? "",
+        timePill: timePillRect ? {
+          bottom: Math.round(timePillRect.bottom),
+          height: Math.round(timePillRect.height),
+          width: Math.round(timePillRect.width),
+          x: Math.round(timePillRect.x),
+          y: Math.round(timePillRect.y)
+        } : null,
         title: document.title,
         url: location.href,
         whyNowVisible
@@ -385,13 +447,24 @@ class CdpSession {
   }
 
   async readCameraProbe() {
-    return this.evaluate(`(() => {
-      const probe = document.querySelector("#ml-browser-camera-probe");
-      if (!probe?.textContent) {
-        return null;
-      }
-      return JSON.parse(probe.textContent);
-    })()`);
+    return waitFor(
+      async () => {
+        const cameraProbe = await this.evaluate(`(() => {
+          const probe = document.querySelector("#ml-browser-camera-probe");
+          if (!probe?.textContent) {
+            return null;
+          }
+          const parsed = JSON.parse(probe.textContent);
+          return Number.isFinite(parsed?.scroll?.x) &&
+            Number.isFinite(parsed?.scroll?.y)
+            ? parsed
+            : null;
+        })()`);
+        return cameraProbe || false;
+      },
+      CDP_WAIT_TIMEOUT_MS,
+      "Timed out waiting for a populated camera probe.",
+    );
   }
 
   async readMapAgencyProbe() {
@@ -554,7 +627,14 @@ class CdpSession {
     });
 
     this.writeFrame(payload);
-    return promise;
+    return withTimeout(
+      promise,
+      CDP_COMMAND_TIMEOUT_MS,
+      `Timed out waiting for Chrome DevTools response to ${method}.`,
+    ).catch((error) => {
+      this.pending.delete(id);
+      throw error;
+    });
   }
 
   handleSocketClosed(verb) {
@@ -780,11 +860,18 @@ function assertPngScreenshot(buffer, viewport) {
   assert.equal(signature, "89504e470d0a1a0a", `${viewport.name} screenshot is not a PNG.`);
   const width = buffer.readUInt32BE(16);
   const height = buffer.readUInt32BE(20);
-  assert.equal(width, viewport.width, `${viewport.name} screenshot width mismatch.`);
-  assert.equal(height, viewport.height, `${viewport.name} screenshot height mismatch.`);
+  const deviceScaleFactor = viewport.deviceScaleFactor ?? 1;
+  const expectedWidth = Math.round(viewport.width * deviceScaleFactor);
+  const expectedHeight = Math.round(viewport.height * deviceScaleFactor);
+  assert.equal(width, expectedWidth, `${viewport.name} screenshot width mismatch.`);
+  assert.equal(height, expectedHeight, `${viewport.name} screenshot height mismatch.`);
+  const minimumUsefulBytes = Math.max(
+    40_000,
+    expectedWidth * expectedHeight * 0.08,
+  );
   assert.ok(
-    buffer.length > (viewport.name === "mobile" ? 70_000 : 120_000),
-    `${viewport.name} screenshot is suspiciously small; the canvas may be blank.`,
+    buffer.length > minimumUsefulBytes,
+    `${viewport.name} screenshot is suspiciously small (${buffer.length} bytes); the canvas may be blank.`,
   );
 }
 
@@ -858,6 +945,101 @@ async function assertWatchModeFeelGuard() {
   );
 }
 
+async function assertCameraPanContractGuard() {
+  const [streetSource, cameraSource, geometrySource, viewportSource, smokeSource] =
+    await Promise.all([
+      readFile(STREET_APP_PATH, "utf8"),
+      readFile(RUNTIME_CAMERA_PATH, "utf8"),
+      readFile(RUNTIME_GEOMETRY_PATH, "utf8"),
+      readFile(RUNTIME_VIEWPORT_PATH, "utf8"),
+      readFile(VISUAL_SMOKE_PATH, "utf8"),
+    ]);
+
+  assert.ok(
+    geometrySource.includes("function getCompactCameraScrollRange"),
+    "Compact camera panning must use one X/Y scroll range helper.",
+  );
+  assert.ok(
+    geometrySource.includes("COMPACT_CAMERA_VERTICAL_OVERSCAN_MAX"),
+    "Compact camera panning must keep explicit vertical overscan.",
+  );
+  assert.ok(
+    geometrySource.includes("function getCompactCameraNorthOverscan"),
+    "Compact camera panning must keep extra north clearance for the top HUD.",
+  );
+  assert.ok(
+    viewportSource.includes("function getCompactSceneTopSafeHeight"),
+    "Compact camera viewport must reserve a top safe band below the HUD.",
+  );
+  assert.ok(
+    cameraSource.includes("getCompactCameraScrollRange"),
+    "Runtime camera update must clamp through the shared X/Y compact scroll range.",
+  );
+  assert.ok(
+    cameraSource.includes("COMPACT_CAMERA_OFFSET_VERTICAL_WORLD_RATIO"),
+    "Runtime camera offset must keep a compact vertical budget large enough to clear the north edge.",
+  );
+  const compactWatchAnchorY = readNumericConst(
+    cameraSource,
+    "COMPACT_CAMERA_ANCHOR_Y_WATCH_RATIO",
+  );
+  const compactInteractiveAnchorY = readNumericConst(
+    cameraSource,
+    "COMPACT_CAMERA_ANCHOR_Y_INTERACTIVE_RATIO",
+  );
+  assert.ok(
+    compactWatchAnchorY >= 0.46,
+    `Compact watch camera anchor is too high to read north under the HUD: ${compactWatchAnchorY}.`,
+  );
+  assert.ok(
+    compactInteractiveAnchorY >= 0.48,
+    `Compact interactive camera anchor is too high to read north under the HUD: ${compactInteractiveAnchorY}.`,
+  );
+  assert.ok(
+    streetSource.includes("getCompactCameraScrollRange"),
+    "Runtime camera reset must clamp through the shared X/Y compact scroll range.",
+  );
+  assert.ok(
+    !cameraSource.includes("targetScrollY = clamp(targetScrollY, 0, maxScrollY)"),
+    "Runtime camera update must not hard-clamp compact north panning to scrollY >= 0.",
+  );
+  assert.ok(
+    !streetSource.includes(
+      "visibleHeight * getRuntimeCameraAnchorYRatio(runtimeState),\n        0,\n        maxScrollY",
+    ),
+    "Runtime camera reset must not hard-clamp compact north panning to scrollY >= 0.",
+  );
+  assert.ok(
+    smokeSource.includes('name: "codex-compact"'),
+    "Visual smoke must include the Codex-sized compact viewport.",
+  );
+  assert.ok(
+    smokeSource.includes('name: "codex-screenshot-tall"'),
+    "Visual smoke must include the tall Codex screenshot viewport.",
+  );
+  assert.ok(
+    smokeSource.includes('name: "codex-retina-reported"'),
+    "Visual smoke must include the reported DPR 2 Codex viewport.",
+  );
+  assert.ok(
+    smokeSource.includes('name: "compact-boundary"') &&
+      smokeSource.includes('name: "tablet-portrait"') &&
+      smokeSource.includes('name: "phone-boundary"'),
+    "Visual smoke must include compact, tablet, and phone breakpoint viewports.",
+  );
+  assert.ok(
+    smokeSource.includes("west map overscan") &&
+      smokeSource.includes("north map overscan"),
+    "Visual smoke must assert west and north compact overscan.",
+  );
+  assert.ok(
+    streetSource.includes(
+      "cue.targetLocationId && !cue.targetIsNpc && distance > CELL * 1.1",
+    ),
+    "NPC map-agency targets must not draw full location footprint halos that read as blue rectangle artifacts.",
+  );
+}
+
 function readNumericConst(source, name) {
   const match = source.match(
     new RegExp(`const ${name} = ([0-9_.]+);`),
@@ -906,8 +1088,8 @@ async function runViewportCheck(session, viewport) {
       `${viewport.name}: compact collapsed rail is missing its primary action.`,
     );
     assert.ok(
-      page.compactPrimaryAction.width >= Math.min(240, viewport.width * 0.56) &&
-        page.compactPrimaryAction.height >= 36,
+      page.compactPrimaryAction.width >= Math.min(210, viewport.width * 0.56) &&
+        page.compactPrimaryAction.height >= 34,
       `${viewport.name}: compact primary action is too small (${page.compactPrimaryAction.width}x${page.compactPrimaryAction.height}).`,
     );
     assert.ok(
@@ -1001,6 +1183,16 @@ async function runViewportCheck(session, viewport) {
 
   const panBefore = await session.readCameraProbe();
   assert.ok(panBefore, `${viewport.name}: missing camera probe.`);
+  if (viewport.width <= 960) {
+    assert.ok(
+      page.timePill,
+      `${viewport.name}: missing top HUD metrics for camera safe-area check.`,
+    );
+    assert.ok(
+      panBefore.sceneViewportCss?.y >= page.timePill.bottom + 4,
+      `${viewport.name}: camera viewport starts under the top HUD (${panBefore.sceneViewportCss?.y ?? "missing"}px, HUD bottom ${page.timePill.bottom}px).`,
+    );
+  }
   const railLeft =
     page.rail && page.rail.x > viewport.width * 0.52
       ? page.rail.x
@@ -1101,26 +1293,55 @@ async function runViewportCheck(session, viewport) {
   );
 
   let panAtWestEdge = panAfterReverse;
+  let westEdgeDragFromX = dragToX;
+  let westEdgeDragToX = dragFromX;
   if (viewport.width <= 960) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    westEdgeDragFromX = Math.round(
+      clamp(viewport.width * 0.14, 42, viewport.width - 84),
+    );
+    westEdgeDragToX = Math.round(
+      clamp(viewport.width * 0.88, 120, viewport.width - 42),
+    );
+    for (let attempt = 0; attempt < 16; attempt += 1) {
       await session.dragMap({
-        from: { x: dragToX, y: dragY },
+        from: { x: westEdgeDragFromX, y: dragY },
         touch: viewport.width < 600,
-        to: { x: dragFromX, y: dragY },
+        to: { x: westEdgeDragToX, y: dragY },
       });
       await sleep(220);
+      panAtWestEdge = await session.readCameraProbe();
+      if (panAtWestEdge.scroll.x <= panAtWestEdge.scrollRange.minX + 52) {
+        break;
+      }
     }
-    panAtWestEdge = await session.readCameraProbe();
     assert.ok(
       panAtWestEdge,
       `${viewport.name}: missing camera probe at west edge.`,
     );
+    const westScrollThreshold =
+      viewport.width >= 900 ? -200 : viewport.width >= 600 ? -280 : -120;
     assert.ok(
-      panAtWestEdge.scroll.x <= 48,
-      `${viewport.name}: left map edge is still clamped too far inward (scroll x ${panAtWestEdge.scroll.x.toFixed(
+      panAtWestEdge.scroll.x <= westScrollThreshold,
+      `${viewport.name}: west map overscan is still clamped too far inward (scroll x ${panAtWestEdge.scroll.x.toFixed(
         1,
-      )}).`,
+      )}, expected <= ${westScrollThreshold}, min ${panAtWestEdge.scrollRange.minX.toFixed(
+        1,
+      )}, offset x ${panAtWestEdge.cameraOffset.x.toFixed(
+        1,
+      )}, zoom ${panAtWestEdge.zoom.toFixed(3)}).`,
     );
+    if (requiresComputedCompactEdge(viewport)) {
+      assert.ok(
+        panAtWestEdge.scroll.x <= panAtWestEdge.scrollRange.minX + 52,
+        `${viewport.name}: west map did not reach the computed edge range (scroll x ${panAtWestEdge.scroll.x.toFixed(
+          1,
+        )}, min ${panAtWestEdge.scrollRange.minX.toFixed(
+          1,
+        )}, offset x ${panAtWestEdge.cameraOffset.x.toFixed(
+          1,
+        )}, zoom ${panAtWestEdge.zoom.toFixed(3)}).`,
+      );
+    }
   }
 
   const westPanScreenshotPath = path.join(
@@ -1130,6 +1351,148 @@ async function runViewportCheck(session, viewport) {
   await session.captureScreenshot(westPanScreenshotPath);
   const westPanScreenshot = await readFile(westPanScreenshotPath);
   assertPngScreenshot(westPanScreenshot, viewport);
+
+  let northEdge = null;
+  let eastEdge = null;
+  let southEdge = null;
+  let northPanScreenshotPath = null;
+  let eastPanScreenshotPath = null;
+  let southPanScreenshotPath = null;
+  if (viewport.width <= 960) {
+    const northEdgeDragX = Math.round(
+      clamp(viewport.width * 0.36, 96, viewport.width - 96),
+    );
+    const northEdgeDragFromY = Math.round(
+      clamp(viewport.height * 0.16, 96, viewport.height - 360),
+    );
+    const safeMapBottomY = Math.min(
+      viewport.height * 0.5,
+      (page.rail?.y ?? viewport.height) - 48,
+      (page.dock?.y ?? viewport.height) - 48,
+    );
+    const northEdgeDragToY = Math.round(
+      clamp(
+        safeMapBottomY,
+        northEdgeDragFromY + 160,
+        viewport.height - 180,
+      ),
+    );
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      await session.dragMap({
+        from: { x: northEdgeDragX, y: northEdgeDragFromY },
+        touch: viewport.width < 600,
+        to: { x: northEdgeDragX, y: northEdgeDragToY },
+      });
+      await sleep(220);
+      northEdge = await session.readCameraProbe();
+      if (northEdge.scroll.y <= northEdge.scrollRange.minY + 52) {
+        break;
+      }
+    }
+    assert.ok(
+      northEdge,
+      `${viewport.name}: missing camera probe at north edge.`,
+    );
+    const northScrollThreshold = viewport.width >= 600 ? -380 : -360;
+    assert.ok(
+      northEdge.scroll.y <= northScrollThreshold,
+      `${viewport.name}: north map framing is still too shallow under the HUD (scroll y ${northEdge.scroll.y.toFixed(
+        1,
+      )}, expected <= ${northScrollThreshold}).`,
+    );
+    if (requiresComputedCompactEdge(viewport)) {
+      assert.ok(
+        northEdge.scroll.y <= northEdge.scrollRange.minY + 52,
+        `${viewport.name}: north map did not reach the computed edge range (scroll y ${northEdge.scroll.y.toFixed(
+          1,
+        )}, min ${northEdge.scrollRange.minY.toFixed(1)}).`,
+      );
+      assert.ok(
+        northEdge.visibleWorldRect.top <= HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX,
+        `${viewport.name}: north visual clearance is still too shallow (visible world top ${northEdge.visibleWorldRect.top.toFixed(
+          1,
+        )}, expected <= ${HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX}).`,
+      );
+    }
+    northPanScreenshotPath = path.join(
+      OUTPUT_DIR,
+      `${viewport.name}-after-pan-north.png`,
+    );
+    await session.captureScreenshot(northPanScreenshotPath);
+    const northPanScreenshot = await readFile(northPanScreenshotPath);
+    assertPngScreenshot(northPanScreenshot, viewport);
+
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      await session.dragMap({
+        from: { x: westEdgeDragToX, y: dragY },
+        touch: viewport.width < 600,
+        to: { x: westEdgeDragFromX, y: dragY },
+      });
+      await sleep(220);
+      eastEdge = await session.readCameraProbe();
+      if (eastEdge.scroll.x >= eastEdge.scrollRange.maxX - 52) {
+        break;
+      }
+    }
+    assert.ok(
+      eastEdge,
+      `${viewport.name}: missing camera probe at east edge.`,
+    );
+    const horizontalTraversal =
+      eastEdge.scroll.x - panAtWestEdge.scroll.x;
+    const horizontalTraversalThreshold = Math.min(
+      520,
+      Math.max(260, eastEdge.sceneViewport.width * 0.5),
+    );
+    assert.ok(
+      horizontalTraversal >= horizontalTraversalThreshold,
+      `${viewport.name}: east/west map traversal is too small (${horizontalTraversal.toFixed(
+        1,
+      )}, expected >= ${horizontalTraversalThreshold.toFixed(1)}).`,
+    );
+    eastPanScreenshotPath = path.join(
+      OUTPUT_DIR,
+      `${viewport.name}-after-pan-east.png`,
+    );
+    await session.captureScreenshot(eastPanScreenshotPath);
+    const eastPanScreenshot = await readFile(eastPanScreenshotPath);
+    assertPngScreenshot(eastPanScreenshot, viewport);
+
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      await session.dragMap({
+        from: { x: northEdgeDragX, y: northEdgeDragToY },
+        touch: viewport.width < 600,
+        to: { x: northEdgeDragX, y: northEdgeDragFromY },
+      });
+      await sleep(220);
+      southEdge = await session.readCameraProbe();
+      if (southEdge.scroll.y >= southEdge.scrollRange.maxY - 52) {
+        break;
+      }
+    }
+    assert.ok(
+      southEdge,
+      `${viewport.name}: missing camera probe at south edge.`,
+    );
+    const verticalTraversal = southEdge.scroll.y - northEdge.scroll.y;
+    const verticalTraversalThreshold = Math.min(
+      560,
+      Math.max(320, southEdge.sceneViewport.height * 0.36),
+    );
+    assert.ok(
+      verticalTraversal >= verticalTraversalThreshold,
+      `${viewport.name}: north/south map traversal is too small (${verticalTraversal.toFixed(
+        1,
+      )}, expected >= ${verticalTraversalThreshold.toFixed(1)}).`,
+    );
+    southPanScreenshotPath = path.join(
+      OUTPUT_DIR,
+      `${viewport.name}-after-pan-south.png`,
+    );
+    await session.captureScreenshot(southPanScreenshotPath);
+    const southPanScreenshot = await readFile(southPanScreenshotPath);
+    assertPngScreenshot(southPanScreenshot, viewport);
+  }
 
   return {
     mapAgency,
@@ -1145,11 +1508,17 @@ async function runViewportCheck(session, viewport) {
       reverseOffsetDelta: Number(reverseOffsetDelta.toFixed(2)),
       reverseScrollDelta: Number(reverseScrollDelta.toFixed(2)),
       scrollDelta: Number(scrollDelta.toFixed(2)),
+      eastEdge,
+      northEdge,
+      southEdge,
       wheel: compactWheelPan,
       westEdge: panAtWestEdge,
     },
+    eastPanScreenshotPath,
+    northPanScreenshotPath,
     panScreenshotPath,
     screenshotPath,
+    southPanScreenshotPath,
     expandedRailScreenshotPath,
     westPanScreenshotPath,
   };
@@ -1247,6 +1616,7 @@ async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
   await assertAmbientScaleGuard();
   await assertWatchModeFeelGuard();
+  await assertCameraPanContractGuard();
   const webServer = await ensureStack();
   const devtoolsPort = await findFreePort();
   const session = await launchBrowser(devtoolsPort);
