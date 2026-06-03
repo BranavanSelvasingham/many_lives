@@ -74,7 +74,19 @@ describe("SimulationEngine street slice", () => {
     expect(
       world.jobs.find((job) => job.id === "job-tea-shift")?.completed,
     ).toBe(true);
+    const completedTeaJob = world.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    expect(completedTeaJob).toMatchObject({
+      completed: true,
+      missed: false,
+    });
+    expect(completedTeaJob).not.toHaveProperty("consequenceAppliedAt");
+    expect(completedTeaJob).not.toHaveProperty("missedAt");
     expect(world.player.money).toBeGreaterThan(12);
+    expect(world.player.memories.map((entry) => entry.text)).not.toContain(
+      "You missed Ada's lunch window, so that paid foothold is no longer waiting.",
+    );
     expect(
       world.jobs.find((job) => job.id === "job-yard-shift")?.discovered,
     ).toBe(true);
@@ -515,6 +527,60 @@ describe("SimulationEngine street slice", () => {
         (option) => option.actionId === "reflect:first-afternoon-pump",
       ),
     ).toBe(true);
+  });
+
+  it("projects destination follow-up steps without executing them before arrival", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-short-horizon-destination-trace");
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.currentLocationId).toBe("boarding-house");
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: true,
+      mode: "moving",
+      stepKind: "move",
+      targetLocationId: "tea-house",
+    });
+
+    const nextSteps = world.rowanAutonomy.planningTrace?.nextSteps ?? [];
+    expect(nextSteps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "move",
+          targetLocationId: "tea-house",
+        }),
+        expect.objectContaining({
+          actionId: "talk:npc-ada",
+          kind: "talk",
+          legal: true,
+          npcId: "npc-ada",
+          targetLocationId: "tea-house",
+        }),
+      ]),
+    );
+    expect(
+      nextSteps.some((step) =>
+        step.validation.includes("fresh simulator validation"),
+      ),
+    ).toBe(true);
+    expect(world.activeConversation?.npcId).not.toBe("npc-ada");
+    expectCognitionToMirrorAutonomy(world);
   });
 
   it("keeps Ada's verified offer as a fork instead of forcing immediate acceptance", async () => {
@@ -1148,6 +1214,96 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("closes Ada's missed lunch option and redirects to a live yard lead", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-ada-closes-missed-lunch");
+
+    world = await engine.tick(world, 9);
+    expect(
+      world.jobs.find((job) => job.id === "job-tea-shift")?.missed,
+    ).toBe(true);
+
+    const teaHouse = world.locations.find((location) => location.id === "tea-house");
+    expect(teaHouse).toBeDefined();
+    if (!teaHouse) {
+      return;
+    }
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: teaHouse.entryX,
+      y: teaHouse.entryY,
+    });
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "Do you still need work today?",
+    });
+
+    const adaReply = world.activeConversation?.lines
+      .filter((line) => line.speaker === "npc")
+      .at(-1)?.text;
+    expect(adaReply).toMatch(/lunch already moved on|missed my useful window|cup-and-counter work is gone/i);
+    expect(world.jobs.find((job) => job.id === "job-yard-shift")).toMatchObject({
+      discovered: true,
+      missed: false,
+    });
+    expect(world.activeConversation?.objectiveText).toBe(
+      "See if Tomas still needs another set of hands in the yard.",
+    );
+    expect(world.activeConversation?.objectiveText).not.toMatch(
+      /cup-and-counter|Kettle & Lamp/i,
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "accept:job-tea-shift",
+    );
+    expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("closes Tomas's missed yard option instead of reopening stale work", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-tomas-closes-missed-yard");
+
+    world = await engine.tick(world, 13);
+    expect(
+      world.jobs.find((job) => job.id === "job-yard-shift")?.missed,
+    ).toBe(true);
+
+    const freightYard = world.locations.find(
+      (location) => location.id === "freight-yard",
+    );
+    expect(freightYard).toBeDefined();
+    if (!freightYard) {
+      return;
+    }
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: freightYard.entryX,
+      y: freightYard.entryY,
+    });
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-tomas",
+      text: "Still need work in the yard?",
+    });
+
+    const tomasReply = world.activeConversation?.lines
+      .filter((line) => line.speaker === "npc")
+      .at(-1)?.text;
+    expect(tomasReply).toMatch(/loading block already moved|too late|work is done/i);
+    expect(world.activeConversation?.objectiveText).toBe(
+      "Return to Morrow House and take stock.",
+    );
+    expect(world.activeConversation?.objectiveText).not.toMatch(
+      /freight yard lift|loading shift|take the freight/i,
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "accept:job-yard-shift",
+    );
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("completes Mara's Ada lead loop once Rowan has grounded evidence and a next choice", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-mara-ada-lead-loop");
@@ -1577,6 +1733,349 @@ describe("SimulationEngine street slice", () => {
       ),
     ).toBe(true);
     expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("lets urgent discovered job windows outrank stale route hints", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-urgent-job-over-stale-route");
+    const teaHouse = world.locations.find((location) => location.id === "tea-house");
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+
+    expect(teaHouse).toBeDefined();
+    expect(yardJob).toBeDefined();
+    if (!teaHouse || !yardJob) {
+      return;
+    }
+
+    world.player.x = teaHouse.entryX;
+    world.player.y = teaHouse.entryY;
+    world.player.currentLocationId = teaHouse.id;
+    world.player.knownLocationIds = [
+      ...new Set([
+        ...world.player.knownLocationIds,
+        "tea-house",
+        "freight-yard",
+        "boarding-house",
+      ]),
+    ];
+    world.clock.totalMinutes = 16 * 60 + 30;
+    world.clock.hour = 16;
+    world.clock.minute = 30;
+    world.clock.label = "Afternoon";
+    yardJob.discovered = true;
+    world.activeConversation = undefined;
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "settle",
+      outcomes: [
+        {
+          id: "stale-go-home",
+          label: "Go home even though live work is closing.",
+          status: "open",
+          urgency: 8,
+          authority: "predicate",
+          blockers: ["This stale objective target should lose to live pressure."],
+          targetLocationId: "boarding-house",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "first-afternoon",
+      source: "manual",
+      text: "Go home and take stock.",
+      trail: [
+        {
+          id: "stale-home-route",
+          title: "Go home and ignore the closing yard lift.",
+          detail: "This stale route hint should not override live job pressure.",
+          done: false,
+          targetLocationId: "boarding-house",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "accept:job-yard-shift",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "accept:job-yard-shift",
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("boarding-house");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          option.actionId === "accept:job-yard-shift" &&
+          option.rationale.includes("closes around 5pm"),
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.targetLocationId === "boarding-house",
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.outcomes.some(
+        (outcome) => outcome.id === "job-window-job-yard-shift",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("rejects stale predicate actions when live world state makes them illegal", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-stale-predicate-action-rejected");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+    world = await engine.tick(world, 10);
+
+    expect(
+      world.jobs.find((job) => job.id === "job-tea-shift")?.missed,
+    ).toBe(true);
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "work",
+      outcomes: [
+        {
+          id: "predicate-complete-tea-shift",
+          label: "Complete Ada's cup-and-counter shift.",
+          status: "open",
+          urgency: 5,
+          authority: "predicate",
+          actionId: "work:job-tea-shift",
+          blockers: ["The live job window may already be closed."],
+          targetLocationId: "tea-house",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "work-tea",
+      source: "manual",
+      text: "Earn paid work at Kettle & Lamp.",
+      trail: [
+        {
+          id: "stale-work-action",
+          title: "Work Ada's shift even though the window passed.",
+          detail:
+            "This stale objective action should be audited against live legality.",
+          done: false,
+          actionId: "work:job-tea-shift",
+          targetLocationId: "tea-house",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "work:job-tea-shift",
+    );
+    expect(world.rowanAutonomy.planningTrace?.selectedActionId).not.toBe(
+      "work:job-tea-shift",
+    );
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) =>
+          option.actionId === "work:job-tea-shift" &&
+          option.reason?.includes("no longer legal"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects stale solve hints after an NPC resolves the problem first", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-npc-resolution-rejects-stale-solve");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 10,
+      y: 7,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "inspect:problem-cart",
+    });
+    world = await engine.tick(world, 11);
+
+    expect(world.problems.find((problem) => problem.id === "problem-cart")).toMatchObject({
+      resolvedByNpcId: "npc-nia",
+      status: "resolved",
+    });
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "help",
+      outcomes: [
+        {
+          id: "predicate-clear-cart",
+          label: "Clear the jammed handcart.",
+          status: "open",
+          urgency: 5,
+          authority: "predicate",
+          actionId: "solve:problem-cart",
+          blockers: ["The cart must still be a legal live problem."],
+          targetLocationId: "market-square",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "help-cart",
+      source: "manual",
+      text: "Clear the jammed cart in Quay Square.",
+      trail: [
+        {
+          id: "stale-cart-solve",
+          title: "Solve the cart after Nia already cleared it.",
+          detail:
+            "This stale route hint must lose to the current legal action surface.",
+          done: false,
+          actionId: "solve:problem-cart",
+          targetLocationId: "market-square",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-cart",
+    );
+    expect(world.rowanAutonomy.planningTrace?.selectedActionId).not.toBe(
+      "solve:problem-cart",
+    );
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) =>
+          option.actionId === "solve:problem-cart" &&
+          option.reason?.includes("no longer legal"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rebuilds stale pump solve hints as complete after Mara contains the pump", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-mara-resolution-rejects-stale-pump");
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.tick(world, 13);
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 3,
+      y: 11,
+    });
+
+    expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
+      resolvedByNpcId: "npc-mara",
+      status: "resolved",
+    });
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "help",
+      outcomes: [
+        {
+          id: "predicate-fix-pump",
+          label: "Fix the leaking pump.",
+          status: "open",
+          urgency: 5,
+          authority: "predicate",
+          actionId: "solve:problem-pump",
+          blockers: ["The pump must still be a legal live problem."],
+          targetLocationId: "courtyard",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "help-pump",
+      source: "manual",
+      text: "Fix the leaking pump in Morrow Yard.",
+      trail: [
+        {
+          id: "stale-pump-solve",
+          title: "Solve the pump after Mara already contained it.",
+          detail:
+            "This stale route hint must lose to the current legal action surface.",
+          done: false,
+          actionId: "solve:problem-pump",
+          targetLocationId: "courtyard",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-pump",
+    );
+    expect(world.player.objective).toMatchObject({
+      progress: {
+        completed: 3,
+        total: 3,
+      },
+    });
+    expect(world.player.objective?.trail.flatMap((step) => step.actionId ?? [])).not.toContain(
+      "solve:problem-pump",
+    );
+    expect(world.rowanAutonomy.planningTrace?.selectedActionId).not.toBe(
+      "solve:problem-pump",
+    );
+    expect(world.rowanAutonomy).toMatchObject({
+      label: "Objective complete",
+      stepKind: "idle",
+    });
   });
 
   it("keeps explicit predicate authority when route hints mirror the predicate target", async () => {

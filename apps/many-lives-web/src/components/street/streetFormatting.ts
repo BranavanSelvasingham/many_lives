@@ -59,6 +59,8 @@ export function problemStatusLabel(status: string) {
   switch (status) {
     case "solved":
       return "settled";
+    case "resolved":
+      return "handled";
     case "expired":
       return "missed";
     case "active":
@@ -165,6 +167,7 @@ export function statusTone(status: string) {
   switch (status) {
     case "done":
     case "solved":
+    case "resolved":
     case "completed":
       return "border border-[rgba(183,146,89,0.4)] bg-[rgba(183,146,89,0.12)] text-[color:var(--text-main)]";
     case "accepted":

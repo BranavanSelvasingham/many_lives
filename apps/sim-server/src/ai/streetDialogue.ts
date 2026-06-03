@@ -1,4 +1,5 @@
 import type {
+  JobState,
   LocationState,
   MemoryEntry,
   NpcState,
@@ -272,6 +273,9 @@ export function buildDeterministicStreetReply(
   const topics = detectTopics(input.playerText);
   const teaJob = input.game.jobs.find((job) => job.id === "job-tea-shift");
   const yardJob = input.game.jobs.find((job) => job.id === "job-yard-shift");
+  const teaWindowClosed = jobWindowClosed(input.game, teaJob);
+  const yardWindowClosed = jobWindowClosed(input.game, yardJob);
+  const yardWindowOpen = jobWindowOpen(input.game, yardJob);
   const pumpProblem = input.game.problems.find((problem) => problem.id === "problem-pump");
   const cartProblem = input.game.problems.find((problem) => problem.id === "problem-cart");
   const hasWrench = input.game.player.inventory.some((item) => item.id === "item-wrench");
@@ -313,6 +317,43 @@ export function buildDeterministicStreetReply(
       }
 
       if (topics.has("work") || topics.has("money")) {
+        if (teaWindowClosed) {
+          return {
+            reply: chooseConversationLine(
+              yardWindowOpen
+                ? [
+                    "Ada's lunch window has already moved on. If you still need coin today, try Tomas at North Crane before the yard closes.",
+                    "Kettle & Lamp already had to solve lunch without you. North Crane Yard is the only work lead I would still chase today.",
+                    "Ada was the morning answer. This late, ask Tomas at the yard if he still has a loading block open.",
+                  ]
+                : [
+                    "Ada's lunch window is gone, and the yard has likely moved on too. Go take stock before you chase tomorrow badly.",
+                    "Today's easy paid windows have closed. Come back to the house, count what is true, and start cleaner tomorrow.",
+                    "You missed the useful work hours for today. That does not end the story, but it changes the next move.",
+                  ],
+              context,
+              yardWindowOpen ? "mara-work-tea-closed-yard-open" : "mara-work-closed",
+            ),
+            followupThought: pickFollowupThought(
+              yardWindowOpen
+                ? [
+                    "The first work lead closed, but the day has not fully shut.",
+                    "Tomas is the live option now.",
+                    "That answer changed the route instead of pretending time held still.",
+                  ]
+                : [
+                    "The day closed some doors.",
+                    "He needs to stop chasing a stale lead.",
+                    "Tomorrow will need a cleaner start.",
+                  ],
+              context,
+              yardWindowOpen
+                ? "mara-work-tea-closed-yard-open-followup"
+                : "mara-work-closed-followup",
+            ),
+          };
+        }
+
         return {
           reply: chooseConversationLine(
             [
@@ -336,6 +377,35 @@ export function buildDeterministicStreetReply(
       }
 
       if (topics.has("home") || topics.has("rent")) {
+        if (teaWindowClosed) {
+          return {
+            reply: chooseConversationLine(
+              yardWindowOpen
+                ? [
+                    "Pay when you say you will, be kind in the shared spaces, and stop chasing Ada's lunch window. If coin still matters today, ask Tomas at North Crane.",
+                    "Morrow House keeps people who notice when a window closes. Lunch moved on, but the yard may still have a loading block.",
+                    "A room starts feeling like yours when you adapt. Ada's lunch is done; Tomas is the only work lead I would still try today.",
+                  ]
+                : [
+                    "Pay when you say you will, be kind in the shared spaces, and stop chasing closed doors. Tonight is for taking stock.",
+                    "Morrow House keeps people who notice when the day has changed. The paid windows moved on; come back clear-eyed.",
+                    "A room starts feeling like yours when you adapt. The work windows are gone for today, so count what you still have.",
+                  ],
+              context,
+              yardWindowOpen ? "mara-home-tea-closed-yard-open" : "mara-home-work-closed",
+            ),
+            followupThought: pickFollowupThought(
+              [
+                "That was a grounded answer.",
+                "The room advice changed with the hour.",
+                "Closed windows matter here.",
+              ],
+              context,
+              "mara-home-work-closed-followup",
+            ),
+          };
+        }
+
         return {
           reply: chooseConversationLine(
             [
@@ -359,6 +429,37 @@ export function buildDeterministicStreetReply(
       }
 
       if (context.rowan.objectiveState?.routeKey === "first-afternoon") {
+        if (teaWindowClosed) {
+          return {
+            reply: chooseConversationLine(
+              yardWindowOpen
+                ? [
+                    "Kettle & Lamp was the right first bet this morning, but lunch is gone. Go ask Tomas before the yard closes.",
+                    "Ada's window moved on. If Rowan still wants today's work, North Crane Yard is the live lead now.",
+                    "Do not walk to a closed lunch shift. Try Tomas at the yard while there is still daylight.",
+                  ]
+                : [
+                    "Kettle & Lamp was the right first bet this morning, but that window is closed now. Come back and take stock.",
+                    "Do not walk to a closed lunch shift. The useful move now is to count what the day left you.",
+                    "Ada's window moved on. Stop chasing the morning route and bring the day back to Morrow House.",
+                  ],
+              context,
+              yardWindowOpen
+                ? "mara-first-afternoon-tea-closed-yard-open"
+                : "mara-first-afternoon-work-closed",
+            ),
+            followupThought: pickFollowupThought(
+              [
+                "The old route is not the current answer.",
+                "The hour changed the advice.",
+                "That keeps Rowan out of a stale errand.",
+              ],
+              context,
+              "mara-first-afternoon-work-closed-followup",
+            ),
+          };
+        }
+
         return {
           reply: chooseConversationLine(
             [
@@ -403,6 +504,43 @@ export function buildDeterministicStreetReply(
       };
     case "npc-ada":
       if (topics.has("work") || topics.has("money")) {
+        if (teaWindowClosed) {
+          return {
+            reply: chooseConversationLine(
+              yardWindowOpen
+                ? [
+                    "Lunch already moved on. I cannot pay you for a rush that finished without you, but Tomas may still need hands at North Crane.",
+                    "You missed my useful window. If you still want today's coin, go ask Tomas before the yard shuts.",
+                    "The cup-and-counter work is gone for today. North Crane is the only place I would still ask.",
+                  ]
+                : [
+                    "Lunch already moved on, and I cannot pay you for a rush that finished without you.",
+                    "You missed my useful window. Come earlier tomorrow if you want this room to need you.",
+                    "The cup-and-counter work is gone for today. Do not stand here pretending lunch waited.",
+                  ],
+              context,
+              yardWindowOpen ? "ada-work-tea-closed-yard-open" : "ada-work-closed",
+            ),
+            followupThought: pickFollowupThought(
+              yardWindowOpen
+                ? [
+                    "Ada closed her door without closing the whole day.",
+                    "Tomas is the live work lead now.",
+                    "The answer changed with the clock.",
+                  ]
+                : [
+                    "That window is gone.",
+                    "The room did not wait.",
+                    "Tomorrow needs a better start.",
+                  ],
+              context,
+              yardWindowOpen
+                ? "ada-work-tea-closed-yard-open-followup"
+                : "ada-work-closed-followup",
+            ),
+          };
+        }
+
         if (!teaJob?.accepted && !teaJob?.completed && !teaJob?.missed) {
           return {
             reply: chooseConversationLine(
@@ -580,6 +718,29 @@ export function buildDeterministicStreetReply(
         !yardJob.completed &&
         !yardJob.missed
       ) {
+        if (yardWindowClosed) {
+          return {
+            reply: chooseConversationLine(
+              [
+                "The loading block already moved. I cannot pay hands I did not have when the carts were here.",
+                "Too late for that run. The lane is clear now because we cleared it without you.",
+                "That work is done for today. Come earlier if you want the yard to build around you.",
+              ],
+              context,
+              "tomas-yard-next-step-closed",
+            ),
+            followupThought: pickFollowupThought(
+              [
+                "The yard did not hold the work open.",
+                "He heard the window close.",
+                "There is no stale shift to take.",
+              ],
+              context,
+              "tomas-yard-next-step-closed-followup",
+            ),
+          };
+        }
+
         return {
           reply: chooseConversationLine(
             [
@@ -608,6 +769,29 @@ export function buildDeterministicStreetReply(
         topics.has("yard") ||
         topics.has("next_step")
       ) {
+        if (yardWindowClosed) {
+          return {
+            reply: chooseConversationLine(
+              [
+                "The loading block already moved. I cannot pay hands I did not have when the carts were here.",
+                "Too late for that run. The lane is clear now because we cleared it without you.",
+                "That work is done for today. Come earlier if you want the yard to build around you.",
+              ],
+              context,
+              "tomas-yard-closed",
+            ),
+            followupThought: pickFollowupThought(
+              [
+                "The yard did not hold the work open.",
+                "He heard the window close.",
+                "There is no stale shift to take.",
+              ],
+              context,
+              "tomas-yard-closed-followup",
+            ),
+          };
+        }
+
         if (!yardJob?.accepted && !yardJob?.completed && !yardJob?.missed) {
           return {
             reply: chooseConversationLine(
@@ -1342,6 +1526,31 @@ function hashText(text: string) {
   }
 
   return hash;
+}
+
+function jobWindowOpen(world: StreetGameState, job: JobState | undefined) {
+  return Boolean(
+    job &&
+      !job.completed &&
+      !job.missed &&
+      jobWindowMinutesRemaining(world, job) > 0,
+  );
+}
+
+function jobWindowClosed(world: StreetGameState, job: JobState | undefined) {
+  return Boolean(
+    job &&
+      !job.completed &&
+      (job.missed || jobWindowMinutesRemaining(world, job) <= 0),
+  );
+}
+
+function jobWindowMinutesRemaining(
+  world: StreetGameState,
+  job: JobState,
+) {
+  const dayStartMinutes = Math.max(0, world.clock.day - 1) * 24 * 60;
+  return dayStartMinutes + job.endHour * 60 - world.clock.totalMinutes;
 }
 
 const STOP_WORDS = new Set([

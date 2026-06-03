@@ -239,6 +239,10 @@ function buildProblemMemoryDetail(
     return `I let this spread at ${place}.`;
   }
 
+  if (problem.status === "resolved") {
+    return `This got handled at ${place} while I was elsewhere.`;
+  }
+
   if (problem.status === "active") {
     return `I can deal with this at ${place}. It pays $${problem.rewardMoney}.`;
   }

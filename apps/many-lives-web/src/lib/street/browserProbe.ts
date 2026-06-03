@@ -173,6 +173,7 @@ function worldPressureProbePayload(game: StreetGameState) {
       return {
         accepted: job.accepted,
         completed: job.completed,
+        consequenceAppliedAt: job.consequenceAppliedAt ?? null,
         deferredUntilMinutes: job.deferredUntilMinutes ?? null,
         discovered: job.discovered,
         endsInMinutes: inWindow
@@ -182,6 +183,7 @@ function worldPressureProbePayload(game: StreetGameState) {
         inWindow,
         locationId: job.locationId,
         missed: job.missed,
+        missedAt: job.missedAt ?? null,
         startsInMinutes:
           currentTotalMinutes < startTotal
             ? Math.max(0, startTotal - currentTotalMinutes)
@@ -201,8 +203,10 @@ function worldPressureProbePayload(game: StreetGameState) {
           .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
       return {
         currentLocationId: npc.currentLocationId,
+        currentConcern: npc.currentConcern,
         currentScheduleLocationId: currentSchedule?.locationId ?? null,
         id: npc.id,
+        mood: npc.mood,
         nextScheduleLocationId: nextSchedule?.locationId ?? null,
         nextScheduleStartsInMinutes: nextSchedule
           ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
@@ -211,11 +215,15 @@ function worldPressureProbePayload(game: StreetGameState) {
     }),
     problems: (game.problems ?? []).map((problem) => ({
       discovered: problem.discovered,
+      consequenceAppliedAt: problem.consequenceAppliedAt ?? null,
       escalatedAt: problem.escalatedAt ?? null,
       escalationLevel: problem.escalationLevel ?? 0,
+      expiredAt: problem.expiredAt ?? null,
       id: problem.id,
       locationId: problem.locationId,
       requiredItemId: problem.requiredItemId ?? null,
+      resolvedAt: problem.resolvedAt ?? null,
+      resolvedByNpcId: problem.resolvedByNpcId ?? null,
       status: problem.status,
       title: problem.title,
       urgency: problem.urgency,

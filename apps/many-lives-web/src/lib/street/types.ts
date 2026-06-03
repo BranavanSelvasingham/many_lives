@@ -315,6 +315,8 @@ export interface JobState {
   accepted: boolean;
   completed: boolean;
   missed: boolean;
+  missedAt?: string;
+  consequenceAppliedAt?: string;
   deferredUntilMinutes?: number;
   unlockedBy?: string;
 }
@@ -324,11 +326,15 @@ export interface ProblemState {
   title: string;
   summary: string;
   locationId: string;
-  status: "hidden" | "active" | "solved" | "expired";
+  status: "hidden" | "active" | "solved" | "expired" | "resolved";
   discovered: boolean;
   urgency: number;
   escalationLevel?: number;
   escalatedAt?: string;
+  expiredAt?: string;
+  resolvedAt?: string;
+  resolvedByNpcId?: string;
+  consequenceAppliedAt?: string;
   rewardMoney: number;
   requiredItemId?: string;
   consequenceIfIgnored: string;

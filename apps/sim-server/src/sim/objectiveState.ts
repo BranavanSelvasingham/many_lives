@@ -50,6 +50,26 @@ interface ObjectiveOutcomeEvaluation {
 }
 
 const OBJECTIVE_TRAIL_LIMIT = 10;
+const JOB_WINDOW_PRESSURE_MINUTES = 45;
+
+function problemClosedByWorld(
+  problem: ReturnType<typeof problemById>,
+): boolean {
+  return Boolean(
+    problem &&
+      (problem.status === "solved" ||
+        problem.status === "resolved" ||
+        problem.status === "expired"),
+  );
+}
+
+function problemCleared(
+  problem: ReturnType<typeof problemById>,
+): boolean {
+  return Boolean(
+    problem && (problem.status === "solved" || problem.status === "resolved"),
+  );
+}
 
 export function buildPlayerObjectiveState(
   world: StreetGameState,
@@ -578,21 +598,37 @@ function evaluateObjectiveOutcome(
     }
     case "work-commit": {
       const leadJob = workLeadJob(world, route, objectiveText);
+      const leadJobAtRisk = Boolean(leadJob && jobWindowAtRisk(world, leadJob));
       return outcomeEvaluation(Boolean(leadJob?.accepted || leadJob?.completed), {
+        atRisk: leadJobAtRisk,
         blockers: leadJob?.missed
           ? [`${leadJob.title} was missed.`]
-          : [`${leadJob?.title ?? "The job"} has not been accepted yet.`],
-        evidence: leadJob?.accepted ? `${leadJob.title} accepted.` : undefined,
+          : leadJobAtRisk
+            ? [`${leadJob?.title ?? "The job"} closes soon.`]
+            : [`${leadJob?.title ?? "The job"} has not been accepted yet.`],
+        evidence: leadJob?.accepted
+          ? `${leadJob.title} accepted.`
+          : leadJobAtRisk && leadJob
+            ? `${leadJob.title} window closes around ${formatHour(leadJob.endHour)}.`
+            : undefined,
         failed: Boolean(leadJob?.missed && !leadJob.completed),
       });
     }
     case "work-finish": {
       const leadJob = workLeadJob(world, route, objectiveText);
+      const leadJobAtRisk = Boolean(leadJob && jobWindowAtRisk(world, leadJob));
       return outcomeEvaluation(Boolean(leadJob?.completed), {
+        atRisk: leadJobAtRisk,
         blockers: leadJob?.missed
           ? [`${leadJob.title} was missed.`]
-          : [`${leadJob?.title ?? "The job"} is not finished yet.`],
-        evidence: leadJob?.completed ? `${leadJob.title} completed.` : undefined,
+          : leadJobAtRisk
+            ? [`${leadJob?.title ?? "The job"} is near closing.`]
+            : [`${leadJob?.title ?? "The job"} is not finished yet.`],
+        evidence: leadJob?.completed
+          ? `${leadJob.title} completed.`
+          : leadJobAtRisk && leadJob
+            ? `${leadJob.title} window closes around ${formatHour(leadJob.endHour)}.`
+            : undefined,
         failed: Boolean(leadJob?.missed && !leadJob.completed),
       });
     }
@@ -611,9 +647,13 @@ function evaluateObjectiveOutcome(
       });
     case "help-cart-solve":
     case "cart-solved":
-      return outcomeEvaluation(cartProblem?.status === "solved", {
-        blockers: ["The jammed cart is still active."],
+      return outcomeEvaluation(problemCleared(cartProblem), {
+        blockers:
+          cartProblem?.status === "expired"
+            ? ["The jammed cart got worse before anyone cleared it."]
+            : ["The jammed cart is still active."],
         evidence: cartProblem?.status,
+        failed: cartProblem?.status === "expired",
       });
     case "help-pump-inspect":
     case "pump-discovered":
@@ -623,17 +663,29 @@ function evaluateObjectiveOutcome(
     case "help-pump-tool":
     case "tool-buy":
     case "wrench-in-inventory":
-      return outcomeEvaluation(hasWrench, {
-        blockers: ["Rowan does not have a wrench yet."],
-        evidence: hasWrench ? "Wrench in inventory." : undefined,
+      return outcomeEvaluation(hasWrench || problemClosedByWorld(pumpProblem), {
+        blockers:
+          pumpProblem?.status === "expired"
+            ? ["The pump got away before the tool mattered."]
+            : ["Rowan does not have a wrench yet."],
+        evidence: hasWrench
+          ? "Wrench in inventory."
+          : pumpProblem?.status === "resolved"
+            ? "The pump was already contained by the house."
+            : pumpProblem?.status,
+        failed: pumpProblem?.status === "expired",
       });
     case "help-pump-fix":
     case "pump-solved":
-      return outcomeEvaluation(pumpProblem?.status === "solved", {
-        blockers: hasWrench
-          ? ["The pump is still active."]
-          : ["The pump needs a wrench before Rowan can solve it."],
+      return outcomeEvaluation(problemCleared(pumpProblem), {
+        blockers:
+          pumpProblem?.status === "expired"
+            ? ["The pump got away before anyone contained it."]
+            : hasWrench
+              ? ["The pump is still active."]
+              : ["The pump needs a wrench before Rowan can solve it."],
         evidence: pumpProblem?.status,
+        failed: pumpProblem?.status === "expired",
       });
     case "tool-return": {
       const target = objectiveTargetProblem(world, objectiveText);
@@ -642,7 +694,7 @@ function evaluateObjectiveOutcome(
           Boolean(
             target &&
               (world.player.currentLocationId === target.locationId ||
-                target.status === "solved"),
+                problemClosedByWorld(target)),
           ),
         {
           blockers: hasWrench
@@ -654,11 +706,14 @@ function evaluateObjectiveOutcome(
     }
     case "tool-use": {
       const target = objectiveTargetProblem(world, objectiveText);
-      return outcomeEvaluation(target?.status === "solved", {
+      return outcomeEvaluation(problemCleared(target), {
         blockers: hasWrench
-          ? ["The target problem is still active."]
+          ? target?.status === "expired"
+            ? ["The target problem got worse before the tool reached it."]
+            : ["The target problem is still active."]
           : ["The target problem needs the right tool first."],
         evidence: target?.status,
+        failed: target?.status === "expired",
       });
     }
     case "rest-return":
@@ -1717,6 +1772,7 @@ function buildWorkRoute(
   const leadJob = lead === "yard" ? yardJob : teaJob;
   const anyCompletedWork = world.jobs.some((job) => job.completed);
   const outcomes = buildWorkOutcomeDefinitions(
+    world,
     lead,
     leadNpc?.id,
     leadLocation?.id,
@@ -1808,6 +1864,7 @@ function buildWorkRoute(
 }
 
 function buildWorkOutcomeDefinitions(
+  world: StreetGameState,
   lead: "tea" | "yard",
   leadNpcId: string | undefined,
   leadLocationId: string | undefined,
@@ -1816,6 +1873,7 @@ function buildWorkOutcomeDefinitions(
   const leadAccepted = Boolean(leadJob?.accepted);
   const leadCompleted = Boolean(leadJob?.completed);
   const leadMissed = Boolean(leadJob?.missed);
+  const leadAtRisk = jobWindowAtRisk(world, leadJob);
   const jobActionId =
     leadJob && !leadCompleted && !leadMissed
       ? leadAccepted
@@ -1840,14 +1898,14 @@ function buildWorkOutcomeDefinitions(
     {
       id: "work-commit",
       label: "Paid work committed",
-      urgency: 3,
+      urgency: leadAtRisk ? 7 : 3,
       actionId: jobActionId,
       targetLocationId: leadLocationId,
     },
     {
       id: "work-finish",
       label: "Paid work finished",
-      urgency: 2,
+      urgency: leadAtRisk ? 6 : 2,
       actionId: finishActionId,
       targetLocationId: leadLocationId,
     },
@@ -1949,19 +2007,20 @@ function buildCommittedJobOutcomeDefinitions(
 function buildCartOutcomeDefinitions(
   problem: ReturnType<typeof problemById>,
 ): ObjectiveOutcomeDefinition[] {
+  const cartActive = problem?.status === "active";
   return [
     {
       id: "cart-discovered",
       label: "Cart problem understood",
       urgency: 2,
-      actionId: "inspect:problem-cart",
+      actionId: cartActive && !problem?.discovered ? "inspect:problem-cart" : undefined,
       targetLocationId: problem?.locationId,
     },
     {
       id: "cart-solved",
       label: "Cart cleared",
       urgency: 1,
-      actionId: "solve:problem-cart",
+      actionId: cartActive && problem?.discovered ? "solve:problem-cart" : undefined,
       targetLocationId: problem?.locationId,
     },
   ];
@@ -1971,27 +2030,32 @@ function buildPumpOutcomeDefinitions(
   problem: ReturnType<typeof problemById>,
   hasWrench: boolean,
 ): ObjectiveOutcomeDefinition[] {
+  const pumpActive = problem?.status === "active";
+  const pumpClosed = problemClosedByWorld(problem);
   return [
     {
       id: "pump-discovered",
       label: "Pump problem understood",
       urgency: 3,
-      actionId: "inspect:problem-pump",
-      targetLocationId: problem?.locationId,
+      actionId: pumpActive && !problem?.discovered ? "inspect:problem-pump" : undefined,
+      targetLocationId: pumpActive && !problem?.discovered ? problem?.locationId : undefined,
     },
     {
       id: "wrench-in-inventory",
       label: "Wrench secured",
       urgency: 2,
-      actionId: hasWrench ? undefined : "buy:item-wrench",
-      targetLocationId: hasWrench ? problem?.locationId : "repair-stall",
+      actionId: !pumpClosed && !hasWrench ? "buy:item-wrench" : undefined,
+      targetLocationId: !pumpClosed && !hasWrench ? "repair-stall" : undefined,
     },
     {
       id: "pump-solved",
       label: "Pump solved",
       urgency: 1,
-      actionId: "solve:problem-pump",
-      targetLocationId: problem?.locationId,
+      actionId:
+        pumpActive && problem?.discovered && hasWrench
+          ? "solve:problem-pump"
+          : undefined,
+      targetLocationId: pumpActive ? problem?.locationId : undefined,
     },
   ];
 }
@@ -2013,6 +2077,8 @@ function buildHelpRoute(
   const problemLocation = problem
     ? findLocation(world, problem.locationId)
     : undefined;
+  const problemActive = problem?.status === "active";
+  const problemClosed = problemClosedByWorld(problem);
 
   if (problem?.id === "problem-cart") {
     return {
@@ -2036,9 +2102,16 @@ function buildHelpRoute(
           title: "Clear the cart before it snarls the square.",
           detail:
             "The square works better when somebody moves trouble before it spreads.",
-          progress: problem.status === "solved" ? "Solved" : "Active",
-          done: problem.status === "solved",
-          actionId: "solve:problem-cart",
+          progress: problemCleared(problem)
+            ? "Cleared"
+            : problem.status === "expired"
+              ? "Missed"
+              : "Active",
+          done: problemCleared(problem),
+          actionId:
+            problem.status === "active" && problem.discovered
+              ? "solve:problem-cart"
+              : undefined,
           targetLocationId: problem.locationId,
         }),
       ],
@@ -2059,7 +2132,7 @@ function buildHelpRoute(
           : "A closer look will tell Rowan whether this is his problem or just nearby trouble.",
         progress: problem?.discovered ? "Problem seen" : "Still a lead",
         done: Boolean(problem?.discovered),
-        actionId: "inspect:problem-pump",
+        actionId: problemActive && !problem?.discovered ? "inspect:problem-pump" : undefined,
         targetLocationId: problem?.locationId,
       }),
       makeStep({
@@ -2070,19 +2143,38 @@ function buildHelpRoute(
         detail: hasWrench
           ? "The tool is in hand. The yard just needs Rowan to use it."
           : "Jo is the easiest place to turn loose coins into something that helps.",
-        progress: hasWrench ? "Tool in hand" : "No wrench yet",
-        done: hasWrench,
-        actionId: hasWrench ? undefined : "buy:item-wrench",
-        targetLocationId: hasWrench ? problem?.locationId : "repair-stall",
+        progress: hasWrench
+          ? "Tool in hand"
+          : problemClosed
+            ? "No longer needed"
+            : "No wrench yet",
+        done: hasWrench || problemClosed,
+        actionId:
+          problemActive && !hasWrench && !problemClosed
+            ? "buy:item-wrench"
+            : undefined,
+        targetLocationId:
+          problemActive && !hasWrench && !problemClosed
+            ? "repair-stall"
+            : hasWrench && problemActive
+              ? problem?.locationId
+              : undefined,
       }),
       makeStep({
         id: "help-pump-fix",
         title: "Fix the leak before it spreads.",
         detail:
           "South Quay remembers the people who solve trouble before it gets loud.",
-        progress: problem?.status === "solved" ? "Solved" : "Active",
-        done: problem?.status === "solved",
-        actionId: "solve:problem-pump",
+        progress: problemCleared(problem)
+          ? "Cleared"
+          : problem?.status === "expired"
+            ? "Missed"
+            : "Active",
+        done: problemCleared(problem),
+        actionId:
+          problemActive && problem?.discovered && hasWrench
+            ? "solve:problem-pump"
+            : undefined,
         targetLocationId: problem?.locationId,
       }),
     ],
@@ -2133,7 +2225,7 @@ function buildToolRoute(
           Boolean(
             target &&
             (world.player.currentLocationId === target.locationId ||
-              target.status === "solved"),
+              problemClosedByWorld(target)),
           ),
         targetLocationId: target?.locationId,
       }),
@@ -2142,9 +2234,16 @@ function buildToolRoute(
         title: "Use it before the trouble spreads.",
         detail:
           "The right tool should end the problem, not just change the label on it.",
-        progress: target?.status === "solved" ? "Solved" : "Active",
-        done: target?.status === "solved",
-        actionId: target ? `solve:${target.id}` : undefined,
+        progress: problemCleared(target)
+          ? "Cleared"
+          : target?.status === "expired"
+            ? "Missed"
+            : "Active",
+        done: problemCleared(target),
+        actionId:
+          target?.status === "active" && target.discovered
+            ? `solve:${target.id}`
+            : undefined,
         targetLocationId: target?.locationId,
       }),
     ],
@@ -2161,9 +2260,9 @@ function buildToolOutcomeDefinitions(
     Boolean(
       target &&
         (world.player.currentLocationId === target.locationId ||
-          target.status === "solved"),
+          problemClosedByWorld(target)),
     );
-  const problemOpen = Boolean(target && target.status !== "solved");
+  const problemOpen = Boolean(target && !problemClosedByWorld(target));
 
   return [
     {
@@ -2583,6 +2682,14 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
     return "yard" as const;
   }
 
+  if (jobWindowAtRisk(world, yardJob)) {
+    return "yard" as const;
+  }
+
+  if (jobWindowAtRisk(world, teaJob)) {
+    return "tea" as const;
+  }
+
   if (teaJob?.discovered && !teaJob.completed && !teaJob.missed) {
     return "tea" as const;
   }
@@ -2773,8 +2880,24 @@ function currentHour(world: StreetGameState) {
   return world.clock.hour + world.clock.minute / 60;
 }
 
+function formatHour(hour: number) {
+  if (hour === 0) return "midnight";
+  if (hour === 12) return "noon";
+  if (hour > 12) return `${hour - 12}pm`;
+  return `${hour}am`;
+}
+
 function jobById(world: StreetGameState, jobId: string) {
   return world.jobs.find((entry) => entry.id === jobId);
+}
+
+function jobWindowAtRisk(world: StreetGameState, job: JobState | undefined) {
+  if (!job || job.completed || job.missed || !job.discovered) {
+    return false;
+  }
+
+  const minutesRemaining = job.endHour * 60 - (world.clock.hour * 60 + world.clock.minute);
+  return minutesRemaining >= 0 && minutesRemaining <= JOB_WINDOW_PRESSURE_MINUTES;
 }
 
 function problemById(world: StreetGameState, problemId: string) {
@@ -2974,14 +3097,27 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
   const cartProblem = problemById(world, "problem-cart");
   const hasWrench = hasItem(world, "item-wrench");
   const trustedPeople = world.npcs.filter((npc) => npc.trust >= 2).length;
+  const activeProblemNeedsTool = [pumpProblem, cartProblem].some(
+    (problem) =>
+      problem?.discovered &&
+      problem.status === "active" &&
+      problem.requiredItemId &&
+      !hasWrench,
+  );
+  const urgentJobPressure = [teaJob, yardJob].reduce(
+    (pressure, job) =>
+      Math.max(pressure, jobWindowAtRisk(world, job) ? 24 : 0),
+    0,
+  );
 
   return {
     work:
       (activeJob ? 60 : 0) +
-      ((teaJob?.discovered && !teaJob.completed) ||
-      (yardJob?.discovered && !yardJob.completed)
+      ((teaJob?.discovered && !teaJob.completed && !teaJob.missed) ||
+      (yardJob?.discovered && !yardJob.completed && !yardJob.missed)
         ? 22
         : 0) +
+      urgentJobPressure +
       (world.player.money < 15 ? 14 : 0) +
       (topics.has("work") || topics.has("job") || topics.has("shift")
         ? 10
@@ -2997,11 +3133,8 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
         : 0) +
       (topics.has("pump") || topics.has("cart") ? 8 : 0),
     tool:
-      ((pumpProblem?.discovered || cartProblem?.discovered) &&
-      (pumpProblem?.requiredItemId || cartProblem?.requiredItemId) &&
-      !hasWrench
-        ? 42
-        : 0) + (topics.has("tool") || topics.has("wrench") ? 10 : 0),
+      (activeProblemNeedsTool ? 42 : 0) +
+      (topics.has("tool") || topics.has("wrench") ? 10 : 0),
     rest:
       (!recentRest && world.player.energy < 35 ? 50 : 0) +
       (!recentRest && world.player.energy < 50 ? 18 : 0) +

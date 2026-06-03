@@ -3,6 +3,8 @@ export const CAMERA_USER_ZOOM_MAX = 1.16;
 export const CAMERA_USER_ZOOM_MIN = 0.76;
 
 const COMPACT_LAYOUT_MAX_WIDTH = 960;
+const COMPACT_SCENE_TOP_SAFE_HEIGHT_MAX = 96;
+const COMPACT_SCENE_TOP_SAFE_HEIGHT_MIN = 72;
 const PHONE_RAIL_MAX_WIDTH = 560;
 const COMPACT_PORTRAIT_COVER_ZOOM_BOOST = 1.18;
 const MAX_RUNTIME_RENDER_SCALE = 6;
@@ -99,19 +101,20 @@ export function getSceneViewport(
   _world: { height: number; width: number },
   layoutViewport: ViewportSize = viewport,
 ): SceneViewport {
+  const scaleY = viewport.height / Math.max(layoutViewport.height, 1);
   if (isCompactViewport(layoutViewport)) {
+    const frameY = getCompactSceneTopSafeHeight(layoutViewport) * scaleY;
     return {
-      height: viewport.height,
+      height: Math.max(viewport.height - frameY, 1),
       width: viewport.width,
       x: 0,
-      y: 0,
+      y: frameY,
     };
   }
 
   const { overlayInset, railWidth, sceneGap } =
     getOverlayLayoutMetrics(layoutViewport);
   const scaleX = viewport.width / Math.max(layoutViewport.width, 1);
-  const scaleY = viewport.height / Math.max(layoutViewport.height, 1);
   const frameX = 0;
   const frameY = overlayInset * scaleY;
   const frameWidth = Math.max(
@@ -129,6 +132,14 @@ export function getSceneViewport(
     x: frameX,
     y: frameY,
   };
+}
+
+export function getCompactSceneTopSafeHeight(viewport: ViewportSize) {
+  return clamp(
+    viewport.height * 0.075,
+    COMPACT_SCENE_TOP_SAFE_HEIGHT_MIN,
+    COMPACT_SCENE_TOP_SAFE_HEIGHT_MAX,
+  );
 }
 
 export function getSceneZoom(
