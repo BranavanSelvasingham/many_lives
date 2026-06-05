@@ -302,8 +302,14 @@ class CdpSession {
   }
 
   async close() {
+    this.rejectPending(
+      new Error("Chrome DevTools session closed before the command completed."),
+    );
+    this.eventListeners.clear();
+
     try {
       this.socket?.end();
+      this.socket?.destroy();
     } catch {}
 
     if (this.browser) {
@@ -530,7 +536,7 @@ class CdpSession {
     })()`);
   }
 
-  async dragMouse({ from, steps = 8, to }) {
+  async dragMouse({ from, steps = 5, to }) {
     await this.send("Input.dispatchMouseEvent", {
       button: "none",
       type: "mouseMoved",
@@ -568,7 +574,7 @@ class CdpSession {
     });
   }
 
-  async dragTouch({ from, steps = 8, to }) {
+  async dragTouch({ from, steps = 5, to }) {
     await this.send("Input.dispatchTouchEvent", {
       touchPoints: [{ id: 1, x: from.x, y: from.y }],
       type: "touchStart",
@@ -1137,9 +1143,9 @@ async function settleCameraAtEdge(session, edge, currentProbe) {
     return probe;
   }
 
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
     await session.panCameraToEdge(edge);
-    await sleep(180);
+    await sleep(40);
     probe = await session.readCameraProbe();
     if (cameraProbeReachedEdge(probe, edge)) {
       return probe;
@@ -1167,7 +1173,7 @@ async function runViewportCheck(session, viewport) {
   await session.setViewport(viewport);
   await session.navigate(url);
   await session.waitForAppReady();
-  await sleep(750);
+  await sleep(250);
 
   const page = await session.inspectPage();
   assert.equal(page.title, "Many Lives", `${viewport.name}: wrong page title.`);
@@ -1270,7 +1276,7 @@ async function runViewportCheck(session, viewport) {
   if (viewport.width <= 960) {
     const collapsedRailHeight = page.rail?.height ?? 0;
     await session.clickSelector(".ml-rail-toggle");
-    await sleep(350);
+    await sleep(120);
     const expandedPage = await session.inspectPage();
     const minimumExpandedHeight = Math.min(360, viewport.height - 260);
     assert.equal(
@@ -1296,7 +1302,7 @@ async function runViewportCheck(session, viewport) {
     const expandedRailScreenshot = await readFile(expandedRailScreenshotPath);
     assertPngScreenshot(expandedRailScreenshot, viewport);
     await session.clickSelector(".ml-rail-toggle");
-    await sleep(200);
+    await sleep(80);
   }
 
   const panBefore = await session.readCameraProbe();
@@ -1333,7 +1339,7 @@ async function runViewportCheck(session, viewport) {
     touch: viewport.width < 600,
     to: { x: dragToX, y: dragY },
   });
-  await sleep(350);
+  await sleep(120);
   const panAfter = await session.readCameraProbe();
   assert.ok(panAfter, `${viewport.name}: missing camera probe after eastward drag.`);
   const offsetDelta =
@@ -1367,7 +1373,7 @@ async function runViewportCheck(session, viewport) {
       at: { x: dragFromX, y: dragY },
       deltaX: -260,
     });
-    await sleep(300);
+    await sleep(120);
     compactWheelPan = await session.readCameraProbe();
     assert.ok(
       compactWheelPan,
@@ -1389,7 +1395,7 @@ async function runViewportCheck(session, viewport) {
     touch: viewport.width < 600,
     to: { x: dragFromX, y: dragY },
   });
-  await sleep(350);
+  await sleep(120);
   const panAfterReverse = await session.readCameraProbe();
   assert.ok(
     panAfterReverse,
@@ -1411,31 +1417,7 @@ async function runViewportCheck(session, viewport) {
   );
 
   let panAtWestEdge = panAfterReverse;
-  let westEdgeDragFromX = dragToX;
-  let westEdgeDragToX = dragFromX;
   if (viewport.width <= 960) {
-    westEdgeDragFromX = Math.round(
-      clamp(viewport.width * 0.14, 42, viewport.width - 84),
-    );
-    westEdgeDragToX = Math.round(
-      clamp(viewport.width * 0.88, 120, viewport.width - 42),
-    );
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      await session.dragMap({
-        from: { x: westEdgeDragFromX, y: dragY },
-        touch: viewport.width < 600,
-        to: { x: westEdgeDragToX, y: dragY },
-      });
-      await sleep(220);
-      panAtWestEdge = await session.readCameraProbe();
-      if (panAtWestEdge.scroll.x <= panAtWestEdge.scrollRange.minX + 52) {
-        break;
-      }
-    }
-    assert.ok(
-      panAtWestEdge,
-      `${viewport.name}: missing camera probe at west edge.`,
-    );
     panAtWestEdge = await settleCameraAtEdge(
       session,
       "west",
@@ -1482,41 +1464,7 @@ async function runViewportCheck(session, viewport) {
   let eastPanScreenshotPath = null;
   let southPanScreenshotPath = null;
   if (viewport.width <= 960) {
-    const northEdgeDragX = Math.round(
-      clamp(viewport.width * 0.36, 96, viewport.width - 96),
-    );
-    const northEdgeDragFromY = Math.round(
-      clamp(viewport.height * 0.16, 96, viewport.height - 360),
-    );
-    const safeMapBottomY = Math.min(
-      viewport.height * 0.5,
-      (page.rail?.y ?? viewport.height) - 48,
-      (page.dock?.y ?? viewport.height) - 48,
-    );
-    const northEdgeDragToY = Math.round(
-      clamp(
-        safeMapBottomY,
-        northEdgeDragFromY + 160,
-        viewport.height - 180,
-      ),
-    );
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      await session.dragMap({
-        from: { x: northEdgeDragX, y: northEdgeDragFromY },
-        touch: viewport.width < 600,
-        to: { x: northEdgeDragX, y: northEdgeDragToY },
-      });
-      await sleep(220);
-      northEdge = await session.readCameraProbe();
-      if (northEdge.scroll.y <= northEdge.scrollRange.minY + 52) {
-        break;
-      }
-    }
-    assert.ok(
-      northEdge,
-      `${viewport.name}: missing camera probe at north edge.`,
-    );
-    northEdge = await settleCameraAtEdge(session, "north", northEdge);
+    northEdge = await settleCameraAtEdge(session, "north", panAtWestEdge);
     const northScrollThreshold = viewport.width >= 600 ? -380 : -360;
     const activeSpaceKind = northEdge.activeSpaceKind ?? "street";
     const activeSpaceId = northEdge.activeSpaceId ?? "unknown";
@@ -1564,23 +1512,7 @@ async function runViewportCheck(session, viewport) {
     const northPanScreenshot = await readFile(northPanScreenshotPath);
     assertPngScreenshot(northPanScreenshot, viewport);
 
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      await session.dragMap({
-        from: { x: westEdgeDragToX, y: dragY },
-        touch: viewport.width < 600,
-        to: { x: westEdgeDragFromX, y: dragY },
-      });
-      await sleep(220);
-      eastEdge = await session.readCameraProbe();
-      if (eastEdge.scroll.x >= eastEdge.scrollRange.maxX - 52) {
-        break;
-      }
-    }
-    assert.ok(
-      eastEdge,
-      `${viewport.name}: missing camera probe at east edge.`,
-    );
-    eastEdge = await settleCameraAtEdge(session, "east", eastEdge);
+    eastEdge = await settleCameraAtEdge(session, "east", northEdge);
     assertSameCameraSpace(
       viewport,
       panAtWestEdge,
@@ -1615,23 +1547,7 @@ async function runViewportCheck(session, viewport) {
     const eastPanScreenshot = await readFile(eastPanScreenshotPath);
     assertPngScreenshot(eastPanScreenshot, viewport);
 
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      await session.dragMap({
-        from: { x: northEdgeDragX, y: northEdgeDragToY },
-        touch: viewport.width < 600,
-        to: { x: northEdgeDragX, y: northEdgeDragFromY },
-      });
-      await sleep(220);
-      southEdge = await session.readCameraProbe();
-      if (southEdge.scroll.y >= southEdge.scrollRange.maxY - 52) {
-        break;
-      }
-    }
-    assert.ok(
-      southEdge,
-      `${viewport.name}: missing camera probe at south edge.`,
-    );
-    southEdge = await settleCameraAtEdge(session, "south", southEdge);
+    southEdge = await settleCameraAtEdge(session, "south", eastEdge);
     assertSameCameraSpace(
       viewport,
       northEdge,
@@ -1799,12 +1715,16 @@ async function main() {
 
   try {
     for (const viewport of VIEWPORTS) {
+      process.stdout.write(`[many-lives] Checking ${viewport.name} viewport...\n`);
       results.push({
         viewport,
         ...(await runViewportCheck(session, viewport)),
       });
+      process.stdout.write(`[many-lives] Finished ${viewport.name} viewport.\n`);
     }
+    process.stdout.write("[many-lives] Checking stored-run prompt behavior...\n");
     storedGameChoice = await runStoredGameChoiceCheck(session);
+    process.stdout.write("[many-lives] Finished stored-run prompt behavior.\n");
 
     assert.deepEqual(
       session.pageErrors,

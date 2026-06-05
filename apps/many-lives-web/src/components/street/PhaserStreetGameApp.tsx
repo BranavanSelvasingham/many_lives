@@ -635,6 +635,14 @@ type MapAgencyCue = {
   tone: MapAgencyTone;
 };
 
+type MapAgencyLabelDiagnostics = {
+  closeInteractionSuppressed: boolean;
+  intentText: string | null;
+  intentVisible: boolean;
+  targetText: string | null;
+  targetVisible: boolean;
+};
+
 type AmbientCityRoute = {
   accent: number;
   cityEventIds?: string[];
@@ -3506,6 +3514,16 @@ function renderDynamicScene(
   const nearbyInteriorNpc = runtimeState.indices.activeSpace
     ? nearestAnimatedNpcWithin(animatedNpcs, playerPixel, CELL * 1.35)
     : null;
+  const tightInteriorConversationNpc =
+    runtimeState.indices.activeSpace &&
+    activeConversationNpc &&
+    nearbyInteriorNpc?.npc.id === activeConversationNpc.id
+      ? nearbyInteriorNpc
+      : null;
+  const suppressPlayerTitleForTightInteriorConversation = Boolean(
+    tightInteriorConversationNpc &&
+      distanceBetween(tightInteriorConversationNpc, playerPixel) <= CELL * 1.65,
+  );
   const playerLabelOffsetX = nearbyInteriorNpc
     ? nearbyInteriorNpc.x <= playerPixel.x
       ? 40
@@ -3534,7 +3552,7 @@ function renderDynamicScene(
         : 0.78 + Math.sin(now / 240) * 0.06,
     );
   objects.playerTitle
-    .setVisible(true)
+    .setVisible(!suppressPlayerTitleForTightInteriorConversation)
     .setAlpha(usingAuthoredVisualScene ? 0.96 : 0.84);
   objects.playerPulse
     .setVisible(!usingAuthoredVisualScene)
@@ -3636,6 +3654,17 @@ function installStreetProbeAccessor(root: HTMLDivElement) {
       : null;
     if (!payload) {
       return payload;
+    }
+
+    const mapAgencyScript = root.querySelector<HTMLScriptElement>(
+      "#ml-browser-map-agency-probe",
+    );
+    try {
+      payload.mapAgency = mapAgencyScript?.textContent
+        ? JSON.parse(mapAgencyScript.textContent)
+        : null;
+    } catch {
+      payload.mapAgency = null;
     }
 
     const rectFor = (element: Element | null) => {
@@ -4119,9 +4148,12 @@ function updateNpcMarkers(
     const inLiveConversation =
       game?.activeConversation?.npcId === animatedNpc.npc.id;
     const isTalkable = talkableNpcIds.has(animatedNpc.npc.id);
+    const interiorLabelCollisionDistance = inLiveConversation
+      ? CELL * 1.85
+      : CELL * 1.35;
     const interiorLabelCollides =
       runtimeState.indices.activeSpace &&
-      distanceBetween(animatedNpc, playerPixel) <= CELL * 1.35;
+      distanceBetween(animatedNpc, playerPixel) <= interiorLabelCollisionDistance;
     const showLabel = runtimeState.indices.activeSpace
       ? !interiorLabelCollides &&
         (highlight || inLiveConversation || isTalkable)
@@ -4268,6 +4300,13 @@ function syncMapAgencyObjects(
     : cue.detail
       ? `${cue.intent}\n${cue.detail}`
       : cue.intent;
+  const closeInteractionSuppressed = Boolean(
+    runtimeState.indices.activeSpace &&
+      cue.tone === "conversation" &&
+      cue.targetIsNpc &&
+      cue.targetWorld &&
+      distanceBetween(playerPixel, cue.targetWorld) <= CELL * 1.65,
+  );
   const intentHalfWidth = estimateMapAgencyLabelHalfWidth(intentCopy, "intent");
   const intentPosition = clampMapAgencyLabelPosition(
     {
@@ -4282,8 +4321,9 @@ function syncMapAgencyObjects(
     labelSafeRect,
   );
   const labelPulse = 0.92 + Math.sin(now / 560) * 0.035;
+  const showIntentLabel = playerLabelVisible && !closeInteractionSuppressed;
 
-  if (playerLabelVisible) {
+  if (showIntentLabel) {
     setMapAgencyLabel(objects.agencyIntentText, intentCopy, intentPosition, {
       alpha: labelPulse,
       background:
@@ -4296,6 +4336,7 @@ function syncMapAgencyObjects(
     objects.agencyIntentText.setVisible(false).setAlpha(0);
   }
 
+  let targetCopy: string | null = cue.targetLabel;
   const showTargetLabel =
     cue.targetWorld &&
     cue.targetLabel &&
@@ -4304,7 +4345,7 @@ function syncMapAgencyObjects(
       (cue.targetIsNpc ? CELL * 1.45 : CELL * 1.8);
 
   if (showTargetLabel && cue.targetWorld && cue.targetLabel) {
-    const targetCopy = cue.targetLabel.toUpperCase();
+    targetCopy = cue.targetLabel.toUpperCase();
     const targetHalfWidth = estimateMapAgencyLabelHalfWidth(
       targetCopy,
       "target",
@@ -4333,7 +4374,13 @@ function syncMapAgencyObjects(
     objects.agencyTargetText.setVisible(false).setAlpha(0);
   }
 
-  syncBrowserMapAgencyProbe(objects.overlayDom, cue);
+  syncBrowserMapAgencyProbe(objects.overlayDom, cue, {
+    closeInteractionSuppressed,
+    intentText: intentCopy,
+    intentVisible: showIntentLabel,
+    targetText: targetCopy,
+    targetVisible: Boolean(showTargetLabel),
+  });
 }
 
 function setMapAgencyLabel(
@@ -6410,6 +6457,7 @@ function buildMapEdgeCuesHtml(sceneViewport: SceneViewport) {
 function syncBrowserMapAgencyProbe(
   root: HTMLElement,
   cue: MapAgencyCue | null,
+  labels?: MapAgencyLabelDiagnostics,
 ) {
   const probe = root.querySelector<HTMLScriptElement>(
     "#ml-browser-map-agency-probe",
@@ -6423,6 +6471,7 @@ function syncBrowserMapAgencyProbe(
       ? {
           detail: cue.detail,
           intent: cue.intent,
+          labels: labels ?? null,
           target: cue.targetWorld
             ? {
                 isNpc: cue.targetIsNpc,

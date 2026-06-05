@@ -17,16 +17,54 @@ async function main(): Promise<void> {
     "OPENAI_API_KEY is required. Add it to the shell env or local .env before running live:openai:rowan.",
   );
 
-  const provider = new OpenAIProvider({
-    apiKey,
-    model: process.env.OPENAI_MODEL ?? "gpt-5-mini",
-    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? DEFAULT_OPENAI_TIMEOUT_MS),
-  });
-  const engine = new SimulationEngine(provider);
   const maxSteps = Number(process.env.MANY_LIVES_LIVE_ROWAN_STEPS ?? 8);
+  const sessionCount = Math.max(
+    1,
+    Number(process.env.MANY_LIVES_LIVE_ROWAN_SESSIONS ?? 1),
+  );
+  const output: string[] = [];
+
+  for (let sessionIndex = 1; sessionIndex <= sessionCount; sessionIndex += 1) {
+    const provider = new OpenAIProvider({
+      apiKey,
+      model: process.env.OPENAI_MODEL ?? "gpt-5-mini",
+      timeoutMs: Number(
+        process.env.OPENAI_TIMEOUT_MS ?? DEFAULT_OPENAI_TIMEOUT_MS,
+      ),
+    });
+    const session = await runLiveRowanSession({
+      maxSteps,
+      provider,
+      sessionIndex,
+    });
+    output.push(...session.output);
+  }
+
+  process.stdout.write(
+    [
+      `[many-lives] Live Rowan OpenAI stability passed across ${sessionCount} session${sessionCount === 1 ? "" : "s"}.`,
+      "",
+      ...output,
+      "",
+    ].join("\n"),
+  );
+}
+
+async function runLiveRowanSession({
+  maxSteps,
+  provider,
+  sessionIndex,
+}: {
+  maxSteps: number;
+  provider: OpenAIProvider;
+  sessionIndex: number;
+}) {
+  const engine = new SimulationEngine(provider);
   const trace: Array<ReturnType<typeof traceEntry>> = [];
   const seen = new Map<string, number>();
-  let world = await engine.createGame(`rowan-live-openai-${Date.now()}`);
+  let world = await engine.createGame(
+    `rowan-live-openai-${Date.now()}-${sessionIndex}`,
+  );
   trace.push(traceEntry(0, "create_game", world));
 
   for (let step = 1; step <= maxSteps; step += 1) {
@@ -54,18 +92,18 @@ async function main(): Promise<void> {
 
   assert.ok(
     successfulPlannerCalls.length > 0,
-    "Live Rowan session did not complete any successful OpenAI planner calls.",
+    `Live Rowan session ${sessionIndex} did not complete any successful OpenAI planner calls.`,
   );
   assert.deepEqual(
     fallbacks,
     [],
-    `Live Rowan session fell back from OpenAI:\n${fallbacks
+    `Live Rowan session ${sessionIndex} fell back from OpenAI:\n${fallbacks
       .map((entry) => `${entry.task}: ${entry.error ?? "unknown error"}`)
       .join("\n")}`,
   );
   assert.ok(
     trace.some((entry) => entry.reason && entry.signals >= 2),
-    "Live Rowan session did not expose state-grounded autonomy reasons.",
+    `Live Rowan session ${sessionIndex} did not expose state-grounded autonomy reasons.`,
   );
   const mismatchedMoveActions = trace.filter(
     (entry) =>
@@ -77,7 +115,7 @@ async function main(): Promise<void> {
     mismatchedMoveActions,
     [],
     [
-      "Live Rowan session exposed a future action as the current move action.",
+      `Live Rowan session ${sessionIndex} exposed a future action as the current move action.`,
       ...mismatchedMoveActions.map(formatTraceEntry),
       "",
       ...trace.map(formatTraceEntry),
@@ -87,23 +125,23 @@ async function main(): Promise<void> {
     assert.ok(
       longLiveOutcomeIsCoherent(world, trace),
       [
-        "Long live Rowan session did not stay coherent through the first afternoon.",
+        `Long live Rowan session ${sessionIndex} did not stay coherent through the first afternoon.`,
         ...trace.map(formatTraceEntry),
       ].join("\n"),
     );
   }
 
-  process.stdout.write(
-    [
-      "[many-lives] Live Rowan OpenAI session passed.",
+  return {
+    output: [
+      `[many-lives] Live Rowan OpenAI session ${sessionIndex} passed.`,
       `plannerCalls=${plannerCalls.length}`,
       `plannerSuccesses=${successfulPlannerCalls.length}`,
       `fallbacks=${fallbacks.length}`,
       "",
       ...trace.map(formatTraceEntry),
       "",
-    ].join("\n"),
-  );
+    ],
+  };
 }
 
 function traceEntry(step: number, command: string, world: StreetGameState) {

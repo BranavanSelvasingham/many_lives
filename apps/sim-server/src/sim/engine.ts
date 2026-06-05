@@ -679,7 +679,9 @@ function validateActionForExecution(
   if (!action) {
     return {
       ok: false,
-      reason: "That action is not available from here.",
+      reason:
+        unavailableActionReason(world, actionId) ??
+        "That action is not available from here.",
     };
   }
 
@@ -747,6 +749,52 @@ function validateActionForExecution(
     ok: true,
     routeToAnchor: route,
   };
+}
+
+function unavailableActionReason(
+  world: StreetGameState,
+  actionId: string,
+): string | undefined {
+  const [kind, targetId] = actionId.split(":");
+  if (kind === "talk" && targetId) {
+    const npc = world.npcs.find((entry) => entry.id === targetId);
+    return npc ? unavailableNpcActionReason(world, npc) : undefined;
+  }
+
+  return undefined;
+}
+
+function unavailableNpcActionReason(world: StreetGameState, npc: NpcState) {
+  const playerLocation = currentLocation(world);
+  const npcLocation = findLocation(world, npc.currentLocationId);
+  const playerSpace = activeSpace(world);
+  const npcSpace = spaceById(world, npcSpaceId(npc));
+
+  if (
+    playerLocation &&
+    npcLocation &&
+    playerLocation.id === npcLocation.id &&
+    playerSpace.kind === "street" &&
+    npcSpace?.kind === "interior"
+  ) {
+    return `Step inside ${npcLocation.name} to find ${npc.name}.`;
+  }
+
+  if (
+    playerLocation &&
+    npcLocation &&
+    playerLocation.id === npcLocation.id &&
+    playerSpace.kind === "interior" &&
+    npcSpace?.kind === "street"
+  ) {
+    return `Step back out to ${world.districtName} to find ${npc.name}.`;
+  }
+
+  if (npcLocation) {
+    return `${npc.name} is at ${npcLocation.name}; Rowan needs to reach ${npcLocation.name} before talking.`;
+  }
+
+  return `${npc.name} is not available to talk right now.`;
 }
 
 function actionNeedsInteriorAnchor(
@@ -1082,7 +1130,7 @@ function resolveConversationTarget(world: StreetGameState, npcId: string) {
 
   const location = currentLocation(world);
   if (!location || !isNpcInActiveScene(world, npc)) {
-    addFeed(world, "info", `${npc.name} is not here right now.`);
+    addFeed(world, "info", unavailableNpcActionReason(world, npc));
     return undefined;
   }
 
@@ -1886,6 +1934,25 @@ function uniquePlannerChoiceForActionId(
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+function buildMovementFeedText(
+  world: StreetGameState,
+  targetLocation: LocationState,
+  plan: ObjectivePlan,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+) {
+  const rawPurpose = planMovementPurpose(world, plan, objective);
+  const destinationPrefix = `${targetLocation.name.toLowerCase()} is the next stop`;
+  const purpose =
+    rawPurpose.toLowerCase().startsWith(destinationPrefix)
+      ? rawPurpose.slice(destinationPrefix.length).replace(/^[:\s]+/, "")
+      : rawPurpose;
+  const detail = purpose.trim().replace(/\s+/g, " ").replace(/[.]+$/, "");
+
+  return detail
+    ? `Rowan heads to ${targetLocation.name}: ${detail}.`
+    : `Rowan heads to ${targetLocation.name}.`;
+}
+
 async function executeRowanMoveLoopStep(
   world: StreetGameState,
   loopStep: RowanLoopStep,
@@ -1928,7 +1995,7 @@ async function executeRowanMoveLoopStep(
   addFeed(
     world,
     "info",
-    `Rowan heads to ${targetLocation.name} to ${planMovementPurpose(world, plan, objective)}.`,
+    buildMovementFeedText(world, targetLocation, plan, objective),
   );
   movePlayer(world, targetLocation.entryX, targetLocation.entryY);
   syncNpcInnerState(world);
@@ -2314,6 +2381,31 @@ function textGroundsMaraAdaLead(text: string | undefined): boolean {
   );
 }
 
+function textAffirmsMaraAdaLead(text: string | undefined): boolean {
+  const normalized = (text ?? "").toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    /\b(no|not|don't|do not|isn't|closed|can't|cannot|avoid|skip|wrong)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    /\byes\b|\bright\b|\bthat's right\b|\bdo that\b|\bask her\b|\bask ada\b/.test(
+      normalized,
+    ) ||
+    /\b(she|ada)\s+(may|might|could|can|will|does|needs?|has)\b/.test(
+      normalized,
+    ) ||
+    /\bworth\s+(asking|trying)\b/.test(normalized)
+  );
+}
+
 function conversationGroundsMaraAdaLead(
   world: StreetGameState,
   closingReply?: string,
@@ -2666,7 +2758,7 @@ async function conductAutonomousConversation(
 
   const location = currentLocation(world);
   if (!location || !isNpcInActiveScene(world, npc)) {
-    addFeed(world, "info", `${npc.name} is not here right now.`);
+    addFeed(world, "info", unavailableNpcActionReason(world, npc));
     return;
   }
 
@@ -2781,7 +2873,13 @@ async function performConversationTurn(
     });
     reply = groundingReply;
 
-    if (!textGroundsMaraAdaLead(reply.reply)) {
+    if (
+      !textGroundsMaraAdaLead(reply.reply) &&
+      !(
+        textGroundsMaraAdaLead(groundingFollowup) &&
+        textAffirmsMaraAdaLead(reply.reply)
+      )
+    ) {
       reply = groundedMaraAdaLeadReply();
       recordAIRuntimePolicyFallback(
         world,

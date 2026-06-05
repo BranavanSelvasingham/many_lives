@@ -1142,7 +1142,7 @@ function shouldCaptureScreenshot(label) {
     return true;
   }
 
-  if (/-route-(start|mid)$/.test(label)) {
+  if (/-route-(start|mid|close)$/.test(label)) {
     return true;
   }
 
@@ -1170,6 +1170,10 @@ function shouldCaptureScreenshot(label) {
     "stage-repair-move",
     "enter-repair-interior",
   ]).has(label);
+}
+
+function shouldCaptureCloseConversationRoute(label) {
+  return new Set(["mara-live-thread", "ada-live-thread"]).has(label);
 }
 
 function normalizeNullable(value) {
@@ -1772,6 +1776,11 @@ function assertGameplayDom(label, game, probe, dom) {
     /Ask Ada.*at Morrow House|Ada(?:'s)?[^.\n]{0,100}at Morrow House|Ada work at Morrow House/i,
     `${label}: default Rowan rail described Ada's cafe lead as happening at Morrow House.`,
   );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /is not here right now|Rowan heads to [A-Z][^.\n]+ to [A-Z][^.\n]+ is the next stop|to morrow House/,
+    `${label}: default Rowan rail/feed leaked stale movement or wrong-space copy.`,
+  );
 
   if (game.activeConversation) {
     const npcName =
@@ -1995,6 +2004,26 @@ function assertCleanSettledInteriorFrame(byLabel, label, spaceId) {
     entry.mapAgency,
     null,
     `${label}: settled interior frame should not retain a floating route/agency cue.`,
+  );
+}
+
+function assertCloseConversationLabelSuppressed(byLabel, label) {
+  const entry = byLabel[label];
+  assert.ok(entry, `Expected close conversation timeline entry ${label}.`);
+  assert.equal(
+    entry.mapAgency?.target?.isNpc,
+    true,
+    `${label}: expected the map agency target to be the conversation NPC.`,
+  );
+  assert.equal(
+    entry.mapAgency?.labels?.closeInteractionSuppressed,
+    true,
+    `${label}: close interior conversation did not suppress the floating agency label.`,
+  );
+  assert.equal(
+    entry.mapAgency?.labels?.intentVisible,
+    false,
+    `${label}: close interior conversation kept the floating intent label visible.`,
   );
 }
 
@@ -2987,6 +3016,34 @@ async function main() {
           }),
         );
         await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+
+        if (shouldCaptureCloseConversationRoute(step.label)) {
+          const routeCloseProbe = await session.waitForVisualRouteProgress(
+            previousGame,
+            game,
+            0.82,
+          );
+          const routeCloseLabel = `${step.label}-route-close`;
+          const routeCloseCapture = await captureBrowserMovementState({
+            game: previousGame,
+            index: `${index}c`,
+            label: routeCloseLabel,
+            probe: routeCloseProbe,
+            session,
+          });
+          timeline.push(
+            buildTimelineEntry({
+              dom: routeCloseCapture.dom,
+              game: previousGame,
+              label: routeCloseLabel,
+              mapAgency: routeCloseCapture.mapAgency,
+              probe: routeCloseCapture.probe,
+              screenshot: routeCloseCapture.screenshot,
+              screenshotError: routeCloseCapture.screenshotError,
+            }),
+          );
+          await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+        }
       }
       gameRef.current = game;
       const capture =
@@ -3067,6 +3124,14 @@ async function main() {
     "ada-live-thread-route-start",
     "Kettle & Lamp entry to Ada",
     { spaceId: "interior:tea-house" },
+  );
+  assertCloseConversationLabelSuppressed(
+    byLabel,
+    "mara-live-thread-route-close",
+  );
+  assertCloseConversationLabelSuppressed(
+    byLabel,
+    "ada-live-thread-route-close",
   );
   assertTimelineRoute(
     byLabel,

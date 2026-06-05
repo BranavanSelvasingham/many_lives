@@ -159,6 +159,39 @@ class VagueThenGroundedMaraLiveAIProvider extends LiveDialogueAIProvider {
   }
 }
 
+class VagueThenAffirmingMaraLiveAIProvider extends LiveDialogueAIProvider {
+  readonly interpretationRequests: StreetConversationInterpretationRequest[] = [];
+  private maraReplyCount = 0;
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    this.replyRequests.push(input);
+    if (input.npcId === "npc-mara") {
+      this.maraReplyCount += 1;
+      if (this.maraReplyCount === 1) {
+        return {
+          followupThought: "Mara is being too vague.",
+          reply:
+            "The room can hold tonight. We will check you in properly when the evening settles.",
+        };
+      }
+
+      return {
+        followupThought: "Mara is confirming the lead.",
+        reply: "Yes. Ask her before the lunch rush starts filling the room.",
+      };
+    }
+
+    return super.generateStreetReply(input);
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ) {
+    this.interpretationRequests.push(input);
+    return super.interpretStreetConversation(input);
+  }
+}
+
 function expectCognitionToMirrorAutonomy(world: StreetGameState) {
   const nextMove = buildRowanCognition(world).nextMove;
   expect(nextMove).toMatchObject({
@@ -720,6 +753,79 @@ describe("SimulationEngine street slice", () => {
 
     expect(provider.interpretationRequests.length).toBeGreaterThan(0);
     expect(world.rowanAutonomy.detail).toMatch(/Ada|Kettle & Lamp|lunch/i);
+  });
+
+  it("accepts an affirmative live Mara follow-up as visible lead evidence", async () => {
+    const provider = new VagueThenAffirmingMaraLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-affirming-followup-mara");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+      10,
+    );
+
+    const visibleLines = world.activeConversation?.lines.map(
+      (line) => line.text,
+    ) ?? [];
+    expect(visibleLines.join(" ")).toMatch(/Ada at Kettle & Lamp/i);
+    expect(visibleLines.join(" ")).toMatch(/lunch work/i);
+    expect(visibleLines.join(" ")).toMatch(/Yes\. Ask her/i);
+    expect(provider.replyRequests.filter((request) => request.npcId === "npc-mara")).toHaveLength(
+      2,
+    );
+    expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(0);
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+      12,
+    );
+
+    expect(provider.interpretationRequests.length).toBeGreaterThan(0);
+    expect(world.rowanAutonomy.detail).toMatch(/Ada|Kettle & Lamp|lunch/i);
+  });
+
+  it("uses portal-aware copy when Ada is inside the cafe", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-ada-inside-copy");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+
+    const feedText = world.feed.map((entry) => entry.text).join(" ");
+    expect(feedText).toContain("Step inside Kettle & Lamp to find Ada.");
+    expect(feedText).not.toMatch(/Ada is not here right now/i);
+  });
+
+  it("keeps movement feed copy from duplicating the destination", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-movement-copy");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.firstAfternoon?.completedAt !== undefined,
+      48,
+    );
+
+    const feedText = world.feed.map((entry) => entry.text).join("\n");
+    expect(feedText).not.toMatch(/to Morrow House to Morrow House/i);
+    expect(feedText).not.toMatch(/to morrow House/);
+    expect(feedText).not.toMatch(/to Kettle & Lamp to Kettle & Lamp/i);
+    expect(feedText).not.toMatch(/is not here right now/i);
   });
 
   it("lets an OpenAI planner choose a validated objective action", async () => {

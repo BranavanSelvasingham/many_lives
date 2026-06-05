@@ -65,6 +65,12 @@ export function buildGenerateStreetReplyPrompt(
 
 function buildRequiredGroundingLines(input: StreetDialogueRequest): string[] {
   const playerText = input.playerText.toLowerCase();
+  const playerAlreadyGroundsMaraLead =
+    /\bada\b/.test(playerText) &&
+    /\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(playerText) &&
+    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bhelp\b|\bcounter\b|\bpay\b/.test(
+      playerText,
+    );
   if (
     input.npcId !== "npc-mara" ||
     input.game.player.objective?.routeKey !== "first-afternoon" ||
@@ -78,5 +84,11 @@ function buildRequiredGroundingLines(input: StreetDialogueRequest): string[] {
   return [
     "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.",
     "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.",
+    ...(playerAlreadyGroundsMaraLead
+      ? [
+          "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.",
+          "- A short direct confirmation is acceptable here, but it must clearly affirm the lead instead of drifting back to room rules.",
+        ]
+      : []),
   ];
 }
