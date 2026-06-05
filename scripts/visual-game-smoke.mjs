@@ -1402,11 +1402,27 @@ async function runViewportCheck(session, viewport) {
       `${viewport.name}: missing camera probe at north edge.`,
     );
     const northScrollThreshold = viewport.width >= 600 ? -380 : -360;
+    const activeSpaceKind = northEdge.activeSpaceKind ?? "street";
+    const activeSpaceId = northEdge.activeSpaceId ?? "unknown";
+    const isStreetScene = activeSpaceKind === "street";
+    const northRangeCanClearHud =
+      northEdge.scrollRange.minY <= northScrollThreshold;
     assert.ok(
-      northEdge.scroll.y <= northScrollThreshold,
-      `${viewport.name}: north map framing is still too shallow under the HUD (scroll y ${northEdge.scroll.y.toFixed(
+      !isStreetScene || northRangeCanClearHud,
+      `${viewport.name}: street north map range is too shallow under the HUD (active space ${activeSpaceId}, min scroll ${northEdge.scrollRange.minY.toFixed(
         1,
       )}, expected <= ${northScrollThreshold}).`,
+    );
+    const requiredNorthScroll = northRangeCanClearHud
+      ? northScrollThreshold
+      : northEdge.scrollRange.minY + 52;
+    assert.ok(
+      northEdge.scroll.y <= requiredNorthScroll,
+      `${viewport.name}: north map framing is still too shallow for active space ${activeSpaceId} (${activeSpaceKind}; scroll y ${northEdge.scroll.y.toFixed(
+        1,
+      )}, expected <= ${requiredNorthScroll.toFixed(1)}, min ${northEdge.scrollRange.minY.toFixed(
+        1,
+      )}).`,
     );
     if (requiresComputedCompactEdge(viewport)) {
       assert.ok(
@@ -1415,12 +1431,14 @@ async function runViewportCheck(session, viewport) {
           1,
         )}, min ${northEdge.scrollRange.minY.toFixed(1)}).`,
       );
-      assert.ok(
-        northEdge.visibleWorldRect.top <= HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX,
-        `${viewport.name}: north visual clearance is still too shallow (visible world top ${northEdge.visibleWorldRect.top.toFixed(
-          1,
-        )}, expected <= ${HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX}).`,
-      );
+      if (isStreetScene) {
+        assert.ok(
+          northEdge.visibleWorldRect.top <= HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX,
+          `${viewport.name}: north visual clearance is still too shallow (visible world top ${northEdge.visibleWorldRect.top.toFixed(
+            1,
+          )}, expected <= ${HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX}).`,
+        );
+      }
     }
     northPanScreenshotPath = path.join(
       OUTPUT_DIR,

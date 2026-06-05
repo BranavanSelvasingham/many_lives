@@ -6022,6 +6022,8 @@ function syncBrowserCameraProbe(
       };
 
   probe.textContent = JSON.stringify({
+    activeSpaceId: runtimeState.indices.activeSpaceId,
+    activeSpaceKind: runtimeState.indices.activeSpace?.kind ?? "street",
     cameraOffset: {
       x: Number(runtimeState.cameraOffset.x.toFixed(2)),
       y: Number(runtimeState.cameraOffset.y.toFixed(2)),
