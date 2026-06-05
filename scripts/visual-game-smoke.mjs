@@ -404,6 +404,47 @@ class CdpSession {
     );
   }
 
+  async waitForWatchModeUi(viewport) {
+    let lastState = null;
+
+    await waitFor(
+      async () => {
+        try {
+          lastState = await this.evaluate(`(() => {
+            const bodyText = document.body?.innerText ?? "";
+            const root = document.querySelector(".ml-root");
+            const compactPrimaryAction = document.querySelector(".ml-compact-primary-action");
+            return {
+              bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 900),
+              compactPrimaryActionText: compactPrimaryAction?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+              hasRowanText: bodyText.includes("Rowan"),
+              hasWatchAction:
+                bodyText.includes("Advance now") ||
+                bodyText.includes("Watch Rowan begin"),
+              rootClass: root?.className ?? "",
+              url: location.href
+            };
+          })()`);
+
+          return Boolean(
+            lastState?.hasRowanText &&
+              lastState.hasWatchAction &&
+              lastState.rootClass.includes("is-watch-mode"),
+          );
+        } catch (error) {
+          lastState = {
+            error: error instanceof Error ? error.message : String(error),
+          };
+          return false;
+        }
+      },
+      APP_READY_TIMEOUT_MS,
+      `${viewport.name}: timed out waiting for Rowan watch-mode UI. Last state: ${JSON.stringify(
+        lastState,
+      )}`,
+    );
+  }
+
   async inspectPage() {
     return this.evaluate(`(() => {
       const canvas = document.querySelector("canvas");
@@ -431,7 +472,7 @@ class CdpSession {
           whyNowRect.bottom <= window.innerHeight
       );
       return {
-        bodyText: text.slice(0, 1200),
+        bodyText: text.slice(0, 4000),
         canvas: canvasRect ? {
           height: Math.round(canvasRect.height),
           width: Math.round(canvasRect.width),
@@ -512,6 +553,21 @@ class CdpSession {
       }
       return JSON.parse(probe.textContent);
     })()`);
+  }
+
+  async waitForMapAgencyProbe(viewport) {
+    return waitFor(
+      async () => {
+        try {
+          const probe = await this.readMapAgencyProbe();
+          return probe?.intent ? probe : false;
+        } catch {
+          return false;
+        }
+      },
+      APP_READY_TIMEOUT_MS,
+      `${viewport.name}: timed out waiting for a populated in-map agency probe.`,
+    );
   }
 
   async readBrowserProbe() {
@@ -1173,6 +1229,7 @@ async function runViewportCheck(session, viewport) {
   await session.setViewport(viewport);
   await session.navigate(url);
   await session.waitForAppReady();
+  await session.waitForWatchModeUi(viewport);
   await sleep(250);
 
   const page = await session.inspectPage();
@@ -1240,7 +1297,7 @@ async function runViewportCheck(session, viewport) {
   const screenshot = await readFile(screenshotPath);
   assertPngScreenshot(screenshot, viewport);
 
-  const mapAgency = await session.readMapAgencyProbe();
+  const mapAgency = await session.waitForMapAgencyProbe(viewport);
   assert.ok(mapAgency?.intent, `${viewport.name}: missing in-map agency cue.`);
   assert.ok(
     mapAgency.target?.label || mapAgency.detail,
