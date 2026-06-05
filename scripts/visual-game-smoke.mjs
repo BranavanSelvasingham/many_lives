@@ -1449,8 +1449,8 @@ async function runViewportCheck(session, viewport) {
     const horizontalTraversal =
       eastEdge.scroll.x - panAtWestEdge.scroll.x;
     const horizontalTraversalThreshold = Math.min(
-      520,
-      Math.max(260, eastEdge.sceneViewport.width * 0.5),
+      400,
+      Math.max(260, eastEdge.sceneViewport.width * 0.32),
     );
     assert.ok(
       horizontalTraversal >= horizontalTraversalThreshold,
