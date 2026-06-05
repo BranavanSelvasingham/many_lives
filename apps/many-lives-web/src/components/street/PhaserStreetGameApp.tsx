@@ -871,6 +871,9 @@ export function PhaserStreetGameApp() {
   const rowanAutoplayEnabled = useMemo(() => {
     return isTruthyQueryValue(searchParams.get("autoplay"));
   }, [searchParams]);
+  const rowanAutoplayFrozen = useMemo(() => {
+    return isTruthyQueryValue(searchParams.get("freezeAutoplay"));
+  }, [searchParams]);
   const boundGameObserverEnabled = useMemo(() => {
     return isTruthyQueryValue(searchParams.get("observe"));
   }, [searchParams]);
@@ -1508,6 +1511,7 @@ export function PhaserStreetGameApp() {
     if (
       !game ||
       !rowanAutoplayEnabled ||
+      rowanAutoplayFrozen ||
       !autonomy?.autoContinue ||
       busyLabel ||
       optimisticPlayerPosition ||
@@ -1582,6 +1586,7 @@ export function PhaserStreetGameApp() {
     optimisticPlayerPosition,
     rowanPlayback,
     rowanAutoplayEnabled,
+    rowanAutoplayFrozen,
   ]);
 
   useEffect(() => {
@@ -2544,6 +2549,43 @@ function bindNativeCameraPanFallback(
     pulseCameraEdgeCue(runtimeState, panResult.blockedEdges, now);
   };
 
+  const browserCameraControlWindow = window as Window & {
+    __manyLivesPanCameraToEdge?: (edge: CameraEdgeName) => boolean;
+  };
+  const browserPanCameraToEdge = (
+    edge: CameraEdgeName,
+  ) => {
+    if (!runtimeState.snapshot.game) {
+      return false;
+    }
+
+    const sceneViewport = getRuntimeSceneViewport(runtimeState);
+    const panDistance = Math.max(sceneViewport.width, sceneViewport.height) * 4;
+    const panResult = adjustCameraPan(
+      runtimeState,
+      sceneViewport,
+      {
+        x:
+          edge === "east"
+            ? panDistance
+            : edge === "west"
+              ? -panDistance
+              : 0,
+        y:
+          edge === "south"
+            ? panDistance
+            : edge === "north"
+              ? -panDistance
+              : 0,
+      },
+      getRuntimeNow(),
+    );
+    pulseCameraEdgeCue(runtimeState, panResult.blockedEdges, getRuntimeNow());
+    return panResult.didMove || panResult.blockedEdges[edge];
+  };
+  browserCameraControlWindow.__manyLivesPanCameraToEdge =
+    browserPanCameraToEdge;
+
   mount.addEventListener("pointerdown", beginNativePan, { capture: true });
   mount.addEventListener("pointermove", updateNativePan, { capture: true });
   mount.addEventListener("pointerup", finishNativePan, { capture: true });
@@ -2596,6 +2638,12 @@ function bindNativeCameraPanFallback(
         capture: true,
       });
       mount.removeEventListener("wheel", panFromWheel, { capture: true });
+      if (
+        browserCameraControlWindow.__manyLivesPanCameraToEdge ===
+        browserPanCameraToEdge
+      ) {
+        delete browserCameraControlWindow.__manyLivesPanCameraToEdge;
+      }
     },
   };
 }
