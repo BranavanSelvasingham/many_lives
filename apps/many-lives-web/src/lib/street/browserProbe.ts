@@ -5,6 +5,7 @@ import type {
 import type { StreetGameState } from "./types";
 
 export type StreetBrowserMovementDiagnostics = {
+  activeSpaceId: string | null;
   npcPatrols: Array<{
     droppedWaypoints: number;
     key: string;
@@ -26,12 +27,15 @@ export type StreetBrowserMovementDiagnostics = {
       sampledPointsLegal: boolean;
       snappedEnd: boolean;
       snappedStart: boolean;
+      visualObstaclesClear: boolean;
     };
     durationMs: number;
     legal: boolean;
     progress: number;
     reachesDestination: boolean;
     sampledPointsLegal: boolean;
+    spaceId: string | null;
+    visualObstaclesClear: boolean;
     target: {
       x: number;
       y: number;
@@ -101,7 +105,12 @@ function planningTraceProbePayload(game: StreetGameState) {
   const optionPayload = (option: (typeof trace.considered)[number]) => ({
     actionId: option.actionId ?? null,
     label: option.label,
+    matchedOutcomeId: option.matchedOutcomeId ?? null,
     npcId: option.npcId ?? null,
+    planKey: option.planKey,
+    pressureId: option.pressureId ?? null,
+    pressureKind: option.pressureKind ?? null,
+    pressureLabel: option.pressureLabel ?? null,
     rationale: option.rationale,
     reason: option.reason ?? null,
     score: option.score,
@@ -133,6 +142,12 @@ function planningTraceProbePayload(game: StreetGameState) {
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
+    selectedMatchedOutcomeId: trace.selectedMatchedOutcomeId ?? null,
+    selectedPlanKey: trace.selectedPlanKey ?? null,
+    selectedPressureId: trace.selectedPressureId ?? null,
+    selectedPressureKind: trace.selectedPressureKind ?? null,
+    selectedPressureLabel: trace.selectedPressureLabel ?? null,
+    selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
   };
 }
 
@@ -284,6 +299,7 @@ export function buildStreetBrowserProbeJson({
     location: {
       id: game.player.currentLocationId ?? null,
       name: currentLocation?.name ?? game.currentScene.title,
+      spaceId: game.activeSpaceId ?? game.player.spaceId ?? null,
       x: game.player.x,
       y: game.player.y,
     },

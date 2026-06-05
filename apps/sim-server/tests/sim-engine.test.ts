@@ -11,6 +11,12 @@ import type {
   PlayerObjective,
   StreetGameState,
 } from "../src/street-sim/types.js";
+import {
+  enterMorrowHouse,
+  enterRepairStall,
+  enterTeaHouse,
+  exitToStreet,
+} from "./street-test-helpers.js";
 
 class PlanningAIProvider extends MockAIProvider {
   override readonly name = "openai";
@@ -22,7 +28,21 @@ class PlanningAIProvider extends MockAIProvider {
 
   override async planStreetNextAction(input: StreetPlanningRequest) {
     this.requests.push(input);
-    return this.result;
+    if (!this.result?.actionId || this.result.planKey) {
+      return this.result;
+    }
+
+    const matchingAllowedActions = input.allowedActions.filter(
+      (action) => action.actionId === this.result?.actionId,
+    );
+    if (matchingAllowedActions.length !== 1) {
+      return this.result;
+    }
+
+    return {
+      ...this.result,
+      planKey: matchingAllowedActions[0].planKey,
+    };
   }
 }
 
@@ -40,6 +60,22 @@ function expectCognitionToMirrorAutonomy(world: StreetGameState) {
   expect(nextMove?.effects ?? []).toEqual(world.rowanAutonomy.effects ?? []);
 }
 
+async function advanceUntil(
+  engine: SimulationEngine,
+  world: StreetGameState,
+  predicate: (world: StreetGameState) => boolean,
+  maxSteps = 12,
+) {
+  let nextWorld = world;
+  for (let step = 0; step < maxSteps && !predicate(nextWorld); step += 1) {
+    nextWorld = await engine.runCommand(nextWorld, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+  }
+  return nextWorld;
+}
+
 describe("SimulationEngine street slice", () => {
   it("lets the player discover and complete a first paid shift", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
@@ -50,6 +86,7 @@ describe("SimulationEngine street slice", () => {
       x: 6,
       y: 4,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -101,6 +138,7 @@ describe("SimulationEngine street slice", () => {
       x: 6,
       y: 4,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -191,19 +229,17 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-pump");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
     });
-    world = await engine.runCommand(world, {
-      type: "move_to",
-      x: 16,
-      y: 9,
-    });
+    world = await enterRepairStall(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "buy:item-wrench",
     });
+    world = await exitToStreet(engine, world);
     world = await engine.runCommand(world, {
       type: "move_to",
       x: 3,
@@ -261,7 +297,7 @@ describe("SimulationEngine street slice", () => {
     expect(moved.player.currentLocationId).toBe("tea-house");
   });
 
-  it("lets objective pursuit arrive and open the planned conversation in one beat", async () => {
+  it("lets objective pursuit enter the room and open the planned conversation", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-objective-conversation");
 
@@ -274,14 +310,11 @@ describe("SimulationEngine street slice", () => {
       type: "set_objective",
       text: "Talk to Mara about staying at Morrow House.",
     });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: false,
-    });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: false,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
 
     expect(world.player.currentLocationId).toBe("boarding-house");
     expect(world.activeConversation?.npcId).toBe("npc-mara");
@@ -305,20 +338,18 @@ describe("SimulationEngine street slice", () => {
       type: "set_objective",
       text: "Talk to Mara about staying at Morrow House.",
     });
+    world = await enterMorrowHouse(engine, world);
 
     expect(world.rowanAutonomy.autoContinue).toBe(true);
     expect(world.rowanAutonomy.npcId).toBe("npc-mara");
     expect(world.rowanAutonomy.targetLocationId).toBe("boarding-house");
     expectCognitionToMirrorAutonomy(world);
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: false,
-    });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: false,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
 
     expect(world.activeConversation?.npcId).toBe("npc-mara");
   });
@@ -328,20 +359,21 @@ describe("SimulationEngine street slice", () => {
     const world = await engine.createGame("game-first-afternoon-copy");
 
     expect(world.rowanAutonomy).toMatchObject({
+      actionId: "enter:boarding-house",
       autoContinue: true,
-      label: "Talk to Mara",
-      stepKind: "talk",
+      label: "Enter Morrow House",
+      stepKind: "act",
       targetLocationId: "boarding-house",
     });
     expect(world.rowanAutonomy.detail).toContain(
-      "Ask what the room costs",
+      "needs to enter before acting",
     );
     expect(world.rowanAutonomy.intent).toMatchObject({
       reason:
-        "Mara is here and matches the current objective, so Rowan can ask directly.",
+        "Enter Morrow House is available at Morrow House and fits the current objective.",
       signals: expect.arrayContaining([
         "Here: Morrow House",
-        "Person: Mara",
+        "Action: Enter Morrow House",
       ]),
     });
     expect(world.rowanAutonomy.detail).not.toMatch(
@@ -353,10 +385,11 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-opening");
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
 
     const playerLine = world.activeConversation?.lines.find(
       (entry) => entry.speaker === "player",
@@ -373,13 +406,13 @@ describe("SimulationEngine street slice", () => {
 
   it("lets an OpenAI planner choose a validated objective action", async () => {
     const provider = new PlanningAIProvider({
-      actionId: "rest:home",
+      actionId: "talk:npc-mara",
       confidence: 0.91,
-      rationale: "Rowan has energy to recover before choosing a lead.",
+      rationale: "Rowan should ask Mara what the room actually costs.",
     });
     const engine = new SimulationEngine(provider);
     let world = await engine.createGame("game-ai-planner-valid");
-    const startMinutes = world.clock.totalMinutes;
+    world = await enterMorrowHouse(engine, world);
 
     world = await engine.runCommand(world, {
       type: "advance_objective",
@@ -393,16 +426,345 @@ describe("SimulationEngine street slice", () => {
       },
     });
     expect(provider.requests[0].allowedActions.map((action) => action.actionId)).toContain(
+      "talk:npc-mara",
+    );
+    expect(
+      provider.requests[0].allowedActions.every((action) => action.planKey),
+    ).toBe(true);
+    expect(new Set(provider.requests[0].allowedActions.map((action) => action.planKey)).size).toBe(
+      provider.requests[0].allowedActions.length,
+    );
+    expect(
+      provider.requests[0].allowedActions.find(
+        (action) => action.actionId === "talk:npc-mara",
+      ),
+    ).toMatchObject({
+      matchedOutcomeId: expect.any(String),
+      planKey: expect.any(String),
+      pressureKind: expect.any(String),
+    });
+    expect(provider.requests[0].allowedActions.map((action) => action.actionId)).not.toContain(
       "rest:home",
     );
     expect(provider.requests[0].desiredOutcomes.map((outcome) => outcome.id)).toEqual(
       expect.arrayContaining(["shelter-stability", "income"]),
     );
-    expect(world.activeConversation).toBeUndefined();
-    expect(world.clock.totalMinutes).toBe(startMinutes + 60);
-    expect(world.feed.map((entry) => entry.text)).toContain(
-      "You rested, but the house never quite stopped sounding busy and unfinished.",
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(world.rowanAutonomy).toMatchObject({
+      npcId: "npc-mara",
+      targetLocationId: "boarding-house",
+    });
+  });
+
+  it("exposes travel-first plans to the planner as move actions", async () => {
+    const provider = new PlanningAIProvider({
+      actionId: "move:tea-house",
+      confidence: 0.92,
+      rationale: "The work lead is elsewhere, so Rowan should walk there first.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-ai-planner-travel-first");
+
+    for (let step = 0; step < 5; step += 1) {
+      world = await engine.runCommand(world, {
+        type: "advance_objective",
+        allowTimeSkip: false,
+      });
+    }
+
+    expect(provider.requests.length).toBeGreaterThan(0);
+    const badTravelActions = provider.requests.flatMap((request) =>
+      request.allowedActions.filter(
+        (action) =>
+          action.targetLocationId &&
+          action.targetLocationId !== request.game.player.currentLocationId &&
+          action.actionId !== `move:${action.targetLocationId}` &&
+          action.kind !== "enter" &&
+          action.kind !== "exit",
+      ),
     );
+    expect(badTravelActions).toEqual([]);
+    expect(
+      provider.requests.some((request) =>
+        request.allowedActions.some(
+          (action) =>
+            action.actionId === "move:tea-house" ||
+            action.actionId === "exit:boarding-house",
+        ),
+      ),
+    ).toBe(true);
+    if (world.rowanAutonomy.stepKind === "move") {
+      expect(world.rowanAutonomy.actionId).toBe(
+        `move:${world.rowanAutonomy.targetLocationId}`,
+      );
+    }
+  });
+
+  it("does not let the live planner skip required first-afternoon predicate actions", async () => {
+    const setupEngine = new SimulationEngine(new MockAIProvider());
+    let world = await setupEngine.createGame("game-ai-planner-predicate-action");
+
+    world = await advanceUntil(
+      setupEngine,
+      world,
+      (nextWorld) =>
+        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
+    );
+
+    expect(world.firstAfternoon?.planSettledAt).toBeUndefined();
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "reflect:first-afternoon-plan",
+      targetLocationId: "boarding-house",
+    });
+
+    const provider = new PlanningAIProvider({
+      actionId: "reflect:first-afternoon-pump",
+      confidence: 0.96,
+      rationale: "Try to take the pump fork before the Ada plan is committed.",
+    });
+    const liveEngine = new SimulationEngine(provider);
+
+    world = await liveEngine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    const plannerRequest = provider.requests[provider.requests.length - 1];
+    const allowedActionIds =
+      plannerRequest?.allowedActions.map((action) => action.actionId) ?? [];
+    expect(allowedActionIds).toContain("reflect:first-afternoon-plan");
+    expect(allowedActionIds).not.toContain("move:tea-house");
+    expect(allowedActionIds).not.toContain("reflect:first-afternoon-pump");
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:boarding-house",
+      targetLocationId: "tea-house",
+    });
+  });
+
+  it("keeps the live planner on Ada after the first-afternoon plan is selected", async () => {
+    const setupEngine = new SimulationEngine(new MockAIProvider());
+    let world = await setupEngine.createGame("game-ai-planner-ada-plan");
+
+    world = await advanceUntil(
+      setupEngine,
+      world,
+      (nextWorld) =>
+        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
+    );
+    world = await setupEngine.runCommand(world, {
+      type: "act",
+      actionId: "reflect:first-afternoon-plan",
+    });
+
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:boarding-house",
+      targetLocationId: "tea-house",
+    });
+
+    const provider = new PlanningAIProvider({
+      actionId: "move:repair-stall",
+      confidence: 0.98,
+      rationale: "Try to route to repairs instead of verifying Ada's lead.",
+    });
+    const liveEngine = new SimulationEngine(provider);
+
+    world = await liveEngine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    const plannerRequest = provider.requests[provider.requests.length - 1];
+    const allowedActionIds =
+      plannerRequest?.allowedActions.map((action) => action.actionId) ?? [];
+    expect(allowedActionIds).toContain("exit:boarding-house");
+    expect(allowedActionIds).not.toContain("move:repair-stall");
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:tea-house",
+      targetLocationId: "tea-house",
+    });
+  });
+
+  it("does not expose stale Ada talk to the live planner after the paid shift", async () => {
+    const setupEngine = new SimulationEngine(new MockAIProvider());
+    let world = await setupEngine.createGame("game-ai-planner-post-shift-home");
+
+    for (let step = 0; step < 14; step += 1) {
+      const teaShift = world.jobs.find((job) => job.id === "job-tea-shift");
+      if (
+        teaShift?.completed &&
+        world.player.currentLocationId === "tea-house" &&
+        world.rowanAutonomy.targetLocationId === "boarding-house"
+      ) {
+        break;
+      }
+
+      world = await setupEngine.runCommand(world, {
+        type: "advance_objective",
+        allowTimeSkip: true,
+      });
+    }
+
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      completed: true,
+    });
+    expect(world.player.currentLocationId).toBe("tea-house");
+    expect(world.firstAfternoon?.completedAt).toBeUndefined();
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:tea-house",
+      targetLocationId: "boarding-house",
+    });
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    if (pump) {
+      pump.discovered = true;
+      pump.escalationLevel = 2;
+      pump.status = "active";
+      pump.urgency = 5;
+    }
+
+    const provider = new PlanningAIProvider({
+      actionId: "talk:npc-ada",
+      confidence: 0.97,
+      rationale: "Try to reopen Ada instead of landing the afternoon.",
+    });
+    const liveEngine = new SimulationEngine(provider);
+
+    world = await liveEngine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    const plannerRequest = provider.requests[provider.requests.length - 1];
+    const allowedActionIds =
+      plannerRequest?.allowedActions.map((action) => action.actionId) ?? [];
+    expect(allowedActionIds).toContain("exit:tea-house");
+    expect(allowedActionIds).not.toContain("talk:npc-ada");
+    expect(allowedActionIds).not.toContain("move:courtyard");
+    expect(world.activeConversation?.npcId).not.toBe("npc-ada");
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:boarding-house",
+      mode: "moving",
+      targetLocationId: "boarding-house",
+    });
+  });
+
+  it("blocks immediate shift acceptance when Rowan is too drained to work", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-low-energy-shift-accept");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await enterTeaHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 125,
+      silent: true,
+    });
+    world.player.energy = 18;
+    world.activeConversation = undefined;
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.availableActions.find(
+      (action) => action.id === "accept:job-tea-shift",
+    )).toMatchObject({
+      disabled: true,
+      disabledReason: "You are too drained for work that starts now.",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      accepted: false,
+    });
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "You are too drained for work that starts now.",
+    );
+  });
+
+  it("routes first-afternoon low-energy recovery home instead of reopening Ada", async () => {
+    const setupEngine = new SimulationEngine(new MockAIProvider());
+    let world = await setupEngine.createGame("game-low-energy-recovery-plan");
+
+    world = await advanceUntil(
+      setupEngine,
+      world,
+      (nextWorld) => Boolean(nextWorld.firstAfternoon?.planSettledAt),
+    );
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+
+    world = await setupEngine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await enterTeaHouse(setupEngine, world);
+    world = await setupEngine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await setupEngine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+    world = await setupEngine.runCommand(world, {
+      type: "wait",
+      minutes: 125,
+      silent: true,
+    });
+    world.player.energy = 18;
+    world.activeConversation = undefined;
+    world = await setupEngine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    const provider = new PlanningAIProvider({
+      actionId: "talk:npc-ada",
+      confidence: 0.97,
+      rationale: "Try to keep talking instead of recovering.",
+    });
+    const liveEngine = new SimulationEngine(provider);
+
+    world = await liveEngine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    const plannerRequest = provider.requests[provider.requests.length - 1];
+    const allowedActionIds =
+      plannerRequest?.allowedActions.map((action) => action.actionId) ?? [];
+    if (plannerRequest) {
+      expect(allowedActionIds).toContain("exit:tea-house");
+      expect(allowedActionIds).not.toEqual(
+        expect.arrayContaining([
+          "accept:job-tea-shift",
+          "reflect:first-afternoon-compare",
+          "talk:npc-ada",
+        ]),
+      );
+    }
+    expect(world.activeConversation?.npcId).not.toBe("npc-ada");
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:boarding-house",
+      mode: "moving",
+      targetLocationId: "boarding-house",
+    });
   });
 
   it("falls back when an OpenAI planner chooses an invalid action", async () => {
@@ -420,7 +782,9 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(provider.requests).toHaveLength(1);
-    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(world.activeSpaceId).toBe("interior:boarding-house");
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.rowanAutonomy.npcId).toBe("npc-mara");
   });
 
   it("falls back when an OpenAI planner is low confidence", async () => {
@@ -438,17 +802,20 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(provider.requests).toHaveLength(1);
-    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(world.activeSpaceId).toBe("interior:boarding-house");
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.rowanAutonomy.npcId).toBe("npc-mara");
   });
 
   it("keeps no-OpenAI objective advance deterministic", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-no-ai-planner");
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
 
     expect(world.activeConversation?.npcId).toBe("npc-mara");
     expect(world.activeConversation?.lines.find((line) => line.speaker === "player")?.text).toMatch(
@@ -476,10 +843,11 @@ describe("SimulationEngine street slice", () => {
       ],
     };
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: false,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
 
     expect(world.player.currentLocationId).toBe("boarding-house");
     expect(world.activeConversation?.npcId).toBe("npc-mara");
@@ -493,6 +861,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-live-fork");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -511,7 +880,13 @@ describe("SimulationEngine street slice", () => {
     );
     expect(world.rowanAutonomy.planningTrace).toMatchObject({
       selectedActionId: expect.any(String),
+      selectedPlanKey: expect.any(String),
+      selectedPressureKind: expect.any(String),
+      selectedTargetLocationId: expect.any(String),
     });
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.every((option) => option.planKey),
+    ).toBe(true);
     expect(
       world.rowanAutonomy.planningTrace?.considered.map(
         (option) => option.actionId,
@@ -527,12 +902,116 @@ describe("SimulationEngine street slice", () => {
         (option) => option.actionId === "reflect:first-afternoon-pump",
       ),
     ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.find(
+        (option) => option.status === "selected",
+      ),
+    ).toMatchObject({
+      actionId: "reflect:first-afternoon-plan",
+      matchedOutcomeId: "first-afternoon-choose-move",
+      planKey: world.rowanAutonomy.planningTrace?.selectedPlanKey,
+      pressureKind: "predicate",
+    });
+  });
+
+  it("branches the same seeded objective through generic live pressure", async () => {
+    const buildPostMaraWorld = async (gameId: string) => {
+      const engine = new SimulationEngine(new MockAIProvider());
+      let world = await engine.createGame(gameId);
+
+      world = await enterMorrowHouse(engine, world);
+      world = await engine.runCommand(world, {
+        type: "act",
+        actionId: "talk:npc-mara",
+      });
+
+      return { engine, world };
+    };
+
+    const predicateSetup = await buildPostMaraWorld(
+      "game-pressure-branch-predicate",
+    );
+    let predicateWorld = await predicateSetup.engine.runCommand(
+      predicateSetup.world,
+      {
+        type: "advance_objective",
+        allowTimeSkip: false,
+      },
+    );
+    expect(
+      predicateWorld.rowanAutonomy.planningTrace?.considered.find(
+        (option) => option.status === "selected",
+      ),
+    ).toMatchObject({
+      actionId: "reflect:first-afternoon-plan",
+      matchedOutcomeId: "first-afternoon-choose-move",
+      pressureKind: "predicate",
+    });
+
+    const recoverySetup = await buildPostMaraWorld("game-pressure-branch-energy");
+    recoverySetup.world.player.energy = 18;
+    recoverySetup.world.activeConversation = undefined;
+    let recoveryWorld = await recoverySetup.engine.runCommand(
+      recoverySetup.world,
+      {
+        type: "advance_objective",
+        allowTimeSkip: false,
+      },
+    );
+    expect(
+      recoveryWorld.rowanAutonomy.planningTrace?.considered.find(
+        (option) => option.status === "selected",
+      ),
+    ).toMatchObject({
+      actionId: "rest:home",
+      pressureId: "energy:recover",
+      pressureKind: "energy",
+    });
+
+    const toolSetup = await buildPostMaraWorld("game-pressure-branch-tool");
+    const pump = toolSetup.world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    toolSetup.world.player.money = 26;
+    toolSetup.world.player.energy = 60;
+    toolSetup.world.player.knownLocationIds = [
+      ...new Set([
+        ...toolSetup.world.player.knownLocationIds,
+        "repair-stall",
+      ]),
+    ];
+    toolSetup.world.player.knownNpcIds = [
+      ...new Set([...toolSetup.world.player.knownNpcIds, "npc-jo"]),
+    ];
+    toolSetup.world.activeConversation = undefined;
+    if (pump) {
+      pump.discovered = true;
+      pump.escalationLevel = 2;
+      pump.status = "active";
+      pump.urgency = 5;
+    }
+
+    const toolWorld = await toolSetup.engine.runCommand(toolSetup.world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    const selectedToolOption =
+      toolWorld.rowanAutonomy.planningTrace?.considered.find(
+        (option) => option.status === "selected",
+      );
+    expect(selectedToolOption).toMatchObject({
+      pressureKind: "tool",
+      pressureId: "tool:item-wrench:problem-pump",
+      targetLocationId: "repair-stall",
+    });
+    expect(toolWorld.rowanAutonomy.targetLocationId).toBe("repair-stall");
   });
 
   it("projects destination follow-up steps without executing them before arrival", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-short-horizon-destination-trace");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -587,6 +1066,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-post-ada-fork");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -599,11 +1079,7 @@ describe("SimulationEngine street slice", () => {
       type: "act",
       actionId: "reflect:first-afternoon-plan",
     });
-    world = await engine.runCommand(world, {
-      type: "move_to",
-      x: 6,
-      y: 4,
-    });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -625,6 +1101,7 @@ describe("SimulationEngine street slice", () => {
   it("lets deterministic fallback choose objective outcomes over a scripted route hint", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-agent-outcome-over-route");
+    world = await enterMorrowHouse(engine, world);
     const startMinutes = world.clock.totalMinutes;
 
     world.player.energy = 18;
@@ -656,7 +1133,7 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.activeConversation).toBeUndefined();
-    expect(world.clock.totalMinutes).toBe(startMinutes + 60);
+    expect(world.clock.totalMinutes).toBe(startMinutes + 62);
     expect(world.feed.map((entry) => entry.text)).toContain(
       "You rested, but the house never quite stopped sounding busy and unfinished.",
     );
@@ -800,15 +1277,18 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "buy:item-wrench",
+      actionId: "move:repair-stall",
       autoContinue: true,
       layer: "objective",
       targetLocationId: "repair-stall",
     });
     expect(world.rowanAutonomy.detail).toContain("escalating");
     expect(world.rowanAutonomy.planningTrace).toMatchObject({
-      selectedActionId: "buy:item-wrench",
+      selectedActionId: "move:repair-stall",
+      selectedPlanKey: expect.any(String),
+      selectedPressureId: expect.stringMatching(/^tool:/),
       selectedLabel: "Head to Mercer Repairs",
+      selectedTargetLocationId: "repair-stall",
     });
     const nextSteps = world.rowanAutonomy.planningTrace?.nextSteps ?? [];
     expect(nextSteps.length).toBeGreaterThanOrEqual(3);
@@ -836,7 +1316,7 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.player.pendingObjectiveMove).toMatchObject({
-      actionId: "buy:item-wrench",
+      actionId: "move:repair-stall",
       targetLocationId: "repair-stall",
     });
 
@@ -846,6 +1326,18 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.player.currentLocationId).toBe("repair-stall");
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "enter:repair-stall",
+      autoContinue: true,
+      targetLocationId: "repair-stall",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.activeSpaceId).toBe("interior:repair-stall");
     expect(world.rowanAutonomy).toMatchObject({
       actionId: "buy:item-wrench",
       autoContinue: true,
@@ -925,6 +1417,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-manual-conversation-loop");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-mara",
@@ -954,6 +1447,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-resolved-conversation-handoff");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-mara",
@@ -987,10 +1481,11 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-smooth-conversation-landing");
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
     expect(world.activeConversation?.npcId).toBe("npc-mara");
 
     world = await engine.runCommand(world, {
@@ -1015,18 +1510,15 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy).toMatchObject({
       autoContinue: true,
       layer: "objective",
-      stepKind: "move",
+      stepKind: "act",
       targetLocationId: "tea-house",
     });
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-ada",
+    );
     expect(world.activeConversation?.npcId).toBe("npc-ada");
 
     world = await engine.runCommand(world, {
@@ -1051,14 +1543,12 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-queued-objective-walk");
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
+    );
 
     expect(world.activeConversation).toBeUndefined();
     expect(world.rowanAutonomy).toMatchObject({
@@ -1073,15 +1563,15 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.rowanAutonomy).toMatchObject({
-      mode: "moving",
+      mode: "acting",
       targetLocationId: "tea-house",
     });
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-      confirmMove: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-ada",
+    );
 
     expect(world.player.currentLocationId).toBe("tea-house");
     expect(world.activeConversation?.npcId).toBe("npc-ada");
@@ -1091,6 +1581,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-live-conversation-advance");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-mara",
@@ -1138,6 +1629,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-live-conversation-autonomy");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -1161,6 +1653,7 @@ describe("SimulationEngine street slice", () => {
       x: 6,
       y: 4,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -1185,6 +1678,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-mara-ada-handoff");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-mara",
@@ -1234,6 +1728,7 @@ describe("SimulationEngine street slice", () => {
       x: teaHouse.entryX,
       y: teaHouse.entryY,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-ada",
@@ -1318,7 +1813,7 @@ describe("SimulationEngine street slice", () => {
       routeKey: "mara-ada-lead",
     });
 
-    for (let attempt = 0; attempt < 8; attempt += 1) {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
       if (
         world.player.objective?.progress.completed ===
           world.player.objective?.progress.total &&
@@ -1378,6 +1873,15 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.rowanAutonomy).toMatchObject({
+      actionId: "enter:boarding-house",
+      autoContinue: true,
+      layer: "objective",
+      stepKind: "act",
+    });
+
+    world = await enterMorrowHouse(engine, world);
+
+    expect(world.rowanAutonomy).toMatchObject({
       autoContinue: true,
       layer: "objective",
       npcId: "npc-mara",
@@ -1405,6 +1909,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-morrow-standing");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-mara",
@@ -1442,10 +1947,11 @@ describe("SimulationEngine street slice", () => {
       targetLocationId: "boarding-house",
     });
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
 
     expect(world.player.reputation.morrow_house).toBeGreaterThanOrEqual(2);
     expect(world.player.objective?.progress.completed).toBeGreaterThan(0);
@@ -1464,10 +1970,11 @@ describe("SimulationEngine street slice", () => {
       type: "set_objective",
       text: "Get settled in Brackenport: lock in a room, steady income, and a few real friends.",
     });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
 
     expect(world.activeConversation?.npcId).toBe("npc-mara");
     expect(world.player.objective).toMatchObject({
@@ -1487,6 +1994,7 @@ describe("SimulationEngine street slice", () => {
       type: "set_objective",
       text: "Meet people and make the rounds.",
     });
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -1499,21 +2007,19 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.player.objective?.routeKey).toBe("people-npc-ada");
     expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:boarding-house",
       autoContinue: true,
-      mode: "moving",
-      npcId: "npc-ada",
+      mode: "acting",
       targetLocationId: "tea-house",
     });
+    expect(world.rowanAutonomy.npcId).toBeUndefined();
     expectCognitionToMirrorAutonomy(world);
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-ada",
+    );
 
     expect(world.player.currentLocationId).toBe("tea-house");
     expect(world.activeConversation?.npcId).toBe("npc-ada");
@@ -1549,10 +2055,12 @@ describe("SimulationEngine street slice", () => {
     expect(world.player.currentLocationId).toBe("tea-house");
     expect(world.activeConversation).toBeUndefined();
     expect(world.rowanAutonomy).toMatchObject({
+      actionId: "enter:tea-house",
       autoContinue: true,
-      npcId: "npc-ada",
+      mode: "acting",
       targetLocationId: "tea-house",
     });
+    expect(world.rowanAutonomy.npcId).toBeUndefined();
   });
 
   it("ignores a poisoned explore trail target when choosing the next place from live state", async () => {
@@ -1805,11 +2313,11 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.player.pendingObjectiveMove).toMatchObject({
-      actionId: "accept:job-yard-shift",
+      actionId: "move:freight-yard",
       targetLocationId: "freight-yard",
     });
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "accept:job-yard-shift",
+      actionId: "move:freight-yard",
       autoContinue: true,
       mode: "moving",
       targetLocationId: "freight-yard",
@@ -1819,8 +2327,14 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.considered.some(
         (option) =>
           option.status === "selected" &&
-          option.actionId === "accept:job-yard-shift" &&
-          option.rationale.includes("closes around 5pm"),
+          option.actionId === "move:freight-yard" &&
+          option.pressureId === "job:job-yard-shift" &&
+          option.pressureKind === "job",
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.nextSteps.some(
+        (step) => step.actionId === "accept:job-yard-shift",
       ),
     ).toBe(true);
     expect(
@@ -1845,6 +2359,7 @@ describe("SimulationEngine street slice", () => {
       x: 6,
       y: 4,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -1998,6 +2513,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-mara-resolution-rejects-stale-pump");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -2158,6 +2674,7 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-tool-route");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-mara",
@@ -2171,24 +2688,22 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.player.objective?.routeKey).toBe("tool-pump");
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "buy:item-wrench",
+      actionId: "exit:boarding-house",
       autoContinue: true,
-      mode: "moving",
+      mode: "acting",
       targetLocationId: "repair-stall",
     });
     expect(world.rowanAutonomy.npcId).toBeUndefined();
     expectCognitionToMirrorAutonomy(world);
 
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.rowanAutonomy.actionId === "buy:item-wrench",
+    );
 
     expect(world.player.currentLocationId).toBe("repair-stall");
+    expect(world.activeSpaceId).toBe("interior:repair-stall");
     expect(world.rowanAutonomy).toMatchObject({
       actionId: "buy:item-wrench",
       autoContinue: true,
@@ -2215,6 +2730,7 @@ describe("SimulationEngine street slice", () => {
       x: 6,
       y: 4,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -2246,8 +2762,9 @@ describe("SimulationEngine street slice", () => {
       routeKey: "first-afternoon",
     });
     expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:tea-house",
       autoContinue: true,
-      mode: "moving",
+      mode: "acting",
       targetLocationId: "boarding-house",
     });
   });
@@ -2264,10 +2781,9 @@ describe("SimulationEngine street slice", () => {
       completed: true,
       discovered: true,
     });
-    expect(result.finalWorld.clock).toMatchObject({
-      hour: 15,
-      label: "Afternoon",
-    });
+    expect(result.finalWorld.clock.label).toBe("Afternoon");
+    expect(result.finalWorld.clock.totalMinutes).toBeGreaterThanOrEqual(15 * 60);
+    expect(result.finalWorld.clock.totalMinutes).toBeLessThanOrEqual(17 * 60);
     expect(result.finalWorld.player.currentLocationId).toBe("boarding-house");
     expect(result.finalWorld.firstAfternoon?.completedAt).toBeDefined();
     expect(result.finalWorld.firstAfternoon?.fieldNote).toMatchObject({

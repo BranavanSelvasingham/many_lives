@@ -2,6 +2,8 @@ export type TileKind =
   | "lane"
   | "plaza"
   | "stoop"
+  | "floor"
+  | "wall"
   | "roof"
   | "workyard"
   | "courtyard"
@@ -16,6 +18,78 @@ export interface MapTile {
   walkable: boolean;
   locationId?: string;
   district?: string;
+}
+
+export interface GridPoint {
+  x: number;
+  y: number;
+}
+
+export type SpaceKind = "street" | "interior";
+
+export type SpaceObjectKind =
+  | "wall"
+  | "counter"
+  | "table"
+  | "chair"
+  | "bed"
+  | "shelf"
+  | "bench"
+  | "workbench"
+  | "stove"
+  | "desk"
+  | "rug";
+
+export interface SpaceObject {
+  id: string;
+  kind: SpaceObjectKind;
+  label?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  solid: boolean;
+}
+
+export type SpaceAnchorKind = "spawn" | "npc" | "action" | "portal";
+
+export interface SpaceAnchor {
+  id: string;
+  kind: SpaceAnchorKind;
+  x: number;
+  y: number;
+  label?: string;
+  npcId?: string;
+  actionId?: string;
+}
+
+export interface SpacePortal {
+  id: string;
+  label: string;
+  locationId: string;
+  actionId: string;
+  reversePortalId: string;
+  fromSpaceId: string;
+  from: GridPoint;
+  toSpaceId: string;
+  to: GridPoint;
+}
+
+export interface SpaceDefinition {
+  id: string;
+  name: string;
+  kind: SpaceKind;
+  locationId?: string;
+  width: number;
+  height: number;
+  tiles: MapTile[];
+  objects: SpaceObject[];
+  anchors: SpaceAnchor[];
+  portals: SpacePortal[];
+  camera?: {
+    minZoom?: number;
+    maxZoom?: number;
+  };
 }
 
 export interface MapLabel {
@@ -252,6 +326,7 @@ export interface PlayerState {
   id: string;
   name: string;
   backstory: string;
+  spaceId?: string;
   x: number;
   y: number;
   currentLocationId?: string;
@@ -284,6 +359,7 @@ export interface NpcState {
   summary: string;
   narrative: NpcNarrativeProfile;
   currentLocationId: string;
+  currentSpaceId?: string;
   trust: number;
   openness: number;
   known: boolean;
@@ -296,6 +372,7 @@ export interface NpcState {
   memory: string[];
   schedule: Array<{
     locationId: string;
+    spaceId?: string;
     fromHour: number;
     toHour: number;
   }>;
@@ -382,6 +459,7 @@ export interface FeedEntry {
 }
 
 export interface SceneSummary {
+  spaceId?: string;
   locationId?: string;
   title: string;
   description: string;
@@ -408,6 +486,8 @@ export interface ActionOption {
     | "talk"
     | "accept_job"
     | "work_job"
+    | "enter"
+    | "exit"
     | "buy"
     | "contribute"
     | "solve"
@@ -415,6 +495,9 @@ export interface ActionOption {
     | "reflect"
     | "inspect";
   emphasis: "low" | "medium" | "high";
+  spaceId?: string;
+  targetAnchorId?: string;
+  targetLocationId?: string;
   matchesObjective?: boolean;
   disabled?: boolean;
   disabledReason?: string;
@@ -458,6 +541,11 @@ export interface RowanAutonomyIntent {
 export interface RowanPlanningTraceOption {
   actionId?: string;
   label: string;
+  matchedOutcomeId?: string;
+  pressureId?: string;
+  pressureKind?: string;
+  pressureLabel?: string;
+  planKey: string;
   rationale: string;
   reason?: string;
   score: number;
@@ -494,6 +582,12 @@ export interface RowanPlanningTrace {
   rejected: RowanPlanningTraceOption[];
   selectedActionId?: string;
   selectedLabel?: string;
+  selectedMatchedOutcomeId?: string;
+  selectedPlanKey?: string;
+  selectedPressureId?: string;
+  selectedPressureKind?: string;
+  selectedPressureLabel?: string;
+  selectedTargetLocationId?: string;
 }
 
 export interface RowanAutonomyState {
@@ -520,9 +614,11 @@ export interface StreetGameState {
   districtName: string;
   districtNarrative: SettingNarrativeProfile;
   visualSceneId?: string;
+  activeSpaceId?: string;
   currentTime: string;
   clock: ClockState;
   map: CityMap;
+  spaces?: SpaceDefinition[];
   locations: LocationState[];
   player: PlayerState;
   npcs: NpcState[];

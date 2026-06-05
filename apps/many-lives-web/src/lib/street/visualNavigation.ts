@@ -31,6 +31,14 @@ type VisualNavigationScene = {
     columnCenters: number[];
     rowCenters: number[];
   };
+  surfaceDraft?: {
+    cellSize: number;
+    overrides: Array<{
+      col: number;
+      kind: string;
+      row: number;
+    }>;
+  };
 };
 
 const CELL = 40;
@@ -53,6 +61,8 @@ const BLOCKING_LANDMARK_MODULE_KINDS = new Set([
   "service_bay",
   "wall_band",
 ]);
+const BLOCKING_SURFACE_MATERIAL_KINDS = new Set(["bushes", "trees"]);
+const WORLD_PATH_OBSTACLE_SAMPLE_SPACING = 8;
 
 export type VisualRouteDiagnostics = {
   blockedByVisualScene: number;
@@ -61,6 +71,7 @@ export type VisualRouteDiagnostics = {
   sampledPointsLegal: boolean;
   snappedEnd: boolean;
   snappedStart: boolean;
+  visualObstaclesClear: boolean;
 };
 
 export type VisualRouteResult = {
@@ -215,7 +226,15 @@ export function resolveVisualRoute({
     worldPath,
     walkableRuntimePoints,
   );
-  const legal = reachesDestination && sampledPointsLegal && tilePath.length > 0;
+  const visualObstaclesClear = isVisualWorldPathClearOfObstacles(
+    worldPath,
+    visualScene,
+  );
+  const legal =
+    reachesDestination &&
+    sampledPointsLegal &&
+    visualObstaclesClear &&
+    tilePath.length > 0;
 
   return {
     diagnostics: {
@@ -231,6 +250,7 @@ export function resolveVisualRoute({
         ? resolvedStart.tile.x !== Math.round(start.x) ||
           resolvedStart.tile.y !== Math.round(start.y)
         : false,
+      visualObstaclesClear,
     },
     distance: pathDistance(tilePath),
     reachesDestination,
@@ -334,10 +354,49 @@ function collectVisualSceneBlockingRects(scene: VisualNavigationScene) {
           BLOCKING_LANDMARK_INSET_BY_STYLE[landmark.style] ?? 0,
         ),
       ),
+    ...scene.landmarks
+      .filter((landmark) => landmark.style === "square")
+      .map((landmark) => squareFountainBlockingRect(landmark.rect)),
     ...scene.landmarkModules
       .filter((module) => BLOCKING_LANDMARK_MODULE_KINDS.has(module.kind))
       .map((module) => insetVisualRect(module.rect, 8)),
+    ...collectSurfaceDraftBlockingRects(scene),
   ].filter((rect) => rect.width > 1 && rect.height > 1);
+}
+
+function squareFountainBlockingRect(rect: VisualRect): VisualRect {
+  const radius = Math.min(rect.width, rect.height) * 0.18 + 32;
+  return rectFromCenter(
+    {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+    },
+    radius * 2,
+    radius * 2,
+    radius,
+  );
+}
+
+function collectSurfaceDraftBlockingRects(scene: VisualNavigationScene) {
+  const surface = scene.surfaceDraft;
+  if (!surface) {
+    return [];
+  }
+
+  return surface.overrides
+    .filter((cell) => BLOCKING_SURFACE_MATERIAL_KINDS.has(cell.kind))
+    .map((cell) =>
+      insetVisualRect(
+        {
+          height: surface.cellSize,
+          radius: 8,
+          width: surface.cellSize,
+          x: cell.col * surface.cellSize,
+          y: cell.row * surface.cellSize,
+        },
+        4,
+      ),
+    );
 }
 
 function insetVisualRect(rect: VisualRect, inset: number): VisualRect {
@@ -351,6 +410,21 @@ function insetVisualRect(rect: VisualRect, inset: number): VisualRect {
     width,
     x: rect.x + inset,
     y: rect.y + inset,
+  };
+}
+
+function rectFromCenter(
+  center: Point,
+  width: number,
+  height: number,
+  radius?: number,
+): VisualRect {
+  return {
+    height,
+    radius,
+    width,
+    x: center.x - width / 2,
+    y: center.y - height / 2,
   };
 }
 
@@ -376,6 +450,62 @@ function pointInsideVisualRect(point: Point, rect: VisualRect) {
     point.x > rect.x + rect.width ||
     point.y > rect.y + rect.height
   );
+}
+
+function isVisualWorldPathClearOfObstacles(
+  worldPath: Point[],
+  visualScene: VisualNavigationScene | null,
+) {
+  if (!visualScene || worldPath.length === 0) {
+    return true;
+  }
+
+  const blockingRects = collectVisualSceneBlockingRects(visualScene);
+  if (blockingRects.length === 0) {
+    return true;
+  }
+
+  for (let index = 0; index < worldPath.length - 1; index += 1) {
+    if (
+      visualSegmentIntersectsBlockingRects(
+        worldPath[index],
+        worldPath[index + 1],
+        blockingRects,
+      )
+    ) {
+      return false;
+    }
+  }
+
+  return !worldPath.some((point) =>
+    blockingRects.some((rect) => pointInsideVisualRect(point, rect)),
+  );
+}
+
+function visualSegmentIntersectsBlockingRects(
+  from: Point,
+  to: Point,
+  blockingRects: VisualRect[],
+) {
+  const distance = distanceBetween(from, to);
+  const steps = Math.max(
+    1,
+    Math.ceil(distance / WORLD_PATH_OBSTACLE_SAMPLE_SPACING),
+  );
+
+  for (let step = 0; step <= steps; step += 1) {
+    const progress = step / steps;
+    const point = {
+      x: from.x + (to.x - from.x) * progress,
+      y: from.y + (to.y - from.y) * progress,
+    };
+
+    if (blockingRects.some((rect) => pointInsideVisualRect(point, rect))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function interpolateAnchors(anchors: number[], value: number) {

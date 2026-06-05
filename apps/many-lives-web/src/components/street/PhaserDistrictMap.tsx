@@ -139,11 +139,13 @@ type RuntimeState = {
 const TILE_COLORS: Record<TileKind, number> = {
   courtyard: 0x48614d,
   dock: 0x6a5741,
+  floor: 0xb9b19b,
   garden: 0x456947,
   lane: 0x52636e,
   plaza: 0x7d715d,
   roof: 0x171c21,
   stoop: 0x5a6771,
+  wall: 0x354648,
   water: 0x346580,
   workyard: 0x716856,
 };

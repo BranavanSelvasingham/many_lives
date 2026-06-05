@@ -15,11 +15,13 @@ const TILE_NOISE_SCALE = 0.42;
 const TILE_COLORS: Record<TileKind, number> = {
   courtyard: 0xc4b595,
   dock: 0x8b6848,
+  floor: 0xb9b19b,
   garden: 0x52784f,
   lane: 0xc7b9a1,
   plaza: 0xd8cbb2,
   roof: 0x2f3b42,
   stoop: 0xb8ab91,
+  wall: 0x354648,
   water: 0x2f6d83,
   workyard: 0xa89276,
 };

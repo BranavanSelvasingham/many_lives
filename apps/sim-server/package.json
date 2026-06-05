@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "node ../../scripts/run-sim-dev.mjs",
     "dev:watch": "node --watch --import tsx src/index.ts",
+    "live:openai": "tsx src/ai/openaiLiveSmoke.ts",
+    "live:openai:rowan": "tsx src/sim/rowanLiveOpenAISmoke.ts",
     "playtest:rowan": "tsx src/sim/rowanLoopSmoke.ts",
     "start": "node --import tsx src/index.ts",
     "test": "vitest run",

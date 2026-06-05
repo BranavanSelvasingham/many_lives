@@ -10,6 +10,7 @@ import {
   resolvePendingConversationTarget,
   resolveRowanRailNpcSelection,
 } from "../../many-lives-web/src/lib/street/rowanAutonomy.js";
+import { enterMorrowHouse } from "./street-test-helpers.js";
 
 describe("Rowan autonomy helper seams", () => {
   it("keeps pending conversation state aligned with the current source", async () => {
@@ -20,6 +21,7 @@ describe("Rowan autonomy helper seams", () => {
       type: "set_objective",
       text: "Talk to Mara about staying at Morrow House.",
     });
+    world = await enterMorrowHouse(engine, world);
 
     expect(
       resolvePendingConversationTarget({
@@ -69,6 +71,7 @@ describe("Rowan autonomy helper seams", () => {
       type: "set_objective",
       text: "Talk to Mara about staying at Morrow House.",
     });
+    world = await enterMorrowHouse(engine, world);
 
     expect(buildObjectiveAutoContinueKey(world)).toBe(
       `${world.id}:${world.rowanAutonomy.key}`,
@@ -111,6 +114,7 @@ describe("Rowan autonomy helper seams", () => {
       type: "set_objective",
       text: "Talk to Mara about staying at Morrow House.",
     });
+    world = await enterMorrowHouse(engine, world);
 
     const staleWorld = {
       ...world,
@@ -140,6 +144,7 @@ describe("Rowan autonomy helper seams", () => {
       type: "set_objective",
       text: "Talk to Mara about staying at Morrow House.",
     });
+    world = await enterMorrowHouse(engine, world);
 
     expect(
       resolveRowanRailNpcSelection({
@@ -179,7 +184,7 @@ describe("Rowan autonomy helper seams", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-rowan-rail-finished-thread");
 
-    for (let index = 0; index < 16; index += 1) {
+    for (let index = 0; index < 24; index += 1) {
       world = await engine.runCommand(world, {
         type: "advance_objective",
         allowTimeSkip: true,
@@ -205,6 +210,7 @@ describe("Rowan autonomy helper seams", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-rowan-rail-thread-keys");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "speak",
       npcId: "npc-mara",

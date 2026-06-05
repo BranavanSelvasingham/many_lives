@@ -14,6 +14,8 @@
     "visual:game": "node scripts/visual-game-smoke.mjs",
     "harness": "node scripts/app-harness.mjs",
     "harness:quick": "node scripts/app-harness.mjs --profile quick",
+    "live:openai": "corepack pnpm --filter @many-lives/sim-server live:openai",
+    "live:openai:rowan": "corepack pnpm --filter @many-lives/sim-server live:openai:rowan",
     "deploy:check": "bash scripts/check-manylives-deploy.sh",
     "test": "node scripts/app-harness.mjs --profile ci",
     "lint": "corepack pnpm --filter @many-lives/sim-server lint && corepack pnpm --filter @many-lives/many-lives-web lint",

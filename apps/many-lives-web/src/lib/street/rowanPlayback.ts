@@ -278,11 +278,19 @@ export function deriveRowanPlaybackBeats(
     nextGame.clock.totalMinutes - previousGame.clock.totalMinutes;
   const energyDelta = nextGame.player.energy - previousGame.player.energy;
   const moneyDelta = nextGame.player.money - previousGame.player.money;
+  const activeSpaceChanged =
+    previousGame.activeSpaceId !== nextGame.activeSpaceId;
 
-  if (playerMoveDistance > 0) {
+  if (playerMoveDistance > 0 && !activeSpaceChanged) {
     const moveTargetName =
       locationNameForId(nextGame, nextGame.player.currentLocationId) ??
       "the next stop";
+    const movingWithinInterior =
+      previousGame.activeSpaceId?.startsWith("interior:") &&
+      previousGame.activeSpaceId === nextGame.activeSpaceId;
+    const moveTitle = movingWithinInterior
+      ? `Moving inside ${moveTargetName}`
+      : `Walking to ${moveTargetName}`;
     beats.push({
       blocking: true,
       detail:
@@ -292,12 +300,34 @@ export function deriveRowanPlaybackBeats(
       key: `move:${nextGame.currentTime}:${nextGame.player.x}:${nextGame.player.y}:${nextGame.rowanAutonomy?.key ?? "idle"}`,
       kind: "move",
       locationId: nextGame.player.currentLocationId,
-      title: `Walking to ${moveTargetName}`,
+      title: moveTitle,
       tone: beatToneForAutonomy(nextGame.rowanAutonomy?.layer),
     });
   }
 
+  if (activeSpaceChanged) {
+    const locationName =
+      locationNameForId(nextGame, nextGame.player.currentLocationId) ??
+      "the next stop";
+    const enteringInterior = nextGame.activeSpaceId?.startsWith("interior:");
+    beats.push({
+      blocking: true,
+      detail: enteringInterior
+        ? `Rowan entered ${locationName}.`
+        : `Rowan stepped back out to ${nextGame.districtName}.`,
+      durationMs: ROWAN_PLAYBACK_TIMING_MS.arrivalSettle,
+      key: `space:${nextGame.currentTime}:${previousGame.activeSpaceId ?? "unknown"}:${nextGame.activeSpaceId ?? "unknown"}`,
+      kind: "arrive",
+      locationId: nextGame.player.currentLocationId,
+      title: enteringInterior
+        ? `Entered ${locationName}`
+        : `Exited to ${nextGame.districtName}`,
+      tone: "info",
+    });
+  }
+
   if (
+    !activeSpaceChanged &&
     previousGame.player.currentLocationId !== nextGame.player.currentLocationId
   ) {
     const locationName =

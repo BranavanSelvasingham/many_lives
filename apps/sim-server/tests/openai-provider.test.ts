@@ -42,6 +42,12 @@ describe("OpenAIProvider street fallback", () => {
     const result = await provider.generateStreetReply(input);
 
     expect(result).toEqual(deterministic);
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        status: "fallback",
+        task: "generateStreetReply",
+      },
+    ]);
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
@@ -62,21 +68,24 @@ describe("OpenAIProvider street fallback", () => {
   });
 
   it("returns a constrained planner action when the model chooses an allowed action", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        output_text: JSON.stringify({
+          actionId: "talk:npc-mara",
+          confidence: 0.82,
+          planKey: "plan:talk-mara",
+          rationale: "Mara is here and can clarify the room before Rowan wanders.",
+        }),
+      }),
+    );
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        Response.json({
-          output_text: JSON.stringify({
-            actionId: "talk:npc-mara",
-            confidence: 0.82,
-            rationale: "Mara is here and can clarify the room before Rowan wanders.",
-          }),
-        }),
-      ),
+      fetchMock,
     );
 
     const provider = new OpenAIProvider({
       apiKey: "test-key",
+      model: "test-model",
       timeoutMs: 50,
     });
     const result = await provider.planStreetNextAction(buildPlanningRequest());
@@ -84,7 +93,30 @@ describe("OpenAIProvider street fallback", () => {
     expect(result).toEqual({
       actionId: "talk:npc-mara",
       confidence: 0.82,
+      planKey: "plan:talk-mara",
       rationale: "Mara is here and can clarify the room before Rowan wanders.",
+    });
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        model: "test-model",
+        status: "success",
+        task: "planStreetNextAction",
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [[url, init]] = fetchMock.mock.calls as unknown as Array<
+      [string | URL | Request, RequestInit | undefined]
+    >;
+    expect(url).toBe("https://api.openai.com/v1/responses");
+    expect(init?.headers).toMatchObject({
+      Authorization: "Bearer test-key",
+      "Content-Type": "application/json",
+    });
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      model: "test-model",
+      reasoning: {
+        effort: "minimal",
+      },
     });
   });
 
@@ -109,6 +141,12 @@ describe("OpenAIProvider street fallback", () => {
     const result = await provider.planStreetNextAction(buildPlanningRequest());
 
     expect(result).toBeNull();
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        status: "fallback",
+        task: "planStreetNextAction",
+      },
+    ]);
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
@@ -142,6 +180,67 @@ describe("OpenAIProvider street fallback", () => {
     );
     await expect(provider.planStreetNextAction(buildPlanningRequest())).resolves.toBeNull();
   });
+
+  it("requires planKey when actionId is ambiguous", async () => {
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      timeoutMs: 50,
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          output_text: JSON.stringify({
+            actionId: "exit:boarding-house",
+            confidence: 0.93,
+            rationale: "Leave the house, but without saying which plan this serves.",
+          }),
+        }),
+      ),
+    );
+    await expect(
+      provider.planStreetNextAction(buildAmbiguousPlanningRequest()),
+    ).resolves.toBeNull();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          output_text: JSON.stringify({
+            actionId: "exit:boarding-house",
+            confidence: 0.94,
+            planKey: "plan:exit-to-repair",
+            rationale: "The pump pressure needs the repair-stall route.",
+          }),
+        }),
+      ),
+    );
+    await expect(
+      provider.planStreetNextAction(buildAmbiguousPlanningRequest()),
+    ).resolves.toEqual({
+      actionId: "exit:boarding-house",
+      confidence: 0.94,
+      planKey: "plan:exit-to-repair",
+      rationale: "The pump pressure needs the repair-stall route.",
+    });
+  });
+
+  it("records a skipped support-task call when live support tasks are disabled", async () => {
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      timeoutMs: 50,
+    });
+
+    await provider.generateStreetThoughts(seedStreetGame("game-openai-skipped"));
+
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        status: "skipped",
+        task: "generateStreetThoughts",
+      },
+    ]);
+  });
 });
 
 function buildPlanningRequest(): StreetPlanningRequest {
@@ -154,6 +253,7 @@ function buildPlanningRequest(): StreetPlanningRequest {
         kind: "talk",
         label: "Talk to Mara",
         npcId: "npc-mara",
+        planKey: "plan:talk-mara",
         targetLocationId: "boarding-house",
       },
       {
@@ -161,6 +261,7 @@ function buildPlanningRequest(): StreetPlanningRequest {
         description: "Walk to Kettle & Lamp.",
         kind: "move",
         label: "Head to Kettle & Lamp",
+        planKey: "plan:move-tea-house",
         targetLocationId: "tea-house",
       },
     ],
@@ -178,5 +279,30 @@ function buildPlanningRequest(): StreetPlanningRequest {
       routeKey: "first-afternoon",
       text: "Make Rowan's first afternoon count.",
     },
+  };
+}
+
+function buildAmbiguousPlanningRequest(): StreetPlanningRequest {
+  const request = buildPlanningRequest();
+  return {
+    ...request,
+    allowedActions: [
+      {
+        actionId: "exit:boarding-house",
+        description: "Step outside before heading to Ada.",
+        kind: "exit",
+        label: "Exit Morrow House",
+        planKey: "plan:exit-to-ada",
+        targetLocationId: "tea-house",
+      },
+      {
+        actionId: "exit:boarding-house",
+        description: "Step outside before heading to Mercer Repairs.",
+        kind: "exit",
+        label: "Exit Morrow House",
+        planKey: "plan:exit-to-repair",
+        targetLocationId: "repair-stall",
+      },
+    ],
   };
 }

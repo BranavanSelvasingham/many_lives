@@ -77,6 +77,7 @@ For planning work on this axis, use [docs/street/living-world-simulation-plan.md
 - Seeded data may define places, NPCs, jobs, problems, schedules, world events, memories, and objective outcomes.
 - Objective trails may show progress and provide hints, but a review must flag any implementation where `advance_objective` primarily follows the next trail step instead of evaluating current state and legal actions.
 - Objective completion should be evaluated from `player.objective.outcomes`: desired-state predicates with status, evidence, blockers, and urgency. `trail.done` is explanatory scaffolding only and must not be the authoritative completion mechanism.
+- Route-specific hints, opening lines, rationale copy, semantic location hints, and special conversation exceptions belong in the objective scaffold layer, not scattered through planner control flow. If a review finds inline `routeKey` branches in the engine that steer choices instead of reading scaffold data, flag that as an agency hardening gap.
 - Rowan's decision loop should consider current location, time, money, energy, memory, active conversations, known places, known people, jobs, problems, city events, commitments, and available actions.
 - NPCs, jobs, problems, and city events should keep evolving as time advances whether Rowan acts on them or not.
 - AI planning may choose only from validated allowed actions. The simulator remains authoritative for movement, time, consequences, and state mutation.
@@ -131,6 +132,16 @@ rg -n "OPENAI_API_KEY|sk-[A-Za-z0-9_-]{20,}|NEXT_PUBLIC_.*KEY|apiKey" .
 ```
 
 Then inspect any matches. Some source references are expected, but real secret values are not.
+
+## Live OpenAI Contract
+
+The default regression harness does not spend OpenAI tokens. It uses mock or deterministic providers so CI stays stable, cheap, and reproducible.
+
+- Do not claim live OpenAI behavior is working from `corepack pnpm test`, Rowan browser regression, or visual smoke alone.
+- Run `corepack pnpm live:openai` when validating real OpenAI endpoint behavior. This command loads local `.env` files without printing secrets, calls the Responses API through `OpenAIProvider`, requires a successful `planStreetNextAction` call, and fails if the provider silently falls back or returns an action outside the allowed action surface.
+- Run `corepack pnpm live:openai:rowan` when validating that Rowan's early autonomy loop is actually exercising live OpenAI planner calls during a first-run session. It fails if no planner call succeeds or if any live call falls back.
+- Treat `AI_PROVIDER=openai` or `/sim/health` reporting `aiProvider: "openai"` as configuration evidence only. It is not proof that a live request was made during a given playtest.
+- Keep live OpenAI smoke opt-in. Do not make it a required default CI step unless the workflow has explicit secret availability, budget approval, and failure-policy ownership.
 
 ## Mandatory Review Checklist
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
+import { enterMorrowHouse, enterTeaHouse } from "./street-test-helpers.js";
 
 describe("World time pressure", () => {
   it("lets jobs expire if the player drifts past their window", async () => {
@@ -32,6 +33,7 @@ describe("World time pressure", () => {
       x: 6,
       y: 4,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -131,6 +133,7 @@ describe("World time pressure", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-mara-resolves-pump");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -145,9 +148,9 @@ describe("World time pressure", () => {
     const pump = world.problems.find((problem) => problem.id === "problem-pump");
     const mara = world.npcs.find((npc) => npc.id === "npc-mara");
 
-    expect(world.clock.totalMinutes).toBe(17.5 * 60);
+    expect(world.clock.totalMinutes).toBe(17.5 * 60 + 3);
     expect(pump).toMatchObject({
-      resolvedAt: "2026-03-21T17:30:00.000Z",
+      resolvedAt: "2026-03-21T17:33:00.000Z",
       resolvedByNpcId: "npc-mara",
       status: "resolved",
     });
@@ -175,6 +178,7 @@ describe("World time pressure", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-pressure-npc-movement");
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -268,13 +272,14 @@ describe("World time pressure", () => {
       urgency: 3,
     });
 
+    world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-mara",
     });
     world = await engine.tick(world, 4);
 
-    expect(world.clock.totalMinutes).toBe(13 * 60);
+    expect(world.clock.totalMinutes).toBe(13 * 60 + 3);
     expect(world.player.currentLocationId).toBe("boarding-house");
     expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
       discovered: true,

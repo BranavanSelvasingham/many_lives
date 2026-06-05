@@ -7,6 +7,13 @@ import {
   getLocationNarrative,
   getMapLabelNarrative,
 } from "./placeNarratives.js";
+import {
+  BOARDING_HOUSE_SPACE_ID,
+  REPAIR_STALL_SPACE_ID,
+  STREET_SPACE_ID,
+  TEA_HOUSE_SPACE_ID,
+  buildStreetSpaces,
+} from "./spaces.js";
 import type {
   FeedEntry,
   JobState,
@@ -60,6 +67,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
     districtName: DISTRICT_NAME,
     districtNarrative: DISTRICT_NARRATIVE,
     visualSceneId: "south-quay-v2",
+    activeSpaceId: STREET_SPACE_ID,
     currentTime: SCENARIO_START,
     clock: {
       day: 1,
@@ -69,11 +77,13 @@ export function seedStreetGame(gameId: string): StreetGameState {
       label: "Late morning",
     },
     map,
+    spaces: buildStreetSpaces(map),
     locations,
     player: {
       id: "player",
       name: "Rowan",
       backstory: ROWAN_BACKSTORY,
+      spaceId: STREET_SPACE_ID,
       x: 3,
       y: 9,
       currentLocationId: "boarding-house",
@@ -127,6 +137,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
     conversationThreads: {},
     activeConversation: undefined,
     currentScene: {
+      spaceId: STREET_SPACE_ID,
       locationId: "boarding-house",
       title: "",
       description: "",
@@ -676,6 +687,7 @@ function buildNpcs(): NpcState[] {
       summary: mara.backstory,
       narrative: mara,
       currentLocationId: "boarding-house",
+      currentSpaceId: BOARDING_HOUSE_SPACE_ID,
       trust: 1,
       openness: 62,
       known: true,
@@ -684,10 +696,30 @@ function buildNpcs(): NpcState[] {
       currentConcern: mara.context,
       memory: [`Told you ${DISTRICT_NAME} only opens once you start helping.`],
       schedule: [
-        { locationId: "boarding-house", fromHour: 0, toHour: 8 },
-        { locationId: "courtyard", fromHour: 8, toHour: 11 },
-        { locationId: "boarding-house", fromHour: 11, toHour: 21 },
-        { locationId: "courtyard", fromHour: 21, toHour: 24 },
+        {
+          locationId: "boarding-house",
+          spaceId: BOARDING_HOUSE_SPACE_ID,
+          fromHour: 0,
+          toHour: 8,
+        },
+        {
+          locationId: "courtyard",
+          spaceId: STREET_SPACE_ID,
+          fromHour: 8,
+          toHour: 11,
+        },
+        {
+          locationId: "boarding-house",
+          spaceId: BOARDING_HOUSE_SPACE_ID,
+          fromHour: 11,
+          toHour: 21,
+        },
+        {
+          locationId: "courtyard",
+          spaceId: STREET_SPACE_ID,
+          fromHour: 21,
+          toHour: 24,
+        },
       ],
     },
     {
@@ -697,6 +729,7 @@ function buildNpcs(): NpcState[] {
       summary: ada.backstory,
       narrative: ada,
       currentLocationId: "tea-house",
+      currentSpaceId: TEA_HOUSE_SPACE_ID,
       trust: 0,
       openness: 50,
       known: false,
@@ -704,7 +737,14 @@ function buildNpcs(): NpcState[] {
       currentObjective: ada.objective,
       currentConcern: ada.context,
       memory: [],
-      schedule: [{ locationId: "tea-house", fromHour: 7, toHour: 18 }],
+      schedule: [
+        {
+          locationId: "tea-house",
+          spaceId: TEA_HOUSE_SPACE_ID,
+          fromHour: 7,
+          toHour: 18,
+        },
+      ],
     },
     {
       id: "npc-jo",
@@ -713,6 +753,7 @@ function buildNpcs(): NpcState[] {
       summary: jo.backstory,
       narrative: jo,
       currentLocationId: "repair-stall",
+      currentSpaceId: REPAIR_STALL_SPACE_ID,
       trust: 0,
       openness: 44,
       known: false,
@@ -720,7 +761,14 @@ function buildNpcs(): NpcState[] {
       currentObjective: jo.objective,
       currentConcern: jo.context,
       memory: [],
-      schedule: [{ locationId: "repair-stall", fromHour: 9, toHour: 18 }],
+      schedule: [
+        {
+          locationId: "repair-stall",
+          spaceId: REPAIR_STALL_SPACE_ID,
+          fromHour: 9,
+          toHour: 18,
+        },
+      ],
     },
     {
       id: "npc-tomas",
@@ -729,6 +777,7 @@ function buildNpcs(): NpcState[] {
       summary: tomas.backstory,
       narrative: tomas,
       currentLocationId: "freight-yard",
+      currentSpaceId: STREET_SPACE_ID,
       trust: 0,
       openness: 34,
       known: false,
@@ -736,7 +785,14 @@ function buildNpcs(): NpcState[] {
       currentObjective: tomas.objective,
       currentConcern: tomas.context,
       memory: [],
-      schedule: [{ locationId: "freight-yard", fromHour: 10, toHour: 15 }],
+      schedule: [
+        {
+          locationId: "freight-yard",
+          spaceId: STREET_SPACE_ID,
+          fromHour: 10,
+          toHour: 15,
+        },
+      ],
     },
     {
       id: "npc-nia",
@@ -745,6 +801,7 @@ function buildNpcs(): NpcState[] {
       summary: nia.backstory,
       narrative: nia,
       currentLocationId: "market-square",
+      currentSpaceId: STREET_SPACE_ID,
       trust: 0,
       openness: 60,
       known: false,
@@ -753,8 +810,18 @@ function buildNpcs(): NpcState[] {
       currentConcern: nia.context,
       memory: [],
       schedule: [
-        { locationId: "market-square", fromHour: 12, toHour: 16 },
-        { locationId: "moss-pier", fromHour: 16, toHour: 19 },
+        {
+          locationId: "market-square",
+          spaceId: STREET_SPACE_ID,
+          fromHour: 12,
+          toHour: 16,
+        },
+        {
+          locationId: "moss-pier",
+          spaceId: STREET_SPACE_ID,
+          fromHour: 16,
+          toHour: 19,
+        },
       ],
     },
   ];

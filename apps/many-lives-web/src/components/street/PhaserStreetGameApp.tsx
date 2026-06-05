@@ -110,6 +110,7 @@ import {
 import { buildStreetOverlayStyle } from "@/lib/street/streetOverlayStyles";
 import {
   buildNpcPatrolRoute,
+  createRouteFinder,
   dedupePointSequence,
   distanceBetween,
   findNearestWalkablePointByWorldHint,
@@ -130,6 +131,7 @@ import {
 import {
   buildVisualNavigationSurface,
   buildVisualNavigationTiles,
+  buildVisualWalkableRuntimePoints,
   isVisualWorldPathLegal,
   projectVisualNavigationTileCenter,
   resolveVisualRoute,
@@ -203,6 +205,8 @@ import type {
   MapProp,
   MapTile,
   NpcState,
+  SpaceDefinition,
+  SpaceObject,
   StreetGameState,
 } from "@/lib/street/types";
 import {
@@ -275,6 +279,8 @@ function buildGameSyncKey(game: StreetGameState) {
   return [
     game.id,
     game.currentTime,
+    game.activeSpaceId ?? "",
+    game.player.spaceId ?? "",
     game.player.x,
     game.player.y,
     game.player.currentLocationId ?? "",
@@ -327,6 +333,13 @@ function shouldDeferPlayerPositionUpdate(
   optimisticPlayerPosition: Point | null,
 ) {
   if (previousGame.id !== nextGame.id || optimisticPlayerPosition) {
+    return false;
+  }
+
+  if (
+    (previousGame.activeSpaceId ?? previousGame.player.spaceId ?? "") !==
+    (nextGame.activeSpaceId ?? nextGame.player.spaceId ?? "")
+  ) {
     return false;
   }
 
@@ -523,6 +536,7 @@ type PlayerMotionState = {
   durationMs: number;
   path: Point[];
   routeDiagnostics?: VisualRouteDiagnostics;
+  spaceId?: string | null;
   startedAt: number;
   to: Point;
   worldPath?: Point[];
@@ -542,6 +556,8 @@ type PendingVisualGameUpdate = {
 };
 
 type RuntimeIndices = {
+  activeSpace: SpaceDefinition | null;
+  activeSpaceId: string | null;
   animatedSurfaceTiles: Array<Pick<MapTile, "kind" | "x" | "y">>;
   blockedNavigationTileCount: number;
   footprintByLocationId: Map<string, MapFootprint>;
@@ -1287,11 +1303,14 @@ export function PhaserStreetGameApp() {
         return false;
       }
 
-      const visualScene = getPlayableVisualScene(activeGame);
+      const activeSpace = getActiveInteriorSpace(activeGame);
+      const visualScene = activeSpace ? null : getPlayableVisualScene(activeGame);
+      const activeWidth = activeSpace?.width ?? activeGame.map.width;
+      const activeHeight = activeSpace?.height ?? activeGame.map.height;
       const nextTile = findWalkableTile(
         activeGame,
-        clamp(x, 0, activeGame.map.width - 1),
-        clamp(y, 0, activeGame.map.height - 1),
+        clamp(x, 0, activeWidth - 1),
+        clamp(y, 0, activeHeight - 1),
         visualScene,
       );
 
@@ -1306,7 +1325,7 @@ export function PhaserStreetGameApp() {
       const mapKey = createMapKey(activeGame);
       if (routeFinderMapKeyRef.current !== mapKey || !routeFinderRef.current) {
         routeFinderMapKeyRef.current = mapKey;
-        routeFinderRef.current = buildVisualNavigationSurface(
+        routeFinderRef.current = buildActiveNavigationSurface(
           activeGame,
           visualScene,
         ).routeFinder;
@@ -2897,8 +2916,10 @@ function renderStaticScene(
   const sceneZoom = getTargetSceneZoom(runtimeState, sceneViewport, world);
   const camera = scene.cameras.main;
   camera.setBackgroundColor(
-    getPlayableVisualScene(runtimeState.snapshot.game)?.backgroundColor ??
-      "#111d23",
+    runtimeState.indices.activeSpace
+      ? "#121b1c"
+      : (getPlayableVisualScene(runtimeState.snapshot.game)?.backgroundColor ??
+        "#111d23"),
   );
   camera.setBounds(0, 0, world.width, world.height);
   camera.setViewport(
@@ -2932,9 +2953,21 @@ function renderStaticScene(
   drawBackdrop(
     terrainLayer,
     world,
-    runtimeState.indices.visualScene ? undefined : game?.map,
+    runtimeState.indices.visualScene || runtimeState.indices.activeSpace
+      ? undefined
+      : game?.map,
   );
   if (!game) {
+    return;
+  }
+
+  if (runtimeState.indices.activeSpace) {
+    renderInteriorSpace(objects, runtimeState.indices.activeSpace);
+    drawAmbientOverlay(ambientLayer, runtimeState, world);
+    objects.mapLabels = drawInteriorSpaceLabels(
+      scene,
+      runtimeState.indices.activeSpace,
+    );
     return;
   }
 
@@ -2976,6 +3009,253 @@ function renderStaticScene(
   );
 }
 
+function renderInteriorSpace(
+  objects: RuntimeObjects,
+  space: SpaceDefinition,
+) {
+  const { structureDetailLayer, structureLayer, terrainLayer } = objects;
+
+  for (const tile of space.tiles) {
+    const origin = mapTileToWorldOrigin(tile.x, tile.y);
+    if (tile.walkable) {
+      const alternate = (tile.x + tile.y) % 2 === 0;
+      terrainLayer.fillStyle(alternate ? 0xb9b19b : 0xc2baa3, 1);
+      terrainLayer.fillRect(origin.x, origin.y, CELL, CELL);
+      terrainLayer.fillStyle(0xffffff, 0.05);
+      terrainLayer.fillRect(origin.x + 2, origin.y + 2, CELL - 4, 1.5);
+    } else {
+      terrainLayer.fillStyle(0x354648, 1);
+      terrainLayer.fillRect(origin.x, origin.y, CELL, CELL);
+    }
+  }
+
+  for (const object of space.objects) {
+    drawInteriorObject(
+      object.solid ? structureLayer : structureDetailLayer,
+      object,
+    );
+  }
+
+  for (const portal of space.portals) {
+    const center = mapTileToWorldCenter(portal.from.x, portal.from.y);
+    structureDetailLayer.fillStyle(0xd9c27a, 0.72);
+    structureDetailLayer.fillRoundedRect(
+      center.x - CELL * 0.28,
+      center.y + CELL * 0.18,
+      CELL * 0.56,
+      CELL * 0.12,
+      5,
+    );
+  }
+}
+
+function drawInteriorObject(
+  layer: PhaserType.GameObjects.Graphics,
+  object: SpaceObject,
+) {
+  const origin = mapTileToWorldOrigin(object.x, object.y);
+  const rect = {
+    height: object.height * CELL,
+    width: object.width * CELL,
+    x: origin.x,
+    y: origin.y,
+  };
+
+  if (object.kind === "rug") {
+    drawInteriorRug(layer, object, rect);
+    return;
+  }
+
+  const style = interiorObjectStyle(object);
+
+  layer.fillStyle(style.fill, style.alpha);
+  layer.fillRoundedRect(
+    rect.x + style.inset,
+    rect.y + style.inset,
+    rect.width - style.inset * 2,
+    rect.height - style.inset * 2,
+    style.radius,
+  );
+
+  if (object.solid) {
+    layer.lineStyle(2, style.stroke, 0.42);
+    layer.strokeRoundedRect(
+      rect.x + style.inset,
+      rect.y + style.inset,
+      rect.width - style.inset * 2,
+      rect.height - style.inset * 2,
+      style.radius,
+    );
+  }
+}
+
+function drawInteriorRug(
+  layer: PhaserType.GameObjects.Graphics,
+  object: SpaceObject,
+  rect: { height: number; width: number; x: number; y: number },
+) {
+  const inset = 6;
+  const x = rect.x + inset;
+  const y = rect.y + inset;
+  const width = rect.width - inset * 2;
+  const height = rect.height - inset * 2;
+
+  if (/queue/i.test(`${object.id} ${object.label ?? ""}`)) {
+    const centerX = rect.x + rect.width / 2;
+    const top = rect.y + CELL * 0.38;
+    const bottom = rect.y + rect.height - CELL * 0.38;
+    const markerCount = Math.max(2, Math.round(object.height));
+    layer.lineStyle(2, 0xd7c28d, 0.16);
+    layer.lineBetween(centerX, top, centerX, bottom);
+    for (let index = 0; index < markerCount; index += 1) {
+      const progress =
+        markerCount === 1 ? 0.5 : index / Math.max(markerCount - 1, 1);
+      const markerY = top + (bottom - top) * progress;
+      layer.fillStyle(0x1b1610, 0.12);
+      layer.fillCircle(centerX + 1, markerY + 1.2, 4.2);
+      layer.fillStyle(0xd8c17f, 0.46);
+      layer.fillCircle(centerX, markerY, 3.4);
+    }
+    return;
+  }
+
+  const isOilMat = /oil|repair/i.test(`${object.id} ${object.label ?? ""}`);
+  const fill = isOilMat ? 0x5e5747 : 0x9a7b55;
+  const stroke = isOilMat ? 0x292a25 : 0x70563b;
+  const thread = isOilMat ? 0x8a8069 : 0xc5aa77;
+  const alpha = isOilMat ? 0.34 : 0.38;
+
+  layer.fillStyle(fill, alpha);
+  layer.fillRoundedRect(x, y, width, height, 9);
+  layer.lineStyle(1.2, stroke, 0.28);
+  layer.strokeRoundedRect(x, y, width, height, 9);
+
+  const stripeCount = Math.max(2, Math.floor(height / 20));
+  for (let index = 1; index <= stripeCount; index += 1) {
+    const stripeY = y + (height / (stripeCount + 1)) * index;
+    layer.lineStyle(1, thread, 0.16);
+    layer.lineBetween(x + 7, stripeY, x + width - 7, stripeY);
+  }
+}
+
+function interiorObjectStyle(object: SpaceObject) {
+  switch (object.kind) {
+    case "wall":
+      return {
+        alpha: 1,
+        fill: 0x354648,
+        inset: 0,
+        radius: 0,
+        stroke: 0x233134,
+      };
+    case "counter":
+      return {
+        alpha: 0.96,
+        fill: 0x7a6043,
+        inset: 3,
+        radius: 8,
+        stroke: 0x513d2c,
+      };
+    case "table":
+      return {
+        alpha: 0.96,
+        fill: 0x8f6b48,
+        inset: 5,
+        radius: 10,
+        stroke: 0x5f452f,
+      };
+    case "bed":
+      return {
+        alpha: 0.96,
+        fill: 0x7c8891,
+        inset: 5,
+        radius: 8,
+        stroke: 0x55646e,
+      };
+    case "shelf":
+    case "workbench":
+    case "desk":
+      return {
+        alpha: 0.96,
+        fill: 0x66513d,
+        inset: 4,
+        radius: 7,
+        stroke: 0x3e3024,
+      };
+    case "stove":
+      return {
+        alpha: 0.95,
+        fill: 0x4f5b5d,
+        inset: 4,
+        radius: 7,
+        stroke: 0x2f3a3c,
+      };
+    case "bench":
+      return {
+        alpha: 0.94,
+        fill: 0x9b7a50,
+        inset: 6,
+        radius: 7,
+        stroke: 0x60472f,
+      };
+    case "rug":
+    case "chair":
+    default:
+      return {
+        alpha: object.solid ? 0.94 : 0.2,
+        fill: object.solid ? 0x7e6444 : 0x9a7b55,
+        inset: 6,
+        radius: 8,
+        stroke: 0x3e3024,
+      };
+  }
+}
+
+function drawInteriorSpaceLabels(
+  scene: PhaserType.Scene,
+  space: SpaceDefinition,
+) {
+  const labels: PhaserType.GameObjects.GameObject[] = [];
+  const titleOrigin = mapTileToWorldOrigin(1, 1);
+  labels.push(
+    scene.add
+      .text(titleOrigin.x, titleOrigin.y + CELL * 0.12, space.name, {
+        align: "left",
+        color: "#f3ead2",
+        fontFamily: "Georgia, serif",
+        fontSize: "20px",
+        fontStyle: "700",
+        letterSpacing: 1.4,
+        shadow: {
+          blur: 4,
+          color: "#000000",
+          fill: true,
+          offsetX: 0,
+          offsetY: 1,
+        },
+      })
+      .setDepth(40),
+  );
+
+  for (const portal of space.portals) {
+    const center = mapTileToWorldCenter(portal.from.x, portal.from.y);
+    labels.push(
+      scene.add
+        .text(center.x, center.y + CELL * 0.42, "EXIT", {
+          align: "center",
+          color: "#2b2417",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "10px",
+          fontStyle: "800",
+        })
+        .setOrigin(0.5)
+        .setDepth(40),
+    );
+  }
+
+  return labels;
+}
+
 function renderDynamicScene(
   objects: RuntimeObjects,
   runtimeState: RuntimeState,
@@ -3013,6 +3293,14 @@ function renderDynamicScene(
   const playerPixel = samplePlayerWorld(runtimeState, playerTile, now);
   const activeConversationNpc = getSelectedNpc(runtimeState) ?? undefined;
   const animatedNpcs = computeAnimatedNpcs(runtimeState, now, playerPixel);
+  const nearbyInteriorNpc = runtimeState.indices.activeSpace
+    ? nearestAnimatedNpcWithin(animatedNpcs, playerPixel, CELL * 1.35)
+    : null;
+  const playerLabelOffsetX = nearbyInteriorNpc
+    ? nearbyInteriorNpc.x <= playerPixel.x
+      ? 40
+      : -40
+    : 0;
   const playerAnimation = getPlayerAnimationState(
     runtimeState.playerMotion,
     now,
@@ -3021,7 +3309,9 @@ function renderDynamicScene(
   objects.playerContainer.setPosition(playerPixel.x, playerPixel.y);
   objects.playerName
     .setText(runtimeState.snapshot.game?.player.name ?? "Rowan")
+    .setX(playerLabelOffsetX)
     .setVisible(!usingAuthoredVisualScene);
+  objects.playerTitle.setX(playerLabelOffsetX);
   objects.playerBeacon
     .setVisible(true)
     .setScale(1 + Math.sin(now / 220) * (usingAuthoredVisualScene ? 0.1 : 0.08))
@@ -3066,7 +3356,7 @@ function renderDynamicScene(
     activeConversationNpc ? 0.48 : 0.38,
   );
 
-  updateNpcMarkers(objects, runtimeState, animatedNpcs, now);
+  updateNpcMarkers(objects, runtimeState, animatedNpcs, now, playerPixel);
   const mapAgencyCue = buildMapAgencyCue(
     runtimeState,
     animatedNpcs,
@@ -3517,6 +3807,7 @@ function updateNpcMarkers(
   runtimeState: RuntimeState,
   animatedNpcs: AnimatedNpcState[],
   now: number,
+  playerPixel: Point,
 ) {
   const game = runtimeState.snapshot.game;
   const usingAuthoredVisualScene = runtimeState.indices.visualScene !== null;
@@ -3544,6 +3835,19 @@ function updateNpcMarkers(
     const isTalkable = talkableNpcIds.has(animatedNpc.npc.id);
     const showLabel =
       showActorLabels || highlight || inLiveConversation || isTalkable;
+    const interiorLabelCollides =
+      runtimeState.indices.activeSpace &&
+      distanceBetween(animatedNpc, playerPixel) <= CELL * 1.35;
+    const interiorLabelOffsetX = interiorLabelCollides
+      ? animatedNpc.x <= playerPixel.x
+        ? -34
+        : 34
+      : 0;
+    const interiorLabelOffsetY = interiorLabelCollides
+      ? animatedNpc.y <= playerPixel.y
+        ? -34
+        : 30
+      : 24;
     marker.container
       .setPosition(animatedNpc.x, animatedNpc.y)
       .setScale(
@@ -3555,6 +3859,8 @@ function updateNpcMarkers(
       )
       .setVisible(true);
     marker.label
+      .setX(interiorLabelOffsetX)
+      .setY(interiorLabelOffsetY)
       .setVisible(showLabel)
       .setAlpha(
         usingAuthoredVisualScene
@@ -3616,6 +3922,25 @@ function updateNpcMarkers(
   }
 }
 
+function nearestAnimatedNpcWithin(
+  animatedNpcs: AnimatedNpcState[],
+  playerPixel: Point,
+  maximumDistance: number,
+) {
+  let nearestNpc: AnimatedNpcState | null = null;
+  let nearestDistance = maximumDistance;
+
+  for (const npc of animatedNpcs) {
+    const distance = distanceBetween(npc, playerPixel);
+    if (distance <= nearestDistance) {
+      nearestDistance = distance;
+      nearestNpc = npc;
+    }
+  }
+
+  return nearestNpc;
+}
+
 function hideMapAgencyObjects(objects: RuntimeObjects) {
   objects.agencyIntentText.setVisible(false).setAlpha(0);
   objects.agencyTargetText.setVisible(false).setAlpha(0);
@@ -3628,6 +3953,15 @@ function syncMapAgencyObjects(
   cue: MapAgencyCue | null,
   now: number,
 ) {
+  if (
+    runtimeState.indices.activeSpace &&
+    !isRuntimePlayerMotionActive(runtimeState, now)
+  ) {
+    hideMapAgencyObjects(objects);
+    syncBrowserMapAgencyProbe(objects.overlayDom, null);
+    return;
+  }
+
   if (!cue) {
     hideMapAgencyObjects(objects);
     syncBrowserMapAgencyProbe(objects.overlayDom, null);
@@ -3839,6 +4173,10 @@ function buildMapAgencyCue(
 ): MapAgencyCue | null {
   const game = runtimeState.snapshot.game;
   if (!game) {
+    return null;
+  }
+
+  if (runtimeState.indices.activeSpace) {
     return null;
   }
 
@@ -4167,9 +4505,11 @@ function buildBrowserMovementDiagnostics(
     sampledPointsLegal,
     snappedEnd: false,
     snappedStart: false,
+    visualObstaclesClear: sampledPointsLegal,
   };
 
   return {
+    activeSpaceId: runtimeState.indices.activeSpaceId,
     npcPatrols: Array.from(runtimeState.indices.patrolDiagnosticsByKey.values())
       .sort((left, right) => left.key.localeCompare(right.key))
       .map((entry) => ({
@@ -4196,8 +4536,10 @@ function buildBrowserMovementDiagnostics(
             ),
             reachesDestination: diagnostics.reachesDestination,
             sampledPointsLegal: diagnostics.sampledPointsLegal,
+            spaceId: runtimeState.indices.activeSpaceId,
             target: roundBrowserPoint(motion.to),
             tilePath: motion.path.map(roundBrowserPoint),
+            visualObstaclesClear: diagnostics.visualObstaclesClear,
             worldPath: routeWorldPath.map(roundBrowserPoint),
           }
         : null,
@@ -5176,7 +5518,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                   : ""
               }
               <script id="ml-browser-probe" type="application/json">${browserProbeJson}</script>
-              <script id="ml-browser-map-agency-probe" type="application/json">{}</script>
+              <script id="ml-browser-map-agency-probe" type="application/json">null</script>
               <script id="ml-browser-camera-probe" type="application/json">{}</script>
             </div>
           </div>
@@ -5733,6 +6075,10 @@ function getPlayableVisualScene(game: StreetGameState | null) {
     return null;
   }
 
+  if (getActiveInteriorSpace(game)) {
+    return null;
+  }
+
   const sceneId = game.visualSceneId ?? null;
   const visualScene = getVisualScene(sceneId);
   if (!visualScene) {
@@ -5755,6 +6101,80 @@ function getPlayableVisualScene(game: StreetGameState | null) {
 
     throw error;
   }
+}
+
+function getActiveSpace(game: StreetGameState | null): SpaceDefinition | null {
+  if (!game) {
+    return null;
+  }
+
+  const activeSpaceId = getActiveSpaceId(game);
+  if (!activeSpaceId) {
+    return null;
+  }
+
+  return game.spaces?.find((space) => space.id === activeSpaceId) ?? null;
+}
+
+function getActiveSpaceId(game: StreetGameState | null) {
+  return game ? (game.activeSpaceId ?? game.player.spaceId ?? null) : null;
+}
+
+function getStreetSpaceId(game: StreetGameState) {
+  return (
+    game.spaces?.find((space) => space.kind === "street")?.id ??
+    "street:south-quay"
+  );
+}
+
+function getInteriorSpaceForLocationId(
+  game: StreetGameState,
+  locationId: string | undefined,
+) {
+  if (!locationId) {
+    return null;
+  }
+
+  return (
+    game.spaces?.find(
+      (space) => space.kind === "interior" && space.locationId === locationId,
+    ) ?? null
+  );
+}
+
+function getNpcActiveSpaceId(game: StreetGameState, npc: NpcState) {
+  return (
+    npc.currentSpaceId ??
+    getInteriorSpaceForLocationId(game, npc.currentLocationId)?.id ??
+    getStreetSpaceId(game)
+  );
+}
+
+function getActiveInteriorSpace(
+  game: StreetGameState | null,
+): SpaceDefinition | null {
+  const activeSpace = getActiveSpace(game);
+  return activeSpace?.kind === "interior" ? activeSpace : null;
+}
+
+function buildActiveNavigationSurface(
+  game: StreetGameState,
+  visualScene: VisualScene | null,
+) {
+  const activeSpace = getActiveInteriorSpace(game);
+  if (!activeSpace) {
+    return buildVisualNavigationSurface(game, visualScene);
+  }
+
+  return {
+    blockedByVisualScene: 0,
+    routeFinder: createRouteFinder(activeSpace.tiles),
+    tiles: activeSpace.tiles,
+    walkableRuntimePoints: buildVisualWalkableRuntimePoints(
+      activeSpace.tiles,
+      null,
+    ),
+  };
 }
 
 function normalizeCameraWheelDelta(
@@ -5796,6 +6216,8 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
   const game = snapshot.game;
   if (!game) {
     return {
+      activeSpace: null,
+      activeSpaceId: null,
       animatedSurfaceTiles: [],
       blockedNavigationTileCount: 0,
       footprintByLocationId: new Map(),
@@ -5812,10 +6234,13 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
   }
 
   const visualScene = getPlayableVisualScene(game);
-  const navigationSurface = buildVisualNavigationSurface(game, visualScene);
+  const activeSpace = getActiveInteriorSpace(game);
+  const navigationSurface = buildActiveNavigationSurface(game, visualScene);
 
   return {
-    animatedSurfaceTiles: visualScene
+    activeSpace,
+    activeSpaceId: activeSpace?.id ?? (game.activeSpaceId ?? game.player.spaceId ?? null),
+    animatedSurfaceTiles: visualScene || activeSpace
       ? []
       : collectAnimatedSurfaceTiles(game.map),
     blockedNavigationTileCount: navigationSurface.blockedByVisualScene,
@@ -5841,10 +6266,17 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
 }
 
 function getWorldBounds(snapshot: StreetAppSnapshot) {
+  const activeSpace = snapshot.game
+    ? getActiveInteriorSpace(snapshot.game)
+    : null;
+
   return getWorldBoundsForRuntime({
-    map: snapshot.game?.map,
+    map: activeSpace ?? snapshot.game?.map,
     viewport: snapshot.viewport,
-    visualScene: snapshot.game ? getPlayableVisualScene(snapshot.game) : null,
+    visualScene:
+      activeSpace || !snapshot.game
+        ? null
+        : getPlayableVisualScene(snapshot.game),
   });
 }
 
@@ -5999,8 +6431,12 @@ function createInitialPlayerMotion(
     : { x: 0, y: 0 };
 
   if (snapshot.game) {
-    if (!snapshot.animatePlayerEntrance) {
-      return createStaticPlayerMotion(point, startedAt);
+    if (!snapshot.animatePlayerEntrance || getActiveInteriorSpace(snapshot.game)) {
+      return createStaticPlayerMotion(
+        point,
+        startedAt,
+        getActiveSpaceId(snapshot.game),
+      );
     }
 
     return createPlayerEntranceMotion(
@@ -6017,10 +6453,12 @@ function createInitialPlayerMotion(
 function createStaticPlayerMotion(
   point: Point,
   startedAt = getRuntimeNow(),
+  spaceId?: string | null,
 ): PlayerMotionState {
   return {
     durationMs: 1,
     path: [point],
+    spaceId,
     startedAt,
     to: point,
   };
@@ -6066,18 +6504,30 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
     x: runtimeState.snapshot.optimisticPlayerPosition?.x ?? game.player.x,
     y: runtimeState.snapshot.optimisticPlayerPosition?.y ?? game.player.y,
   };
+  const nextSpaceId = getActiveSpaceId(game);
 
   if (runtimeState.playerEntranceGameId !== game.id) {
-    runtimeState.playerMotion = runtimeState.snapshot.animatePlayerEntrance
+    runtimeState.playerMotion =
+      runtimeState.snapshot.animatePlayerEntrance && !getActiveInteriorSpace(game)
       ? createPlayerEntranceMotion(
           game,
           runtimeState.indices.routeFinder,
           nextPoint,
           now,
         )
-      : createStaticPlayerMotion(nextPoint, now);
+      : createStaticPlayerMotion(nextPoint, now, nextSpaceId);
 
     runtimeState.playerEntranceGameId = game.id;
+    return;
+  }
+
+  if (runtimeState.playerMotion.spaceId !== nextSpaceId) {
+    runtimeState.playerMotion = createStaticPlayerMotion(
+      nextPoint,
+      now,
+      nextSpaceId,
+    );
+    setRuntimeWaypointTarget(runtimeState, null);
     return;
   }
 
@@ -6089,7 +6539,27 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   }
 
   const fromPoint = samplePlayerTile(runtimeState.playerMotion, now);
-  const fromWorldPoint = samplePlayerWorld(runtimeState, fromPoint, now);
+  const sampledFromWorldPoint = samplePlayerWorld(runtimeState, fromPoint, now);
+  let fromWorldPoint = sampledFromWorldPoint;
+  if (runtimeState.indices.visualScene) {
+    const projectedTilePoint = projectVisualNavigationTileCenter(
+      runtimeState.indices.visualScene,
+      Math.round(fromPoint.x),
+      Math.round(fromPoint.y),
+    );
+    const nearestWalkablePoint = findNearestWalkablePointByWorldHint(
+      runtimeState.indices.walkableRuntimePoints,
+      sampledFromWorldPoint,
+      {
+        preferredKinds: PUBLIC_TRAVEL_TILE_KINDS,
+      },
+    );
+    fromWorldPoint =
+      nearestWalkablePoint &&
+      distanceBetween(nearestWalkablePoint.world, projectedTilePoint) <= CELL * 1.5
+        ? nearestWalkablePoint.world
+        : projectedTilePoint;
+  }
   const visualRoute = resolveVisualRoute({
     blockedByVisualScene: runtimeState.indices.blockedNavigationTileCount,
     end: nextPoint,
@@ -6116,6 +6586,7 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
     durationMs,
     path,
     routeDiagnostics: visualRoute.diagnostics,
+    spaceId: nextSpaceId,
     startedAt: now,
     to: nextPoint,
     worldPath:
@@ -6134,7 +6605,7 @@ function createPlayerEntranceMotion(
   const entrancePath = buildPlayerEntrancePath(game, findRoute, target);
 
   if (entrancePath.length <= 1) {
-    return createStaticPlayerMotion(target, startedAt);
+    return createStaticPlayerMotion(target, startedAt, getActiveSpaceId(game));
   }
 
   const introStepMs = clamp(
@@ -6150,6 +6621,7 @@ function createPlayerEntranceMotion(
       PLAYER_MAX_MOVE_DURATION_MS,
     ),
     path: entrancePath,
+    spaceId: getActiveSpaceId(game),
     startedAt,
     to: target,
   };
@@ -6228,6 +6700,10 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
     return DEFAULT_PLAYER_MOVE_MS_PER_TILE;
   }
 
+  if (runtimeState.indices.activeSpace) {
+    return runtimeState.snapshot.rowanAutoplayEnabled ? 420 : 340;
+  }
+
   const currentLocation = game.player.currentLocationId
     ? runtimeState.indices.locationsById.get(game.player.currentLocationId)
     : undefined;
@@ -6301,18 +6777,59 @@ function computeAnimatedNpcs(
   }
 
   const animationBeat = now / 1000;
-  const rawNpcs = game.npcs.map((npc, index) =>
-    buildAnimatedNpcState({
-      animationBeat,
-      game,
-      index,
-      indices: runtimeState.indices,
-      npc,
-    }),
+  const activeSpaceId = getActiveSpaceId(game);
+  const visibleNpcs = game.npcs.filter(
+    (npc) => getNpcActiveSpaceId(game, npc) === activeSpaceId,
+  );
+  const rawNpcs = visibleNpcs.map((npc, index) =>
+    runtimeState.indices.activeSpace
+      ? buildInteriorAnimatedNpcState({
+          animationBeat,
+          index,
+          npc,
+          space: runtimeState.indices.activeSpace,
+        })
+      : buildAnimatedNpcState({
+          animationBeat,
+          game,
+          index,
+          indices: runtimeState.indices,
+          npc,
+        }),
   );
   const playerPath = buildPlayerAvoidanceWorldPath(runtimeState, now);
 
   return resolveCrowdPositions(rawNpcs, playerPixel, playerPath);
+}
+
+function buildInteriorAnimatedNpcState({
+  animationBeat,
+  index,
+  npc,
+  space,
+}: {
+  animationBeat: number;
+  index: number;
+  npc: NpcState;
+  space: SpaceDefinition;
+}): AnimatedNpcState {
+  const anchor =
+    space.anchors.find((entry) => entry.npcId === npc.id) ??
+    space.anchors.find((entry) => entry.kind === "spawn") ??
+    space.tiles.find((tile) => tile.walkable);
+  const base = mapTileToWorldCenter(anchor?.x ?? 1, anchor?.y ?? 1);
+  const personality = npcPersonalityProfile(npc);
+  const phaseOffset = ((hashString(npc.id) + index * 17) % 997) / 997;
+  const idle = Math.sin(animationBeat * personality.swayRate + phaseOffset * 8);
+
+  return {
+    facing: idle >= 0 ? 1 : -1,
+    known: npc.known,
+    npc,
+    step: idle * 0.08 * personality.motion.idleWave,
+    x: base.x + idle * CELL * 0.035,
+    y: base.y + Math.cos(animationBeat * 0.7 + phaseOffset) * CELL * 0.025,
+  };
 }
 
 function buildAnimatedNpcState({
@@ -6508,7 +7025,7 @@ function resolveCrowdPositions(
 
 function buildPlayerAvoidanceWorldPath(runtimeState: RuntimeState, now: number) {
   const motion = runtimeState.playerMotion;
-  if (motion.path.length <= 1 || isPlayerMotionSettled(motion, now)) {
+  if (!isRuntimePlayerMotionActive(runtimeState, now)) {
     return [];
   }
 
@@ -6520,6 +7037,11 @@ function buildPlayerAvoidanceWorldPath(runtimeState: RuntimeState, now: number) 
         );
 
   return dedupePointSequence(worldPath);
+}
+
+function isRuntimePlayerMotionActive(runtimeState: RuntimeState, now: number) {
+  const motion = runtimeState.playerMotion;
+  return motion.path.length > 1 && !isPlayerMotionSettled(motion, now);
 }
 
 function isPlayerMotionSettled(motion: PlayerMotionState, now: number) {
@@ -7332,11 +7854,13 @@ function drawDynamicOverlay(
       )
     : undefined;
   const pulse = 0.55 + Math.sin(now / 320) * 0.12;
+  const activeInteriorSpace = Boolean(runtimeState.indices.activeSpace);
+  const activePlayerMotion = isRuntimePlayerMotionActive(runtimeState, now);
 
   drawAnimatedCitySurface(layer, runtimeState.indices, now);
   drawPlayerRouteBreadcrumb(layer, runtimeState, now);
 
-  if (runtimeState.waypointTarget) {
+  if (runtimeState.waypointTarget && (!activeInteriorSpace || activePlayerMotion)) {
     drawWaypointBeacon(
       layer,
       runtimeState.indices,
@@ -7346,26 +7870,28 @@ function drawDynamicOverlay(
     );
   }
 
-  drawMapAgencyOverlay(
-    layer,
-    runtimeState,
-    playerTile,
-    playerPixel,
-    mapAgencyCue,
-    now,
-  );
+  if (!activeInteriorSpace || activePlayerMotion) {
+    drawMapAgencyOverlay(
+      layer,
+      runtimeState,
+      playerTile,
+      playerPixel,
+      mapAgencyCue,
+      now,
+    );
+  }
 
-  if (currentFootprint) {
+  if (!activeInteriorSpace && currentFootprint) {
     drawFootprintHalo(layer, currentFootprint, 0xa9d7d4, 0.08, 0.48);
   }
 
-  if (selectedFootprint) {
+  if (!activeInteriorSpace && selectedFootprint) {
     drawFootprintHalo(layer, selectedFootprint, 0xf1d09f, 0.12 * pulse, 0.68);
   }
 
   drawPlayerPresenceMarker(layer, playerPixel, now);
 
-  if (selectedNpc) {
+  if (!activeInteriorSpace && selectedNpc) {
     const selectedMarker = runtimeState.objects?.npcMarkers.get(selectedNpc.id);
     if (selectedMarker) {
       const personality = npcPersonalityProfile(selectedNpc);
@@ -7405,6 +7931,11 @@ function drawPlayerRouteBreadcrumb(
     return;
   }
 
+  if (runtimeState.indices.activeSpace) {
+    drawInteriorPlayerRouteBreadcrumb(layer, routePath, now);
+    return;
+  }
+
   const pulse = 0.62 + Math.sin(now / 220) * 0.14;
   layer.lineStyle(3.2, 0x8dd0cd, 0.38 * pulse);
   layer.beginPath();
@@ -7419,6 +7950,36 @@ function drawPlayerRouteBreadcrumb(
     const point = routePath[index];
     layer.strokeCircle(point.x, point.y, 3.2 + pulse * 1.1);
   }
+}
+
+function drawInteriorPlayerRouteBreadcrumb(
+  layer: PhaserType.GameObjects.Graphics,
+  routePath: Point[],
+  now: number,
+) {
+  const cleanPath = dedupePointSequence(routePath);
+  if (cleanPath.length <= 1) {
+    return;
+  }
+
+  const pulse = 0.62 + Math.sin(now / 220) * 0.14;
+  const totalDistance = polylineDistance(cleanPath);
+  const markerCount = clamp(Math.round(totalDistance / 22), 3, 18);
+  const flow = positiveModulo(now / 1800, 1);
+
+  for (let index = 0; index <= markerCount; index += 1) {
+    const progress = clamp((index + flow * 0.42) / markerCount, 0.08, 0.94);
+    const point = samplePolylinePoint(cleanPath, progress);
+    const radius = 2.4 + Math.sin(now / 260 + index * 0.9) * 0.28;
+    layer.fillStyle(0x081016, 0.11);
+    layer.fillCircle(point.x + 0.9, point.y + 1.1, radius + 0.9);
+    layer.fillStyle(0xf4dcaa, 0.3 + pulse * 0.08);
+    layer.fillCircle(point.x, point.y, radius);
+  }
+
+  const target = cleanPath[cleanPath.length - 1];
+  layer.lineStyle(1.4, 0xf0cf8c, 0.22 + pulse * 0.08);
+  layer.strokeCircle(target.x, target.y, CELL * 0.24);
 }
 
 function drawWaypointBeacon(
@@ -7587,8 +8148,11 @@ function getPointerTargetTile(
   const mapOrigin = getMapWorldOrigin();
   const x = Math.floor((pointer.worldX - mapOrigin.x) / CELL);
   const y = Math.floor((pointer.worldY - mapOrigin.y) / CELL);
+  const activeSpace = getActiveInteriorSpace(game);
+  const width = activeSpace?.width ?? game.map.width;
+  const height = activeSpace?.height ?? game.map.height;
 
-  if (x < 0 || y < 0 || x >= game.map.width || y >= game.map.height) {
+  if (x < 0 || y < 0 || x >= width || y >= height) {
     return null;
   }
 
@@ -8038,6 +8602,13 @@ function findWalkableTile(
   y: number,
   visualScene: VisualScene | null = getPlayableVisualScene(game),
 ) {
+  const activeSpace = getActiveInteriorSpace(game);
+  if (activeSpace) {
+    return activeSpace.tiles.find(
+      (tile) => tile.x === x && tile.y === y && tile.walkable,
+    );
+  }
+
   return buildVisualNavigationTiles(game, visualScene).tiles.find(
     (tile) => tile.x === x && tile.y === y && tile.walkable,
   );
@@ -8049,8 +8620,21 @@ function createMapKey(game: StreetGameState | null) {
   }
 
   return [
+    game.activeSpaceId ?? "",
+    game.player.spaceId ?? "",
     game.visualSceneId ?? "none",
     getVisualSceneRuntimeRevision(game.visualSceneId ?? null),
+    ...(game.spaces ?? []).map((space) =>
+      [
+        space.id,
+        space.width,
+        space.height,
+        space.tiles.length,
+        space.objects.length,
+        space.anchors.length,
+        space.portals.length,
+      ].join(","),
+    ),
     game.map.width,
     game.map.height,
     game.map.tiles.length,
