@@ -604,6 +604,16 @@ class CdpSession {
     await this.dragMouse(options);
   }
 
+  async panCameraToEdge(edge) {
+    return this.evaluate(`(() => {
+      const panCameraToEdge = window.__manyLivesPanCameraToEdge;
+      if (typeof panCameraToEdge !== "function") {
+        throw new Error("Missing __manyLivesPanCameraToEdge browser hook.");
+      }
+      return panCameraToEdge(${JSON.stringify(edge)});
+    })()`);
+  }
+
   async wheelMap({ at, deltaX = 0, deltaY = 0 }) {
     await this.send("Input.dispatchMouseEvent", {
       button: "none",
@@ -1072,6 +1082,16 @@ async function assertCameraPanContractGuard() {
     "Visual smoke must assert west and north compact overscan.",
   );
   assert.ok(
+    streetSource.includes("freezeAutoplay") &&
+      smokeSource.includes("freezeAutoplay=1"),
+    "Visual smoke must freeze autoplay while measuring camera edge traversal.",
+  );
+  assert.ok(
+    streetSource.includes("__manyLivesPanCameraToEdge") &&
+      smokeSource.includes("__manyLivesPanCameraToEdge"),
+    "Visual smoke must use the runtime camera edge hook for deterministic edge settlement.",
+  );
+  assert.ok(
     streetSource.includes(
       "cue.targetLocationId && !cue.targetIsNpc && distance > CELL * 1.1",
     ),
@@ -1087,8 +1107,60 @@ function readNumericConst(source, name) {
   return Number(match[1].replaceAll("_", ""));
 }
 
+function cameraProbeReachedEdge(probe, edge) {
+  if (!probe?.scroll || !probe?.scrollRange) {
+    return false;
+  }
+
+  if (edge === "west") {
+    return probe.scroll.x <= probe.scrollRange.minX + 52;
+  }
+  if (edge === "east") {
+    return probe.scroll.x >= probe.scrollRange.maxX - 52;
+  }
+  if (edge === "north") {
+    return probe.scroll.y <= probe.scrollRange.minY + 52;
+  }
+  if (edge === "south") {
+    return probe.scroll.y >= probe.scrollRange.maxY - 52;
+  }
+
+  return false;
+}
+
+async function settleCameraAtEdge(session, edge, currentProbe) {
+  let probe = currentProbe;
+  if (cameraProbeReachedEdge(probe, edge)) {
+    return probe;
+  }
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await session.panCameraToEdge(edge);
+    await sleep(180);
+    probe = await session.readCameraProbe();
+    if (cameraProbeReachedEdge(probe, edge)) {
+      return probe;
+    }
+  }
+
+  return probe;
+}
+
+function assertSameCameraSpace(viewport, first, second, description) {
+  assert.equal(
+    second.activeSpaceId,
+    first.activeSpaceId,
+    `${viewport.name}: ${description} changed active space from ${first.activeSpaceId} to ${second.activeSpaceId}; camera traversal must be measured within one stable scene.`,
+  );
+  assert.equal(
+    second.activeSpaceKind,
+    first.activeSpaceKind,
+    `${viewport.name}: ${description} changed active space kind from ${first.activeSpaceKind} to ${second.activeSpaceKind}; camera traversal must be measured within one stable scene.`,
+  );
+}
+
 async function runViewportCheck(session, viewport) {
-  const url = `${activeWebBase}/?new=1&readyCheck=${viewport.name}-${Date.now()}&autoplay=1`;
+  const url = `${activeWebBase}/?new=1&readyCheck=${viewport.name}-${Date.now()}&autoplay=1&freezeAutoplay=1`;
   await session.setViewport(viewport);
   await session.navigate(url);
   await session.waitForAppReady();
@@ -1357,6 +1429,11 @@ async function runViewportCheck(session, viewport) {
       panAtWestEdge,
       `${viewport.name}: missing camera probe at west edge.`,
     );
+    panAtWestEdge = await settleCameraAtEdge(
+      session,
+      "west",
+      panAtWestEdge,
+    );
     const westScrollThreshold =
       viewport.width >= 900 ? -200 : viewport.width >= 600 ? -280 : -120;
     assert.ok(
@@ -1432,6 +1509,7 @@ async function runViewportCheck(session, viewport) {
       northEdge,
       `${viewport.name}: missing camera probe at north edge.`,
     );
+    northEdge = await settleCameraAtEdge(session, "north", northEdge);
     const northScrollThreshold = viewport.width >= 600 ? -380 : -360;
     const activeSpaceKind = northEdge.activeSpaceKind ?? "street";
     const activeSpaceId = northEdge.activeSpaceId ?? "unknown";
@@ -1495,6 +1573,13 @@ async function runViewportCheck(session, viewport) {
       eastEdge,
       `${viewport.name}: missing camera probe at east edge.`,
     );
+    eastEdge = await settleCameraAtEdge(session, "east", eastEdge);
+    assertSameCameraSpace(
+      viewport,
+      panAtWestEdge,
+      eastEdge,
+      "east/west traversal",
+    );
     const horizontalTraversal =
       eastEdge.scroll.x - panAtWestEdge.scroll.x;
     const horizontalTraversalThreshold = Math.min(
@@ -1505,7 +1590,15 @@ async function runViewportCheck(session, viewport) {
       horizontalTraversal >= horizontalTraversalThreshold,
       `${viewport.name}: east/west map traversal is too small (${horizontalTraversal.toFixed(
         1,
-      )}, expected >= ${horizontalTraversalThreshold.toFixed(1)}).`,
+      )}, expected >= ${horizontalTraversalThreshold.toFixed(
+        1,
+      )}; west ${panAtWestEdge.scroll.x.toFixed(
+        1,
+      )}, east ${eastEdge.scroll.x.toFixed(
+        1,
+      )}, min ${eastEdge.scrollRange.minX.toFixed(
+        1,
+      )}, max ${eastEdge.scrollRange.maxX.toFixed(1)}).`,
     );
     eastPanScreenshotPath = path.join(
       OUTPUT_DIR,
@@ -1531,6 +1624,13 @@ async function runViewportCheck(session, viewport) {
       southEdge,
       `${viewport.name}: missing camera probe at south edge.`,
     );
+    southEdge = await settleCameraAtEdge(session, "south", southEdge);
+    assertSameCameraSpace(
+      viewport,
+      northEdge,
+      southEdge,
+      "north/south traversal",
+    );
     const verticalTraversal = southEdge.scroll.y - northEdge.scroll.y;
     const verticalTraversalThreshold = Math.min(
       560,
@@ -1540,7 +1640,15 @@ async function runViewportCheck(session, viewport) {
       verticalTraversal >= verticalTraversalThreshold,
       `${viewport.name}: north/south map traversal is too small (${verticalTraversal.toFixed(
         1,
-      )}, expected >= ${verticalTraversalThreshold.toFixed(1)}).`,
+      )}, expected >= ${verticalTraversalThreshold.toFixed(
+        1,
+      )}; north ${northEdge.scroll.y.toFixed(
+        1,
+      )}, south ${southEdge.scroll.y.toFixed(
+        1,
+      )}, min ${southEdge.scrollRange.minY.toFixed(
+        1,
+      )}, max ${southEdge.scrollRange.maxY.toFixed(1)}).`,
     );
     southPanScreenshotPath = path.join(
       OUTPUT_DIR,
