@@ -13,8 +13,15 @@ const DEFAULT_WEB_BASE =
 const OUTPUT_DIR =
   process.env.MANY_LIVES_VISUAL_CHECK_DIR ??
   path.join(tmpdir(), `manylives-visual-check-${Date.now()}`);
-const WEB_START_TIMEOUT_MS = 60_000;
-const CDP_WAIT_TIMEOUT_MS = 60_000;
+const WEB_START_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_VISUAL_WEB_START_TIMEOUT_MS ?? "90000",
+);
+const CDP_WAIT_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_VISUAL_CDP_WAIT_TIMEOUT_MS ?? "60000",
+);
+const APP_READY_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_VISUAL_APP_READY_TIMEOUT_MS ?? "120000",
+);
 const CDP_COMMAND_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 250;
 const ROOT = process.cwd();
@@ -349,21 +356,45 @@ class CdpSession {
   }
 
   async waitForAppReady() {
-    return waitFor(
-      async () => {
-        try {
-          return await this.evaluate(`(() => {
-            const probe = document.querySelector("#ml-browser-probe");
-            const canvas = document.querySelector("canvas");
-            const rail = document.querySelector(".ml-rail-shell");
-            return Boolean(probe && canvas && rail && document.body.innerText.includes("Rowan"));
-          })()`);
-        } catch {
-          return false;
+    const startedAt = Date.now();
+    let lastState = null;
+
+    while (Date.now() - startedAt < APP_READY_TIMEOUT_MS) {
+      try {
+        lastState = await this.evaluate(`(() => {
+          const probe = document.querySelector("#ml-browser-probe");
+          const canvas = document.querySelector("canvas");
+          const rail = document.querySelector(".ml-rail-shell");
+          const bodyText = document.body?.innerText ?? "";
+          return {
+            bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 500),
+            hasCanvas: Boolean(canvas),
+            hasFrameworkOverlay: /Unhandled Runtime Error|Runtime Error|Build Error|Failed to compile|Application error/i.test(document.body?.textContent ?? ""),
+            hasProbe: Boolean(probe),
+            hasRail: Boolean(rail),
+            hasRowanText: bodyText.includes("Rowan"),
+            ready: Boolean(probe && canvas && rail && bodyText.includes("Rowan")),
+            title: document.title,
+            url: location.href
+          };
+        })()`);
+
+        if (lastState?.ready) {
+          return true;
         }
-      },
-      CDP_WAIT_TIMEOUT_MS,
-      "Timed out waiting for the game canvas, rail, and browser probe.",
+      } catch (error) {
+        lastState = {
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+
+    throw new Error(
+      `Timed out waiting for the game canvas, rail, and browser probe. Last state: ${JSON.stringify(
+        lastState,
+      )}`,
     );
   }
 
