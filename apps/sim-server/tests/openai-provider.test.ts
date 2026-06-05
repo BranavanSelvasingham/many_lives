@@ -16,7 +16,7 @@ describe("OpenAIProvider street fallback", () => {
   });
 
   it("keeps the default live timeout long enough for first-run browser calls", () => {
-    expect(DEFAULT_OPENAI_TIMEOUT_MS).toBeGreaterThanOrEqual(12_000);
+    expect(DEFAULT_OPENAI_TIMEOUT_MS).toBeGreaterThanOrEqual(20_000);
   });
 
   it("falls back quickly when a live street reply times out", async () => {

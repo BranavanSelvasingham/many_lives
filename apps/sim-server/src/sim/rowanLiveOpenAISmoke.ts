@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { loadLocalEnvFiles } from "../ai/localEnv.js";
-import { OpenAIProvider } from "../ai/openaiProvider.js";
+import {
+  DEFAULT_OPENAI_TIMEOUT_MS,
+  OpenAIProvider,
+} from "../ai/openaiProvider.js";
 import { SimulationEngine } from "./engine.js";
 import type { StreetGameState } from "../street-sim/types.js";
 import type { GameCommand } from "../types/api.js";
@@ -17,7 +20,7 @@ async function main(): Promise<void> {
   const provider = new OpenAIProvider({
     apiKey,
     model: process.env.OPENAI_MODEL ?? "gpt-5-mini",
-    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? 12_000),
+    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? DEFAULT_OPENAI_TIMEOUT_MS),
   });
   const engine = new SimulationEngine(provider);
   const maxSteps = Number(process.env.MANY_LIVES_LIVE_ROWAN_STEPS ?? 8);

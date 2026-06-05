@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { MockAIProvider } from "../src/ai/mockProvider.js";
+import { buildGenerateStreetReplyPrompt } from "../src/ai/prompts/generateStreetReply.js";
 import { buildDeterministicStreetReply } from "../src/ai/streetDialogue.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
 
@@ -47,5 +48,21 @@ describe("street dialogue fallback", () => {
     expect(reply.reply).not.toMatch(/moving feet are friendlier/i);
     expect(reply.reply).not.toMatch(/making a ceremony/i);
     expect(reply.reply).not.toMatch(/prove|earn the softer|helpful thing/i);
+  });
+
+  it("requires live Mara first-afternoon replies to ground the Ada work lead", () => {
+    const world = seedStreetGame("game-mara-live-grounding-prompt");
+
+    const prompt = buildGenerateStreetReplyPrompt({
+      game: world,
+      npcId: "npc-mara",
+      playerText:
+        "I'm Rowan. New here. What should I do first if I want to keep the room and find honest work?",
+    });
+
+    expect(prompt).toContain("Required for this Mara reply");
+    expect(prompt).toContain("Ada");
+    expect(prompt).toContain("Kettle & Lamp");
+    expect(prompt).toMatch(/lunch work|shift|counter|pay/i);
   });
 });

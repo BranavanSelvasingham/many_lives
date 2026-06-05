@@ -13,6 +13,7 @@ export function buildGenerateStreetReplyPrompt(
   input: StreetDialogueRequest,
 ): string {
   const context = buildStreetConversationContext(input);
+  const requiredGroundingLines = buildRequiredGroundingLines(input);
   const promptContext = {
     placeAndTime: buildPlainPlaceContext(context),
     rowan: buildPlainRowanContext(context),
@@ -47,6 +48,7 @@ export function buildGenerateStreetReplyPrompt(
     "- Use the place details as background. Do not explain the setting unless the line needs it.",
     "- If Rowan asks something broad, answer briefly and steer toward what matters nearby.",
     "- If Rowan asks what to do first, what is helpful, or whether work is available, answer with the specific next action, place, pay, timing, or condition before adding personality.",
+    ...requiredGroundingLines,
     "- When it fits, include one concrete thing Rowan could do next.",
     "- Treat Rowan as new to Brackenport: a place to stay, steady income, and a few real friends matter underneath most questions, but do not make every answer heavy.",
     "- Use Rowan's current goal, needs, and likely next move as background only. The line should still sound like casual speech.",
@@ -59,4 +61,22 @@ export function buildGenerateStreetReplyPrompt(
     `Rowan says: ${input.playerText}`,
     "Use the person's background, voice, and what is on their mind as quiet guidance.",
   ].join("\n");
+}
+
+function buildRequiredGroundingLines(input: StreetDialogueRequest): string[] {
+  const playerText = input.playerText.toLowerCase();
+  if (
+    input.npcId !== "npc-mara" ||
+    input.game.player.objective?.routeKey !== "first-afternoon" ||
+    input.game.firstAfternoon?.leadFieldNote ||
+    input.game.firstAfternoon?.planSettledAt ||
+    /\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(playerText)
+  ) {
+    return [];
+  }
+
+  return [
+    "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.",
+    "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.",
+  ];
 }

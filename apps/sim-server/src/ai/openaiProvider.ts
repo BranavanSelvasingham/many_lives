@@ -64,7 +64,7 @@ export interface OpenAIProviderOptions {
   timeoutMs?: number;
 }
 
-export const DEFAULT_OPENAI_TIMEOUT_MS = 12_000;
+export const DEFAULT_OPENAI_TIMEOUT_MS = 25_000;
 const MAX_OPENAI_TIMEOUT_MS = 30_000;
 
 export class OpenAIProvider implements AIProvider {

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { loadLocalEnvFiles } from "./localEnv.js";
-import { OpenAIProvider } from "./openaiProvider.js";
+import {
+  DEFAULT_OPENAI_TIMEOUT_MS,
+  OpenAIProvider,
+} from "./openaiProvider.js";
 import type { StreetPlanningRequest } from "./provider.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
 
@@ -17,7 +20,7 @@ async function main(): Promise<void> {
   const provider = new OpenAIProvider({
     apiKey,
     model,
-    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? 12_000),
+    timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS ?? DEFAULT_OPENAI_TIMEOUT_MS),
   });
   const request = buildPlanningRequest();
   const result = await provider.planStreetNextAction(request);
