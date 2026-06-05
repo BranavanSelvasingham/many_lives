@@ -2357,6 +2357,10 @@ function groundedMaraAdaLeadReply() {
   };
 }
 
+function buildMaraAdaLeadGroundingFollowup() {
+  return "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
+}
+
 function resolutionPointsToMaraAdaLead(
   resolution: ConversationResolution,
 ): boolean {
@@ -2746,20 +2750,52 @@ async function performConversationTurn(
     aiProvider.name === "openai"
       ? generatedReply
       : buildObjectiveScriptedReply(world, npc, text) ?? generatedReply;
+  let groundingFollowupTopics = new Set<string>();
   if (
     aiProvider.name === "openai" &&
     shouldRequireMaraAdaLeadEvidence(world, npc, text) &&
     !textGroundsMaraAdaLead(reply.reply)
   ) {
-    reply = groundedMaraAdaLeadReply();
-    recordAIRuntimePolicyFallback(
-      world,
-      "generateStreetReply",
-      "Live Mara reply did not ground the Ada lead.",
-    );
+    recordConversation(world, {
+      npcId: npc.id,
+      speaker: "npc",
+      speakerName: npc.name,
+      text: reply.reply,
+      locationId,
+    });
+
+    const groundingFollowup = buildMaraAdaLeadGroundingFollowup();
+    groundingFollowupTopics = detectConversationTopics(groundingFollowup);
+    recordConversation(world, {
+      npcId: npc.id,
+      speaker: "player",
+      speakerName: world.player.name,
+      text: groundingFollowup,
+      locationId,
+    });
+
+    const groundingReply = await aiProvider.generateStreetReply({
+      game: world,
+      npcId: npc.id,
+      playerText: groundingFollowup,
+    });
+    reply = groundingReply;
+
+    if (!textGroundsMaraAdaLead(reply.reply)) {
+      reply = groundedMaraAdaLeadReply();
+      recordAIRuntimePolicyFallback(
+        world,
+        "generateStreetReply",
+        "Live Mara reply did not ground the Ada lead after Rowan's follow-up.",
+      );
+    }
   }
   const replyTopics = detectConversationTopics(reply.reply);
-  const topics = new Set<string>([...playerTopics, ...replyTopics]);
+  const topics = new Set<string>([
+    ...playerTopics,
+    ...groundingFollowupTopics,
+    ...replyTopics,
+  ]);
   applyConversationRevelations(world, npc, topics);
 
   npc.lastSpokenLine = reply.reply;

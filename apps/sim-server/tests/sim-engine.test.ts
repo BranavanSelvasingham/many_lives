@@ -125,6 +125,40 @@ class VagueMaraLiveAIProvider extends LiveDialogueAIProvider {
   }
 }
 
+class VagueThenGroundedMaraLiveAIProvider extends LiveDialogueAIProvider {
+  readonly interpretationRequests: StreetConversationInterpretationRequest[] = [];
+  private maraReplyCount = 0;
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    this.replyRequests.push(input);
+    if (input.npcId === "npc-mara") {
+      this.maraReplyCount += 1;
+      if (this.maraReplyCount === 1) {
+        return {
+          followupThought: "Mara is being too vague.",
+          reply:
+            "The room can hold tonight. We will check you in properly when the evening settles.",
+        };
+      }
+
+      return {
+        followupThought: "Mara is making the lead plain.",
+        reply:
+          "Yes. Ask Ada at Kettle & Lamp about lunch work before the rush fills the counter.",
+      };
+    }
+
+    return super.generateStreetReply(input);
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ) {
+    this.interpretationRequests.push(input);
+    return super.interpretStreetConversation(input);
+  }
+}
+
 function expectCognitionToMirrorAutonomy(world: StreetGameState) {
   const nextMove = buildRowanCognition(world).nextMove;
   expect(nextMove).toMatchObject({
@@ -623,9 +657,9 @@ describe("SimulationEngine street slice", () => {
       10,
     );
 
-    const maraLine = world.activeConversation?.lines.find(
-      (line) => line.speaker === "npc",
-    )?.text;
+    const maraLine = world.activeConversation?.lines
+      .filter((line) => line.speaker === "npc")
+      .at(-1)?.text;
     expect(maraLine).toMatch(/Ada|Kettle & Lamp|lunch|work|shift/i);
     expect(world.aiRuntime?.totalFallbacks).toBeGreaterThan(0);
     expect(world.aiRuntime?.fallbackReasons.join(" ")).toMatch(
@@ -648,6 +682,44 @@ describe("SimulationEngine street slice", () => {
     ].join(" ");
     expect(copy).toMatch(/Ada|Kettle & Lamp|lunch|work/i);
     expect(provider.interpretationRequests.length).toBeGreaterThan(0);
+  });
+
+  it("continues vague live Mara dialogue with a grounded live follow-up before fallback", async () => {
+    const provider = new VagueThenGroundedMaraLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-vague-then-grounded-mara");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+      10,
+    );
+
+    const visibleLines = world.activeConversation?.lines.map(
+      (line) => line.text,
+    ) ?? [];
+    expect(visibleLines.join(" ")).toMatch(/Ada at Kettle & Lamp/i);
+    expect(visibleLines.join(" ")).toMatch(/lunch work/i);
+    expect(provider.replyRequests.filter((request) => request.npcId === "npc-mara")).toHaveLength(
+      2,
+    );
+    expect(provider.replyRequests.at(-1)?.playerText).toMatch(
+      /Ada at Kettle & Lamp.*lunch work/i,
+    );
+    expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(0);
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+      12,
+    );
+
+    expect(provider.interpretationRequests.length).toBeGreaterThan(0);
+    expect(world.rowanAutonomy.detail).toMatch(/Ada|Kettle & Lamp|lunch/i);
   });
 
   it("lets an OpenAI planner choose a validated objective action", async () => {
