@@ -341,6 +341,33 @@ function initializeAIRuntime(
   world.aiRuntime.provider = aiProvider.name;
 }
 
+function recordAIRuntimePolicyFallback(
+  world: StreetGameState,
+  task: AIRuntimeTask,
+  reason: string,
+): void {
+  if (!world.aiRuntime) {
+    return;
+  }
+
+  const summary = world.aiRuntime.tasks[task];
+  const now = new Date().toISOString();
+  summary.fallbacks += 1;
+  summary.lastFallbackReason = reason;
+  summary.lastStatus = "fallback";
+  summary.lastUpdatedAt = now;
+  world.aiRuntime.fallbackReasons = [
+    reason,
+    ...world.aiRuntime.fallbackReasons,
+  ]
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 5);
+  world.aiRuntime.lastUpdatedAt = now;
+  world.aiRuntime.status =
+    world.aiRuntime.totalSuccesses > 0 ? "live" : "fallback";
+  world.aiRuntime.totalFallbacks += 1;
+}
+
 async function refreshWorld(
   world: StreetGameState,
   aiProvider: AIProvider,
@@ -2272,6 +2299,116 @@ function latestNpcReplyFromConversation(
   return [...lines].reverse().find((line) => line.speaker === "npc")?.text;
 }
 
+function textGroundsMaraAdaLead(text: string | undefined): boolean {
+  const normalized = (text ?? "").toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    /\bada\b/.test(normalized) &&
+    /\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(normalized) &&
+    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bhelp\b|\bcounter\b|\bpay\b/.test(
+      normalized,
+    )
+  );
+}
+
+function conversationGroundsMaraAdaLead(
+  world: StreetGameState,
+  closingReply?: string,
+): boolean {
+  if (textGroundsMaraAdaLead(closingReply)) {
+    return true;
+  }
+
+  return world.conversations.some(
+    (entry) =>
+      entry.npcId === "npc-mara" &&
+      (entry.speaker === "npc" || entry.speaker === "player") &&
+      textGroundsMaraAdaLead(entry.text),
+  );
+}
+
+function shouldRequireMaraAdaLeadEvidence(
+  world: StreetGameState,
+  npc: NpcState,
+  playerText: string,
+): boolean {
+  if (
+    npc.id !== "npc-mara" ||
+    world.player.objective?.routeKey !== "first-afternoon" ||
+    world.firstAfternoon?.leadFieldNote ||
+    world.firstAfternoon?.planSettledAt
+  ) {
+    return false;
+  }
+
+  return !/\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(
+    playerText.toLowerCase(),
+  );
+}
+
+function groundedMaraAdaLeadReply() {
+  return {
+    followupThought: "Ada is the first useful bet.",
+    reply:
+      "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.",
+  };
+}
+
+function resolutionPointsToMaraAdaLead(
+  resolution: ConversationResolution,
+): boolean {
+  const text = [
+    resolution.decision,
+    resolution.memoryText,
+    resolution.objectiveText,
+    resolution.summary,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    /\bada\b|\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(text) &&
+    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bcounter\b/.test(text)
+  );
+}
+
+function sanitizeConversationResolutionForVisibleEvidence(
+  world: StreetGameState,
+  npc: NpcState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  resolution: ConversationResolution,
+  closingReply: string,
+): ConversationResolution {
+  if (
+    npc.id !== "npc-mara" ||
+    objective.routeKey !== "first-afternoon" ||
+    !resolutionPointsToMaraAdaLead(resolution) ||
+    conversationGroundsMaraAdaLead(world, closingReply)
+  ) {
+    return resolution;
+  }
+
+  recordAIRuntimePolicyFallback(
+    world,
+    "interpretStreetConversation",
+    "Conversation interpretation did not have visible Ada lead evidence.",
+  );
+
+  return {
+    decision:
+      "ask Mara one clearer question before treating Ada's lead as real.",
+    memoryKind: "self",
+    memoryText:
+      "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.",
+    summary:
+      "Mara has not yet made the Kettle & Lamp lead visible in the conversation.",
+  };
+}
+
 function shouldContinueConversation(
   world: StreetGameState,
   npc: NpcState,
@@ -2601,14 +2738,26 @@ async function performConversationTurn(
   const trustDelta = updateNpcTrustFromSpeech(npc, text, playerTopics);
   syncRowanAutonomy(world);
   const generatedReply = await aiProvider.generateStreetReply({
-      game: world,
-      npcId: npc.id,
-      playerText: text,
-    });
-  const reply =
+    game: world,
+    npcId: npc.id,
+    playerText: text,
+  });
+  let reply =
     aiProvider.name === "openai"
       ? generatedReply
       : buildObjectiveScriptedReply(world, npc, text) ?? generatedReply;
+  if (
+    aiProvider.name === "openai" &&
+    shouldRequireMaraAdaLeadEvidence(world, npc, text) &&
+    !textGroundsMaraAdaLead(reply.reply)
+  ) {
+    reply = groundedMaraAdaLeadReply();
+    recordAIRuntimePolicyFallback(
+      world,
+      "generateStreetReply",
+      "Live Mara reply did not ground the Ada lead.",
+    );
+  }
   const replyTopics = detectConversationTopics(reply.reply);
   const topics = new Set<string>([...playerTopics, ...replyTopics]);
   applyConversationRevelations(world, npc, topics);
@@ -2868,7 +3017,7 @@ function autonomyDetailForObjectivePlan(
   if (plan.actionId) {
     return isTimeSkippingAction(plan.actionId)
       ? `This will take some time: ${rationale}.`
-      : `This step is ready now: ${rationale}.`;
+      : `Rowan can act on this now: ${rationale}.`;
   }
 
   return `Rowan still has a clear next step: ${rationale}.`;
@@ -2897,7 +3046,7 @@ function autonomyDetailForAction(
 
   return isTimeSkippingAction(actionId)
     ? `This will take some time: ${rationale}.`
-    : `This step is ready now: ${rationale}.`;
+    : `Rowan can act on this now: ${rationale}.`;
 }
 
 function playerFacingAutonomyRationale(
@@ -5026,6 +5175,10 @@ function objectivePlanRationale(
     return scaffoldRationale;
   }
 
+  if (action.id === "reflect:first-afternoon-plan") {
+    return "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
+  }
+
   if (action.id === "buy:item-wrench") {
     const pressureProblem = urgentKnownProblems(world).find(
       (problem) =>
@@ -6344,7 +6497,11 @@ async function resolveConversationResolution(
     objective,
   });
 
-  return {
+  return sanitizeConversationResolutionForVisibleEvidence(
+    world,
+    npc,
+    objective,
+    {
     decision: interpreted.decision ?? heuristic.decision,
     memoryKind: interpreted.memoryText
       ? (interpreted.memoryKind ?? heuristic.memoryKind)
@@ -6353,7 +6510,9 @@ async function resolveConversationResolution(
     npcImpression: interpreted.npcImpression ?? heuristic.npcImpression,
     objectiveText: interpreted.objectiveText ?? heuristic.objectiveText,
     summary: interpreted.summary ?? heuristic.summary,
-  };
+    },
+    closingReply,
+  );
 }
 
 function buildAutonomousSpeech(
@@ -7427,7 +7586,7 @@ function ensureFirstAfternoonLeadFieldNote(world: StreetGameState): void {
     memory:
       "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
     next:
-      "Choose whether to take the cup-and-counter shift now, check another lead, return later, or keep exploring.",
+      "Ada's offer is now a live choice: take the cup-and-counter shift, compare another live pressure, or deliberately walk away before the window closes.",
   };
   addFeed(
     world,

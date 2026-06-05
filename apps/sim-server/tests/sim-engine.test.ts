@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import type {
   StreetAutonomousLineRequest,
+  StreetConversationInterpretationRequest,
   StreetPlanningRequest,
   StreetPlanningResult,
 } from "../src/ai/provider.js";
@@ -67,10 +68,60 @@ class LiveDialogueAIProvider extends MockAIProvider {
     this.replyRequests.push(input);
     const npcName =
       input.game.npcs.find((npc) => npc.id === input.npcId)?.name ?? "Someone";
+    if (input.npcId === "npc-mara") {
+      return {
+        followupThought: "Mara is grounding the live lead.",
+        reply:
+          "Mara live reply for Rowan. Ask Ada at Kettle & Lamp before lunch work fills the room.",
+      };
+    }
+    if (input.npcId === "npc-ada") {
+      return {
+        followupThought: "Ada is making the shift concrete.",
+        reply:
+          "Ada live reply for Rowan. Lunch needs steady hands at Kettle & Lamp and pays fourteen.",
+      };
+    }
     return {
       followupThought: `${npcName} is responding through the live provider.`,
       reply: `${npcName} live reply for Rowan.`,
     };
+  }
+}
+
+class VagueMaraLiveAIProvider extends LiveDialogueAIProvider {
+  readonly interpretationRequests: StreetConversationInterpretationRequest[] = [];
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    this.replyRequests.push(input);
+    if (input.npcId === "npc-mara") {
+      return {
+        followupThought: "Mara is being too vague.",
+        reply:
+          "The room can hold tonight. We will check you in properly when the evening settles.",
+      };
+    }
+
+    return super.generateStreetReply(input);
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ) {
+    this.interpretationRequests.push(input);
+    if (input.npcId === "npc-mara") {
+      return {
+        decision:
+          "get to Kettle & Lamp before lunch gets busy and ask Ada for work.",
+        memoryKind: "job" as const,
+        memoryText:
+          "Mara trusts follow-through more than worry, and Ada is the nearest honest place to start.",
+        objectiveText: "Get to Kettle & Lamp and ask Ada for work.",
+        summary: "Mara pointed Rowan to Ada's lunch work.",
+      };
+    }
+
+    return super.interpretStreetConversation(input);
   }
 }
 
@@ -425,6 +476,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy.detail).not.toMatch(
       /prompt|context is specific|clear enough/i,
     );
+    expect(world.rowanAutonomy.detail).not.toMatch(/This step is ready now/i);
   });
 
   it("opens the first afternoon with room talk before the work lead", async () => {
@@ -464,20 +516,42 @@ describe("SimulationEngine street slice", () => {
       world,
       (nextWorld) =>
         !nextWorld.activeConversation &&
-        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
       12,
     );
 
-    const copy = [
+    const commitmentCopy = [
       world.rowanAutonomy.label,
       world.rowanAutonomy.detail,
       world.rowanAutonomy.intent?.reason,
       ...(world.rowanAutonomy.intent?.signals ?? []),
     ].join(" ");
 
-    expect(copy).toMatch(/Kettle & Lamp|street route|Ada/i);
-    expect(copy).not.toMatch(/Ask Ada.*at Morrow House/i);
-    expect(copy).not.toMatch(/Ada work at Morrow House/i);
+    expect(commitmentCopy).toMatch(/Kettle & Lamp|street route|Ada/i);
+    expect(commitmentCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
+    expect(commitmentCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
+    expect(commitmentCopy).not.toMatch(/Ada work at Morrow House/i);
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+      12,
+    );
+
+    const routeCopy = [
+      world.rowanAutonomy.label,
+      world.rowanAutonomy.detail,
+      world.rowanAutonomy.intent?.reason,
+      ...(world.rowanAutonomy.intent?.signals ?? []),
+    ].join(" ");
+
+    expect(routeCopy).toMatch(/Kettle & Lamp|street route|Ada/i);
+    expect(routeCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
+    expect(routeCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
+    expect(routeCopy).not.toMatch(/Ada work at Morrow House/i);
   });
 
   it("attempts live OpenAI-mode dialogue for first Mara and Ada conversations", async () => {
@@ -535,6 +609,45 @@ describe("SimulationEngine street slice", () => {
       world.activeConversation?.lines.find((line) => line.speaker === "npc")
         ?.text,
     ).toContain("Ada live reply for Rowan.");
+  });
+
+  it("does not let vague Mara dialogue invisibly unlock the Ada lead", async () => {
+    const provider = new VagueMaraLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-vague-mara-evidence-gate");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+      10,
+    );
+
+    const maraLine = world.activeConversation?.lines.find(
+      (line) => line.speaker === "npc",
+    )?.text;
+    expect(maraLine).toMatch(/Ada|Kettle & Lamp|lunch|work|shift/i);
+    expect(world.aiRuntime?.totalFallbacks).toBeGreaterThan(0);
+    expect(world.aiRuntime?.fallbackReasons.join(" ")).toMatch(
+      /Ada lead/i,
+    );
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+      12,
+    );
+
+    const copy = [
+      world.rowanAutonomy.label,
+      world.rowanAutonomy.detail,
+      world.rowanAutonomy.intent?.reason,
+    ].join(" ");
+    expect(copy).toMatch(/Ada|Kettle & Lamp|lunch|work/i);
+    expect(provider.interpretationRequests.length).toBeGreaterThan(0);
   });
 
   it("lets an OpenAI planner choose a validated objective action", async () => {
@@ -1971,7 +2084,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.firstAfternoon?.leadFieldNote).toMatchObject({
       evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
       learned: expect.stringContaining("Mara's Kettle & Lamp lead is real"),
-      next: expect.stringContaining("Choose whether to take"),
+      next: expect.stringContaining("Ada's offer is now a live choice"),
     });
     expect(world.firstAfternoon?.fieldNote).toBeUndefined();
     expect(

@@ -153,7 +153,7 @@ export function restoreOverlayRenderState(
       (state.scrollIdentityByKey.get("command-rail") ?? "") ===
       (commandRail.dataset.preserveScrollKey ?? "");
     if (!commandRailIdentityMatches) {
-      commandRail.scrollTop = 0;
+      scrollCommandRailToDirective(commandRail);
     } else if (state.commandRailNearBottom) {
       commandRail.scrollTop = commandRail.scrollHeight;
     } else if (state.commandRailScrollTop !== null) {
@@ -162,6 +162,8 @@ export function restoreOverlayRenderState(
         Math.max(commandRail.scrollHeight - commandRail.clientHeight, 0),
       );
     }
+    ensureCommandRailDirectiveVisible(commandRail);
+    ensureCommandRailConversationVisible(commandRail);
   }
 
   const transcript = root.querySelector<HTMLElement>(
@@ -200,4 +202,68 @@ export function restoreOverlayRenderState(
       state.fieldSelectionEnd,
     );
   }
+}
+
+function commandRailDirective(commandRail: HTMLElement) {
+  return commandRail.querySelector<HTMLElement>(
+    '[data-rowan-directive="true"]',
+  );
+}
+
+function scrollCommandRailToDirective(commandRail: HTMLElement) {
+  const directive = commandRailDirective(commandRail);
+  if (!directive) {
+    commandRail.scrollTop = 0;
+    return;
+  }
+
+  const railRect = commandRail.getBoundingClientRect();
+  const directiveRect = directive.getBoundingClientRect();
+  commandRail.scrollTop = Math.max(
+    commandRail.scrollTop + directiveRect.top - railRect.top - 10,
+    0,
+  );
+}
+
+function ensureCommandRailDirectiveVisible(commandRail: HTMLElement) {
+  const directive = commandRailDirective(commandRail);
+  if (!directive) {
+    return;
+  }
+
+  const railRect = commandRail.getBoundingClientRect();
+  const directiveRect = directive.getBoundingClientRect();
+  const visibleHeight =
+    Math.min(directiveRect.bottom, railRect.bottom) -
+    Math.max(directiveRect.top, railRect.top);
+  const minimumReadableHeight = Math.min(
+    directiveRect.height,
+    railRect.height,
+    160,
+  );
+  if (
+    directiveRect.top < railRect.top ||
+    visibleHeight < minimumReadableHeight
+  ) {
+    scrollCommandRailToDirective(commandRail);
+  }
+}
+
+function ensureCommandRailConversationVisible(commandRail: HTMLElement) {
+  const bubbles = commandRail.querySelectorAll<HTMLElement>(".ml-chat-bubble");
+  const bubble = bubbles.item(bubbles.length - 1);
+  if (!bubble) {
+    return;
+  }
+
+  const railRect = commandRail.getBoundingClientRect();
+  const bubbleRect = bubble.getBoundingClientRect();
+  if (bubbleRect.bottom <= railRect.bottom && bubbleRect.top >= railRect.top) {
+    return;
+  }
+
+  commandRail.scrollTop = Math.max(
+    commandRail.scrollTop + bubbleRect.bottom - railRect.bottom + 14,
+    0,
+  );
 }

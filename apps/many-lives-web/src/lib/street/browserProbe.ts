@@ -61,6 +61,8 @@ export type StreetBrowserProbeSnapshot = {
     RowanPlaybackState,
     "activeBeat" | "lastCompletedBeat" | "queuedBeats"
   >;
+  rowanAutoplayEnabled?: boolean;
+  rowanAutoplayFrozen?: boolean;
 };
 
 function objectiveProbePayload(game: StreetGameState) {
@@ -310,6 +312,13 @@ export function buildStreetBrowserProbeJson({
       totalMinutes: game.clock.totalMinutes,
     },
     gameId: game.id,
+    firstAfternoon: {
+      completedAt: game.firstAfternoon?.completedAt ?? null,
+      hasFieldNote: Boolean(game.firstAfternoon?.fieldNote),
+      hasLeadFieldNote: Boolean(game.firstAfternoon?.leadFieldNote),
+      planSettledAt: game.firstAfternoon?.planSettledAt ?? null,
+      teaShiftStage: game.firstAfternoon?.teaShiftStage ?? null,
+    },
     location: {
       id: game.player.currentLocationId ?? null,
       name: currentLocation?.name ?? game.currentScene.title,
@@ -340,6 +349,24 @@ export function buildStreetBrowserProbeJson({
       activeTitle: snapshot.rowanPlayback?.activeBeat?.title ?? null,
       justHappened: snapshot.rowanPlayback?.lastCompletedBeat?.title ?? null,
       queuedCount: snapshot.rowanPlayback?.queuedBeats.length ?? 0,
+    },
+    watchMode: {
+      autoContinue: game.rowanAutonomy.autoContinue,
+      enabled: Boolean(snapshot.rowanAutoplayEnabled),
+      frozen: Boolean(snapshot.rowanAutoplayFrozen),
+      pendingPlayback: Boolean(
+        snapshot.rowanPlayback?.activeBeat ||
+          snapshot.rowanPlayback?.queuedBeats.length,
+      ),
+      status: snapshot.rowanAutoplayFrozen
+        ? "frozen"
+        : !snapshot.rowanAutoplayEnabled
+          ? "off"
+          : game.rowanAutonomy.autoContinue
+            ? "watching"
+            : game.rowanAutonomy.stepKind === "blocked"
+              ? "blocked"
+              : "stopped",
     },
     rail: {
       justHappened: rowanRail.justHappened?.title ?? null,

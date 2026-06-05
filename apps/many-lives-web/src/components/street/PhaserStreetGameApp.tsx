@@ -238,12 +238,12 @@ const WATCH_PLAYER_MAX_MOVE_DURATION_MS = 8600;
 const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
-const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 14000;
+const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 1800;
 const AUTONOMY_BEAT_DELAY_MS = {
-  acting: 26000,
-  conversation: 42000,
-  moving: 19000,
-  waiting: 30000,
+  acting: 1800,
+  conversation: 2200,
+  moving: 1400,
+  waiting: 1800,
 } as const;
 const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
   autoContinue: false,
@@ -273,7 +273,7 @@ function autoContinueDelayMsForBeat(game: StreetGameState) {
   }
 
   // Keep Rowan's next step behind the human-visible transcript, not just the sim state.
-  return Math.max(baseDelay, estimateLiveConversationBeatMs(game) + 3000);
+  return Math.max(baseDelay, estimateLiveConversationBeatMs(game) + 900);
 }
 
 function buildGameSyncKey(game: StreetGameState) {
@@ -489,6 +489,7 @@ type StreetAppSnapshot = {
   recentBeat?: RecentBeat;
   rowanPlayback?: RowanPlaybackState;
   rowanAutoplayEnabled: boolean;
+  rowanAutoplayFrozen: boolean;
   storedGameId?: string | null;
   waypointNonce: number;
   waypointTarget?: Point;
@@ -1632,6 +1633,7 @@ export function PhaserStreetGameApp() {
       recentBeat: rowanPlayback.lastCompletedBeat,
       rowanPlayback,
       rowanAutoplayEnabled,
+      rowanAutoplayFrozen,
       storedGameId: storedGamePromptId,
       waypointNonce,
       waypointTarget: waypointTarget ?? undefined,
@@ -1650,6 +1652,7 @@ export function PhaserStreetGameApp() {
       requestedGameId,
       rowanPlayback,
       rowanAutoplayEnabled,
+      rowanAutoplayFrozen,
       sceneOverrideVersion,
       storedGamePromptId,
       viewport,
@@ -2936,7 +2939,13 @@ function syncCommandRailDiagnostics(root: HTMLDivElement) {
 
   const railRect = commandRail.getBoundingClientRect();
   const anchorRect = directive.getBoundingClientRect();
-  const anchorVisible = anchorRect.top >= railRect.top - 1;
+  const visibleHeight =
+    Math.min(anchorRect.bottom, railRect.bottom) -
+    Math.max(anchorRect.top, railRect.top);
+  const minimumReadableHeight = Math.min(anchorRect.height, railRect.height, 160);
+  const anchorVisible =
+    anchorRect.top >= railRect.top - 1 &&
+    visibleHeight >= minimumReadableHeight - 1;
   commandRail.dataset.commandRailAnchorVisible = anchorVisible
     ? "true"
     : "false";
@@ -3142,6 +3151,20 @@ function drawTeaHouseShiftState(
 
   if (stage === "rush") {
     drawCafeCustomer(layer, {
+      accent: 0x78a88a,
+      alpha: 0.58,
+      facing: -1,
+      x: counter.x - CELL * 0.95,
+      y: counter.y + CELL * 0.5,
+    });
+    drawCafeCustomer(layer, {
+      accent: 0xb98bc3,
+      alpha: 0.5,
+      facing: -1,
+      x: counter.x - CELL * 1.36,
+      y: counter.y + CELL * 0.5,
+    });
+    drawCafeCustomer(layer, {
       accent: 0xc88d64,
       alpha: 0.68,
       facing: 1,
@@ -3149,17 +3172,25 @@ function drawTeaHouseShiftState(
       y: southTable.y + CELL * 0.56,
     });
     drawCafeCup(layer, northTable.x - 10, northTable.y - 3, true);
+    drawCafeCup(layer, northTable.x + 12, northTable.y - 1, true);
     drawCafeCup(layer, middleTable.x + 8, middleTable.y - 2, true);
     drawCafeCup(layer, southTable.x - 5, southTable.y - 2, true);
+    drawCafeCup(layer, southTable.x + 11, southTable.y + 1, true);
     drawCafeTray(layer, tablePass.x, tablePass.y, 0xe0bd74, 0.4);
   } else if (stage === "counter") {
+    drawCafeTray(layer, northTable.x - 4, northTable.y - 1, 0x9bd0cc, 0.18);
+    drawCafeTray(layer, southTable.x + 6, southTable.y, 0x9bd0cc, 0.16);
     drawCafeCup(layer, counter.x + 4, counter.y - 9, false);
     drawCafeCup(layer, counter.x + 18, counter.y - 9, false);
+    drawCafeCup(layer, counter.x + 32, counter.y - 8, false);
     drawCafeTray(layer, counter.x + 7, counter.y + 4, 0x9bd0cc, 0.5);
     layer.lineStyle(2.2, 0xeedaa3, 0.36);
     layer.lineBetween(counter.x - 18, counter.y + 16, counter.x + 22, counter.y + 16);
     layer.lineBetween(counter.x - 10, counter.y + 23, counter.x + 30, counter.y + 23);
   } else if (stage === "paid") {
+    drawCafeTray(layer, northTable.x - 6, northTable.y, 0x9bd0cc, 0.1);
+    drawCafeTray(layer, middleTable.x + 8, middleTable.y, 0x9bd0cc, 0.1);
+    drawCafeTray(layer, southTable.x + 4, southTable.y, 0x9bd0cc, 0.1);
     drawCafeCup(layer, counter.x + 4, counter.y - 8, false);
     drawCafeTray(layer, counter.x + 4, counter.y + 4, 0xe0bd74, 0.32);
     layer.fillStyle(0x17110a, 0.18);
@@ -3591,6 +3622,76 @@ function renderOverlay(objects: RuntimeObjects, runtimeState: RuntimeState) {
   root.innerHTML = buildOverlayHtml(runtimeState);
   restoreOverlayRenderState(root, overlayState);
   syncCommandRailDiagnostics(root);
+  installStreetProbeAccessor(root);
+}
+
+function installStreetProbeAccessor(root: HTMLDivElement) {
+  const probeWindow = window as typeof window & {
+    __manyLivesStreetProbe?: () => unknown;
+  };
+  probeWindow.__manyLivesStreetProbe = () => {
+    const script = root.querySelector<HTMLScriptElement>("#ml-browser-probe");
+    const payload = script?.textContent
+      ? (JSON.parse(script.textContent) as Record<string, unknown>)
+      : null;
+    if (!payload) {
+      return payload;
+    }
+
+    const rectFor = (element: Element | null) => {
+      if (!element) {
+        return null;
+      }
+
+      const rect = element.getBoundingClientRect();
+      return {
+        bottom: Math.round(rect.bottom),
+        height: Math.round(rect.height),
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        top: Math.round(rect.top),
+        width: Math.round(rect.width),
+      };
+    };
+    const commandRail = root.querySelector<HTMLElement>(
+      '[data-preserve-scroll="command-rail"]',
+    );
+    const directive = root.querySelector('[data-rowan-directive="true"]');
+    const readableDirectiveVisible = (() => {
+      if (!commandRail || !directive) {
+        return null;
+      }
+
+      const railRect = commandRail.getBoundingClientRect();
+      const directiveRect = directive.getBoundingClientRect();
+      const visibleHeight =
+        Math.min(directiveRect.bottom, railRect.bottom) -
+        Math.max(directiveRect.top, railRect.top);
+      const minimumReadableHeight = Math.min(
+        directiveRect.height,
+        railRect.height,
+        120,
+      );
+      return (
+        directiveRect.top >= railRect.top - 1 &&
+        visibleHeight >= minimumReadableHeight - 1
+      );
+    })();
+    payload.railVisibility = {
+      commandRailAnchorVisible: commandRail
+        ? readableDirectiveVisible
+        : null,
+      commandRailScrollTop: commandRail
+        ? Number(commandRail.dataset.commandRailScrollTop ?? commandRail.scrollTop)
+        : null,
+      conversationPanelRect: rectFor(
+        root.querySelector("[data-conversation-panel]"),
+      ),
+      directiveRect: rectFor(directive),
+      railRect: rectFor(commandRail),
+    };
+    return payload;
+  };
 }
 
 function syncBrowserMovementProbe(
@@ -5223,18 +5324,18 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const primaryContinueLabel = snapshot.rowanAutoplayEnabled
     ? firstAfternoonOpening
       ? "Watch Rowan begin"
-      : "Nudge Rowan"
+      : "Advance now"
     : game.activeConversation
       ? activeConversationContinueLabel
       : rowanAutonomy.label || "Continue";
   const primaryContinueCopy = game.activeConversation
     ? snapshot.rowanAutoplayEnabled
-      ? "He will keep talking on his own."
+      ? "Autoplay is on; this skips the pause."
       : "Let the conversation land."
     : snapshot.rowanAutoplayEnabled
       ? firstAfternoonOpening
-        ? "He'll start with Mara."
-        : "He will keep going on his own."
+        ? "Autoplay will start with Mara."
+        : "Autoplay is on; this skips the wait."
       : rowanAutonomy.mode === "moving"
         ? "Move Rowan there."
         : rowanAutonomy.mode === "waiting"
@@ -5504,6 +5605,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     snapshot: {
       ...snapshot,
       movement: buildBrowserMovementDiagnostics(runtimeState),
+      rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
+      rowanAutoplayFrozen: snapshot.rowanAutoplayFrozen,
     },
   });
   const dockActiveTab = focusPanel ?? "actions";
@@ -5682,7 +5785,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 `
                   : snapshot.rowanAutoplayEnabled && rowanAutonomy.autoContinue
                     ? `<div class="ml-autoplay-note">${escapeHtml(
-                        "Rowan is moving through this beat. You can still take the next step when you want.",
+                        "Autoplay is carrying this beat. You can still skip the wait when you want.",
                       )}</div>`
                     : ""
               }

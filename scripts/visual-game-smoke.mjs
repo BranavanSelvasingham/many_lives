@@ -951,17 +951,20 @@ async function assertWatchModeFeelGuard() {
   );
 
   assert.ok(
-    delayValues.acting >= 24_000 &&
-      delayValues.conversation >= 40_000 &&
-      delayValues.moving >= 18_000 &&
-      delayValues.waiting >= 28_000,
-    `Watch-mode autoplay is paced too tightly: ${JSON.stringify(delayValues)}`,
+    delayValues.acting <= 2_500 &&
+      delayValues.conversation <= 3_000 &&
+      delayValues.moving <= 2_000 &&
+      delayValues.waiting <= 2_500,
+    `Watch-mode autoplay is paced too slowly for true observation: ${JSON.stringify(delayValues)}`,
   );
   assert.ok(
-    streetSource.includes('"? "Nudge Rowan"') ||
-      streetSource.includes('? "Nudge Rowan"') ||
-      streetSource.includes('? "Watch Rowan begin"'),
-    "Watch-mode primary action should be a soft nudge, not a command.",
+    !streetSource.includes("Nudge Rowan"),
+    "Watch-mode primary action must not depend on Nudge Rowan copy.",
+  );
+  assert.ok(
+    streetSource.includes("? \"Advance now\"") ||
+      streetSource.includes("? \"Watch Rowan begin\""),
+    "Watch-mode primary action should expose optional watch/skip language.",
   );
   assert.ok(
     !streetSource.includes("return `Talk: ${targetNpc.name}`;"),
@@ -1185,9 +1188,13 @@ async function runViewportCheck(session, viewport) {
   );
   assert.ok(
     page.bodyText.includes("Rowan") &&
-      (page.bodyText.includes("Nudge Rowan") ||
+      (page.bodyText.includes("Advance now") ||
         page.bodyText.includes("Watch Rowan begin")),
     `${viewport.name}: expected Rowan watch-mode UI text was missing.`,
+  );
+  assert.ok(
+    !page.bodyText.includes("Nudge Rowan"),
+    `${viewport.name}: watch-mode UI still contains Nudge Rowan copy.`,
   );
   assert.ok(
     page.rootClass.includes("is-watch-mode"),
@@ -1205,7 +1212,7 @@ async function runViewportCheck(session, viewport) {
     );
     assert.ok(
       page.compactPrimaryAction.text.includes("Watch Rowan begin") ||
-        page.compactPrimaryAction.text.includes("Nudge Rowan"),
+        page.compactPrimaryAction.text.includes("Advance now"),
       `${viewport.name}: compact primary action text is not the current Rowan action: ${page.compactPrimaryAction.text}`,
     );
   }

@@ -314,7 +314,7 @@ export function buildConversationPanelHtml(options: {
   return `
     <div class="ml-chat-shell ${isLiveConversation ? "is-live" : ""} ${
       isRailMode ? "is-rail" : ""
-    }">
+    }" data-conversation-panel="true">
       <div class="ml-chat-header">
         <div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>
         <div class="ml-chat-head-copy">

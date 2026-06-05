@@ -484,6 +484,9 @@ class CdpSession {
 
   async readBrowserProbe() {
     const probe = await this.evaluate(`(() => {
+      if (typeof window.__manyLivesStreetProbe === "function") {
+        return window.__manyLivesStreetProbe();
+      }
       const script = document.querySelector("#ml-browser-probe");
       if (!script) {
         return null;
@@ -618,6 +621,29 @@ class CdpSession {
       const fieldNotes = Array.from(document.querySelectorAll("[data-field-note]"));
       const fieldNote = document.querySelector('[data-field-note="first-afternoon"]');
       const activeConversation = document.querySelector("[data-conversation-panel]");
+      const commandRail = document.querySelector('[data-preserve-scroll="command-rail"]');
+      const rowanDirective = document.querySelector('[data-rowan-directive="true"]');
+      const chatBubbles = Array.from(document.querySelectorAll(".ml-chat-bubble"));
+      const latestChatBubble = chatBubbles.at(-1) ?? null;
+      const readableDirectiveVisible = (() => {
+        if (!commandRail || !rowanDirective) {
+          return null;
+        }
+        const railRect = commandRail.getBoundingClientRect();
+        const directiveRect = rowanDirective.getBoundingClientRect();
+        const visibleHeight =
+          Math.min(directiveRect.bottom, railRect.bottom) -
+          Math.max(directiveRect.top, railRect.top);
+        const minimumReadableHeight = Math.min(
+          directiveRect.height,
+          railRect.height,
+          120
+        );
+        return (
+          directiveRect.top >= railRect.top - 1 &&
+          visibleHeight >= minimumReadableHeight - 1
+        );
+      })();
 
       return {
         actionLabels: Array.from(document.querySelectorAll("[data-action-id]"))
@@ -645,12 +671,25 @@ class CdpSession {
         ),
         hasRail: Boolean(rail),
         layout: {
+          chatBubbles: chatBubbles.map((element) => ({
+            rect: rectFromElement(element),
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          })),
           clippingAncestors: {
             dockPanel: clippingAncestorsFor(".ml-dock-panel"),
             focusWindow: clippingAncestorsFor(".ml-inline-focus-window"),
+            latestChatBubble: clippingAncestorsFor(".ml-chat-bubble:last-of-type"),
+            rowanDirective: clippingAncestorsFor('[data-rowan-directive="true"]'),
             rightStack: clippingAncestorsFor(".ml-right-stack"),
             timePill: clippingAncestorsFor(".ml-time-pill"),
           },
+          commandRail: commandRail
+            ? {
+                anchorVisible: readableDirectiveVisible,
+                rect: rectFromElement(commandRail),
+                scrollTop: Math.round(commandRail.scrollTop),
+              }
+            : null,
           dock: rectFor(".ml-dock"),
           dockPanel: rectFor(".ml-dock-panel"),
           fieldNotes: fieldNotes.map((element) => ({
@@ -659,6 +698,8 @@ class CdpSession {
           })),
           focusBody: rectFor(".ml-focus-body"),
           focusWindow: rectFor(".ml-inline-focus-window"),
+          latestChatBubble: rectFromElement(latestChatBubble),
+          rowanDirective: rectFromElement(rowanDirective),
           document: {
             clientHeight: document.documentElement.clientHeight,
             clientWidth: document.documentElement.clientWidth,
@@ -1718,12 +1759,17 @@ function assertGameplayDom(label, game, probe, dom) {
   );
   assert.doesNotMatch(
     dom.bodyText,
+    /Nudge Rowan|This step is ready now|confirm and commit/i,
+    `${label}: default Rowan rail leaked stale stepper or scaffold copy.`,
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
     /belongs here/i,
     `${label}: default Rowan rail leaked mechanical location language.`,
   );
   assert.doesNotMatch(
     dom.bodyText,
-    /Ask Ada.*at Morrow House|Ada work at Morrow House/i,
+    /Ask Ada.*at Morrow House|Ada(?:'s)?[^.\n]{0,100}at Morrow House|Ada work at Morrow House/i,
     `${label}: default Rowan rail described Ada's cafe lead as happening at Morrow House.`,
   );
 
@@ -1738,6 +1784,8 @@ function assertGameplayDom(label, game, probe, dom) {
     );
   }
 
+  assertRailReadability(label, game, probe, dom);
+
   if (label === "lunch-rush" || label === "finish-shift") {
     assert.match(
       dom.bodyText,
@@ -1751,9 +1799,69 @@ function assertGameplayDom(label, game, probe, dom) {
       game.firstAfternoon?.fieldNote,
       `${label}: first-afternoon field note was not persisted by the sim.`,
     );
+    const leadNote = dom.fieldNotes.find(
+      (note) => note.key === "mara-ada-lead",
+    );
+    assert.doesNotMatch(
+      leadNote?.text ?? "",
+      /Choose whether to take the cup-and-counter shift now/i,
+      `${label}: completed run still shows stale lead-note next-step copy.`,
+    );
+    assert.match(
+      leadNote?.text ?? "",
+      /first afternoon is settled|shift paid|Return to Morrow House|take stock/i,
+      `${label}: completed run does not show state-derived lead-note next-step copy.`,
+    );
   }
 
   assertCriticalVisualCoherence(label, dom);
+}
+
+function rectIsInside(inner, outer, tolerance = 2) {
+  if (!inner || !outer) {
+    return true;
+  }
+
+  return (
+    inner.left >= outer.left - tolerance &&
+    inner.right <= outer.right + tolerance &&
+    inner.top >= outer.top - tolerance &&
+    inner.bottom <= outer.bottom + tolerance
+  );
+}
+
+function assertRailReadability(label, game, probe, dom) {
+  const commandRail = dom.layout?.commandRail;
+  if (commandRail && !game.activeConversation) {
+    assert.notEqual(
+      commandRail.anchorVisible,
+      false,
+      `${label}: active Rowan rail card is clipped or scrolled out of view (${JSON.stringify({
+        commandRail,
+        directive: dom.layout?.rowanDirective,
+      })}).`,
+    );
+  }
+
+  if (!game.activeConversation) {
+    assert.notEqual(
+      probe.railVisibility?.commandRailAnchorVisible,
+      false,
+      `${label}: browser probe reports active Rowan rail card is not fully visible.`,
+    );
+  }
+
+  if (!game.activeConversation) {
+    return;
+  }
+
+  assert.ok(
+    rectIsInside(dom.layout?.latestChatBubble, commandRail?.rect, 3),
+    `${label}: latest conversation bubble is clipped outside the command rail (${JSON.stringify({
+      bubble: dom.layout?.latestChatBubble,
+      commandRail: commandRail?.rect,
+    })}).`,
+  );
 }
 
 function assertPlayerRouteDiagnostics(label, probe) {
@@ -2255,6 +2363,7 @@ function buildTimelineEntry({
     screenshot,
     screenshotError: screenshotError ?? null,
     visualPlayer: probe.visualPlayer,
+    watchMode: probe.watchMode ?? null,
     aiRuntime: probe.aiRuntime ?? null,
     worldPressure: probe.worldPressure ?? null,
     sim: {
@@ -2268,6 +2377,7 @@ function buildTimelineEntry({
       leadFieldNote: game.firstAfternoon?.leadFieldNote ?? null,
       locationId: game.player.currentLocationId,
       money: game.player.money,
+      teaShiftStage: game.firstAfternoon?.teaShiftStage ?? null,
     },
   };
 }
@@ -2373,6 +2483,76 @@ async function captureProbeState({ game, label }) {
     probe,
     screenshot: null,
     screenshotError: null,
+  };
+}
+
+async function runAutoplayObservation(session) {
+  const url = `${getWebBase()}?new=1&autoplay=1&autoplayRegression=${Date.now()}`;
+  await session.navigate(url);
+  const startProbe = await session.readBrowserProbe();
+  assert.equal(
+    startProbe.watchMode?.enabled,
+    true,
+    "Fresh autoplay observation did not start in watch mode.",
+  );
+  assert.notEqual(
+    startProbe.watchMode?.status,
+    "frozen",
+    "Fresh autoplay observation unexpectedly started frozen.",
+  );
+
+  const completedProbe = await waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (
+        probe?.firstAfternoon?.completedAt ||
+        /first afternoon complete/i.test(probe?.autonomy?.label ?? "")
+      ) {
+        return probe;
+      }
+      return null;
+    },
+    140_000,
+    "Autoplay did not reach first-afternoon completion without manual advance clicks.",
+  );
+  const dom = await session.readDomSnapshot();
+  assert.doesNotMatch(
+    dom.bodyText,
+    /Nudge Rowan/i,
+    "Fresh autoplay observation still exposes Nudge Rowan copy.",
+  );
+  assert.equal(
+    completedProbe.watchMode?.enabled,
+    true,
+    "Completed autoplay observation lost watch-mode diagnostics.",
+  );
+  assert.ok(
+    completedProbe.clock.totalMinutes > startProbe.clock.totalMinutes,
+    "Autoplay observation did not advance game time.",
+  );
+
+  const screenshotPath = path.join(
+    OUTPUT_DIR,
+    "autoplay-observation-complete.png",
+  );
+  await session.captureScreenshot(screenshotPath);
+
+  return {
+    completed: {
+      autonomyLabel: completedProbe.autonomy?.label ?? null,
+      clock: completedProbe.clock,
+      firstAfternoon: completedProbe.firstAfternoon,
+      gameId: completedProbe.gameId,
+      location: completedProbe.location,
+      watchMode: completedProbe.watchMode,
+    },
+    screenshot: screenshotPath,
+    start: {
+      autonomyLabel: startProbe.autonomy?.label ?? null,
+      clock: startProbe.clock,
+      gameId: startProbe.gameId,
+      watchMode: startProbe.watchMode,
+    },
   };
 }
 
@@ -2734,6 +2914,7 @@ async function main() {
   let game = await createGame();
   const gameRef = { current: game };
   let overlayChecks = [];
+  let autoplayObservation = null;
   const session = USE_CHROME_DRIVER
     ? await launchBrowserSession(browserUrl(game.id))
     : null;
@@ -2839,6 +3020,9 @@ async function main() {
       traceRegression("overlay-start");
       overlayChecks = await runOverlayPanelChecks(session);
       traceRegression("overlay-done");
+      traceRegression("autoplay-observation-start");
+      autoplayObservation = await runAutoplayObservation(session);
+      traceRegression("autoplay-observation-done");
       assert.deepEqual(
         session.pageErrors,
         [],
@@ -3046,16 +3230,37 @@ async function main() {
     741,
     "Expected the lunch rush beat to land at 12:21 after Rowan reaches the counter anchor.",
   );
+  assert.equal(
+    byLabel["lunch-rush"]?.sim?.teaShiftStage,
+    "rush",
+    "Expected the cafe rush screenshot to be tied to the rush sim stage.",
+  );
   assert.match(
     byLabel["lunch-rush"]?.autonomy?.label ?? "",
     /lunch rush/i,
     "Expected Rowan to keep the lunch rush moving once the shift begins.",
+  );
+  assert.equal(
+    byLabel["finish-shift"]?.sim?.teaShiftStage,
+    "counter",
+    "Expected the finish-shift screenshot to show the counter sim stage before pay.",
   );
   assert.match(
     byLabel["finish-shift"]?.autonomy?.label ?? "",
     /finish/i,
     "Expected Rowan to finish the cafe shift before heading home.",
   );
+  assert.equal(
+    byLabel["head-home"]?.sim?.teaShiftStage,
+    "paid",
+    "Expected the head-home screenshot to show the paid cafe sim stage.",
+  );
+  for (const label of ["lunch-rush", "finish-shift", "head-home"]) {
+    assert.ok(
+      byLabel[label]?.screenshot,
+      `Expected browser screenshot evidence for ${label}.`,
+    );
+  }
   assert.equal(
     byLabel["head-home"]?.autonomy?.targetLocationId,
     "boarding-house",
@@ -3157,6 +3362,7 @@ async function main() {
   });
   const summary = {
     browserDriver: BROWSER_DRIVER,
+    autoplayObservation,
     evidence,
     finalGameId: game.id,
     finalState: {

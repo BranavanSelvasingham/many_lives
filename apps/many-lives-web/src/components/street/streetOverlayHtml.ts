@@ -662,7 +662,9 @@ export function buildFirstAfternoonFieldNoteHtml(
         </div>
         <div class="ml-field-note-line">
           <div class="ml-row-meta">Next</div>
-          <div class="ml-row-copy">${escapeHtml(note!.next)}</div>
+          <div class="ml-row-copy">${escapeHtml(
+            fieldNoteNextCopy(game, key, note!.next),
+          )}</div>
         </div>
         <div class="ml-field-note-line">
           <div class="ml-row-meta">Memory Created</div>
@@ -676,6 +678,44 @@ export function buildFirstAfternoonFieldNoteHtml(
     .join("");
 
   return `<div class="ml-field-note-ledger">${cardsHtml}</div>`;
+}
+
+function fieldNoteNextCopy(
+  game: StreetGameState,
+  key: string,
+  fallback: string,
+) {
+  if (key !== "mara-ada-lead") {
+    return fallback;
+  }
+
+  const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
+  const stage = game.firstAfternoon?.teaShiftStage;
+  if (game.firstAfternoon?.completedAt || game.firstAfternoon?.fieldNote) {
+    return "The first afternoon is settled; rest at Morrow House and decide which lead deserves tomorrow morning.";
+  }
+
+  if (teaJob?.completed || stage === "paid") {
+    return "The shift paid. Return to Morrow House and take stock before the day scatters into another thread.";
+  }
+
+  if (stage === "counter") {
+    return "Finish the counter pass, collect the pay, then let the work become a real field note.";
+  }
+
+  if (stage === "rush") {
+    return "Keep the lunch rush moving: clear cups, watch the counter, and stay useful until Ada can pay.";
+  }
+
+  if (teaJob?.accepted || game.player.activeJobId === "job-tea-shift") {
+    return "The shift is booked. Stay near Kettle & Lamp until lunch starts, then prove the lead with work.";
+  }
+
+  if (teaJob?.discovered) {
+    return "Ada's offer is live: take the cup-and-counter shift, compare another real pressure, or deliberately walk away.";
+  }
+
+  return fallback;
 }
 
 function buildRowanNotebookModel({
