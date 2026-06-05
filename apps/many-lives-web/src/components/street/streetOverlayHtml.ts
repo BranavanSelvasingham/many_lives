@@ -176,7 +176,6 @@ export function buildRowanStoryCardHtml(
             </div>`
           : ""
       }
-      ${primary ? buildPlanningTraceHtml(card.planningTrace) : ""}
       ${
         primary && card.signals?.length
           ? `<div class="ml-rowan-signal-row">
@@ -196,7 +195,7 @@ export function buildRowanStoryCardHtml(
   `;
 }
 
-function buildPlanningTraceHtml(
+export function buildPlanningTraceHtml(
   trace?: StreetGameState["rowanAutonomy"]["planningTrace"],
 ) {
   if (!trace || trace.considered.length === 0) {
@@ -252,6 +251,82 @@ function buildPlanningTraceHtml(
             </div>`
           : ""
       }
+    </div>
+  `;
+}
+
+export function buildRuntimeDebugHtml(game: StreetGameState) {
+  const aiRuntime = game.aiRuntime;
+  const trace = game.rowanAutonomy.planningTrace;
+
+  if (!aiRuntime && !trace) {
+    return "";
+  }
+
+  const aiLabel = aiRuntime
+    ? aiRuntime.status === "live"
+      ? "AI: Live"
+      : aiRuntime.status === "fallback"
+        ? "AI: Fallback"
+        : "AI: Not called"
+    : "AI: Not called";
+  const aiTone = aiRuntime?.status === "live"
+    ? "live"
+    : aiRuntime?.status === "fallback"
+      ? "fallback"
+      : "quiet";
+  const callSummary = aiRuntime
+    ? `${aiRuntime.totalSuccesses} live • ${aiRuntime.totalFallbacks} fallback • ${aiRuntime.totalSkips} skipped`
+    : "No AI runtime evidence on this session yet.";
+  const activeTasks = aiRuntime
+    ? Object.entries(aiRuntime.tasks)
+        .filter(([, summary]) =>
+          Boolean(summary.successes || summary.fallbacks || summary.skips),
+        )
+        .slice(0, 4)
+    : [];
+
+  return `
+    <div class="ml-debug-panel">
+      <div class="ml-kicker">Debug</div>
+      <div class="ml-ai-runtime" data-ai-status="${escapeHtml(aiTone)}">
+        <div class="ml-ai-runtime-title">${escapeHtml(aiLabel)}</div>
+        <div class="ml-ai-runtime-copy">${escapeHtml(callSummary)}</div>
+        ${
+          aiRuntime?.fallbackReasons.length
+            ? `<div class="ml-ai-runtime-copy is-warning">${escapeHtml(
+                buildNarrativePreview(aiRuntime.fallbackReasons[0]!, 132),
+              )}</div>`
+            : ""
+        }
+        ${
+          activeTasks.length
+            ? `<div class="ml-ai-task-grid">
+                ${activeTasks
+                  .map(
+                    ([task, summary]) => `
+                      <span>${escapeHtml(task)}: ${escapeHtml(
+                        `${summary.successes}/${summary.fallbacks}/${summary.skips}`,
+                      )}</span>
+                    `,
+                  )
+                  .join("")}
+              </div>`
+            : ""
+        }
+      </div>
+      ${buildPlanningTraceHtml(trace) || buildEmptyPlanningTraceHtml()}
+    </div>
+  `;
+}
+
+function buildEmptyPlanningTraceHtml() {
+  return `
+    <div class="ml-planner-trace">
+      <div class="ml-planner-trace-head">
+        <span>Planner trace</span>
+        <strong>No trace for this beat</strong>
+      </div>
     </div>
   `;
 }

@@ -36,6 +36,7 @@ import {
   interiorSpaceIdForLocation,
 } from "../street-sim/spaces.js";
 import type {
+  AIRuntimeTask,
   ActionOption,
   ClockState,
   ConversationEntry,
@@ -69,6 +70,7 @@ import type {
 export const STEP_MINUTES = 30;
 
 const MINUTES_PER_MOVEMENT_TILE = 1.5;
+const MIN_PLAYER_MOVEMENT_ENERGY = 12;
 const MIN_STREET_PLANNER_CONFIDENCE = 0.55;
 const JOB_WINDOW_PRESSURE_MINUTES = 45;
 
@@ -207,6 +209,7 @@ export class SimulationEngine {
 
   async createGame(gameId: string): Promise<StreetGameState> {
     const world = seedStreetGame(gameId);
+    initializeAIRuntime(world, this.aiProvider);
     return refreshWorld(world, this.aiProvider, { thoughtRefreshMode: "full" });
   }
 
@@ -303,12 +306,48 @@ function cloneWorld(world: StreetGameState): StreetGameState {
   return structuredClone(world);
 }
 
+const AI_RUNTIME_TASKS: AIRuntimeTask[] = [
+  "generateStreetAutonomousLine",
+  "generateStreetReply",
+  "generateStreetThoughts",
+  "interpretStreetConversation",
+  "planStreetNextAction",
+];
+
+function initializeAIRuntime(
+  world: StreetGameState,
+  aiProvider: AIProvider,
+): void {
+  world.aiRuntime ??= {
+    fallbackReasons: [],
+    model: aiProvider.model,
+    provider: aiProvider.name,
+    status: "not_called",
+    tasks: Object.fromEntries(
+      AI_RUNTIME_TASKS.map((task) => [
+        task,
+        {
+          fallbacks: 0,
+          skips: 0,
+          successes: 0,
+        },
+      ]),
+    ) as NonNullable<StreetGameState["aiRuntime"]>["tasks"],
+    totalFallbacks: 0,
+    totalSkips: 0,
+    totalSuccesses: 0,
+  };
+  world.aiRuntime.model = aiProvider.model;
+  world.aiRuntime.provider = aiProvider.name;
+}
+
 async function refreshWorld(
   world: StreetGameState,
   aiProvider: AIProvider,
   options: { thoughtRefreshMode?: ThoughtRefreshMode } = {},
 ): Promise<StreetGameState> {
   const thoughtRefreshMode = options.thoughtRefreshMode ?? "full";
+  initializeAIRuntime(world, aiProvider);
   world.conversations ??= [];
   world.conversationThreads ??= {};
   world.firstAfternoon ??= {};
@@ -404,7 +443,7 @@ function movePlayer(world: StreetGameState, x: number, y: number): void {
   world.player.y = targetTile.y;
   world.player.energy = clamp(
     world.player.energy - movementEnergyForDistance(distance, space.kind),
-    18,
+    MIN_PLAYER_MOVEMENT_ENERGY,
     100,
   );
   updatePlayerLocation(world);
@@ -467,7 +506,7 @@ function usePortal(world: StreetGameState, actionId: string): void {
   world.player.y = portal.to.y;
   world.player.energy = clamp(
     world.player.energy - movementEnergyForDistance(distance, fromSpace.kind),
-    18,
+    MIN_PLAYER_MOVEMENT_ENERGY,
     100,
   );
   updatePlayerLocation(world);
@@ -727,7 +766,7 @@ function movePlayerToActionAnchor(
   world.player.energy = clamp(
     world.player.energy -
       movementEnergyForDistance(validation.distanceToAnchor, space.kind),
-    18,
+    MIN_PLAYER_MOVEMENT_ENERGY,
     100,
   );
   updatePlayerLocation(world);
@@ -1063,7 +1102,7 @@ function movePlayerToNpcAnchor(world: StreetGameState, npc: NpcState) {
   world.player.y = anchor.y;
   world.player.energy = clamp(
     world.player.energy - movementEnergyForDistance(distance, space.kind),
-    18,
+    MIN_PLAYER_MOVEMENT_ENERGY,
     100,
   );
   updatePlayerLocation(world);
@@ -1395,7 +1434,7 @@ async function resolveAiPlannedObjectiveLoopStep(
   const planned = await aiProvider.planStreetNextAction({
     allowedActions: structuredClone(allowedActions),
     desiredOutcomes: buildStreetPlanningOutcomes(world, objective),
-    game: cloneWorld(world),
+    game: world,
     objective,
   });
   const choice = selectPlannerChoice(planned, choices);
@@ -2494,12 +2533,24 @@ async function conductAutonomousConversation(
     return;
   }
 
+  const liveOpener =
+    aiProvider.name === "openai"
+      ? (
+          await aiProvider.generateStreetAutonomousLine({
+            game: world,
+            npcId,
+            objective,
+            purpose: "opener",
+          })
+        ).speech
+      : opener;
+
   await runConversationLoop(
     world,
     npc,
     location,
     objective,
-    opener,
+    liveOpener,
     aiProvider,
     {
       addFallbackFeed: true,
@@ -2549,13 +2600,15 @@ async function performConversationTurn(
   const playerTopics = detectConversationTopics(text);
   const trustDelta = updateNpcTrustFromSpeech(npc, text, playerTopics);
   syncRowanAutonomy(world);
-  const reply =
-    buildObjectiveScriptedReply(world, npc, text) ??
-    (await aiProvider.generateStreetReply({
+  const generatedReply = await aiProvider.generateStreetReply({
       game: world,
       npcId: npc.id,
       playerText: text,
-    }));
+    });
+  const reply =
+    aiProvider.name === "openai"
+      ? generatedReply
+      : buildObjectiveScriptedReply(world, npc, text) ?? generatedReply;
   const replyTopics = detectConversationTopics(reply.reply);
   const topics = new Set<string>([...playerTopics, ...replyTopics]);
   applyConversationRevelations(world, npc, topics);
@@ -2784,7 +2837,10 @@ function autonomyDetailForObjectivePlan(
   plan: ObjectivePlan,
   objectiveText: string,
 ) {
-  const rationale = normalizeAutonomyRationale(plan.rationale || objectiveText);
+  const rationale = playerFacingAutonomyRationale(
+    world,
+    normalizeAutonomyRationale(plan.rationale || objectiveText),
+  );
   const targetLocation =
     plan.targetLocationId !== undefined
       ? findLocation(world, plan.targetLocationId)
@@ -2792,7 +2848,7 @@ function autonomyDetailForObjectivePlan(
 
   if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
     return `${targetLocation.name} is the next stop: ${normalizeAutonomyRationale(
-      plan.rationale ||
+      playerFacingAutonomyRationale(world, plan.rationale) ||
         `get to ${targetLocation.name} and keep the objective moving`,
     )}.`;
   }
@@ -2823,12 +2879,15 @@ function autonomyDetailForAction(
   actionId: string,
   rationaleText: string,
 ) {
-  const rationale = normalizeAutonomyRationale(rationaleText);
+  const rationale = playerFacingAutonomyRationale(
+    world,
+    normalizeAutonomyRationale(rationaleText),
+  );
   const [kind, targetId] = actionId.split(":");
 
   if (kind === "enter") {
     const location = targetId ? findLocation(world, targetId) : undefined;
-    return `${location?.name ?? "The building"} is the next stop, so Rowan needs to enter before acting: ${rationale}.`;
+    return `${location?.name ?? "The building"} is the next stop, so Rowan steps inside before acting: ${rationale}.`;
   }
 
   if (kind === "exit") {
@@ -2839,6 +2898,44 @@ function autonomyDetailForAction(
   return isTimeSkippingAction(actionId)
     ? `This will take some time: ${rationale}.`
     : `This step is ready now: ${rationale}.`;
+}
+
+function playerFacingAutonomyRationale(
+  world: StreetGameState,
+  rationaleText: string | undefined,
+) {
+  const rationale = normalizeAutonomyRationale(rationaleText ?? "");
+  if (!rationale) {
+    return "";
+  }
+
+  const normalized = rationale.toLowerCase();
+  if (normalized.includes("ada lead verified")) {
+    return "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
+  }
+
+  if (
+    /ask ada.*morrow house|ada work at morrow house|lunch work at morrow house/.test(
+      normalized,
+    )
+  ) {
+    return "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs to leave Morrow House and reach the cafe first";
+  }
+
+  if (normalized.includes("first afternoon taken stock")) {
+    return world.player.energy < 28
+      ? "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
+      : "the shift paid, and Morrow House is the right place to let the day land";
+  }
+
+  if (normalized.includes("cup-and-counter") || normalized.includes("lunch rush")) {
+    return "Ada gave Rowan real work, and the room needs steady hands now";
+  }
+
+  return rationale
+    .replace(/move toward the open objective outcome:\s*/i, "")
+    .replace(/\bcurrent objective\b/gi, "next promise")
+    .replace(/\bfits the next promise\b/gi, "belongs to the next promise");
 }
 
 function buildRowanAutonomyIntent(
@@ -2938,15 +3035,27 @@ function buildRowanAutonomyReason({
       return `${targetLocationName} is where ${lowercaseFirst(actionLabel)} can happen, so Rowan is going there now.`;
     }
 
-    return `The current objective points to ${targetLocationName}, so Rowan is walking there before deciding again.`;
+    return `Rowan has a reason to get to ${targetLocationName} before deciding again.`;
   }
 
   if (loopStep.kind === "talk" && npcName) {
-    return `${npcName} is here and matches the current objective, so Rowan can ask directly.`;
+    return `${npcName} is here, so Rowan can ask the question in person.`;
   }
 
   if (loopStep.kind === "act" && actionLabel) {
-    return `${actionLabel} is available ${currentLocationName ? `at ${currentLocationName}` : "here"} and fits the current objective.`;
+    if (/ada|kettle|lunch/i.test(actionLabel) && currentLocationName === "Morrow House") {
+      return "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs the street route before asking.";
+    }
+
+    if (currentLocationName) {
+      if (/^enter\b/i.test(actionLabel)) {
+        return `Rowan is at ${currentLocationName}, so stepping inside is the useful next move.`;
+      }
+
+      return `Rowan is at ${currentLocationName}, so ${lowercaseFirst(actionLabel)} is the useful next move.`;
+    }
+
+    return `${actionLabel} is the useful next thing Rowan can do here.`;
   }
 
   if (loopStep.kind === "wait") {
@@ -2954,7 +3063,7 @@ function buildRowanAutonomyReason({
   }
 
   if (loopStep.kind === "blocked") {
-    return "None of the available moves clearly fit the current objective, so Rowan needs a fresher lead.";
+    return "None of the available moves clearly fit what Rowan knows, so he needs a fresher lead.";
   }
 
   if (loopStep.kind === "observe") {
@@ -4823,7 +4932,7 @@ function objectivePredicateMoveIntentForLocation(
     if (outcome.npcId && npc?.currentLocationId === location.id) {
       return {
         npcId: outcome.npcId,
-        rationale: `Move toward the open objective outcome: ${outcome.label}`,
+        rationale: moveRationaleForOutcome(world, outcome.label),
         speech: buildAutonomousSpeech(world, npc, objective),
       };
     }
@@ -4831,16 +4940,36 @@ function objectivePredicateMoveIntentForLocation(
     if (outcome.actionId && actionLegal) {
       return {
         actionId: outcome.actionId,
-        rationale: `Move toward the open objective outcome: ${outcome.label}`,
+        rationale: moveRationaleForOutcome(world, outcome.label),
       };
     }
 
     return {
-      rationale: `Move toward the open objective outcome: ${outcome.label}`,
+      rationale: moveRationaleForOutcome(world, outcome.label),
     };
   }
 
   return undefined;
+}
+
+function moveRationaleForOutcome(world: StreetGameState, outcomeLabel: string) {
+  const normalized = outcomeLabel.toLowerCase();
+
+  if (normalized.includes("ada lead verified")) {
+    return "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
+  }
+
+  if (normalized.includes("first afternoon taken stock")) {
+    return world.player.energy < 28
+      ? "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
+      : "The shift paid, and Morrow House is the right place to let the day land";
+  }
+
+  if (normalized.includes("lunch") || normalized.includes("shift")) {
+    return "Ada gave Rowan real work, and the room needs steady hands now";
+  }
+
+  return outcomeLabel;
 }
 
 function livePressureMoveIntentForLocation(
@@ -6758,6 +6887,7 @@ function workJob(world: StreetGameState, jobId: string): void {
       advanceWorld(world, 25, { workingJobId: job.id });
       world.player.energy = clamp(world.player.energy - 5, 12, 100);
       world.firstAfternoon.teaShiftStage = "counter";
+      movePlayerWithinActiveSpaceForWork(world, { x: 7, y: 5 });
       world.player.currentThought =
         "Ada is not watching every step now. That probably means I am keeping up.";
       addFeed(
@@ -6822,6 +6952,29 @@ function workJob(world: StreetGameState, jobId: string): void {
     "job",
     `You finished ${job.title.toLowerCase()} and took your pay while the block was still moving.`,
   );
+}
+
+function movePlayerWithinActiveSpaceForWork(
+  world: StreetGameState,
+  target: GridPoint,
+) {
+  const space = activeSpace(world);
+  const targetTile = tileAt(space, target.x, target.y);
+  if (!targetTile?.walkable) {
+    return false;
+  }
+
+  const route = findWalkableRoute(space.tiles, world.player, targetTile);
+  if (!route.reached) {
+    return false;
+  }
+
+  world.activeSpaceId = space.id;
+  world.player.spaceId = space.id;
+  world.player.x = targetTile.x;
+  world.player.y = targetTile.y;
+  updatePlayerLocation(world);
+  return true;
 }
 
 function buyItem(world: StreetGameState, itemId: string): void {
@@ -7997,9 +8150,9 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     const actionId = "reflect:first-afternoon-plan";
     actions.push({
       id: actionId,
-      label: "Ask Ada about lunch work",
+      label: "Choose Ada's Kettle & Lamp lead",
       description:
-        "Take Mara's Kettle & Lamp lead before the noon room gets away from Ada.",
+        "Commit to leaving Morrow House and following Mara's lead to Ada at Kettle & Lamp.",
       kind: "reflect",
       emphasis: "high",
       ...spatial(actionId, location.id),

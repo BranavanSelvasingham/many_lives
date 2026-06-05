@@ -30,6 +30,7 @@ import {
 
 export class MockAIProvider implements AIProvider {
   readonly name: string = "mock";
+  readonly model: string = "deterministic";
 
   async summarizeState(world: AIContext["world"]): Promise<string> {
     buildSummarizeStatePrompt(world);

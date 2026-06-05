@@ -641,6 +641,35 @@ export interface RowanAutonomyState {
   targetLocationId?: string;
 }
 
+export type AIRuntimeTask =
+  | "generateStreetAutonomousLine"
+  | "generateStreetReply"
+  | "generateStreetThoughts"
+  | "interpretStreetConversation"
+  | "planStreetNextAction";
+
+export interface AIRuntimeTaskSummary {
+  fallbacks: number;
+  lastFallbackReason?: string;
+  lastStatus?: "fallback" | "skipped" | "success";
+  lastUpdatedAt?: string;
+  skips: number;
+  successes: number;
+}
+
+export interface AIRuntimeState {
+  fallbackReasons: string[];
+  lastLiveCallAt?: string;
+  lastUpdatedAt?: string;
+  model: string;
+  provider: string;
+  status: "fallback" | "live" | "not_called";
+  tasks: Record<AIRuntimeTask, AIRuntimeTaskSummary>;
+  totalFallbacks: number;
+  totalSkips: number;
+  totalSuccesses: number;
+}
+
 export interface StreetGameState {
   id: string;
   scenarioName: string;
@@ -650,6 +679,7 @@ export interface StreetGameState {
   districtNarrative: SettingNarrativeProfile;
   visualSceneId?: string;
   activeSpaceId?: string;
+  aiRuntime?: AIRuntimeState;
   currentTime: string;
   clock: ClockState;
   map: CityMap;

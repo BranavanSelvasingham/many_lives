@@ -29,6 +29,7 @@ import {
   buildLoadingHtml,
   buildMindTabHtml,
   buildNarrativePreview,
+  buildRuntimeDebugHtml,
   buildRowanStoryCardHtml,
   buildTabButton,
   escapeHtml,
@@ -3095,6 +3096,136 @@ function renderInteriorSpace(
       5,
     );
   }
+
+}
+
+function drawTeaHouseShiftState(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+  game: StreetGameState,
+) {
+  if (space.id !== "interior:tea-house") {
+    return;
+  }
+
+  const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
+  const stage =
+    game.firstAfternoon?.teaShiftStage ??
+    (teaJob?.accepted && !teaJob.completed ? "rush" : undefined);
+  if (!stage) {
+    return;
+  }
+
+  const counter = mapTileToWorldCenter(8, 3);
+  const tablePass = mapTileToWorldCenter(7, 5);
+  const northTable = mapTileToWorldCenter(4, 3);
+  const middleTable = mapTileToWorldCenter(6, 5);
+  const southTable = mapTileToWorldCenter(4, 7);
+  const customerAlpha = stage === "paid" ? 0.28 : stage === "counter" ? 0.62 : 0.78;
+
+  if (stage !== "paid") {
+    drawCafeCustomer(layer, {
+      accent: 0x9bd0cc,
+      alpha: customerAlpha,
+      facing: 1,
+      x: northTable.x - CELL * 1.15,
+      y: northTable.y + CELL * 0.56,
+    });
+    drawCafeCustomer(layer, {
+      accent: 0xe0bd74,
+      alpha: customerAlpha * 0.92,
+      facing: -1,
+      x: middleTable.x + CELL * 0.98,
+      y: middleTable.y + CELL * 0.56,
+    });
+  }
+
+  if (stage === "rush") {
+    drawCafeCustomer(layer, {
+      accent: 0xc88d64,
+      alpha: 0.68,
+      facing: 1,
+      x: southTable.x - CELL * 1.04,
+      y: southTable.y + CELL * 0.56,
+    });
+    drawCafeCup(layer, northTable.x - 10, northTable.y - 3, true);
+    drawCafeCup(layer, middleTable.x + 8, middleTable.y - 2, true);
+    drawCafeCup(layer, southTable.x - 5, southTable.y - 2, true);
+    drawCafeTray(layer, tablePass.x, tablePass.y, 0xe0bd74, 0.4);
+  } else if (stage === "counter") {
+    drawCafeCup(layer, counter.x + 4, counter.y - 9, false);
+    drawCafeCup(layer, counter.x + 18, counter.y - 9, false);
+    drawCafeTray(layer, counter.x + 7, counter.y + 4, 0x9bd0cc, 0.5);
+    layer.lineStyle(2.2, 0xeedaa3, 0.36);
+    layer.lineBetween(counter.x - 18, counter.y + 16, counter.x + 22, counter.y + 16);
+    layer.lineBetween(counter.x - 10, counter.y + 23, counter.x + 30, counter.y + 23);
+  } else if (stage === "paid") {
+    drawCafeCup(layer, counter.x + 4, counter.y - 8, false);
+    drawCafeTray(layer, counter.x + 4, counter.y + 4, 0xe0bd74, 0.32);
+    layer.fillStyle(0x17110a, 0.18);
+    layer.fillCircle(counter.x + 29, counter.y + 8, 7.8);
+    layer.fillStyle(0xe8c66b, 0.86);
+    layer.fillCircle(counter.x + 27, counter.y + 6, 6.6);
+    layer.fillStyle(0x6f5425, 0.74);
+    layer.fillRect(counter.x + 24.5, counter.y + 3.5, 5, 1.2);
+    layer.fillRect(counter.x + 24.5, counter.y + 7.5, 5, 1.2);
+  }
+}
+
+function drawCafeCustomer(
+  layer: PhaserType.GameObjects.Graphics,
+  options: {
+    accent: number;
+    alpha: number;
+    facing: 1 | -1;
+    x: number;
+    y: number;
+  },
+) {
+  const { accent, alpha, facing, x, y } = options;
+  layer.fillStyle(0x081016, 0.16 * alpha);
+  layer.fillEllipse(x, y + 12, 22, 7);
+  layer.fillStyle(0x4d5b5f, 0.82 * alpha);
+  layer.fillRoundedRect(x - 7, y - 14, 14, 23, 5);
+  layer.fillStyle(accent, 0.84 * alpha);
+  layer.fillRoundedRect(x - 4, y - 9, 8, 13, 3);
+  layer.fillStyle(0xc5a176, 0.86 * alpha);
+  layer.fillCircle(x + facing * 1.4, y - 21, 8.2);
+  layer.fillStyle(0x4b3c2f, 0.72 * alpha);
+  layer.fillEllipse(x + facing * 1.2, y - 26, 13, 5.4);
+}
+
+function drawCafeCup(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  dirty: boolean,
+) {
+  layer.fillStyle(0x091015, 0.14);
+  layer.fillEllipse(x + 1.2, y + 7, 12, 4.5);
+  layer.fillStyle(dirty ? 0xb6ab95 : 0xe6eadf, dirty ? 0.82 : 0.92);
+  layer.fillRoundedRect(x - 5, y - 4, 10, 12, 3);
+  layer.lineStyle(1.4, dirty ? 0x6d5b42 : 0x8a9a95, 0.52);
+  layer.strokeRoundedRect(x - 5, y - 4, 10, 12, 3);
+  if (dirty) {
+    layer.fillStyle(0x6f5432, 0.46);
+    layer.fillCircle(x - 1, y + 1, 1.9);
+  }
+}
+
+function drawCafeTray(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  color: number,
+  alpha: number,
+) {
+  layer.fillStyle(0x091015, 0.12);
+  layer.fillRoundedRect(x - 17, y + 10, 35, 8, 4);
+  layer.fillStyle(color, alpha);
+  layer.fillRoundedRect(x - 18, y + 7, 35, 8, 4);
+  layer.lineStyle(1.3, 0xf4e0ab, alpha * 0.7);
+  layer.lineBetween(x - 12, y + 11, x + 12, y + 11);
 }
 
 function drawInteriorObject(
@@ -3358,7 +3489,7 @@ function renderDynamicScene(
   objects.playerName
     .setText(runtimeState.snapshot.game?.player.name ?? "Rowan")
     .setX(playerLabelOffsetX)
-    .setVisible(!usingAuthoredVisualScene);
+    .setVisible(!usingAuthoredVisualScene && !runtimeState.indices.activeSpace);
   objects.playerTitle.setX(playerLabelOffsetX);
   objects.playerBeacon
     .setVisible(true)
@@ -3423,11 +3554,16 @@ function renderDynamicScene(
     runtimeState.snapshot.viewport,
   );
   const camera = objects.scene.cameras.main;
+  const cameraFollowPixel = resolveCameraFollowPixel(
+    runtimeState,
+    playerPixel,
+    mapAgencyCue,
+  );
   const cameraBlockedEdges = updateCamera(
     camera,
     runtimeState,
     sceneViewport,
-    playerPixel,
+    cameraFollowPixel,
     world,
     now,
   );
@@ -3859,7 +3995,8 @@ function updateNpcMarkers(
 ) {
   const game = runtimeState.snapshot.game;
   const usingAuthoredVisualScene = runtimeState.indices.visualScene !== null;
-  const showActorLabels = !usingAuthoredVisualScene;
+  const showActorLabels =
+    !usingAuthoredVisualScene && !runtimeState.indices.activeSpace;
   const talkableNpcIds = new Set(
     (game?.availableActions ?? [])
       .map((action) => extractTalkNpcId(action.id))
@@ -3881,11 +4018,13 @@ function updateNpcMarkers(
     const inLiveConversation =
       game?.activeConversation?.npcId === animatedNpc.npc.id;
     const isTalkable = talkableNpcIds.has(animatedNpc.npc.id);
-    const showLabel =
-      showActorLabels || highlight || inLiveConversation || isTalkable;
     const interiorLabelCollides =
       runtimeState.indices.activeSpace &&
       distanceBetween(animatedNpc, playerPixel) <= CELL * 1.35;
+    const showLabel = runtimeState.indices.activeSpace
+      ? !interiorLabelCollides &&
+        (highlight || inLiveConversation || isTalkable)
+      : showActorLabels || highlight || inLiveConversation || isTalkable;
     const interiorLabelOffsetX = interiorLabelCollides
       ? animatedNpc.x <= playerPixel.x
         ? -34
@@ -4225,7 +4364,7 @@ function buildMapAgencyCue(
   }
 
   if (runtimeState.indices.activeSpace) {
-    return null;
+    return buildInteriorMapAgencyCue(runtimeState, animatedNpcs);
   }
 
   const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
@@ -4324,6 +4463,161 @@ function buildMapAgencyCue(
     targetTile,
     targetWorld,
     tone,
+  };
+}
+
+function buildInteriorMapAgencyCue(
+  runtimeState: RuntimeState,
+  animatedNpcs: AnimatedNpcState[],
+): MapAgencyCue | null {
+  const game = runtimeState.snapshot.game;
+  const space = runtimeState.indices.activeSpace;
+  if (!game || !space) {
+    return null;
+  }
+
+  const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
+  const activeConversation = game.activeConversation;
+  const pendingMove = game.player.pendingObjectiveMove;
+  const shouldShowCue =
+    autonomy.autoContinue ||
+    Boolean(activeConversation) ||
+    Boolean(runtimeState.waypointTarget);
+
+  if (!shouldShowCue) {
+    return null;
+  }
+
+  const targetNpc =
+    resolveNpcById(game, activeConversation?.npcId) ??
+    resolveNpcById(game, autonomy.npcId) ??
+    resolveNpcById(game, pendingMove?.npcId);
+  const conversationLike =
+    Boolean(activeConversation) ||
+    autonomy.mode === "conversation" ||
+    autonomy.stepKind === "talk";
+  const anchor = resolveInteriorMapAgencyAnchor({
+    activeConversationNpcId: activeConversation?.npcId,
+    actionId: autonomy.actionId,
+    npcId: targetNpc?.id ?? autonomy.npcId ?? pendingMove?.npcId,
+    space,
+  });
+  const waypointTile = runtimeState.waypointTarget
+    ? {
+        x: Math.round(runtimeState.waypointTarget.x),
+        y: Math.round(runtimeState.waypointTarget.y),
+      }
+    : null;
+  const targetTile = anchor
+    ? { x: anchor.x, y: anchor.y }
+    : waypointTile;
+  const animatedNpcWorld = targetNpc
+    ? getAnimatedNpcWorldPoint(animatedNpcs, targetNpc.id)
+    : null;
+  const anchorWorld = targetTile
+    ? projectRuntimeTileCenter(runtimeState.indices, targetTile.x, targetTile.y)
+    : null;
+  const targetWorld =
+    conversationLike && animatedNpcWorld
+      ? animatedNpcWorld
+      : anchorWorld ?? animatedNpcWorld;
+
+  if (!targetWorld) {
+    return null;
+  }
+
+  return {
+    detail: buildMapAgencyDetail({
+      activeConversation,
+      autonomy,
+      game,
+      pendingMove,
+      targetLocation:
+        game.player.currentLocationId
+          ? runtimeState.indices.locationsById.get(game.player.currentLocationId) ?? null
+          : null,
+    }),
+    intent: activeConversation && targetNpc
+      ? `With ${targetNpc.name}`
+      : conversationLike && targetNpc
+        ? `Talk with ${targetNpc.name}`
+        : compactMapAgencyCopy(autonomy.label || anchor?.label || "Next step", 34),
+    targetIsNpc: Boolean(conversationLike && targetNpc),
+    targetLabel:
+      conversationLike && targetNpc
+        ? null
+        : anchor?.label
+          ? `Next: ${anchor.label}`
+          : null,
+    targetLocationId: game.player.currentLocationId ?? null,
+    targetTile,
+    targetWorld,
+    tone: normalizeMapAgencyTone(autonomy.mode),
+  };
+}
+
+function resolveInteriorMapAgencyAnchor({
+  activeConversationNpcId,
+  actionId,
+  npcId,
+  space,
+}: {
+  activeConversationNpcId?: string | null;
+  actionId?: string | null;
+  npcId?: string | null;
+  space: SpaceDefinition;
+}) {
+  if (activeConversationNpcId) {
+    return (
+      space.anchors.find(
+        (anchor) => anchor.actionId === `talk:${activeConversationNpcId}`,
+      ) ??
+      space.anchors.find((anchor) => anchor.npcId === activeConversationNpcId) ??
+      null
+    );
+  }
+
+  if (actionId) {
+    const actionAnchor = space.anchors.find(
+      (anchor) => anchor.actionId === actionId,
+    );
+    if (actionAnchor) {
+      return actionAnchor;
+    }
+  }
+
+  if (npcId) {
+    return (
+      space.anchors.find((anchor) => anchor.actionId === `talk:${npcId}`) ??
+      space.anchors.find((anchor) => anchor.npcId === npcId) ??
+      null
+    );
+  }
+
+  return null;
+}
+
+function resolveCameraFollowPixel(
+  runtimeState: RuntimeState,
+  playerPixel: Point,
+  cue: MapAgencyCue | null,
+) {
+  if (
+    !runtimeState.indices.activeSpace ||
+    !cue?.targetWorld ||
+    runtimeState.cameraGesture?.dragging
+  ) {
+    return playerPixel;
+  }
+
+  const distance = distanceBetween(playerPixel, cue.targetWorld);
+  if (distance < CELL * 0.75) {
+    return playerPixel;
+  }
+
+  return {
+    x: playerPixel.x * 0.58 + cue.targetWorld.x * 0.42,
+    y: playerPixel.y * 0.6 + cue.targetWorld.y * 0.4,
   };
 }
 
@@ -5152,10 +5446,12 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     !firstAfternoonComplete &&
     !railActiveConversation &&
     !isBlockingRowanPlaybackForGame(snapshot.rowanPlayback, game);
+  const debugRailHtml = buildRuntimeDebugHtml(game);
   const hasRailMore =
     railContextEntries.length > 0 ||
     secondaryActions.length > 0 ||
-    (showManualTimeControls && waitOptions.length > 0);
+    (showManualTimeControls && waitOptions.length > 0) ||
+    Boolean(debugRailHtml);
   const railMoreSummary = [
     railContextEntries.length > 0
       ? `${railContextEntries.length} context note${
@@ -5433,6 +5729,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                       }</div>
                     </button>
                     <div class="ml-rail-more-body">
+                      ${debugRailHtml}
                       ${
                         railContextEntries.length > 0
                           ? `
@@ -6056,7 +6353,7 @@ function syncBrowserCameraProbe(
   const world = getWorldBounds(runtimeState.snapshot);
   const scrollRange = isCompactViewport(runtimeState.snapshot.viewport)
     ? getCompactCameraScrollRange({
-        map: runtimeState.snapshot.game?.map,
+        map: runtimeState.indices.activeSpace ?? runtimeState.snapshot.game?.map,
         visibleHeight,
         visibleWidth,
         visualScene: runtimeState.indices.visualScene,
@@ -6422,7 +6719,7 @@ function resetRuntimeCameraForGame(
   let maxScrollY = Math.max(world.height - visibleHeight, 0);
   if (isCompactViewport(runtimeState.snapshot.viewport)) {
     const range = getCompactCameraScrollRange({
-      map: game.map,
+      map: runtimeState.indices.activeSpace ?? game.map,
       visibleHeight,
       visibleWidth,
       visualScene: runtimeState.indices.visualScene,
@@ -7908,6 +8205,9 @@ function drawDynamicOverlay(
   const activePlayerMotion = isRuntimePlayerMotionActive(runtimeState, now);
 
   drawAnimatedCitySurface(layer, runtimeState.indices, now);
+  if (runtimeState.indices.activeSpace) {
+    drawTeaHouseShiftState(layer, runtimeState.indices.activeSpace, game);
+  }
   drawPlayerRouteBreadcrumb(layer, runtimeState, now);
 
   if (runtimeState.waypointTarget && (!activeInteriorSpace || activePlayerMotion)) {

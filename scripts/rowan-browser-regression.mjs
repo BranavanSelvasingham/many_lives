@@ -1164,8 +1164,9 @@ function buildProbeFromGame(game) {
             game.npcs.find((npc) => npc.id === activeConversation.npcId)?.name ??
             null,
           updatedAt: activeConversation.updatedAt,
-        }
+      }
       : null,
+    aiRuntime: aiRuntimeProbeFromGame(game),
     autonomy: {
       autoContinue: game.rowanAutonomy.autoContinue,
       intent: game.rowanAutonomy.intent
@@ -1191,6 +1192,7 @@ function buildProbeFromGame(game) {
     location: {
       id: game.player.currentLocationId ?? null,
       name: currentLocation?.name ?? game.currentScene.title,
+      spaceId: game.activeSpaceId ?? game.player.spaceId ?? null,
       x: game.player.x,
       y: game.player.y,
     },
@@ -1220,6 +1222,23 @@ function buildProbeFromGame(game) {
       useConversationTranscript: Boolean(activeConversation),
     },
   };
+}
+
+function aiRuntimeProbeFromGame(game) {
+  return game.aiRuntime
+    ? {
+        fallbackReasons: game.aiRuntime.fallbackReasons,
+        lastLiveCallAt: game.aiRuntime.lastLiveCallAt ?? null,
+        lastUpdatedAt: game.aiRuntime.lastUpdatedAt ?? null,
+        model: game.aiRuntime.model,
+        provider: game.aiRuntime.provider,
+        status: game.aiRuntime.status,
+        tasks: game.aiRuntime.tasks,
+        totalFallbacks: game.aiRuntime.totalFallbacks,
+        totalSkips: game.aiRuntime.totalSkips,
+        totalSuccesses: game.aiRuntime.totalSuccesses,
+      }
+    : null;
 }
 
 function objectiveProbeFromGame(game) {
@@ -1503,6 +1522,11 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
     worldPressureFromGame(game),
     `${label}: browser world pressure diverged from sim.`,
   );
+  assert.deepEqual(
+    probe.aiRuntime ?? null,
+    aiRuntimeProbeFromGame(game),
+    `${label}: browser AI runtime diverged from sim.`,
+  );
   assertProbeAuditability(label, game, probe);
   assert.equal(
     probe.visualPlayer?.isMovingToServerState ?? false,
@@ -1686,6 +1710,21 @@ function assertGameplayDom(label, game, probe, dom) {
     dom.bodyText,
     new RegExp(escapeRegExp(probe.autonomy.label.slice(0, 28)), "i"),
     `${label}: rendered UI does not show the current Rowan beat.`,
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /Planner trace|Rejected:|Blocked:|fits the current objective|current objective|Action:/i,
+    `${label}: default Rowan rail leaked debug/planner language.`,
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /belongs here/i,
+    `${label}: default Rowan rail leaked mechanical location language.`,
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /Ask Ada.*at Morrow House|Ada work at Morrow House/i,
+    `${label}: default Rowan rail described Ada's cafe lead as happening at Morrow House.`,
   );
 
   if (game.activeConversation) {
@@ -2216,6 +2255,7 @@ function buildTimelineEntry({
     screenshot,
     screenshotError: screenshotError ?? null,
     visualPlayer: probe.visualPlayer,
+    aiRuntime: probe.aiRuntime ?? null,
     worldPressure: probe.worldPressure ?? null,
     sim: {
       currentTime: game.currentTime,
@@ -2409,6 +2449,48 @@ async function runOverlayPanelChecks(session) {
       screenshot,
     });
   }
+
+  await session.clickSelector("[data-close-focus]");
+  await sleep(150);
+  const openedDebug = await session.clickSelector("[data-toggle-support]");
+  assert.equal(
+    openedDebug,
+    true,
+    "overlay-debug: expected More debug toggle to be clickable.",
+  );
+  await sleep(300);
+  await session.evaluate(`(() => {
+    document.querySelector('.ml-debug-panel')?.scrollIntoView({
+      block: 'center',
+      inline: 'nearest',
+    });
+  })()`);
+  await sleep(200);
+  const debugDom = await session.readDomSnapshot();
+  assert.match(
+    debugDom.bodyText,
+    /Debug/i,
+    "overlay-debug: expected debug section in More panel.",
+  );
+  assert.match(
+    debugDom.bodyText,
+    /AI: (Live|Fallback|Not called)/i,
+    "overlay-debug: expected AI runtime status in More panel.",
+  );
+  assert.match(
+    debugDom.bodyText,
+    /Planner trace/i,
+    "overlay-debug: expected planner trace to be available only in More panel.",
+  );
+  const debugScreenshot = path.join(OUTPUT_DIR, "overlay-debug.png");
+  await session.captureScreenshot(debugScreenshot);
+  checks.push({
+    activeTab: debugDom.activeTab,
+    bodyTextSample: debugDom.bodyTextSample,
+    label: "overlay-debug",
+    layout: debugDom.layout,
+    screenshot: debugScreenshot,
+  });
 
   return checks;
 }

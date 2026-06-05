@@ -53,6 +53,7 @@ export type RuntimeCameraState = {
   cameraOffset: Point;
   cameraZoomFactor: number;
   indices: {
+    activeSpace?: MapSize | null;
     visualScene: VisualScene | null;
   };
   lastCameraInteractionAt: number;
@@ -113,7 +114,7 @@ export function updateCamera(
   let maxScrollY = Math.max(world.height - visibleHeight, 0);
   if (isCompactViewport(runtimeState.snapshot.viewport)) {
     const range = getCompactCameraScrollRange({
-      map: runtimeState.snapshot.game?.map,
+      map: getRuntimeCameraMap(runtimeState),
       visibleHeight,
       visualScene: runtimeState.indices.visualScene,
       visibleWidth,
@@ -484,7 +485,7 @@ function clampCameraOffset(
   offset: Point,
 ) {
   const world = getWorldBoundsForRuntime({
-    map: runtimeState.snapshot.game?.map,
+    map: getRuntimeCameraMap(runtimeState),
     viewport,
     visualScene: runtimeState.indices.visualScene,
   });
@@ -508,6 +509,10 @@ function clampCameraOffset(
     x: clamp(offset.x, -maxX, maxX),
     y: clamp(offset.y, -maxY, maxY),
   };
+}
+
+function getRuntimeCameraMap(runtimeState: RuntimeCameraState) {
+  return runtimeState.indices.activeSpace ?? runtimeState.snapshot.game?.map;
 }
 
 function normalizeCameraZoomFactor(runtimeState: RuntimeCameraState) {

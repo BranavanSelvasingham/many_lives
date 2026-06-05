@@ -35,7 +35,11 @@ import {
   streetThoughtsCacheKey,
   type StreetThoughtsResult,
 } from "./streetThoughts.js";
-import type { StreetGameState } from "../street-sim/types.js";
+import type {
+  AIRuntimeState,
+  AIRuntimeTask,
+  StreetGameState,
+} from "../street-sim/types.js";
 
 export type OpenAIProviderTask =
   | "generateStreetAutonomousLine"
@@ -47,6 +51,7 @@ export type OpenAIProviderTask =
 export interface OpenAIProviderCallLogEntry {
   durationMs: number;
   error?: string;
+  gameId?: string;
   model: string;
   status: "fallback" | "skipped" | "success";
   task: OpenAIProviderTask;
@@ -59,7 +64,7 @@ export interface OpenAIProviderOptions {
   timeoutMs?: number;
 }
 
-const DEFAULT_OPENAI_TIMEOUT_MS = 1800;
+export const DEFAULT_OPENAI_TIMEOUT_MS = 12_000;
 const MAX_OPENAI_TIMEOUT_MS = 30_000;
 
 export class OpenAIProvider implements AIProvider {
@@ -72,6 +77,10 @@ export class OpenAIProvider implements AIProvider {
 
   get name(): string {
     return this.options.apiKey ? "openai" : "openai-fallback";
+  }
+
+  get model(): string {
+    return this.modelName();
   }
 
   getCallLog(): OpenAIProviderCallLogEntry[] {
@@ -134,10 +143,11 @@ export class OpenAIProvider implements AIProvider {
       this.recordCall({
         durationMs: 0,
         error: "OPENAI_STREET_SUPPORT_TASKS is not enabled.",
+        gameId: game.id,
         model: this.modelName(),
         status: "skipped",
         task: "generateStreetThoughts",
-      });
+      }, game);
       return this.fallback.generateStreetThoughts(game);
     }
 
@@ -151,6 +161,7 @@ export class OpenAIProvider implements AIProvider {
 
     const result = await this.callOpenAIOrFallback(
       "generateStreetThoughts",
+      game,
       async () => {
         const output = await this.createTextResponse(prompt, 220);
         return normalizeStreetThoughts(output, game);
@@ -174,6 +185,7 @@ export class OpenAIProvider implements AIProvider {
     const prompt = buildGenerateStreetReplyPrompt(input);
     const result = await this.callOpenAIOrFallback(
       "generateStreetReply",
+      input.game,
       async () => {
         const output = await this.createTextResponse(prompt, 260);
         return normalizeStreetReply(output, input);
@@ -188,21 +200,11 @@ export class OpenAIProvider implements AIProvider {
   async generateStreetAutonomousLine(
     input: StreetAutonomousLineRequest,
   ): Promise<StreetAutonomousLineResult> {
-    if (!shouldUseOpenAIForStreetSupportTasks()) {
-      this.recordCall({
-        durationMs: 0,
-        error: "OPENAI_STREET_SUPPORT_TASKS is not enabled.",
-        model: this.modelName(),
-        status: "skipped",
-        task: "generateStreetAutonomousLine",
-      });
-      return this.fallback.generateStreetAutonomousLine(input);
-    }
-
     const prompt = buildGenerateStreetAutonomousLinePrompt(input);
 
     return this.callOpenAIOrFallback(
       "generateStreetAutonomousLine",
+      input.game,
       async () => {
         const output = await this.createTextResponse(prompt, 120);
         return normalizeStreetAutonomousLine(output, input);
@@ -214,21 +216,11 @@ export class OpenAIProvider implements AIProvider {
   async interpretStreetConversation(
     input: StreetConversationInterpretationRequest,
   ): Promise<StreetConversationInterpretationResult> {
-    if (!shouldUseOpenAIForStreetSupportTasks()) {
-      this.recordCall({
-        durationMs: 0,
-        error: "OPENAI_STREET_SUPPORT_TASKS is not enabled.",
-        model: this.modelName(),
-        status: "skipped",
-        task: "interpretStreetConversation",
-      });
-      return this.fallback.interpretStreetConversation(input);
-    }
-
     const prompt = buildInterpretStreetConversationPrompt(input);
 
     return this.callOpenAIOrFallback(
       "interpretStreetConversation",
+      input.game,
       async () => {
         const output = await this.createTextResponse(prompt, 220);
         return normalizeStreetConversationInterpretation(output);
@@ -244,6 +236,7 @@ export class OpenAIProvider implements AIProvider {
 
     return this.callOpenAIOrFallback(
       "planStreetNextAction",
+      input.game,
       async () => {
         const output = await this.createTextResponse(prompt, 160);
         return normalizeStreetPlanningResult(output, input);
@@ -269,6 +262,7 @@ export class OpenAIProvider implements AIProvider {
 
   private async callOpenAIOrFallback<T>(
     task: OpenAIProviderTask,
+    game: StreetGameState | undefined,
     requestFactory: () => Promise<T>,
     fallbackFactory: () => Promise<T>,
   ): Promise<T> {
@@ -276,10 +270,11 @@ export class OpenAIProvider implements AIProvider {
       this.recordCall({
         durationMs: 0,
         error: "OPENAI_API_KEY is not configured.",
+        gameId: game?.id,
         model: this.modelName(),
         status: "skipped",
         task,
-      });
+      }, game);
       return fallbackFactory();
     }
 
@@ -288,19 +283,21 @@ export class OpenAIProvider implements AIProvider {
       const result = await requestFactory();
       this.recordCall({
         durationMs: Date.now() - startedAt,
+        gameId: game?.id,
         model: this.modelName(),
         status: "success",
         task,
-      });
+      }, game);
       return result;
     } catch (error) {
       this.recordCall({
         durationMs: Date.now() - startedAt,
         error: formatOpenAIError(error),
+        gameId: game?.id,
         model: this.modelName(),
         status: "fallback",
         task,
-      });
+      }, game);
       return fallbackFactory();
     }
   }
@@ -375,10 +372,106 @@ export class OpenAIProvider implements AIProvider {
     return this.options.model ?? "gpt-5-nano";
   }
 
-  private recordCall(entry: OpenAIProviderCallLogEntry): void {
+  private recordCall(
+    entry: OpenAIProviderCallLogEntry,
+    game?: StreetGameState,
+  ): void {
     this.callLog.push(entry);
+    if (game) {
+      recordAIRuntimeCall(game, entry);
+    }
     this.options.onCall?.(entry);
   }
+}
+
+const AI_RUNTIME_TASKS: AIRuntimeTask[] = [
+  "generateStreetAutonomousLine",
+  "generateStreetReply",
+  "generateStreetThoughts",
+  "interpretStreetConversation",
+  "planStreetNextAction",
+];
+
+function recordAIRuntimeCall(
+  game: StreetGameState,
+  entry: OpenAIProviderCallLogEntry,
+) {
+  const runtime = ensureAIRuntime(game, entry.model);
+  const task = runtime.tasks[entry.task];
+  const now = new Date().toISOString();
+
+  task.lastStatus = entry.status;
+  task.lastUpdatedAt = now;
+  runtime.lastUpdatedAt = now;
+
+  if (entry.status === "success") {
+    task.successes += 1;
+    runtime.totalSuccesses += 1;
+    runtime.lastLiveCallAt = now;
+    runtime.status = "live";
+  } else if (entry.status === "fallback") {
+    const reason = redactFallbackReason(entry.error);
+    task.fallbacks += 1;
+    task.lastFallbackReason = reason;
+    runtime.totalFallbacks += 1;
+    runtime.status = runtime.totalSuccesses > 0 ? "live" : "fallback";
+    if (reason) {
+      runtime.fallbackReasons = [reason, ...runtime.fallbackReasons]
+        .filter((value, index, values) => values.indexOf(value) === index)
+        .slice(0, 5);
+    }
+  } else {
+    task.skips += 1;
+    runtime.totalSkips += 1;
+    runtime.status =
+      runtime.totalSuccesses > 0
+        ? "live"
+        : runtime.totalFallbacks > 0
+          ? "fallback"
+          : "not_called";
+  }
+}
+
+function ensureAIRuntime(
+  game: StreetGameState,
+  model: string,
+): AIRuntimeState {
+  if (!game.aiRuntime) {
+    game.aiRuntime = {
+      fallbackReasons: [],
+      model,
+      provider: "openai",
+      status: "not_called",
+      tasks: Object.fromEntries(
+        AI_RUNTIME_TASKS.map((task) => [
+          task,
+          {
+            fallbacks: 0,
+            skips: 0,
+            successes: 0,
+          },
+        ]),
+      ) as AIRuntimeState["tasks"],
+      totalFallbacks: 0,
+      totalSkips: 0,
+      totalSuccesses: 0,
+    };
+  }
+
+  game.aiRuntime.model = model;
+  game.aiRuntime.provider = "openai";
+  return game.aiRuntime;
+}
+
+function redactFallbackReason(reason: string | undefined) {
+  if (!reason) {
+    return "OpenAI request fell back.";
+  }
+
+  return reason
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]{20,}/g, "sk-[redacted]")
+    .slice(0, 180);
 }
 
 function formatOpenAIError(error: unknown): string {

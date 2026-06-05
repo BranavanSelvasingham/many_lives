@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { OpenAIProvider } from "../src/ai/openaiProvider.js";
+import {
+  DEFAULT_OPENAI_TIMEOUT_MS,
+  OpenAIProvider,
+} from "../src/ai/openaiProvider.js";
 import type { StreetPlanningRequest } from "../src/ai/provider.js";
 import {
   buildDeterministicStreetReply,
@@ -10,6 +13,10 @@ import { seedStreetGame } from "../src/street-sim/seedGame.js";
 describe("OpenAIProvider street fallback", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("keeps the default live timeout long enough for first-run browser calls", () => {
+    expect(DEFAULT_OPENAI_TIMEOUT_MS).toBeGreaterThanOrEqual(12_000);
   });
 
   it("falls back quickly when a live street reply times out", async () => {
@@ -48,6 +55,22 @@ describe("OpenAIProvider street fallback", () => {
         task: "generateStreetReply",
       },
     ]);
+    expect(game.aiRuntime).toMatchObject({
+      fallbackReasons: expect.arrayContaining([
+        expect.stringMatching(/AbortError|timed out/i),
+      ]),
+      model: "gpt-5-nano",
+      provider: "openai",
+      status: "fallback",
+      tasks: {
+        generateStreetReply: {
+          fallbacks: 1,
+          lastStatus: "fallback",
+        },
+      },
+      totalFallbacks: 1,
+      totalSuccesses: 0,
+    });
     expect(Date.now() - startedAt).toBeLessThan(500);
   });
 
@@ -88,7 +111,8 @@ describe("OpenAIProvider street fallback", () => {
       model: "test-model",
       timeoutMs: 50,
     });
-    const result = await provider.planStreetNextAction(buildPlanningRequest());
+    const planningRequest = buildPlanningRequest();
+    const result = await provider.planStreetNextAction(planningRequest);
 
     expect(result).toEqual({
       actionId: "talk:npc-mara",
@@ -117,6 +141,20 @@ describe("OpenAIProvider street fallback", () => {
       reasoning: {
         effort: "minimal",
       },
+    });
+    expect(planningRequest.game.aiRuntime).toMatchObject({
+      lastLiveCallAt: expect.any(String),
+      model: "test-model",
+      provider: "openai",
+      status: "live",
+      tasks: {
+        planStreetNextAction: {
+          lastStatus: "success",
+          successes: 1,
+        },
+      },
+      totalFallbacks: 0,
+      totalSuccesses: 1,
     });
   });
 
@@ -232,7 +270,8 @@ describe("OpenAIProvider street fallback", () => {
       timeoutMs: 50,
     });
 
-    await provider.generateStreetThoughts(seedStreetGame("game-openai-skipped"));
+    const game = seedStreetGame("game-openai-skipped");
+    await provider.generateStreetThoughts(game);
 
     expect(provider.getCallLog()).toMatchObject([
       {
@@ -240,6 +279,17 @@ describe("OpenAIProvider street fallback", () => {
         task: "generateStreetThoughts",
       },
     ]);
+    expect(game.aiRuntime).toMatchObject({
+      provider: "openai",
+      status: "not_called",
+      tasks: {
+        generateStreetThoughts: {
+          lastStatus: "skipped",
+          skips: 1,
+        },
+      },
+      totalSkips: 1,
+    });
   });
 });
 

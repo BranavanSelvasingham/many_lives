@@ -273,6 +273,20 @@ export function buildStreetBrowserProbeJson({
           updatedAt: activeConversation.updatedAt,
         }
       : null,
+    aiRuntime: game.aiRuntime
+      ? {
+          fallbackReasons: game.aiRuntime.fallbackReasons,
+          lastLiveCallAt: game.aiRuntime.lastLiveCallAt ?? null,
+          lastUpdatedAt: game.aiRuntime.lastUpdatedAt ?? null,
+          model: game.aiRuntime.model,
+          provider: game.aiRuntime.provider,
+          status: game.aiRuntime.status,
+          tasks: game.aiRuntime.tasks,
+          totalFallbacks: game.aiRuntime.totalFallbacks,
+          totalSkips: game.aiRuntime.totalSkips,
+          totalSuccesses: game.aiRuntime.totalSuccesses,
+        }
+      : null,
     autonomy: {
       autoContinue: game.rowanAutonomy.autoContinue,
       intent: game.rowanAutonomy.intent

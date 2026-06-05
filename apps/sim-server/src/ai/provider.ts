@@ -122,6 +122,7 @@ export interface StreetPlanningResult {
 
 export interface AIProvider {
   readonly name: string;
+  readonly model: string;
   summarizeState(world: WorldState): Promise<string>;
   classifyEscalation(context: AIContext): Promise<EscalationSuggestion>;
   generateInboxMessage(

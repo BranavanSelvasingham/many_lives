@@ -293,9 +293,11 @@ export function deriveRowanPlaybackBeats(
       : `Walking to ${moveTargetName}`;
     beats.push({
       blocking: true,
-      detail:
+      detail: appendResourceDelta(
         nextGame.rowanAutonomy?.detail ||
-        `Rowan is on his way to ${moveTargetName}.`,
+          `Rowan is on his way to ${moveTargetName}.`,
+        { energyDelta, moneyDelta },
+      ),
       durationMs: moveDurationMs(playerMoveDistance),
       key: `move:${nextGame.currentTime}:${nextGame.player.x}:${nextGame.player.y}:${nextGame.rowanAutonomy?.key ?? "idle"}`,
       kind: "move",
@@ -446,7 +448,10 @@ export function deriveRowanPlaybackBeats(
     const payCopy = moneyDelta > 0 ? ` and came away with +$${moneyDelta}` : "";
     beats.push({
       blocking: true,
-      detail: `Rowan made it through ${locationName}${payCopy}.`,
+      detail: appendResourceDelta(
+        `Rowan made it through ${locationName}${payCopy}.`,
+        { energyDelta, moneyDelta },
+      ),
       durationMs: ROWAN_PLAYBACK_TIMING_MS.postActionCompletePause,
       key: `action-complete:${completedJob.id}:${nextGame.currentTime}`,
       kind: "action_complete",
@@ -489,7 +494,10 @@ export function deriveRowanPlaybackBeats(
       if (energyDelta > 0 && atHome) {
         beats.push({
           blocking: true,
-          detail: `Rowan caught his breath and got ${energyDelta} energy back before the next push.`,
+          detail: appendResourceDelta(
+            `Rowan caught his breath and got ${energyDelta} energy back before the next push.`,
+            { energyDelta, moneyDelta },
+          ),
           durationMs: ROWAN_PLAYBACK_TIMING_MS.postActionCompletePause,
           key: `rest:${nextGame.currentTime}:${nextGame.player.energy}`,
           kind: "rest",
@@ -512,6 +520,65 @@ export function deriveRowanPlaybackBeats(
   }
 
   return beats;
+}
+
+function appendResourceDelta(
+  detail: string,
+  {
+    energyDelta,
+    moneyDelta,
+  }: {
+    energyDelta: number;
+    moneyDelta: number;
+  },
+) {
+  const resourceDelta = formatResourceDelta({ energyDelta, moneyDelta });
+  if (!resourceDelta) {
+    return detail;
+  }
+
+  return `${detail.replace(/\s+$/g, "")} ${resourceDelta}`;
+}
+
+function formatResourceDelta({
+  energyDelta,
+  moneyDelta,
+}: {
+  energyDelta: number;
+  moneyDelta: number;
+}) {
+  const changes: string[] = [];
+  if (moneyDelta !== 0) {
+    changes.push(`${moneyDelta > 0 ? "+" : "-"}$${Math.abs(moneyDelta)}`);
+  }
+  if (Math.abs(energyDelta) >= 3) {
+    changes.push(
+      `${energyDelta > 0 ? "+" : "-"}${Math.abs(energyDelta)} energy`,
+    );
+  }
+
+  return changes.length > 0 ? `Resources: ${changes.join(", ")}.` : "";
+}
+
+function playerFacingRailSignals(signals: string[] | undefined) {
+  if (!signals?.length) {
+    return undefined;
+  }
+
+  const rewritten = signals
+    .map((signal) =>
+      signal
+        .replace(/^Action:\s*/i, "Next: ")
+        .replace(/\bcurrent objective\b/gi, "next promise"),
+    )
+    .filter(
+      (signal) =>
+        !/planner trace|rejected|blocked|fits the current objective/i.test(
+          signal,
+        ),
+    );
+
+  return rewritten.length > 0 ? rewritten : undefined;
 }
 
 export function buildRowanRailViewModel({
@@ -551,7 +618,7 @@ export function buildRowanRailViewModel({
         : undefined,
     signals:
       game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
-        ? game.rowanAutonomy.intent?.signals
+        ? playerFacingRailSignals(game.rowanAutonomy.intent?.signals)
         : undefined,
     title:
       game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
@@ -564,7 +631,7 @@ export function buildRowanRailViewModel({
     detail:
       "Rowan has $12, tonight's bed at Morrow House, and one useful first person to ask: Mara.",
     reason: game.rowanAutonomy?.intent?.reason,
-    signals: game.rowanAutonomy?.intent?.signals,
+    signals: playerFacingRailSignals(game.rowanAutonomy?.intent?.signals),
     title: "A room for tonight",
     tone: "info",
   };

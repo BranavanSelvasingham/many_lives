@@ -722,6 +722,49 @@ export function buildStreetOverlayStyle({
         line-height: 1.55;
         color: rgba(219, 228, 233, 0.78);
       }
+      .ml-debug-panel {
+        border-radius: 16px;
+        border: 1px solid rgba(138, 151, 161, 0.14);
+        background: rgba(9, 15, 19, 0.58);
+        padding: 11px 12px;
+      }
+      .ml-ai-runtime {
+        margin-top: 8px;
+        border-radius: 14px;
+        border: 1px solid rgba(138, 151, 161, 0.16);
+        background: rgba(21, 30, 35, 0.72);
+        padding: 10px 11px;
+      }
+      .ml-ai-runtime[data-ai-status="live"] {
+        border-color: rgba(89, 165, 132, 0.28);
+        background: rgba(19, 35, 33, 0.72);
+      }
+      .ml-ai-runtime[data-ai-status="fallback"] {
+        border-color: rgba(167, 105, 99, 0.3);
+        background: rgba(44, 28, 31, 0.72);
+      }
+      .ml-ai-runtime-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: rgba(239, 243, 245, 0.94);
+      }
+      .ml-ai-runtime-copy {
+        margin-top: 5px;
+        font-size: 11px;
+        line-height: 1.5;
+        color: rgba(219, 228, 233, 0.74);
+      }
+      .ml-ai-runtime-copy.is-warning {
+        color: rgba(246, 198, 193, 0.9);
+      }
+      .ml-ai-task-grid {
+        margin-top: 8px;
+        display: grid;
+        gap: 5px;
+        font-size: 10px;
+        line-height: 1.35;
+        color: rgba(213, 224, 229, 0.62);
+      }
       .ml-title {
         margin-top: 8px;
         font-size: 36px;

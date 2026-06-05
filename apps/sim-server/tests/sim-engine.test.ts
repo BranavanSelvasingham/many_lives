@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import type {
+  StreetAutonomousLineRequest,
   StreetPlanningRequest,
   StreetPlanningResult,
 } from "../src/ai/provider.js";
+import type { StreetDialogueRequest } from "../src/ai/streetDialogue.js";
 import { SimulationEngine } from "../src/sim/engine.js";
 import { buildRowanCognition } from "../src/sim/rowanCognition.js";
 import { runRowanLoopSmoke } from "../src/sim/rowanLoopSmoke.js";
@@ -42,6 +44,32 @@ class PlanningAIProvider extends MockAIProvider {
     return {
       ...this.result,
       planKey: matchingAllowedActions[0].planKey,
+    };
+  }
+}
+
+class LiveDialogueAIProvider extends MockAIProvider {
+  override readonly name = "openai";
+  override readonly model = "test-live-dialogue";
+  readonly autonomousLineRequests: StreetAutonomousLineRequest[] = [];
+  readonly replyRequests: StreetDialogueRequest[] = [];
+
+  override async generateStreetAutonomousLine(
+    input: StreetAutonomousLineRequest,
+  ) {
+    this.autonomousLineRequests.push(input);
+    return {
+      speech: `Live ${input.npcId} ${input.purpose} line.`,
+    };
+  }
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    this.replyRequests.push(input);
+    const npcName =
+      input.game.npcs.find((npc) => npc.id === input.npcId)?.name ?? "Someone";
+    return {
+      followupThought: `${npcName} is responding through the live provider.`,
+      reply: `${npcName} live reply for Rowan.`,
     };
   }
 }
@@ -167,6 +195,11 @@ describe("SimulationEngine street slice", () => {
       actionId: "work:job-tea-shift",
     });
     expect(world.firstAfternoon?.teaShiftStage).toBe("rush");
+    expect(world.player).toMatchObject({
+      spaceId: "interior:tea-house",
+      x: 8,
+      y: 3,
+    });
     expect(world.player.currentThought).toBe(
       "The room is filling. Cups first, tables second, keep moving.",
     );
@@ -194,6 +227,11 @@ describe("SimulationEngine street slice", () => {
       actionId: "work:job-tea-shift",
     });
     expect(world.firstAfternoon?.teaShiftStage).toBe("counter");
+    expect(world.player).toMatchObject({
+      spaceId: "interior:tea-house",
+      x: 7,
+      y: 5,
+    });
     expect(world.player.currentThought).toBe(
       "Ada is not watching every step now. That probably means I am keeping up.",
     );
@@ -213,6 +251,11 @@ describe("SimulationEngine street slice", () => {
       actionId: "work:job-tea-shift",
     });
     expect(world.firstAfternoon?.teaShiftStage).toBe("paid");
+    expect(world.player).toMatchObject({
+      spaceId: "interior:tea-house",
+      x: 8,
+      y: 3,
+    });
     expect(world.jobs.find((job) => job.id === "job-tea-shift")?.completed).toBe(
       true,
     );
@@ -366,16 +409,19 @@ describe("SimulationEngine street slice", () => {
       targetLocationId: "boarding-house",
     });
     expect(world.rowanAutonomy.detail).toContain(
-      "needs to enter before acting",
+      "steps inside before acting",
     );
     expect(world.rowanAutonomy.intent).toMatchObject({
       reason:
-        "Enter Morrow House is available at Morrow House and fits the current objective.",
+        "Rowan is at Morrow House, so stepping inside is the useful next move.",
       signals: expect.arrayContaining([
         "Here: Morrow House",
         "Action: Enter Morrow House",
       ]),
     });
+    expect(world.rowanAutonomy.intent?.reason).not.toMatch(
+      /fits the current objective|current objective|belongs here/i,
+    );
     expect(world.rowanAutonomy.detail).not.toMatch(
       /prompt|context is specific|clear enough/i,
     );
@@ -402,6 +448,93 @@ describe("SimulationEngine street slice", () => {
     expect(playerLine?.text).not.toMatch(/hands|lunch|work lead/i);
     expect(maraLine?.text).toMatch(/Morrow House|room|Ada|Kettle & Lamp/i);
     expect(world.activeConversation?.objectiveText).toContain("Ada");
+  });
+
+  it("describes the Ada lead as a street route from Morrow House", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-ada-route-copy");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+    );
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+      12,
+    );
+
+    const copy = [
+      world.rowanAutonomy.label,
+      world.rowanAutonomy.detail,
+      world.rowanAutonomy.intent?.reason,
+      ...(world.rowanAutonomy.intent?.signals ?? []),
+    ].join(" ");
+
+    expect(copy).toMatch(/Kettle & Lamp|street route|Ada/i);
+    expect(copy).not.toMatch(/Ask Ada.*at Morrow House/i);
+    expect(copy).not.toMatch(/Ada work at Morrow House/i);
+  });
+
+  it("attempts live OpenAI-mode dialogue for first Mara and Ada conversations", async () => {
+    const provider = new LiveDialogueAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-live-first-dialogue");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+      10,
+    );
+
+    expect(
+      provider.autonomousLineRequests.some(
+        (request) =>
+          request.npcId === "npc-mara" && request.purpose === "opener",
+      ),
+    ).toBe(true);
+    expect(
+      provider.replyRequests.some((request) => request.npcId === "npc-mara"),
+    ).toBe(true);
+    expect(
+      world.activeConversation?.lines.find((line) => line.speaker === "player")
+        ?.text,
+    ).toContain("Live npc-mara opener line.");
+    expect(
+      world.activeConversation?.lines.find((line) => line.speaker === "npc")
+        ?.text,
+    ).toContain("Mara live reply for Rowan.");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-ada",
+      24,
+    );
+
+    expect(world.activeConversation?.npcId).toBe("npc-ada");
+    expect(
+      provider.autonomousLineRequests.some(
+        (request) =>
+          request.npcId === "npc-ada" && request.purpose === "opener",
+      ),
+    ).toBe(true);
+    expect(
+      provider.replyRequests.some((request) => request.npcId === "npc-ada"),
+    ).toBe(true);
+    expect(
+      world.activeConversation?.lines.find((line) => line.speaker === "player")
+        ?.text,
+    ).toContain("Live npc-ada opener line.");
+    expect(
+      world.activeConversation?.lines.find((line) => line.speaker === "npc")
+        ?.text,
+    ).toContain("Ada live reply for Rowan.");
   });
 
   it("lets an OpenAI planner choose a validated objective action", async () => {
