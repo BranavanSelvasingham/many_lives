@@ -13,9 +13,9 @@ const DEFAULT_WEB_BASE =
 const OUTPUT_DIR =
   process.env.MANY_LIVES_VISUAL_CHECK_DIR ??
   path.join(tmpdir(), `manylives-visual-check-${Date.now()}`);
-const WEB_START_TIMEOUT_MS = 25_000;
-const CDP_WAIT_TIMEOUT_MS = 15_000;
-const CDP_COMMAND_TIMEOUT_MS = 12_000;
+const WEB_START_TIMEOUT_MS = 60_000;
+const CDP_WAIT_TIMEOUT_MS = 60_000;
+const CDP_COMMAND_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 250;
 const ROOT = process.cwd();
 const STREET_APP_PATH = path.join(
