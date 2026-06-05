@@ -1633,6 +1633,33 @@ function assertProbeAuditability(label, game, probe) {
   );
 }
 
+async function waitForGameplayDom(label, session, probe) {
+  const expectedLabel = probe.autonomy.label.slice(0, 28);
+  const expectedPattern = new RegExp(escapeRegExp(expectedLabel), "i");
+  const startedAt = Date.now();
+  let lastDom = null;
+
+  while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
+    try {
+      lastDom = await session.readDomSnapshot();
+      if (
+        lastDom?.hasFrameworkErrorOverlay ||
+        expectedPattern.test(lastDom?.bodyText ?? "")
+      ) {
+        return lastDom;
+      }
+    } catch {}
+
+    await sleep(PROBE_POLL_INTERVAL_MS);
+  }
+
+  assert.fail(
+    `${label}: rendered UI did not catch up to the current Rowan beat "${expectedLabel}". Last DOM: ${
+      lastDom?.bodyTextSample ?? "missing"
+    }`,
+  );
+}
+
 function assertGameplayDom(label, game, probe, dom) {
   assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
   assert.equal(
@@ -2209,7 +2236,7 @@ async function captureBrowserState({ game, index, label, session }) {
   const probe = await session.waitForGame(game);
   assertBrowserProbeMatchesGame(label, game, probe);
   assertCityEventState(label, game);
-  const dom = await session.readDomSnapshot();
+  const dom = await waitForGameplayDom(label, session, probe);
   const mapAgency = await session.readMapAgencyProbe();
   assertGameplayDom(label, game, probe, dom);
 
