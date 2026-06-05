@@ -37,9 +37,25 @@ import {
 } from "./streetThoughts.js";
 import type { StreetGameState } from "../street-sim/types.js";
 
-interface OpenAIProviderOptions {
+export type OpenAIProviderTask =
+  | "generateStreetAutonomousLine"
+  | "generateStreetReply"
+  | "generateStreetThoughts"
+  | "interpretStreetConversation"
+  | "planStreetNextAction";
+
+export interface OpenAIProviderCallLogEntry {
+  durationMs: number;
+  error?: string;
+  model: string;
+  status: "fallback" | "skipped" | "success";
+  task: OpenAIProviderTask;
+}
+
+export interface OpenAIProviderOptions {
   apiKey?: string;
   model?: string;
+  onCall?: (entry: OpenAIProviderCallLogEntry) => void;
   timeoutMs?: number;
 }
 
@@ -48,6 +64,7 @@ const MAX_OPENAI_TIMEOUT_MS = 30_000;
 
 export class OpenAIProvider implements AIProvider {
   private readonly fallback = new MockAIProvider();
+  private readonly callLog: OpenAIProviderCallLogEntry[] = [];
   private readonly streetThoughtCache = new Map<string, StreetThoughtsResult>();
   private readonly streetReplyCache = new Map<string, StreetDialogueResult>();
 
@@ -55,6 +72,10 @@ export class OpenAIProvider implements AIProvider {
 
   get name(): string {
     return this.options.apiKey ? "openai" : "openai-fallback";
+  }
+
+  getCallLog(): OpenAIProviderCallLogEntry[] {
+    return [...this.callLog];
   }
 
   async summarizeState(world: AIContext["world"]): Promise<string> {
@@ -110,6 +131,13 @@ export class OpenAIProvider implements AIProvider {
     game: StreetGameState,
   ): Promise<StreetThoughtsResult> {
     if (!shouldUseOpenAIForStreetSupportTasks()) {
+      this.recordCall({
+        durationMs: 0,
+        error: "OPENAI_STREET_SUPPORT_TASKS is not enabled.",
+        model: this.modelName(),
+        status: "skipped",
+        task: "generateStreetThoughts",
+      });
       return this.fallback.generateStreetThoughts(game);
     }
 
@@ -121,10 +149,14 @@ export class OpenAIProvider implements AIProvider {
 
     const prompt = buildGenerateStreetThoughtsPrompt(game);
 
-    const result = await this.callOrFallback(async () => {
-      const output = await this.createTextResponse(prompt, 220);
-      return normalizeStreetThoughts(output, game);
-    }, () => this.fallback.generateStreetThoughts(game));
+    const result = await this.callOpenAIOrFallback(
+      "generateStreetThoughts",
+      async () => {
+        const output = await this.createTextResponse(prompt, 220);
+        return normalizeStreetThoughts(output, game);
+      },
+      () => this.fallback.generateStreetThoughts(game),
+    );
 
     this.streetThoughtCache.set(cacheKey, result);
     return result;
@@ -140,10 +172,14 @@ export class OpenAIProvider implements AIProvider {
     }
 
     const prompt = buildGenerateStreetReplyPrompt(input);
-    const result = await this.callOrFallback(async () => {
-      const output = await this.createTextResponse(prompt, 260);
-      return normalizeStreetReply(output, input);
-    }, () => this.fallback.generateStreetReply(input));
+    const result = await this.callOpenAIOrFallback(
+      "generateStreetReply",
+      async () => {
+        const output = await this.createTextResponse(prompt, 260);
+        return normalizeStreetReply(output, input);
+      },
+      () => this.fallback.generateStreetReply(input),
+    );
 
     this.streetReplyCache.set(cacheKey, result);
     return result;
@@ -153,30 +189,52 @@ export class OpenAIProvider implements AIProvider {
     input: StreetAutonomousLineRequest,
   ): Promise<StreetAutonomousLineResult> {
     if (!shouldUseOpenAIForStreetSupportTasks()) {
+      this.recordCall({
+        durationMs: 0,
+        error: "OPENAI_STREET_SUPPORT_TASKS is not enabled.",
+        model: this.modelName(),
+        status: "skipped",
+        task: "generateStreetAutonomousLine",
+      });
       return this.fallback.generateStreetAutonomousLine(input);
     }
 
     const prompt = buildGenerateStreetAutonomousLinePrompt(input);
 
-    return this.callOrFallback(async () => {
-      const output = await this.createTextResponse(prompt, 120);
-      return normalizeStreetAutonomousLine(output, input);
-    }, () => this.fallback.generateStreetAutonomousLine(input));
+    return this.callOpenAIOrFallback(
+      "generateStreetAutonomousLine",
+      async () => {
+        const output = await this.createTextResponse(prompt, 120);
+        return normalizeStreetAutonomousLine(output, input);
+      },
+      () => this.fallback.generateStreetAutonomousLine(input),
+    );
   }
 
   async interpretStreetConversation(
     input: StreetConversationInterpretationRequest,
   ): Promise<StreetConversationInterpretationResult> {
     if (!shouldUseOpenAIForStreetSupportTasks()) {
+      this.recordCall({
+        durationMs: 0,
+        error: "OPENAI_STREET_SUPPORT_TASKS is not enabled.",
+        model: this.modelName(),
+        status: "skipped",
+        task: "interpretStreetConversation",
+      });
       return this.fallback.interpretStreetConversation(input);
     }
 
     const prompt = buildInterpretStreetConversationPrompt(input);
 
-    return this.callOrFallback(async () => {
-      const output = await this.createTextResponse(prompt, 220);
-      return normalizeStreetConversationInterpretation(output);
-    }, () => this.fallback.interpretStreetConversation(input));
+    return this.callOpenAIOrFallback(
+      "interpretStreetConversation",
+      async () => {
+        const output = await this.createTextResponse(prompt, 220);
+        return normalizeStreetConversationInterpretation(output);
+      },
+      () => this.fallback.interpretStreetConversation(input),
+    );
   }
 
   async planStreetNextAction(
@@ -184,10 +242,14 @@ export class OpenAIProvider implements AIProvider {
   ): Promise<StreetPlanningResult | null> {
     const prompt = buildPlanStreetNextActionPrompt(input);
 
-    return this.callOrFallback(async () => {
-      const output = await this.createTextResponse(prompt, 160);
-      return normalizeStreetPlanningResult(output, input);
-    }, () => this.fallback.planStreetNextAction(input));
+    return this.callOpenAIOrFallback(
+      "planStreetNextAction",
+      async () => {
+        const output = await this.createTextResponse(prompt, 160);
+        return normalizeStreetPlanningResult(output, input);
+      },
+      () => this.fallback.planStreetNextAction(input),
+    );
   }
 
   private async callOrFallback<T>(
@@ -201,6 +263,44 @@ export class OpenAIProvider implements AIProvider {
     try {
       return await requestFactory();
     } catch {
+      return fallbackFactory();
+    }
+  }
+
+  private async callOpenAIOrFallback<T>(
+    task: OpenAIProviderTask,
+    requestFactory: () => Promise<T>,
+    fallbackFactory: () => Promise<T>,
+  ): Promise<T> {
+    if (!this.options.apiKey) {
+      this.recordCall({
+        durationMs: 0,
+        error: "OPENAI_API_KEY is not configured.",
+        model: this.modelName(),
+        status: "skipped",
+        task,
+      });
+      return fallbackFactory();
+    }
+
+    const startedAt = Date.now();
+    try {
+      const result = await requestFactory();
+      this.recordCall({
+        durationMs: Date.now() - startedAt,
+        model: this.modelName(),
+        status: "success",
+        task,
+      });
+      return result;
+    } catch (error) {
+      this.recordCall({
+        durationMs: Date.now() - startedAt,
+        error: formatOpenAIError(error),
+        model: this.modelName(),
+        status: "fallback",
+        task,
+      });
       return fallbackFactory();
     }
   }
@@ -222,7 +322,7 @@ export class OpenAIProvider implements AIProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: this.options.model ?? "gpt-5-nano",
+          model: this.modelName(),
           input: prompt,
           reasoning: {
             effort: "minimal",
@@ -270,6 +370,23 @@ export class OpenAIProvider implements AIProvider {
       this.options.timeoutMs ?? Number(process.env.OPENAI_TIMEOUT_MS),
     );
   }
+
+  private modelName(): string {
+    return this.options.model ?? "gpt-5-nano";
+  }
+
+  private recordCall(entry: OpenAIProviderCallLogEntry): void {
+    this.callLog.push(entry);
+    this.options.onCall?.(entry);
+  }
+}
+
+function formatOpenAIError(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`.slice(0, 300);
+  }
+
+  return String(error).slice(0, 300);
 }
 
 function normalizeOpenAIRequestTimeoutMs(value: number): number {
@@ -366,12 +483,25 @@ function normalizeStreetPlanningResult(
   input: StreetPlanningRequest,
 ): StreetPlanningResult | null {
   const parsed = safeParseStreetPlanningJson(rawText);
-  if (!parsed || typeof parsed.actionId !== "string") {
+  if (!parsed) {
     return null;
   }
 
-  const actionId = parsed.actionId.trim();
-  if (!input.allowedActions.some((action) => action.actionId === actionId)) {
+  const parsedActionId =
+    typeof parsed.actionId === "string" ? parsed.actionId.trim() : undefined;
+  const parsedPlanKey =
+    typeof parsed.planKey === "string" ? parsed.planKey.trim() : undefined;
+  const allowedAction = parsedPlanKey
+    ? input.allowedActions.find((action) => action.planKey === parsedPlanKey)
+    : parsedActionId
+      ? uniqueAllowedActionForActionId(input.allowedActions, parsedActionId)
+      : undefined;
+
+  if (!allowedAction) {
+    return null;
+  }
+
+  if (parsedActionId && parsedActionId !== allowedAction.actionId) {
     return null;
   }
 
@@ -382,10 +512,19 @@ function normalizeStreetPlanningResult(
   const rationale = sanitizeOptionalNarrativeField(parsed.rationale) ?? "";
 
   return {
-    actionId,
+    actionId: allowedAction.actionId,
     confidence,
+    planKey: allowedAction.planKey,
     rationale,
   };
+}
+
+function uniqueAllowedActionForActionId(
+  allowedActions: StreetPlanningRequest["allowedActions"],
+  actionId: string,
+) {
+  const matches = allowedActions.filter((action) => action.actionId === actionId);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function safeParseThoughtsJson(rawText: string): {
@@ -457,6 +596,7 @@ function safeParseConversationInterpretationJson(rawText: string): {
 function safeParseStreetPlanningJson(rawText: string): {
   actionId?: string;
   confidence?: number;
+  planKey?: string;
   rationale?: string;
 } | null {
   const trimmed = rawText.trim();
@@ -469,6 +609,7 @@ function safeParseStreetPlanningJson(rawText: string): {
     return JSON.parse(withoutFence) as {
       actionId?: string;
       confidence?: number;
+      planKey?: string;
       rationale?: string;
     };
   } catch {

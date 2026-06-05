@@ -410,15 +410,55 @@ async function assertRowanBrowserArtifacts(logLine) {
       minBytes: 100_000,
     },
     {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "00-initial-mara-open.png"),
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "00-initial-morrow-exterior.png"),
       minBytes: 120_000,
     },
     {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "08-lunch-rush.png"),
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "01-enter-morrow-house.png"),
       minBytes: 120_000,
     },
     {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "13-first-afternoon-complete.png"),
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "08-enter-cafe-interior.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "9a-ada-live-thread-route-start.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "12-lunch-rush.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "12a-lunch-rush-route-start.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "18-enter-morrow-return.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "19-home-reset.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "19a-home-reset-route-start.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "20-first-afternoon-complete.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "23-enter-repair-interior.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "24a-repair-jo-live-thread-route-start.png"),
+      minBytes: 120_000,
+    },
+    {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "25-buy-wrench-interior.png"),
       minBytes: 120_000,
     },
     {

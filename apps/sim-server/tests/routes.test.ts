@@ -68,6 +68,19 @@ describe("HTTP routes", () => {
 
     expect(moveResponse.statusCode).toBe(200);
     expect(moveResponse.json().game.player.currentLocationId).toBe("tea-house");
+    expect(moveResponse.json().game.activeSpaceId).toBe("street:south-quay");
+
+    const enterResponse = await app.inject({
+      method: "POST",
+      url: `/game/${createdGame.id}/command`,
+      payload: {
+        type: "act",
+        actionId: "enter:tea-house",
+      },
+    });
+
+    expect(enterResponse.statusCode).toBe(200);
+    expect(enterResponse.json().game.activeSpaceId).toBe("interior:tea-house");
 
     const talkResponse = await app.inject({
       method: "POST",

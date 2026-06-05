@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
+import { enterMorrowHouse, enterRepairStall } from "./street-test-helpers.js";
 
 describe("Scene actions", () => {
   it("offers grounded actions based on the player's current place", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("game-actions");
+    let world = await engine.createGame("game-actions");
+
+    expect(
+      world.availableActions.some((action) => action.id === "enter:boarding-house"),
+    ).toBe(true);
+
+    world = await enterMorrowHouse(engine, world);
 
     expect(
       world.availableActions.some((action) => action.id === "talk:npc-mara"),
@@ -26,6 +33,12 @@ describe("Scene actions", () => {
     });
 
     expect(world.player.currentLocationId).toBe("repair-stall");
+    expect(
+      world.availableActions.some((action) => action.id === "enter:repair-stall"),
+    ).toBe(true);
+
+    world = await enterRepairStall(engine, world);
+
     expect(
       world.availableActions.some((action) => action.id === "talk:npc-jo"),
     ).toBe(true);

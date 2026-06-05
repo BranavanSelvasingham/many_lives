@@ -81,7 +81,12 @@ export interface StreetPlanningAllowedAction {
   description: string;
   kind: ActionOption["kind"] | "move" | "observe" | "wait";
   label: string;
+  matchedOutcomeId?: string;
   npcId?: string;
+  planKey: string;
+  pressureId?: string;
+  pressureKind?: string;
+  pressureLabel?: string;
   targetLocationId?: string;
 }
 
@@ -111,6 +116,7 @@ export interface StreetPlanningRequest {
 export interface StreetPlanningResult {
   actionId: string;
   confidence: number;
+  planKey?: string;
   rationale: string;
 }
 

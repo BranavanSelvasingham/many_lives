@@ -19,6 +19,7 @@ import type { VisualScene } from "@/lib/street/visualScenes";
 
 const CAMERA_DRAG_START_DISTANCE_PX = 10;
 const CAMERA_DRAG_PAN_MULTIPLIER = 2.05;
+const CAMERA_DRAG_PAN_COMPACT_VERTICAL_MULTIPLIER = 4.5;
 const CAMERA_OFFSET_RETURN_DELAY_MS = 9_500;
 const CAMERA_OFFSET_RETURN_LERP = 0.006;
 const CAMERA_RECENT_INTERACTION_LERP = 0.68;
@@ -289,12 +290,17 @@ export function updateCameraGesture(
   }
 
   gesture.dragging = true;
+  const verticalPanMultiplier = isCompactPortraitViewport(
+    runtimeState.snapshot.viewport,
+  )
+    ? CAMERA_DRAG_PAN_COMPACT_VERTICAL_MULTIPLIER
+    : CAMERA_DRAG_PAN_MULTIPLIER;
   return applyCameraOffset(
     runtimeState,
     sceneViewport,
     {
       x: gesture.originOffset.x + deltaX * CAMERA_DRAG_PAN_MULTIPLIER,
-      y: gesture.originOffset.y + deltaY * CAMERA_DRAG_PAN_MULTIPLIER,
+      y: gesture.originOffset.y + deltaY * verticalPanMultiplier,
     },
     now,
   );

@@ -103,9 +103,10 @@ export function buildPlanStreetNextActionPrompt(
   return [
     "Choose Rowan's next move from the allowed actions.",
     "Return strict JSON only with this shape:",
-    '{"actionId":"...","rationale":"...","confidence":0.0}',
+    '{"planKey":"...","actionId":"...","rationale":"...","confidence":0.0}',
     "Rules:",
-    "- Choose exactly one actionId from allowedActions. Do not invent action IDs.",
+    "- Choose exactly one planKey from allowedActions. Include the matching actionId for audit only. Do not invent plan keys or action IDs.",
+    "- If multiple allowed actions share the same actionId, the planKey is what distinguishes the actual target and reason.",
     "- The game server will execute and validate the action; you cannot change state directly.",
     "- Prefer the action that best follows Rowan's current objective, memories, recent conversations, time, money, energy, and local opportunities.",
     "- Treat desiredOutcomes as the goal; the objective trail is only supporting context, not a mandatory route.",

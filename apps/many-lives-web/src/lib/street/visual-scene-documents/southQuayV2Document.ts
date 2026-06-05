@@ -1,4 +1,4 @@
-import type { VisualSceneDocument } from "@/lib/street/visualScenes";
+import type { VisualSceneDocument } from "../visualScenes";
 
 const SOUTH_QUAY_V2_DOCUMENT = {
   "backgroundColor": "#111d23",
@@ -2399,7 +2399,7 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 12,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 7
       },
       {
@@ -2549,7 +2549,7 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 13,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 12
       },
       {
@@ -2814,17 +2814,17 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 24,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 15
       },
       {
         "col": 25,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 15
       },
       {
         "col": 26,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 15
       },
       {
@@ -2894,7 +2894,7 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 24,
-        "kind": "trees",
+        "kind": "walkway",
         "row": 16
       },
       {
@@ -2969,7 +2969,7 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 24,
-        "kind": "trees",
+        "kind": "walkway",
         "row": 17
       },
       {
@@ -3374,27 +3374,27 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 27,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 22
       },
       {
         "col": 28,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 22
       },
       {
         "col": 29,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 22
       },
       {
         "col": 30,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 22
       },
       {
         "col": 31,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 22
       },
       {

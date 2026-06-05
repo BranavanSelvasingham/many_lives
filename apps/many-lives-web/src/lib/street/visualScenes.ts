@@ -1,5 +1,5 @@
-import type { StreetGameState } from "@/lib/street/types";
-import { SOUTH_QUAY_V2_DOCUMENT } from "@/lib/street/visual-scene-documents/southQuayV2Document";
+import type { StreetGameState } from "./types";
+import { SOUTH_QUAY_V2_DOCUMENT } from "./visual-scene-documents/southQuayV2Document";
 
 export type VisualSceneId = "south-quay-v1" | "south-quay-v2";
 

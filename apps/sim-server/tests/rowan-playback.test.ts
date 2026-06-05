@@ -14,6 +14,7 @@ import {
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
 import type { StreetGameState } from "../src/street-sim/types.js";
+import { enterMorrowHouse, enterTeaHouse } from "./street-test-helpers.js";
 
 function asWebGame(world: StreetGameState) {
   return world as unknown as import("../../many-lives-web/src/lib/street/types.js").StreetGameState;
@@ -60,10 +61,30 @@ describe("Rowan playback helpers", () => {
     expect(moveBeat?.title).toBe("Walking to Kettle & Lamp");
   });
 
+  it("labels portal transitions as entering interiors instead of walking", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-enter-interior");
+    const entered = await enterMorrowHouse(engine, world);
+
+    const beats = deriveRowanPlaybackBeats(asWebGame(world), asWebGame(entered));
+
+    expect(beats.map((beat) => beat.kind)).not.toContain("move");
+    expect(beats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "arrive",
+          title: "Entered Morrow House",
+        }),
+      ]),
+    );
+  });
+
   it("derives thread open and landed beats from Rowan-led conversation flow", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("rowan-playback-thread");
-    const liveConversation = await engine.runCommand(world, {
+    let world = await engine.createGame("rowan-playback-thread");
+    world = await enterMorrowHouse(engine, world);
+    const insideMorrow = await enterMorrowHouse(engine, world);
+    const liveConversation = await engine.runCommand(insideMorrow, {
       type: "act",
       actionId: "talk:npc-mara",
     });
@@ -94,6 +115,7 @@ describe("Rowan playback helpers", () => {
       x: 6,
       y: 4,
     });
+    world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "talk:npc-ada",
@@ -260,7 +282,8 @@ describe("Rowan playback helpers", () => {
     expect(railView.statusLabel).toBe("Ready");
     expect(railView.next?.title).toBe("Ask Mara how to keep tonight's room.");
 
-    const liveConversation = await engine.runCommand(world, {
+    const insideMorrow = await enterMorrowHouse(engine, world);
+    const liveConversation = await engine.runCommand(insideMorrow, {
       type: "act",
       actionId: "talk:npc-mara",
     });
@@ -281,7 +304,7 @@ describe("Rowan playback helpers", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("rowan-playback-home-rest");
 
-    for (let step = 0; step < 16; step += 1) {
+    for (let step = 0; step < 24; step += 1) {
       world = await engine.runCommand(world, {
         type: "advance_objective",
         allowTimeSkip: true,

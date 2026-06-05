@@ -931,6 +931,10 @@ async function assertWatchModeFeelGuard() {
     cameraSource,
     "CAMERA_DRAG_PAN_MULTIPLIER",
   );
+  const compactVerticalDragMultiplier = readNumericConst(
+    cameraSource,
+    "CAMERA_DRAG_PAN_COMPACT_VERTICAL_MULTIPLIER",
+  );
   const returnDelay = readNumericConst(
     cameraSource,
     "CAMERA_OFFSET_RETURN_DELAY_MS",
@@ -938,6 +942,10 @@ async function assertWatchModeFeelGuard() {
   assert.ok(
     dragMultiplier >= 2,
     `Camera drag multiplier is too low for organic panning: ${dragMultiplier}`,
+  );
+  assert.ok(
+    compactVerticalDragMultiplier >= 2.5,
+    `Compact portrait vertical drag multiplier is too low to reliably reach the north/south edges on phone viewports: ${compactVerticalDragMultiplier}`,
   );
   assert.ok(
     returnDelay >= 8_000,

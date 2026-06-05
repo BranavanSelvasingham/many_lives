@@ -357,6 +357,18 @@ async function advanceObjective(
   return payload.game;
 }
 
+async function runGameCommand(gameId, command) {
+  const payload = await fetchJson(`${getWebSimBase()}/game/${gameId}/command`, {
+    body: JSON.stringify(command),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+
+  return payload.game;
+}
+
 function browserUrl(gameId) {
   return `${getWebBase()}?gameId=${encodeURIComponent(gameId)}&autoplay=0&observe=1`;
 }
@@ -485,6 +497,28 @@ class CdpSession {
 
     if (probe?.parseError) {
       throw new Error(`Could not parse #ml-browser-probe: ${probe.parseError}`);
+    }
+
+    return probe;
+  }
+
+  async readMapAgencyProbe() {
+    const probe = await this.evaluate(`(() => {
+      const script = document.querySelector("#ml-browser-map-agency-probe");
+      if (!script) {
+        return null;
+      }
+      try {
+        return JSON.parse(script.textContent || "null");
+      } catch (error) {
+        return { parseError: String(error) };
+      }
+    })()`);
+
+    if (probe?.parseError) {
+      throw new Error(
+        `Could not parse #ml-browser-map-agency-probe: ${probe.parseError}`,
+      );
     }
 
     return probe;
@@ -1072,18 +1106,28 @@ function shouldCaptureScreenshot(label) {
   }
 
   return new Set([
-    "initial-mara-open",
+    "initial-morrow-exterior",
+    "enter-morrow-house",
     "mara-live-thread",
     "head-to-cafe-plan",
+    "exit-morrow-house",
     "stage-cafe-move",
+    "arrive-cafe-door",
+    "enter-cafe-interior",
     "ada-live-thread",
     "ada-thread-landed",
     "hold-for-shift",
     "lunch-rush",
     "finish-shift",
     "head-home",
+    "exit-cafe-interior",
     "arrive-home",
+    "enter-morrow-return",
+    "home-reset",
     "first-afternoon-complete",
+    "exit-morrow-for-repair",
+    "stage-repair-move",
+    "enter-repair-interior",
   ]).has(label);
 }
 
@@ -1100,6 +1144,8 @@ function locationForGame(game) {
 function playerPositionChanged(previousGame, nextGame) {
   return (
     previousGame.id === nextGame.id &&
+    (previousGame.activeSpaceId ?? previousGame.player.spaceId ?? null) ===
+      (nextGame.activeSpaceId ?? nextGame.player.spaceId ?? null) &&
     (previousGame.player.x !== nextGame.player.x ||
       previousGame.player.y !== nextGame.player.y)
   );
@@ -1218,7 +1264,12 @@ function planningTraceProbeFromGame(game) {
   const optionPayload = (option) => ({
     actionId: option.actionId ?? null,
     label: option.label,
+    matchedOutcomeId: option.matchedOutcomeId ?? null,
     npcId: option.npcId ?? null,
+    planKey: option.planKey ?? null,
+    pressureId: option.pressureId ?? null,
+    pressureKind: option.pressureKind ?? null,
+    pressureLabel: option.pressureLabel ?? null,
     rationale: option.rationale,
     reason: option.reason ?? null,
     score: option.score,
@@ -1250,6 +1301,12 @@ function planningTraceProbeFromGame(game) {
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
+    selectedMatchedOutcomeId: trace.selectedMatchedOutcomeId ?? null,
+    selectedPlanKey: trace.selectedPlanKey ?? null,
+    selectedPressureId: trace.selectedPressureId ?? null,
+    selectedPressureKind: trace.selectedPressureKind ?? null,
+    selectedPressureLabel: trace.selectedPressureLabel ?? null,
+    selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
   };
 }
 
@@ -1387,6 +1444,11 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
     `${label}: browser location diverged from sim location.`,
   );
   assert.equal(
+    probe.location.spaceId,
+    normalizeNullable(game.activeSpaceId ?? game.player.spaceId),
+    `${label}: browser active space diverged from sim active space.`,
+  );
+  assert.equal(
     probe.location.x,
     game.player.x,
     `${label}: browser player x diverged from sim position.`,
@@ -1475,11 +1537,32 @@ function assertPlanningTracePayload(label, planningTrace) {
     planningTrace.considered.every(
       (option) =>
         typeof option.score === "number" &&
+        typeof option.planKey === "string" &&
+        option.planKey.length > 0 &&
         option.rationale &&
         Object.prototype.hasOwnProperty.call(option, "targetLocationId") &&
-        Object.prototype.hasOwnProperty.call(option, "npcId"),
+        Object.prototype.hasOwnProperty.call(option, "npcId") &&
+        Object.prototype.hasOwnProperty.call(option, "matchedOutcomeId") &&
+        Object.prototype.hasOwnProperty.call(option, "pressureId") &&
+        Object.prototype.hasOwnProperty.call(option, "pressureKind") &&
+        Object.prototype.hasOwnProperty.call(option, "pressureLabel"),
     ),
-    `${label}: planner trace considered options must expose score, rationale, target, and npc.`,
+    `${label}: planner trace considered options must expose plan key, score, rationale, target, npc, outcome, and pressure metadata.`,
+  );
+  const selectedTraceOption = planningTrace.considered.find(
+    (option) => option.status === "selected",
+  );
+  assert.ok(
+    planningTrace.selectedPlanKey &&
+      selectedTraceOption?.planKey === planningTrace.selectedPlanKey,
+    `${label}: planner trace selectedPlanKey must match the selected considered option.`,
+  );
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureId") &&
+      Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureKind") &&
+      Object.prototype.hasOwnProperty.call(planningTrace, "selectedMatchedOutcomeId") &&
+      Object.prototype.hasOwnProperty.call(planningTrace, "selectedTargetLocationId"),
+    `${label}: planner trace must expose selected pressure, selected outcome, and selected target metadata.`,
   );
   assert.ok(
     planningTrace.rejected.every((option) =>
@@ -1611,7 +1694,16 @@ function assertPlayerRouteDiagnostics(label, probe) {
   const route = probe.movement?.playerRoute;
   assert.ok(route, `${label}: expected an active player route diagnostic.`);
   assert.equal(route.active, true, `${label}: expected route to be active.`);
-  assert.equal(route.legal, true, `${label}: expected route to be legal.`);
+  assert.equal(
+    route.spaceId,
+    probe.location?.spaceId ?? probe.movement?.activeSpaceId ?? null,
+    `${label}: player route should belong to the active space.`,
+  );
+  assert.equal(
+    route.legal,
+    true,
+    `${label}: expected route to be legal. ${JSON.stringify(route)}`,
+  );
   assert.equal(
     route.reachesDestination,
     true,
@@ -1622,13 +1714,18 @@ function assertPlayerRouteDiagnostics(label, probe) {
     true,
     `${label}: expected route world points to stay on walkable map points.`,
   );
-  assert.ok(
-    route.tilePath.length > 2,
-    `${label}: expected a multi-point tile path, got ${route.tilePath.length}.`,
+  assert.equal(
+    route.visualObstaclesClear ?? route.diagnostics?.visualObstaclesClear,
+    true,
+    `${label}: expected route to avoid rendered visual obstacles.`,
   );
   assert.ok(
-    route.worldPath.length > 2,
-    `${label}: expected a multi-point world path, got ${route.worldPath.length}.`,
+    route.tilePath.length >= 2,
+    `${label}: expected at least a two-point tile path, got ${route.tilePath.length}.`,
+  );
+  assert.ok(
+    route.worldPath.length >= 2,
+    `${label}: expected at least a two-point world path, got ${route.worldPath.length}.`,
   );
 
   for (const point of route.worldPath) {
@@ -1669,7 +1766,8 @@ function assertRequiredNpcPatrolDiagnostics(label, probe) {
   }
 }
 
-function assertTimelineRoute(byLabel, label, routeName) {
+function assertTimelineRoute(byLabel, label, routeName, options = {}) {
+  const minPathPoints = options.minPathPoints ?? 3;
   const route = byLabel[label]?.movement?.playerRoute;
   assert.ok(route, `Expected route diagnostics for ${routeName}.`);
   assert.equal(route.legal, true, `${routeName}: route should be legal.`);
@@ -1683,13 +1781,46 @@ function assertTimelineRoute(byLabel, label, routeName) {
     true,
     `${routeName}: route points should remain on the walkable map graph.`,
   );
-  assert.ok(
-    route.tilePath.length > 2,
-    `${routeName}: expected more than two tile path points.`,
+  assert.equal(
+    route.visualObstaclesClear ?? route.diagnostics?.visualObstaclesClear,
+    true,
+    `${routeName}: route should avoid rendered visual obstacles.`,
   );
   assert.ok(
-    route.worldPath.length > 2,
-    `${routeName}: expected more than two world path points.`,
+    route.tilePath.length >= minPathPoints,
+    `${routeName}: expected at least ${minPathPoints} tile path points.`,
+  );
+  assert.ok(
+    route.worldPath.length >= minPathPoints,
+    `${routeName}: expected at least ${minPathPoints} world path points.`,
+  );
+
+  if (options.spaceId) {
+    assert.equal(
+      route.spaceId,
+      options.spaceId,
+      `${routeName}: route should stay in ${options.spaceId}.`,
+    );
+  }
+}
+
+function assertCleanSettledInteriorFrame(byLabel, label, spaceId) {
+  const entry = byLabel[label];
+  assert.ok(entry, `Expected settled interior timeline entry ${label}.`);
+  assert.equal(
+    entry.location?.spaceId,
+    spaceId,
+    `${label}: expected settled frame to be inside ${spaceId}.`,
+  );
+  assert.equal(
+    entry.movement?.playerRoute?.active ?? false,
+    false,
+    `${label}: settled interior frame should not keep an active route diagnostic.`,
+  );
+  assert.equal(
+    entry.mapAgency,
+    null,
+    `${label}: settled interior frame should not retain a floating route/agency cue.`,
   );
 }
 
@@ -1709,12 +1840,19 @@ function buildMovementAuditSummary(timeline) {
         snappedStart: Boolean(route.diagnostics?.snappedStart),
         target: route.target,
         tilePathLength: route.tilePath.length,
+        visualObstaclesClear: Boolean(
+          route.visualObstaclesClear ?? route.diagnostics?.visualObstaclesClear,
+        ),
         worldPathLength: route.worldPath.length,
       };
     });
 
   const patrolsByLocation = new Map();
   for (const entry of timeline) {
+    if (entry.movement?.activeSpaceId !== "street:south-quay") {
+      continue;
+    }
+
     for (const patrol of entry.movement?.npcPatrols ?? []) {
       const current = patrolsByLocation.get(patrol.locationId) ?? {
         allRouted: true,
@@ -1770,10 +1908,11 @@ function assertMovementAuditSummary(movementAudit) {
         route.legal &&
         route.reachesDestination &&
         route.sampledPointsLegal &&
-        route.tilePathLength > 2 &&
-        route.worldPathLength > 2,
+        route.visualObstaclesClear &&
+        route.tilePathLength >= 2 &&
+        route.worldPathLength >= 2,
     ),
-    "Expected every exported player route diagnostic to be legal and multi-point.",
+    "Expected every exported player route diagnostic to be legal, obstacle-clear, and at least two points.",
   );
 
   const patrolByLocationId = new Map(
@@ -1811,7 +1950,7 @@ function assertCityEventState(label, game) {
   assert.ok(lunchRush, `${label}: missing lunch-rush city event.`);
   assert.ok(marketCrossing, `${label}: missing market-crossing city event.`);
 
-  if (label === "initial-mara-open") {
+  if (label === "initial-morrow-exterior") {
     assert.equal(
       cafePrep.status,
       "active",
@@ -2015,6 +2154,7 @@ function buildTimelineEntry({
   dom,
   game,
   label,
+  mapAgency,
   probe,
   screenshot,
   screenshotError,
@@ -2042,6 +2182,7 @@ function buildTimelineEntry({
       : null,
     label,
     location: probe.location,
+    mapAgency: mapAgency ?? null,
     movement: probe.movement ?? null,
     objective: probe.objective,
     rail: probe.rail,
@@ -2053,6 +2194,10 @@ function buildTimelineEntry({
       currentTime: game.currentTime,
       energy: game.player.energy,
       fieldNote: game.firstAfternoon?.fieldNote ?? null,
+      inventory: game.player.inventory.map((item) => ({
+        id: item.id,
+        name: item.name,
+      })),
       leadFieldNote: game.firstAfternoon?.leadFieldNote ?? null,
       locationId: game.player.currentLocationId,
       money: game.player.money,
@@ -2065,6 +2210,7 @@ async function captureBrowserState({ game, index, label, session }) {
   assertBrowserProbeMatchesGame(label, game, probe);
   assertCityEventState(label, game);
   const dom = await session.readDomSnapshot();
+  const mapAgency = await session.readMapAgencyProbe();
   assertGameplayDom(label, game, probe, dom);
 
   const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
@@ -2092,6 +2238,7 @@ async function captureBrowserState({ game, index, label, session }) {
 
   return {
     dom,
+    mapAgency,
     probe,
     screenshot,
     screenshotError,
@@ -2111,7 +2258,10 @@ async function captureBrowserMovementState({
   });
   assertCityEventState(label, game);
   assertPlayerRouteDiagnostics(label, probe);
-  assertRequiredNpcPatrolDiagnostics(label, probe);
+  if ((game.activeSpaceId ?? game.player.spaceId) === "street:south-quay") {
+    assertRequiredNpcPatrolDiagnostics(label, probe);
+  }
+  const mapAgency = await session.readMapAgencyProbe();
 
   const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
   const screenshotPath = path.join(OUTPUT_DIR, `${key}.png`);
@@ -2138,6 +2288,7 @@ async function captureBrowserMovementState({
 
   return {
     dom: null,
+    mapAgency,
     probe,
     screenshot,
     screenshotError,
@@ -2151,6 +2302,7 @@ async function captureProbeState({ game, label }) {
 
   return {
     dom: null,
+    mapAgency: null,
     probe,
     screenshot: null,
     screenshotError: null,
@@ -2336,8 +2488,12 @@ function escapeFfmpegConcatPath(filePath) {
 function buildRegressionSteps(gameRef) {
   return [
     {
-      label: "initial-mara-open",
+      label: "initial-morrow-exterior",
       mutate: async () => gameRef.current,
+    },
+    {
+      label: "enter-morrow-house",
+      mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
       label: "mara-live-thread",
@@ -2352,7 +2508,19 @@ function buildRegressionSteps(gameRef) {
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
+      label: "exit-morrow-house",
+      mutate: async () => advanceObjective(gameRef.current.id, false),
+    },
+    {
       label: "stage-cafe-move",
+      mutate: async () => advanceObjective(gameRef.current.id, false),
+    },
+    {
+      label: "arrive-cafe-door",
+      mutate: async () => advanceObjective(gameRef.current.id, false),
+    },
+    {
+      label: "enter-cafe-interior",
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
@@ -2380,6 +2548,10 @@ function buildRegressionSteps(gameRef) {
       mutate: async () => advanceObjective(gameRef.current.id, true),
     },
     {
+      label: "exit-cafe-interior",
+      mutate: async () => advanceObjective(gameRef.current.id, true),
+    },
+    {
       label: "stage-home-move",
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
@@ -2388,8 +2560,57 @@ function buildRegressionSteps(gameRef) {
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
+      label: "enter-morrow-return",
+      mutate: async () => advanceObjective(gameRef.current.id, false),
+    },
+    {
+      label: "home-reset",
+      mutate: async () => advanceObjective(gameRef.current.id, true),
+    },
+    {
       label: "first-afternoon-complete",
       mutate: async () => advanceObjective(gameRef.current.id, true),
+    },
+    {
+      label: "exit-morrow-for-repair",
+      mutate: async () =>
+        runGameCommand(gameRef.current.id, {
+          type: "act",
+          actionId: "exit:boarding-house",
+        }),
+    },
+    {
+      label: "stage-repair-move",
+      mutate: async () =>
+        runGameCommand(gameRef.current.id, {
+          type: "move_to",
+          x: 16,
+          y: 9,
+        }),
+    },
+    {
+      label: "enter-repair-interior",
+      mutate: async () =>
+        runGameCommand(gameRef.current.id, {
+          type: "act",
+          actionId: "enter:repair-stall",
+        }),
+    },
+    {
+      label: "repair-jo-live-thread",
+      mutate: async () =>
+        runGameCommand(gameRef.current.id, {
+          type: "act",
+          actionId: "talk:npc-jo",
+        }),
+    },
+    {
+      label: "buy-wrench-interior",
+      mutate: async () =>
+        runGameCommand(gameRef.current.id, {
+          type: "act",
+          actionId: "buy:item-wrench",
+        }),
     },
   ];
 }
@@ -2443,6 +2664,7 @@ async function main() {
             dom: routeStartCapture.dom,
             game: previousGame,
             label: routeStartLabel,
+            mapAgency: routeStartCapture.mapAgency,
             probe: routeStartCapture.probe,
             screenshot: routeStartCapture.screenshot,
             screenshotError: routeStartCapture.screenshotError,
@@ -2468,6 +2690,7 @@ async function main() {
             dom: routeMidCapture.dom,
             game: previousGame,
             label: routeMidLabel,
+            mapAgency: routeMidCapture.mapAgency,
             probe: routeMidCapture.probe,
             screenshot: routeMidCapture.screenshot,
             screenshotError: routeMidCapture.screenshotError,
@@ -2493,6 +2716,7 @@ async function main() {
           dom: capture.dom,
           game,
           label: step.label,
+          mapAgency: capture.mapAgency,
           probe: capture.probe,
           screenshot: capture.screenshot,
           screenshotError: capture.screenshotError,
@@ -2526,13 +2750,124 @@ async function main() {
 
   assertTimelineRoute(
     byLabel,
-    "ada-live-thread-route-start",
+    "arrive-cafe-door-route-start",
     "Morrow House to Kettle & Lamp",
   );
   assertTimelineRoute(
     byLabel,
     "arrive-home-route-start",
     "Kettle & Lamp to Morrow House",
+  );
+  assertTimelineRoute(
+    byLabel,
+    "stage-repair-move-route-start",
+    "Morrow House to Mercer Repairs",
+  );
+  assertTimelineRoute(
+    byLabel,
+    "mara-live-thread-route-start",
+    "Morrow House entry to Mara",
+    { spaceId: "interior:boarding-house" },
+  );
+  assertTimelineRoute(
+    byLabel,
+    "ada-live-thread-route-start",
+    "Kettle & Lamp entry to Ada",
+    { spaceId: "interior:tea-house" },
+  );
+  assertTimelineRoute(
+    byLabel,
+    "lunch-rush-route-start",
+    "Ada to Kettle & Lamp counter",
+    { minPathPoints: 2, spaceId: "interior:tea-house" },
+  );
+  assertTimelineRoute(
+    byLabel,
+    "home-reset-route-start",
+    "Morrow House entry to room",
+    { spaceId: "interior:boarding-house" },
+  );
+  assert.ok(
+    byLabel["first-afternoon-complete"],
+    "Expected browser evidence for first-afternoon completion after the room route.",
+  );
+  assert.equal(
+    byLabel["first-afternoon-complete"]?.autonomy?.label,
+    "First afternoon complete",
+    "Expected first-afternoon completion to resolve after Rowan reaches the room/take-stock anchor.",
+  );
+  assert.equal(
+    byLabel["first-afternoon-complete"]?.autonomy?.mode,
+    "idle",
+    "Expected first-afternoon completion to be a settled in-place completion, not another movement route.",
+  );
+  assertTimelineRoute(
+    byLabel,
+    "repair-jo-live-thread-route-start",
+    "Mercer Repairs entry to Jo",
+    { spaceId: "interior:repair-stall" },
+  );
+  assertTimelineRoute(
+    byLabel,
+    "buy-wrench-interior-route-start",
+    "Jo to Mercer Repairs wrench anchor",
+    { minPathPoints: 2, spaceId: "interior:repair-stall" },
+  );
+
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "enter-morrow-house",
+    "interior:boarding-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "mara-live-thread",
+    "interior:boarding-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "enter-cafe-interior",
+    "interior:tea-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "ada-live-thread",
+    "interior:tea-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "lunch-rush",
+    "interior:tea-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "enter-morrow-return",
+    "interior:boarding-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "home-reset",
+    "interior:boarding-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "first-afternoon-complete",
+    "interior:boarding-house",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "enter-repair-interior",
+    "interior:repair-stall",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "repair-jo-live-thread",
+    "interior:repair-stall",
+  );
+  assertCleanSettledInteriorFrame(
+    byLabel,
+    "buy-wrench-interior",
+    "interior:repair-stall",
   );
 
   assert.equal(
@@ -2599,8 +2934,8 @@ async function main() {
   );
   assert.equal(
     byLabel["lunch-rush"]?.clock?.totalMinutes,
-    740,
-    "Expected the lunch rush beat to land at 12:20.",
+    741,
+    "Expected the lunch rush beat to land at 12:21 after Rowan reaches the counter anchor.",
   );
   assert.match(
     byLabel["lunch-rush"]?.autonomy?.label ?? "",
@@ -2618,14 +2953,34 @@ async function main() {
     "Expected Rowan to point back to Morrow House after the paid shift.",
   );
   assert.equal(
+    byLabel["exit-cafe-interior"]?.location?.spaceId,
+    "street:south-quay",
+    "Expected Rowan to exit the cafe interior before walking home.",
+  );
+  assert.equal(
     byLabel["arrive-home"]?.location?.id,
     "boarding-house",
     "Expected Rowan to visibly arrive back at Morrow House.",
   );
   assert.match(
     byLabel["arrive-home"]?.autonomy?.label ?? "",
-    /take stock/i,
-    "Expected Rowan to take stock once he gets home.",
+    /enter/i,
+    "Expected Rowan to enter Morrow House after arriving home before resolving the take-stock action.",
+  );
+  assert.equal(
+    byLabel["enter-morrow-return"]?.location?.spaceId,
+    "interior:boarding-house",
+    "Expected Rowan to switch back into the Morrow House interior after arriving home.",
+  );
+  assert.equal(
+    byLabel["home-reset"]?.location?.id,
+    "boarding-house",
+    "Expected Rowan to stay at Morrow House after routing to the room/take-stock anchor.",
+  );
+  assert.match(
+    byLabel["home-reset"]?.autonomy?.label ?? "",
+    /take stock|first afternoon complete/i,
+    "Expected Rowan to take stock or finish the first-afternoon outcome at Morrow House.",
   );
   assert.equal(
     byLabel["first-afternoon-complete"]?.location?.id,
@@ -2651,6 +3006,37 @@ async function main() {
     ].join(" "),
     /Ada|Kettle & Lamp|rush/i,
     "Expected the persisted field note to describe the resolved cafe thread.",
+  );
+  assert.equal(
+    byLabel["exit-morrow-for-repair"]?.location?.spaceId,
+    "street:south-quay",
+    "Expected Rowan to exit Morrow House before routing to Mercer Repairs.",
+  );
+  assert.equal(
+    byLabel["stage-repair-move"]?.location?.id,
+    "repair-stall",
+    "Expected Rowan to route to Mercer Repairs on the street map.",
+  );
+  assert.equal(
+    byLabel["enter-repair-interior"]?.location?.spaceId,
+    "interior:repair-stall",
+    "Expected the browser run to switch into the Mercer Repairs interior.",
+  );
+  assert.equal(
+    byLabel["repair-jo-live-thread"]?.activeConversation?.npcId,
+    "npc-jo",
+    "Expected Rowan to reach Jo inside Mercer Repairs.",
+  );
+  assert.equal(
+    byLabel["buy-wrench-interior"]?.location?.spaceId,
+    "interior:repair-stall",
+    "Expected Rowan to stay inside Mercer Repairs while buying the wrench.",
+  );
+  assert.ok(
+    byLabel["buy-wrench-interior"]?.sim?.inventory?.some(
+      (item) => item.id === "item-wrench",
+    ),
+    "Expected Rowan to buy the wrench at the Mercer Repairs anchor.",
   );
 
   const screenshotCount = timeline.filter((entry) => entry.screenshot).length;
