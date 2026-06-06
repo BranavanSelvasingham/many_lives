@@ -15,7 +15,6 @@ import {
   advanceStreetObjective,
   createStreetGame,
   loadStreetGame,
-  moveStreetPlayer,
   waitInStreetGame,
 } from "@/lib/street/api";
 import { useSearchParams } from "next/navigation";
@@ -131,7 +130,6 @@ import {
 } from "@/lib/street/navigation";
 import {
   buildVisualNavigationSurface,
-  buildVisualNavigationTiles,
   buildVisualWalkableRuntimePoints,
   isVisualWorldPathLegal,
   projectVisualNavigationTileCenter,
@@ -191,7 +189,6 @@ import {
   CELL,
   KENNEY_TILE,
   getCompactCameraScrollRange,
-  getMapWorldOrigin,
   getWorldBoundsForRuntime,
   mapTileToWorldCenter,
   mapTileToWorldOrigin,
@@ -220,7 +217,6 @@ import {
   type VisualScene,
 } from "@/lib/street/visualScenes";
 
-const MOVEMENT_FLUSH_DELAY_MS = 45;
 const BOUND_GAME_REFRESH_MS = 900;
 const CAMERA_EDGE_CUE_DURATION_MS = 520;
 const CAMERA_EDGE_CUE_NAMES: CameraEdgeName[] = [
@@ -497,10 +493,6 @@ type StreetAppSnapshot = {
   viewport: ViewportSize;
 };
 
-type MoveToOptions = {
-  showWaypoint?: boolean;
-};
-
 type AdvanceObjectiveOptions = {
   confirmedByUser?: boolean;
 };
@@ -514,8 +506,6 @@ type PhaserStreetExperienceProps = {
   onAction: (actionId: string, label: string) => void;
   onAdvanceObjective: (options?: AdvanceObjectiveOptions) => void;
   onAdvanceTime: (minutes: number, label: string) => void;
-  onMoveBy: (deltaX: number, deltaY: number) => void;
-  onMoveTo: (x: number, y: number, options?: MoveToOptions) => boolean;
   onReload: () => void;
   onResumeStoredGame: () => void;
   onStartNewGame: () => void;
@@ -527,8 +517,6 @@ type RuntimeCallbacks = Pick<
   | "onAction"
   | "onAdvanceObjective"
   | "onAdvanceTime"
-  | "onMoveBy"
-  | "onMoveTo"
   | "onReload"
   | "onResumeStoredGame"
   | "onStartNewGame"
@@ -848,9 +836,6 @@ export function PhaserStreetGameApp() {
   const gameRef = useRef<StreetGameState | null>(null);
   const optimisticPlayerRef = useRef<Point | null>(null);
   const objectiveAutoContinueTimerRef = useRef<number | null>(null);
-  const waypointTargetRef = useRef<Point | null>(null);
-  const movementTargetRef = useRef<Point | null>(null);
-  const movementFlushTimerRef = useRef<number | null>(null);
   const pendingVisualGameUpdateRef = useRef<PendingVisualGameUpdate | null>(
     null,
   );
@@ -859,7 +844,6 @@ export function PhaserStreetGameApp() {
     null,
   );
   const routeFinderMapKeyRef = useRef("");
-  const isMovementInFlightRef = useRef(false);
   const requestSequenceRef = useRef(0);
   const lastAppliedRequestRef = useRef(0);
   const busyLabelRef = useRef<string | null>(null);
@@ -895,10 +879,6 @@ export function PhaserStreetGameApp() {
   useEffect(() => {
     optimisticPlayerRef.current = optimisticPlayerPosition;
   }, [optimisticPlayerPosition]);
-
-  useEffect(() => {
-    waypointTargetRef.current = waypointTarget;
-  }, [waypointTarget]);
 
   useEffect(() => {
     busyLabelRef.current = busyLabel;
@@ -1025,9 +1005,7 @@ export function PhaserStreetGameApp() {
           nextGame.activeConversation?.locationId ?? null,
         );
         setOptimisticPlayerMoveDurationMs(transitionMs);
-        if (!waypointTargetRef.current) {
-          publishWaypoint(visualTarget);
-        }
+        publishWaypoint(visualTarget);
         startTransition(() => {
           setRowanPlayback((current) =>
             appendRowanPlaybackBeats(current, deferredPlaybackBeats),
@@ -1243,160 +1221,6 @@ export function PhaserStreetGameApp() {
     [],
   );
 
-  const flushMovementQueue = useCallback(async () => {
-    if (isMovementInFlightRef.current) {
-      return;
-    }
-
-    const activeGame = gameRef.current;
-    const target = movementTargetRef.current;
-    if (!activeGame || !target) {
-      return;
-    }
-
-    movementTargetRef.current = null;
-    isMovementInFlightRef.current = true;
-    const requestId = nextRequestId();
-
-    try {
-      const nextGame = await moveStreetPlayer(
-        activeGame.id,
-        target.x,
-        target.y,
-      );
-      applyGameUpdate(nextGame, requestId);
-
-      if (!movementTargetRef.current) {
-        setOptimisticPlayerPosition(null);
-        setOptimisticPlayerLocationId(null);
-        setOptimisticPlayerConversationLocationId(null);
-        setOptimisticPlayerMoveDurationMs(null);
-      }
-    } catch (moveError) {
-      movementTargetRef.current = null;
-      setOptimisticPlayerPosition(null);
-      setOptimisticPlayerLocationId(null);
-      setOptimisticPlayerConversationLocationId(null);
-      setOptimisticPlayerMoveDurationMs(null);
-      publishWaypoint(null);
-      setError(
-        moveError instanceof Error
-          ? moveError.message
-          : "Rowan couldn't complete that move.",
-      );
-    } finally {
-      isMovementInFlightRef.current = false;
-
-      if (movementTargetRef.current) {
-        void flushMovementQueue();
-      }
-    }
-  }, [applyGameUpdate, nextRequestId, publishWaypoint]);
-
-  const scheduleMovementFlush = useCallback(() => {
-    if (movementFlushTimerRef.current) {
-      window.clearTimeout(movementFlushTimerRef.current);
-    }
-
-    movementFlushTimerRef.current = window.setTimeout(() => {
-      movementFlushTimerRef.current = null;
-      void flushMovementQueue();
-    }, MOVEMENT_FLUSH_DELAY_MS);
-  }, [flushMovementQueue]);
-
-  const handleMoveTo = useCallback(
-    (x: number, y: number, options?: MoveToOptions) => {
-      const activeGame = gameRef.current;
-      if (
-        !activeGame ||
-        busyLabelRef.current ||
-        pendingVisualGameUpdateRef.current ||
-        isBlockingRowanPlaybackForGame(rowanPlaybackRef.current, activeGame)
-      ) {
-        return false;
-      }
-
-      const activeSpace = getActiveInteriorSpace(activeGame);
-      const visualScene = activeSpace ? null : getPlayableVisualScene(activeGame);
-      const activeWidth = activeSpace?.width ?? activeGame.map.width;
-      const activeHeight = activeSpace?.height ?? activeGame.map.height;
-      const nextTile = findWalkableTile(
-        activeGame,
-        clamp(x, 0, activeWidth - 1),
-        clamp(y, 0, activeHeight - 1),
-        visualScene,
-      );
-
-      if (!nextTile) {
-        return false;
-      }
-
-      const currentVisualPosition = optimisticPlayerRef.current ?? {
-        x: activeGame.player.x,
-        y: activeGame.player.y,
-      };
-      const mapKey = createMapKey(activeGame);
-      if (routeFinderMapKeyRef.current !== mapKey || !routeFinderRef.current) {
-        routeFinderMapKeyRef.current = mapKey;
-        routeFinderRef.current = buildActiveNavigationSurface(
-          activeGame,
-          visualScene,
-        ).routeFinder;
-      }
-      const candidateRoute = routeFinderRef.current(
-        currentVisualPosition,
-        nextTile,
-      );
-
-      if (!routeReachesDestination(candidateRoute, nextTile)) {
-        setError("Rowan cannot find a clean route there.");
-        return false;
-      }
-
-      if (
-        currentVisualPosition.x === nextTile.x &&
-        currentVisualPosition.y === nextTile.y
-      ) {
-        return false;
-      }
-
-      setError(null);
-      setOptimisticPlayerPosition({
-        x: nextTile.x,
-        y: nextTile.y,
-      });
-      if (options?.showWaypoint) {
-        publishWaypoint({ x: nextTile.x, y: nextTile.y });
-      } else if (waypointTargetRef.current) {
-        publishWaypoint(null);
-      }
-      movementTargetRef.current = {
-        x: nextTile.x,
-        y: nextTile.y,
-      };
-      scheduleMovementFlush();
-      return true;
-    },
-    [publishWaypoint, scheduleMovementFlush],
-  );
-
-  const handleMoveBy = useCallback(
-    (deltaX: number, deltaY: number) => {
-      const activeGame = gameRef.current;
-      if (!activeGame || busyLabelRef.current) {
-        return;
-      }
-
-      const origin = optimisticPlayerRef.current ?? {
-        x: activeGame.player.x,
-        y: activeGame.player.y,
-      };
-
-      handleMoveTo(origin.x + deltaX, origin.y + deltaY);
-    },
-    [handleMoveTo],
-  );
-
   const handleAction = useCallback(
     async (actionId: string, label: string) => {
       const activeGame = gameRef.current;
@@ -1457,9 +1281,6 @@ export function PhaserStreetGameApp() {
     return () => {
       if (objectiveAutoContinueTimerRef.current) {
         window.clearTimeout(objectiveAutoContinueTimerRef.current);
-      }
-      if (movementFlushTimerRef.current) {
-        window.clearTimeout(movementFlushTimerRef.current);
       }
       clearPendingVisualGameUpdate();
       if (boundGameRefreshTimerRef.current) {
@@ -1684,8 +1505,6 @@ export function PhaserStreetGameApp() {
             onAdvanceTime={(minutes, label) => {
               void handleAdvanceTime(minutes, label);
             }}
-            onMoveBy={handleMoveBy}
-            onMoveTo={handleMoveTo}
             onReload={() => {
               void loadGame();
             }}
@@ -1701,8 +1520,6 @@ export function PhaserStreetGameApp() {
 
 function PhaserStreetExperience({
   snapshot,
-  onMoveTo,
-  onMoveBy,
   onAction,
   onAdvanceTime,
   onAdvanceObjective,
@@ -1716,8 +1533,6 @@ function PhaserStreetExperience({
     onAction,
     onAdvanceObjective,
     onAdvanceTime,
-    onMoveBy,
-    onMoveTo,
     onReload,
     onResumeStoredGame,
     onStartNewGame,
@@ -1729,8 +1544,6 @@ function PhaserStreetExperience({
       onAction,
       onAdvanceObjective,
       onAdvanceTime,
-      onMoveBy,
-      onMoveTo,
       onReload,
       onResumeStoredGame,
       onStartNewGame,
@@ -1739,8 +1552,6 @@ function PhaserStreetExperience({
     onAction,
     onAdvanceObjective,
     onAdvanceTime,
-    onMoveBy,
-    onMoveTo,
     onReload,
     onResumeStoredGame,
     onStartNewGame,
@@ -1918,70 +1729,6 @@ async function createRuntime(options: {
 
       const keyboard = this.input.keyboard;
       if (keyboard) {
-        keyboard.on("keydown-W", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(0, -1);
-        });
-        keyboard.on("keydown-S", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(0, 1);
-        });
-        keyboard.on("keydown-A", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(-1, 0);
-        });
-        keyboard.on("keydown-D", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(1, 0);
-        });
-        keyboard.on("keydown-UP", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(0, -1);
-        });
-        keyboard.on("keydown-DOWN", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(0, 1);
-        });
-        keyboard.on("keydown-LEFT", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(-1, 0);
-        });
-        keyboard.on("keydown-RIGHT", () => {
-          if (
-            isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
-          ) {
-            return;
-          }
-          options.callbacksRef.current.onMoveBy(1, 0);
-        });
         keyboard.on("keydown-MINUS", () => {
           if (
             isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)
@@ -2023,11 +1770,11 @@ async function createRuntime(options: {
       });
       this.input.on("pointerup", (pointer: PhaserType.Input.Pointer) => {
         options.mount.style.cursor = "grab";
-        finishRuntimePointerTap(runtimeState, pointer, options.callbacksRef);
+        finishCameraGesture(runtimeState, pointer);
       });
       this.input.on("pointerupoutside", (pointer: PhaserType.Input.Pointer) => {
         options.mount.style.cursor = "grab";
-        finishRuntimePointerTap(runtimeState, pointer, options.callbacksRef);
+        finishCameraGesture(runtimeState, pointer);
       });
       this.input.on(
         "wheel",
@@ -5993,9 +5740,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                         </div>
                           <div class="ml-footer-copy">${escapeHtml(
                             rowanAutonomy.autoContinue
-                              ? "Watching Rowan choose. You can still jump ahead or choose a different move."
+                              ? "Watching Rowan choose. You can still jump ahead when needed."
                               : upcomingCommitmentLabel ??
-                                  "Use time controls when Rowan is waiting, or click the street to move.",
+                                  "Use time controls when Rowan is waiting.",
                           )}</div>
                         </div>
                       `
@@ -8625,84 +8372,6 @@ function drawFootprintHalo(
   layer.strokeRoundedRect(worldX, worldY, width, height, radius);
 }
 
-function finishRuntimePointerTap(
-  runtimeState: RuntimeState,
-  pointer: PhaserType.Input.Pointer,
-  callbacksRef: React.MutableRefObject<RuntimeCallbacks>,
-) {
-  const gestureResult = finishCameraGesture(runtimeState, pointer);
-  if (!gestureResult.wasTap) {
-    return;
-  }
-
-  const game = runtimeState.snapshot.game;
-  if (!game || runtimeState.snapshot.busyLabel) {
-    return;
-  }
-
-  const sceneViewport = getRuntimeSceneViewport(runtimeState);
-  if (!isPointerWithinSceneViewport(pointer, sceneViewport)) {
-    return;
-  }
-
-  const tile = getPointerTargetTile(runtimeState, game, pointer);
-  if (!tile) {
-    return;
-  }
-
-  const accepted = callbacksRef.current.onMoveTo(tile.x, tile.y, {
-    showWaypoint: true,
-  });
-  if (accepted) {
-    setRuntimeWaypointTarget(runtimeState, tile);
-  }
-}
-
-function getPointerTargetTile(
-  runtimeState: RuntimeState,
-  game: StreetGameState,
-  pointer: PhaserType.Input.Pointer,
-) {
-  const visualScene = runtimeState.indices.visualScene;
-  if (visualScene) {
-    const nearestPoint = findNearestWalkablePointByWorldHint(
-      runtimeState.indices.walkableRuntimePoints,
-      {
-        x: pointer.worldX,
-        y: pointer.worldY,
-      },
-      {
-        preferredKinds: PUBLIC_TRAVEL_TILE_KINDS,
-      },
-    );
-
-    if (
-      !nearestPoint ||
-      distanceBetween(nearestPoint.world, {
-        x: pointer.worldX,
-        y: pointer.worldY,
-      }) > 92
-    ) {
-      return null;
-    }
-
-    return nearestPoint.tile;
-  }
-
-  const mapOrigin = getMapWorldOrigin();
-  const x = Math.floor((pointer.worldX - mapOrigin.x) / CELL);
-  const y = Math.floor((pointer.worldY - mapOrigin.y) / CELL);
-  const activeSpace = getActiveInteriorSpace(game);
-  const width = activeSpace?.width ?? game.map.width;
-  const height = activeSpace?.height ?? game.map.height;
-
-  if (x < 0 || y < 0 || x >= width || y >= height) {
-    return null;
-  }
-
-  return findWalkableTile(game, x, y, visualScene);
-}
-
 function pickDefaultSelectedNpcId(game: StreetGameState | null) {
   if (!game) {
     return null;
@@ -9142,24 +8811,6 @@ function focusPanelMeta(
 function extractTalkNpcId(actionId: string) {
   const [kind, targetId] = actionId.split(":");
   return kind === "talk" && targetId ? targetId : undefined;
-}
-
-function findWalkableTile(
-  game: StreetGameState,
-  x: number,
-  y: number,
-  visualScene: VisualScene | null = getPlayableVisualScene(game),
-) {
-  const activeSpace = getActiveInteriorSpace(game);
-  if (activeSpace) {
-    return activeSpace.tiles.find(
-      (tile) => tile.x === x && tile.y === y && tile.walkable,
-    );
-  }
-
-  return buildVisualNavigationTiles(game, visualScene).tiles.find(
-    (tile) => tile.x === x && tile.y === y && tile.walkable,
-  );
 }
 
 function createMapKey(game: StreetGameState | null) {

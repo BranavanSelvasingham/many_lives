@@ -1033,6 +1033,17 @@ async function assertWatchModeFeelGuard() {
     "Watch-mode primary action must not depend on Nudge Rowan copy.",
   );
   assert.ok(
+    !streetSource.includes("click the street to move"),
+    "Street runtime must not invite users to click the street to move Rowan.",
+  );
+  assert.ok(
+    !streetSource.includes("moveStreetPlayer") &&
+      !streetSource.includes("onMoveTo") &&
+      !streetSource.includes("onMoveBy") &&
+      !streetSource.includes("finishRuntimePointerTap"),
+    "Active street runtime must not expose direct Rowan movement controls.",
+  );
+  assert.ok(
     streetSource.includes("? \"Advance now\"") ||
       streetSource.includes("? \"Watch Rowan begin\""),
     "Watch-mode primary action should expose optional watch/skip language.",

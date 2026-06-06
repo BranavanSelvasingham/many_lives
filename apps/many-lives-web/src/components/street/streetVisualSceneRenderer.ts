@@ -97,7 +97,9 @@ function drawV2LandmarkGroundArt(
   visualScene: VisualScene,
 ) {
   drawV2LandmarkCastShadows(layer, visualScene);
+  drawV2MacroCompositionPass(layer, visualScene);
   drawV2SurfaceAestheticPass(layer, visualScene);
+  drawV2ComposedPavingPass(layer, visualScene);
   drawV2SquareGroundAccents(layer, visualScene);
   drawV2DockGroundWear(layer, visualScene);
 }
@@ -211,15 +213,48 @@ function drawV2SurfaceAestheticPass(
           : cell.kind === "walkway"
             ? 0xbca98a
             : 0xa99678;
+      const tileAccent =
+        cell.kind === "walkway"
+          ? 0xf5e4c6
+          : cell.kind === "tiled_stone_road"
+            ? 0xdac8a5
+            : 0x7f8887;
+      const tileShadow =
+        cell.kind === "paved_asphalt"
+          ? 0x343d40
+          : cell.kind === "walkway"
+            ? 0x927d5c
+            : 0x897659;
 
-      layer.lineStyle(1.15, warmLine, 0.14);
+      if (seed % 2 === 0) {
+        layer.fillStyle(tileAccent, 0.034);
+        layer.fillRoundedRect(
+          cell.x + 4 + (seed % 7),
+          cell.y + 5 + ((seed + 3) % 9),
+          Math.max(18, cell.width * (0.34 + (seed % 4) * 0.03)),
+          Math.max(8, cell.height * 0.16),
+          5,
+        );
+      }
+      if (seed % 5 === 0) {
+        layer.fillStyle(tileShadow, 0.03);
+        layer.fillRoundedRect(
+          cell.x + cell.width * 0.42 + ((seed + 5) % 8),
+          cell.y + cell.height * 0.58 + ((seed + 1) % 5),
+          Math.max(16, cell.width * 0.32),
+          Math.max(6, cell.height * 0.13),
+          5,
+        );
+      }
+
+      layer.lineStyle(1.1, warmLine, 0.1);
       layer.lineBetween(
         cell.x + 6,
         cell.y + 8 + (seed % 9),
         cell.x + cell.width - 7,
         cell.y + 7 + ((seed + 3) % 9),
       );
-      layer.lineStyle(1, coolJoint, 0.16);
+      layer.lineStyle(1, coolJoint, 0.11);
       layer.lineBetween(
         cell.x + 8 + (seed % 7),
         cell.y + cell.height - 8,
@@ -227,30 +262,36 @@ function drawV2SurfaceAestheticPass(
         cell.y + cell.height - 10 + ((seed + 5) % 6),
       );
 
-      if (seed % 3 === 0) {
-        layer.fillStyle(0x6f5e49, 0.055);
+      if (seed % 4 === 0) {
+        layer.fillStyle(0x6f5e49, 0.035);
         layer.fillEllipse(
           centerX + Math.sin(seed) * 8,
           centerY + Math.cos(seed * 0.7) * 8,
-          28 + (seed % 18),
-          4.5,
+          26 + (seed % 14),
+          4,
         );
       }
 
-      if (cell.y > visualScene.height * 0.74 || cell.x > visualScene.width - 320) {
-        layer.fillStyle(0x315e66, 0.07);
+      if (
+        cell.y > visualScene.height * 0.74 ||
+        cell.x > visualScene.width - 320
+      ) {
+        layer.fillStyle(0x315e66, 0.052);
         layer.fillEllipse(
           centerX + Math.sin(seed * 0.4) * 12,
           centerY + Math.cos(seed * 0.2) * 10,
-          36 + (seed % 22),
-          8,
+          34 + (seed % 18),
+          7,
         );
-        layer.lineStyle(1.4, 0xa6d6d2, 0.08);
+      }
+
+      if (cell.kind !== "paved_asphalt" && seed % 7 === 1) {
+        layer.lineStyle(1, 0xfff4d0, 0.08);
         layer.lineBetween(
-          cell.x + 8,
-          centerY + Math.sin(seed) * 5,
-          cell.x + cell.width - 10,
-          centerY - 2 + Math.cos(seed) * 4,
+          cell.x + 10,
+          cell.y + 12,
+          cell.x + 22 + (seed % 19),
+          cell.y + 11 + ((seed + 7) % 11),
         );
       }
     }
@@ -261,7 +302,7 @@ function drawV2SurfaceAestheticPass(
     }
 
     if (cell.kind === "grass") {
-      layer.lineStyle(1.2, 0xb7ce8e, 0.12);
+      layer.lineStyle(1.2, 0xb7ce8e, 0.1);
       layer.lineBetween(
         cell.x + 7,
         centerY - 4 + (seed % 8),
@@ -270,6 +311,205 @@ function drawV2SurfaceAestheticPass(
       );
     }
   });
+}
+
+function drawV2MacroCompositionPass(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const square = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "market-square",
+  );
+  const cafe = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "tea-house",
+  );
+  const boardingHouse = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "boarding-house",
+  );
+  const freightYard = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "freight-yard",
+  );
+  const pier = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "moss-pier",
+  );
+
+  if (boardingHouse && cafe) {
+    const y = Math.max(
+      boardingHouse.rect.y + boardingHouse.rect.height + 8,
+      602,
+    );
+    layer.fillStyle(0xffefca, 0.05);
+    layer.fillRoundedRect(
+      boardingHouse.rect.x + boardingHouse.rect.width * 0.4,
+      y,
+      cafe.rect.x + cafe.rect.width - boardingHouse.rect.x,
+      86,
+      26,
+    );
+    layer.fillStyle(0x18232a, 0.055);
+    layer.fillRoundedRect(
+      boardingHouse.rect.x + boardingHouse.rect.width * 0.44,
+      y + 76,
+      cafe.rect.x + cafe.rect.width - boardingHouse.rect.x - 24,
+      12,
+      6,
+    );
+  }
+
+  if (square) {
+    const centerX = square.rect.x + square.rect.width / 2;
+    const centerY = square.rect.y + square.rect.height / 2;
+    layer.fillStyle(0xffefd2, 0.065);
+    layer.fillEllipse(
+      centerX,
+      centerY + 24,
+      square.rect.width * 1.72,
+      square.rect.height * 1.56,
+    );
+    layer.fillStyle(0x162025, 0.055);
+    layer.fillEllipse(
+      centerX + 24,
+      centerY + square.rect.height * 0.6,
+      square.rect.width * 1.35,
+      38,
+    );
+  }
+
+  if (freightYard && pier) {
+    layer.fillStyle(0x28444a, 0.05);
+    layer.fillRoundedRect(
+      freightYard.rect.x - 64,
+      freightYard.rect.y + freightYard.rect.height - 18,
+      pier.rect.x + pier.rect.width - freightYard.rect.x + 72,
+      Math.max(
+        102,
+        pier.rect.y - freightYard.rect.y - freightYard.rect.height + 64,
+      ),
+      28,
+    );
+    layer.fillStyle(0xffe0a4, 0.04);
+    layer.fillRoundedRect(
+      freightYard.rect.x - 26,
+      freightYard.rect.y + freightYard.rect.height + 28,
+      Math.max(420, pier.rect.width + 60),
+      28,
+      14,
+    );
+  }
+
+  layer.fillStyle(0x071116, 0.075);
+  layer.fillRoundedRect(
+    0,
+    visualScene.height * 0.91,
+    visualScene.width,
+    visualScene.height * 0.09,
+    0,
+  );
+}
+
+function drawV2ComposedPavingPass(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const square = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "market-square",
+  );
+  const boardingHouse = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "boarding-house",
+  );
+  const cafe = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "tea-house",
+  );
+  const freightYard = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "freight-yard",
+  );
+  const pier = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "moss-pier",
+  );
+
+  const pavingBands: VisualRect[] = [];
+  if (boardingHouse && cafe) {
+    pavingBands.push({
+      x: boardingHouse.rect.x + boardingHouse.rect.width * 0.42,
+      y: Math.min(
+        boardingHouse.rect.y + boardingHouse.rect.height + 20,
+        cafe.rect.y + cafe.rect.height + 18,
+      ),
+      width:
+        cafe.rect.x +
+        cafe.rect.width -
+        (boardingHouse.rect.x + boardingHouse.rect.width * 0.42),
+      height: 72,
+      radius: 24,
+    });
+  }
+  if (square) {
+    pavingBands.push({
+      x: square.rect.x - 154,
+      y: square.rect.y + square.rect.height + 20,
+      width: square.rect.width + 308,
+      height: 94,
+      radius: 28,
+    });
+  }
+  if (freightYard && pier) {
+    pavingBands.push({
+      x: freightYard.rect.x - 42,
+      y: Math.min(
+        freightYard.rect.y + freightYard.rect.height + 18,
+        pier.rect.y - 76,
+      ),
+      width: Math.max(
+        pier.rect.x + pier.rect.width - freightYard.rect.x + 30,
+        420,
+      ),
+      height: 92,
+      radius: 26,
+    });
+  }
+
+  for (const band of pavingBands) {
+    layer.fillStyle(0xf2dfbb, 0.045);
+    layer.fillRoundedRect(
+      band.x,
+      band.y,
+      band.width,
+      band.height,
+      band.radius ?? 18,
+    );
+    layer.lineStyle(2.2, 0xffefc8, 0.14);
+    layer.lineBetween(
+      band.x + 18,
+      band.y + 9,
+      band.x + band.width - 18,
+      band.y + 5,
+    );
+    layer.lineStyle(2.4, 0x6e5f4e, 0.085);
+    layer.lineBetween(
+      band.x + 20,
+      band.y + band.height - 7,
+      band.x + band.width - 18,
+      band.y + band.height - 11,
+    );
+
+    for (let x = band.x + 26; x < band.x + band.width - 18; x += 46) {
+      const seed = Math.round(x + band.y * 0.5);
+      layer.lineStyle(1, 0xa99370, 0.09);
+      layer.lineBetween(
+        x,
+        band.y + 16 + (seed % 8),
+        x + 14,
+        band.y + band.height - 18 - ((seed + 5) % 10),
+      );
+    }
+  }
+
+  for (const anchors of Object.values(visualScene.locationAnchors)) {
+    layer.fillStyle(0x071116, 0.055);
+    layer.fillEllipse(anchors.frontage.x + 12, anchors.frontage.y + 18, 96, 18);
+    layer.fillStyle(0xffedc3, 0.055);
+    layer.fillEllipse(anchors.frontage.x - 6, anchors.frontage.y + 4, 78, 12);
+  }
 }
 
 function drawV2SquareGroundAccents(
@@ -296,7 +536,11 @@ function drawV2SquareGroundAccents(
     Math.max(12, (rect.radius ?? 24) - 8),
   );
   layer.lineStyle(1.2, 0x9d8763, 0.18);
-  for (let inset = 34; inset < Math.min(rect.width, rect.height) / 2; inset += 26) {
+  for (
+    let inset = 34;
+    inset < Math.min(rect.width, rect.height) / 2;
+    inset += 26
+  ) {
     layer.strokeRoundedRect(
       rect.x + inset,
       rect.y + inset * 0.52,
@@ -329,7 +573,12 @@ function drawV2DockGroundWear(
       layer.lineBetween(rect.x + 34, y, rect.x + rect.width - 36, y + 18);
     }
     layer.fillStyle(0x6e5136, 0.1);
-    layer.fillEllipse(rect.x + rect.width * 0.52, rect.y + rect.height + 44, 156, 18);
+    layer.fillEllipse(
+      rect.x + rect.width * 0.52,
+      rect.y + rect.height + 44,
+      156,
+      18,
+    );
   }
 
   if (pier) {
@@ -389,6 +638,7 @@ function drawTeaHouseHeroArt(
 ) {
   const roofHeight = Math.max(24, Math.min(42, rect.height * 0.18));
   const lowerBandHeight = Math.max(26, rect.height * 0.16);
+  const awningY = rect.y + roofHeight + rect.height * 0.36;
   layer.fillStyle(0xf0e4cd, 1);
   layer.fillRoundedRect(
     rect.x,
@@ -413,6 +663,12 @@ function drawTeaHouseHeroArt(
     roofHeight,
     rect.radius ?? 18,
   );
+  layer.fillStyle(0xfff3d6, 0.18);
+  layer.fillRoundedRect(rect.x + 22, rect.y + 8, rect.width - 44, 7, 4);
+  layer.lineStyle(2, 0x6f795b, 0.28);
+  for (let x = rect.x + 30; x < rect.x + rect.width - 24; x += 34) {
+    layer.lineBetween(x, rect.y + 8, x + 8, rect.y + roofHeight - 8);
+  }
   layer.fillStyle(0xffffff, 0.52);
   layer.fillRoundedRect(
     rect.x + 42,
@@ -437,6 +693,15 @@ function drawTeaHouseHeroArt(
     Math.max(54, rect.height - roofHeight - lowerBandHeight - 28),
     Math.max(16, (rect.radius ?? 20) - 4),
   );
+  layer.fillStyle(0x315241, 0.9);
+  layer.fillRoundedRect(rect.x + 34, awningY, rect.width - 68, 22, 9);
+  layer.fillStyle(0xf4ead3, 0.92);
+  for (let index = 0; index < 7; index += 1) {
+    const scallopX = rect.x + 48 + index * ((rect.width - 96) / 6);
+    layer.fillCircle(scallopX, awningY + 22, 9);
+  }
+  layer.fillStyle(0x071116, 0.12);
+  layer.fillRoundedRect(rect.x + 38, awningY + 24, rect.width - 76, 8, 4);
   layer.fillStyle(0x79583a, 0.12);
   layer.fillRoundedRect(
     rect.x + 32,
@@ -459,6 +724,13 @@ function drawTeaHouseHeroArt(
     rect.width - 54,
     12,
     6,
+  );
+  layer.fillStyle(0xffdda0, 0.16);
+  layer.fillEllipse(
+    rect.x + rect.width / 2,
+    rect.y + rect.height - 34,
+    rect.width * 0.58,
+    18,
   );
 }
 
@@ -494,6 +766,10 @@ function drawBoardingHouseHeroArt(
     roofHeight,
     rect.radius ?? 18,
   );
+  layer.lineStyle(1.8, 0xe7edf0, 0.18);
+  for (let x = rect.x + 22; x < rect.x + rect.width - 22; x += 36) {
+    layer.lineBetween(x, rect.y + 8, x + 9, rect.y + roofHeight - 9);
+  }
   layer.fillStyle(0x4d5961, 1);
   layer.fillRoundedRect(signX, rect.y + 12, signWidth, 34, 12);
   layer.lineStyle(3, 0xd5bd88, 1);
@@ -538,6 +814,21 @@ function drawBoardingHouseHeroArt(
     rect.y + rect.height - lowerBandHeight - 10,
     rect.width - 18,
     lowerBandHeight,
+  );
+  layer.lineStyle(2, 0x79553f, 0.26);
+  for (
+    let y = rect.y + roofHeight + 32;
+    y < rect.y + rect.height - 54;
+    y += 42
+  ) {
+    layer.lineBetween(rect.x + 28, y, rect.x + rect.width - 30, y + 3);
+  }
+  layer.fillStyle(0xffe2a3, 0.09);
+  layer.fillEllipse(
+    rect.x + rect.width / 2 - 10,
+    rect.y + rect.height - 48,
+    120,
+    18,
   );
 }
 
@@ -604,6 +895,16 @@ function drawQuaySquareHeroArt(
     crossHeight,
     22,
   );
+  layer.lineStyle(1.4, 0xf7edcf, 0.24);
+  for (let index = 0; index < 5; index += 1) {
+    const offset = (index - 2) * 26;
+    layer.lineBetween(
+      innerRect.x + 38,
+      centerY + offset,
+      innerRect.x + innerRect.width - 38,
+      centerY + offset * 0.82,
+    );
+  }
   layer.fillStyle(0xb8a17a, 1);
   layer.fillCircle(centerX, centerY, civicRadius + 26);
   layer.fillStyle(0xe9dfcc, 1);
@@ -614,6 +915,15 @@ function drawQuaySquareHeroArt(
   layer.fillCircle(centerX, centerY, civicRadius * 0.58);
   layer.fillStyle(0xffffff, 0.36);
   layer.fillCircle(centerX, centerY - civicRadius * 0.16, civicRadius * 0.24);
+  layer.fillStyle(0xd8f7ff, 0.18);
+  layer.fillEllipse(
+    centerX + 3,
+    centerY + 3,
+    civicRadius * 1.35,
+    civicRadius * 0.58,
+  );
+  layer.lineStyle(1.6, 0xf8ffff, 0.34);
+  layer.strokeEllipse(centerX, centerY, civicRadius * 1.58, civicRadius * 0.82);
   layer.fillStyle(0x9c8760, 1);
   layer.fillRoundedRect(
     innerRect.x + 42,
@@ -680,6 +990,7 @@ function drawV2GenericLandmarkArt(
   const roofHeight = Math.max(28, Math.min(56, landmark.rect.height * 0.24));
   const lowerBandHeight = Math.max(40, landmark.rect.height * 0.22);
   const isDockyard = landmark.locationId === "freight-yard";
+  const isRepairStall = landmark.locationId === "repair-stall";
   const dockyardCargoWidth = isDockyard
     ? Math.max(78, landmark.rect.width * 0.28)
     : 0;
@@ -719,6 +1030,19 @@ function drawV2GenericLandmarkArt(
     roofHeight,
     landmark.rect.radius ?? 18,
   );
+  layer.lineStyle(2, 0xf2dfb8, 0.12);
+  for (
+    let x = landmark.rect.x + 20;
+    x < landmark.rect.x + landmark.rect.width - 20;
+    x += 42
+  ) {
+    layer.lineBetween(
+      x,
+      landmark.rect.y + 9,
+      x + 7,
+      landmark.rect.y + roofHeight - 8,
+    );
+  }
 
   if (isDockyard) {
     layer.fillStyle(0x8a8376, 1);
@@ -774,6 +1098,42 @@ function drawV2GenericLandmarkArt(
       landmark.rect.width - 70,
       10,
       5,
+    );
+  }
+
+  if (isRepairStall) {
+    const bayY = landmark.rect.y + roofHeight + 28;
+    layer.fillStyle(0x18242a, 0.42);
+    layer.fillRoundedRect(
+      landmark.rect.x + 34,
+      bayY,
+      landmark.rect.width - 68,
+      Math.max(70, landmark.rect.height * 0.36),
+      16,
+    );
+    layer.fillStyle(0xb89062, 0.82);
+    layer.fillRoundedRect(
+      landmark.rect.x + 48,
+      bayY + Math.max(42, landmark.rect.height * 0.22),
+      landmark.rect.width - 96,
+      16,
+      7,
+    );
+    layer.lineStyle(2.5, 0xcfd8dc, 0.28);
+    for (
+      let x = landmark.rect.x + 62;
+      x < landmark.rect.x + landmark.rect.width - 64;
+      x += 38
+    ) {
+      layer.lineBetween(x, bayY + 12, x - 6, bayY + 48);
+      layer.lineBetween(x - 6, bayY + 48, x + 9, bayY + 48);
+    }
+    layer.fillStyle(0xffd796, 0.08);
+    layer.fillEllipse(
+      landmark.rect.x + landmark.rect.width / 2,
+      bayY + 48,
+      landmark.rect.width * 0.72,
+      22,
     );
   }
 
@@ -893,7 +1253,7 @@ function drawV2GenericLandmarkArt(
       dockyardCargoHeight * 0.18,
       8,
     );
-    layer.fillStyle(0xd1ab58, 1);
+    layer.fillStyle(0xa98050, 1);
     layer.fillRoundedRect(
       dockyardCargoX + dockyardCargoWidth * 0.22,
       dockyardCargoY + dockyardCargoHeight * 0.31,
@@ -901,15 +1261,25 @@ function drawV2GenericLandmarkArt(
       8,
       4,
     );
-    const stripeWidth = (landmark.rect.width - 110) / 5;
-    for (let stripeIndex = 0; stripeIndex < 5; stripeIndex += 1) {
-      layer.fillStyle(stripeIndex % 2 === 0 ? 0xd9a240 : 0x2d2e30, 1);
-      layer.fillRoundedRect(
-        landmark.rect.x + 55 + stripeIndex * stripeWidth,
-        landmark.rect.y + landmark.rect.height - 18,
-        stripeWidth,
-        8,
-        4,
+    layer.fillStyle(0x1f2528, 0.38);
+    layer.fillRoundedRect(
+      landmark.rect.x + 54,
+      landmark.rect.y + landmark.rect.height - 22,
+      landmark.rect.width - 108,
+      8,
+      4,
+    );
+    layer.lineStyle(2, 0xcc9d62, 0.32);
+    for (
+      let x = landmark.rect.x + 66;
+      x < landmark.rect.x + landmark.rect.width - 66;
+      x += 42
+    ) {
+      layer.lineBetween(
+        x,
+        landmark.rect.y + landmark.rect.height - 22,
+        x + 18,
+        landmark.rect.y + landmark.rect.height - 15,
       );
     }
     layer.fillStyle(0x4c4841, 1);
@@ -1276,7 +1646,13 @@ function drawTerrainDraftWaterReflections(
         layer.fillStyle(0xf1d19a, 0.065);
         for (let x = rect.x + 12; x < rect.x + rect.width - 8; x += 28) {
           const length = 13 + ((col * 5 + row * 13 + Math.round(x)) % 12);
-          layer.fillRoundedRect(x, rect.y + rect.height - length - 10, 6, length, 3);
+          layer.fillRoundedRect(
+            x,
+            rect.y + rect.height - length - 10,
+            6,
+            length,
+            3,
+          );
         }
       }
 
@@ -2139,9 +2515,21 @@ function drawHarborEdge(
 
   if (quayWall) {
     const rect = quayWall.rect;
+    layer.fillStyle(0x0a1720, 0.18);
+    layer.fillRoundedRect(
+      rect.x + 6,
+      rect.y + rect.height - 6,
+      rect.width - 12,
+      12,
+      5,
+    );
+    layer.fillStyle(0xf0d7a0, 0.12);
+    layer.fillRoundedRect(rect.x + 12, rect.y + 4, rect.width - 24, 7, 4);
     layer.lineStyle(2, 0xb4a583, 0.36);
     for (let x = rect.x + 26; x < rect.x + rect.width - 26; x += 86) {
       layer.lineBetween(x, rect.y + 10, x, rect.y + rect.height - 4);
+      layer.fillStyle(0xf8e7b8, 0.08);
+      layer.fillEllipse(x + 8, rect.y + rect.height + 12, 16, 34);
     }
   }
 
@@ -2149,6 +2537,20 @@ function drawHarborEdge(
     const rect = dockApron.rect;
     layer.fillStyle(0xb38b5c, 0.28);
     layer.fillRoundedRect(rect.x + 14, rect.y + 16, rect.width - 28, 18, 8);
+    layer.lineStyle(2.4, 0xf2d7a3, 0.2);
+    layer.lineBetween(
+      rect.x + 18,
+      rect.y + 12,
+      rect.x + rect.width - 20,
+      rect.y + 9,
+    );
+    layer.lineStyle(2, 0x493426, 0.16);
+    layer.lineBetween(
+      rect.x + 20,
+      rect.y + rect.height - 10,
+      rect.x + rect.width - 22,
+      rect.y + rect.height - 14,
+    );
   }
 
   if (dockLandmark) {
@@ -2168,6 +2570,11 @@ function drawHarborEdge(
     layer.fillStyle(0x6e5140, 1);
     layer.fillRoundedRect(rect.x + 72, rect.y + 58, 70, 16, 6);
     layer.fillRoundedRect(rect.x + rect.width - 152, rect.y + 84, 88, 16, 6);
+    layer.fillStyle(0xf4d59a, 0.1);
+    for (let x = rect.x + 54; x < rect.x + rect.width - 46; x += 76) {
+      layer.fillRoundedRect(x, rect.y + 48, 36, 5, 3);
+      layer.fillEllipse(x + 12, rect.y + rect.height + 2, 24, 11);
+    }
   }
 }
 
@@ -2324,6 +2731,27 @@ function drawLandmarkWallBand(
     landmarkModule.rect.width - 20,
     Math.max(18, landmarkModule.rect.height * 0.32),
   );
+  layer.fillStyle(0xfff0cf, 0.08);
+  layer.fillRoundedRect(
+    landmarkModule.rect.x + 12,
+    landmarkModule.rect.y + 10,
+    landmarkModule.rect.width - 24,
+    Math.max(8, landmarkModule.rect.height * 0.12),
+    5,
+  );
+  layer.lineStyle(1.2, 0x5f4d3d, 0.08);
+  for (
+    let y = landmarkModule.rect.y + 18;
+    y < landmarkModule.rect.y + landmarkModule.rect.height - 14;
+    y += 34
+  ) {
+    layer.lineBetween(
+      landmarkModule.rect.x + 14,
+      y,
+      landmarkModule.rect.x + landmarkModule.rect.width - 16,
+      y + 2,
+    );
+  }
 }
 
 function drawLandmarkAwning(
@@ -2347,6 +2775,21 @@ function drawLandmarkAwning(
     landmarkModule.rect.y + landmarkModule.rect.height - 6,
     landmarkModule.rect.width,
     6,
+  );
+  layer.fillStyle(0x071116, 0.12);
+  layer.fillRoundedRect(
+    landmarkModule.rect.x + 2,
+    landmarkModule.rect.y + landmarkModule.rect.height,
+    landmarkModule.rect.width - 4,
+    7,
+    3,
+  );
+  layer.lineStyle(1, 0xffffff, 0.2);
+  layer.lineBetween(
+    landmarkModule.rect.x + 8,
+    landmarkModule.rect.y + 4,
+    landmarkModule.rect.x + landmarkModule.rect.width - 8,
+    landmarkModule.rect.y + 4,
   );
 }
 
@@ -2410,6 +2853,27 @@ function drawLandmarkWindowRow(
       unitWidth - 8,
       Math.max(windowHeight - 14, 0),
       6,
+    );
+    layer.lineStyle(1.4, 0x775b43, 0.22);
+    layer.lineBetween(
+      x + unitWidth / 2,
+      landmarkModule.rect.y + 8,
+      x + unitWidth / 2,
+      landmarkModule.rect.y + Math.max(windowHeight - 8, 8),
+    );
+    layer.lineBetween(
+      x + 6,
+      landmarkModule.rect.y + windowHeight * 0.52,
+      x + unitWidth - 6,
+      landmarkModule.rect.y + windowHeight * 0.52,
+    );
+    layer.fillStyle(0xffffff, 0.18);
+    layer.fillRoundedRect(
+      x + 7,
+      landmarkModule.rect.y + 9,
+      Math.max(unitWidth * 0.28, 5),
+      5,
+      2,
     );
   }
 }
@@ -2517,6 +2981,22 @@ function drawLandmarkServiceBay(
       landmarkModule.rect.y + landmarkModule.rect.height - 10,
     );
   }
+  layer.fillStyle(0x071116, 0.18);
+  layer.fillRoundedRect(
+    landmarkModule.rect.x + 12,
+    landmarkModule.rect.y + landmarkModule.rect.height - 16,
+    landmarkModule.rect.width - 24,
+    9,
+    4,
+  );
+  layer.fillStyle(0xd7bc79, 0.12);
+  layer.fillRoundedRect(
+    landmarkModule.rect.x + 18,
+    landmarkModule.rect.y + 10,
+    landmarkModule.rect.width - 36,
+    6,
+    3,
+  );
 }
 
 function drawLandmarkSign(
@@ -2547,6 +3027,14 @@ function drawLandmarkSign(
     landmarkModule.rect.width,
     landmarkModule.rect.height,
     landmarkModule.rect.radius ?? 10,
+  );
+  layer.fillStyle(0xffffff, 0.08);
+  layer.fillRoundedRect(
+    landmarkModule.rect.x + 10,
+    landmarkModule.rect.y + 6,
+    landmarkModule.rect.width - 20,
+    5,
+    3,
   );
 }
 
@@ -2682,6 +3170,12 @@ function drawV2ProceduralPropClusters(
   if (courtyard) {
     drawV2CourtyardPersonality(layer, courtyard.rect);
   }
+  drawV2StreetLifeVehicles(layer, {
+    cafe,
+    freightYard,
+    pier,
+    square,
+  });
 }
 
 function drawV2CafePersonality(
@@ -2691,8 +3185,20 @@ function drawV2CafePersonality(
   const terraceY = rect.y + rect.height - 44;
   layer.fillStyle(0x071116, 0.1);
   layer.fillRoundedRect(rect.x + 44, terraceY + 18, rect.width - 88, 22, 8);
+  layer.fillStyle(0xffe4ad, 0.07);
+  layer.fillEllipse(
+    rect.x + rect.width / 2,
+    terraceY + 20,
+    rect.width * 0.72,
+    28,
+  );
   layer.lineStyle(2, 0x6e4f36, 0.52);
-  layer.lineBetween(rect.x + 56, terraceY + 3, rect.x + rect.width - 54, terraceY + 3);
+  layer.lineBetween(
+    rect.x + 56,
+    terraceY + 3,
+    rect.x + rect.width - 54,
+    terraceY + 3,
+  );
   layer.lineStyle(1.5, 0xcaa36f, 0.38);
   for (let x = rect.x + 62; x < rect.x + rect.width - 58; x += 38) {
     layer.lineBetween(x, terraceY - 8, x, terraceY + 26);
@@ -2703,11 +3209,17 @@ function drawV2CafePersonality(
     drawAuthoredTerraceTable(layer, x, tableY + Math.sin(x * 0.04) * 2);
     layer.fillStyle(0xeed4a2, 0.34);
     layer.fillCircle(x - 4, tableY - 3, 5);
+    layer.fillStyle(0x2f2017, 0.1);
+    layer.fillEllipse(x + 8, tableY + 19, 38, 9);
   }
 
   drawMenuBoard(layer, rect.x + 42, rect.y + rect.height - 58);
   drawAuthoredPlanter(layer, rect.x + 28, rect.y + rect.height - 18);
-  drawAuthoredPlanter(layer, rect.x + rect.width - 28, rect.y + rect.height - 18);
+  drawAuthoredPlanter(
+    layer,
+    rect.x + rect.width - 28,
+    rect.y + rect.height - 18,
+  );
 }
 
 function drawV2BoardingHousePersonality(
@@ -2740,16 +3252,33 @@ function drawV2RepairStallPersonality(
 ) {
   const counterY = rect.y + rect.height - 54;
   layer.fillStyle(0x071116, 0.13);
-  layer.fillEllipse(rect.x + rect.width / 2 + 10, counterY + 26, rect.width * 0.72, 18);
+  layer.fillEllipse(
+    rect.x + rect.width / 2 + 10,
+    counterY + 26,
+    rect.width * 0.72,
+    18,
+  );
   layer.fillStyle(0x7c6046, 0.98);
   layer.fillRoundedRect(rect.x + 42, counterY, rect.width - 84, 22, 8);
   layer.fillStyle(0xd2bc91, 0.5);
   layer.fillRoundedRect(rect.x + 54, counterY + 5, rect.width - 108, 6, 3);
   drawToolStand(layer, rect.x + 46, rect.y + rect.height - 28);
   drawCrateStack(layer, rect.x + rect.width - 42, rect.y + rect.height - 28);
+  layer.fillStyle(0x38444a, 0.26);
+  layer.fillRoundedRect(rect.x + 62, rect.y + 74, rect.width - 124, 8, 4);
   layer.lineStyle(2.4, 0x38444a, 0.46);
-  layer.lineBetween(rect.x + rect.width - 80, rect.y + 42, rect.x + rect.width - 28, rect.y + 18);
-  layer.lineBetween(rect.x + rect.width - 50, rect.y + 30, rect.x + rect.width - 50, rect.y + 74);
+  layer.lineBetween(
+    rect.x + rect.width - 80,
+    rect.y + 42,
+    rect.x + rect.width - 28,
+    rect.y + 18,
+  );
+  layer.lineBetween(
+    rect.x + rect.width - 50,
+    rect.y + 30,
+    rect.x + rect.width - 50,
+    rect.y + 74,
+  );
 }
 
 function drawV2SquarePersonality(
@@ -2766,7 +3295,14 @@ function drawV2SquarePersonality(
   drawAuthoredPlanter(layer, rect.x + 42, rect.y + 36);
   drawAuthoredPlanter(layer, rect.x + rect.width - 42, rect.y + 36);
   drawAuthoredLamp(layer, rect.x + 42, rect.y + rect.height - 34, 0.82);
-  drawAuthoredLamp(layer, rect.x + rect.width - 42, rect.y + rect.height - 34, 0.82);
+  drawAuthoredLamp(
+    layer,
+    rect.x + rect.width - 42,
+    rect.y + rect.height - 34,
+    0.82,
+  );
+  drawAuthoredLamp(layer, rect.x + 42, rect.y + 38, 0.72);
+  drawAuthoredLamp(layer, rect.x + rect.width - 42, rect.y + 38, 0.72);
 
   layer.fillStyle(0xffffff, 0.1);
   layer.fillEllipse(centerX - 4, centerY - 5, 72, 34);
@@ -2774,6 +3310,8 @@ function drawV2SquarePersonality(
   layer.strokeEllipse(centerX, centerY, 56, 28);
   layer.lineStyle(1.4, 0xa8d8e6, 0.44);
   layer.strokeEllipse(centerX, centerY - 2, 34, 16);
+  layer.fillStyle(0xffe5a8, 0.08);
+  layer.fillEllipse(centerX, centerY + 9, 118, 20);
 }
 
 function drawV2FreightYardPersonality(
@@ -2783,13 +3321,61 @@ function drawV2FreightYardPersonality(
   drawCrateStack(layer, rect.x + 38, rect.y + rect.height - 34);
   drawBarrel(layer, rect.x + rect.width - 42, rect.y + rect.height - 40);
   drawToolStand(layer, rect.x + rect.width - 70, rect.y + 78);
+  layer.fillStyle(0x071116, 0.1);
+  layer.fillEllipse(
+    rect.x + rect.width / 2,
+    rect.y + rect.height - 28,
+    rect.width * 0.76,
+    20,
+  );
   layer.lineStyle(4, 0x2c3438, 0.48);
-  layer.lineBetween(rect.x + 34, rect.y + 36, rect.x + rect.width - 34, rect.y + 36);
+  layer.lineBetween(
+    rect.x + 34,
+    rect.y + 36,
+    rect.x + rect.width - 34,
+    rect.y + 36,
+  );
   layer.lineStyle(2, 0xcfa767, 0.34);
-  layer.lineBetween(rect.x + 62, rect.y + 46, rect.x + rect.width - 60, rect.y + 46);
-  layer.fillStyle(0xd8a348, 0.9);
-  for (let x = rect.x + 48; x < rect.x + rect.width - 42; x += 46) {
-    layer.fillRoundedRect(x, rect.y + rect.height - 20, 22, 5, 3);
+  layer.lineBetween(
+    rect.x + 62,
+    rect.y + 46,
+    rect.x + rect.width - 60,
+    rect.y + 46,
+  );
+  layer.fillStyle(0x977653, 0.42);
+  for (let x = rect.x + 56; x < rect.x + rect.width - 58; x += 74) {
+    layer.fillRoundedRect(x, rect.y + rect.height - 21, 32, 5, 3);
+  }
+}
+
+function drawV2StreetLifeVehicles(
+  layer: PhaserType.GameObjects.Graphics,
+  landmarks: {
+    cafe?: VisualScene["landmarks"][number];
+    freightYard?: VisualScene["landmarks"][number];
+    pier?: VisualScene["landmarks"][number];
+    square?: VisualScene["landmarks"][number];
+  },
+) {
+  if (landmarks.cafe) {
+    const rect = landmarks.cafe.rect;
+    drawParkedBicycle(layer, rect.x + 82, rect.y + rect.height + 16, 1.14);
+    drawSmallDeliveryVan(
+      layer,
+      rect.x + rect.width * 0.52,
+      rect.y + rect.height + 42,
+      1.08,
+    );
+  }
+
+  if (landmarks.freightYard) {
+    const rect = landmarks.freightYard.rect;
+    drawCargoHandcart(
+      layer,
+      rect.x + rect.width + 34,
+      rect.y + rect.height * 0.5,
+      0.95,
+    );
   }
 }
 
@@ -2798,10 +3384,27 @@ function drawV2PierPersonality(
   rect: VisualRect,
 ) {
   layer.fillStyle(0x071116, 0.16);
-  layer.fillRoundedRect(rect.x + 18, rect.y + rect.height - 16, rect.width - 36, 26, 8);
+  layer.fillRoundedRect(
+    rect.x + 18,
+    rect.y + rect.height - 16,
+    rect.width - 36,
+    26,
+    8,
+  );
+  layer.fillStyle(0x1b3944, 0.18);
+  layer.fillRoundedRect(
+    rect.x + 20,
+    rect.y + rect.height - 5,
+    rect.width - 40,
+    13,
+    6,
+  );
   layer.lineStyle(2, 0xd6bc82, 0.26);
   for (let x = rect.x + 28; x < rect.x + rect.width - 24; x += 38) {
     layer.lineBetween(x, rect.y + 24, x, rect.y + rect.height - 18);
+    layer.lineStyle(1.6, 0xf3d39a, 0.1);
+    layer.lineBetween(x + 7, rect.y + 28, x + 7, rect.y + rect.height - 24);
+    layer.lineStyle(2, 0xd6bc82, 0.26);
   }
 
   const bollards = [
@@ -2815,7 +3418,13 @@ function drawV2PierPersonality(
     layer.fillStyle(0xd8bf7a, 0.08);
     layer.fillEllipse(bollard.x, bollard.y + 34, 18, 38);
   }
-  drawSaggingRope(layer, bollards[0].x, bollards[0].y, bollards[1].x, bollards[1].y);
+  drawSaggingRope(
+    layer,
+    bollards[0].x,
+    bollards[0].y,
+    bollards[1].x,
+    bollards[1].y,
+  );
   drawSaggingRope(
     layer,
     bollards[2].x,
@@ -2825,7 +3434,27 @@ function drawV2PierPersonality(
   );
   drawRopeCoil(layer, rect.x + rect.width - 94, rect.y + 100);
   drawDockLadder(layer, rect.x + 116, rect.y + rect.height - 32);
-  drawAuthoredBoat(layer, rect.x + rect.width - 106, rect.y + rect.height - 42, -0.08, 0.72);
+  drawAuthoredBoat(
+    layer,
+    rect.x + rect.width - 106,
+    rect.y + rect.height - 42,
+    -0.08,
+    0.72,
+  );
+  layer.lineStyle(2, 0xcdb68a, 0.45);
+  layer.lineBetween(
+    rect.x + rect.width - 132,
+    rect.y + rect.height - 45,
+    rect.x + rect.width - 94,
+    rect.y + 103,
+  );
+  layer.fillStyle(0xf4e3b6, 0.08);
+  layer.fillEllipse(
+    rect.x + rect.width - 110,
+    rect.y + rect.height - 20,
+    62,
+    12,
+  );
 }
 
 function drawV2CourtyardPersonality(
@@ -2837,7 +3466,13 @@ function drawV2CourtyardPersonality(
   drawBarrel(layer, rect.x + rect.width - 56, rect.y + rect.height - 44);
   drawCrateStack(layer, rect.x + rect.width - 92, rect.y + rect.height - 40);
   layer.fillStyle(0xd8c49a, 0.18);
-  layer.fillRoundedRect(rect.x + 28, rect.y + rect.height - 42, rect.width - 56, 10, 5);
+  layer.fillRoundedRect(
+    rect.x + 28,
+    rect.y + rect.height - 42,
+    rect.width - 56,
+    10,
+    5,
+  );
 }
 
 function drawSaggingRope(
@@ -2853,10 +3488,7 @@ function drawSaggingRope(
   for (let step = 1; step <= 12; step += 1) {
     const ratio = step / 12;
     const x = startX + (endX - startX) * ratio;
-    const y =
-      startY +
-      (endY - startY) * ratio +
-      Math.sin(ratio * Math.PI) * 14;
+    const y = startY + (endY - startY) * ratio + Math.sin(ratio * Math.PI) * 14;
     layer.lineBetween(previousX, previousY, x, y);
     previousX = x;
     previousY = y;
@@ -2883,15 +3515,19 @@ function drawV2VegetationCanopies(
     if (cell.kind === "grass") {
       layer.lineStyle(1.2, 0xd5e5a8, 0.12);
       for (let blade = 0; blade < 3; blade += 1) {
-        const x = cell.x + 10 + ((seed + blade * 13) % Math.max(cell.width - 18, 1));
-        const y = cell.y + 12 + ((seed + blade * 17) % Math.max(cell.height - 18, 1));
+        const x =
+          cell.x + 10 + ((seed + blade * 13) % Math.max(cell.width - 18, 1));
+        const y =
+          cell.y + 12 + ((seed + blade * 17) % Math.max(cell.height - 18, 1));
         layer.lineBetween(x, y + 4, x + 10, y);
       }
+      layer.fillStyle(0xf3e4b2, 0.055);
+      layer.fillEllipse(centerX - 4, centerY - 2, cell.width * 0.42, 8);
       return;
     }
 
-    layer.fillStyle(0x132016, 0.1);
-    layer.fillEllipse(centerX + 7, centerY + 16, cell.width * 0.58, 12);
+    layer.fillStyle(0x132016, 0.13);
+    layer.fillEllipse(centerX + 8, centerY + 17, cell.width * 0.66, 15);
 
     const baseColor = cell.kind === "trees" ? 0x436f3c : 0x4f7743;
     const darkColor = cell.kind === "trees" ? 0x2f5430 : 0x365f35;
@@ -2899,14 +3535,18 @@ function drawV2VegetationCanopies(
     const radius = cell.kind === "trees" ? 13 : 9;
 
     layer.fillStyle(darkColor, 0.92);
-    layer.fillCircle(centerX - 6, centerY + 3, radius);
-    layer.fillCircle(centerX + 8, centerY + 1, radius * 0.82);
+    layer.fillCircle(centerX - 9, centerY + 5, radius * 1.08);
+    layer.fillCircle(centerX + 8, centerY + 3, radius * 0.92);
+    layer.fillCircle(centerX + 1, centerY + 10, radius * 0.86);
     layer.fillStyle(baseColor, 0.96);
-    layer.fillCircle(centerX - 1, centerY - 3, radius);
-    layer.fillCircle(centerX + 11, centerY - 6, radius * 0.78);
+    layer.fillCircle(centerX - 3, centerY - 4, radius * 1.08);
+    layer.fillCircle(centerX + 12, centerY - 7, radius * 0.84);
+    layer.fillCircle(centerX - 16, centerY - 3, radius * 0.72);
     layer.fillStyle(lightColor, 0.32);
-    layer.fillCircle(centerX - 5, centerY - 8, radius * 0.38);
-    layer.fillCircle(centerX + 9, centerY - 10, radius * 0.28);
+    layer.fillCircle(centerX - 7, centerY - 10, radius * 0.42);
+    layer.fillCircle(centerX + 8, centerY - 12, radius * 0.3);
+    layer.fillStyle(0xf2e9bb, 0.16);
+    layer.fillEllipse(centerX - 4, centerY - 14, radius * 1.1, 3.8);
   });
 }
 
@@ -3521,6 +4161,8 @@ function drawAuthoredLamp(
 ) {
   layer.fillStyle(0x0c1318, 0.22);
   layer.fillEllipse(x, y + 8 * scale, 12 * scale, 6 * scale);
+  layer.fillStyle(0xffe0a0, 0.07);
+  layer.fillEllipse(x + 4 * scale, y + 4 * scale, 34 * scale, 13 * scale);
   layer.fillStyle(0x3a474d, 1);
   layer.fillRoundedRect(
     x - 2 * scale,
@@ -3538,6 +4180,8 @@ function drawAuthoredLamp(
     12 * scale,
     4,
   );
+  layer.fillStyle(0xffffff, 0.2);
+  layer.fillRoundedRect(x - 2 * scale, y - 26 * scale, 4 * scale, 5 * scale, 2);
   layer.fillStyle(0xf3dfa6, 0.18);
   layer.fillCircle(x, y - 22 * scale, 11 * scale);
 }
@@ -3559,6 +4203,12 @@ function drawAuthoredBench(
   layer.fillStyle(0x795c42, 1);
   layer.fillRoundedRect(x - 30, y - 8, 60, 16, 5);
   layer.fillRoundedRect(x - 24, y - 18, 48, 6, 3);
+  layer.fillStyle(0xd4b178, 0.28);
+  layer.fillRoundedRect(x - 26, y - 16, 52, 3, 2);
+  layer.fillRoundedRect(x - 26, y - 5, 52, 3, 2);
+  layer.fillStyle(0x3c2d22, 0.28);
+  layer.fillEllipse(x + 5, y + 14, 68, 9);
+  layer.fillStyle(0x795c42, 1);
   layer.fillRoundedRect(x - 20, y + 6, 6, 18, 3);
   layer.fillRoundedRect(x + 14, y + 6, 6, 18, 3);
 }
@@ -3568,12 +4218,19 @@ function drawAuthoredPlanter(
   x: number,
   y: number,
 ) {
+  layer.fillStyle(0x071116, 0.12);
+  layer.fillEllipse(x + 3, y + 8, 35, 9);
   layer.fillStyle(0x6e5b4b, 1);
   layer.fillRoundedRect(x - 14, y - 10, 28, 20, 6);
+  layer.fillStyle(0xd0aa78, 0.22);
+  layer.fillRoundedRect(x - 10, y - 8, 20, 5, 3);
   layer.fillStyle(0x4e7747, 0.98);
   layer.fillCircle(x - 6, y - 6, 10);
   layer.fillCircle(x + 2, y - 10, 9);
   layer.fillCircle(x + 9, y - 5, 8);
+  layer.fillStyle(0x99ba6c, 0.36);
+  layer.fillCircle(x - 5, y - 12, 3.6);
+  layer.fillCircle(x + 7, y - 11, 3);
 }
 
 function drawAuthoredTerraceTable(
@@ -3581,13 +4238,144 @@ function drawAuthoredTerraceTable(
   x: number,
   y: number,
 ) {
+  layer.fillStyle(0x071116, 0.12);
+  layer.fillEllipse(x + 4, y + 18, 44, 9);
   layer.fillStyle(0x694f38, 1);
   layer.fillCircle(x, y, 12);
+  layer.fillStyle(0xc9975c, 0.38);
+  layer.fillCircle(x - 4, y - 3, 5);
   layer.fillRoundedRect(x - 1.5, y + 6, 3, 18, 1.5);
   layer.fillRoundedRect(x - 22, y + 8, 12, 4, 2);
   layer.fillRoundedRect(x + 10, y + 8, 12, 4, 2);
   layer.fillRoundedRect(x - 18, y - 2, 8, 3, 2);
   layer.fillRoundedRect(x + 10, y - 2, 8, 3, 2);
+}
+
+function drawParkedBicycle(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  scale: number,
+) {
+  layer.fillStyle(0x071116, 0.16);
+  layer.fillEllipse(x + 5 * scale, y + 9 * scale, 48 * scale, 8 * scale);
+  layer.lineStyle(2.4 * scale, 0x334248, 0.8);
+  layer.strokeCircle(x - 14 * scale, y + 2 * scale, 8 * scale);
+  layer.strokeCircle(x + 16 * scale, y + 2 * scale, 8 * scale);
+  layer.lineStyle(2.2 * scale, 0x5d4a38, 0.9);
+  layer.lineBetween(
+    x - 14 * scale,
+    y + 2 * scale,
+    x - 1 * scale,
+    y - 10 * scale,
+  );
+  layer.lineBetween(
+    x - 1 * scale,
+    y - 10 * scale,
+    x + 16 * scale,
+    y + 2 * scale,
+  );
+  layer.lineBetween(x - 6 * scale, y + 2 * scale, x + 7 * scale, y + 2 * scale);
+  layer.lineStyle(1.7 * scale, 0xc6a873, 0.52);
+  layer.lineBetween(
+    x - 1 * scale,
+    y - 10 * scale,
+    x + 9 * scale,
+    y - 13 * scale,
+  );
+  layer.lineBetween(
+    x + 6 * scale,
+    y - 7 * scale,
+    x + 16 * scale,
+    y - 13 * scale,
+  );
+}
+
+function drawCargoHandcart(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  scale: number,
+) {
+  layer.fillStyle(0x071116, 0.16);
+  layer.fillEllipse(x + 8 * scale, y + 14 * scale, 64 * scale, 11 * scale);
+  layer.fillStyle(0x6f583e, 0.96);
+  layer.fillRoundedRect(
+    x - 20 * scale,
+    y - 12 * scale,
+    42 * scale,
+    21 * scale,
+    5 * scale,
+  );
+  layer.fillStyle(0xb08b5e, 0.28);
+  layer.fillRoundedRect(
+    x - 15 * scale,
+    y - 8 * scale,
+    32 * scale,
+    6 * scale,
+    3 * scale,
+  );
+  layer.lineStyle(2.4 * scale, 0x3d3026, 0.72);
+  layer.lineBetween(
+    x + 18 * scale,
+    y - 3 * scale,
+    x + 36 * scale,
+    y - 12 * scale,
+  );
+  layer.lineBetween(
+    x + 18 * scale,
+    y + 3 * scale,
+    x + 36 * scale,
+    y + 12 * scale,
+  );
+  layer.fillStyle(0x273238, 0.9);
+  layer.fillCircle(x - 14 * scale, y + 12 * scale, 5 * scale);
+  layer.fillCircle(x + 14 * scale, y + 12 * scale, 5 * scale);
+}
+
+function drawSmallDeliveryVan(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  scale: number,
+) {
+  layer.fillStyle(0x071116, 0.15);
+  layer.fillEllipse(x + 8 * scale, y + 16 * scale, 76 * scale, 12 * scale);
+  layer.fillStyle(0xbeb6a0, 0.92);
+  layer.fillRoundedRect(
+    x - 34 * scale,
+    y - 12 * scale,
+    68 * scale,
+    26 * scale,
+    8 * scale,
+  );
+  layer.fillStyle(0x8e9aa0, 0.68);
+  layer.fillRoundedRect(
+    x - 20 * scale,
+    y - 8 * scale,
+    22 * scale,
+    10 * scale,
+    4 * scale,
+  );
+  layer.fillStyle(0x7b6449, 0.45);
+  layer.fillRoundedRect(
+    x + 7 * scale,
+    y - 6 * scale,
+    18 * scale,
+    8 * scale,
+    3 * scale,
+  );
+  layer.fillStyle(0x263137, 0.9);
+  layer.fillCircle(x - 18 * scale, y + 15 * scale, 5 * scale);
+  layer.fillCircle(x + 21 * scale, y + 15 * scale, 5 * scale);
+  layer.fillStyle(0xf1d9a4, 0.38);
+  layer.fillRoundedRect(
+    x - 31 * scale,
+    y - 9 * scale,
+    8 * scale,
+    4 * scale,
+    2 * scale,
+  );
 }
 
 function drawMenuBoard(
@@ -3604,6 +4392,9 @@ function drawMenuBoard(
   layer.fillRoundedRect(x - 16, y - 20, 32, 24, 6);
   layer.lineStyle(2, 0xd7bc79, 0.72);
   layer.strokeRoundedRect(x - 16, y - 20, 32, 24, 6);
+  layer.lineStyle(1, 0xf2dfaa, 0.5);
+  layer.lineBetween(x - 9, y - 13, x + 9, y - 13);
+  layer.lineBetween(x - 9, y - 7, x + 7, y - 7);
 }
 
 function drawCrateStack(
@@ -3620,6 +4411,8 @@ function drawCrateStack(
   for (const crate of crates) {
     layer.fillStyle(0x8b6848, 1);
     layer.fillRoundedRect(crate.x, crate.y, crate.width, crate.height, 4);
+    layer.fillStyle(0xc59b68, 0.2);
+    layer.fillRoundedRect(crate.x + 4, crate.y + 4, crate.width - 8, 5, 3);
     layer.lineStyle(2, 0xa88460, 0.5);
     layer.strokeRoundedRect(crate.x, crate.y, crate.width, crate.height, 4);
     layer.lineBetween(
@@ -3760,6 +4553,14 @@ function drawAuthoredBoat(
     height,
     8 * scale,
   );
+  layer.fillStyle(0x3a2a20, 0.28);
+  layer.fillRoundedRect(
+    x - width / 2 + 5 * scale,
+    y + 1 * scale,
+    width - 10 * scale,
+    4 * scale,
+    2 * scale,
+  );
   layer.fillStyle(0xd7c095, 0.82);
   layer.fillRoundedRect(
     x - width / 2 + 8,
@@ -3779,8 +4580,7 @@ function drawAmbientHarborLife(
 ) {
   const bottomWater = waterSegments
     .filter(
-      (segment) =>
-        segment.y > visualScene.height * 0.72 && segment.width > 220,
+      (segment) => segment.y > visualScene.height * 0.72 && segment.width > 220,
     )
     .sort((a, b) => b.width - a.width)[0];
   const eastWater = waterSegments.find(
@@ -3868,6 +4668,43 @@ function drawAnimatedWaterLightFields(
       layer.fillEllipse(sparkleX + 7, sparkleY + 2.4, 17, 3);
     }
   }
+}
+
+function drawV2AnimatedVegetationHighlights(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+  beat: number,
+) {
+  if (visualScene.id !== "south-quay-v2") {
+    return;
+  }
+
+  forEachSurfaceDraftCell(visualScene, (cell) => {
+    if (cell.kind !== "trees" && cell.kind !== "bushes") {
+      return;
+    }
+
+    const seed = cell.col * 23 + cell.row * 41;
+    const sway = Math.sin(beat * 0.72 + seed * 0.19) * 2.2;
+    const centerX = cell.x + cell.width / 2 + Math.sin(seed) * 5;
+    const centerY = cell.y + cell.height / 2 + Math.cos(seed * 0.7) * 4;
+    const alpha = cell.kind === "trees" ? 0.052 : 0.04;
+
+    layer.fillStyle(0xe8efbb, alpha);
+    layer.fillEllipse(
+      centerX - 7 + sway,
+      centerY - 13,
+      cell.kind === "trees" ? 18 : 12,
+      4,
+    );
+    layer.fillStyle(0x9fc875, alpha * 0.75);
+    layer.fillEllipse(
+      centerX + 9 + sway * 0.7,
+      centerY - 9,
+      cell.kind === "trees" ? 14 : 10,
+      3.5,
+    );
+  });
 }
 
 export function drawAnimatedVisualWater(
@@ -4094,14 +4931,16 @@ export function drawAnimatedVisualWater(
         },
       );
 
-      for (let x = segment.x + 28; x < segment.x + segment.width - 18; x += 108) {
+      for (
+        let x = segment.x + 28;
+        x < segment.x + segment.width - 18;
+        x += 108
+      ) {
         const shimmerPhase = beat * 1.45 + segment.row * 0.63 + x * 0.018;
         const shimmerAlpha = 0.055 + (Math.sin(shimmerPhase) + 1) * 0.038;
         const shimmerWidth = 18 + (Math.sin(shimmerPhase * 0.72) + 1) * 12;
         const shimmerY =
-          segment.y +
-          segment.height * 0.42 +
-          Math.sin(shimmerPhase * 1.18) * 7;
+          segment.y + segment.height * 0.42 + Math.sin(shimmerPhase * 1.18) * 7;
         layer.lineStyle(
           1.5,
           blendColor(crestColor, 0xffffff, 0.38),
@@ -4115,7 +4954,11 @@ export function drawAnimatedVisualWater(
         );
       }
 
-      for (let x = segment.x + 56; x < segment.x + segment.width - 20; x += 168) {
+      for (
+        let x = segment.x + 56;
+        x < segment.x + segment.width - 20;
+        x += 168
+      ) {
         const glintPhase = beat * 0.92 + x * 0.013 + segment.row * 0.41;
         layer.fillStyle(
           blendColor(crestColor, 0xffffff, 0.48),
@@ -4132,6 +4975,7 @@ export function drawAnimatedVisualWater(
 
     drawAnimatedWaterLightFields(layer, visualScene, waterSegments, beat);
     drawAmbientHarborLife(layer, visualScene, waterSegments, beat);
+    drawV2AnimatedVegetationHighlights(layer, visualScene, beat);
 
     for (let row = 0; row < terrainGrid.rows; row += 1) {
       for (let col = 0; col < terrainGrid.cols; col += 1) {
@@ -4195,12 +5039,7 @@ export function drawAnimatedVisualWater(
           } else {
             for (let y = rect.y + 8; y < rect.y + rect.height - 8; y += 20) {
               const driftY = Math.sin(beat * 2.1 + y * 0.05 + 1.4) * 2.5;
-              layer.fillEllipse(
-                rect.x + rect.width - 4 + driftY,
-                y,
-                4.2,
-                14,
-              );
+              layer.fillEllipse(rect.x + rect.width - 4 + driftY, y, 4.2, 14);
               layer.fillStyle(0xbfe8ef, foamAlpha * 0.28);
               layer.fillEllipse(
                 rect.x + rect.width - 9 + driftY * 0.4,

@@ -527,6 +527,190 @@ class CdpSession {
     return probe;
   }
 
+  async readCameraProbe() {
+    const probe = await this.evaluate(`(() => {
+      const script = document.querySelector("#ml-browser-camera-probe");
+      if (!script) {
+        return null;
+      }
+      try {
+        return JSON.parse(script.textContent || "null");
+      } catch (error) {
+        return { parseError: String(error) };
+      }
+    })()`);
+
+    if (probe?.parseError) {
+      throw new Error(`Could not parse #ml-browser-camera-probe: ${probe.parseError}`);
+    }
+
+    return probe;
+  }
+
+  async readVisibleElementRect(selector) {
+    return this.evaluate(`(() => {
+      const elements = Array.from(document.querySelectorAll(${JSON.stringify(selector)}));
+      for (const element of elements) {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        const visible =
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          !element.disabled;
+        if (!visible) {
+          continue;
+        }
+
+        return {
+          rect: {
+            bottom: rect.bottom,
+            centerX: rect.left + rect.width / 2,
+            centerY: rect.top + rect.height / 2,
+            height: rect.height,
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            width: rect.width,
+          },
+          text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+        };
+      }
+
+      return null;
+    })()`);
+  }
+
+  async readPlayerControlCandidate() {
+    return this.evaluate(`(() => {
+      const selectors = [
+        "[data-advance-objective]:not([disabled])",
+        "[data-action-id]:not([disabled])",
+        "[data-wait-minutes]:not([disabled])"
+      ];
+      const isVisibleControl = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          !element.disabled
+        );
+      };
+
+      for (const selector of selectors) {
+        const element = Array.from(document.querySelectorAll(selector)).find(isVisibleControl);
+        if (!element) {
+          continue;
+        }
+
+        const rect = element.getBoundingClientRect();
+        return {
+          actionId: element.getAttribute("data-action-id"),
+          advancesObjective: element.hasAttribute("data-advance-objective"),
+          rect: {
+            bottom: rect.bottom,
+            centerX: rect.left + rect.width / 2,
+            centerY: rect.top + rect.height / 2,
+            height: rect.height,
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            width: rect.width,
+          },
+          selector,
+          text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          waitMinutes: element.getAttribute("data-wait-minutes")
+        };
+      }
+
+      return null;
+    })()`);
+  }
+
+  async clickVisibleSelector(selector) {
+    const target = await this.readVisibleElementRect(selector);
+    assert.ok(target, `Expected visible clickable element for selector ${selector}.`);
+    await this.dispatchMouseClick(target.rect.centerX, target.rect.centerY);
+    return target;
+  }
+
+  async clickPlayerControl() {
+    const candidate = await this.readPlayerControlCandidate();
+    assert.ok(
+      candidate,
+      "Expected a visible player control: next-step, action, or time button.",
+    );
+    await this.dispatchMouseClick(
+      candidate.rect.centerX,
+      candidate.rect.centerY,
+    );
+    return candidate;
+  }
+
+  async dispatchMouseClick(x, y) {
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x,
+      y,
+    });
+    await this.send("Input.dispatchMouseEvent", {
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+      type: "mousePressed",
+      x,
+      y,
+    });
+    await this.send("Input.dispatchMouseEvent", {
+      button: "left",
+      buttons: 0,
+      clickCount: 1,
+      type: "mouseReleased",
+      x,
+      y,
+    });
+  }
+
+  async dispatchMouseDrag(start, end, steps = 8) {
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mouseMoved",
+      x: start.x,
+      y: start.y,
+    });
+    await this.send("Input.dispatchMouseEvent", {
+      button: "left",
+      buttons: 1,
+      clickCount: 1,
+      type: "mousePressed",
+      x: start.x,
+      y: start.y,
+    });
+
+    for (let index = 1; index <= steps; index += 1) {
+      const progress = index / steps;
+      await this.send("Input.dispatchMouseEvent", {
+        buttons: 1,
+        type: "mouseMoved",
+        x: start.x + (end.x - start.x) * progress,
+        y: start.y + (end.y - start.y) * progress,
+      });
+      await sleep(16);
+    }
+
+    await this.send("Input.dispatchMouseEvent", {
+      button: "left",
+      buttons: 0,
+      clickCount: 1,
+      type: "mouseReleased",
+      x: end.x,
+      y: end.y,
+    });
+  }
+
   async readDomSnapshot() {
     return this.evaluate(`(() => {
       const rectFromElement = (element) => {
@@ -2704,6 +2888,620 @@ async function runOverlayPanelChecks(session) {
   return checks;
 }
 
+function playerProbeSignature(probe) {
+  return JSON.stringify({
+    activeConversation: probe.activeConversation
+      ? {
+          lines: probe.activeConversation.lines,
+          npcId: probe.activeConversation.npcId,
+        }
+      : null,
+    autonomy: {
+      key: probe.autonomy?.key ?? null,
+      label: probe.autonomy?.label ?? null,
+      mode: probe.autonomy?.mode ?? null,
+      stepKind: probe.autonomy?.stepKind ?? null,
+      targetLocationId: probe.autonomy?.targetLocationId ?? null,
+    },
+    clock: probe.clock?.iso ?? null,
+    firstAfternoon: probe.firstAfternoon ?? null,
+    location: probe.location ?? null,
+    playback: probe.playback ?? null,
+    visualPlayer: probe.visualPlayer ?? null,
+  });
+}
+
+function inhabitCameraDelta(before, after) {
+  return {
+    x: Math.round(
+      ((after?.scroll?.x ?? 0) - (before?.scroll?.x ?? 0)) * 100,
+    ) / 100,
+    y: Math.round(
+      ((after?.scroll?.y ?? 0) - (before?.scroll?.y ?? 0)) * 100,
+    ) / 100,
+  };
+}
+
+function assertInhabitPlayerDom(label, dom, controlCandidate = null) {
+  assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
+  assert.equal(
+    dom.hasFrameworkErrorOverlay,
+    false,
+    `${label}: browser rendered a framework/runtime error overlay.`,
+  );
+  assert.equal(dom.hasCanvas, true, `${label}: game canvas is missing.`);
+  assert.equal(dom.hasRail, true, `${label}: Rowan rail is missing.`);
+  assert.match(
+    dom.bodyText,
+    /Rowan/i,
+    `${label}: player-facing UI does not identify Rowan.`,
+  );
+  assert.ok(
+    dom.tabLabels.some((tab) => /World/i.test(tab)) &&
+      dom.tabLabels.some((tab) => /Locals/i.test(tab)) &&
+      dom.tabLabels.some((tab) => /Journal/i.test(tab)) &&
+      dom.tabLabels.some((tab) => /Notebook/i.test(tab)),
+    `${label}: player-facing tabs are not all reachable.`,
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /Planner trace|Rejected:|Blocked:|Action:/i,
+    `${label}: default player view leaked debug/planner language.`,
+  );
+
+  const complete = /first afternoon complete/i.test(dom.bodyText);
+  if (!complete) {
+    assert.ok(
+      controlCandidate,
+      `${label}: expected a visible next player control before completion.`,
+    );
+    assert.ok(
+      controlCandidate.text.length > 0,
+      `${label}: visible player control has no readable label.`,
+    );
+  }
+
+  assertCriticalVisualCoherence(label, dom);
+}
+
+async function waitForInhabitSettled(session, label) {
+  return waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (!probe) {
+        return null;
+      }
+      if (probe.visualPlayer?.isMovingToServerState) {
+        return null;
+      }
+      if (probe.playback?.activeKind || (probe.playback?.queuedCount ?? 0) > 0) {
+        return null;
+      }
+      return probe;
+    },
+    75_000,
+    `${label}: timed out waiting for the player-facing run to settle.`,
+  );
+}
+
+async function waitForInhabitTransition(session, beforeSignature, label) {
+  return waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (!probe || playerProbeSignature(probe) === beforeSignature) {
+        return null;
+      }
+      if (probe.visualPlayer?.isMovingToServerState) {
+        return null;
+      }
+      if (probe.playback?.activeKind || (probe.playback?.queuedCount ?? 0) > 0) {
+        return null;
+      }
+      return probe;
+    },
+    75_000,
+    `${label}: visible player control did not advance the run.`,
+  );
+}
+
+async function waitForInhabitCameraProbe(session, label) {
+  return waitFor(
+    async () => {
+      const probe = await session.readCameraProbe();
+      if (probe?.scroll && probe?.sceneViewportCss) {
+        return probe;
+      }
+      return null;
+    },
+    20_000,
+    `${label}: camera probe never exposed player camera state.`,
+  );
+}
+
+async function closeInhabitSupportPanel(session) {
+  const openToggle = await session.readVisibleElementRect(
+    '[data-toggle-support][aria-expanded="true"]',
+  );
+  if (!openToggle) {
+    const clicked = await session.evaluate(`(() => {
+      const toggle = document.querySelector('[data-toggle-support][aria-expanded="true"]');
+      if (!toggle) {
+        return false;
+      }
+      toggle.dispatchEvent(new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+      }));
+      return true;
+    })()`);
+    if (clicked) {
+      await sleep(200);
+    }
+    return clicked;
+  }
+
+  await session.dispatchMouseClick(
+    openToggle.rect.centerX,
+    openToggle.rect.centerY,
+  );
+  await sleep(200);
+  return true;
+}
+
+async function captureInhabitMoment({
+  index,
+  label,
+  moments,
+  session,
+  userQuestion,
+}) {
+  await closeInhabitSupportPanel(session);
+  const probe = await waitForInhabitSettled(session, label);
+  const dom = await session.readDomSnapshot();
+  const controlCandidate = await session.readPlayerControlCandidate();
+  assertInhabitPlayerDom(label, dom, controlCandidate);
+  const camera = await session.readCameraProbe().catch(() => null);
+  const screenshot = path.join(
+    OUTPUT_DIR,
+    `inhabit-${String(index).padStart(2, "0")}-${slug(label)}.png`,
+  );
+  await session.captureScreenshot(screenshot);
+  const moment = {
+    activeConversation: probe.activeConversation?.npcId ?? null,
+    autonomyLabel: probe.autonomy?.label ?? null,
+    clock: probe.clock,
+    control: controlCandidate
+      ? {
+          actionId: controlCandidate.actionId ?? null,
+          advancesObjective: Boolean(controlCandidate.advancesObjective),
+          selector: controlCandidate.selector,
+          text: controlCandidate.text,
+          waitMinutes: controlCandidate.waitMinutes ?? null,
+        }
+      : null,
+    firstAfternoon: probe.firstAfternoon,
+    label,
+    location: probe.location,
+    screenshot,
+    userQuestion,
+    camera: camera
+      ? {
+          scroll: camera.scroll ?? null,
+          scrollRange: camera.scrollRange ?? null,
+          visibleWorldRect: camera.visibleWorldRect ?? null,
+        }
+      : null,
+  };
+  moments.push(moment);
+  return moment;
+}
+
+async function runInhabitPanelChecks(session) {
+  const checks = [];
+  const panels = [
+    {
+      expectedTab: "people",
+      label: "inhabit-panel-locals",
+      selector: '[data-tab="people"]',
+      text: /Mara|Ada|Rowan/i,
+    },
+    {
+      expectedTab: "journal",
+      label: "inhabit-panel-journal",
+      selector: '[data-tab="journal"]',
+      text: /Journal|Objectives|Field/i,
+    },
+    {
+      expectedTab: "mind",
+      label: "inhabit-panel-notebook",
+      selector: '[data-tab="mind"]',
+      text: /Notebook|Current Belief|Current Plan/i,
+    },
+  ];
+
+  for (const panel of panels) {
+    await session.clickVisibleSelector(panel.selector);
+    await sleep(250);
+    const dom = await session.readDomSnapshot();
+    assert.equal(
+      dom.activeTab,
+      panel.expectedTab,
+      `${panel.label}: expected ${panel.expectedTab} tab to become active.`,
+    );
+    assert.match(
+      dom.bodyText,
+      panel.text,
+      `${panel.label}: expected player-readable panel content.`,
+    );
+    assertCriticalVisualCoherence(panel.label, dom, {
+      expectFocusWindow: true,
+    });
+    const screenshot = path.join(OUTPUT_DIR, `${panel.label}.png`);
+    await session.captureScreenshot(screenshot);
+    checks.push({
+      activeTab: dom.activeTab,
+      bodyTextSample: dom.bodyTextSample,
+      label: panel.label,
+      screenshot,
+    });
+  }
+
+  await session.clickVisibleSelector("[data-close-focus]");
+  await sleep(200);
+  const closedDom = await session.readDomSnapshot();
+  assert.equal(
+    closedDom.activeTab,
+    "actions",
+    "inhabit-panel-close: expected close to return to the World/action view.",
+  );
+
+  return checks;
+}
+
+async function runInhabitCameraCheck(session) {
+  const before = await waitForInhabitCameraProbe(session, "inhabit-camera");
+  const viewport = before.sceneViewportCss;
+  const center = {
+    x: viewport.x + viewport.width * 0.42,
+    y: viewport.y + viewport.height * 0.52,
+  };
+  const drags = [
+    {
+      from: center,
+      label: "west-look",
+      to: { x: center.x - viewport.width * 0.18, y: center.y },
+    },
+    {
+      from: center,
+      label: "east-look",
+      to: { x: center.x + viewport.width * 0.18, y: center.y },
+    },
+    {
+      from: center,
+      label: "north-look",
+      to: { x: center.x, y: center.y - viewport.height * 0.14 },
+    },
+    {
+      from: center,
+      label: "south-look",
+      to: { x: center.x, y: center.y + viewport.height * 0.14 },
+    },
+  ];
+  const observations = [];
+  let previous = before;
+
+  for (const drag of drags) {
+    await session.dispatchMouseDrag(drag.from, drag.to);
+    await sleep(350);
+    const after = await waitForInhabitCameraProbe(
+      session,
+      `inhabit-camera-${drag.label}`,
+    );
+    const delta = inhabitCameraDelta(previous, after);
+    observations.push({
+      delta,
+      label: drag.label,
+      scroll: after.scroll,
+      visibleWorldRect: after.visibleWorldRect,
+    });
+    previous = after;
+  }
+
+  const moved = observations.some(
+    (entry) => Math.abs(entry.delta.x) >= 8 || Math.abs(entry.delta.y) >= 8,
+  );
+  assert.equal(
+    moved,
+    true,
+    `inhabit-camera: player drags did not visibly move the camera. ${JSON.stringify(
+      observations,
+    )}`,
+  );
+
+  const screenshot = path.join(OUTPUT_DIR, "inhabit-camera-after-drags.png");
+  await session.captureScreenshot(screenshot);
+
+  return {
+    before: {
+      scroll: before.scroll,
+      scrollRange: before.scrollRange,
+      visibleWorldRect: before.visibleWorldRect,
+    },
+    observations,
+    screenshot,
+  };
+}
+
+async function clickUntilInhabitMilestone({
+  clickLog,
+  maxClicks,
+  milestone,
+  session,
+}) {
+  for (let attempt = 0; attempt <= maxClicks; attempt += 1) {
+    const probe = await waitForInhabitSettled(
+      session,
+      `${milestone.label}-settled-${attempt}`,
+    );
+    if (milestone.reached(probe)) {
+      return probe;
+    }
+
+    if (attempt === maxClicks) {
+      break;
+    }
+
+    const beforeSignature = playerProbeSignature(probe);
+    let control = await session.readPlayerControlCandidate();
+    let openedSupportForControl = false;
+    if (!control) {
+      const supportToggle = await session.readVisibleElementRect(
+        '[data-toggle-support]',
+      );
+      if (supportToggle) {
+        await session.dispatchMouseClick(
+          supportToggle.rect.centerX,
+          supportToggle.rect.centerY,
+        );
+        openedSupportForControl = true;
+      } else {
+        openedSupportForControl = await session.clickSelector(
+          "[data-toggle-support]",
+        );
+      }
+      if (openedSupportForControl) {
+        openedSupportForControl = true;
+        await sleep(250);
+        control = await session.readPlayerControlCandidate();
+      }
+    }
+    if (
+      !control &&
+      probe.watchMode?.enabled &&
+      !probe.watchMode?.frozen &&
+      probe.autonomy?.autoContinue
+    ) {
+      clickLog.push({
+        beforeAutonomyLabel: probe.autonomy?.label ?? null,
+        beforeClock: probe.clock,
+        beforeLocation: probe.location,
+        kind: "watched-auto-continue",
+        milestone: milestone.label,
+        text: "Watched autoplay carry the beat.",
+      });
+      await waitForInhabitTransition(
+        session,
+        beforeSignature,
+        `${milestone.label}-watch-${attempt + 1}`,
+      );
+      await closeInhabitSupportPanel(session);
+      continue;
+    }
+    if (!control) {
+      const dom = await session.readDomSnapshot().catch(() => null);
+      assert.fail(
+        `${milestone.label}: expected a visible player control before clicking. State: ${JSON.stringify(
+          {
+            activeConversation: probe.activeConversation ?? null,
+            autonomy: probe.autonomy ?? null,
+            clock: probe.clock ?? null,
+            firstAfternoon: probe.firstAfternoon ?? null,
+            location: probe.location ?? null,
+            text: dom?.bodyTextSample ?? null,
+          },
+          null,
+          2,
+        )}`,
+      );
+    }
+    await session.dispatchMouseClick(
+      control.rect.centerX,
+      control.rect.centerY,
+    );
+    clickLog.push({
+      actionId: control.actionId ?? null,
+      advancesObjective: Boolean(control.advancesObjective),
+      beforeAutonomyLabel: probe.autonomy?.label ?? null,
+      beforeClock: probe.clock,
+      beforeLocation: probe.location,
+      kind: "visible-control-click",
+      openedSupportForControl,
+      milestone: milestone.label,
+      text: control.text,
+      waitMinutes: control.waitMinutes ?? null,
+    });
+    await waitForInhabitTransition(
+      session,
+      beforeSignature,
+      `${milestone.label}-click-${attempt + 1}`,
+    );
+    await closeInhabitSupportPanel(session);
+  }
+
+  const finalProbe = await session.readBrowserProbe();
+  assert.fail(
+    `${milestone.label}: player-POV run did not reach milestone after ${maxClicks} visible clicks. Last state: ${JSON.stringify(
+      {
+        activeConversation: finalProbe?.activeConversation ?? null,
+        autonomy: finalProbe?.autonomy ?? null,
+        clock: finalProbe?.clock ?? null,
+        firstAfternoon: finalProbe?.firstAfternoon ?? null,
+        location: finalProbe?.location ?? null,
+      },
+      null,
+      2,
+    )}`,
+  );
+}
+
+async function runInhabitGameplayPass(session) {
+  const url = `${getWebBase()}?new=1&autoplay=1&freezeAutoplay=1&inhabitGameplay=${Date.now()}`;
+  await session.navigate(url);
+  const moments = [];
+  const clickLog = [];
+  const milestonesReached = [];
+  let momentIndex = 0;
+
+  await captureInhabitMoment({
+    index: momentIndex++,
+    label: "first-actionable-screen",
+    moments,
+    session,
+    userQuestion:
+      "As a new player, can I tell who Rowan is, where he is, and what I can do first?",
+  });
+
+  const panelChecks = await runInhabitPanelChecks(session);
+  const cameraCheck = await runInhabitCameraCheck(session);
+  const frozenProbe = await session.readBrowserProbe();
+  const watchUrl = `${getWebBase()}?gameId=${encodeURIComponent(
+    frozenProbe.gameId,
+  )}&autoplay=1&inhabitGameplay=${Date.now()}`;
+  await session.navigate(watchUrl);
+  await waitForInhabitSettled(session, "inhabit-watch-mode-resumed");
+
+  const milestones = [
+    {
+      label: "entered-morrow-house",
+      maxClicks: 3,
+      reached: (probe) => probe.location?.spaceId === "interior:boarding-house",
+      userQuestion: "Does the first visible control take Rowan into the house?",
+    },
+    {
+      label: "mara-conversation",
+      maxClicks: 4,
+      reached: (probe) => probe.activeConversation?.npcId === "npc-mara",
+      userQuestion: "Does the game clearly start the first human interaction?",
+    },
+    {
+      label: "mara-lead-landed",
+      maxClicks: 6,
+      reached: (probe) =>
+        Boolean(probe.firstAfternoon?.hasLeadFieldNote) ||
+        probe.autonomy?.targetLocationId === "tea-house",
+      userQuestion:
+        "Does Mara's conversation produce an understandable lead instead of dead air?",
+    },
+    {
+      label: "arrived-kettle-lamp",
+      maxClicks: 8,
+      reached: (probe) =>
+        probe.location?.id === "tea-house" ||
+        probe.location?.spaceId === "interior:tea-house",
+      userQuestion: "Can I follow Rowan from the house to Kettle & Lamp?",
+    },
+    {
+      label: "ada-conversation",
+      maxClicks: 8,
+      reached: (probe) => probe.activeConversation?.npcId === "npc-ada",
+      userQuestion: "Does the lead resolve into the right person and place?",
+    },
+    {
+      label: "shift-in-motion",
+      maxClicks: 12,
+      reached: (probe) =>
+        ["rush", "counter", "paid"].includes(
+          probe.firstAfternoon?.teaShiftStage,
+        ) || /lunch rush|finish/i.test(probe.autonomy?.label ?? ""),
+      userQuestion:
+        "Does accepting work turn into a visible, readable gameplay beat?",
+    },
+    {
+      label: "first-afternoon-complete",
+      maxClicks: 18,
+      reached: (probe) =>
+        Boolean(probe.firstAfternoon?.completedAt) ||
+        /first afternoon complete/i.test(probe.autonomy?.label ?? ""),
+      userQuestion:
+        "Can a player-driven session reach a natural stopping point without direct sim commands?",
+    },
+  ];
+
+  for (const milestone of milestones) {
+    await clickUntilInhabitMilestone({
+      clickLog,
+      maxClicks: milestone.maxClicks,
+      milestone,
+      session,
+    });
+    milestonesReached.push(milestone.label);
+    await captureInhabitMoment({
+      index: momentIndex++,
+      label: milestone.label,
+      moments,
+      session,
+      userQuestion: milestone.userQuestion,
+    });
+  }
+
+  const visibleControlClickCount = clickLog.filter(
+    (entry) => entry.kind === "visible-control-click",
+  ).length;
+  const watchedAutoContinueCount = clickLog.filter(
+    (entry) => entry.kind === "watched-auto-continue",
+  ).length;
+  assert.ok(
+    visibleControlClickCount >= 4,
+    `Inhabit gameplay pass clicked too few visible controls to count as a player-POV run: ${visibleControlClickCount}.`,
+  );
+  assert.ok(
+    clickLog.length >= 10,
+    `Inhabit gameplay pass had too few player-facing interactions/watch beats: ${clickLog.length}.`,
+  );
+  assert.equal(
+    milestonesReached.at(-1),
+    "first-afternoon-complete",
+    "Inhabit gameplay pass did not end at first-afternoon completion.",
+  );
+  assert.ok(
+    moments.every((moment) => moment.screenshot),
+    "Inhabit gameplay pass must capture screenshot evidence for every player milestone.",
+  );
+
+  const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
+  const report = {
+    cameraCheck,
+    clickCount: clickLog.length,
+    directSimCommandsUsed: false,
+    evidenceStandard:
+      "Progression is driven by visible browser controls, pointer drags, and normal watch-mode beats; sim probes are read only for assertions.",
+    moments,
+    milestonesReached,
+    panelChecks,
+    progressionClicks: clickLog,
+    reportPath,
+    status: "passed",
+    url,
+    visibleControlClickCount,
+    watchUrl,
+    watchedAutoContinueCount,
+  };
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+  return report;
+}
+
 async function createVisualEvidence({ overlayChecks, timeline }) {
   const screenshots = timeline
     .filter((entry) => entry.screenshot)
@@ -2944,6 +3742,7 @@ async function main() {
   const gameRef = { current: game };
   let overlayChecks = [];
   let autoplayObservation = null;
+  let inhabitGameplay = null;
   const session = USE_CHROME_DRIVER
     ? await launchBrowserSession(browserUrl(game.id))
     : null;
@@ -3080,6 +3879,9 @@ async function main() {
       traceRegression("autoplay-observation-start");
       autoplayObservation = await runAutoplayObservation(session);
       traceRegression("autoplay-observation-done");
+      traceRegression("inhabit-gameplay-start");
+      inhabitGameplay = await runInhabitGameplayPass(session);
+      traceRegression("inhabit-gameplay-done");
       assert.deepEqual(
         session.pageErrors,
         [],
@@ -3439,6 +4241,7 @@ async function main() {
       money: game.player.money,
       objective: game.player.objective?.text ?? null,
     },
+    inhabitGameplay,
     npcDiagnostics: movementAudit.npcPatrols,
     outputDir: OUTPUT_DIR,
     overlayChecks,

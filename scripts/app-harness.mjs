@@ -137,18 +137,6 @@ function buildSteps() {
       ]),
     );
 
-    if (!SKIP_BROWSER_PLAYTEST) {
-      allSteps.push(
-        commandStep("rowan browser playtest", "corepack", [
-          "pnpm",
-          "playtest:gameplay:browser",
-        ], {
-          MANY_LIVES_BROWSER_PLAYTEST_DIR: BROWSER_PLAYTEST_DIR,
-        }),
-        inlineStep("rowan browser artifact check", assertRowanBrowserArtifacts),
-      );
-    }
-
     if (!SKIP_VISUAL) {
       allSteps.push(
         commandStep("visual game smoke", "corepack", ["pnpm", "visual:game"], {
@@ -179,6 +167,18 @@ function buildSteps() {
             },
           ]),
         ),
+      );
+    }
+
+    if (!SKIP_BROWSER_PLAYTEST) {
+      allSteps.push(
+        commandStep("inhabit gameplay browser regression", "corepack", [
+          "pnpm",
+          "playtest:inhabit:browser",
+        ], {
+          MANY_LIVES_BROWSER_PLAYTEST_DIR: BROWSER_PLAYTEST_DIR,
+        }),
+        inlineStep("inhabit gameplay artifact check", assertRowanBrowserArtifacts),
       );
     }
   }
@@ -406,6 +406,11 @@ async function assertRowanBrowserArtifacts(logLine) {
       parseJson: true,
     },
     {
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "inhabit-gameplay-report.json"),
+      minBytes: 2_000,
+      parseJson: true,
+    },
+    {
       filePath: path.join(BROWSER_PLAYTEST_DIR, "rowan-gameplay-regression.mp4"),
       minBytes: 100_000,
     },
@@ -508,8 +513,63 @@ async function assertRowanBrowserArtifacts(logLine) {
     }
   }
 
+  const inhabit = summary.inhabitGameplay;
+  if (!inhabit || inhabit.status !== "passed") {
+    throw new Error("Inhabit gameplay browser pass did not report a passed status.");
+  }
+  if (inhabit.directSimCommandsUsed !== false) {
+    throw new Error("Inhabit gameplay browser pass must not use direct sim commands.");
+  }
+  if ((inhabit.progressionClicks ?? []).length < 10) {
+    throw new Error(
+      `Inhabit gameplay pass had too few player-facing progression beats: ${
+        inhabit.progressionClicks?.length ?? 0
+      }.`,
+    );
+  }
+  if ((inhabit.visibleControlClickCount ?? 0) < 4) {
+    throw new Error(
+      `Inhabit gameplay pass clicked too few visible player controls: ${
+        inhabit.visibleControlClickCount ?? 0
+      }.`,
+    );
+  }
+
+  const inhabitMomentLabels = new Set(
+    (inhabit.moments ?? []).map((moment) => moment.label),
+  );
+  for (const label of [
+    "first-actionable-screen",
+    "mara-conversation",
+    "ada-conversation",
+    "shift-in-motion",
+    "first-afternoon-complete",
+  ]) {
+    if (!inhabitMomentLabels.has(label)) {
+      throw new Error(`Inhabit gameplay pass missing player milestone: ${label}.`);
+    }
+  }
+
+  await assertArtifacts(
+    logLine,
+    [
+      ...(inhabit.moments ?? []).map((moment) => ({
+        filePath: moment.screenshot,
+        minBytes: 120_000,
+      })),
+      ...(inhabit.panelChecks ?? []).map((check) => ({
+        filePath: check.screenshot,
+        minBytes: 120_000,
+      })),
+      {
+        filePath: inhabit.cameraCheck?.screenshot,
+        minBytes: 120_000,
+      },
+    ].filter((artifact) => artifact.filePath),
+  );
+
   logLine(
-    `[many-lives:harness] rowan browser summary ok: ${summary.screenshotCount} gameplay screenshots, ${overlayLabels.size} overlay checks, recording ${summary.evidence.recordingPath}.`,
+    `[many-lives:harness] rowan browser summary ok: ${summary.screenshotCount} gameplay screenshots, ${overlayLabels.size} overlay checks, ${inhabit.visibleControlClickCount} visible player clicks, ${inhabit.watchedAutoContinueCount ?? 0} watch beats, recording ${summary.evidence.recordingPath}.`,
   );
 }
 

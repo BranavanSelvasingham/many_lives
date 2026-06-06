@@ -152,6 +152,7 @@ Use this checklist when the user asks whether the app is playable, ready, or dep
 - Resume saved run and confirm the game id matches storage.
 - Start new from the saved-run prompt and confirm the new id differs.
 - Watch autoplay for 3 to 5 minutes or until the first stopping point.
+- Run the final player-POV browser regression: the inhabit gameplay pass must progress from a fresh browser session by visible clicks and pointer drags, not direct sim commands.
 - Confirm Rowan's objective decisions come from current world state and available legal actions, not just the next hardcoded objective trail item.
 - Pan to each map edge and confirm the user can tell when the edge is reached.
 - Check desktop, tablet, and phone-sized layouts.
@@ -169,7 +170,13 @@ The app-level harness is the single release-readiness command for this street mi
 corepack pnpm harness
 ```
 
-It runs the sim lint pass, web lint pass, sim tests, repo Node tests, web fallback test, production Next build, public secret exposure scan, Rowan sim playtest, Rowan browser regression, and visual game smoke. `corepack pnpm test` runs the same harness with the CI profile.
+It runs the sim lint pass, web lint pass, sim tests, repo Node tests, web fallback test, production Next build, public secret exposure scan, Rowan sim playtest, visual game smoke, and a final browser gameplay regression. `corepack pnpm test` runs the same harness with the CI profile.
+
+The browser regression includes a final inhabit gameplay pass. That pass opens a fresh browser session, uses visible controls, pointer drags, and normal watch-mode beats to act like a player, checks Locals/Journal/Notebook, verifies camera drag response, and reaches first-afternoon completion without direct sim commands. Use it directly with:
+
+```bash
+corepack pnpm playtest:inhabit:browser
+```
 
 Harness artifacts are written outside the repo by default:
 
