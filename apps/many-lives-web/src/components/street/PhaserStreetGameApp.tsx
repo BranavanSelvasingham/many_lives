@@ -2159,6 +2159,7 @@ async function createRuntime(options: {
       const previousGameId = runtimeState.snapshot.game?.id ?? null;
       const nextGameId = nextSnapshot.game?.id ?? null;
       const gameChanged = previousGameId !== nextGameId;
+      const previousActiveSpaceId = runtimeState.indices.activeSpaceId;
       runtimeState.snapshot = nextSnapshot;
       const nextMapKey = createMapKey(nextSnapshot.game);
 
@@ -2171,7 +2172,10 @@ async function createRuntime(options: {
         }
       }
 
-      if (gameChanged) {
+      if (
+        gameChanged ||
+        previousActiveSpaceId !== runtimeState.indices.activeSpaceId
+      ) {
         resetRuntimeCameraForGame(runtimeState, runtimeState.objects);
       }
 
@@ -3624,7 +3628,10 @@ function renderDynamicScene(
     getOverlaySceneViewport(runtimeState),
     now,
   );
-  syncBrowserCameraProbe(objects.overlayDom, runtimeState, camera, sceneViewport);
+  syncBrowserCameraProbe(objects.overlayDom, runtimeState, camera, sceneViewport, {
+    cameraFollowPixel,
+    playerPixel,
+  });
   syncBrowserMovementProbe(objects.overlayDom, runtimeState);
 }
 
@@ -6492,6 +6499,10 @@ function syncBrowserCameraProbe(
   runtimeState: RuntimeState,
   camera: PhaserType.Cameras.Scene2D.Camera,
   sceneViewport: SceneViewport,
+  points?: {
+    cameraFollowPixel: Point;
+    playerPixel: Point;
+  },
 ) {
   const probe = root.querySelector<HTMLScriptElement>(
     "#ml-browser-camera-probe",
@@ -6526,6 +6537,18 @@ function syncBrowserCameraProbe(
       y: Number(runtimeState.cameraOffset.y.toFixed(2)),
     },
     dragging: runtimeState.cameraGesture?.dragging === true,
+    followWorldPoint: points
+      ? {
+          x: Number(points.cameraFollowPixel.x.toFixed(2)),
+          y: Number(points.cameraFollowPixel.y.toFixed(2)),
+        }
+      : null,
+    playerWorldPoint: points
+      ? {
+          x: Number(points.playerPixel.x.toFixed(2)),
+          y: Number(points.playerPixel.y.toFixed(2)),
+        }
+      : null,
     sceneViewport: {
       height: Math.round(sceneViewport.height),
       width: Math.round(sceneViewport.width),
@@ -6732,8 +6755,8 @@ function createRuntimeIndices(snapshot: StreetAppSnapshot): RuntimeIndices {
     };
   }
 
-  const visualScene = getPlayableVisualScene(game);
   const activeSpace = getActiveInteriorSpace(game);
+  const visualScene = activeSpace ? null : getPlayableVisualScene(game);
   const navigationSurface = buildActiveNavigationSurface(game, visualScene);
 
   return {
@@ -8051,16 +8074,6 @@ function drawMapAgencyOverlay(
     y: cue.targetWorld.y - (cue.targetIsNpc ? 4 : 0),
   };
 
-  if (cue.targetLocationId && !cue.targetIsNpc && distance > CELL * 1.1) {
-    const footprint = getRuntimeLocationHighlightRect(
-      runtimeState.indices,
-      cue.targetLocationId,
-    );
-    if (footprint) {
-      drawFootprintHalo(layer, footprint, color, 0.035, 0.14);
-    }
-  }
-
   if (distance > CELL * 1.05) {
     drawMapAgencyPath(
       layer,
@@ -8080,6 +8093,35 @@ function drawMapAgencyOverlay(
   layer.strokeCircle(targetPoint.x, targetPoint.y, ringRadius);
   layer.lineStyle(1.4, 0xfff2cf, 0.26 + pulse * 0.12);
   layer.strokeCircle(targetPoint.x, targetPoint.y, ringRadius * 0.62);
+
+  if (cue.targetLocationId && !cue.targetIsNpc && distance > CELL * 1.1) {
+    drawMapAgencyLocationTicks(layer, targetPoint, color, pulse);
+  }
+}
+
+function drawMapAgencyLocationTicks(
+  layer: PhaserType.GameObjects.Graphics,
+  targetPoint: Point,
+  color: number,
+  pulse: number,
+) {
+  const tickRadius = CELL * (0.74 + pulse * 0.08);
+  const tickLength = CELL * 0.18;
+  const alpha = 0.28 + pulse * 0.12;
+  const corners = [
+    { x: -1, y: -1 },
+    { x: 1, y: -1 },
+    { x: -1, y: 1 },
+    { x: 1, y: 1 },
+  ];
+
+  layer.lineStyle(2, color, alpha);
+  for (const corner of corners) {
+    const x = targetPoint.x + corner.x * tickRadius;
+    const y = targetPoint.y + corner.y * tickRadius;
+    layer.lineBetween(x, y, x - corner.x * tickLength, y);
+    layer.lineBetween(x, y, x, y - corner.y * tickLength);
+  }
 }
 
 function drawMapAgencyPath(
@@ -8908,6 +8950,10 @@ function playerTileToWorld(
   indices: RuntimeIndices,
   game?: StreetGameState,
 ) {
+  if (indices.activeSpace) {
+    return mapTileToWorldCenter(point.x, point.y);
+  }
+
   if (game) {
     const authoredPoint = resolveAuthoredLocationWorldPoint({
       conversationLocationId: game.activeConversation?.locationId,

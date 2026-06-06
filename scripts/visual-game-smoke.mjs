@@ -73,6 +73,14 @@ const VIEWPORTS = [
   { height: 900, name: "phone-boundary", width: 560 },
   { height: 844, name: "mobile", width: 390 },
 ];
+const INTERIOR_CAMERA_VIEWPORT = {
+  deviceScaleFactor: 2,
+  height: 998,
+  minimumUsefulBytesRatio: 0.04,
+  name: "interior-camera",
+  width: 810,
+};
+const INTERIOR_CAMERA_MIN_PAN_DELTA = 20;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -966,11 +974,12 @@ function assertPngScreenshot(buffer, viewport) {
   const deviceScaleFactor = viewport.deviceScaleFactor ?? 1;
   const expectedWidth = Math.round(viewport.width * deviceScaleFactor);
   const expectedHeight = Math.round(viewport.height * deviceScaleFactor);
+  const minimumUsefulBytesRatio = viewport.minimumUsefulBytesRatio ?? 0.08;
   assert.equal(width, expectedWidth, `${viewport.name} screenshot width mismatch.`);
   assert.equal(height, expectedHeight, `${viewport.name} screenshot height mismatch.`);
   const minimumUsefulBytes = Math.max(
     40_000,
-    expectedWidth * expectedHeight * 0.08,
+    expectedWidth * expectedHeight * minimumUsefulBytesRatio,
   );
   assert.ok(
     buffer.length > minimumUsefulBytes,
@@ -1193,15 +1202,47 @@ function cameraProbeReachedEdge(probe, edge) {
   return false;
 }
 
-async function settleCameraAtEdge(session, edge, currentProbe) {
+function cameraProbeInRange(probe, tolerance = 0.5) {
+  return Boolean(
+    probe?.scroll &&
+      probe?.scrollRange &&
+      probe.scroll.x >= probe.scrollRange.minX - tolerance &&
+      probe.scroll.x <= probe.scrollRange.maxX + tolerance &&
+      probe.scroll.y >= probe.scrollRange.minY - tolerance &&
+      probe.scroll.y <= probe.scrollRange.maxY + tolerance,
+  );
+}
+
+function cameraScrollDistance(first, second) {
+  return Math.hypot(
+    (second?.scroll?.x ?? 0) - (first?.scroll?.x ?? 0),
+    (second?.scroll?.y ?? 0) - (first?.scroll?.y ?? 0),
+  );
+}
+
+function cameraPointDistance(first, second) {
+  return Math.hypot(
+    (second?.x ?? 0) - (first?.x ?? 0),
+    (second?.y ?? 0) - (first?.y ?? 0),
+  );
+}
+
+async function settleCameraAtEdge(
+  session,
+  edge,
+  currentProbe,
+  options = {},
+) {
+  const attempts = options.attempts ?? 4;
+  const settleMs = options.settleMs ?? 40;
   let probe = currentProbe;
   if (cameraProbeReachedEdge(probe, edge)) {
     return probe;
   }
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     await session.panCameraToEdge(edge);
-    await sleep(40);
+    await sleep(settleMs);
     probe = await session.readCameraProbe();
     if (cameraProbeReachedEdge(probe, edge)) {
       return probe;
@@ -1757,6 +1798,170 @@ async function runStoredGameChoiceCheck(session) {
   };
 }
 
+async function createInteriorCameraGame() {
+  const created = await fetchJson(`${activeWebBase}/sim/game/new`, {
+    body: "{}",
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const gameId = created?.game?.id;
+  assert.ok(gameId, "Interior camera check could not create a game id.");
+
+  const entered = await fetchJson(`${activeWebBase}/sim/game/${gameId}/command`, {
+    body: JSON.stringify({ actionId: "enter:boarding-house", type: "act" }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  assert.equal(
+    entered?.game?.activeSpaceId,
+    "interior:boarding-house",
+    "Interior camera check could not enter Morrow House.",
+  );
+
+  return gameId;
+}
+
+async function waitForInteriorCameraProbe(session) {
+  return waitFor(
+    async () => {
+      try {
+        const probe = await session.readCameraProbe();
+        return probe?.activeSpaceKind === "interior" ? probe : false;
+      } catch {
+        return false;
+      }
+    },
+    APP_READY_TIMEOUT_MS,
+    "Timed out waiting for an interior camera probe.",
+  );
+}
+
+async function runInteriorCameraCheck(session) {
+  const gameId = await createInteriorCameraGame();
+  await session.setViewport(INTERIOR_CAMERA_VIEWPORT);
+  await session.navigate(
+    `${activeWebBase}/?autoplay=1&freezeAutoplay=1&readyCheck=interior-camera-${Date.now()}&gameId=${gameId}`,
+  );
+  await session.waitForAppReady();
+  const initial = await waitForInteriorCameraProbe(session);
+  await sleep(800);
+  const settled = await session.readCameraProbe();
+  await sleep(800);
+  const settledAgain = await session.readCameraProbe();
+
+  assert.equal(
+    settled.activeSpaceId,
+    "interior:boarding-house",
+    "Interior camera check loaded the wrong active space.",
+  );
+  assert.ok(
+    cameraProbeInRange(settled),
+    `Interior camera settled outside its range: scroll ${JSON.stringify(
+      settled.scroll,
+    )}, range ${JSON.stringify(settled.scrollRange)}.`,
+  );
+  assert.ok(
+    cameraProbeInRange(settledAgain),
+    `Interior camera drifted outside its range: scroll ${JSON.stringify(
+      settledAgain.scroll,
+    )}, range ${JSON.stringify(settledAgain.scrollRange)}.`,
+  );
+  assert.ok(
+    cameraScrollDistance(settled, settledAgain) <= 2,
+    `Interior camera drifted after settling by ${cameraScrollDistance(
+      settled,
+      settledAgain,
+    ).toFixed(1)} world pixels.`,
+  );
+  assert.ok(
+    cameraPointDistance(settled.playerWorldPoint, settled.followWorldPoint) <= 100,
+    `Interior camera follow target jumped away from Rowan's room coordinate: player ${JSON.stringify(
+      settled.playerWorldPoint,
+    )}, follow ${JSON.stringify(settled.followWorldPoint)}.`,
+  );
+
+  const screenshotPath = path.join(OUTPUT_DIR, "interior-camera.png");
+  await session.captureScreenshot(screenshotPath);
+  const screenshot = await readFile(screenshotPath);
+  assertPngScreenshot(screenshot, INTERIOR_CAMERA_VIEWPORT);
+
+  const interiorSettleOptions = { attempts: 8, settleMs: 90 };
+  const eastEdge = await settleCameraAtEdge(
+    session,
+    "east",
+    settledAgain,
+    interiorSettleOptions,
+  );
+  assertSameCameraSpace(INTERIOR_CAMERA_VIEWPORT, settledAgain, eastEdge, "interior east pan");
+  assert.ok(cameraProbeInRange(eastEdge), "Interior east pan left the camera out of range.");
+  assert.ok(
+    eastEdge.scroll.x >= settledAgain.scroll.x + INTERIOR_CAMERA_MIN_PAN_DELTA ||
+      cameraProbeReachedEdge(eastEdge, "east"),
+    `Interior east pan did not move enough: before ${settledAgain.scroll.x.toFixed(
+      1,
+    )}, after ${eastEdge.scroll.x.toFixed(1)}.`,
+  );
+
+  const westEdge = await settleCameraAtEdge(
+    session,
+    "west",
+    eastEdge,
+    interiorSettleOptions,
+  );
+  assertSameCameraSpace(INTERIOR_CAMERA_VIEWPORT, eastEdge, westEdge, "interior west pan");
+  assert.ok(cameraProbeInRange(westEdge), "Interior west pan left the camera out of range.");
+  assert.ok(
+    westEdge.scroll.x <= eastEdge.scroll.x - INTERIOR_CAMERA_MIN_PAN_DELTA ||
+      cameraProbeReachedEdge(westEdge, "west"),
+    `Interior west pan did not move enough: east ${eastEdge.scroll.x.toFixed(
+      1,
+    )}, west ${westEdge.scroll.x.toFixed(1)}.`,
+  );
+
+  const southEdge = await settleCameraAtEdge(
+    session,
+    "south",
+    westEdge,
+    interiorSettleOptions,
+  );
+  assertSameCameraSpace(INTERIOR_CAMERA_VIEWPORT, westEdge, southEdge, "interior south pan");
+  assert.ok(cameraProbeInRange(southEdge), "Interior south pan left the camera out of range.");
+  assert.ok(
+    southEdge.scroll.y >= westEdge.scroll.y + INTERIOR_CAMERA_MIN_PAN_DELTA ||
+      cameraProbeReachedEdge(southEdge, "south"),
+    `Interior south pan did not move enough: before ${westEdge.scroll.y.toFixed(
+      1,
+    )}, after ${southEdge.scroll.y.toFixed(1)}.`,
+  );
+
+  const northEdge = await settleCameraAtEdge(
+    session,
+    "north",
+    southEdge,
+    interiorSettleOptions,
+  );
+  assertSameCameraSpace(INTERIOR_CAMERA_VIEWPORT, southEdge, northEdge, "interior north pan");
+  assert.ok(cameraProbeInRange(northEdge), "Interior north pan left the camera out of range.");
+  assert.ok(
+    northEdge.scroll.y <= southEdge.scroll.y - INTERIOR_CAMERA_MIN_PAN_DELTA ||
+      cameraProbeReachedEdge(northEdge, "north"),
+    `Interior north pan did not move enough: south ${southEdge.scroll.y.toFixed(
+      1,
+    )}, north ${northEdge.scroll.y.toFixed(1)}.`,
+  );
+
+  return {
+    eastEdge,
+    gameId,
+    initial,
+    northEdge,
+    screenshotPath,
+    settled,
+    southEdge,
+    westEdge,
+  };
+}
+
 async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
   await assertAmbientScaleGuard();
@@ -1766,6 +1971,7 @@ async function main() {
   const devtoolsPort = await findFreePort();
   const session = await launchBrowser(devtoolsPort);
   const results = [];
+  let interiorCamera = null;
   let storedGameChoice = null;
   const summaryPath = path.join(OUTPUT_DIR, "summary.json");
   let visualError = null;
@@ -1782,6 +1988,9 @@ async function main() {
     process.stdout.write("[many-lives] Checking stored-run prompt behavior...\n");
     storedGameChoice = await runStoredGameChoiceCheck(session);
     process.stdout.write("[many-lives] Finished stored-run prompt behavior.\n");
+    process.stdout.write("[many-lives] Checking interior camera behavior...\n");
+    interiorCamera = await runInteriorCameraCheck(session);
+    process.stdout.write("[many-lives] Finished interior camera behavior.\n");
 
     assert.deepEqual(
       session.pageErrors,
@@ -1794,6 +2003,7 @@ async function main() {
       `${JSON.stringify(
         {
           outputDir: OUTPUT_DIR,
+          interiorCamera,
           results,
           storedGameChoice,
           webBase: activeWebBase,
@@ -1815,6 +2025,7 @@ async function main() {
         `[many-lives] Mobile: ${path.join(OUTPUT_DIR, "mobile.png")}`,
         `[many-lives] Mobile after pan: ${path.join(OUTPUT_DIR, "mobile-after-pan.png")}`,
         `[many-lives] Mobile after west pan: ${path.join(OUTPUT_DIR, "mobile-after-pan-west.png")}`,
+        `[many-lives] Interior camera: ${path.join(OUTPUT_DIR, "interior-camera.png")}`,
         `[many-lives] Summary: ${summaryPath}`,
         "",
       ].join("\n"),

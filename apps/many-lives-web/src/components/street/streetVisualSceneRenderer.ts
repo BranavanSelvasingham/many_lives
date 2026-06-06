@@ -38,6 +38,7 @@ export function renderAuthoredVisualScene(
     drawV2LandmarkStructureArt(objects, visualScene);
     drawLandmarkModules(objects, visualScene);
     drawPropClusters(objects.structureDetailLayer, visualScene);
+    drawV2AtmosphereAndLighting(objects.structureDetailLayer, visualScene);
     return;
   }
 
@@ -95,8 +96,251 @@ function drawV2LandmarkGroundArt(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  void layer;
-  void visualScene;
+  drawV2LandmarkCastShadows(layer, visualScene);
+  drawV2SurfaceAestheticPass(layer, visualScene);
+  drawV2SquareGroundAccents(layer, visualScene);
+  drawV2DockGroundWear(layer, visualScene);
+}
+
+function drawV2LandmarkCastShadows(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  for (const landmark of visualScene.landmarks) {
+    const { rect } = landmark;
+    const shadowAlpha =
+      landmark.style === "square"
+        ? 0.06
+        : landmark.style === "dock"
+          ? 0.1
+          : landmark.style === "courtyard"
+            ? 0.035
+            : 0.16;
+    const offsetX =
+      landmark.style === "dock" ? 10 : landmark.style === "courtyard" ? 12 : 18;
+    const offsetY =
+      landmark.style === "dock" ? 13 : landmark.style === "courtyard" ? 14 : 24;
+
+    layer.fillStyle(0x071116, shadowAlpha);
+    layer.fillRoundedRect(
+      rect.x + offsetX,
+      rect.y + offsetY,
+      rect.width,
+      rect.height,
+      rect.radius ?? 20,
+    );
+
+    layer.fillStyle(0x061015, shadowAlpha * 0.42);
+    layer.fillEllipse(
+      rect.x + rect.width / 2 + offsetX * 1.5,
+      rect.y + rect.height + offsetY * 0.82,
+      rect.width * 0.92,
+      Math.max(24, rect.height * 0.15),
+    );
+  }
+}
+
+function forEachSurfaceDraftCell(
+  visualScene: VisualScene,
+  callback: (cell: {
+    col: number;
+    height: number;
+    kind: VisualSurfaceMaterialKind;
+    row: number;
+    width: number;
+    x: number;
+    y: number;
+  }) => void,
+) {
+  const surface = visualScene.surfaceDraft;
+  if (!surface) {
+    return;
+  }
+
+  const cols = Math.max(1, Math.ceil(visualScene.width / surface.cellSize));
+  const rows = Math.max(1, Math.ceil(visualScene.height / surface.cellSize));
+  const overrideMap = new Map(
+    surface.overrides.map((cell) => [`${cell.col}:${cell.row}`, cell.kind]),
+  );
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const kind = overrideMap.get(`${col}:${row}`) ?? surface.baseKind;
+      const x = col * surface.cellSize;
+      const y = row * surface.cellSize;
+      const width = Math.min(surface.cellSize, visualScene.width - x);
+      const height = Math.min(surface.cellSize, visualScene.height - y);
+      const terrainKind = getTerrainDraftKindAtPoint(
+        visualScene,
+        x + width / 2,
+        y + height / 2,
+      );
+
+      if (terrainKind === "water") {
+        continue;
+      }
+
+      callback({ col, height, kind, row, width, x, y });
+    }
+  }
+}
+
+function drawV2SurfaceAestheticPass(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  forEachSurfaceDraftCell(visualScene, (cell) => {
+    const seed = cell.col * 29 + cell.row * 37;
+    const centerX = cell.x + cell.width / 2;
+    const centerY = cell.y + cell.height / 2;
+
+    if (
+      cell.kind === "paved_asphalt" ||
+      cell.kind === "tiled_stone_road" ||
+      cell.kind === "walkway"
+    ) {
+      const warmLine =
+        cell.kind === "walkway"
+          ? 0xf7ecd7
+          : cell.kind === "tiled_stone_road"
+            ? 0xe5d7bb
+            : 0xd2c8b5;
+      const coolJoint =
+        cell.kind === "paved_asphalt"
+          ? 0x5a6466
+          : cell.kind === "walkway"
+            ? 0xbca98a
+            : 0xa99678;
+
+      layer.lineStyle(1.15, warmLine, 0.14);
+      layer.lineBetween(
+        cell.x + 6,
+        cell.y + 8 + (seed % 9),
+        cell.x + cell.width - 7,
+        cell.y + 7 + ((seed + 3) % 9),
+      );
+      layer.lineStyle(1, coolJoint, 0.16);
+      layer.lineBetween(
+        cell.x + 8 + (seed % 7),
+        cell.y + cell.height - 8,
+        cell.x + cell.width - 8,
+        cell.y + cell.height - 10 + ((seed + 5) % 6),
+      );
+
+      if (seed % 3 === 0) {
+        layer.fillStyle(0x6f5e49, 0.055);
+        layer.fillEllipse(
+          centerX + Math.sin(seed) * 8,
+          centerY + Math.cos(seed * 0.7) * 8,
+          28 + (seed % 18),
+          4.5,
+        );
+      }
+
+      if (cell.y > visualScene.height * 0.74 || cell.x > visualScene.width - 320) {
+        layer.fillStyle(0x315e66, 0.07);
+        layer.fillEllipse(
+          centerX + Math.sin(seed * 0.4) * 12,
+          centerY + Math.cos(seed * 0.2) * 10,
+          36 + (seed % 22),
+          8,
+        );
+        layer.lineStyle(1.4, 0xa6d6d2, 0.08);
+        layer.lineBetween(
+          cell.x + 8,
+          centerY + Math.sin(seed) * 5,
+          cell.x + cell.width - 10,
+          centerY - 2 + Math.cos(seed) * 4,
+        );
+      }
+    }
+
+    if (cell.kind === "trees" || cell.kind === "bushes") {
+      layer.fillStyle(0x071116, cell.kind === "trees" ? 0.12 : 0.08);
+      layer.fillEllipse(centerX + 8, centerY + 12, cell.width * 0.72, 15);
+    }
+
+    if (cell.kind === "grass") {
+      layer.lineStyle(1.2, 0xb7ce8e, 0.12);
+      layer.lineBetween(
+        cell.x + 7,
+        centerY - 4 + (seed % 8),
+        cell.x + cell.width - 8,
+        centerY - 8 + ((seed + 3) % 10),
+      );
+    }
+  });
+}
+
+function drawV2SquareGroundAccents(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const square = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "market-square",
+  );
+  if (!square) {
+    return;
+  }
+
+  const { rect } = square;
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+
+  layer.lineStyle(2, 0xf4ead0, 0.22);
+  layer.strokeRoundedRect(
+    rect.x + 12,
+    rect.y + 12,
+    rect.width - 24,
+    rect.height - 24,
+    Math.max(12, (rect.radius ?? 24) - 8),
+  );
+  layer.lineStyle(1.2, 0x9d8763, 0.18);
+  for (let inset = 34; inset < Math.min(rect.width, rect.height) / 2; inset += 26) {
+    layer.strokeRoundedRect(
+      rect.x + inset,
+      rect.y + inset * 0.52,
+      rect.width - inset * 2,
+      rect.height - inset,
+      14,
+    );
+  }
+
+  layer.fillStyle(0xfff3cf, 0.08);
+  layer.fillEllipse(centerX - 16, centerY - 10, rect.width * 0.72, 28);
+}
+
+function drawV2DockGroundWear(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const yard = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "freight-yard",
+  );
+  const pier = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "moss-pier",
+  );
+
+  if (yard) {
+    const { rect } = yard;
+    layer.lineStyle(3, 0x4d463c, 0.14);
+    for (let index = 0; index < 5; index += 1) {
+      const y = rect.y + rect.height + 28 + index * 10;
+      layer.lineBetween(rect.x + 34, y, rect.x + rect.width - 36, y + 18);
+    }
+    layer.fillStyle(0x6e5136, 0.1);
+    layer.fillEllipse(rect.x + rect.width * 0.52, rect.y + rect.height + 44, 156, 18);
+  }
+
+  if (pier) {
+    const { rect } = pier;
+    layer.fillStyle(0x2e5e63, 0.09);
+    layer.fillRoundedRect(rect.x - 18, rect.y - 18, rect.width + 36, 26, 8);
+    layer.lineStyle(2, 0xefe0b8, 0.2);
+    for (let x = rect.x + 22; x < rect.x + rect.width - 18; x += 54) {
+      layer.lineBetween(x, rect.y - 8, x + 18, rect.y - 4);
+    }
+  }
 }
 
 function drawV2LandmarkStructureArt(
@@ -805,7 +1049,7 @@ function drawSurfaceZones(
         );
         break;
       case "courtyard_ground":
-        layer.fillStyle(0x657855, 0.98);
+        layer.fillStyle(0x7d9164, 0.34);
         layer.fillRoundedRect(
           rect.x,
           rect.y,
@@ -813,7 +1057,15 @@ function drawSurfaceZones(
           rect.height,
           rect.radius ?? 18,
         );
-        layer.fillStyle(0x7d8c6b, 0.28);
+        layer.lineStyle(2, 0x4f6146, 0.2);
+        layer.strokeRoundedRect(
+          rect.x + 2,
+          rect.y + 2,
+          rect.width - 4,
+          rect.height - 4,
+          rect.radius ?? 18,
+        );
+        layer.fillStyle(0x97a979, 0.11);
         layer.fillRoundedRect(
           rect.x + 16,
           rect.y + 16,
@@ -821,7 +1073,7 @@ function drawSurfaceZones(
           rect.height - 32,
           16,
         );
-        layer.fillStyle(0xbba985, 0.32);
+        layer.fillStyle(0xd3c49f, 0.14);
         layer.fillRoundedRect(
           rect.x + rect.width / 2 - 28,
           rect.y + 52,
@@ -829,6 +1081,10 @@ function drawSurfaceZones(
           rect.height - 110,
           10,
         );
+        layer.lineStyle(1.4, 0xd6e3ac, 0.1);
+        for (let y = rect.y + 24; y < rect.y + rect.height - 18; y += 22) {
+          layer.lineBetween(rect.x + 24, y, rect.x + rect.width - 28, y - 8);
+        }
         break;
       case "dock_apron":
         layer.fillStyle(0xb69f7a, 0.98);
@@ -975,6 +1231,272 @@ function buildTerrainDraftWaterSegments(grid: TerrainDraftGrid) {
   return segments;
 }
 
+function drawTerrainDraftWaterReflections(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+  grid: TerrainDraftGrid,
+) {
+  for (let row = 0; row < grid.rows; row += 1) {
+    for (let col = 0; col < grid.cols; col += 1) {
+      if (grid.kinds[row][col] !== "water") {
+        continue;
+      }
+
+      const rect = terrainDraftCellRect(visualScene, grid.cellSize, col, row);
+      const top = row > 0 ? grid.kinds[row - 1][col] : null;
+      const bottom = row < grid.rows - 1 ? grid.kinds[row + 1][col] : null;
+      const left = col > 0 ? grid.kinds[row][col - 1] : null;
+      const right = col < grid.cols - 1 ? grid.kinds[row][col + 1] : null;
+
+      if (top === "land") {
+        layer.fillStyle(0x071c25, 0.24);
+        layer.fillRect(rect.x, rect.y, rect.width, 7);
+        layer.fillStyle(0xd8c39a, 0.18);
+        layer.fillRoundedRect(rect.x + 7, rect.y + 5, rect.width - 14, 6, 3);
+        layer.fillStyle(0xf5efd7, 0.08);
+        layer.fillRoundedRect(rect.x + 12, rect.y + 15, rect.width - 24, 4, 2);
+        layer.fillStyle(0xf2d7a3, 0.075);
+        for (let x = rect.x + 10; x < rect.x + rect.width - 8; x += 26) {
+          const length = 16 + ((col * 7 + row * 11 + Math.round(x)) % 14);
+          layer.fillRoundedRect(x, rect.y + 10, 6, length, 3);
+        }
+      }
+
+      if (bottom === "land") {
+        layer.fillStyle(0x061821, 0.22);
+        layer.fillRect(rect.x, rect.y + rect.height - 7, rect.width, 7);
+        layer.fillStyle(0xcba677, 0.16);
+        layer.fillRoundedRect(
+          rect.x + 7,
+          rect.y + rect.height - 12,
+          rect.width - 14,
+          6,
+          3,
+        );
+        layer.fillStyle(0xf1d19a, 0.065);
+        for (let x = rect.x + 12; x < rect.x + rect.width - 8; x += 28) {
+          const length = 13 + ((col * 5 + row * 13 + Math.round(x)) % 12);
+          layer.fillRoundedRect(x, rect.y + rect.height - length - 10, 6, length, 3);
+        }
+      }
+
+      if (left === "land") {
+        layer.fillStyle(0x061821, 0.2);
+        layer.fillRect(rect.x, rect.y, 7, rect.height);
+        layer.fillStyle(0xd8c39a, 0.14);
+        layer.fillRoundedRect(rect.x + 5, rect.y + 8, 5, rect.height - 16, 3);
+        layer.fillStyle(0xf2d7a3, 0.07);
+        for (let y = rect.y + 12; y < rect.y + rect.height - 8; y += 22) {
+          layer.fillRoundedRect(rect.x + 12, y, 13, 5, 3);
+        }
+      }
+
+      if (right === "land") {
+        layer.fillStyle(0x061821, 0.2);
+        layer.fillRect(rect.x + rect.width - 7, rect.y, 7, rect.height);
+        layer.fillStyle(0xd8c39a, 0.14);
+        layer.fillRoundedRect(
+          rect.x + rect.width - 10,
+          rect.y + 8,
+          5,
+          rect.height - 16,
+          3,
+        );
+        layer.fillStyle(0xf2d7a3, 0.07);
+        for (let y = rect.y + 12; y < rect.y + rect.height - 8; y += 22) {
+          layer.fillRoundedRect(rect.x + rect.width - 25, y, 13, 5, 3);
+        }
+      }
+    }
+  }
+}
+
+function drawWaterPaintDabs(
+  layer: PhaserType.GameObjects.Graphics,
+  segment: TerrainDraftWaterSegment,
+  height: number,
+  palette: {
+    deep: number;
+    glow: number;
+    jade: number;
+    stone: number;
+  },
+) {
+  const seed = segment.row * 37 + Math.round(segment.x / 8);
+
+  for (let index = 0; index < 4; index += 1) {
+    const ratio = (index + 0.55) / 4.6;
+    const x =
+      segment.x +
+      segment.width * ratio +
+      Math.sin(seed * 0.31 + index * 1.7) * 22;
+    const y =
+      segment.y +
+      height * (0.2 + ((seed + index * 17) % 53) / 88) +
+      Math.sin(seed * 0.19 + index) * 3;
+    const width = Math.min(
+      segment.width * (0.18 + ((seed + index * 11) % 10) / 52),
+      154,
+    );
+    const color =
+      index % 3 === 0
+        ? palette.jade
+        : index % 3 === 1
+          ? palette.glow
+          : palette.stone;
+
+    layer.fillStyle(color, 0.07 + (index % 2) * 0.025);
+    layer.fillEllipse(x, y, Math.max(width, 38), 8 + (index % 2) * 4);
+    layer.fillStyle(palette.deep, 0.045);
+    layer.fillEllipse(
+      x + Math.sin(seed + index) * 8,
+      y + 8,
+      Math.max(width * 0.72, 30),
+      5,
+    );
+  }
+}
+
+function drawTerrainDraftWaterBase(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+  grid: TerrainDraftGrid,
+) {
+  const waterSegments = buildTerrainDraftWaterSegments(grid);
+
+  for (const segment of waterSegments) {
+    const height = Math.min(segment.height, visualScene.height - segment.y);
+    if (height <= 0 || segment.width <= 0) {
+      continue;
+    }
+
+    const depth = Math.max(
+      0,
+      Math.min((segment.y + height / 2) / visualScene.height, 1),
+    );
+    const rowPulse = (Math.sin(segment.row * 0.74) + 1) / 2;
+    const harborBase = blendColor(
+      blendColor(0x1f7893, 0x092b42, depth * 0.55),
+      0x35c0a6,
+      rowPulse * 0.22,
+    );
+    const glassColor = blendColor(harborBase, 0xd0f1ed, 0.42);
+    const troughColor = blendColor(harborBase, 0x031926, 0.55);
+    const jadeColor = blendColor(harborBase, 0x4fe6c6, 0.42);
+    const reflectedStone = blendColor(0xf6c56f, harborBase, 0.28);
+    const deepInk = blendColor(0x031926, harborBase, 0.24);
+
+    layer.fillStyle(harborBase, 1);
+    layer.fillRect(segment.x, segment.y, segment.width, height);
+    layer.fillStyle(glassColor, 0.2);
+    layer.fillRect(segment.x, segment.y + 2, segment.width, height * 0.3);
+    layer.fillStyle(troughColor, 0.24 + depth * 0.1);
+    layer.fillRect(
+      segment.x,
+      segment.y + height * 0.55,
+      segment.width,
+      height * 0.45,
+    );
+
+    layer.fillStyle(blendColor(harborBase, 0xffffff, 0.26), 0.07);
+    layer.fillRoundedRect(
+      segment.x + 4,
+      segment.y + height * 0.12,
+      Math.max(segment.width - 8, 0),
+      Math.max(height * 0.08, 3),
+      5,
+    );
+    layer.fillStyle(deepInk, 0.18);
+    layer.fillRoundedRect(
+      segment.x + 2,
+      segment.y + height * 0.78,
+      Math.max(segment.width - 4, 0),
+      Math.max(height * 0.12, 5),
+      6,
+    );
+
+    drawWaterPaintDabs(layer, segment, height, {
+      deep: deepInk,
+      glow: glassColor,
+      jade: jadeColor,
+      stone: reflectedStone,
+    });
+
+    drawWaveStroke(
+      layer,
+      segment.x + 4,
+      segment.y + height * (0.62 + rowPulse * 0.06),
+      Math.max(segment.width - 8, 0),
+      0,
+      segment.row * 0.9 + 0.6,
+      8.6,
+      10.2,
+      blendColor(0x0d3545, harborBase, 0.34),
+      0.18,
+    );
+    drawWaveStroke(
+      layer,
+      segment.x + 8,
+      segment.y + height * (0.48 + rowPulse * 0.08),
+      Math.max(segment.width - 16, 0),
+      0,
+      segment.row * 0.74,
+      7.8,
+      8.5,
+      jadeColor,
+      0.16,
+    );
+    drawWaveStroke(
+      layer,
+      segment.x + 16,
+      segment.y + height * (0.34 + rowPulse * 0.12),
+      Math.max(segment.width - 32, 0),
+      0,
+      segment.row * 0.55 + 1.8,
+      3.6,
+      4.2,
+      reflectedStone,
+      0.2,
+    );
+
+    layer.lineStyle(1.5, blendColor(glassColor, 0xffffff, 0.24), 0.18);
+    for (let x = segment.x + 24; x < segment.x + segment.width - 16; x += 86) {
+      const drift = Math.sin(x * 0.021 + segment.row * 0.5) * 5;
+      const y = segment.y + height * (0.28 + rowPulse * 0.2);
+      layer.lineBetween(x + drift, y, x + 42 + drift, y - 2);
+    }
+
+    layer.fillStyle(blendColor(glassColor, 0xffffff, 0.3), 0.08);
+    for (let x = segment.x + 44; x < segment.x + segment.width - 24; x += 122) {
+      const shimmerY =
+        segment.y + height * (0.38 + Math.sin(x * 0.017 + segment.row) * 0.18);
+      layer.fillEllipse(x, shimmerY, 46, 5.5);
+    }
+
+    if (segment.width < 132) {
+      for (let y = segment.y + 8; y < segment.y + height - 8; y += 18) {
+        const drift = Math.sin(y * 0.037 + segment.row) * 3;
+        layer.lineStyle(3.6, blendColor(jadeColor, 0xffffff, 0.18), 0.19);
+        layer.lineBetween(
+          segment.x + segment.width * 0.24 + drift,
+          y,
+          segment.x + segment.width * 0.76 + drift,
+          y + 15,
+        );
+        layer.lineStyle(2.5, blendColor(reflectedStone, 0xffffff, 0.14), 0.14);
+        layer.lineBetween(
+          segment.x + segment.width * 0.2 - drift,
+          y + 3,
+          segment.x + segment.width * 0.7 - drift,
+          y + 14,
+        );
+      }
+    }
+  }
+
+  drawTerrainDraftWaterReflections(layer, visualScene, grid);
+}
+
 function drawWaveStroke(
   layer: PhaserType.GameObjects.Graphics,
   x: number,
@@ -1102,12 +1624,17 @@ function drawTerrainDraftGround(
 
   const baseKind = visualScene.terrainDraft?.baseKind ?? "land";
 
-  layer.fillStyle(baseKind === "water" ? 0x4b7086 : 0xd4c6a4, 1);
+  layer.fillStyle(baseKind === "water" ? 0x2d6277 : 0xd4c6a4, 1);
   layer.fillRect(0, 0, visualScene.width, visualScene.height);
+  drawTerrainDraftWaterBase(layer, visualScene, grid);
+
   for (let row = 0; row < grid.rows; row += 1) {
     for (let col = 0; col < grid.cols; col += 1) {
       const kind = grid.kinds[row][col];
       if (kind === baseKind) {
+        continue;
+      }
+      if (kind === "water") {
         continue;
       }
       const { x, y, width, height } = terrainDraftCellRect(
@@ -1123,11 +1650,6 @@ function drawTerrainDraftGround(
         layer.fillRect(x + 2, y + 2, width * 0.52, height * 0.42);
         layer.fillStyle(0xa48f66, 0.08);
         layer.fillRect(x, y + height - 2, width, 2);
-      } else if (kind === "water" && baseKind === "land") {
-        layer.fillStyle(0x54798f, 1);
-        layer.fillRect(x, y, width, height);
-        layer.fillStyle(0x103346, 0.26);
-        layer.fillRect(x, y + height * 0.48, width, height * 0.52);
       } else if (kind === "land") {
         layer.fillStyle(0xd4c6a4, 1);
         layer.fillRect(x, y, width, height);
@@ -1196,7 +1718,7 @@ function drawTerrainDraftGround(
           );
         }
 
-        layer.lineStyle(4, 0xf8faf4, 0.94);
+        layer.lineStyle(4, 0xd8c5a0, 0.5);
         if (side === "top") {
           layer.lineBetween(
             rect.x + 8,
@@ -1204,7 +1726,7 @@ function drawTerrainDraftGround(
             rect.x + rect.width - 10,
             rect.y + 1,
           );
-          layer.lineStyle(2.6, 0xdff4fb, 0.5);
+          layer.lineStyle(2.6, 0xdff4fb, 0.32);
           layer.lineBetween(
             rect.x + 10,
             rect.y - 5,
@@ -1218,7 +1740,7 @@ function drawTerrainDraftGround(
             rect.x + rect.width - 10,
             rect.y + rect.height - 1,
           );
-          layer.lineStyle(2.6, 0xdff4fb, 0.5);
+          layer.lineStyle(2.6, 0xdff4fb, 0.32);
           layer.lineBetween(
             rect.x + 10,
             rect.y + rect.height + 5,
@@ -2068,6 +2590,11 @@ function drawPropClusters(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
+  if (visualScene.id === "south-quay-v2") {
+    drawV2ProceduralPropClusters(layer, visualScene);
+    drawV2VegetationCanopies(layer, visualScene);
+  }
+
   for (const cluster of visualScene.propClusters) {
     switch (cluster.kind) {
       case "cafe_terrace":
@@ -2111,6 +2638,370 @@ function drawPropClusters(
         break;
     }
   }
+}
+
+function getV2Landmark(
+  visualScene: VisualScene,
+  locationId: VisualScene["landmarks"][number]["locationId"],
+) {
+  return visualScene.landmarks.find(
+    (landmark) => landmark.locationId === locationId,
+  );
+}
+
+function drawV2ProceduralPropClusters(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const cafe = getV2Landmark(visualScene, "tea-house");
+  const boardingHouse = getV2Landmark(visualScene, "boarding-house");
+  const repairStall = getV2Landmark(visualScene, "repair-stall");
+  const square = getV2Landmark(visualScene, "market-square");
+  const freightYard = getV2Landmark(visualScene, "freight-yard");
+  const pier = getV2Landmark(visualScene, "moss-pier");
+  const courtyard = getV2Landmark(visualScene, "courtyard");
+
+  if (cafe) {
+    drawV2CafePersonality(layer, cafe.rect);
+  }
+  if (boardingHouse) {
+    drawV2BoardingHousePersonality(layer, boardingHouse.rect);
+  }
+  if (repairStall) {
+    drawV2RepairStallPersonality(layer, repairStall.rect);
+  }
+  if (square) {
+    drawV2SquarePersonality(layer, square.rect);
+  }
+  if (freightYard) {
+    drawV2FreightYardPersonality(layer, freightYard.rect);
+  }
+  if (pier) {
+    drawV2PierPersonality(layer, pier.rect);
+  }
+  if (courtyard) {
+    drawV2CourtyardPersonality(layer, courtyard.rect);
+  }
+}
+
+function drawV2CafePersonality(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  const terraceY = rect.y + rect.height - 44;
+  layer.fillStyle(0x071116, 0.1);
+  layer.fillRoundedRect(rect.x + 44, terraceY + 18, rect.width - 88, 22, 8);
+  layer.lineStyle(2, 0x6e4f36, 0.52);
+  layer.lineBetween(rect.x + 56, terraceY + 3, rect.x + rect.width - 54, terraceY + 3);
+  layer.lineStyle(1.5, 0xcaa36f, 0.38);
+  for (let x = rect.x + 62; x < rect.x + rect.width - 58; x += 38) {
+    layer.lineBetween(x, terraceY - 8, x, terraceY + 26);
+  }
+
+  const tableY = terraceY + 18;
+  for (let x = rect.x + 82; x < rect.x + rect.width - 76; x += 74) {
+    drawAuthoredTerraceTable(layer, x, tableY + Math.sin(x * 0.04) * 2);
+    layer.fillStyle(0xeed4a2, 0.34);
+    layer.fillCircle(x - 4, tableY - 3, 5);
+  }
+
+  drawMenuBoard(layer, rect.x + 42, rect.y + rect.height - 58);
+  drawAuthoredPlanter(layer, rect.x + 28, rect.y + rect.height - 18);
+  drawAuthoredPlanter(layer, rect.x + rect.width - 28, rect.y + rect.height - 18);
+}
+
+function drawV2BoardingHousePersonality(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  const doorX = rect.x + rect.width / 2;
+  const doorY = rect.y + rect.height - 78;
+  layer.fillStyle(0x071116, 0.14);
+  layer.fillEllipse(doorX + 8, doorY + 78, 90, 18);
+  layer.fillStyle(0x7e5e46, 0.96);
+  layer.fillRoundedRect(doorX - 44, doorY + 58, 88, 20, 8);
+  layer.fillStyle(0xd8c195, 0.55);
+  layer.fillRoundedRect(doorX - 34, doorY + 63, 68, 6, 3);
+
+  layer.fillStyle(0xead7aa, 0.2);
+  for (let x = rect.x + 58; x < rect.x + rect.width - 48; x += 64) {
+    layer.fillRoundedRect(x - 10, rect.y + 88, 24, 7, 4);
+    layer.fillRoundedRect(x - 10, rect.y + 144, 24, 6, 3);
+    layer.fillStyle(0x8c4f43, 0.22);
+    layer.fillRoundedRect(x - 14, rect.y + 96, 6, 28, 3);
+    layer.fillRoundedRect(x + 16, rect.y + 96, 6, 28, 3);
+    layer.fillStyle(0xead7aa, 0.2);
+  }
+}
+
+function drawV2RepairStallPersonality(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  const counterY = rect.y + rect.height - 54;
+  layer.fillStyle(0x071116, 0.13);
+  layer.fillEllipse(rect.x + rect.width / 2 + 10, counterY + 26, rect.width * 0.72, 18);
+  layer.fillStyle(0x7c6046, 0.98);
+  layer.fillRoundedRect(rect.x + 42, counterY, rect.width - 84, 22, 8);
+  layer.fillStyle(0xd2bc91, 0.5);
+  layer.fillRoundedRect(rect.x + 54, counterY + 5, rect.width - 108, 6, 3);
+  drawToolStand(layer, rect.x + 46, rect.y + rect.height - 28);
+  drawCrateStack(layer, rect.x + rect.width - 42, rect.y + rect.height - 28);
+  layer.lineStyle(2.4, 0x38444a, 0.46);
+  layer.lineBetween(rect.x + rect.width - 80, rect.y + 42, rect.x + rect.width - 28, rect.y + 18);
+  layer.lineBetween(rect.x + rect.width - 50, rect.y + 30, rect.x + rect.width - 50, rect.y + 74);
+}
+
+function drawV2SquarePersonality(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  const centerX = rect.x + rect.width / 2;
+  const centerY = rect.y + rect.height / 2;
+  const benchY = centerY + rect.height * 0.35;
+
+  drawAuthoredBench(layer, rect.x + 66, benchY, 0);
+  drawAuthoredBench(layer, rect.x + rect.width - 66, benchY, 0);
+  drawAuthoredBench(layer, centerX, rect.y + 34, Math.PI / 2);
+  drawAuthoredPlanter(layer, rect.x + 42, rect.y + 36);
+  drawAuthoredPlanter(layer, rect.x + rect.width - 42, rect.y + 36);
+  drawAuthoredLamp(layer, rect.x + 42, rect.y + rect.height - 34, 0.82);
+  drawAuthoredLamp(layer, rect.x + rect.width - 42, rect.y + rect.height - 34, 0.82);
+
+  layer.fillStyle(0xffffff, 0.1);
+  layer.fillEllipse(centerX - 4, centerY - 5, 72, 34);
+  layer.lineStyle(1.8, 0xf6fbff, 0.34);
+  layer.strokeEllipse(centerX, centerY, 56, 28);
+  layer.lineStyle(1.4, 0xa8d8e6, 0.44);
+  layer.strokeEllipse(centerX, centerY - 2, 34, 16);
+}
+
+function drawV2FreightYardPersonality(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  drawCrateStack(layer, rect.x + 38, rect.y + rect.height - 34);
+  drawBarrel(layer, rect.x + rect.width - 42, rect.y + rect.height - 40);
+  drawToolStand(layer, rect.x + rect.width - 70, rect.y + 78);
+  layer.lineStyle(4, 0x2c3438, 0.48);
+  layer.lineBetween(rect.x + 34, rect.y + 36, rect.x + rect.width - 34, rect.y + 36);
+  layer.lineStyle(2, 0xcfa767, 0.34);
+  layer.lineBetween(rect.x + 62, rect.y + 46, rect.x + rect.width - 60, rect.y + 46);
+  layer.fillStyle(0xd8a348, 0.9);
+  for (let x = rect.x + 48; x < rect.x + rect.width - 42; x += 46) {
+    layer.fillRoundedRect(x, rect.y + rect.height - 20, 22, 5, 3);
+  }
+}
+
+function drawV2PierPersonality(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  layer.fillStyle(0x071116, 0.16);
+  layer.fillRoundedRect(rect.x + 18, rect.y + rect.height - 16, rect.width - 36, 26, 8);
+  layer.lineStyle(2, 0xd6bc82, 0.26);
+  for (let x = rect.x + 28; x < rect.x + rect.width - 24; x += 38) {
+    layer.lineBetween(x, rect.y + 24, x, rect.y + rect.height - 18);
+  }
+
+  const bollards = [
+    { x: rect.x + 48, y: rect.y + 38 },
+    { x: rect.x + 136, y: rect.y + 54 },
+    { x: rect.x + rect.width - 138, y: rect.y + 46 },
+    { x: rect.x + rect.width - 52, y: rect.y + 68 },
+  ];
+  for (const bollard of bollards) {
+    drawBollard(layer, bollard.x, bollard.y);
+    layer.fillStyle(0xd8bf7a, 0.08);
+    layer.fillEllipse(bollard.x, bollard.y + 34, 18, 38);
+  }
+  drawSaggingRope(layer, bollards[0].x, bollards[0].y, bollards[1].x, bollards[1].y);
+  drawSaggingRope(
+    layer,
+    bollards[2].x,
+    bollards[2].y,
+    bollards[3].x,
+    bollards[3].y,
+  );
+  drawRopeCoil(layer, rect.x + rect.width - 94, rect.y + 100);
+  drawDockLadder(layer, rect.x + 116, rect.y + rect.height - 32);
+  drawAuthoredBoat(layer, rect.x + rect.width - 106, rect.y + rect.height - 42, -0.08, 0.72);
+}
+
+function drawV2CourtyardPersonality(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  drawPump(layer, rect.x + 78, rect.y + 92);
+  drawLaundryLine(layer, rect.x + 124, rect.y + 48, rect.x + rect.width - 42);
+  drawBarrel(layer, rect.x + rect.width - 56, rect.y + rect.height - 44);
+  drawCrateStack(layer, rect.x + rect.width - 92, rect.y + rect.height - 40);
+  layer.fillStyle(0xd8c49a, 0.18);
+  layer.fillRoundedRect(rect.x + 28, rect.y + rect.height - 42, rect.width - 56, 10, 5);
+}
+
+function drawSaggingRope(
+  layer: PhaserType.GameObjects.Graphics,
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+) {
+  layer.lineStyle(3, 0xc9ad79, 0.76);
+  let previousX = startX;
+  let previousY = startY;
+  for (let step = 1; step <= 12; step += 1) {
+    const ratio = step / 12;
+    const x = startX + (endX - startX) * ratio;
+    const y =
+      startY +
+      (endY - startY) * ratio +
+      Math.sin(ratio * Math.PI) * 14;
+    layer.lineBetween(previousX, previousY, x, y);
+    previousX = x;
+    previousY = y;
+  }
+}
+
+function drawV2VegetationCanopies(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  forEachSurfaceDraftCell(visualScene, (cell) => {
+    if (
+      cell.kind !== "trees" &&
+      cell.kind !== "bushes" &&
+      cell.kind !== "grass"
+    ) {
+      return;
+    }
+
+    const seed = cell.col * 19 + cell.row * 31;
+    const centerX = cell.x + cell.width / 2 + Math.sin(seed) * 5;
+    const centerY = cell.y + cell.height / 2 + Math.cos(seed * 0.7) * 4;
+
+    if (cell.kind === "grass") {
+      layer.lineStyle(1.2, 0xd5e5a8, 0.12);
+      for (let blade = 0; blade < 3; blade += 1) {
+        const x = cell.x + 10 + ((seed + blade * 13) % Math.max(cell.width - 18, 1));
+        const y = cell.y + 12 + ((seed + blade * 17) % Math.max(cell.height - 18, 1));
+        layer.lineBetween(x, y + 4, x + 10, y);
+      }
+      return;
+    }
+
+    layer.fillStyle(0x132016, 0.1);
+    layer.fillEllipse(centerX + 7, centerY + 16, cell.width * 0.58, 12);
+
+    const baseColor = cell.kind === "trees" ? 0x436f3c : 0x4f7743;
+    const darkColor = cell.kind === "trees" ? 0x2f5430 : 0x365f35;
+    const lightColor = cell.kind === "trees" ? 0x86a968 : 0x95b36f;
+    const radius = cell.kind === "trees" ? 13 : 9;
+
+    layer.fillStyle(darkColor, 0.92);
+    layer.fillCircle(centerX - 6, centerY + 3, radius);
+    layer.fillCircle(centerX + 8, centerY + 1, radius * 0.82);
+    layer.fillStyle(baseColor, 0.96);
+    layer.fillCircle(centerX - 1, centerY - 3, radius);
+    layer.fillCircle(centerX + 11, centerY - 6, radius * 0.78);
+    layer.fillStyle(lightColor, 0.32);
+    layer.fillCircle(centerX - 5, centerY - 8, radius * 0.38);
+    layer.fillCircle(centerX + 9, centerY - 10, radius * 0.28);
+  });
+}
+
+function drawV2AtmosphereAndLighting(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  drawV2WindowWarmth(layer, visualScene);
+  drawV2WaterfrontHaze(layer, visualScene);
+  drawV2MorningLightWash(layer, visualScene);
+}
+
+function drawV2WindowWarmth(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  for (const visualModule of visualScene.landmarkModules) {
+    if (visualModule.kind !== "window_row" && visualModule.kind !== "entry") {
+      continue;
+    }
+
+    const glowAlpha = visualModule.kind === "entry" ? 0.075 : 0.052;
+    layer.fillStyle(0xffe2a3, glowAlpha);
+    layer.fillRoundedRect(
+      visualModule.rect.x - 5,
+      visualModule.rect.y - 5,
+      visualModule.rect.width + 10,
+      visualModule.rect.height + 10,
+      Math.max(8, visualModule.rect.radius ?? 8),
+    );
+    layer.fillStyle(0xffffff, glowAlpha * 0.42);
+    layer.fillRoundedRect(
+      visualModule.rect.x + 4,
+      visualModule.rect.y + 4,
+      Math.max(visualModule.rect.width * 0.42, 8),
+      Math.max(visualModule.rect.height * 0.22, 4),
+      4,
+    );
+  }
+}
+
+function drawV2WaterfrontHaze(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const waterGrid = buildTerrainDraftGrid(visualScene);
+  if (!waterGrid) {
+    return;
+  }
+
+  const waterSegments = buildTerrainDraftWaterSegments(waterGrid);
+  for (const segment of waterSegments) {
+    if (segment.width < 120) {
+      continue;
+    }
+
+    layer.fillStyle(0xe4f2e6, 0.035);
+    layer.fillRoundedRect(
+      segment.x + 8,
+      segment.y + 10,
+      segment.width - 16,
+      Math.min(segment.height * 0.5, 30),
+      10,
+    );
+    layer.fillStyle(0xffd89a, 0.026);
+    layer.fillEllipse(
+      segment.x + segment.width * 0.55,
+      segment.y + segment.height * 0.32,
+      Math.min(segment.width * 0.58, 260),
+      18,
+    );
+  }
+}
+
+function drawV2MorningLightWash(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  layer.fillStyle(0xffe2a8, 0.035);
+  layer.fillRoundedRect(0, 0, visualScene.width, visualScene.height * 0.42, 0);
+  layer.fillStyle(0xffffff, 0.026);
+  layer.fillEllipse(
+    visualScene.width * 0.18,
+    visualScene.height * 0.12,
+    visualScene.width * 0.7,
+    visualScene.height * 0.22,
+  );
+  layer.fillStyle(0x061116, 0.055);
+  layer.fillRoundedRect(
+    0,
+    visualScene.height * 0.88,
+    visualScene.width,
+    visualScene.height * 0.12,
+    0,
+  );
 }
 
 function drawCafeTerraceCluster(
@@ -2801,14 +3692,16 @@ function drawLaundryLine(
   y: number,
   endX: number,
 ) {
-  layer.lineStyle(2, 0x665548, 0.52);
+  layer.lineStyle(1.6, 0x665548, 0.34);
   layer.lineBetween(startX, y, endX, y + 4);
-  const clothColors = [0xf0e9dd, 0xc58f63, 0x7a9cba, 0xe7d6a6];
   const spacing = (endX - startX) / 5;
   for (let index = 0; index < 4; index += 1) {
-    const clothX = startX + spacing * (index + 0.7);
-    layer.fillStyle(clothColors[index], 0.96);
-    layer.fillRoundedRect(clothX - 8, y + 2, 16, 18, 3);
+    const pegX = startX + spacing * (index + 0.7);
+    const pegY = y + 1 + index * 0.2;
+    layer.lineStyle(1.2, 0x8d7657, 0.28);
+    layer.lineBetween(pegX, pegY, pegX, pegY + 7);
+    layer.fillStyle(0xd4c39b, 0.16);
+    layer.fillRoundedRect(pegX - 2.5, pegY + 6, 5, 2.4, 1.2);
   }
 }
 
@@ -2876,6 +3769,105 @@ function drawAuthoredBoat(
     2 * scale,
   );
   void rotation;
+}
+
+function drawAmbientHarborLife(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+  waterSegments: TerrainDraftWaterSegment[],
+  beat: number,
+) {
+  const bottomWater = waterSegments
+    .filter(
+      (segment) =>
+        segment.y > visualScene.height * 0.72 && segment.width > 220,
+    )
+    .sort((a, b) => b.width - a.width)[0];
+  const eastWater = waterSegments.find(
+    (segment) =>
+      segment.x + segment.width > visualScene.width - 96 &&
+      segment.y > visualScene.height * 0.22 &&
+      segment.y < visualScene.height * 0.72 &&
+      segment.width > 40,
+  );
+
+  if (bottomWater) {
+    const bob = Math.sin(beat * 1.12 + bottomWater.row * 0.44) * 3.4;
+    const boatX = bottomWater.x + bottomWater.width * 0.7;
+    const boatY = bottomWater.y + bottomWater.height * 0.46 + bob;
+    layer.fillStyle(0x071820, 0.2);
+    layer.fillEllipse(boatX + 4, boatY + 13, 62, 12);
+    drawAuthoredBoat(layer, boatX, boatY, -0.08, 0.74);
+    layer.lineStyle(1.8, 0xd6c08f, 0.35);
+    layer.lineBetween(
+      boatX - 34,
+      boatY - 3,
+      bottomWater.x + bottomWater.width * 0.52,
+      bottomWater.y + 6,
+    );
+  }
+
+  if (eastWater) {
+    const pulse = (Math.sin(beat * 1.7 + eastWater.row * 0.5) + 1) / 2;
+    const buoyX = eastWater.x + eastWater.width * 0.54;
+    const buoyY = eastWater.y + eastWater.height * 0.5 + pulse * 4;
+    layer.fillStyle(0x061821, 0.2);
+    layer.fillEllipse(buoyX, buoyY + 5, 18, 5);
+    layer.fillStyle(0xd7a446, 0.95);
+    layer.fillCircle(buoyX, buoyY, 5.5);
+    layer.fillStyle(0xf7e3a8, 0.72);
+    layer.fillCircle(buoyX - 1.2, buoyY - 1.4, 2.2);
+  }
+}
+
+function drawAnimatedWaterLightFields(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+  waterSegments: TerrainDraftWaterSegment[],
+  beat: number,
+) {
+  for (const segment of waterSegments) {
+    const height = Math.min(segment.height, visualScene.height - segment.y);
+    if (height <= 0 || segment.width <= 0) {
+      continue;
+    }
+    if (segment.width < 96 && segment.row % 2 === 1) {
+      continue;
+    }
+
+    const sweep = positiveModulo(beat * 0.075 + segment.row * 0.11, 1.26);
+    const sweepX = segment.x + segment.width * (sweep - 0.13);
+    const pulse = (Math.sin(beat * 1.25 + segment.row * 0.7) + 1) / 2;
+    const glowWidth = Math.min(Math.max(segment.width * 0.38, 56), 220);
+    const glowY = segment.y + height * (0.34 + pulse * 0.24);
+
+    layer.fillStyle(0x83fff0, 0.045 + pulse * 0.035);
+    layer.fillEllipse(sweepX, glowY, glowWidth, 12 + pulse * 8);
+    layer.fillStyle(0xffd997, 0.035 + pulse * 0.026);
+    layer.fillEllipse(
+      segment.x + segment.width * (1.08 - sweep * 0.74),
+      segment.y + height * (0.2 + pulse * 0.16),
+      Math.min(glowWidth * 0.66, 132),
+      7 + pulse * 5,
+    );
+
+    for (let index = 0; index < 2; index += 1) {
+      const sparklePhase =
+        beat * (1.4 + index * 0.24) + segment.row * 0.52 + index;
+      const sparkleX =
+        segment.x +
+        positiveModulo(sparklePhase * 31 + index * 57, segment.width);
+      const sparkleY =
+        segment.y +
+        height * (0.18 + ((segment.row + index * 5) % 8) / 11) +
+        Math.sin(sparklePhase) * 4;
+      const sparkleAlpha = 0.06 + (Math.sin(sparklePhase * 1.7) + 1) * 0.045;
+      layer.fillStyle(0xf5fff6, sparkleAlpha);
+      layer.fillEllipse(sparkleX, sparkleY, 28, 4.2);
+      layer.fillStyle(0x9ff8f0, sparkleAlpha * 0.6);
+      layer.fillEllipse(sparkleX + 7, sparkleY + 2.4, 17, 3);
+    }
+  }
 }
 
 export function drawAnimatedVisualWater(
@@ -3014,17 +4006,58 @@ export function drawAnimatedVisualWater(
 
     for (const segment of waterSegments) {
       const segmentPhase = segment.row * 0.32;
+      const depth = Math.max(
+        0,
+        Math.min((segment.y + segment.height / 2) / visualScene.height, 1),
+      );
+      const crestColor = blendColor(0xe2fbff, 0xa4d8e0, depth * 0.44);
+      const deepSwellColor = blendColor(0x8cc7d2, 0x0f3444, depth * 0.52);
       drawWaveStroke(
         layer,
         segment.x + 10,
-        segment.y + segment.height * 0.24,
+        segment.y + segment.height * 0.2,
         Math.max(segment.width - 20, 0),
         beat,
         segmentPhase,
-        4.2,
-        2.8,
-        0xdcf5fb,
-        0.18,
+        5.2,
+        3.4,
+        deepSwellColor,
+        0.09,
+      );
+      drawWaveStroke(
+        layer,
+        segment.x + 6,
+        segment.y + segment.height * 0.29,
+        Math.max(segment.width - 12, 0),
+        beat,
+        segmentPhase + 2.15,
+        6.4,
+        7.2,
+        blendColor(0x5ac7bd, deepSwellColor, 0.28),
+        0.075,
+        {
+          packetLength: Math.max(Math.min(segment.width * 0.44, 164), 64),
+          softness: 1.2,
+          speed: 0.07,
+        },
+      );
+      drawWaveStroke(
+        layer,
+        segment.x + 8,
+        segment.y + segment.height * 0.34,
+        Math.max(segment.width - 16, 0),
+        beat,
+        segmentPhase + 0.42,
+        3.8,
+        2.4,
+        crestColor,
+        0.145,
+        {
+          direction: -1,
+          packetLength: Math.max(Math.min(segment.width * 0.24, 102), 38),
+          softness: 1.55,
+          speed: 0.12,
+        },
       );
       drawWaveStroke(
         layer,
@@ -3035,8 +4068,8 @@ export function drawAnimatedVisualWater(
         segmentPhase + 0.9,
         3.1,
         2.2,
-        0xd4eef5,
-        0.12,
+        blendColor(crestColor, 0xffffff, 0.18),
+        0.17,
         {
           packetLength: Math.max(Math.min(segment.width * 0.28, 88), 34),
           softness: 1.85,
@@ -3052,15 +4085,53 @@ export function drawAnimatedVisualWater(
         segmentPhase + 1.45,
         2.1,
         1.7,
-        0xc6e5ee,
-        0.08,
+        blendColor(crestColor, 0x6eaebc, 0.28),
+        0.105,
         {
           packetLength: Math.max(Math.min(segment.width * 0.22, 72), 28),
           softness: 2.1,
           speed: 0.24,
         },
       );
+
+      for (let x = segment.x + 28; x < segment.x + segment.width - 18; x += 108) {
+        const shimmerPhase = beat * 1.45 + segment.row * 0.63 + x * 0.018;
+        const shimmerAlpha = 0.055 + (Math.sin(shimmerPhase) + 1) * 0.038;
+        const shimmerWidth = 18 + (Math.sin(shimmerPhase * 0.72) + 1) * 12;
+        const shimmerY =
+          segment.y +
+          segment.height * 0.42 +
+          Math.sin(shimmerPhase * 1.18) * 7;
+        layer.lineStyle(
+          1.5,
+          blendColor(crestColor, 0xffffff, 0.38),
+          shimmerAlpha,
+        );
+        layer.lineBetween(
+          x + Math.sin(shimmerPhase * 0.8) * 6,
+          shimmerY,
+          Math.min(x + shimmerWidth, segment.x + segment.width - 12),
+          shimmerY - 1.2,
+        );
+      }
+
+      for (let x = segment.x + 56; x < segment.x + segment.width - 20; x += 168) {
+        const glintPhase = beat * 0.92 + x * 0.013 + segment.row * 0.41;
+        layer.fillStyle(
+          blendColor(crestColor, 0xffffff, 0.48),
+          0.045 + (Math.sin(glintPhase) + 1) * 0.04,
+        );
+        layer.fillEllipse(
+          x + Math.cos(glintPhase * 1.4) * 8,
+          segment.y + segment.height * 0.62 + Math.sin(glintPhase) * 8,
+          32,
+          4.8,
+        );
+      }
     }
+
+    drawAnimatedWaterLightFields(layer, visualScene, waterSegments, beat);
+    drawAmbientHarborLife(layer, visualScene, waterSegments, beat);
 
     for (let row = 0; row < terrainGrid.rows; row += 1) {
       for (let col = 0; col < terrainGrid.cols; col += 1) {
@@ -3089,28 +4160,55 @@ export function drawAnimatedVisualWater(
 
         for (const side of shoreEdges) {
           const foamAlpha =
-            0.13 + (Math.sin(beat * 2.1 + col * 0.61 + row * 0.49) + 1) * 0.08;
+            0.1 + (Math.sin(beat * 2.1 + col * 0.61 + row * 0.49) + 1) * 0.07;
           layer.fillStyle(0xf5fcff, foamAlpha);
 
           if (side === "top") {
-            for (let x = rect.x + 8; x < rect.x + rect.width - 8; x += 18) {
+            for (let x = rect.x + 8; x < rect.x + rect.width - 8; x += 22) {
               const lift = Math.sin(beat * 2.3 + x * 0.05) * 3;
-              layer.fillEllipse(x, rect.y + 4 + lift, 18, 4.8);
+              layer.fillEllipse(x, rect.y + 4 + lift, 14, 4.2);
+              layer.fillStyle(0xbfe8ef, foamAlpha * 0.32);
+              layer.fillEllipse(x + 7, rect.y + 9 + lift * 0.4, 18, 3.2);
+              layer.fillStyle(0xf5fcff, foamAlpha);
             }
           } else if (side === "bottom") {
-            for (let x = rect.x + 8; x < rect.x + rect.width - 8; x += 18) {
+            for (let x = rect.x + 8; x < rect.x + rect.width - 8; x += 22) {
               const lift = Math.sin(beat * 2.3 + x * 0.05 + 1.4) * 3;
-              layer.fillEllipse(x, rect.y + rect.height - 4 + lift, 18, 4.8);
+              layer.fillEllipse(x, rect.y + rect.height - 4 + lift, 14, 4.2);
+              layer.fillStyle(0xbfe8ef, foamAlpha * 0.3);
+              layer.fillEllipse(
+                x + 7,
+                rect.y + rect.height - 9 + lift * 0.4,
+                18,
+                3.2,
+              );
+              layer.fillStyle(0xf5fcff, foamAlpha);
             }
           } else if (side === "left") {
-            for (let y = rect.y + 8; y < rect.y + rect.height - 8; y += 18) {
+            for (let y = rect.y + 8; y < rect.y + rect.height - 8; y += 20) {
               const driftY = Math.sin(beat * 2.1 + y * 0.05) * 2.5;
-              layer.fillEllipse(rect.x + 4 + driftY, y, 4.8, 18);
+              layer.fillEllipse(rect.x + 4 + driftY, y, 4.2, 14);
+              layer.fillStyle(0xbfe8ef, foamAlpha * 0.28);
+              layer.fillEllipse(rect.x + 9 + driftY * 0.4, y + 7, 3.2, 18);
+              layer.fillStyle(0xf5fcff, foamAlpha);
             }
           } else {
-            for (let y = rect.y + 8; y < rect.y + rect.height - 8; y += 18) {
+            for (let y = rect.y + 8; y < rect.y + rect.height - 8; y += 20) {
               const driftY = Math.sin(beat * 2.1 + y * 0.05 + 1.4) * 2.5;
-              layer.fillEllipse(rect.x + rect.width - 4 + driftY, y, 4.8, 18);
+              layer.fillEllipse(
+                rect.x + rect.width - 4 + driftY,
+                y,
+                4.2,
+                14,
+              );
+              layer.fillStyle(0xbfe8ef, foamAlpha * 0.28);
+              layer.fillEllipse(
+                rect.x + rect.width - 9 + driftY * 0.4,
+                y + 7,
+                3.2,
+                18,
+              );
+              layer.fillStyle(0xf5fcff, foamAlpha);
             }
           }
         }
@@ -3231,6 +4329,7 @@ export function drawAnimatedSkyWeather(
   const beat = now / 1000;
 
   for (const skyLayer of visualScene.skyLayers) {
+    const quietHarborWeather = visualScene.id === "south-quay-v2";
     const skyRect = getNormalizedSkyLayerRect(
       visualScene.height,
       skyLayer.rect,
@@ -3242,8 +4341,11 @@ export function drawAnimatedSkyWeather(
     );
     const coverageWidth = Math.max(bandWidth, visualScene.width * 0.16);
     const cloudCount = Math.max(
-      4,
-      Math.round((coverageWidth / 240) * Math.max(skyLayer.density, 1.2)),
+      quietHarborWeather ? 2 : 4,
+      Math.round(
+        (coverageWidth / (quietHarborWeather ? 360 : 240)) *
+          Math.max(skyLayer.density, quietHarborWeather ? 0.65 : 1.2),
+      ),
     );
     const spacing = Math.max(
       (coverageWidth + bandWidth * 0.14) / Math.max(cloudCount, 1),
@@ -3361,9 +4463,11 @@ export function drawAnimatedSkyWeather(
     }
 
     const hazeAlpha = clamp(
-      palette.hazeAlpha * (0.74 + skyLayer.opacity * 0.42),
-      0.08,
-      0.4,
+      palette.hazeAlpha *
+        (0.74 + skyLayer.opacity * 0.42) *
+        (quietHarborWeather ? 0.42 : 1),
+      quietHarborWeather ? 0.035 : 0.08,
+      quietHarborWeather ? 0.16 : 0.4,
     );
     layer.fillStyle(palette.haze, hazeAlpha);
     layer.fillRoundedRect(
@@ -3379,11 +4483,13 @@ export function drawAnimatedSkyWeather(
         positiveModulo(cloudIndex * spacing + drift, travelSpan) - spacing;
       const cloudScale =
         skyLayer.scale *
-        (skyLayer.cloudKind === "storm-front"
-          ? 1.28
-          : skyLayer.cloudKind === "harbor-bank"
-            ? 1.12
-            : 0.94) *
+        (quietHarborWeather
+          ? 0.5
+          : skyLayer.cloudKind === "storm-front"
+            ? 1.28
+            : skyLayer.cloudKind === "harbor-bank"
+              ? 1.12
+              : 0.94) *
         (0.92 + (cloudIndex % 3) * 0.11);
       const cloudWidth = 118 * cloudScale;
       const cloudHeight = 36 * cloudScale;
@@ -3399,9 +4505,34 @@ export function drawAnimatedSkyWeather(
         continue;
       }
       const cloudAlpha = Math.max(
-        0.12,
-        Math.min(skyLayer.opacity * (0.7 + (cloudIndex % 2) * 0.12), 1),
+        quietHarborWeather ? 0.035 : 0.12,
+        Math.min(
+          skyLayer.opacity *
+            (quietHarborWeather ? 0.18 : 0.7 + (cloudIndex % 2) * 0.12),
+          quietHarborWeather ? 0.16 : 1,
+        ),
       );
+
+      if (quietHarborWeather) {
+        const streakY = baseY + cloudHeight * 0.48;
+        layer.fillStyle(palette.body, cloudAlpha);
+        layer.fillRoundedRect(
+          cloudX + cloudWidth * 0.08,
+          streakY,
+          cloudWidth * 0.84,
+          Math.max(4, cloudHeight * 0.2),
+          Math.max(3, cloudHeight * 0.1),
+        );
+        layer.fillStyle(palette.edge, cloudAlpha * 0.42);
+        layer.fillRoundedRect(
+          cloudX + cloudWidth * 0.18,
+          streakY - cloudHeight * 0.18,
+          cloudWidth * 0.48,
+          Math.max(3, cloudHeight * 0.12),
+          Math.max(2, cloudHeight * 0.07),
+        );
+        continue;
+      }
 
       layer.fillStyle(0x000000, 0.08 * cloudAlpha);
       layer.fillEllipse(

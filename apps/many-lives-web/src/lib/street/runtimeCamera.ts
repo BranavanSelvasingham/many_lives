@@ -18,10 +18,10 @@ import {
 import type { VisualScene } from "@/lib/street/visualScenes";
 
 const CAMERA_DRAG_START_DISTANCE_PX = 10;
-const CAMERA_DRAG_PAN_MULTIPLIER = 2.05;
-const CAMERA_DRAG_PAN_COMPACT_VERTICAL_MULTIPLIER = 4.5;
-const CAMERA_OFFSET_RETURN_DELAY_MS = 9_500;
-const CAMERA_OFFSET_RETURN_LERP = 0.006;
+const CAMERA_DRAG_PAN_MULTIPLIER = 2.35;
+const CAMERA_DRAG_PAN_COMPACT_VERTICAL_MULTIPLIER = 5.2;
+const CAMERA_OFFSET_RETURN_DELAY_MS = 30_000;
+const CAMERA_OFFSET_RETURN_LERP = 0.003;
 const CAMERA_RECENT_INTERACTION_LERP = 0.68;
 const CAMERA_USER_ZOOM_LERP = 0.16;
 const PLAYER_CAMERA_LERP = 0.08;
@@ -127,6 +127,7 @@ export function updateCamera(
   }
   const playerViewportX = playerPixel.x - camera.scrollX;
   const playerViewportY = playerPixel.y - camera.scrollY;
+  const isInteriorSpace = Boolean(runtimeState.indices.activeSpace);
   const isDragging = runtimeState.cameraGesture?.dragging === true;
   const isExploring =
     isDragging ||
@@ -134,7 +135,7 @@ export function updateCamera(
   let targetScrollX = camera.scrollX;
   let targetScrollY = camera.scrollY;
 
-  if (isExploring) {
+  if (isInteriorSpace || isExploring) {
     targetScrollX = playerPixel.x - anchorX;
     targetScrollY = playerPixel.y - anchorY;
   } else {
@@ -193,7 +194,9 @@ export function updateCamera(
   }
 
   const followLerp = isDragging
-    ? 0.84
+    ? 1
+    : isInteriorSpace && !isExploring
+      ? 1
     : isExploring
       ? CAMERA_RECENT_INTERACTION_LERP
       : isWatchingRowan
@@ -201,6 +204,8 @@ export function updateCamera(
         : PLAYER_CAMERA_LERP;
   camera.scrollX += (targetScrollX - camera.scrollX) * followLerp;
   camera.scrollY += (targetScrollY - camera.scrollY) * followLerp;
+  camera.scrollX = clamp(camera.scrollX, minScrollX, maxScrollX);
+  camera.scrollY = clamp(camera.scrollY, minScrollY, maxScrollY);
   return blockedEdges;
 }
 
@@ -276,7 +281,10 @@ export function updateCameraGesture(
     return createEmptyCameraPanResult();
   }
 
-  if (!isPointerWithinSceneViewport(pointer, gestureViewport)) {
+  if (
+    !gesture.dragging &&
+    !isPointerWithinSceneViewport(pointer, gestureViewport)
+  ) {
     return createEmptyCameraPanResult();
   }
 
