@@ -158,6 +158,104 @@ describe("OpenAIProvider street fallback", () => {
     });
   });
 
+  it("retries a transient 503 and records success when the retry passes", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response("temporary provider outage", {
+          status: 503,
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          output_text: JSON.stringify({
+            actionId: "talk:npc-mara",
+            confidence: 0.83,
+            planKey: "plan:talk-mara",
+            rationale:
+              "Mara is here and can clarify the room before Rowan wanders.",
+          }),
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      model: "test-model",
+      retryDelayMs: 0,
+      timeoutMs: 50,
+    });
+    const planningRequest = buildPlanningRequest();
+    const result = await provider.planStreetNextAction(planningRequest);
+
+    expect(result).toEqual({
+      actionId: "talk:npc-mara",
+      confidence: 0.83,
+      planKey: "plan:talk-mara",
+      rationale: "Mara is here and can clarify the room before Rowan wanders.",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        status: "success",
+        task: "planStreetNextAction",
+      },
+    ]);
+    expect(planningRequest.game.aiRuntime).toMatchObject({
+      fallbackReasons: [],
+      status: "live",
+      tasks: {
+        planStreetNextAction: {
+          fallbacks: 0,
+          lastStatus: "success",
+          successes: 1,
+        },
+      },
+      totalFallbacks: 0,
+      totalSuccesses: 1,
+    });
+  });
+
+  it("does not retry non-transient OpenAI HTTP failures", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response("bad request", {
+        status: 400,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      retryDelayMs: 0,
+      timeoutMs: 50,
+    });
+    const planningRequest = buildPlanningRequest();
+    const result = await provider.planStreetNextAction(planningRequest);
+
+    expect(result).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        error: "OpenAIResponseError: OpenAI request failed with 400",
+        status: "fallback",
+        task: "planStreetNextAction",
+      },
+    ]);
+    expect(planningRequest.game.aiRuntime).toMatchObject({
+      fallbackReasons: ["OpenAIResponseError: OpenAI request failed with 400"],
+      status: "fallback",
+      tasks: {
+        planStreetNextAction: {
+          fallbacks: 1,
+          lastFallbackReason:
+            "OpenAIResponseError: OpenAI request failed with 400",
+          lastStatus: "fallback",
+        },
+      },
+      totalFallbacks: 1,
+    });
+  });
+
   it("returns null when the planner times out", async () => {
     vi.stubGlobal(
       "fetch",
