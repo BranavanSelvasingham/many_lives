@@ -2025,7 +2025,7 @@ function assertGameplayDom(label, game, probe, dom) {
   );
   assert.doesNotMatch(
     dom.bodyText,
-    /Nudge Rowan|This step is ready now|confirm and commit/i,
+    /Nudge Rowan|This step is ready now|A next step is ready|Advance now|Autoplay is on; this skips|confirm and commit/i,
     `${label}: default Rowan rail leaked stale stepper or scaffold copy.`,
   );
   assert.doesNotMatch(

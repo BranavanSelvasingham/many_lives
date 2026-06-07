@@ -223,9 +223,15 @@ function assertFreshAutoplayPage(page, probe, base) {
   assert.ok(page.rootClass.includes("is-watch-mode"), "Live app did not enter watch mode.");
   assert.ok(
     page.bodyText.includes("Rowan") &&
-      (page.bodyText.includes("Advance now") ||
+      (page.bodyText.includes("Continue watching") ||
         page.bodyText.includes("Watch Rowan begin")),
     "Live app is missing Rowan watch-mode action text.",
+  );
+  assert.ok(
+    !/Advance now|A next step is ready|Autoplay is on; this skips/i.test(
+      page.bodyText,
+    ),
+    "Live app leaked watch-mode stepper copy.",
   );
   assert.ok(!page.bodyText.includes("Nudge Rowan"), "Live app still contains Nudge Rowan copy.");
   assert.ok(probe?.gameId, "Live browser probe is missing a game id.");
@@ -427,7 +433,7 @@ class CdpSession {
               bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 900),
               hasRowanText: bodyText.includes("Rowan"),
               hasWatchAction:
-                bodyText.includes("Advance now") ||
+                bodyText.includes("Continue watching") ||
                 bodyText.includes("Watch Rowan begin"),
               rootClass: root?.className ?? "",
               url: location.href

@@ -5407,18 +5407,18 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const primaryContinueLabel = snapshot.rowanAutoplayEnabled
     ? firstAfternoonOpening
       ? "Watch Rowan begin"
-      : "Advance now"
+      : "Continue watching"
     : game.activeConversation
       ? activeConversationContinueLabel
       : rowanAutonomy.label || "Continue";
   const primaryContinueCopy = game.activeConversation
     ? snapshot.rowanAutoplayEnabled
-      ? "Autoplay is on; this skips the pause."
+      ? "Rowan is carrying the conversation forward."
       : "Let the conversation land."
     : snapshot.rowanAutoplayEnabled
       ? firstAfternoonOpening
-        ? "Autoplay will start with Mara."
-        : "Autoplay is on; this skips the wait."
+        ? "Rowan starts by asking Mara."
+        : "Rowan will keep going when this beat lands."
       : rowanAutonomy.mode === "moving"
         ? "Move Rowan there."
         : rowanAutonomy.mode === "waiting"

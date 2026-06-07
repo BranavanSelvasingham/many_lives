@@ -348,7 +348,7 @@ export function buildConversationPanelHtml(options: {
                 : joinNarrativeFragments([
                     railThreadText,
                     willCarryForward
-                      ? "A next step is ready."
+                      ? "Rowan has enough to carry this forward."
                       : "Conversation is active.",
                   ])
               : willAutostart
