@@ -46,6 +46,9 @@ const RUNTIME_VIEWPORT_PATH = path.join(
 );
 const VISUAL_SMOKE_PATH = path.join(ROOT, "scripts/visual-game-smoke.mjs");
 const HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX = -660;
+const GENERIC_AUTOPLAY_NOTE = "Rowan is carrying this beat forward";
+const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
+  /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i;
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
@@ -84,6 +87,14 @@ const INTERIOR_CAMERA_VIEWPORT = {
   width: 810,
 };
 const INTERIOR_CAMERA_MIN_PAN_DELTA = 20;
+
+function hasWatchModeProgressText(bodyText) {
+  return (
+    bodyText.includes("Continue watching") ||
+    bodyText.includes("Watch Rowan begin") ||
+    CONTEXTUAL_WATCH_MODE_COPY_PATTERN.test(bodyText)
+  );
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -432,7 +443,7 @@ class CdpSession {
               hasWatchAction:
                 bodyText.includes("Continue watching") ||
                 bodyText.includes("Watch Rowan begin") ||
-                bodyText.includes("Rowan is carrying this beat forward"),
+                /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i.test(bodyText),
               rootClass: root?.className ?? "",
               url: location.href
             };
@@ -1361,10 +1372,13 @@ async function runFreshAutoplayStartCheck(session) {
     "fresh autoplay remained stuck on Watch Rowan begin after the start delay.",
   );
   assert.ok(
-    page.bodyText.includes("Continue watching") ||
-      page.bodyText.includes("Rowan is carrying this beat forward") ||
+    hasWatchModeProgressText(page.bodyText) ||
       Boolean(advancedProbe.activeConversation?.npcId),
     "fresh autoplay did not present a continued watch-mode state after starting.",
+  );
+  assert.ok(
+    !page.bodyText.includes(GENERIC_AUTOPLAY_NOTE),
+    "fresh autoplay exposed the generic carry-forward note instead of contextual watch-mode copy.",
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");
@@ -1418,11 +1432,12 @@ async function runViewportCheck(session, viewport) {
     `${viewport.name}: canvas height is too small.`,
   );
   assert.ok(
-    page.bodyText.includes("Rowan") &&
-      (page.bodyText.includes("Continue watching") ||
-        page.bodyText.includes("Watch Rowan begin") ||
-        page.bodyText.includes("Rowan is carrying this beat forward")),
+    page.bodyText.includes("Rowan") && hasWatchModeProgressText(page.bodyText),
     `${viewport.name}: expected Rowan watch-mode UI text was missing.`,
+  );
+  assert.ok(
+    !page.bodyText.includes(GENERIC_AUTOPLAY_NOTE),
+    `${viewport.name}: watch-mode UI exposed the generic carry-forward note.`,
   );
   assert.ok(
     !/Advance now|A next step is ready|Autoplay is on; this skips|skip the (?:wait|pause)/i.test(
