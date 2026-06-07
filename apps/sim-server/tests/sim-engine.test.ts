@@ -7,7 +7,10 @@ import type {
   StreetPlanningResult,
 } from "../src/ai/provider.js";
 import type { StreetDialogueRequest } from "../src/ai/streetDialogue.js";
-import { SimulationEngine } from "../src/sim/engine.js";
+import {
+  SimulationEngine,
+  playerFacingAutonomyRationale,
+} from "../src/sim/engine.js";
 import { buildRowanCognition } from "../src/sim/rowanCognition.js";
 import { runRowanLoopSmoke } from "../src/sim/rowanLoopSmoke.js";
 import type {
@@ -662,6 +665,64 @@ describe("SimulationEngine street slice", () => {
     );
     expect(world.rowanAutonomy.intent?.reason).toMatch(
       /Kettle & Lamp|Ada|Mara|lunch/i,
+    );
+  });
+
+  it("keeps late Nia rail rationale ahead of stale Morrow House standing copy", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("game-late-nia-rail-copy");
+    const currentObjective = world.player.objective as PlayerObjective;
+
+    const trueStandingRationale = playerFacingAutonomyRationale(
+      world,
+      "Morrow House standing built",
+    );
+    expect(trueStandingRationale).toMatch(/Morrow House|standing|foothold/i);
+
+    world.currentTime = "Day 1, 15:50";
+    world.clock.hour = 15;
+    world.clock.minute = 50;
+    world.clock.totalMinutes = 15 * 60 + 50;
+    world.firstAfternoon = {
+      completedAt: "Day 1, 15:24",
+    };
+    world.player.currentLocationId = "repair-stall";
+    world.player.energy = 20;
+    world.player.knownNpcIds = Array.from(
+      new Set([...world.player.knownNpcIds, "npc-jo", "npc-nia"]),
+    );
+    world.player.objective = {
+      ...currentObjective,
+      focus: "help",
+      routeKey: "people-nia",
+      source: "conversation",
+      text: "Ask Nia where the block is about to jam before the square feels it.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "nia-block-lead",
+          label: "Ask Nia where the block is about to jam",
+          npcId: "npc-nia",
+          status: "open",
+          urgency: 86,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [],
+    };
+
+    const lateNiaRationale = playerFacingAutonomyRationale(
+      world,
+      "Morrow House standing built",
+    );
+
+    expect(lateNiaRationale).toMatch(/Nia|South Quay|block jam/i);
+    expect(lateNiaRationale).not.toMatch(
+      /Morrow House is where|standing settle|runs himself flat|tonight's bed|room stays mine/i,
     );
   });
 
