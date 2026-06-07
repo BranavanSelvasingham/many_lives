@@ -845,9 +845,18 @@ type RuntimeState = {
   renderScale: number;
   snapshot: StreetAppSnapshot;
   ui: UiState;
+  visualEventCues: VisualEventCue[];
   waypointAppliedNonce: number;
   waypointPlacedAt: number;
   waypointTarget: Point | null;
+};
+
+type VisualEventCue = {
+  cue: string;
+  locationId: string;
+  locationName: string;
+  signal: string;
+  visibleLabel: string | null;
 };
 
 type RuntimeHandle = {
@@ -1710,6 +1719,7 @@ async function createRuntime(options: {
       selectedNpcId: pickDefaultSelectedNpcId(initialSnapshot.game),
       supportExpanded: false,
     },
+    visualEventCues: [],
     waypointAppliedNonce: initialSnapshot.waypointNonce,
     waypointPlacedAt: runtimeNow,
     waypointTarget: initialSnapshot.waypointTarget ?? null,
@@ -5716,6 +5726,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       movement: buildBrowserMovementDiagnostics(runtimeState),
       rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
       rowanAutoplayFrozen: snapshot.rowanAutoplayFrozen,
+      visualEventCues: runtimeState.visualEventCues,
     },
   });
   const dockActiveTab = focusPanel ?? "actions";
@@ -7691,6 +7702,7 @@ function drawAmbientOverlay(
   now = getRuntimeNow(),
 ) {
   const game = runtimeState.snapshot.game;
+  runtimeState.visualEventCues = [];
   layer.clear();
 
   if (!game) {
@@ -7818,6 +7830,43 @@ function cityEventIsRenderable(
   );
 }
 
+function cityEventVisibleLabel(
+  game: StreetGameState,
+  eventId: string,
+  options: { includeResolved?: boolean; includeUpcoming?: boolean } = {},
+) {
+  const event = game.cityEvents?.find((candidate) => candidate.id === eventId);
+  if (!event || !cityEventIsRenderable(game, eventId, options)) {
+    return null;
+  }
+
+  return event.visibleLabel ?? event.title ?? null;
+}
+
+function locationNameForCue(
+  game: StreetGameState,
+  locationId: string,
+  fallback: string,
+) {
+  return game.locations.find((location) => location.id === locationId)?.name ?? fallback;
+}
+
+function registerVisualEventCue(
+  runtimeState: RuntimeState,
+  cue: VisualEventCue,
+) {
+  if (
+    runtimeState.visualEventCues.some(
+      (existing) =>
+        existing.cue === cue.cue && existing.locationId === cue.locationId,
+    )
+  ) {
+    return;
+  }
+
+  runtimeState.visualEventCues.push(cue);
+}
+
 function drawCafeWarmWindowEvent(
   layer: PhaserType.GameObjects.Graphics,
   runtimeState: RuntimeState,
@@ -7836,9 +7885,30 @@ function drawCafeWarmWindowEvent(
         includeUpcoming: true,
       }));
 
-  if (!anchors || hour < 7 || hour > 16.5 || (!eventDriven && hour > 16)) {
+  if (
+    !anchors ||
+    !game ||
+    hour < 7 ||
+    hour > 16.5 ||
+    (!eventDriven && hour > 16)
+  ) {
     return;
   }
+
+  registerVisualEventCue(runtimeState, {
+    cue: "warm cafe prep",
+    locationId: "tea-house",
+    locationName: locationNameForCue(game, "tea-house", "Kettle & Lamp"),
+    signal: "awning lights, lit windows, menu board, and set tables",
+    visibleLabel:
+      cityEventVisibleLabel(game, "event-cafe-prep", {
+        includeResolved: true,
+      }) ??
+      cityEventVisibleLabel(game, "event-lunch-rush", {
+        includeResolved: true,
+        includeUpcoming: true,
+      }),
+  });
 
   const rect = anchors.highlight;
   const lunchActive = game
@@ -7850,6 +7920,9 @@ function drawCafeWarmWindowEvent(
   const windowY = rect.y + rect.height * 0.56;
   const windowWidth = rect.width * 0.18;
   const startX = rect.x + rect.width * 0.18;
+  const awningY = rect.y + rect.height * 0.44;
+  const awningX = rect.x + rect.width * 0.12;
+  const awningWidth = rect.width * 0.76;
 
   layer.fillStyle(0xf3dfa6, 0.1 * pulse);
   layer.fillRoundedRect(
@@ -7859,6 +7932,22 @@ function drawCafeWarmWindowEvent(
     42,
     16,
   );
+
+  layer.fillStyle(0x823f3d, 0.78);
+  layer.fillRoundedRect(awningX, awningY - 15, awningWidth, 24, 8);
+  const stripeWidth = awningWidth / 6;
+  for (let index = 0; index < 6; index += 1) {
+    layer.fillStyle(index % 2 === 0 ? 0xf4d9a2 : 0x9f4c44, 0.86);
+    layer.fillRoundedRect(
+      awningX + index * stripeWidth + 2,
+      awningY - 13,
+      stripeWidth - 4,
+      19,
+      5,
+    );
+  }
+  layer.lineStyle(2.4, 0xf6dfaa, 0.42 * pulse);
+  layer.lineBetween(awningX + 8, awningY + 10, awningX + awningWidth - 8, awningY + 10);
 
   for (let index = 0; index < 3; index += 1) {
     const x = startX + index * (windowWidth + rect.width * 0.08);
@@ -7873,6 +7962,32 @@ function drawCafeWarmWindowEvent(
   layer.fillCircle(anchors.door.x, anchors.door.y - 28, 18);
   layer.lineStyle(2, 0xf6dfaa, 0.38 * doorPulse);
   layer.strokeCircle(anchors.door.x, anchors.door.y - 28, 11);
+
+  const menuX = rect.x + rect.width * 0.78;
+  const menuY = rect.y + rect.height * 0.72;
+  layer.fillStyle(0x161f22, 0.82);
+  layer.fillRoundedRect(menuX, menuY, 28, 38, 5);
+  layer.lineStyle(2, 0xd8c28c, 0.72);
+  layer.strokeRoundedRect(menuX + 2, menuY + 2, 24, 34, 4);
+  layer.lineStyle(2, 0xf1dfb2, 0.56);
+  layer.lineBetween(menuX + 8, menuY + 12, menuX + 21, menuY + 12);
+  layer.lineBetween(menuX + 8, menuY + 21, menuX + 20, menuY + 21);
+  layer.lineBetween(menuX + 8, menuY + 29, menuX + 18, menuY + 29);
+
+  const tableY = rect.y + rect.height * 0.82;
+  for (let index = 0; index < 2; index += 1) {
+    const tableX = rect.x + rect.width * (0.22 + index * 0.2);
+    layer.fillStyle(0x5a4030, 0.58);
+    layer.fillEllipse(tableX, tableY + 12, 48, 12);
+    layer.fillStyle(0xf0cf8c, 0.84);
+    layer.fillEllipse(tableX, tableY, 34, 14);
+    layer.fillStyle(0xffedbd, 0.86);
+    layer.fillCircle(tableX - 8, tableY - 6, 3.4);
+    layer.fillCircle(tableX + 8, tableY - 6, 3.4);
+    layer.lineStyle(1.5, 0xf7e5bd, 0.5 + Math.sin(now / 520 + index) * 0.12);
+    layer.lineBetween(tableX - 8, tableY - 12, tableX - 8, tableY - 22);
+    layer.lineBetween(tableX + 8, tableY - 12, tableX + 8, tableY - 21);
+  }
 }
 
 function drawDockCartEvent(
@@ -7890,9 +8005,19 @@ function drawDockCartEvent(
       includeUpcoming: true,
     });
 
-  if (!anchors || (!eventDriven && (hour < 11.5 || hour > 17))) {
+  if (!anchors || !game || (!eventDriven && (hour < 11.5 || hour > 17))) {
     return;
   }
+
+  registerVisualEventCue(runtimeState, {
+    cue: "square handcart",
+    locationId: "market-square",
+    locationName: locationNameForCue(game, "market-square", "Quay Square"),
+    signal: "rolling cart, stacked crates, and visible wheels",
+    visibleLabel: cityEventVisibleLabel(game, "event-square-cart", {
+      includeUpcoming: true,
+    }),
+  });
 
   const rect = anchors.highlight;
   const progress = positiveModulo(
@@ -7940,15 +8065,45 @@ function drawSquarePasserbyBeat(
         includeUpcoming: true,
       }));
 
-  if (!anchors || (!eventDriven && (hour < 8 || hour > 18))) {
+  if (!anchors || !game || (!eventDriven && (hour < 8 || hour > 18))) {
     return;
   }
+
+  registerVisualEventCue(runtimeState, {
+    cue: "square crossing bustle",
+    locationId: "market-square",
+    locationName: locationNameForCue(game, "market-square", "Quay Square"),
+    signal: "paired pedestrians, crossing marks, pause bubble, and hand gesture",
+    visibleLabel:
+      cityEventVisibleLabel(game, "event-market-crossing") ??
+      cityEventVisibleLabel(game, "event-square-cart", {
+        includeUpcoming: true,
+      }),
+  });
 
   const rect = anchors.highlight;
   const progress = positiveModulo(now / 11000 + 0.18, 1);
   const pausing = progress > 0.36 && progress < 0.68;
   const x = rect.x + rect.width * (0.28 + Math.min(progress, 0.68) * 0.36);
   const y = rect.y + rect.height * 0.62 + Math.sin(now / 220) * 1.2;
+
+  for (let index = 0; index < 4; index += 1) {
+    const markX = rect.x + rect.width * (0.24 + index * 0.1);
+    const markY = rect.y + rect.height * 0.55 + index * 7;
+    layer.lineStyle(3.4, 0xf1dfb2, 0.24);
+    layer.lineBetween(markX, markY, markX + 36, markY + 18);
+  }
+
+  drawAmbientPedestrian(layer, {
+    accent: 0xc68a61,
+    alpha: pausing ? 0.76 : 0.64,
+    color: 0x5b4d49,
+    facing: progress < 0.5 ? -1 : 1,
+    scale: 0.88,
+    step: pausing ? -0.08 : Math.sin(progress * Math.PI * 2 + 0.9),
+    x: x + 34,
+    y: y + 9,
+  });
 
   drawAmbientPedestrian(layer, {
     accent: 0xf0cf8c,

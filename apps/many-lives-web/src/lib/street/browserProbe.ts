@@ -63,6 +63,13 @@ export type StreetBrowserProbeSnapshot = {
   >;
   rowanAutoplayEnabled?: boolean;
   rowanAutoplayFrozen?: boolean;
+  visualEventCues?: Array<{
+    cue: string;
+    locationId: string;
+    locationName: string;
+    signal: string;
+    visibleLabel: string | null;
+  }>;
 };
 
 function objectiveProbePayload(game: StreetGameState) {
@@ -320,6 +327,7 @@ export function buildStreetBrowserProbeJson({
       totalMinutes: game.clock.totalMinutes,
     },
     gameId: game.id,
+    visualEventCues: snapshot.visualEventCues ?? [],
     firstAfternoon: {
       completedAt: game.firstAfternoon?.completedAt ?? null,
       hasFieldNote: Boolean(game.firstAfternoon?.fieldNote),
