@@ -2396,9 +2396,10 @@ function textAffirmsMaraAdaLead(text: string | undefined): boolean {
   }
 
   return (
-    /\byes\b|\bright\b|\bthat's right\b|\bdo that\b|\bask her\b|\bask ada\b/.test(
+    /\byes\b|\bright\b|\bexactly\b|\bcorrect\b|\bthat(?:'|’)s right\b|\bthat(?:'|’)s the one\b|\bthat is the one\b|\byou(?:'|’)ve got it\b|\byou have got it\b|\bdo that\b|\bask her\b|\bask ada\b/.test(
       normalized,
     ) ||
+    /\b(she|ada)\s*(?:'|’)?ll\b/.test(normalized) ||
     /\b(she|ada)\s+(may|might|could|can|will|does|needs?|has)\b/.test(
       normalized,
     ) ||

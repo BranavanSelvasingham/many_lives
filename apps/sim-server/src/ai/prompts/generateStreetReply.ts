@@ -87,7 +87,8 @@ function buildRequiredGroundingLines(input: StreetDialogueRequest): string[] {
     ...(playerAlreadyGroundsMaraLead
       ? [
           "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.",
-          "- A short direct confirmation is acceptable here, but it must clearly affirm the lead instead of drifting back to room rules.",
+          "- A short direct confirmation is acceptable here, but it must clearly affirm that exact lead instead of drifting back to room rules.",
+          "- Good shape for this follow-up: Yes, that's the one. Ask her before lunch fills the counter. Or: Exactly. She'll need steady hands before lunch.",
         ]
       : []),
   ];

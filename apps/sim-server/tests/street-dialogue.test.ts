@@ -65,4 +65,21 @@ describe("street dialogue fallback", () => {
     expect(prompt).toContain("Kettle & Lamp");
     expect(prompt).toMatch(/lunch work|shift|counter|pay/i);
   });
+
+  it("tells live Mara to plainly confirm Rowan's grounded Ada follow-up", () => {
+    const world = seedStreetGame("game-mara-live-followup-grounding-prompt");
+
+    const prompt = buildGenerateStreetReplyPrompt({
+      game: world,
+      npcId: "npc-mara",
+      playerText:
+        "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?",
+    });
+
+    expect(prompt).toContain(
+      "Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead",
+    );
+    expect(prompt).toContain("clearly affirm that exact lead");
+    expect(prompt).toContain("Exactly. She'll need steady hands before lunch.");
+  });
 });

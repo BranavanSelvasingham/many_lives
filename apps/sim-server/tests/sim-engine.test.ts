@@ -192,6 +192,40 @@ class VagueThenAffirmingMaraLiveAIProvider extends LiveDialogueAIProvider {
   }
 }
 
+class VagueThenNaturalConfirmingMaraLiveAIProvider extends LiveDialogueAIProvider {
+  readonly interpretationRequests: StreetConversationInterpretationRequest[] = [];
+  private maraReplyCount = 0;
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    this.replyRequests.push(input);
+    if (input.npcId === "npc-mara") {
+      this.maraReplyCount += 1;
+      if (this.maraReplyCount === 1) {
+        return {
+          followupThought: "Mara is being too vague.",
+          reply:
+            "The room can hold tonight. We will check you in properly when the evening settles.",
+        };
+      }
+
+      return {
+        followupThought: "Mara is confirming the lead.",
+        reply:
+          "Exactly. She'll need steady hands before lunch if the counter starts slipping.",
+      };
+    }
+
+    return super.generateStreetReply(input);
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ) {
+    this.interpretationRequests.push(input);
+    return super.interpretStreetConversation(input);
+  }
+}
+
 function expectCognitionToMirrorAutonomy(world: StreetGameState) {
   const nextMove = buildRowanCognition(world).nextMove;
   expect(nextMove).toMatchObject({
@@ -775,6 +809,44 @@ describe("SimulationEngine street slice", () => {
     expect(visibleLines.join(" ")).toMatch(/Yes\. Ask her/i);
     expect(provider.replyRequests.filter((request) => request.npcId === "npc-mara")).toHaveLength(
       2,
+    );
+    expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(0);
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+      12,
+    );
+
+    expect(provider.interpretationRequests.length).toBeGreaterThan(0);
+    expect(world.rowanAutonomy.detail).toMatch(/Ada|Kettle & Lamp|lunch/i);
+  });
+
+  it("accepts a natural live Mara confirmation after Rowan grounds the lead", async () => {
+    const provider = new VagueThenNaturalConfirmingMaraLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-natural-followup-mara");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+      10,
+    );
+
+    const visibleLines =
+      world.activeConversation?.lines.map((line) => line.text) ?? [];
+    expect(visibleLines.join(" ")).toMatch(/Ada at Kettle & Lamp/i);
+    expect(visibleLines.join(" ")).toMatch(/lunch work/i);
+    expect(visibleLines.join(" ")).toMatch(/Exactly\. She'll need steady hands/i);
+    expect(
+      provider.replyRequests.filter((request) => request.npcId === "npc-mara"),
+    ).toHaveLength(2);
+    expect(provider.replyRequests.at(-1)?.playerText).toMatch(
+      /Ada at Kettle & Lamp.*lunch work/i,
     );
     expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(0);
 
