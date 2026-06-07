@@ -78,6 +78,8 @@ const REQUIRED_NPC_PATROL_LOCATION_IDS = [
   "market-square",
   "freight-yard",
 ];
+const OPENING_CTA_PATTERN =
+  /Watch Rowan begin|Rowan starts by asking Mara\./i;
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
@@ -3294,6 +3296,49 @@ async function captureInhabitMoment({
   return moment;
 }
 
+function assertInhabitOpeningCtaProgression(moments) {
+  const byLabel = Object.fromEntries(
+    moments.map((moment) => [moment.label, moment]),
+  );
+  const firstActionable = byLabel["first-actionable-screen"];
+  const enteredMorrowHouse = byLabel["entered-morrow-house"];
+
+  assert.ok(
+    firstActionable?.control?.text,
+    "first-actionable-screen: expected opening CTA control text.",
+  );
+  assert.match(
+    firstActionable.control.text,
+    OPENING_CTA_PATTERN,
+    "first-actionable-screen: expected the true exterior opening to invite watching Rowan begin.",
+  );
+  assert.equal(
+    firstActionable.location?.spaceId,
+    "street:south-quay",
+    "first-actionable-screen: opening CTA evidence must come from the exterior street space.",
+  );
+
+  assert.ok(
+    enteredMorrowHouse?.control?.text,
+    "entered-morrow-house: expected continued-watch control text.",
+  );
+  assert.equal(
+    enteredMorrowHouse.location?.spaceId,
+    "interior:boarding-house",
+    "entered-morrow-house: CTA regression evidence must be captured inside Morrow House.",
+  );
+  assert.doesNotMatch(
+    enteredMorrowHouse.control.text,
+    OPENING_CTA_PATTERN,
+    "entered-morrow-house: opening CTA text must not persist after Rowan enters Morrow House.",
+  );
+  assert.match(
+    enteredMorrowHouse.control.text,
+    /Continue watching/i,
+    "entered-morrow-house: expected established continued-watch CTA copy after the opening beat.",
+  );
+}
+
 async function runInhabitPanelChecks(session) {
   const checks = [];
   const panels = [
@@ -3794,6 +3839,7 @@ async function runInhabitGameplayPass(session) {
     moments.every((moment) => moment.screenshot),
     "Inhabit gameplay pass must capture screenshot evidence for every player milestone.",
   );
+  assertInhabitOpeningCtaProgression(moments);
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {

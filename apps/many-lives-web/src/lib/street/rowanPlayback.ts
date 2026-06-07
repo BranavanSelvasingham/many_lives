@@ -703,6 +703,8 @@ export function buildRowanRailViewModel({
 
 export function isFirstAfternoonOpening(game: StreetGameState) {
   const progress = game.player.objective?.progress;
+  const activeSpaceId =
+    game.activeSpaceId ?? game.player.spaceId ?? "street:south-quay";
   const hasConversationHistory =
     game.conversations.length > 0 ||
     Object.values(game.conversationThreads).some(
@@ -711,6 +713,7 @@ export function isFirstAfternoonOpening(game: StreetGameState) {
 
   return Boolean(
     game.player.objective?.routeKey === "first-afternoon" &&
+      activeSpaceId === "street:south-quay" &&
       progress &&
       progress.completed === 0 &&
       !game.activeConversation &&
