@@ -1233,6 +1233,34 @@ function cameraProbeInRange(probe, tolerance = 0.5) {
   );
 }
 
+function assertFirstRouteEventCues(browserProbe, viewportName) {
+  const cues = browserProbe?.visualEventCues ?? [];
+  const cueNames = new Set(cues.map((cue) => cue.cue));
+  assert.ok(
+    cues.length >= 2,
+    `${viewportName}: expected at least two visible city event cues in the first-route probe, got ${JSON.stringify(cues)}.`,
+  );
+  assert.ok(
+    cueNames.has("warm cafe prep"),
+    `${viewportName}: missing warm cafe prep cue evidence in the first-route probe.`,
+  );
+  assert.ok(
+    cueNames.has("square crossing bustle"),
+    `${viewportName}: missing square crossing bustle cue evidence in the first-route probe.`,
+  );
+  assert.ok(
+    cues.every(
+      (cue) =>
+        cue.locationName &&
+        cue.signal &&
+        !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
+          `${cue.cue} ${cue.locationName} ${cue.signal}`,
+        ),
+    ),
+    `${viewportName}: event cue evidence must use player-facing cue names, got ${JSON.stringify(cues)}.`,
+  );
+}
+
 function cameraScrollDistance(first, second) {
   return Math.hypot(
     (second?.scroll?.x ?? 0) - (first?.scroll?.x ?? 0),
@@ -1458,6 +1486,7 @@ async function runViewportCheck(session, viewport) {
   );
   const browserProbe = await session.readBrowserProbe();
   assert.ok(browserProbe, `${viewport.name}: missing browser probe.`);
+  assertFirstRouteEventCues(browserProbe, viewport.name);
   assert.ok(
     browserProbe.autonomy?.intent?.reason,
     `${viewport.name}: autonomy probe is missing a state-based reason.`,
@@ -1793,6 +1822,7 @@ async function runViewportCheck(session, viewport) {
   }
 
   return {
+    eventCues: browserProbe.visualEventCues ?? [],
     mapAgency,
     page,
     pan: {
