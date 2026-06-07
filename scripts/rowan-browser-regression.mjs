@@ -2961,6 +2961,42 @@ async function runAutoplayObservation(session) {
   };
 }
 
+const STALE_HISTORICAL_FIELD_NOTE_NEXT_PATTERNS = [
+  /NEXT\s+The first afternoon is settled; rest at Morrow House and decide which lead deserves tomorrow morning\./i,
+  /NEXT\s+Sleep on the first foothold, then decide whether tomorrow starts with Ada's lead or the dock board\./i,
+];
+
+function assertHistoricalFieldNoteNextDemoted(label, dom) {
+  const bodyText = dom.bodyText?.replace(/\s+/g, " ").trim() ?? "";
+
+  for (const stalePattern of STALE_HISTORICAL_FIELD_NOTE_NEXT_PATTERNS) {
+    assert.doesNotMatch(
+      bodyText,
+      stalePattern,
+      `${label}: historical field-note guidance should not be presented under a live-looking NEXT label.`,
+    );
+  }
+
+  if (
+    /Ask Nia where the block is about to jam|Talk to Nia next while there is still time|Jo's clue points toward Nia/i.test(
+      bodyText,
+    )
+  ) {
+    assert.match(
+      bodyText,
+      /AT THE TIME\s+The first afternoon is settled; rest at Morrow House and decide which lead deserves tomorrow morning\./i,
+      `${label}: historical lead field-note guidance should be labeled as recorded-at-the-time context in the late Nia state.`,
+    );
+    if (label === "overlay-debug") {
+      assert.match(
+        bodyText,
+        /AT THE TIME\s+Sleep on the first foothold, then decide whether tomorrow starts with Ada's lead or the dock board\./i,
+        `${label}: final first-afternoon field-note guidance should be demoted in the late Nia debug view.`,
+      );
+    }
+  }
+}
+
 async function runOverlayPanelChecks(session) {
   const checks = [];
 
@@ -3026,6 +3062,9 @@ async function runOverlayPanelChecks(session) {
         rejectedText,
         `${panel.label}: manual objective seeds should not be presented as live objective outcomes.`,
       );
+    }
+    if (panel.expectedTab === "journal") {
+      assertHistoricalFieldNoteNextDemoted(panel.label, dom);
     }
     assertCriticalVisualCoherence(panel.label, dom, {
       expectFocusWindow: true,
@@ -3095,6 +3134,7 @@ async function runOverlayPanelChecks(session) {
       "overlay-debug: late Nia objective leaked stale Morrow House standing directive text.",
     );
   }
+  assertHistoricalFieldNoteNextDemoted("overlay-debug", debugDom);
   const debugScreenshot = path.join(OUTPUT_DIR, "overlay-debug.png");
   await session.captureScreenshot(debugScreenshot);
   checks.push({
