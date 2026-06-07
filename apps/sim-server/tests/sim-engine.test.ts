@@ -632,12 +632,16 @@ describe("SimulationEngine street slice", () => {
     expect(commitmentCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
     expect(commitmentCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
     expect(commitmentCopy).not.toMatch(/Ada work at Morrow House/i);
+    expect(commitmentCopy).not.toMatch(
+      /already (?:picked|chose)|confirms? the route|instead of changing course/i,
+    );
 
     world = await advanceUntil(
       engine,
       world,
       (nextWorld) =>
         !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.actionId === "move:tea-house" &&
         nextWorld.rowanAutonomy.targetLocationId === "tea-house",
       12,
     );
@@ -653,6 +657,12 @@ describe("SimulationEngine street slice", () => {
     expect(routeCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada work at Morrow House/i);
+    expect(routeCopy).not.toMatch(
+      /already (?:picked|chose)|confirms? the route|instead of changing course/i,
+    );
+    expect(world.rowanAutonomy.intent?.reason).toMatch(
+      /Kettle & Lamp|Ada|Mara|lunch/i,
+    );
   });
 
   it("attempts live OpenAI-mode dialogue for first Mara and Ada conversations", async () => {

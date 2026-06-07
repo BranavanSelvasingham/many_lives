@@ -2035,6 +2035,11 @@ function assertGameplayDom(label, game, probe, dom) {
   );
   assert.doesNotMatch(
     dom.bodyText,
+    /already (?:picked|chose)|confirms? the route|confirmation of (?:the )?route|instead of changing course|preselected route|route-control/i,
+    `${label}: default Rowan rail leaked route-control copy instead of Rowan's situated reason.`,
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
     /Ask Ada.*at Morrow House|Ada(?:'s)?[^.\n]{0,100}at Morrow House|Ada work at Morrow House/i,
     `${label}: default Rowan rail described Ada's cafe lead as happening at Morrow House.`,
   );
