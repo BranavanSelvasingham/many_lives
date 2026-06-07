@@ -45,7 +45,8 @@ export function buildPeopleTabHtml(options: {
   currentObjectiveText: string;
   currentSummary: string;
   currentThought: string;
-  npcs: NpcState[];
+  nearbyNpcs: NpcState[];
+  rosterNpcs: NpcState[];
   selectedNpc: NpcState | null;
   snapshot: ConversationOverlaySnapshot;
   talkableNpcIds: Set<string>;
@@ -60,7 +61,8 @@ export function buildPeopleTabHtml(options: {
     currentObjectiveText,
     currentSummary,
     currentThought,
-    npcs,
+    nearbyNpcs,
+    rosterNpcs,
     selectedNpc,
     snapshot,
     talkableNpcIds,
@@ -72,10 +74,76 @@ export function buildPeopleTabHtml(options: {
   const liveConversationNpcId = snapshot.game?.activeConversation?.npcId;
   const liveConversationSelected =
     Boolean(selectedNpc) && liveConversationNpcId === selectedNpc?.id;
+  const locationNameById = new Map(
+    snapshot.game?.locations.map((location) => [location.id, location.name]) ??
+      [],
+  );
+  const personButtonHtml = (npc: NpcState, scope: "nearby" | "roster") => {
+    const personality = npcPersonalityProfile(npc);
+    const hasLiveThread = liveConversationNpcId === npc.id;
+    const knownStatus = npc.known ? "known" : "unfamiliar";
+    const locationName = locationNameById.get(npc.currentLocationId);
+    const scopeMeta =
+      scope === "nearby"
+        ? knownStatus
+        : locationName
+          ? `${knownStatus} • currently at ${locationName}`
+          : `${knownStatus} • elsewhere in South Quay`;
+
+    return `
+      <button
+        class="ml-person ${selectedNpc?.id === npc.id ? "is-active" : ""} ${
+          hasLiveThread ? "has-live-thread" : ""
+        }"
+        data-select-npc="${escapeHtml(npc.id)}"
+        data-locals-person-scope="${scope}"
+        type="button"
+      >
+        <div class="ml-person-heading">
+          <div class="ml-person-name">${escapeHtml(npc.name)}</div>
+          ${
+            hasLiveThread
+              ? '<div class="ml-person-live-tag">Live</div>'
+              : ""
+          }
+        </div>
+        <div class="ml-person-meta">${escapeHtml(
+          `${personality.badge} • ${scopeMeta}`,
+        )}</div>
+        <div class="ml-row-copy" style="margin-top: 8px;">${escapeHtml(
+          personality.listLine,
+        )}</div>
+      </button>
+    `;
+  };
 
   return `
     <div class="ml-focus-grid ${liveConversationSelected ? "is-live-conversation" : ""}">
       <div class="ml-focus-stack">
+        <div class="ml-card" data-locals-nearby>
+          <div class="ml-kicker">People Nearby</div>
+          ${
+            nearbyNpcs.length > 0
+              ? ""
+              : '<div class="ml-row-copy" style="margin-top: 8px;">No one is close enough to approach here yet.</div>'
+          }
+          <div class="ml-people-grid" style="margin-top: 12px;">
+            ${nearbyNpcs.map((npc) => personButtonHtml(npc, "nearby")).join("")}
+          </div>
+        </div>
+        ${
+          rosterNpcs.length > 0
+            ? `
+              <div class="ml-card" data-locals-roster>
+                <div class="ml-kicker">South Quay Roster</div>
+                <div class="ml-row-copy" style="margin-top: 8px;">People Rowan has heard about or may meet by moving through the district.</div>
+                <div class="ml-people-grid" style="margin-top: 12px;">
+                  ${rosterNpcs.map((npc) => personButtonHtml(npc, "roster")).join("")}
+                </div>
+              </div>
+            `
+            : ""
+        }
         <div class="ml-card">
           <div class="ml-kicker">Rowan Model</div>
           <div class="ml-row-title" style="margin-top: 8px;">${escapeHtml(
@@ -88,41 +156,6 @@ export function buildPeopleTabHtml(options: {
               ? `Tools on hand: ${tools.map((item) => item.name).join(", ")}`
               : "No tools yet. Rowan is still relying on time, talk, and a little cash.",
           )}</div>
-        </div>
-        <div class="ml-card">
-          <div class="ml-kicker">People Nearby</div>
-          <div class="ml-people-grid" style="margin-top: 12px;">
-            ${npcs
-              .map((npc) => {
-                const personality = npcPersonalityProfile(npc);
-                const hasLiveThread = liveConversationNpcId === npc.id;
-                return `
-                <button
-                  class="ml-person ${selectedNpc?.id === npc.id ? "is-active" : ""} ${
-                    hasLiveThread ? "has-live-thread" : ""
-                  }"
-                  data-select-npc="${escapeHtml(npc.id)}"
-                  type="button"
-                >
-                  <div class="ml-person-heading">
-                    <div class="ml-person-name">${escapeHtml(npc.name)}</div>
-                    ${
-                      hasLiveThread
-                        ? '<div class="ml-person-live-tag">Live</div>'
-                        : ""
-                    }
-                  </div>
-                  <div class="ml-person-meta">${escapeHtml(
-                    `${personality.badge} • ${npc.known ? "known" : "unfamiliar"}`,
-                  )}</div>
-                  <div class="ml-row-copy" style="margin-top: 8px;">${escapeHtml(
-                    personality.listLine,
-                  )}</div>
-                </button>
-              `;
-              })
-              .join("")}
-          </div>
         </div>
       </div>
       <div class="ml-focus-stack">

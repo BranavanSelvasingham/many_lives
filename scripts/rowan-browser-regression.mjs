@@ -3391,6 +3391,36 @@ function assertInhabitSituatedWatchCtaCopy(moments) {
   }
 }
 
+function assertInhabitLocalsPanelSemantics(label, localsPanel) {
+  assert.ok(localsPanel, `${label}: missing Locals panel section probe.`);
+  assert.match(
+    localsPanel.nearbyText,
+    /Mara/i,
+    `${label}: nearby Locals section should keep Mara visible at the opening.`,
+  );
+  assert.doesNotMatch(
+    localsPanel.nearbyText,
+    /Ada|Jo|Tomas|Nia/i,
+    `${label}: nearby Locals section listed remote NPCs as in-reach people.`,
+  );
+  assert.match(
+    localsPanel.rosterText,
+    /South Quay Roster|heard about|moving through the district/i,
+    `${label}: remote Locals section should be framed as a wider South Quay roster.`,
+  );
+  assert.doesNotMatch(
+    localsPanel.bodyText,
+    /People Rowan can approach in Morrow House/i,
+    `${label}: Locals panel used stale in-reach copy for the broader roster.`,
+  );
+  assert.ok(
+    localsPanel.nearbyMaraVisible,
+    `${label}: Mara's nearby person card should be visible in the initial Locals screenshot. ${JSON.stringify(
+      localsPanel.nearbyMaraRect,
+    )}`,
+  );
+}
+
 async function runInhabitPanelChecks(session) {
   const checks = [];
   const panels = [
@@ -3398,7 +3428,7 @@ async function runInhabitPanelChecks(session) {
       expectedTab: "people",
       label: "inhabit-panel-locals",
       selector: '[data-tab="people"]',
-      text: /Mara|Ada|Rowan/i,
+      text: /Mara|South Quay Roster|Rowan/i,
     },
     {
       expectedTab: "journal",
@@ -3428,6 +3458,51 @@ async function runInhabitPanelChecks(session) {
       panel.text,
       `${panel.label}: expected player-readable panel content.`,
     );
+    const localsPanel =
+      panel.label === "inhabit-panel-locals"
+        ? await session.evaluate(`(() => {
+            const textFor = (selector) =>
+              document
+                .querySelector(selector)
+                ?.textContent
+                ?.replace(/\\s+/g, " ")
+                .trim() ?? "";
+            const rectFor = (selector) => {
+              const element = document.querySelector(selector);
+              if (!element) {
+                return null;
+              }
+              const rect = element.getBoundingClientRect();
+              return {
+                bottom: Math.round(rect.bottom),
+                height: Math.round(rect.height),
+                left: Math.round(rect.left),
+                right: Math.round(rect.right),
+                top: Math.round(rect.top),
+                width: Math.round(rect.width),
+              };
+            };
+            const nearbyMaraRect = rectFor('[data-locals-nearby] [data-select-npc="npc-mara"]');
+            const visibleHeight = nearbyMaraRect
+              ? Math.min(nearbyMaraRect.bottom, window.innerHeight) -
+                Math.max(nearbyMaraRect.top, 0)
+              : 0;
+            return {
+              bodyText: document.body?.innerText?.replace(/\\s+/g, " ").trim() ?? "",
+              nearbyMaraRect,
+              nearbyMaraVisible:
+                Boolean(nearbyMaraRect) &&
+                nearbyMaraRect.width > 0 &&
+                nearbyMaraRect.height > 0 &&
+                visibleHeight >= Math.min(nearbyMaraRect.height, 72),
+              nearbyText: textFor("[data-locals-nearby]"),
+              rosterText: textFor("[data-locals-roster]"),
+            };
+          })()`)
+        : null;
+    if (localsPanel) {
+      assertInhabitLocalsPanelSemantics(panel.label, localsPanel);
+    }
     assertCriticalVisualCoherence(panel.label, dom, {
       expectFocusWindow: true,
     });
@@ -3437,6 +3512,7 @@ async function runInhabitPanelChecks(session) {
       activeTab: dom.activeTab,
       bodyTextSample: dom.bodyTextSample,
       label: panel.label,
+      localsPanel,
       screenshot,
     });
   }

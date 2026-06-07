@@ -5237,11 +5237,21 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       .map((action) => extractTalkNpcId(action.id))
       .filter(isPresent),
   );
-  const nearbyNpcs = game.currentScene.people
-    .map((person) => game.npcs.find((npc) => npc.id === person.id))
-    .filter(isPresent);
-  const fallbackNpcList =
-    nearbyNpcs.length > 0 ? nearbyNpcs : game.npcs.slice(0, 5);
+  const currentLocationId =
+    game.player.currentLocationId ?? game.currentScene.locationId;
+  const scenePersonIds = new Set(
+    game.currentScene.people.map((person) => person.id),
+  );
+  const nearbyNpcs = game.npcs.filter(
+    (npc) =>
+      scenePersonIds.has(npc.id) ||
+      talkableNpcIds.has(npc.id) ||
+      (Boolean(currentLocationId) && npc.currentLocationId === currentLocationId),
+  );
+  const nearbyNpcIds = new Set(nearbyNpcs.map((npc) => npc.id));
+  const rosterNpcs = game.npcs
+    .filter((npc) => !nearbyNpcIds.has(npc.id))
+    .slice(0, 5);
   const sceneNotes = game.currentScene.notes.slice(0, 3);
   const currentObjectiveText =
     game.player.objective?.text ?? "Find the next useful thing to do.";
@@ -5377,7 +5387,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     : undefined;
   const focusPanel = ui.focusPanel;
   const focusMeta = focusPanel
-    ? focusPanelMeta(focusPanel, selectedNpc, game)
+    ? focusPanelMeta(focusPanel, selectedNpc, game, nearbyNpcs.length)
     : null;
   const focusContent =
     focusPanel === "people"
@@ -5396,7 +5406,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           currentObjectiveText,
           currentSummary,
           currentThought,
-          npcs: fallbackNpcList,
+          nearbyNpcs,
+          rosterNpcs,
           selectedNpc,
           snapshot,
           talkableNpcIds,
@@ -9315,6 +9326,7 @@ function focusPanelMeta(
   focusPanel: FocusPanel,
   selectedNpc: NpcState | null,
   game: StreetGameState,
+  nearbyNpcCount = 0,
 ) {
   const selectedPersonality = selectedNpc
     ? npcPersonalityProfile(selectedNpc)
@@ -9329,12 +9341,16 @@ function focusPanelMeta(
           ? isLiveConversation
             ? "Live Conversation"
             : "Person Card"
-          : "People In Reach",
+          : nearbyNpcCount > 0
+            ? "People In Reach"
+            : "South Quay Locals",
         subtitle: selectedNpc
           ? isLiveConversation
             ? `${selectedPersonality?.badge ?? selectedNpc.role} • mood ${selectedNpc.mood} • trust ${selectedNpc.trust} • conversation active`
             : `${selectedPersonality?.badge ?? selectedNpc.role} • mood ${selectedNpc.mood} • trust ${selectedNpc.trust}`
-          : `People Rowan can approach in ${game.currentScene.title}.`,
+          : nearbyNpcCount > 0
+            ? `People Rowan can approach around ${game.currentScene.title}. Other locals are listed separately.`
+            : `No one is currently in reach around ${game.currentScene.title}; wider South Quay locals are listed separately.`,
         title: selectedNpc?.name ?? "Locals",
       };
     case "journal":
