@@ -1965,6 +1965,11 @@ function assertGameplayDom(label, game, probe, dom) {
     /is not here right now|Rowan heads to [A-Z][^.\n]+ to [A-Z][^.\n]+ is the next stop|to morrow House/,
     `${label}: default Rowan rail/feed leaked stale movement or wrong-space copy.`,
   );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /\{"message":|"message"\s*:\s*"Game\s+game-|Game\s+game-[A-Za-z0-9-]+\s+was not found/i,
+    `${label}: default Rowan rail leaked a raw missing-game backend error.`,
+  );
 
   if (game.activeConversation) {
     const npcName =
@@ -2733,6 +2738,11 @@ async function runAutoplayObservation(session) {
     dom.bodyText,
     /Nudge Rowan/i,
     "Fresh autoplay observation still exposes Nudge Rowan copy.",
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /\{"message":|"message"\s*:\s*"Game\s+game-|Game\s+game-[A-Za-z0-9-]+\s+was not found/i,
+    "Fresh autoplay observation exposed a raw missing-game backend error.",
   );
   assert.equal(
     completedProbe.watchMode?.enabled,

@@ -1312,6 +1312,12 @@ async function runViewportCheck(session, viewport) {
     `${viewport.name}: watch-mode UI still contains Nudge Rowan copy.`,
   );
   assert.ok(
+    !/\{"message":|"message"\s*:\s*"Game\s+game-|Game\s+game-[A-Za-z0-9-]+\s+was not found/i.test(
+      page.bodyText,
+    ),
+    `${viewport.name}: watch-mode UI leaked a raw missing-game backend error.`,
+  );
+  assert.ok(
     page.rootClass.includes("is-watch-mode"),
     `${viewport.name}: autoplay run did not mark the overlay as watch mode.`,
   );

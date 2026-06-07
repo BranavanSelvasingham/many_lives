@@ -7,6 +7,7 @@ import {
   loadGameState,
 } from "../apps/many-lives-web/src/app/sim/_server/http";
 import { GET as getSimHealth } from "../apps/many-lives-web/src/app/sim/health/route";
+import { requestJson } from "../apps/many-lives-web/src/lib/api/client";
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => Promise<void> | void) {
   const previous = new Map<string, string | undefined>();
@@ -149,6 +150,52 @@ test("in-process state fallback returns the player projection", async () => {
         );
       },
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("web API client unwraps structured error messages instead of raw JSON", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        message: "Game game-missing was not found.",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+        status: 404,
+      },
+    );
+
+  try {
+    await assert.rejects(
+      requestJson("/game/game-missing/state"),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.message, "Game game-missing was not found.");
+        assert.doesNotMatch(error.message, /^\s*\{/);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("web API client preserves plain text errors for diagnostics", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    new Response("backend unavailable", {
+      status: 502,
+    });
+
+  try {
+    await assert.rejects(requestJson("/health"), {
+      message: "backend unavailable",
+    });
   } finally {
     globalThis.fetch = originalFetch;
   }

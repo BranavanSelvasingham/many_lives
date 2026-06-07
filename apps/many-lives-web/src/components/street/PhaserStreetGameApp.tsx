@@ -472,6 +472,18 @@ function isMissingStreetGameError(error: unknown) {
   );
 }
 
+function formatStreetRuntimeError(error: unknown, fallback: string) {
+  if (isMissingStreetGameError(error)) {
+    return "That run is no longer available. Start a fresh run to keep watching Rowan.";
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  return fallback;
+}
+
 type StreetAppSnapshot = {
   animatePlayerEntrance: boolean;
   busyLabel: string | null;
@@ -1126,11 +1138,12 @@ export function PhaserStreetGameApp() {
       applyGameUpdate(nextGame, requestId);
     } catch (loadError) {
       setError(
-        loadError instanceof Error
-          ? loadError.message
-          : gameIdToOpen
+        formatStreetRuntimeError(
+          loadError,
+          gameIdToOpen
             ? "Could not open your saved game."
             : "Could not open the district.",
+        ),
       );
     } finally {
       setBusyLabel(null);
@@ -1210,9 +1223,10 @@ export function PhaserStreetGameApp() {
         await callback();
       } catch (runError) {
         setError(
-          runError instanceof Error
-            ? runError.message
-            : "Something in the district failed to update.",
+          formatStreetRuntimeError(
+            runError,
+            "Something in the district failed to update.",
+          ),
         );
       } finally {
         setBusyLabel(null);
