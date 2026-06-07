@@ -427,7 +427,7 @@ class CdpSession {
               compactPrimaryActionText: compactPrimaryAction?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
               hasRowanText: bodyText.includes("Rowan"),
               hasWatchAction:
-                bodyText.includes("Advance now") ||
+                bodyText.includes("Continue watching") ||
                 bodyText.includes("Watch Rowan begin"),
               rootClass: root?.className ?? "",
               url: location.href
@@ -1044,7 +1044,7 @@ async function assertWatchModeFeelGuard() {
     "Active street runtime must not expose direct Rowan movement controls.",
   );
   assert.ok(
-    streetSource.includes("? \"Advance now\"") ||
+    streetSource.includes("? \"Continue watching\"") ||
       streetSource.includes("? \"Watch Rowan begin\""),
     "Watch-mode primary action should expose optional watch/skip language.",
   );
@@ -1303,9 +1303,15 @@ async function runViewportCheck(session, viewport) {
   );
   assert.ok(
     page.bodyText.includes("Rowan") &&
-      (page.bodyText.includes("Advance now") ||
+      (page.bodyText.includes("Continue watching") ||
         page.bodyText.includes("Watch Rowan begin")),
     `${viewport.name}: expected Rowan watch-mode UI text was missing.`,
+  );
+  assert.ok(
+    !/Advance now|A next step is ready|Autoplay is on; this skips/i.test(
+      page.bodyText,
+    ),
+    `${viewport.name}: watch-mode UI leaked stepper copy.`,
   );
   assert.ok(
     !page.bodyText.includes("Nudge Rowan"),
@@ -1333,7 +1339,7 @@ async function runViewportCheck(session, viewport) {
     );
     assert.ok(
       page.compactPrimaryAction.text.includes("Watch Rowan begin") ||
-        page.compactPrimaryAction.text.includes("Advance now"),
+        page.compactPrimaryAction.text.includes("Continue watching"),
       `${viewport.name}: compact primary action text is not the current Rowan action: ${page.compactPrimaryAction.text}`,
     );
   }
