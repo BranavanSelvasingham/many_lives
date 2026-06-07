@@ -105,8 +105,7 @@ function resourceBand(value: number, thresholds: number[]) {
 }
 
 function buildPlayerThought(game: StreetGameState) {
-  const nextObjectiveStep = game.player.objective?.trail.find((step) => !step.done);
-  const nextObjectiveText = nextObjectiveStep?.title ?? game.player.objective?.text ?? "";
+  const nextObjectiveText = buildObjectiveReasoningCue(game);
   const activeJob = game.jobs.find((job) => job.id === game.player.activeJobId);
   const pumpProblem = game.problems.find((problem) => problem.id === "problem-pump");
   const cartProblem = game.problems.find((problem) => problem.id === "problem-cart");
@@ -147,6 +146,11 @@ function buildPlayerThought(game: StreetGameState) {
     game.firstAfternoon?.teaShiftStage === "rush"
   ) {
     return "The room is filling. Cups first, tables second, keep moving.";
+  }
+
+  const liveAutonomyThought = buildLiveAutonomyThought(game);
+  if (liveAutonomyThought) {
+    return sanitizeThought(liveAutonomyThought);
   }
 
   const immediateObjectiveThought = buildImmediateObjectiveThought(
@@ -360,8 +364,7 @@ function buildImmediateObjectiveThought(
 }
 
 function buildPlanningThought(game: StreetGameState) {
-  const nextObjectiveStep = game.player.objective?.trail.find((step) => !step.done);
-  const objective = nextObjectiveStep?.title ?? game.player.objective?.text ?? "";
+  const objective = buildObjectiveReasoningCue(game);
   const objectiveFocus = game.player.objective?.focus;
   const knownLocations = game.locations.filter((location) =>
     game.player.knownLocationIds.includes(location.id),
@@ -440,6 +443,51 @@ function buildPlanningThought(game: StreetGameState) {
   }
 
   return "I should map South Quay and make a few introductions.";
+}
+
+function buildObjectiveReasoningCue(game: StreetGameState) {
+  const objective = game.player.objective;
+  if (!objective) {
+    return "";
+  }
+
+  const liveOutcome = objective.outcomes
+    .filter((outcome) => outcome.status !== "met" && outcome.status !== "failed")
+    .sort((left, right) => right.urgency - left.urgency)[0];
+
+  return liveOutcome?.label ?? objective.text;
+}
+
+function buildLiveAutonomyThought(game: StreetGameState) {
+  const autonomy = game.rowanAutonomy;
+  if (!autonomy || autonomy.mode === "idle" || autonomy.stepKind === "idle") {
+    return undefined;
+  }
+
+  const targetLocation = autonomy.targetLocationId
+    ? game.locations.find((location) => location.id === autonomy.targetLocationId)
+    : undefined;
+  const npc = autonomy.npcId
+    ? game.npcs.find((entry) => entry.id === autonomy.npcId)
+    : undefined;
+
+  if (autonomy.stepKind === "talk" && npc) {
+    return `I should ask ${npc.name} while they're here.`;
+  }
+
+  if (autonomy.actionId?.startsWith("enter:") && targetLocation) {
+    return `I should step inside ${targetLocation.name}.`;
+  }
+
+  if (targetLocation) {
+    return `${targetLocation.name} matters next.`;
+  }
+
+  if (autonomy.intent?.reason) {
+    return firstPersonThought(autonomy.intent.reason);
+  }
+
+  return firstPersonThought(autonomy.label);
 }
 
 function buildRecentConversationThought(

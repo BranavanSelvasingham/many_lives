@@ -1,6 +1,7 @@
 import type { StreetGameState } from "../../street-sim/types.js";
 import { getNpcNarrative } from "../../street-sim/npcNarratives.js";
 import { buildStreetVoicePromptLines } from "../streetVoice.js";
+import { buildRowanCognition } from "../../sim/rowanCognition.js";
 
 export function buildGenerateStreetThoughtsPrompt(
   game: StreetGameState,
@@ -43,6 +44,68 @@ export function buildGenerateStreetThoughtsPrompt(
     ? game.conversationThreads?.[game.activeConversation.npcId] ?? game.activeConversation
     : undefined;
   const objective = game.player.objective;
+  const rowanCognition = buildRowanCognition(game);
+  const objectiveAuthority = objective
+    ? {
+        desiredOutcomeGoal: objective.text,
+        focus: objective.focus,
+        routeKey: objective.routeKey,
+        progress: objective.progress,
+        desiredOutcomes: objective.outcomes.map((outcome) => ({
+          id: outcome.id,
+          label: outcome.label,
+          status: outcome.status,
+          urgency: outcome.urgency,
+          blockers: outcome.blockers ?? [],
+          evidence: outcome.evidence ?? null,
+          targetLocationId: outcome.targetLocationId,
+          npcId: outcome.npcId,
+          actionId: outcome.actionId,
+        })),
+        primaryNeed: rowanCognition.primaryNeed
+          ? {
+              need: rowanCognition.primaryNeed.label,
+              status: rowanCognition.primaryNeed.status,
+              why: rowanCognition.primaryNeed.reason,
+            }
+          : null,
+        likelyNextMove: rowanCognition.nextMove
+          ? {
+              what: rowanCognition.nextMove.text,
+              why: rowanCognition.nextMove.rationale,
+              kind: rowanCognition.nextMove.kind,
+              where: rowanCognition.nextMove.targetLocationId,
+              who: rowanCognition.nextMove.npcId,
+              action: rowanCognition.nextMove.actionId,
+            }
+          : null,
+        currentAutonomy: {
+          label: game.rowanAutonomy.label,
+          why: game.rowanAutonomy.intent?.reason ?? game.rowanAutonomy.detail,
+          kind: game.rowanAutonomy.stepKind,
+          where: game.rowanAutonomy.targetLocationId,
+          who: game.rowanAutonomy.npcId,
+          action: game.rowanAutonomy.actionId,
+        },
+        supportingRouteHints: objective.trail
+          .filter((step) => !step.done)
+          .map((step) => ({
+            id: step.id,
+            text: step.title,
+            detail: step.detail,
+            progress: step.progress,
+            targetLocationId: step.targetLocationId,
+            npcId: step.npcId,
+            actionId: step.actionId,
+          })),
+        recentlyFinishedHints: objective.completedTrail.slice(-8).map((step) => ({
+          id: step.id,
+          text: step.title,
+          detail: step.detail,
+          progress: step.progress,
+        })),
+      }
+    : null;
   const discoveredProblems = game.problems
     .filter((problem) => problem.discovered)
     .map((problem) => ({
@@ -82,18 +145,8 @@ export function buildGenerateStreetThoughtsPrompt(
     `Player: ${game.player.name} at ${currentLocation?.name ?? "the street"}, backstory ${game.player.backstory}, money ${game.player.money}, energy ${game.player.energy}, objective ${objective?.text ?? "none"}, active job ${activeJob?.title ?? "none"}`,
     `Current job timing: ${JSON.stringify(activeJobTiming)}`,
     `Place Rowan is about to go: ${JSON.stringify(pendingObjectiveMove)}`,
-    `Rowan's current plan: ${JSON.stringify(
-      objective
-        ? {
-            text: objective.text,
-            focus: objective.focus,
-            routeKey: objective.routeKey,
-            progress: objective.progress,
-            trail: objective.trail,
-            completedTrail: objective.completedTrail.slice(-8),
-          }
-        : null,
-    )}`,
+    "Rowan's objective authority: desired outcomes, current autonomy, needs, and live state come first; supportingRouteHints are optional scaffolding only.",
+    `Rowan objective authority: ${JSON.stringify(objectiveAuthority)}`,
     `City background: ${JSON.stringify(game.cityNarrative)}`,
     `District background: ${JSON.stringify(game.districtNarrative)}`,
     `Current place: ${JSON.stringify(
