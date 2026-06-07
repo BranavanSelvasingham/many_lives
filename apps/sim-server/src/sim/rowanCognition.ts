@@ -70,7 +70,7 @@ export function buildRowanCognitionState(
 ): NonNullable<StreetGameState["rowanCognition"]> {
   const cognition = buildRowanCognition(world);
   const primaryNeed = cognition.primaryNeed;
-  const currentBelief = selectNotebookBelief(cognition);
+  const currentBelief = selectNotebookBelief(world, cognition);
   const notebookNeed =
     needForBeliefTopic(cognition.needs, currentBelief?.topic) ?? primaryNeed;
   const nextMove = cognition.nextMove;
@@ -108,6 +108,7 @@ export function buildRowanCognitionState(
       "Ask the first useful question.",
     title: notebookNeed?.label ?? "First page of the morning",
     uncertainty:
+      uncertaintyForBelief(currentBelief) ??
       uncertaintyForNeed(notebookNeed?.key) ??
       notebookNeed?.reason ??
       "Who can turn tonight's room into tomorrow's foothold?",
@@ -255,6 +256,7 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
   const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
   const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
   const pumpProblem = world.problems.find((problem) => problem.id === "problem-pump");
+  const objectiveText = world.player.objective?.text.toLowerCase() ?? "";
 
   if (maraKnown) {
     beliefs.push({
@@ -315,6 +317,18 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
     });
   }
 
+  if (/\bnia\b|\bblock\b|\bjam\b|\bcart\b|\bsquare\b/.test(objectiveText)) {
+    beliefs.push({
+      id: "belief-nia-current-lead",
+      topic: "help",
+      text:
+        "Jo's clue points Rowan toward Nia before the block jam turns into someone else's problem.",
+      confidence: niaKnown ? "promising" : "possible",
+      source: joKnown ? "Jo at Mercer Repairs" : "Current lead",
+      npcId: "npc-nia",
+    });
+  }
+
   if (niaKnown) {
     beliefs.push({
       id: "belief-nia-people",
@@ -329,7 +343,7 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
   return beliefs;
 }
 
-function selectNotebookBelief(cognition: RowanCognition) {
+function selectNotebookBelief(world: StreetGameState, cognition: RowanCognition) {
   const nextMove = cognition.nextMove;
   const primaryNeedTopic = topicForNeed(cognition.primaryNeed?.key);
   const confidenceScore: Record<RowanBeliefConfidence, number> = {
@@ -339,24 +353,102 @@ function selectNotebookBelief(cognition: RowanCognition) {
   };
 
   return [...cognition.beliefs].sort((left, right) => {
-    const leftDirect =
-      (nextMove?.npcId && left.npcId === nextMove.npcId) ||
-      (nextMove?.targetLocationId && left.locationId === nextMove.targetLocationId);
-    const rightDirect =
-      (nextMove?.npcId && right.npcId === nextMove.npcId) ||
-      (nextMove?.targetLocationId && right.locationId === nextMove.targetLocationId);
-    if (leftDirect !== rightDirect) {
-      return leftDirect ? -1 : 1;
-    }
-
-    const leftNeed = primaryNeedTopic !== undefined && left.topic === primaryNeedTopic;
-    const rightNeed = primaryNeedTopic !== undefined && right.topic === primaryNeedTopic;
-    if (leftNeed !== rightNeed) {
-      return leftNeed ? -1 : 1;
-    }
-
-    return confidenceScore[right.confidence] - confidenceScore[left.confidence];
+    return (
+      notebookBeliefScore(world, right, {
+        confidenceScore,
+        nextMove,
+        primaryNeedTopic,
+      }) -
+      notebookBeliefScore(world, left, {
+        confidenceScore,
+        nextMove,
+        primaryNeedTopic,
+      })
+    );
   })[0];
+}
+
+function notebookBeliefScore(
+  world: StreetGameState,
+  belief: RowanBelief,
+  context: {
+    confidenceScore: Record<RowanBeliefConfidence, number>;
+    nextMove?: RowanNextMove;
+    primaryNeedTopic?: RowanBelief["topic"];
+  },
+) {
+  const direct =
+    (context.nextMove?.npcId && belief.npcId === context.nextMove.npcId) ||
+    (context.nextMove?.targetLocationId &&
+      belief.locationId === context.nextMove.targetLocationId);
+  const objectiveMatch = objectiveMatchesBelief(world, belief);
+  const primaryNeedMatch =
+    context.primaryNeedTopic !== undefined && belief.topic === context.primaryNeedTopic;
+  const firstAfternoonSettled = Boolean(world.firstAfternoon?.completedAt);
+
+  let score = context.confidenceScore[belief.confidence] * 10;
+  if (direct) {
+    score += 70;
+  }
+  if (objectiveMatch) {
+    score += 180;
+  }
+  if (primaryNeedMatch) {
+    score += 40;
+  }
+  if (firstAfternoonSettled && belief.topic === "shelter" && !direct && !objectiveMatch) {
+    score -= 90;
+  }
+
+  return score;
+}
+
+function objectiveMatchesBelief(world: StreetGameState, belief: RowanBelief) {
+  const objectiveText = world.player.objective?.text.toLowerCase() ?? "";
+  if (!objectiveText) {
+    return false;
+  }
+
+  const npcName = belief.npcId
+    ? world.npcs.find((npc) => npc.id === belief.npcId)?.name.toLowerCase()
+    : undefined;
+  const locationName = belief.locationId
+    ? world.locations.find((location) => location.id === belief.locationId)?.name.toLowerCase()
+    : undefined;
+
+  if (npcName && objectiveText.includes(npcName)) {
+    return true;
+  }
+
+  if (locationName && objectiveText.includes(locationName)) {
+    return true;
+  }
+
+  if (belief.source && objectiveText.includes(belief.source.toLowerCase())) {
+    return true;
+  }
+
+  switch (belief.topic) {
+    case "help":
+      if (belief.id === "belief-pump-standing") {
+        return /\bpump\b|\bleak\b|\bfix\b/.test(objectiveText);
+      }
+      return /\bblock\b|\bjam\b|\bcart\b|\bsquare\b|\bpump\b|\bfix\b|\bhelp\b/.test(
+        objectiveText,
+      );
+    case "work":
+      return /\bwork\b|\bjob\b|\bshift\b|\bpay\b|\bincome\b/.test(objectiveText);
+    case "shelter":
+      return /\broom\b|\bbed\b|\bstay\b|\bhouse\b|\bshelter\b/.test(objectiveText);
+    case "tool":
+      return /\bwrench\b|\btool\b|\brepair\b/.test(objectiveText);
+    case "belonging":
+      return /\bperson\b|\bpeople\b|\bfriend\b|\btrust\b|\bknown\b/.test(
+        objectiveText,
+      );
+    default:
+      return false;
+  }
 }
 
 function topicForNeed(needKey?: RowanNeedKey): RowanBelief["topic"] | undefined {
@@ -388,6 +480,22 @@ function needKeyForTopic(topic?: RowanBelief["topic"]): RowanNeedKey | undefined
       return "shelter";
     case "work":
       return "income";
+    case "help":
+    case "tool":
+      return "orientation";
+    default:
+      return undefined;
+  }
+}
+
+function uncertaintyForBelief(belief?: RowanBelief) {
+  switch (belief?.id) {
+    case "belief-nia-current-lead":
+      return "What does Nia know about the block before it jams?";
+    case "belief-jo-tools":
+      return "Which local problem is worth spending scarce money on?";
+    case "belief-pump-standing":
+      return "Can Rowan turn a small fix into a real local foothold?";
     default:
       return undefined;
   }

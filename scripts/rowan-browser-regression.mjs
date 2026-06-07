@@ -2680,6 +2680,43 @@ function assertNotebookUsesCognitionAuthority(label, dom, probe) {
     /\b(worldPressure|cityEvents|jobWindows|npcSchedules|planningTrace|routeKey)\b/i,
     `${label}: player-facing Notebook should not leak backend-shaped debug labels.`,
   );
+  assertNotebookFreshForLateObjective(label, normalizedBody, notebook);
+}
+
+function assertNotebookFreshForLateObjective(label, normalizedBody, notebook) {
+  const lateNiaLeadVisible =
+    /Talk to Nia next while there is still time/i.test(normalizedBody) ||
+    /Ask Nia where the block is about to jam/i.test(normalizedBody) ||
+    /Objective shifted/i.test(normalizedBody);
+  if (!lateNiaLeadVisible) {
+    return;
+  }
+
+  const notebookText = [
+    notebook.title,
+    notebook.belief,
+    notebook.clue,
+    notebook.plan,
+    notebook.uncertainty,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  assert.doesNotMatch(
+    notebookText,
+    /Keep a stable room|Mara is the person most likely|tonight's bed|bed feel less temporary/i,
+    `${label}: late Notebook stayed anchored to stale room/shelter authority after the Nia lead surfaced.`,
+  );
+  assert.match(
+    notebookText,
+    /Nia|Jo|block|jam|square/i,
+    `${label}: late Notebook should reflect the current Nia/block-jam lead.`,
+  );
+  assert.notEqual(
+    notebook.authority?.notebookNeedKey,
+    "shelter",
+    `${label}: late Notebook should not keep shelter as the active need after the objective shifted to Nia/local pressure.`,
+  );
 }
 
 function buildTimelineEntry({
