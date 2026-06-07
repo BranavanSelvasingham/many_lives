@@ -22,6 +22,9 @@ const CDP_COMMAND_TIMEOUT_MS = Number(
 const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_LIVE_SMOKE_READY_TIMEOUT_MS ?? "30000",
 );
+const AUTOPLAY_START_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_LIVE_SMOKE_AUTOPLAY_START_TIMEOUT_MS ?? "10000",
+);
 const POLL_INTERVAL_MS = 250;
 const WINDOW_SIZE = process.env.MANY_LIVES_LIVE_SMOKE_WINDOW ?? "1365,768";
 const SUMMARY_PATH = path.join(OUTPUT_DIR, "summary.json");
@@ -57,10 +60,14 @@ async function main() {
     await session.navigate(firstUrl);
     await session.waitForAppReady();
     await session.waitForWatchModeUi();
-    await sleep(1_000);
 
+    const openingProbe = await session.readBrowserProbe();
+    const firstProbe = await waitForFreshAutoplayAdvance(
+      session,
+      openingProbe,
+      "Live fresh autoplay",
+    );
     const firstPage = await session.inspectPage();
-    const firstProbe = await session.readBrowserProbe();
     assertFreshAutoplayPage(firstPage, firstProbe, liveBase);
 
     const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay.png");
@@ -235,10 +242,42 @@ function assertFreshAutoplayPage(page, probe, base) {
     "Live app leaked watch-mode stepper copy.",
   );
   assert.ok(!page.bodyText.includes("Nudge Rowan"), "Live app still contains Nudge Rowan copy.");
+  assert.ok(
+    !page.bodyText.includes("Watch Rowan begin"),
+    "Live autoplay stayed on the opening watch action instead of starting Rowan.",
+  );
   assert.ok(probe?.gameId, "Live browser probe is missing a game id.");
   assert.equal(probe.watchMode?.enabled, true, "Live browser probe did not report watch mode.");
   assert.ok(probe.objective?.text, "Live browser probe is missing Rowan's objective.");
   assert.ok(probe.rail?.now, "Live browser probe is missing Rowan's current rail beat.");
+}
+
+async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
+  assert.ok(openingProbe?.gameId, `${label}: opening probe is missing a game id.`);
+  assert.equal(
+    openingProbe.watchMode?.enabled,
+    true,
+    `${label}: opening probe is not in watch mode.`,
+  );
+
+  return waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (!probe?.watchMode?.enabled || probe.watchMode?.frozen) {
+        return false;
+      }
+
+      const advanced =
+        probe.clock?.totalMinutes > openingProbe.clock?.totalMinutes ||
+        probe.autonomy?.key !== openingProbe.autonomy?.key ||
+        probe.location?.id !== openingProbe.location?.id ||
+        Boolean(probe.activeConversation?.npcId);
+
+      return advanced ? probe : false;
+    },
+    AUTOPLAY_START_TIMEOUT_MS,
+    `${label} did not leave the opening Watch Rowan begin state within ${AUTOPLAY_START_TIMEOUT_MS}ms.`,
+  );
 }
 
 async function launchBrowserSession() {
