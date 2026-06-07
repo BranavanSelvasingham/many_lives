@@ -5351,9 +5351,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     .filter((item) => item.id !== primaryTool?.id)
     .slice(0, 2)
     .map((item) => item.name);
-  const conversationLines = selectedNpc
-    ? getConversationPreview(game, selectedNpc.id)
-    : [];
   const selectedConversationThread = selectedNpc
     ? getConversationThreadState(game, selectedNpc.id)
     : undefined;
@@ -5370,6 +5367,17 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     : undefined;
   const selectedActiveConversation =
     selectedNpc && game.activeConversation?.npcId === selectedNpc.id
+      ? game.activeConversation
+      : undefined;
+  const peoplePanelNpc = selectedNpc ?? nearbyNpcs[0] ?? null;
+  const peoplePanelConversationLines = peoplePanelNpc
+    ? getConversationPreview(game, peoplePanelNpc.id)
+    : [];
+  const peoplePanelConversationThread = peoplePanelNpc
+    ? getConversationThreadState(game, peoplePanelNpc.id)
+    : undefined;
+  const peoplePanelActiveConversation =
+    peoplePanelNpc && game.activeConversation?.npcId === peoplePanelNpc.id
       ? game.activeConversation
       : undefined;
   const railActiveConversation =
@@ -5393,22 +5401,22 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     focusPanel === "people"
       ? buildPeopleTabHtml({
           conversationDecision:
-            selectedActiveConversation?.decision ??
-            selectedConversationThread?.decision,
-          conversationLines,
+            peoplePanelActiveConversation?.decision ??
+            peoplePanelConversationThread?.decision,
+          conversationLines: peoplePanelConversationLines,
           conversationObjectiveText:
-            selectedActiveConversation?.objectiveText ??
-            selectedConversationThread?.objectiveText,
-          conversationSummary: selectedConversationThread?.summary,
+            peoplePanelActiveConversation?.objectiveText ??
+            peoplePanelConversationThread?.objectiveText,
+          conversationSummary: peoplePanelConversationThread?.summary,
           conversationUpdatedAt:
-            selectedActiveConversation?.updatedAt ??
-            selectedConversationThread?.updatedAt,
+            peoplePanelActiveConversation?.updatedAt ??
+            peoplePanelConversationThread?.updatedAt,
           currentObjectiveText,
           currentSummary,
           currentThought,
           nearbyNpcs,
           rosterNpcs,
-          selectedNpc,
+          selectedNpc: peoplePanelNpc,
           snapshot,
           talkableNpcIds,
           tools,

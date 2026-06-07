@@ -162,7 +162,7 @@ export function buildPeopleTabHtml(options: {
         ${
           selectedNpc
             ? `
-            <div class="ml-card">
+            <div class="ml-card" data-locals-person-card>
               <div class="ml-kicker">${escapeHtml(
                 liveConversationSelected ? "Conversation Active" : "Person Card",
               )}</div>
@@ -209,7 +209,7 @@ export function buildPeopleTabHtml(options: {
             </div>
           `
             : `
-            <div class="ml-card">
+            <div class="ml-card" data-locals-placeholder-card>
               <div class="ml-kicker">Character Card</div>
               <div class="ml-row-copy" style="margin-top: 8px;">Pick someone from the block to pull their card into focus.</div>
             </div>
