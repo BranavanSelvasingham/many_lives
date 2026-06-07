@@ -2777,7 +2777,14 @@ async function runOverlayPanelChecks(session) {
       label: "overlay-notebook",
       selector: '[data-tab="mind"]',
       expectedTab: "mind",
-      expectedText: [/Rowan's Notebook/i, /Current Belief/i, /Current Plan/i],
+      expectedText: [
+        /Rowan's Notebook/i,
+        /Current Belief/i,
+        /Current Plan/i,
+        /City Pulse/i,
+        /South Quay is moving/i,
+      ],
+      rejectedText: [/worldPressure/i, /cityEvents/i, /jobWindows/i, /npcSchedules/i],
     },
     {
       label: "overlay-journal",
@@ -3116,7 +3123,7 @@ async function runInhabitPanelChecks(session) {
       expectedTab: "mind",
       label: "inhabit-panel-notebook",
       selector: '[data-tab="mind"]',
-      text: /Notebook|Current Belief|Current Plan/i,
+      text: /(?=.*Notebook)(?=.*City Pulse)(?=.*South Quay is moving)/is,
     },
   ];
 

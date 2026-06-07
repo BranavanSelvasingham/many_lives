@@ -475,9 +475,35 @@ export function buildMindTabHtml(options: {
     primaryPlace,
     primaryThread,
   });
+  const cityPulseItems = buildCityPulseItems(game);
 
   return `
     <div class="ml-focus-stack">
+      <div class="ml-card" data-city-pulse="true">
+        <div class="ml-kicker">City Pulse</div>
+        <div class="ml-card-title" style="margin-top: 8px;">South Quay is moving</div>
+        <div class="ml-list" style="margin-top: 12px;">
+          ${
+            cityPulseItems.length > 0
+              ? cityPulseItems
+                  .map(
+                    (item) => `
+                    <div class="ml-row">
+                      <div class="ml-row-title">${escapeHtml(item.title)}</div>
+                      <div class="ml-row-copy">${escapeHtml(item.detail)}</div>
+                      ${
+                        item.meta
+                          ? `<div class="ml-row-meta">${escapeHtml(item.meta)}</div>`
+                          : ""
+                      }
+                    </div>
+                  `,
+                  )
+                  .join("")
+              : `<div class="ml-row"><div class="ml-row-copy">The block is quiet for the moment, but Rowan is still watching for work, trouble, and people on the move.</div></div>`
+          }
+        </div>
+      </div>
       <div class="ml-card ml-notebook-card">
         <div class="ml-kicker">Rowan's Notebook</div>
         <div class="ml-card-title" style="margin-top: 8px;">${escapeHtml(
@@ -823,6 +849,173 @@ function buildRowanNotebookModel({
     title: "First page of the morning",
     uncertainty: "Who can turn tonight's room into tomorrow's foothold?",
   };
+}
+
+type CityPulseItem = {
+  detail: string;
+  id: string;
+  meta?: string;
+  priority: number;
+  title: string;
+};
+
+function buildCityPulseItems(game: StreetGameState): CityPulseItem[] {
+  const locationById = new Map(
+    game.locations.map((location) => [location.id, location]),
+  );
+  const currentTotalMinutes = game.clock.totalMinutes;
+  const dayOffsetMinutes = Math.max(0, game.clock.day - 1) * 24 * 60;
+  const currentHour = game.clock.hour + game.clock.minute / 60;
+
+  const eventItems = (game.cityEvents ?? [])
+    .filter((event) => event.status === "active" || event.status === "upcoming")
+    .map((event): CityPulseItem => {
+      const startsIn = Math.max(
+        0,
+        dayOffsetMinutes + event.startMinute - currentTotalMinutes,
+      );
+      const endsIn = Math.max(
+        0,
+        dayOffsetMinutes + event.endMinute - currentTotalMinutes,
+      );
+      const place = locationById.get(event.locationId)?.name ?? "South Quay";
+      const timing =
+        event.status === "active"
+          ? `active for ${formatMinutesRemaining(endsIn)}`
+          : `starts in ${formatMinutesRemaining(startsIn)}`;
+      const priority =
+        event.status === "active"
+          ? event.tone === "warning"
+            ? 70
+            : event.tone === "lead"
+              ? 62
+              : 48
+          : startsIn <= 90
+            ? 42
+            : 22;
+
+      return {
+        detail: buildNarrativePreview(event.summary, 140),
+        id: `event-${event.id}`,
+        meta: `${place} • ${timing}`,
+        priority,
+        title: event.visibleLabel || event.title,
+      };
+    });
+
+  const problemItems = (game.problems ?? [])
+    .filter(
+      (problem) =>
+        problem.discovered &&
+        (problem.status === "active" || problem.status === "expired"),
+    )
+    .map((problem): CityPulseItem => {
+      const place = locationById.get(problem.locationId)?.name ?? "the block";
+      const escalated = (problem.escalationLevel ?? 0) > 0;
+
+      return {
+        detail: escalated
+          ? `${buildNarrativePreview(
+              problem.summary,
+              110,
+            )} It has already started getting worse.`
+          : buildNarrativePreview(problem.summary, 140),
+        id: `problem-${problem.id}`,
+        meta:
+          problem.status === "expired"
+            ? `${place} • already worsened`
+            : `${place} • still needs handling`,
+        priority: problem.status === "active" ? 82 : 50,
+        title: problem.title,
+      };
+    });
+
+  const jobItems = (game.jobs ?? [])
+    .filter(
+      (job) =>
+        (job.accepted || job.discovered) && !job.completed && !job.missed,
+    )
+    .map((job): CityPulseItem => {
+      const startTotal = dayOffsetMinutes + Math.round(job.startHour * 60);
+      const endTotal = dayOffsetMinutes + Math.round(job.endHour * 60);
+      const inWindow =
+        currentTotalMinutes >= startTotal && currentTotalMinutes < endTotal;
+      const startsIn = Math.max(0, startTotal - currentTotalMinutes);
+      const endsIn = Math.max(0, endTotal - currentTotalMinutes);
+      const place = locationById.get(job.locationId)?.name ?? "a job site";
+
+      return {
+        detail: buildNarrativePreview(job.summary, 140),
+        id: `job-${job.id}`,
+        meta: inWindow
+          ? `${place} • open for ${formatMinutesRemaining(endsIn)}`
+          : `${place} • opens in ${formatMinutesRemaining(startsIn)}`,
+        priority: job.accepted ? 78 : inWindow ? 68 : 46,
+        title: job.accepted ? `${job.title} is committed` : job.title,
+      };
+    });
+
+  const npcItems = (game.npcs ?? [])
+    .filter((npc) => npc.known || game.player.knownNpcIds.includes(npc.id))
+    .flatMap((npc): CityPulseItem[] => {
+      const nextStop = npc.schedule
+        .filter((entry) => entry.fromHour > currentHour)
+        .sort((left, right) => left.fromHour - right.fromHour)[0];
+      if (!nextStop) {
+        return [];
+      }
+
+      const startsIn = Math.max(
+        0,
+        Math.round((nextStop.fromHour - currentHour) * 60),
+      );
+      if (startsIn > 120 || nextStop.locationId === npc.currentLocationId) {
+        return [];
+      }
+
+      const currentPlace =
+        locationById.get(npc.currentLocationId)?.name ?? "nearby";
+      const nextPlace = locationById.get(nextStop.locationId)?.name;
+      if (!nextPlace) {
+        return [];
+      }
+
+      return [
+        {
+          detail: `${npc.name} is still ${lowercaseFirst(
+            trimPeriod(npc.currentConcern),
+          )}.`,
+          id: `npc-${npc.id}-${nextStop.locationId}`,
+          meta: `${currentPlace} now • ${nextPlace} in ${formatMinutesRemaining(
+            startsIn,
+          )}`,
+          priority: startsIn <= 45 ? 44 : 30,
+          title: `${npc.name} may move soon`,
+        },
+      ];
+    });
+
+  return [...problemItems, ...jobItems, ...eventItems, ...npcItems]
+    .sort((left, right) => right.priority - left.priority)
+    .slice(0, 5);
+}
+
+function formatMinutesRemaining(minutes: number) {
+  if (minutes <= 0) {
+    return "now";
+  }
+
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  if (remainder === 0) {
+    return `${hours} hr`;
+  }
+
+  return `${hours} hr ${remainder} min`;
 }
 
 export function joinNarrativeFragments(parts: Array<string | undefined>) {
