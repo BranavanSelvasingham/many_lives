@@ -606,6 +606,59 @@ export interface RowanAutonomyState {
   targetLocationId?: string;
 }
 
+export interface RowanCognitionNeedSummary {
+  key: string;
+  label: string;
+  reason: string;
+  status: "active" | "stable" | "urgent";
+}
+
+export interface RowanCognitionBeliefSummary {
+  confidence: "confirmed" | "possible" | "promising";
+  id: string;
+  locationId?: string;
+  npcId?: string;
+  source: string;
+  text: string;
+  topic: "belonging" | "help" | "shelter" | "tool" | "work";
+}
+
+export interface RowanCognitionNextMoveSummary {
+  actionId?: string;
+  kind?: RowanAutonomyStepKind;
+  npcId?: string;
+  rationale: string;
+  targetLocationId?: string;
+  text: string;
+}
+
+export interface RowanNotebookAuthoritySummary {
+  belief: string;
+  clue: string;
+  confidence: string;
+  plan: string;
+  title: string;
+  uncertainty: string;
+  authority: {
+    beliefConfidence?: RowanCognitionBeliefSummary["confidence"];
+    beliefId?: string;
+    beliefSource?: string;
+    nextMoveActionId?: string;
+    nextMoveNpcId?: string;
+    nextMoveRationale?: string;
+    nextMoveTargetLocationId?: string;
+    notebookNeedKey?: string;
+    primaryNeedKey?: string;
+  };
+}
+
+export interface RowanCognitionState {
+  currentBelief?: RowanCognitionBeliefSummary;
+  nextMove?: RowanCognitionNextMoveSummary;
+  notebook: RowanNotebookAuthoritySummary;
+  primaryNeed?: RowanCognitionNeedSummary;
+}
+
 export type AIRuntimeTask =
   | "generateStreetAutonomousLine"
   | "generateStreetReply"
@@ -682,6 +735,7 @@ export interface StreetGameState {
   availableActions: ActionOption[];
   goals: string[];
   rowanAutonomy: RowanAutonomyState;
+  rowanCognition?: RowanCognitionState;
   summary: string;
 }
 

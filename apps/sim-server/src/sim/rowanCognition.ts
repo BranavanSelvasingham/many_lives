@@ -65,6 +65,88 @@ export function buildRowanCognition(world: StreetGameState): RowanCognition {
   };
 }
 
+export function buildRowanCognitionState(
+  world: StreetGameState,
+): NonNullable<StreetGameState["rowanCognition"]> {
+  const cognition = buildRowanCognition(world);
+  const primaryNeed = cognition.primaryNeed;
+  const currentBelief = selectNotebookBelief(cognition);
+  const notebookNeed =
+    needForBeliefTopic(cognition.needs, currentBelief?.topic) ?? primaryNeed;
+  const nextMove = cognition.nextMove;
+  const notebook = {
+    authority: {
+      beliefConfidence: currentBelief?.confidence,
+      beliefId: currentBelief?.id,
+      beliefSource: currentBelief?.source,
+      nextMoveActionId: nextMove?.actionId,
+      nextMoveNpcId: nextMove?.npcId,
+      nextMoveRationale: nextMove?.rationale,
+      nextMoveTargetLocationId: nextMove?.targetLocationId,
+      notebookNeedKey: notebookNeed?.key,
+      primaryNeedKey: primaryNeed?.key,
+    },
+    belief:
+      currentBelief?.text ??
+      primaryNeed?.reason ??
+      "South Quay is still mostly unknown, and Rowan needs one reliable person to ask.",
+    clue: currentBelief
+      ? `${currentBelief.source} made this feel ${confidenceAdjective(
+          currentBelief.confidence,
+        )}.`
+      : primaryNeed
+        ? `The strongest pressure right now is ${primaryNeed.label.toLowerCase()}.`
+        : "The room at Morrow House is safe for tonight, but not a future by itself.",
+    confidence: currentBelief
+      ? `${confidenceLabel(currentBelief.confidence)} from ${currentBelief.source}.`
+      : primaryNeed
+        ? `${needStatusLabel(primaryNeed.status)}: ${primaryNeed.reason}`
+        : "Unsettled.",
+    plan:
+      nextMove?.text ??
+      world.rowanAutonomy?.label ??
+      "Ask the first useful question.",
+    title: notebookNeed?.label ?? "First page of the morning",
+    uncertainty:
+      uncertaintyForNeed(notebookNeed?.key) ??
+      notebookNeed?.reason ??
+      "Who can turn tonight's room into tomorrow's foothold?",
+  };
+
+  return {
+    currentBelief: currentBelief
+      ? {
+          confidence: currentBelief.confidence,
+          id: currentBelief.id,
+          locationId: currentBelief.locationId,
+          npcId: currentBelief.npcId,
+          source: currentBelief.source,
+          text: currentBelief.text,
+          topic: currentBelief.topic,
+        }
+      : undefined,
+    nextMove: nextMove
+      ? {
+          actionId: nextMove.actionId,
+          kind: nextMove.kind,
+          npcId: nextMove.npcId,
+          rationale: nextMove.rationale,
+          targetLocationId: nextMove.targetLocationId,
+          text: nextMove.text,
+        }
+      : undefined,
+    notebook,
+    primaryNeed: primaryNeed
+      ? {
+          key: primaryNeed.key,
+          label: primaryNeed.label,
+          reason: primaryNeed.reason,
+          status: primaryNeed.status,
+        }
+      : undefined,
+  };
+}
+
 function buildRowanNeeds(world: StreetGameState): RowanNeed[] {
   const needs: RowanNeed[] = [];
   const money = world.player.money;
@@ -245,6 +327,126 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
   }
 
   return beliefs;
+}
+
+function selectNotebookBelief(cognition: RowanCognition) {
+  const nextMove = cognition.nextMove;
+  const primaryNeedTopic = topicForNeed(cognition.primaryNeed?.key);
+  const confidenceScore: Record<RowanBeliefConfidence, number> = {
+    confirmed: 3,
+    possible: 1,
+    promising: 2,
+  };
+
+  return [...cognition.beliefs].sort((left, right) => {
+    const leftDirect =
+      (nextMove?.npcId && left.npcId === nextMove.npcId) ||
+      (nextMove?.targetLocationId && left.locationId === nextMove.targetLocationId);
+    const rightDirect =
+      (nextMove?.npcId && right.npcId === nextMove.npcId) ||
+      (nextMove?.targetLocationId && right.locationId === nextMove.targetLocationId);
+    if (leftDirect !== rightDirect) {
+      return leftDirect ? -1 : 1;
+    }
+
+    const leftNeed = primaryNeedTopic !== undefined && left.topic === primaryNeedTopic;
+    const rightNeed = primaryNeedTopic !== undefined && right.topic === primaryNeedTopic;
+    if (leftNeed !== rightNeed) {
+      return leftNeed ? -1 : 1;
+    }
+
+    return confidenceScore[right.confidence] - confidenceScore[left.confidence];
+  })[0];
+}
+
+function topicForNeed(needKey?: RowanNeedKey): RowanBelief["topic"] | undefined {
+  switch (needKey) {
+    case "belonging":
+      return "belonging";
+    case "income":
+      return "work";
+    case "shelter":
+      return "shelter";
+    default:
+      return undefined;
+  }
+}
+
+function needForBeliefTopic(
+  needs: RowanNeed[],
+  topic?: RowanBelief["topic"],
+) {
+  const needKey = needKeyForTopic(topic);
+  return needKey ? needs.find((need) => need.key === needKey) : undefined;
+}
+
+function needKeyForTopic(topic?: RowanBelief["topic"]): RowanNeedKey | undefined {
+  switch (topic) {
+    case "belonging":
+      return "belonging";
+    case "shelter":
+      return "shelter";
+    case "work":
+      return "income";
+    default:
+      return undefined;
+  }
+}
+
+function confidenceAdjective(confidence: RowanBeliefConfidence) {
+  switch (confidence) {
+    case "confirmed":
+      return "confirmed";
+    case "promising":
+      return "promising";
+    case "possible":
+      return "possible";
+    default:
+      return "uncertain";
+  }
+}
+
+function confidenceLabel(confidence: RowanBeliefConfidence) {
+  switch (confidence) {
+    case "confirmed":
+      return "Confirmed";
+    case "promising":
+      return "Promising";
+    case "possible":
+      return "Possible";
+    default:
+      return "Unsettled";
+  }
+}
+
+function needStatusLabel(status: RowanNeedStatus) {
+  switch (status) {
+    case "urgent":
+      return "Urgent";
+    case "active":
+      return "Active";
+    case "stable":
+      return "Stable";
+    default:
+      return "Unsettled";
+  }
+}
+
+function uncertaintyForNeed(needKey?: RowanNeedKey) {
+  switch (needKey) {
+    case "belonging":
+      return "Who will remember Rowan as more than a new face?";
+    case "income":
+      return "Which lead can turn into paid work before the day gets away?";
+    case "orientation":
+      return "Which place should Rowan understand before choosing badly?";
+    case "rest":
+      return "How far can Rowan push before tired choices get expensive?";
+    case "shelter":
+      return "What would make tonight's bed feel less temporary?";
+    default:
+      return undefined;
+  }
 }
 
 export function buildRowanNextMoveFromAutonomy(

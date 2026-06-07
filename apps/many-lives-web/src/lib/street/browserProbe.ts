@@ -306,6 +306,14 @@ export function buildStreetBrowserProbeJson({
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
     },
+    rowanCognition: game.rowanCognition
+      ? {
+          currentBelief: game.rowanCognition.currentBelief ?? null,
+          nextMove: game.rowanCognition.nextMove ?? null,
+          notebook: game.rowanCognition.notebook,
+          primaryNeed: game.rowanCognition.primaryNeed ?? null,
+        }
+      : null,
     clock: {
       iso: game.currentTime,
       label: game.clock.label,

@@ -755,6 +755,17 @@ function buildRowanNotebookModel({
   primaryPlace?: StreetGameState["locations"][number];
   primaryThread?: MemoryThread;
 }) {
+  if (game.rowanCognition?.notebook) {
+    return {
+      belief: game.rowanCognition.notebook.belief,
+      clue: game.rowanCognition.notebook.clue,
+      confidence: game.rowanCognition.notebook.confidence,
+      plan: game.rowanCognition.notebook.plan,
+      title: game.rowanCognition.notebook.title,
+      uncertainty: game.rowanCognition.notebook.uncertainty,
+    };
+  }
+
   const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
   const currentPlanHint =
     game.rowanAutonomy?.label ??
