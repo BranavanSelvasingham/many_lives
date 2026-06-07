@@ -603,7 +603,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.activeConversation?.objectiveText).toContain("Ada");
   });
 
-  it("describes the Ada lead as a street route from Morrow House", async () => {
+  it("describes the Ada lead as a situated cafe lead from Morrow House", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-ada-route-copy");
 
@@ -628,12 +628,12 @@ describe("SimulationEngine street slice", () => {
       ...(world.rowanAutonomy.intent?.signals ?? []),
     ].join(" ");
 
-    expect(commitmentCopy).toMatch(/Kettle & Lamp|street route|Ada/i);
+    expect(commitmentCopy).toMatch(/Kettle & Lamp|Ada|cafe|lunch/i);
     expect(commitmentCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
     expect(commitmentCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
     expect(commitmentCopy).not.toMatch(/Ada work at Morrow House/i);
     expect(commitmentCopy).not.toMatch(
-      /already (?:picked|chose)|confirms? the route|instead of changing course/i,
+      /already (?:picked|chose)|confirms? the route|instead of changing course|needs the street route|street route from/i,
     );
 
     world = await advanceUntil(
@@ -653,12 +653,12 @@ describe("SimulationEngine street slice", () => {
       ...(world.rowanAutonomy.intent?.signals ?? []),
     ].join(" ");
 
-    expect(routeCopy).toMatch(/Kettle & Lamp|street route|Ada/i);
+    expect(routeCopy).toMatch(/Kettle & Lamp|Ada|Mara|lunch/i);
     expect(routeCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada work at Morrow House/i);
     expect(routeCopy).not.toMatch(
-      /already (?:picked|chose)|confirms? the route|instead of changing course/i,
+      /already (?:picked|chose)|confirms? the route|instead of changing course|needs the street route|street route from/i,
     );
     expect(world.rowanAutonomy.intent?.reason).toMatch(
       /Kettle & Lamp|Ada|Mara|lunch/i,

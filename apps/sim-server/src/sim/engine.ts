@@ -3180,7 +3180,7 @@ function autonomyDetailForAction(
 
   if (kind === "exit") {
     const location = targetId ? findLocation(world, targetId) : undefined;
-    return `Rowan needs the street route from ${location?.name ?? "this room"} before continuing: ${rationale}.`;
+    return `Rowan is done inside ${location?.name ?? "this room"} for now, so he steps back into South Quay: ${rationale}.`;
   }
 
   return isTimeSkippingAction(actionId)
@@ -3214,6 +3214,12 @@ function playerFacingAutonomyRationale(
     return world.player.energy < 28
       ? "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
       : "the shift paid, and Morrow House is the right place to let the day land";
+  }
+
+  if (normalized.includes("morrow house standing built")) {
+    return world.player.energy < 28
+      ? "Morrow House is where Rowan can let today's standing settle before he runs himself flat"
+      : "Morrow House is where today's standing can turn into a steadier foothold";
   }
 
   if (normalized.includes("cup-and-counter") || normalized.includes("lunch rush")) {
@@ -3338,7 +3344,7 @@ function buildRowanAutonomyReason({
 
   if (loopStep.kind === "act" && actionLabel) {
     if (/ada|kettle|lunch/i.test(actionLabel) && currentLocationName === "Morrow House") {
-      return "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs the street route before asking.";
+      return "Mara's lead points to Ada at Kettle & Lamp, so Rowan has to reach the cafe before asking.";
     }
 
     if (currentLocationName) {
