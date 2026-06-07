@@ -26,6 +26,9 @@ const AUTOPLAY_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_LIVE_SMOKE_AUTOPLAY_START_TIMEOUT_MS ?? "10000",
 );
 const POLL_INTERVAL_MS = 250;
+const GENERIC_AUTOPLAY_NOTE = "Rowan is carrying this beat forward";
+const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
+  /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i;
 const WINDOW_SIZE = process.env.MANY_LIVES_LIVE_SMOKE_WINDOW ?? "1365,768";
 const SUMMARY_PATH = path.join(OUTPUT_DIR, "summary.json");
 
@@ -36,6 +39,14 @@ if (!LIVE_URL) {
 
 const liveBase = LIVE_URL.replace(/\/+$/, "");
 const chromeBin = findChromeBin();
+
+function hasWatchModeProgressText(bodyText) {
+  return (
+    bodyText.includes("Continue watching") ||
+    bodyText.includes("Watch Rowan begin") ||
+    CONTEXTUAL_WATCH_MODE_COPY_PATTERN.test(bodyText)
+  );
+}
 
 async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
@@ -229,11 +240,12 @@ function assertFreshAutoplayPage(page, probe, base) {
   assert.equal(page.hasRawBackendError, false, "Live app leaked a raw backend error.");
   assert.ok(page.rootClass.includes("is-watch-mode"), "Live app did not enter watch mode.");
   assert.ok(
-    page.bodyText.includes("Rowan") &&
-      (page.bodyText.includes("Continue watching") ||
-        page.bodyText.includes("Watch Rowan begin") ||
-        page.bodyText.includes("Rowan is carrying this beat forward")),
+    page.bodyText.includes("Rowan") && hasWatchModeProgressText(page.bodyText),
     "Live app is missing Rowan watch-mode action text.",
+  );
+  assert.ok(
+    !page.bodyText.includes(GENERIC_AUTOPLAY_NOTE),
+    "Live app exposed the generic carry-forward note instead of contextual watch-mode copy.",
   );
   assert.ok(
     !/Advance now|A next step is ready|Autoplay is on; this skips|skip the (?:wait|pause)/i.test(
@@ -475,7 +487,7 @@ class CdpSession {
               hasWatchAction:
                 bodyText.includes("Continue watching") ||
                 bodyText.includes("Watch Rowan begin") ||
-                bodyText.includes("Rowan is carrying this beat forward"),
+                /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i.test(bodyText),
               rootClass: root?.className ?? "",
               url: location.href
             };
