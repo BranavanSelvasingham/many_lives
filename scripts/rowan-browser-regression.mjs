@@ -809,6 +809,83 @@ class CdpSession {
       const rowanDirective = document.querySelector('[data-rowan-directive="true"]');
       const chatBubbles = Array.from(document.querySelectorAll(".ml-chat-bubble"));
       const latestChatBubble = chatBubbles.at(-1) ?? null;
+      const chatRows = Array.from(document.querySelectorAll(".ml-chat-row"));
+      const latestChatRow = chatRows.at(-1) ?? null;
+      const rectForElements = (elements) => {
+        const rects = elements
+          .map((element) => element.getBoundingClientRect())
+          .filter((rect) => rect.width > 0 && rect.height > 0);
+        if (rects.length === 0) {
+          return null;
+        }
+
+        const rect = {
+          bottom: Math.round(Math.max(...rects.map((entry) => entry.bottom))),
+          left: Math.round(Math.min(...rects.map((entry) => entry.left))),
+          right: Math.round(Math.max(...rects.map((entry) => entry.right))),
+          top: Math.round(Math.min(...rects.map((entry) => entry.top))),
+        };
+        rect.height = Math.round(rect.bottom - rect.top);
+        rect.width = Math.round(rect.right - rect.left);
+        return rect;
+      };
+      const latestChatExchange = (() => {
+        if (!latestChatRow) {
+          return null;
+        }
+
+        const textFor = (element) =>
+          element.textContent?.replace(/\s+/g, " ").trim() ?? "";
+        const bubbleTextForRow = (row) =>
+          row
+            .querySelector(".ml-chat-bubble")
+            ?.textContent?.replace(/\s+/g, " ")
+            .trim() ?? "";
+        const meaningfulRows = chatRows.filter((row) =>
+          bubbleTextForRow(row),
+        );
+        const latestMeaningfulRow = meaningfulRows.at(-1) ?? latestChatRow;
+        const latestRowIsTyping = latestChatRow !== latestMeaningfulRow;
+        const preferredExchange = latestRowIsTyping
+          ? [...meaningfulRows.slice(-2), latestChatRow]
+          : meaningfulRows.slice(-2);
+        const latestMeaningfulExchange =
+          latestRowIsTyping && latestMeaningfulRow
+            ? [latestMeaningfulRow, latestChatRow]
+            : [latestMeaningfulRow];
+        const railRect = commandRail?.getBoundingClientRect();
+        const preferredElements =
+          preferredExchange.length > 0 ? preferredExchange : [latestChatRow];
+        const preferredRect = rectForElements(preferredElements);
+        const meaningfulRect = rectForElements(latestMeaningfulExchange);
+        const preferredFits = Boolean(
+          preferredRect &&
+            railRect &&
+            preferredRect.height + 24 <= railRect.height,
+        );
+        const meaningfulFits = Boolean(
+          meaningfulRect &&
+            railRect &&
+            meaningfulRect.height + 24 <= railRect.height,
+        );
+        const exchangeBubbles =
+          preferredFits || !meaningfulFits
+            ? preferredElements
+            : latestMeaningfulExchange;
+        const rect =
+          preferredFits || !meaningfulFits ? preferredRect : meaningfulRect;
+        if (!rect) {
+          return null;
+        }
+
+        return {
+          fitsCommandRail: railRect
+            ? rect.height + 24 <= railRect.height
+            : false,
+          rect,
+          texts: exchangeBubbles.map(textFor),
+        };
+      })();
       const readableDirectiveVisible = (() => {
         if (!commandRail || !rowanDirective) {
           return null;
@@ -882,6 +959,7 @@ class CdpSession {
           })),
           focusBody: rectFor(".ml-focus-body"),
           focusWindow: rectFor(".ml-inline-focus-window"),
+          latestChatExchange,
           latestChatBubble: rectFromElement(latestChatBubble),
           rowanDirective: rectFromElement(rowanDirective),
           document: {
@@ -2060,6 +2138,15 @@ function assertRailReadability(label, game, probe, dom) {
       commandRail: commandRail?.rect,
     })}).`,
   );
+  if (dom.layout?.latestChatExchange?.fitsCommandRail) {
+    assert.ok(
+      rectIsInside(dom.layout.latestChatExchange.rect, commandRail?.rect, 3),
+      `${label}: latest conversation exchange is clipped outside the command rail (${JSON.stringify({
+        commandRail: commandRail?.rect,
+        exchange: dom.layout.latestChatExchange,
+      })}).`,
+    );
+  }
 }
 
 function assertPlayerRouteDiagnostics(label, probe) {

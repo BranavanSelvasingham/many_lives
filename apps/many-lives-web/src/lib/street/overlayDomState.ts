@@ -250,20 +250,92 @@ function ensureCommandRailDirectiveVisible(commandRail: HTMLElement) {
 }
 
 function ensureCommandRailConversationVisible(commandRail: HTMLElement) {
-  const bubbles = commandRail.querySelectorAll<HTMLElement>(".ml-chat-bubble");
-  const bubble = bubbles.item(bubbles.length - 1);
-  if (!bubble) {
+  const rows = Array.from(
+    commandRail.querySelectorAll<HTMLElement>(".ml-chat-row"),
+  );
+  const latestRow = rows.at(-1);
+  if (!latestRow) {
     return;
   }
 
   const railRect = commandRail.getBoundingClientRect();
-  const bubbleRect = bubble.getBoundingClientRect();
-  if (bubbleRect.bottom <= railRect.bottom && bubbleRect.top >= railRect.top) {
+  const meaningfulRows = rows.filter(conversationRowHasSpokenText);
+  const latestMeaningfulRow = meaningfulRows.at(-1) ?? latestRow;
+  const latestRowIsTyping = latestRow !== latestMeaningfulRow;
+  const preferredExchange = latestRowIsTyping
+    ? [...meaningfulRows.slice(-2), latestRow]
+    : meaningfulRows.slice(-2);
+  const latestMeaningfulExchange =
+    latestRowIsTyping && latestMeaningfulRow
+      ? [latestMeaningfulRow, latestRow]
+      : [latestMeaningfulRow];
+  const preferredRect = rectForConversationElements(
+    preferredExchange.length > 0 ? preferredExchange : [latestRow],
+  );
+  const latestMeaningfulRect = rectForConversationElements(
+    latestMeaningfulExchange,
+  );
+  const latestRowRect = latestRow.getBoundingClientRect();
+  const targetRect =
+    preferredRect && rectFitsCommandRail(preferredRect, railRect)
+      ? preferredRect
+      : latestMeaningfulRect &&
+          rectFitsCommandRail(latestMeaningfulRect, railRect)
+        ? latestMeaningfulRect
+        : latestRowRect;
+
+  if (
+    targetRect.bottom <= railRect.bottom - 8 &&
+    targetRect.top >= railRect.top + 8
+  ) {
     return;
   }
 
-  commandRail.scrollTop = Math.max(
-    commandRail.scrollTop + bubbleRect.bottom - railRect.bottom + 14,
-    0,
+  let nextScrollTop = commandRail.scrollTop;
+  if (targetRect.bottom > railRect.bottom - 8) {
+    nextScrollTop += targetRect.bottom - railRect.bottom + 14;
+  }
+  if (targetRect.top < railRect.top + 8) {
+    nextScrollTop += targetRect.top - railRect.top - 10;
+  }
+
+  commandRail.scrollTop = Math.max(nextScrollTop, 0);
+}
+
+function conversationRowHasSpokenText(row: HTMLElement) {
+  return Boolean(
+    row
+      .querySelector<HTMLElement>(".ml-chat-bubble")
+      ?.textContent?.replace(/\s+/g, " ")
+      .trim(),
   );
+}
+
+function rectForConversationElements(elements: HTMLElement[]) {
+  const rects = elements
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width > 0 && rect.height > 0);
+  if (rects.length === 0) {
+    return null;
+  }
+
+  return {
+    bottom: Math.max(...rects.map((rect) => rect.bottom)),
+    height:
+      Math.max(...rects.map((rect) => rect.bottom)) -
+      Math.min(...rects.map((rect) => rect.top)),
+    left: Math.min(...rects.map((rect) => rect.left)),
+    right: Math.max(...rects.map((rect) => rect.right)),
+    top: Math.min(...rects.map((rect) => rect.top)),
+    width:
+      Math.max(...rects.map((rect) => rect.right)) -
+      Math.min(...rects.map((rect) => rect.left)),
+  };
+}
+
+function rectFitsCommandRail(
+  rect: DOMRect | ReturnType<typeof rectForConversationElements>,
+  railRect: DOMRect,
+) {
+  return Boolean(rect && rect.height + 24 <= railRect.height);
 }
