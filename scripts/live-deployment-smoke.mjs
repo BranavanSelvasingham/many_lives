@@ -224,11 +224,12 @@ function assertFreshAutoplayPage(page, probe, base) {
   assert.ok(
     page.bodyText.includes("Rowan") &&
       (page.bodyText.includes("Continue watching") ||
-        page.bodyText.includes("Watch Rowan begin")),
+        page.bodyText.includes("Watch Rowan begin") ||
+        page.bodyText.includes("Rowan is carrying this beat forward")),
     "Live app is missing Rowan watch-mode action text.",
   );
   assert.ok(
-    !/Advance now|A next step is ready|Autoplay is on; this skips/i.test(
+    !/Advance now|A next step is ready|Autoplay is on; this skips|skip the (?:wait|pause)/i.test(
       page.bodyText,
     ),
     "Live app leaked watch-mode stepper copy.",
@@ -434,7 +435,8 @@ class CdpSession {
               hasRowanText: bodyText.includes("Rowan"),
               hasWatchAction:
                 bodyText.includes("Continue watching") ||
-                bodyText.includes("Watch Rowan begin"),
+                bodyText.includes("Watch Rowan begin") ||
+                bodyText.includes("Rowan is carrying this beat forward"),
               rootClass: root?.className ?? "",
               url: location.href
             };

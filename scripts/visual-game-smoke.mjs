@@ -428,7 +428,8 @@ class CdpSession {
               hasRowanText: bodyText.includes("Rowan"),
               hasWatchAction:
                 bodyText.includes("Continue watching") ||
-                bodyText.includes("Watch Rowan begin"),
+                bodyText.includes("Watch Rowan begin") ||
+                bodyText.includes("Rowan is carrying this beat forward"),
               rootClass: root?.className ?? "",
               url: location.href
             };
@@ -1046,7 +1047,7 @@ async function assertWatchModeFeelGuard() {
   assert.ok(
     streetSource.includes("? \"Continue watching\"") ||
       streetSource.includes("? \"Watch Rowan begin\""),
-    "Watch-mode primary action should expose optional watch/skip language.",
+    "Watch-mode primary action should expose optional watch language.",
   );
   assert.ok(
     !streetSource.includes("return `Talk: ${targetNpc.name}`;"),
@@ -1304,11 +1305,12 @@ async function runViewportCheck(session, viewport) {
   assert.ok(
     page.bodyText.includes("Rowan") &&
       (page.bodyText.includes("Continue watching") ||
-        page.bodyText.includes("Watch Rowan begin")),
+        page.bodyText.includes("Watch Rowan begin") ||
+        page.bodyText.includes("Rowan is carrying this beat forward")),
     `${viewport.name}: expected Rowan watch-mode UI text was missing.`,
   );
   assert.ok(
-    !/Advance now|A next step is ready|Autoplay is on; this skips/i.test(
+    !/Advance now|A next step is ready|Autoplay is on; this skips|skip the (?:wait|pause)/i.test(
       page.bodyText,
     ),
     `${viewport.name}: watch-mode UI leaked stepper copy.`,
