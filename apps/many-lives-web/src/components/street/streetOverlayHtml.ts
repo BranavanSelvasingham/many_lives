@@ -667,6 +667,8 @@ export function buildFirstAfternoonFieldNoteHtml(
   const cardsHtml = notes
     .map(({ key, note, title }, index) => {
       const compact = Boolean(options.compactAfterFirst && index > 0);
+      const nextLabel = fieldNoteNextLabel(game, key);
+      const nextCopy = fieldNoteNextCopy(game, key, note!.next);
 
       return `
     <div class="ml-field-note-card ${compact ? "is-compact" : ""}" data-field-note="${escapeHtml(key)}">
@@ -686,11 +688,11 @@ export function buildFirstAfternoonFieldNoteHtml(
           <div class="ml-row-meta">Evidence</div>
           <div class="ml-row-copy">${escapeHtml(note!.evidence)}</div>
         </div>
-        <div class="ml-field-note-line">
-          <div class="ml-row-meta">Next</div>
-          <div class="ml-row-copy">${escapeHtml(
-            fieldNoteNextCopy(game, key, note!.next),
+        <div class="ml-field-note-line" data-field-note-next-row="${escapeHtml(key)}">
+          <div class="ml-row-meta" data-field-note-next-label="${escapeHtml(key)}">${escapeHtml(
+            nextLabel,
           )}</div>
+          <div class="ml-row-copy">${escapeHtml(nextCopy)}</div>
         </div>
         <div class="ml-field-note-line">
           <div class="ml-row-meta">Memory Created</div>
@@ -704,6 +706,24 @@ export function buildFirstAfternoonFieldNoteHtml(
     .join("");
 
   return `<div class="ml-field-note-ledger">${cardsHtml}</div>`;
+}
+
+function fieldNoteNextLabel(game: StreetGameState, key: string) {
+  return isHistoricalFieldNoteNext(game, key) ? "At The Time" : "Next";
+}
+
+function isHistoricalFieldNoteNext(game: StreetGameState, key: string) {
+  if (key === "first-afternoon") {
+    return Boolean(game.firstAfternoon?.fieldNote);
+  }
+
+  if (key === "mara-ada-lead") {
+    return Boolean(
+      game.firstAfternoon?.completedAt || game.firstAfternoon?.fieldNote,
+    );
+  }
+
+  return false;
 }
 
 function fieldNoteNextCopy(
