@@ -1287,7 +1287,7 @@ function resolvePendingMoveLoopStep(
     autoContinue: true,
     detail:
       pendingMove.rationale ||
-      `Rowan already chose ${location?.name ?? "the next stop"} and can go there now.`,
+      `${location?.name ?? "The next place"} is the useful next stop based on what Rowan knows now.`,
     key: `pending:${pendingMove.preparedAt}:${pendingMove.targetLocationId}:${pendingMove.actionId ?? pendingMove.npcId ?? ""}`,
     kind: "move",
     label: autonomyLabelForNextBeat(world, pendingMove),
@@ -3298,7 +3298,13 @@ function buildRowanAutonomyReason({
   }
 
   if (world.player.pendingObjectiveMove && loopStep.kind === "move") {
-    return "Rowan already picked this destination; this beat confirms the route instead of changing course.";
+    return buildPendingMovementReason({
+      actionLabel,
+      loopStep,
+      npcName,
+      targetLocationName,
+      world,
+    });
   }
 
   const activeJob = activeJobForIntent(world);
@@ -3363,6 +3369,57 @@ function buildRowanAutonomyReason({
   }
 
   return loopStep.detail;
+}
+
+function buildPendingMovementReason({
+  actionLabel,
+  loopStep,
+  npcName,
+  targetLocationName,
+  world,
+}: {
+  actionLabel?: string;
+  loopStep: RowanLoopStep;
+  npcName?: string;
+  targetLocationName?: string;
+  world: StreetGameState;
+}) {
+  const pendingMove = world.player.pendingObjectiveMove;
+  const rationale = playerFacingAutonomyRationale(
+    world,
+    pendingMove?.rationale ?? loopStep.detail,
+  ).replace(/[.!?]+$/g, "");
+  const target = targetLocationName ?? "the next place";
+  const normalizedTarget = targetLocationName?.toLowerCase();
+  if (
+    rationale &&
+    normalizedTarget &&
+    rationale.toLowerCase().startsWith(normalizedTarget)
+  ) {
+    return `${rationale}.`;
+  }
+
+  const cleanedActionLabel = actionLabel
+    ? lowercaseFirst(actionLabel).replace(/\.$/g, "")
+    : undefined;
+
+  if (rationale && npcName && targetLocationName) {
+    return `${target} is where ${npcName} can answer the next question: ${rationale}.`;
+  }
+
+  if (rationale && cleanedActionLabel && targetLocationName) {
+    return `${target} is where Rowan can ${cleanedActionLabel}: ${rationale}.`;
+  }
+
+  if (rationale) {
+    return `${target} is the next stop: ${rationale}.`;
+  }
+
+  if (targetLocationName) {
+    return `What Rowan knows now points to ${targetLocationName}, so he is going there before deciding again.`;
+  }
+
+  return "What Rowan knows now points to a useful next place, so he is following that lead before deciding again.";
 }
 
 function buildRowanAutonomySignals({
