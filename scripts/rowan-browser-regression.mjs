@@ -2629,6 +2629,50 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function assertNotebookUsesCognitionAuthority(label, dom, probe) {
+  const notebook = probe?.rowanCognition?.notebook;
+  assert.ok(
+    notebook,
+    `${label}: expected browser probe to expose Rowan cognition Notebook authority.`,
+  );
+
+  const normalizedBody = dom.bodyText.replace(/\s+/g, " ");
+  const fields = [
+    ["belief", notebook.belief],
+    ["plan", notebook.plan],
+    ["confidence", notebook.confidence],
+    ["uncertainty", notebook.uncertainty],
+  ];
+
+  for (const [field, value] of fields) {
+    const snippet = String(value ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 72);
+    assert.ok(
+      snippet.length >= 12,
+      `${label}: cognition Notebook ${field} should be meaningful.`,
+    );
+    assert.match(
+      normalizedBody,
+      new RegExp(escapeRegExp(snippet), "i"),
+      `${label}: visible Notebook ${field} did not match Rowan cognition authority.`,
+    );
+  }
+
+  assert.ok(
+    notebook.authority?.primaryNeedKey ||
+      notebook.authority?.beliefId ||
+      notebook.authority?.nextMoveRationale,
+    `${label}: cognition Notebook authority should identify the need, belief, or next move source.`,
+  );
+  assert.doesNotMatch(
+    normalizedBody,
+    /\b(worldPressure|cityEvents|jobWindows|npcSchedules|planningTrace|routeKey)\b/i,
+    `${label}: player-facing Notebook should not leak backend-shaped debug labels.`,
+  );
+}
+
 function buildTimelineEntry({
   dom,
   game,
@@ -2935,6 +2979,11 @@ async function runOverlayPanelChecks(session) {
     assertCriticalVisualCoherence(panel.label, dom, {
       expectFocusWindow: true,
     });
+
+    if (panel.expectedTab === "mind") {
+      const probe = await session.readBrowserProbe();
+      assertNotebookUsesCognitionAuthority(panel.label, dom, probe);
+    }
 
     const screenshot = path.join(OUTPUT_DIR, `${panel.label}.png`);
     await session.captureScreenshot(screenshot);
@@ -3393,6 +3442,8 @@ async function runInhabitRowanNotebookClickCheck(session) {
       `${label}: Rowan click did not reveal the expected Notebook content.`,
     );
   }
+  const probe = await session.readBrowserProbe();
+  assertNotebookUsesCognitionAuthority(label, dom, probe);
 
   assertCriticalVisualCoherence(label, dom, {
     expectFocusWindow: true,

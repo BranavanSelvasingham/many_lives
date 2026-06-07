@@ -24,7 +24,10 @@ import {
   objectiveRouteScriptedReply,
   objectiveRouteSuppressesConversationTopic,
 } from "./objectiveScaffolds.js";
-import { buildRowanCognition } from "./rowanCognition.js";
+import {
+  buildRowanCognition,
+  buildRowanCognitionState,
+} from "./rowanCognition.js";
 import {
   executeRowanLoopStep,
   resolveRowanLoopStep as resolveLayeredRowanLoopStep,
@@ -394,6 +397,7 @@ async function refreshWorld(
   world.availableActions = buildAvailableActions(world);
   world.goals = buildGoals(world);
   world.rowanAutonomy = deriveRowanAutonomy(world);
+  world.rowanCognition = buildRowanCognitionState(world);
   world.summary = buildSummary(world);
   await hydrateStreetThoughts(world, aiProvider, thoughtRefreshMode);
   trimFeed(world);
