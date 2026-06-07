@@ -61,11 +61,18 @@ export interface OpenAIProviderOptions {
   apiKey?: string;
   model?: string;
   onCall?: (entry: OpenAIProviderCallLogEntry) => void;
+  retryCount?: number;
+  retryDelayMs?: number;
   timeoutMs?: number;
 }
 
 export const DEFAULT_OPENAI_TIMEOUT_MS = 25_000;
 const MAX_OPENAI_TIMEOUT_MS = 30_000;
+export const DEFAULT_OPENAI_RETRY_COUNT = 1;
+const MAX_OPENAI_RETRY_COUNT = 2;
+const DEFAULT_OPENAI_RETRY_DELAY_MS = 250;
+const MAX_OPENAI_RETRY_DELAY_MS = 2_000;
+const RETRYABLE_OPENAI_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504]);
 
 export class OpenAIProvider implements AIProvider {
   private readonly fallback = new MockAIProvider();
@@ -306,66 +313,93 @@ export class OpenAIProvider implements AIProvider {
     prompt: string,
     maxOutputTokens: number,
   ): Promise<string> {
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => {
-      abortController.abort();
-    }, this.requestTimeoutMs());
+    const attemptCount = this.retryCount() + 1;
+    let lastError: unknown;
 
-    try {
-      const response = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.options.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: this.modelName(),
-          input: prompt,
-          reasoning: {
-            effort: "minimal",
+    for (let attemptIndex = 0; attemptIndex < attemptCount; attemptIndex += 1) {
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => {
+        abortController.abort();
+      }, this.requestTimeoutMs());
+
+      try {
+        const response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.options.apiKey}`,
+            "Content-Type": "application/json",
           },
-          max_output_tokens: maxOutputTokens,
-        }),
-        signal: abortController.signal,
-      });
+          body: JSON.stringify({
+            model: this.modelName(),
+            input: prompt,
+            reasoning: {
+              effort: "minimal",
+            },
+            max_output_tokens: maxOutputTokens,
+          }),
+          signal: abortController.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`OpenAI request failed with ${response.status}`);
-      }
+        if (!response.ok) {
+          throw new OpenAIResponseError(response.status);
+        }
 
-      const json = (await response.json()) as {
-        output_text?: string;
-        output?: Array<{
-          content?: Array<{
-            type?: string;
-            text?: string;
+        const json = (await response.json()) as {
+          output_text?: string;
+          output?: Array<{
+            content?: Array<{
+              type?: string;
+              text?: string;
+            }>;
           }>;
-        }>;
-      };
+        };
 
-      const outputText =
-        json.output_text ??
-        json.output
-          ?.flatMap((item) => item.content ?? [])
-          .filter((item) => item.type === "output_text" || item.type === "text")
-          .map((item) => item.text ?? "")
-          .join("\n")
-          .trim();
+        const outputText =
+          json.output_text ??
+          json.output
+            ?.flatMap((item) => item.content ?? [])
+            .filter((item) => item.type === "output_text" || item.type === "text")
+            .map((item) => item.text ?? "")
+            .join("\n")
+            .trim();
 
-      if (!outputText) {
-        throw new Error("OpenAI response did not include text output");
+        if (!outputText) {
+          throw new Error("OpenAI response did not include text output");
+        }
+
+        return outputText;
+      } catch (error) {
+        lastError = error;
+        const hasRetryLeft = attemptIndex < attemptCount - 1;
+        if (!hasRetryLeft || !isRetryableOpenAIRequestError(error)) {
+          throw error;
+        }
+
+        await delay(this.retryDelayMs(attemptIndex));
+      } finally {
+        clearTimeout(timeoutId);
       }
-
-      return outputText;
-    } finally {
-      clearTimeout(timeoutId);
     }
+
+    throw lastError ?? new Error("OpenAI request failed before producing text");
   }
 
   private requestTimeoutMs(): number {
     return normalizeOpenAIRequestTimeoutMs(
       this.options.timeoutMs ?? Number(process.env.OPENAI_TIMEOUT_MS),
     );
+  }
+
+  private retryCount(): number {
+    return normalizeOpenAIRetryCount(
+      this.options.retryCount ?? Number(process.env.OPENAI_RETRY_COUNT),
+    );
+  }
+
+  private retryDelayMs(attemptIndex: number): number {
+    return normalizeOpenAIRetryDelayMs(
+      this.options.retryDelayMs ?? Number(process.env.OPENAI_RETRY_DELAY_MS),
+    ) * (attemptIndex + 1);
   }
 
   private modelName(): string {
@@ -381,6 +415,13 @@ export class OpenAIProvider implements AIProvider {
       recordAIRuntimeCall(game, entry);
     }
     this.options.onCall?.(entry);
+  }
+}
+
+class OpenAIResponseError extends Error {
+  constructor(readonly status: number) {
+    super(`OpenAI request failed with ${status}`);
+    this.name = "OpenAIResponseError";
   }
 }
 
@@ -488,6 +529,44 @@ function normalizeOpenAIRequestTimeoutMs(value: number): number {
   }
 
   return Math.min(Math.max(Math.round(value), 1), MAX_OPENAI_TIMEOUT_MS);
+}
+
+function normalizeOpenAIRetryCount(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return DEFAULT_OPENAI_RETRY_COUNT;
+  }
+
+  return Math.min(Math.round(value), MAX_OPENAI_RETRY_COUNT);
+}
+
+function normalizeOpenAIRetryDelayMs(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return DEFAULT_OPENAI_RETRY_DELAY_MS;
+  }
+
+  return Math.min(Math.round(value), MAX_OPENAI_RETRY_DELAY_MS);
+}
+
+function isRetryableOpenAIRequestError(error: unknown): boolean {
+  if (error instanceof OpenAIResponseError) {
+    return RETRYABLE_OPENAI_STATUSES.has(error.status);
+  }
+
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return false;
+  }
+
+  return error instanceof TypeError;
+}
+
+function delay(ms: number): Promise<void> {
+  if (ms <= 0) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function shouldUseOpenAIForStreetSupportTasks(): boolean {
