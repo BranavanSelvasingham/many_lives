@@ -5868,7 +5868,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 `
                   : snapshot.rowanAutoplayEnabled && rowanAutonomy.autoContinue
                     ? `<div class="ml-autoplay-note">${escapeHtml(
-                        "Autoplay is carrying this beat. You can still skip the wait when you want.",
+                        "Rowan is carrying this beat forward.",
                       )}</div>`
                     : ""
               }
