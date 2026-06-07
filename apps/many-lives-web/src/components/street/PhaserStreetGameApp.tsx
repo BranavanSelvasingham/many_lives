@@ -235,6 +235,7 @@ const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
 const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 1800;
+const AUTOPLAY_OPENING_AUTOSTART_DELAY_MS = 1800;
 const AUTONOMY_BEAT_DELAY_MS = {
   acting: 1800,
   conversation: 2200,
@@ -251,6 +252,10 @@ const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
   stepKind: "idle",
 };
 function autoContinueDelayMsForBeat(game: StreetGameState) {
+  if (isFirstAfternoonOpening(game)) {
+    return AUTOPLAY_OPENING_AUTOSTART_DELAY_MS;
+  }
+
   const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
   const baseDelay =
     autonomy.mode === "conversation"
@@ -270,6 +275,23 @@ function autoContinueDelayMsForBeat(game: StreetGameState) {
 
   // Keep Rowan's next step behind the human-visible transcript, not just the sim state.
   return Math.max(baseDelay, estimateLiveConversationBeatMs(game) + 900);
+}
+
+function buildWatchModeAdvanceKey(game: StreetGameState | null) {
+  if (!game) {
+    return null;
+  }
+
+  const autoContinueKey = buildObjectiveAutoContinueKey(game);
+  if (autoContinueKey) {
+    return autoContinueKey;
+  }
+
+  if (isFirstAfternoonOpening(game)) {
+    return `${game.id}:opening:${game.rowanAutonomy?.key ?? "opening"}`;
+  }
+
+  return null;
 }
 
 function buildGameSyncKey(game: StreetGameState) {
@@ -1359,7 +1381,8 @@ export function PhaserStreetGameApp() {
     }
 
     const autonomy = game?.rowanAutonomy;
-    const autoContinueKey = game ? buildObjectiveAutoContinueKey(game) : null;
+    const openingAutoStart = game ? isFirstAfternoonOpening(game) : false;
+    const autoContinueKey = buildWatchModeAdvanceKey(game);
     if (
       lastObjectiveAutoContinueKeyRef.current &&
       lastObjectiveAutoContinueKeyRef.current !== autoContinueKey
@@ -1371,7 +1394,7 @@ export function PhaserStreetGameApp() {
       !game ||
       !rowanAutoplayEnabled ||
       rowanAutoplayFrozen ||
-      !autonomy?.autoContinue ||
+      (!autonomy?.autoContinue && !openingAutoStart) ||
       busyLabel ||
       optimisticPlayerPosition ||
       isBlockingRowanPlaybackForGame(rowanPlayback, game)
@@ -1380,7 +1403,7 @@ export function PhaserStreetGameApp() {
     }
 
     const autoContinuingConversation =
-      Boolean(game.activeConversation) && autonomy.layer === "conversation";
+      Boolean(game.activeConversation) && autonomy?.layer === "conversation";
     if (game.activeConversation && !autoContinuingConversation) {
       return;
     }
@@ -1396,9 +1419,12 @@ export function PhaserStreetGameApp() {
     objectiveAutoContinueTimerRef.current = window.setTimeout(() => {
       const activeGame = gameRef.current;
       const activeAutonomy = activeGame?.rowanAutonomy;
+      const activeOpeningAutoStart = activeGame
+        ? isFirstAfternoonOpening(activeGame)
+        : false;
       if (
         !activeGame ||
-        !activeAutonomy?.autoContinue ||
+        (!activeAutonomy?.autoContinue && !activeOpeningAutoStart) ||
         busyLabelRef.current ||
         optimisticPlayerRef.current ||
         isBlockingRowanPlaybackForGame(rowanPlaybackRef.current, activeGame)
@@ -1408,7 +1434,7 @@ export function PhaserStreetGameApp() {
 
       const activeAutoContinuingConversation =
         Boolean(activeGame.activeConversation) &&
-        activeAutonomy.layer === "conversation";
+        activeAutonomy?.layer === "conversation";
       if (
         activeGame.activeConversation &&
         !activeAutoContinuingConversation
@@ -1416,7 +1442,7 @@ export function PhaserStreetGameApp() {
         return;
       }
 
-      const activeAutoContinueKey = buildObjectiveAutoContinueKey(activeGame);
+      const activeAutoContinueKey = buildWatchModeAdvanceKey(activeGame);
       if (activeAutoContinueKey !== autoContinueKey) {
         return;
       }

@@ -22,6 +22,9 @@ const CDP_WAIT_TIMEOUT_MS = Number(
 const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_APP_READY_TIMEOUT_MS ?? "120000",
 );
+const AUTOPLAY_START_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_VISUAL_AUTOPLAY_START_TIMEOUT_MS ?? "10000",
+);
 const CDP_COMMAND_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 250;
 const ROOT = process.cwd();
@@ -1050,6 +1053,11 @@ async function assertWatchModeFeelGuard() {
     "Watch-mode primary action should expose optional watch language.",
   );
   assert.ok(
+    streetSource.includes("buildWatchModeAdvanceKey") &&
+      streetSource.includes("AUTOPLAY_OPENING_AUTOSTART_DELAY_MS"),
+    "Fresh watch mode must auto-start the opening Rowan beat instead of requiring the Watch Rowan begin button.",
+  );
+  assert.ok(
     !streetSource.includes("return `Talk: ${targetNpc.name}`;"),
     "Conversation target labels should not duplicate NPC name tags.",
   );
@@ -1275,6 +1283,85 @@ function assertSameCameraSpace(viewport, first, second, description) {
     first.activeSpaceKind,
     `${viewport.name}: ${description} changed active space kind from ${first.activeSpaceKind} to ${second.activeSpaceKind}; camera traversal must be measured within one stable scene.`,
   );
+}
+
+async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
+  assert.ok(openingProbe?.gameId, `${label}: opening probe is missing a game id.`);
+  assert.equal(
+    openingProbe.watchMode?.enabled,
+    true,
+    `${label}: opening probe is not in watch mode.`,
+  );
+
+  return waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (!probe?.watchMode?.enabled || probe.watchMode?.frozen) {
+        return false;
+      }
+
+      const advanced =
+        probe.clock?.totalMinutes > openingProbe.clock?.totalMinutes ||
+        probe.autonomy?.key !== openingProbe.autonomy?.key ||
+        probe.location?.id !== openingProbe.location?.id ||
+        Boolean(probe.activeConversation?.npcId);
+
+      return advanced ? probe : false;
+    },
+    AUTOPLAY_START_TIMEOUT_MS,
+    `${label} did not leave the opening Watch Rowan begin state within ${AUTOPLAY_START_TIMEOUT_MS}ms.`,
+  );
+}
+
+async function runFreshAutoplayStartCheck(session) {
+  const viewport = VIEWPORTS[0];
+  const url = `${activeWebBase}/?new=1&autoplay=1&autoplayStart=${Date.now()}`;
+  await session.setViewport(viewport);
+  await session.navigate(url);
+  await session.waitForAppReady();
+  await session.waitForWatchModeUi(viewport);
+
+  const openingProbe = await session.readBrowserProbe();
+  const advancedProbe = await waitForFreshAutoplayAdvance(
+    session,
+    openingProbe,
+    "fresh autoplay",
+  );
+  const page = await session.inspectPage();
+  assert.ok(
+    !page.bodyText.includes("Watch Rowan begin"),
+    "fresh autoplay remained stuck on Watch Rowan begin after the start delay.",
+  );
+  assert.ok(
+    page.bodyText.includes("Continue watching") ||
+      page.bodyText.includes("Rowan is carrying this beat forward") ||
+      Boolean(advancedProbe.activeConversation?.npcId),
+    "fresh autoplay did not present a continued watch-mode state after starting.",
+  );
+
+  const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");
+  await session.captureScreenshot(screenshotPath);
+  const screenshot = await readFile(screenshotPath);
+  assertPngScreenshot(screenshot, viewport);
+
+  return {
+    advanced: {
+      activeConversation: advancedProbe.activeConversation,
+      autonomy: advancedProbe.autonomy,
+      clock: advancedProbe.clock,
+      location: advancedProbe.location,
+      rail: advancedProbe.rail,
+      watchMode: advancedProbe.watchMode,
+    },
+    opening: {
+      autonomy: openingProbe.autonomy,
+      clock: openingProbe.clock,
+      location: openingProbe.location,
+      rail: openingProbe.rail,
+      watchMode: openingProbe.watchMode,
+    },
+    screenshotPath,
+  };
 }
 
 async function runViewportCheck(session, viewport) {
@@ -1996,12 +2083,16 @@ async function main() {
   const devtoolsPort = await findFreePort();
   const session = await launchBrowser(devtoolsPort);
   const results = [];
+  let freshAutoplayStart = null;
   let interiorCamera = null;
   let storedGameChoice = null;
   const summaryPath = path.join(OUTPUT_DIR, "summary.json");
   let visualError = null;
 
   try {
+    process.stdout.write("[many-lives] Checking fresh autoplay start behavior...\n");
+    freshAutoplayStart = await runFreshAutoplayStartCheck(session);
+    process.stdout.write("[many-lives] Finished fresh autoplay start behavior.\n");
     for (const viewport of VIEWPORTS) {
       process.stdout.write(`[many-lives] Checking ${viewport.name} viewport...\n`);
       results.push({
@@ -2027,6 +2118,7 @@ async function main() {
       summaryPath,
       `${JSON.stringify(
         {
+          freshAutoplayStart,
           outputDir: OUTPUT_DIR,
           interiorCamera,
           results,
@@ -2047,6 +2139,7 @@ async function main() {
         `[many-lives] Desktop: ${path.join(OUTPUT_DIR, "desktop.png")}`,
         `[many-lives] Desktop after pan: ${path.join(OUTPUT_DIR, "desktop-after-pan.png")}`,
         `[many-lives] Desktop after west pan: ${path.join(OUTPUT_DIR, "desktop-after-pan-west.png")}`,
+        `[many-lives] Fresh autoplay started: ${path.join(OUTPUT_DIR, "fresh-autoplay-started.png")}`,
         `[many-lives] Mobile: ${path.join(OUTPUT_DIR, "mobile.png")}`,
         `[many-lives] Mobile after pan: ${path.join(OUTPUT_DIR, "mobile-after-pan.png")}`,
         `[many-lives] Mobile after west pan: ${path.join(OUTPUT_DIR, "mobile-after-pan-west.png")}`,
