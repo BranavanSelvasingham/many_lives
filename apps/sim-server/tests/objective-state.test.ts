@@ -35,6 +35,34 @@ describe("objectiveState classification", () => {
     ).toBe("settle");
   });
 
+  it("treats the late Nia block-jam lead as people instead of stale housing", () => {
+    const text = "Ask Nia where the block is about to jam before the square feels it.";
+
+    expect(classifyObjective(text)).toBe("people");
+
+    const world = seedStreetGame("objective-nia-block-lead");
+    world.player.knownNpcIds = Array.from(
+      new Set([...world.player.knownNpcIds, "npc-nia"]),
+    );
+    const objective = buildPlayerObjectiveState(world, {
+      focus: classifyObjective(text),
+      previous: world.player.objective,
+      source: "conversation",
+      text,
+    });
+    const objectiveText = [
+      objective?.routeKey,
+      ...(objective?.outcomes.map((outcome) => outcome.label) ?? []),
+      ...(objective?.trail.map((step) => step.title) ?? []),
+    ].join(" ");
+
+    expect(objective?.routeKey).toBe("people-npc-nia");
+    expect(objectiveText).toMatch(/Nia/i);
+    expect(objectiveText).not.toMatch(
+      /Build standing at Morrow House|room stays mine|Morrow House standing built/i,
+    );
+  });
+
   it("exposes desired-state outcomes and blockers for a pump objective", () => {
     const world = seedStreetGame("objective-pump-blockers");
     const pump = world.problems.find((problem) => problem.id === "problem-pump");

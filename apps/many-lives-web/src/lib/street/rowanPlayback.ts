@@ -87,6 +87,10 @@ type BuildRowanRailViewModelOptions = {
   watchMode?: boolean;
 };
 
+type ObjectiveTrailStep = NonNullable<
+  StreetGameState["player"]["objective"]
+>["trail"][number];
+
 const AUTO_OPEN_BEAT_KINDS = new Set<RowanPlaybackBeatKind>([
   "action_complete",
   "action_start",
@@ -773,7 +777,7 @@ function buildObjectiveNextRailCard(
   }
 
   const nextObjectiveStep = game.player.objective?.trail.find(
-    (step) => !step.done,
+    (step) => !step.done && !trailHintConflictsWithLiveObjective(game, step),
   );
   const objectiveText =
     nextObjectiveStep?.title ??
@@ -794,6 +798,52 @@ function buildObjectiveNextRailCard(
   }
 
   return nextCard;
+}
+
+function trailHintConflictsWithLiveObjective(
+  game: StreetGameState,
+  step: ObjectiveTrailStep,
+) {
+  return liveObjectiveIsNiaBlockLead(game) && trailHintIsMorrowStanding(step);
+}
+
+function liveObjectiveIsNiaBlockLead(game: StreetGameState) {
+  const objective = game.player.objective;
+  if (!objective) {
+    return false;
+  }
+
+  const objectiveText = [
+    objective.text,
+    objective.routeKey,
+    ...(objective.outcomes ?? []).flatMap((outcome) => [
+      outcome.id,
+      outcome.label,
+      outcome.npcId,
+      outcome.evidence,
+      ...(outcome.blockers ?? []),
+    ]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    /\bnia\b/.test(objectiveText) &&
+    /\b(block|jam|cart|square)\b/.test(objectiveText)
+  );
+}
+
+function trailHintIsMorrowStanding(step: ObjectiveTrailStep) {
+  const trailText = [step.id, step.title, step.detail, step.progress]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    /\bmorrow house\b/.test(trailText) &&
+    /\b(standing|room stays mine|tonight'?s bed|settle)\b/.test(trailText)
+  );
 }
 
 function statusLabelForBeat(beat: RowanPlaybackBeat) {
