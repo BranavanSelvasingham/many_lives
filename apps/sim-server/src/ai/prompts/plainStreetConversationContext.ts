@@ -52,19 +52,45 @@ export function buildPlainRowanContext(context: StreetConversationContext) {
           goal: plan.text,
           kind: plan.focus,
           progress: plan.progress?.label,
-          nextSteps: plan.trail.map((step) => ({
-            id: step.id,
-            text: step.title,
-            detail: step.detail,
-            progress: step.progress,
-            done: Boolean(step.done),
+          desiredOutcomes: plan.outcomes.map((outcome) => ({
+            id: outcome.id,
+            text: outcome.label,
+            status: outcome.status,
+            urgency: outcome.urgency,
+            blockers: outcome.blockers ?? [],
+            evidence: outcome.evidence,
+            where: outcome.targetLocationId,
+            who: outcome.npcId,
+            action: outcome.actionId,
           })),
-          recentlyFinishedSteps: plan.completedTrail.map((step) => ({
+          openDesiredOutcomes: plan.outcomes
+            .filter((outcome) => outcome.status !== "met" && outcome.status !== "failed")
+            .map((outcome) => ({
+              id: outcome.id,
+              text: outcome.label,
+              status: outcome.status,
+              urgency: outcome.urgency,
+              blockers: outcome.blockers ?? [],
+              where: outcome.targetLocationId,
+              who: outcome.npcId,
+              action: outcome.actionId,
+            })),
+          supportingRouteHints: plan.trail
+            .filter((step) => !step.done)
+            .map((step) => ({
+              id: step.id,
+              text: step.title,
+              detail: step.detail,
+              progress: step.progress,
+              where: step.targetLocationId,
+              who: step.npcId,
+              action: step.actionId,
+            })),
+          recentlyFinishedHints: plan.completedTrail.map((step) => ({
             id: step.id,
             text: step.title,
             detail: step.detail,
             progress: step.progress,
-            done: Boolean(step.done),
           })),
         }
       : undefined,

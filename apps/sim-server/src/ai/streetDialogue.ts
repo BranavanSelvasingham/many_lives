@@ -3,6 +3,7 @@ import type {
   LocationState,
   MemoryEntry,
   NpcState,
+  ObjectiveOutcomeStatus,
   StreetGameState,
 } from "../street-sim/types.js";
 import { normalizeStreetVoice } from "./streetVoice.js";
@@ -71,12 +72,26 @@ export interface StreetConversationContext {
         total: number;
         label: string;
       };
+      outcomes: Array<{
+        id: string;
+        label: string;
+        status: ObjectiveOutcomeStatus;
+        urgency: number;
+        blockers?: string[];
+        evidence?: string;
+        targetLocationId?: string;
+        npcId?: string;
+        actionId?: string;
+      }>;
       trail: Array<{
         id: string;
         title: string;
         detail?: string;
         progress?: string;
         timestamp?: string;
+        targetLocationId?: string;
+        npcId?: string;
+        actionId?: string;
         done?: boolean;
       }>;
       completedTrail: Array<{
@@ -208,6 +223,7 @@ export function buildStreetConversationContext(
             focus: input.game.player.objective.focus,
             routeKey: input.game.player.objective.routeKey,
             progress: input.game.player.objective.progress,
+            outcomes: input.game.player.objective.outcomes,
             trail: input.game.player.objective.trail,
             completedTrail: input.game.player.objective.completedTrail.slice(-8),
           }
@@ -1423,8 +1439,12 @@ function collectPlannerReferenceTexts(input: StreetDialogueRequest) {
   const objective = input.game.player.objective;
   const references = [
     objective?.text,
-    ...(objective?.trail.map((step) => step.title) ?? []),
-    ...(objective?.trail.map((step) => step.detail ?? "") ?? []),
+    ...(objective?.outcomes.map((outcome) => outcome.label) ?? []),
+    ...(objective?.outcomes.map((outcome) => outcome.evidence ?? "") ?? []),
+    ...(objective?.outcomes.flatMap((outcome) => outcome.blockers ?? []) ?? []),
+    input.game.rowanAutonomy.intent?.reason,
+    input.game.rowanAutonomy.detail,
+    input.game.rowanAutonomy.planningTrace?.selectedLabel,
     ...(objective?.completedTrail.map((step) => step.title) ?? []),
   ];
 
