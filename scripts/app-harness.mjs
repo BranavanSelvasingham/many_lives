@@ -21,6 +21,7 @@ const SKIP_BROWSER_PLAYTEST = readFlag("--skip-browser-playtest");
 const LOG_DIR = path.join(OUTPUT_DIR, "logs");
 const VISUAL_DIR = path.join(OUTPUT_DIR, "visual-game");
 const BROWSER_PLAYTEST_DIR = path.join(OUTPUT_DIR, "rowan-browser");
+const LIVE_SMOKE_DIR = path.join(OUTPUT_DIR, "live-smoke");
 const SUMMARY_PATH = path.join(OUTPUT_DIR, "summary.json");
 
 const profiles = new Set(["quick", "full", "ci"]);
@@ -38,6 +39,7 @@ const summary = {
   outputDir: OUTPUT_DIR,
   artifacts: {
     logs: LOG_DIR,
+    liveSmoke: LIVE_URL ? LIVE_SMOKE_DIR : null,
     visualGame: SKIP_VISUAL ? null : VISUAL_DIR,
     rowanBrowser: SKIP_BROWSER_PLAYTEST ? null : BROWSER_PLAYTEST_DIR,
   },
@@ -48,6 +50,7 @@ const summary = {
 await mkdir(LOG_DIR, { recursive: true });
 await mkdir(VISUAL_DIR, { recursive: true });
 await mkdir(BROWSER_PLAYTEST_DIR, { recursive: true });
+await mkdir(LIVE_SMOKE_DIR, { recursive: true });
 
 console.log(`[many-lives:harness] Profile: ${PROFILE}`);
 console.log(`[many-lives:harness] Output: ${OUTPUT_DIR}`);
@@ -185,9 +188,13 @@ function buildSteps() {
 
   if (LIVE_URL) {
     allSteps.push(
-      inlineStep("live deployment smoke", (logLine) =>
-        smokeLiveUrl(LIVE_URL, logLine),
-      ),
+      commandStep("live deployment browser smoke", "node", [
+        "scripts/live-deployment-smoke.mjs",
+        "--live-url",
+        LIVE_URL,
+      ], {
+        MANY_LIVES_LIVE_SMOKE_DIR: LIVE_SMOKE_DIR,
+      }),
     );
   }
 
@@ -599,20 +606,6 @@ async function* walkTextFiles(directory) {
 
 function looksTextual(fileName) {
   return /\.(css|html|js|json|map|mjs|svg|txt|xml)$/i.test(fileName);
-}
-
-async function smokeLiveUrl(liveUrl, logLine) {
-  const base = liveUrl.replace(/\/+$/, "");
-  const urls = [base, `${base}/sim/health`];
-
-  for (const url of urls) {
-    const response = await fetch(url, { redirect: "follow" });
-    logLine(`[many-lives:harness] ${url} -> ${response.status}`);
-
-    if (!response.ok) {
-      throw new Error(`Live smoke failed for ${url}: HTTP ${response.status}`);
-    }
-  }
 }
 
 function readOption(name) {
