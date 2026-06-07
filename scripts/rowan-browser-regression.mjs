@@ -2035,7 +2035,7 @@ function assertGameplayDom(label, game, probe, dom) {
   );
   assert.doesNotMatch(
     dom.bodyText,
-    /already (?:picked|chose)|confirms? the route|confirmation of (?:the )?route|instead of changing course|preselected route|route-control/i,
+    /already (?:picked|chose)|confirms? the route|confirmation of (?:the )?route|instead of changing course|preselected route|route-control|needs the street route|street route from|street route before asking/i,
     `${label}: default Rowan rail leaked route-control copy instead of Rowan's situated reason.`,
   );
   assert.doesNotMatch(
@@ -3032,6 +3032,11 @@ async function runOverlayPanelChecks(session) {
     debugDom.bodyText,
     /Planner trace/i,
     "overlay-debug: expected planner trace to be available only in More panel.",
+  );
+  assert.doesNotMatch(
+    debugDom.bodyText,
+    /already (?:picked|chose)|confirms? the route|confirmation of (?:the )?route|instead of changing course|preselected route|route-control|needs the street route|street route from|street route before asking/i,
+    "overlay-debug: default rail copy behind More leaked route-control wording.",
   );
   const debugScreenshot = path.join(OUTPUT_DIR, "overlay-debug.png");
   await session.captureScreenshot(debugScreenshot);
