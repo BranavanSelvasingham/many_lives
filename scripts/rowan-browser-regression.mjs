@@ -3084,6 +3084,17 @@ async function runOverlayPanelChecks(session) {
     /already (?:picked|chose)|confirms? the route|confirmation of (?:the )?route|instead of changing course|preselected route|route-control|needs the street route|street route from|street route before asking/i,
     "overlay-debug: default rail copy behind More leaked route-control wording.",
   );
+  if (
+    /Talk to Nia next while there is still time|Ask Nia where the block is about to jam|Jo's clue points toward Nia/i.test(
+      debugDom.bodyText,
+    )
+  ) {
+    assert.doesNotMatch(
+      debugDom.bodyText,
+      /Build standing at Morrow House so the room stays mine|room stays mine|Morrow House standing built|Rest for an hour at Morrow House|Head to Morrow House|tonight's bed/i,
+      "overlay-debug: late Nia objective leaked stale Morrow House standing directive text.",
+    );
+  }
   const debugScreenshot = path.join(OUTPUT_DIR, "overlay-debug.png");
   await session.captureScreenshot(debugScreenshot);
   checks.push({

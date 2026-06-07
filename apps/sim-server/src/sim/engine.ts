@@ -3048,6 +3048,10 @@ function autonomyLabelForNextBeat(
       ? findLocation(world, plan.targetLocationId)
       : undefined;
 
+  if (planIsNiaRecoveryBeat(world, plan)) {
+    return "Recover before following Nia";
+  }
+
   if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
     return `Head to ${targetLocation.name}`;
   }
@@ -3112,12 +3116,26 @@ function autonomyLabelForAction(world: StreetGameState, actionId: string) {
     case "contribute":
       return "Handle house chores";
     case "rest":
+      if (objectiveIsNiaBlockLead(world)) {
+        return "Recover before following Nia";
+      }
       return "Rest at Morrow House";
     case "reflect":
       return "Take stock";
     default:
       return "Take the next action";
   }
+}
+
+function planIsNiaRecoveryBeat(
+  world: StreetGameState,
+  plan: Pick<ObjectivePlan, "actionId" | "targetLocationId">,
+) {
+  return (
+    objectiveIsNiaBlockLead(world) &&
+    plan.actionId === "rest:home" &&
+    plan.targetLocationId === world.player.homeLocationId
+  );
 }
 
 function autonomyDetailForObjectivePlan(
@@ -3214,6 +3232,13 @@ export function playerFacingAutonomyRationale(
     return world.player.energy < 28
       ? "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
       : "the shift paid, and Morrow House is the right place to let the day land";
+  }
+
+  if (
+    objectiveIsNiaBlockLead(world) &&
+    /\b(rest|recover|reset)\b.*\bmorrow house\b/.test(normalized)
+  ) {
+    return "Rowan is too worn down to make Nia's lead stick, so he needs a short recovery before the block jam gets worse";
   }
 
   if (normalized.includes("morrow house standing built")) {
@@ -4066,7 +4091,10 @@ function planningTraceOptionForPlan(
     pressureId: pressureMatch?.pressure.id,
     pressureKind: pressureMatch?.pressure.kind,
     pressureLabel: pressureMatch?.pressure.label,
-    rationale: compactIntentText(plan.rationale, 140),
+    rationale: compactIntentText(
+      playerFacingAutonomyRationale(world, plan.rationale) || plan.rationale,
+      140,
+    ),
     reason:
       forcedStatus === "rejected" || !selected
         ? rejectedPlanningReason(world, plan, selectedScore)

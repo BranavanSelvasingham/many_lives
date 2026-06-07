@@ -13,7 +13,10 @@ import {
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
-import type { StreetGameState } from "../src/street-sim/types.js";
+import type {
+  PlayerObjective,
+  StreetGameState,
+} from "../src/street-sim/types.js";
 import { enterMorrowHouse, enterTeaHouse } from "./street-test-helpers.js";
 
 function asWebGame(world: StreetGameState) {
@@ -327,5 +330,127 @@ describe("Rowan playback helpers", () => {
 
     expect(railView.now.title).toBe("First afternoon complete");
     expect(railView.next).toBeNull();
+  });
+
+  it("does not promote stale Morrow standing trail hints after the Nia lead takes over", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-late-nia-trail");
+    const currentObjective = world.player.objective as PlayerObjective;
+    const staleStandingStep = {
+      id: "settle-standing",
+      title: "Build standing at Morrow House so the room stays mine.",
+      detail:
+        "Now that Rowan knows the terms, he needs to show up, help out, and make the house easier to run.",
+      done: false,
+      progress: "Standing 2/2",
+      targetLocationId: "boarding-house",
+    };
+
+    world.currentTime = "Day 1, 15:50";
+    world.clock.hour = 15;
+    world.clock.minute = 50;
+    world.clock.totalMinutes = 15 * 60 + 50;
+    world.firstAfternoon = {
+      completedAt: "Day 1, 15:24",
+    };
+    world.player.currentLocationId = "repair-stall";
+    world.player.objective = {
+      ...currentObjective,
+      focus: "help",
+      routeKey: "people-nia",
+      source: "conversation",
+      text: "Ask Nia where the block is about to jam before the square feels it.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "nia-block-lead",
+          label: "Ask Nia where the block is about to jam",
+          npcId: "npc-nia",
+          status: "open",
+          urgency: 86,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [staleStandingStep],
+    };
+    world.rowanAutonomy = {
+      actionId: "exit:repair-stall",
+      autoContinue: true,
+      detail:
+        "Rowan is done inside Mercer Repairs for now, so he steps back into South Quay: Jo's clue points toward Nia now, so Rowan needs South Quay before the block jam gets worse.",
+      intent: {
+        reason: "Rowan is at Mercer Repairs, so exit to South Quay is the useful next move.",
+        signals: [
+          "Goal: Ask Nia where the block is about to jam before the square feels it.",
+        ],
+      },
+      key: "plan:people-nia:repair-stall:exit",
+      label: "Exit to South Quay",
+      layer: "objective",
+      mode: "acting",
+      stepKind: "act",
+      targetLocationId: "market-square",
+    };
+
+    const railView = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is reading the live lead.",
+      game: asWebGame(world),
+      playback: createEmptyRowanPlaybackState(),
+      quietStatusLabel: world.currentScene.title,
+    });
+
+    const lateRailText = [
+      railView.peekLabel,
+      railView.thought,
+      railView.now.title,
+      railView.now.detail,
+      railView.next?.title,
+      railView.next?.detail,
+    ].join(" ");
+
+    expect(lateRailText).toMatch(/Nia|South Quay|block|jam/i);
+    expect(lateRailText).not.toMatch(
+      /Build standing at Morrow House|room stays mine|tonight's bed/i,
+    );
+
+    world.player.objective = {
+      ...currentObjective,
+      focus: "settle",
+      routeKey: "settle-core",
+      source: "manual",
+      text: "Keep tonight's room and improve Rowan's standing at Morrow House.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "settle-standing",
+          label: "Morrow House standing built",
+          status: "open",
+          targetLocationId: "boarding-house",
+          urgency: 4,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [staleStandingStep],
+    };
+    const standingRailView = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is reading the room terms.",
+      game: asWebGame(world),
+      playback: createEmptyRowanPlaybackState(),
+      quietStatusLabel: world.currentScene.title,
+    });
+
+    expect(
+      `${standingRailView.peekLabel} ${standingRailView.next?.title}`,
+    ).toMatch(/Build standing at Morrow House so the room stays mine/i);
   });
 });

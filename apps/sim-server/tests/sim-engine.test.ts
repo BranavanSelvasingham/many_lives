@@ -724,6 +724,16 @@ describe("SimulationEngine street slice", () => {
     expect(lateNiaRationale).not.toMatch(
       /Morrow House is where|standing settle|runs himself flat|tonight's bed|room stays mine/i,
     );
+
+    const lateNiaRecoveryRationale = playerFacingAutonomyRationale(
+      world,
+      "Rest for an hour at Morrow House.",
+    );
+
+    expect(lateNiaRecoveryRationale).toMatch(/Nia|recover|block jam/i);
+    expect(lateNiaRecoveryRationale).not.toMatch(
+      /Rest for an hour at Morrow House|tonight's bed|room stays mine/i,
+    );
   });
 
   it("attempts live OpenAI-mode dialogue for first Mara and Ada conversations", async () => {

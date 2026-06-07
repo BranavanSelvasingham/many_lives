@@ -3230,6 +3230,13 @@ export function classifyObjective(text: string): ObjectiveFocus {
   }
 
   if (
+    /\bnia\b/.test(normalized) &&
+    /\b(ask|talk|meet|block|jam|cart|square)\b/.test(normalized)
+  ) {
+    return "people";
+  }
+
+  if (
     hasHomeNeed &&
     /\b(keep|lock in|secure|find out|what it takes|terms?|mine|stay)\b/.test(
       normalized,
