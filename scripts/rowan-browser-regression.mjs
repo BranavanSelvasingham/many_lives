@@ -3122,6 +3122,40 @@ async function waitForInhabitCameraProbe(session, label) {
   );
 }
 
+function worldPointToViewportPoint(camera, worldPoint, label) {
+  assert.ok(camera?.sceneViewportCss, `${label}: missing scene viewport bounds.`);
+  assert.ok(camera?.visibleWorldRect, `${label}: missing visible world bounds.`);
+  assert.ok(worldPoint, `${label}: missing Rowan world point.`);
+
+  const viewport = camera.sceneViewportCss;
+  const visible = camera.visibleWorldRect;
+  assert.ok(
+    visible.width > 0 && visible.height > 0,
+    `${label}: visible world bounds are empty.`,
+  );
+
+  const point = {
+    x:
+      viewport.x +
+      ((worldPoint.x - visible.left) / visible.width) * viewport.width,
+    y:
+      viewport.y +
+      ((worldPoint.y - visible.top) / visible.height) * viewport.height,
+  };
+
+  assert.ok(
+    point.x >= viewport.x &&
+      point.x <= viewport.x + viewport.width &&
+      point.y >= viewport.y &&
+      point.y <= viewport.y + viewport.height,
+    `${label}: Rowan click point is outside the scene viewport: ${JSON.stringify(
+      { point, viewport, visible, worldPoint },
+    )}`,
+  );
+
+  return point;
+}
+
 async function closeInhabitSupportPanel(session) {
   const openToggle = await session.readVisibleElementRect(
     '[data-toggle-support][aria-expanded="true"]',
@@ -3261,6 +3295,122 @@ async function runInhabitPanelChecks(session) {
   );
 
   return checks;
+}
+
+async function runInhabitRowanNotebookClickCheck(session) {
+  const label = "inhabit-rowan-click-notebook";
+  const camera = await waitForInhabitCameraProbe(session, label);
+  const avatarWorldPoint = {
+    x: camera.playerWorldPoint.x,
+    y: camera.playerWorldPoint.y + 96,
+  };
+  const clickPoint = worldPointToViewportPoint(
+    camera,
+    avatarWorldPoint,
+    label,
+  );
+
+  await session.evaluate(`(() => {
+    window.__manyLivesRowanClickEvents = [];
+    const record = (event) => {
+      window.__manyLivesRowanClickEvents.push({
+        button: "button" in event ? event.button : null,
+        buttons: "buttons" in event ? event.buttons : null,
+        clientX: "clientX" in event ? Math.round(event.clientX) : null,
+        clientY: "clientY" in event ? Math.round(event.clientY) : null,
+        defaultPrevented: event.defaultPrevented,
+        path: typeof event.composedPath === "function"
+          ? event.composedPath().slice(0, 6).map((target) => {
+              if (!(target instanceof Element)) {
+                return target === window ? "WINDOW" : target === document ? "DOCUMENT" : String(target);
+              }
+              const id = target.id ? \`#\${target.id}\` : "";
+              const className = typeof target.className === "string" && target.className
+                ? \`.\${target.className.trim().replace(/\\s+/g, ".")}\`
+                : "";
+              return \`\${target.tagName}\${id}\${className}\`;
+            })
+          : [],
+        target: event.target instanceof Element ? event.target.tagName : String(event.target),
+        type: event.type,
+      });
+    };
+    for (const type of ["pointerdown", "pointerup", "mousedown", "mouseup", "click"]) {
+      document.addEventListener(type, record, { capture: true });
+    }
+  })()`);
+  await session.dispatchMouseClick(clickPoint.x, clickPoint.y);
+  await sleep(300);
+
+  const dom = await session.readDomSnapshot();
+  const clickDebug = await session.evaluate(`(() => {
+    const target = document.elementFromPoint(${JSON.stringify(
+      Math.round(clickPoint.x),
+    )}, ${JSON.stringify(Math.round(clickPoint.y))});
+    return {
+      activeTab: ${JSON.stringify(dom.activeTab)},
+      bodyTextSample: ${JSON.stringify(dom.bodyTextSample)},
+      camera: ${JSON.stringify({
+        playerWorldPoint: camera.playerWorldPoint,
+        sceneViewportCss: camera.sceneViewportCss,
+        visibleWorldRect: camera.visibleWorldRect,
+      })},
+      clickPoint: ${JSON.stringify({
+        x: Math.round(clickPoint.x),
+        y: Math.round(clickPoint.y),
+      })},
+      recordedEvents: window.__manyLivesRowanClickEvents ?? [],
+      elementFromPoint: target
+        ? {
+            className: target.className || null,
+            id: target.id || null,
+            tagName: target.tagName,
+            text: target.textContent?.replace(/\\s+/g, " ").trim().slice(0, 160) ?? "",
+          }
+        : null
+    };
+  })()`);
+  const screenshot = path.join(OUTPUT_DIR, `${label}.png`);
+  await session.captureScreenshot(screenshot);
+  assert.equal(
+    dom.activeTab,
+    "mind",
+    `${label}: clicking Rowan should open the Notebook tab. ${JSON.stringify(
+      { clickDebug, screenshot },
+    )}`,
+  );
+
+  for (const expectedText of [
+    /Rowan's Notebook/i,
+    /Current Belief/i,
+    /Current Plan/i,
+    /Confidence/i,
+    /Next Uncertainty/i,
+  ]) {
+    assert.match(
+      dom.bodyText,
+      expectedText,
+      `${label}: Rowan click did not reveal the expected Notebook content.`,
+    );
+  }
+
+  assertCriticalVisualCoherence(label, dom, {
+    expectFocusWindow: true,
+  });
+
+  await session.clickVisibleSelector("[data-close-focus]");
+  await sleep(200);
+
+  return {
+    activeTab: dom.activeTab,
+    bodyTextSample: dom.bodyTextSample,
+    clickPoint: {
+      x: Math.round(clickPoint.x),
+      y: Math.round(clickPoint.y),
+    },
+    label,
+    screenshot,
+  };
 }
 
 async function runInhabitCameraCheck(session) {
@@ -3476,6 +3626,7 @@ async function runInhabitGameplayPass(session) {
       "As a new player, can I tell who Rowan is, where he is, and what I can do first?",
   });
 
+  const rowanNotebookClick = await runInhabitRowanNotebookClickCheck(session);
   const panelChecks = await runInhabitPanelChecks(session);
   const cameraCheck = await runInhabitCameraCheck(session);
   const frozenProbe = await session.readBrowserProbe();
@@ -3595,6 +3746,7 @@ async function runInhabitGameplayPass(session) {
     panelChecks,
     progressionClicks: clickLog,
     reportPath,
+    rowanNotebookClick,
     status: "passed",
     url,
     visibleControlClickCount,
