@@ -479,31 +479,6 @@ export function buildMindTabHtml(options: {
 
   return `
     <div class="ml-focus-stack">
-      <div class="ml-card" data-city-pulse="true">
-        <div class="ml-kicker">City Pulse</div>
-        <div class="ml-card-title" style="margin-top: 8px;">South Quay is moving</div>
-        <div class="ml-list" style="margin-top: 12px;">
-          ${
-            cityPulseItems.length > 0
-              ? cityPulseItems
-                  .map(
-                    (item) => `
-                    <div class="ml-row">
-                      <div class="ml-row-title">${escapeHtml(item.title)}</div>
-                      <div class="ml-row-copy">${escapeHtml(item.detail)}</div>
-                      ${
-                        item.meta
-                          ? `<div class="ml-row-meta">${escapeHtml(item.meta)}</div>`
-                          : ""
-                      }
-                    </div>
-                  `,
-                  )
-                  .join("")
-              : `<div class="ml-row"><div class="ml-row-copy">The block is quiet for the moment, but Rowan is still watching for work, trouble, and people on the move.</div></div>`
-          }
-        </div>
-      </div>
       <div class="ml-card ml-notebook-card">
         <div class="ml-kicker">Rowan's Notebook</div>
         <div class="ml-card-title" style="margin-top: 8px;">${escapeHtml(
@@ -530,6 +505,31 @@ export function buildMindTabHtml(options: {
             <div class="ml-row-meta">Next Uncertainty</div>
             <div class="ml-row-copy">${escapeHtml(notebook.uncertainty)}</div>
           </div>
+        </div>
+      </div>
+      <div class="ml-card" data-city-pulse="true">
+        <div class="ml-kicker">City Pulse</div>
+        <div class="ml-card-title" style="margin-top: 8px;">South Quay is moving</div>
+        <div class="ml-list" style="margin-top: 12px;">
+          ${
+            cityPulseItems.length > 0
+              ? cityPulseItems
+                  .map(
+                    (item) => `
+                    <div class="ml-row">
+                      <div class="ml-row-title">${escapeHtml(item.title)}</div>
+                      <div class="ml-row-copy">${escapeHtml(item.detail)}</div>
+                      ${
+                        item.meta
+                          ? `<div class="ml-row-meta">${escapeHtml(item.meta)}</div>`
+                          : ""
+                      }
+                    </div>
+                  `,
+                  )
+                  .join("")
+              : `<div class="ml-row"><div class="ml-row-copy">The block is quiet for the moment, but Rowan is still watching for work, trouble, and people on the move.</div></div>`
+          }
         </div>
       </div>
       <div class="ml-card">

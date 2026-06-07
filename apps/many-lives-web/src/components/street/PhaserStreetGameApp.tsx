@@ -791,11 +791,25 @@ type ConversationReplayState = {
   timerId: number | null;
 };
 
+type CameraProjectionState = {
+  playerWorldPoint: Point;
+  sceneViewportCss: SceneViewport;
+  visibleWorldRect: {
+    bottom: number;
+    height: number;
+    left: number;
+    right: number;
+    top: number;
+    width: number;
+  };
+};
+
 type RuntimeState = {
   autoStartedConversationKey: string | null;
   cameraEdgeCue: Record<CameraEdgeName, number>;
   cameraGesture: CameraGestureState | null;
   cameraOffset: Point;
+  cameraProjection: CameraProjectionState | null;
   cameraZoomFactor: number;
   conversationAutostartTimerId: number | null;
   conversationReplay: ConversationReplayState;
@@ -1658,6 +1672,7 @@ async function createRuntime(options: {
       initialIndices,
       runtimeNow,
     ),
+    cameraProjection: null,
     renderScale,
     snapshot: initialSnapshot,
     ui: {
@@ -1710,6 +1725,36 @@ async function createRuntime(options: {
         overlayDom,
       );
       runtimeState.objects = objects;
+      const openRowanNotebookFromScene = () => {
+        runtimeState.ui.activeTab = "mind";
+        runtimeState.ui.focusPanel = "mind";
+        if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+          runtimeState.ui.railExpanded = false;
+        }
+        renderOverlay(objects, runtimeState);
+      };
+      const pointerHitsRowanAvatar = (pointer: PhaserType.Input.Pointer) => {
+        if (!runtimeState.snapshot.game) {
+          return false;
+        }
+
+        const now = getRuntimeNow();
+        const playerTile = samplePlayerTile(runtimeState.playerMotion, now);
+        const playerWorld = samplePlayerWorld(runtimeState, playerTile, now);
+        const camera = this.cameras.main;
+        const sceneViewport = getRuntimeSceneViewport(runtimeState);
+        const zoom = Math.max(camera.zoom, 0.001);
+        const playerScreen = {
+          x: sceneViewport.x + (playerWorld.x - camera.scrollX) * zoom,
+          y: sceneViewport.y + (playerWorld.y - camera.scrollY) * zoom,
+        };
+
+        return (
+          Math.abs(pointer.x - playerScreen.x) <= 46 * zoom &&
+          pointer.y >= playerScreen.y - 92 * zoom &&
+          pointer.y <= playerScreen.y + 132 * zoom
+        );
+      };
       objects.playerContainer.setSize(78, 126);
       objects.playerContainer.setInteractive(
         new Phaser.Geom.Rectangle(-39, -88, 78, 126),
@@ -1724,12 +1769,7 @@ async function createRuntime(options: {
           event: PhaserType.Types.Input.EventData,
         ) => {
           event.stopPropagation();
-          runtimeState.ui.activeTab = "mind";
-          runtimeState.ui.focusPanel = "mind";
-          if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
-            runtimeState.ui.railExpanded = false;
-          }
-          renderOverlay(objects, runtimeState);
+          openRowanNotebookFromScene();
         },
       );
 
@@ -1762,6 +1802,11 @@ async function createRuntime(options: {
       }
 
       this.input.on("pointerdown", (pointer: PhaserType.Input.Pointer) => {
+        if (pointerHitsRowanAvatar(pointer)) {
+          openRowanNotebookFromScene();
+          return;
+        }
+
         options.mount.style.cursor = "grabbing";
         beginCameraGesture(
           runtimeState,
@@ -1969,8 +2014,12 @@ function bindNativeCameraPanFallback(
 ) {
   let activePointerId: number | null = null;
   let activeStartPointer: PhaserType.Input.Pointer | null = null;
+  let activeStartClientPoint: Point | null = null;
+  let activeMouseStartPointer: PhaserType.Input.Pointer | null = null;
+  let activeMouseStartClientPoint: Point | null = null;
   let activeTouchId: number | null = null;
   let activeTouchStartPointer: PhaserType.Input.Pointer | null = null;
+  let activeTouchStartClientPoint: Point | null = null;
 
   const toRuntimePointerFromClient = (
     clientX: number,
@@ -1992,7 +2041,7 @@ function bindNativeCameraPanFallback(
     } as PhaserType.Input.Pointer;
   };
 
-  const toRuntimePointer = (event: PointerEvent | WheelEvent) =>
+  const toRuntimePointer = (event: MouseEvent | PointerEvent | WheelEvent) =>
     toRuntimePointerFromClient(
       event.clientX,
       event.clientY,
@@ -2008,6 +2057,11 @@ function bindNativeCameraPanFallback(
       isDown,
     );
 
+  const toClientPoint = (clientX: number, clientY: number): Point => ({
+    x: clientX,
+    y: clientY,
+  });
+
   const isBlockedByOverlay = (event: Event) => {
     if (isOverlayTextInputFocused(runtimeState.objects?.overlayDom ?? null)) {
       return true;
@@ -2019,9 +2073,76 @@ function bindNativeCameraPanFallback(
     );
   };
 
+  const isInteractiveOverlayTarget = (target: EventTarget | null) => {
+    const overlayRoot = runtimeState.objects?.overlayDom ?? null;
+    if (!isOverlayEventTarget(overlayRoot, target)) {
+      return false;
+    }
+
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    return Boolean(
+      target.closest(
+        'a, button, input, select, textarea, [contenteditable="true"], [role="button"], [role="tab"], [data-overlay-field-key]',
+      ),
+    );
+  };
+
   const captureCameraEvent = (event: Event) => {
     event.preventDefault();
     event.stopPropagation();
+  };
+
+  const openRowanNotebookFromMap = () => {
+    const objects = runtimeState.objects;
+    if (!objects || !runtimeState.snapshot.game) {
+      return false;
+    }
+
+    runtimeState.ui.activeTab = "mind";
+    runtimeState.ui.focusPanel = "mind";
+    if (isCollapsibleRailViewport(runtimeState.snapshot.viewport)) {
+      runtimeState.ui.railExpanded = false;
+    }
+    renderOverlay(objects, runtimeState);
+    return true;
+  };
+
+  const isClientPointOnRowanAvatar = (point: Point) => {
+    const projection = runtimeState.cameraProjection;
+    if (!runtimeState.snapshot.game || !projection) {
+      return false;
+    }
+
+    const playerWorld = projection.playerWorldPoint;
+    const sceneViewport = projection.sceneViewportCss;
+    const visibleWorld = projection.visibleWorldRect;
+    const playerScreen = {
+      x:
+        sceneViewport.x +
+        ((playerWorld.x - visibleWorld.left) / visibleWorld.width) *
+          sceneViewport.width,
+      y:
+        sceneViewport.y +
+        ((playerWorld.y - visibleWorld.top) / visibleWorld.height) *
+          sceneViewport.height,
+    };
+    const hitZoom = sceneViewport.width / visibleWorld.width;
+    const bounds = {
+      bottom: playerScreen.y + 132 * hitZoom,
+      left: playerScreen.x - 46 * hitZoom,
+      right: playerScreen.x + 46 * hitZoom,
+      top: playerScreen.y - 92 * hitZoom,
+    };
+
+    return (
+      point.x >= bounds.left &&
+      point.x <= bounds.right &&
+      point.y >= bounds.top &&
+      point.y <= bounds.bottom
+    );
   };
 
   const beginNativePan = (event: PointerEvent) => {
@@ -2046,6 +2167,7 @@ function bindNativeCameraPanFallback(
 
     activePointerId = event.pointerId;
     activeStartPointer = pointer;
+    activeStartClientPoint = toClientPoint(event.clientX, event.clientY);
 
     try {
       mount.setPointerCapture(event.pointerId);
@@ -2063,6 +2185,7 @@ function bindNativeCameraPanFallback(
     if (!pointer.isDown) {
       activePointerId = null;
       activeStartPointer = null;
+      activeStartClientPoint = null;
       mount.style.cursor = "grab";
       finishCameraGesture(runtimeState, pointer, getRuntimeNow());
       return;
@@ -2115,8 +2238,14 @@ function bindNativeCameraPanFallback(
     const wasDragging =
       runtimeState.cameraGesture?.pointerId === event.pointerId &&
       runtimeState.cameraGesture.dragging;
+    const shouldOpenRowanNotebook =
+      !wasDragging &&
+      activeStartClientPoint &&
+      isClientPointOnRowanAvatar(activeStartClientPoint) &&
+      isClientPointOnRowanAvatar(toClientPoint(event.clientX, event.clientY));
     activePointerId = null;
     activeStartPointer = null;
+    activeStartClientPoint = null;
     mount.style.cursor = "grab";
 
     try {
@@ -2131,6 +2260,11 @@ function bindNativeCameraPanFallback(
       return;
     }
 
+    if (shouldOpenRowanNotebook && openRowanNotebookFromMap()) {
+      captureCameraEvent(event);
+      return;
+    }
+
     window.setTimeout(() => {
       if (
         runtimeState.cameraGesture?.pointerId === event.pointerId &&
@@ -2141,6 +2275,58 @@ function bindNativeCameraPanFallback(
     }, 0);
   };
 
+  const beginNativeMouseClick = (event: MouseEvent) => {
+    if (
+      activeTouchId !== null ||
+      event.button !== 0 ||
+      !runtimeState.snapshot.game ||
+      isBlockedByOverlay(event)
+    ) {
+      return;
+    }
+
+    const pointer = toRuntimePointer(event);
+    if (
+      !isPointerWithinSceneViewport(
+        pointer,
+        getRuntimeCameraGestureViewport(runtimeState),
+      )
+    ) {
+      return;
+    }
+
+    activeMouseStartPointer = pointer;
+    activeMouseStartClientPoint = toClientPoint(event.clientX, event.clientY);
+  };
+
+  const finishNativeMouseClick = (event: MouseEvent) => {
+    if (!activeMouseStartPointer || !activeMouseStartClientPoint) {
+      return;
+    }
+
+    const startPointer = activeMouseStartPointer;
+    const startClientPoint = activeMouseStartClientPoint;
+    const pointer = toRuntimePointer(event);
+    const moved = Math.hypot(
+      pointer.x - startPointer.x,
+      pointer.y - startPointer.y,
+    );
+    activeMouseStartPointer = null;
+    activeMouseStartClientPoint = null;
+
+    if (
+      moved >= 10 ||
+      !isClientPointOnRowanAvatar(startClientPoint) ||
+      !isClientPointOnRowanAvatar(toClientPoint(event.clientX, event.clientY))
+    ) {
+      return;
+    }
+
+    if (openRowanNotebookFromMap()) {
+      captureCameraEvent(event);
+    }
+  };
+
   const cancelNativePan = (event: PointerEvent) => {
     if (activePointerId !== event.pointerId) {
       return;
@@ -2148,6 +2334,7 @@ function bindNativeCameraPanFallback(
 
     activePointerId = null;
     activeStartPointer = null;
+    activeStartClientPoint = null;
     mount.style.cursor = "grab";
     finishCameraGesture(runtimeState, toRuntimePointer(event), getRuntimeNow());
   };
@@ -2194,10 +2381,12 @@ function bindNativeCameraPanFallback(
 
     activeTouchId = touch.identifier;
     activeTouchStartPointer = pointer;
+    activeTouchStartClientPoint = toClientPoint(touch.clientX, touch.clientY);
   };
 
   const updateNativeTouchPan = (event: TouchEvent) => {
-    const touch = findActiveTouch(event.touches) ?? findActiveTouch(event.changedTouches);
+    const touch =
+      findActiveTouch(event.touches) ?? findActiveTouch(event.changedTouches);
     if (!touch || activeTouchId === null) {
       return;
     }
@@ -2250,12 +2439,23 @@ function bindNativeCameraPanFallback(
     const wasDragging =
       runtimeState.cameraGesture?.pointerId === pointer.id &&
       runtimeState.cameraGesture.dragging;
+    const shouldOpenRowanNotebook =
+      !wasDragging &&
+      activeTouchStartClientPoint &&
+      isClientPointOnRowanAvatar(activeTouchStartClientPoint) &&
+      isClientPointOnRowanAvatar(toClientPoint(touch.clientX, touch.clientY));
     activeTouchId = null;
     activeTouchStartPointer = null;
+    activeTouchStartClientPoint = null;
 
     if (wasDragging) {
       captureCameraEvent(event);
       finishCameraGesture(runtimeState, pointer, getRuntimeNow());
+      return;
+    }
+
+    if (shouldOpenRowanNotebook && openRowanNotebookFromMap()) {
+      captureCameraEvent(event);
       return;
     }
 
@@ -2277,6 +2477,7 @@ function bindNativeCameraPanFallback(
 
     activeTouchId = null;
     activeTouchStartPointer = null;
+    activeTouchStartClientPoint = null;
     finishCameraGesture(
       runtimeState,
       toTouchPointer(touch, false),
@@ -2326,6 +2527,31 @@ function bindNativeCameraPanFallback(
     pulseCameraEdgeCue(runtimeState, panResult.blockedEdges, now);
   };
 
+  const openRowanNotebookFromClick = (event: MouseEvent) => {
+    const textInputBlocked = isOverlayTextInputFocused(
+      runtimeState.objects?.overlayDom ?? null,
+    );
+    const point = toClientPoint(event.clientX, event.clientY);
+    const avatarHit = isClientPointOnRowanAvatar(point);
+    const interactiveOverlayBlocked = isInteractiveOverlayTarget(event.target);
+
+    if (!runtimeState.snapshot.game || textInputBlocked) {
+      return;
+    }
+
+    if (!avatarHit) {
+      return;
+    }
+
+    if (interactiveOverlayBlocked) {
+      return;
+    }
+
+    if (openRowanNotebookFromMap()) {
+      captureCameraEvent(event);
+    }
+  };
+
   const browserCameraControlWindow = window as Window & {
     __manyLivesPanCameraToEdge?: (edge: CameraEdgeName) => boolean;
   };
@@ -2367,6 +2593,10 @@ function bindNativeCameraPanFallback(
   mount.addEventListener("pointermove", updateNativePan, { capture: true });
   mount.addEventListener("pointerup", finishNativePan, { capture: true });
   mount.addEventListener("pointercancel", cancelNativePan, { capture: true });
+  mount.addEventListener("mousedown", beginNativeMouseClick, {
+    capture: true,
+  });
+  mount.addEventListener("mouseup", finishNativeMouseClick, { capture: true });
   mount.addEventListener("touchstart", beginNativeTouchPan, {
     capture: true,
     passive: false,
@@ -2382,6 +2612,12 @@ function bindNativeCameraPanFallback(
   mount.addEventListener("touchcancel", cancelNativeTouchPan, {
     capture: true,
     passive: false,
+  });
+  mount.addEventListener("click", openRowanNotebookFromClick, {
+    capture: true,
+  });
+  document.addEventListener("click", openRowanNotebookFromClick, {
+    capture: true,
   });
   mount.addEventListener("wheel", panFromWheel, {
     capture: true,
@@ -2402,6 +2638,12 @@ function bindNativeCameraPanFallback(
       mount.removeEventListener("pointercancel", cancelNativePan, {
         capture: true,
       });
+      mount.removeEventListener("mousedown", beginNativeMouseClick, {
+        capture: true,
+      });
+      mount.removeEventListener("mouseup", finishNativeMouseClick, {
+        capture: true,
+      });
       mount.removeEventListener("touchstart", beginNativeTouchPan, {
         capture: true,
       });
@@ -2412,6 +2654,12 @@ function bindNativeCameraPanFallback(
         capture: true,
       });
       mount.removeEventListener("touchcancel", cancelNativeTouchPan, {
+        capture: true,
+      });
+      mount.removeEventListener("click", openRowanNotebookFromClick, {
+        capture: true,
+      });
+      document.removeEventListener("click", openRowanNotebookFromClick, {
         capture: true,
       });
       mount.removeEventListener("wheel", panFromWheel, { capture: true });
@@ -3381,6 +3629,26 @@ function renderDynamicScene(
     world,
     now,
   );
+  const effectiveZoom = Math.max(camera.zoom, 0.001);
+  const visibleWidth = sceneViewport.width / effectiveZoom;
+  const visibleHeight = sceneViewport.height / effectiveZoom;
+  runtimeState.cameraProjection = {
+    playerWorldPoint: playerPixel,
+    sceneViewportCss: {
+      height: sceneViewport.height / runtimeState.renderScale,
+      width: sceneViewport.width / runtimeState.renderScale,
+      x: sceneViewport.x / runtimeState.renderScale,
+      y: sceneViewport.y / runtimeState.renderScale,
+    },
+    visibleWorldRect: {
+      bottom: camera.scrollY + visibleHeight,
+      height: visibleHeight,
+      left: camera.scrollX,
+      right: camera.scrollX + visibleWidth,
+      top: camera.scrollY,
+      width: visibleWidth,
+    },
+  };
   syncMapAgencyObjects(objects, runtimeState, playerPixel, mapAgencyCue, now);
   pulseCameraEdgeCue(runtimeState, cameraBlockedEdges, now);
   syncCameraEdgeCues(
