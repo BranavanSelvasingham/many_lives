@@ -3472,6 +3472,26 @@ function assertInhabitLocalsPanelSemantics(label, localsPanel) {
       localsPanel.nearbyMaraRect,
     )}`,
   );
+  assert.equal(
+    localsPanel.placeholderCardText,
+    "",
+    `${label}: opening Locals panel should not render a blank character-card placeholder when a nearby person is available.`,
+  );
+  assert.match(
+    localsPanel.focusedPersonCardText,
+    /Mara/i,
+    `${label}: opening Locals panel should default the focused character card to nearby Mara.`,
+  );
+  assert.match(
+    localsPanel.focusedPersonCardText,
+    /Current Objective/i,
+    `${label}: focused Mara card should expose her current objective.`,
+  );
+  assert.match(
+    localsPanel.focusedPersonCardText,
+    /Current Concern/i,
+    `${label}: focused Mara card should expose her current concern.`,
+  );
 }
 
 async function runInhabitPanelChecks(session) {
@@ -3542,6 +3562,7 @@ async function runInhabitPanelChecks(session) {
               : 0;
             return {
               bodyText: document.body?.innerText?.replace(/\\s+/g, " ").trim() ?? "",
+              focusedPersonCardText: textFor("[data-locals-person-card]"),
               nearbyMaraRect,
               nearbyMaraVisible:
                 Boolean(nearbyMaraRect) &&
@@ -3549,6 +3570,7 @@ async function runInhabitPanelChecks(session) {
                 nearbyMaraRect.height > 0 &&
                 visibleHeight >= Math.min(nearbyMaraRect.height, 72),
               nearbyText: textFor("[data-locals-nearby]"),
+              placeholderCardText: textFor("[data-locals-placeholder-card]"),
               rosterText: textFor("[data-locals-roster]"),
             };
           })()`)
