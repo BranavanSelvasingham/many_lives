@@ -80,6 +80,8 @@ const REQUIRED_NPC_PATROL_LOCATION_IDS = [
 ];
 const OPENING_CTA_PATTERN =
   /Watch Rowan begin|Rowan starts by asking Mara\./i;
+const GENERIC_WATCH_CTA_COPY_PATTERN =
+  /Rowan will keep going when this beat lands/i;
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
@@ -3339,6 +3341,56 @@ function assertInhabitOpeningCtaProgression(moments) {
   );
 }
 
+function assertInhabitSituatedWatchCtaCopy(moments) {
+  const byLabel = Object.fromEntries(
+    moments.map((moment) => [moment.label, moment]),
+  );
+  const expectations = [
+    {
+      label: "entered-morrow-house",
+      pattern: /Mara|talk|ask/i,
+      reason:
+        "entered-morrow-house: continued-watch copy should describe asking or talking to Mara.",
+    },
+    {
+      label: "mara-lead-landed",
+      pattern: /South Quay|Kettle & Lamp|cafe|leav|stepping back|heading/i,
+      reason:
+        "mara-lead-landed: continued-watch copy should describe leaving Morrow House or moving toward Kettle & Lamp.",
+    },
+    {
+      label: "arrived-kettle-lamp",
+      pattern: /Kettle & Lamp|cafe|enter|stepping into/i,
+      reason:
+        "arrived-kettle-lamp: continued-watch copy should describe entering Kettle & Lamp.",
+    },
+    {
+      label: "shift-in-motion",
+      pattern: /lunch rush|work|shift|counter/i,
+      reason:
+        "shift-in-motion: continued-watch copy should describe working or keeping the lunch rush moving.",
+    },
+  ];
+
+  for (const expectation of expectations) {
+    const moment = byLabel[expectation.label];
+    assert.ok(
+      moment?.control?.text,
+      `${expectation.label}: expected continued-watch control text.`,
+    );
+    assert.doesNotMatch(
+      moment.control.text,
+      GENERIC_WATCH_CTA_COPY_PATTERN,
+      `${expectation.label}: continued-watch copy regressed to generic beat-landing copy.`,
+    );
+    assert.match(
+      moment.control.text,
+      expectation.pattern,
+      expectation.reason,
+    );
+  }
+}
+
 async function runInhabitPanelChecks(session) {
   const checks = [];
   const panels = [
@@ -3840,6 +3892,7 @@ async function runInhabitGameplayPass(session) {
     "Inhabit gameplay pass must capture screenshot evidence for every player milestone.",
   );
   assertInhabitOpeningCtaProgression(moments);
+  assertInhabitSituatedWatchCtaCopy(moments);
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {

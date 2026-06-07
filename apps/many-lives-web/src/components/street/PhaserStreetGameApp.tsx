@@ -5013,6 +5013,80 @@ function buildMapAgencyDetail({
   return compactMapAgencyCopy(buildPlayerThought(game), 58);
 }
 
+function buildWatchModePrimaryContinueCopy({
+  autonomy,
+  firstAfternoonOpening,
+  targetLocation,
+  targetNpc,
+}: {
+  autonomy: StreetGameState["rowanAutonomy"];
+  firstAfternoonOpening: boolean;
+  targetLocation: LocationState | null;
+  targetNpc: NpcState | null;
+}) {
+  if (firstAfternoonOpening) {
+    return "Rowan starts by asking Mara.";
+  }
+
+  const label = autonomy.label.trim();
+  const targetLocationName = targetLocation
+    ? mapAgencyLocationName(targetLocation)
+    : null;
+
+  if (autonomy.mode === "conversation") {
+    if (targetNpc) {
+      return `Rowan is about to ask ${targetNpc.name} in person.`;
+    }
+
+    const talkMatch = label.match(/^Talk to (.+)$/i);
+    if (talkMatch?.[1]) {
+      return `Rowan is about to ask ${talkMatch[1]} in person.`;
+    }
+
+    return "Rowan is starting the next conversation.";
+  }
+
+  if (
+    /lunch rush/i.test(label) ||
+    /lunch rush/i.test(autonomy.detail) ||
+    autonomy.actionId?.startsWith("work:")
+  ) {
+    return "Rowan is keeping the lunch rush moving.";
+  }
+
+  if (/exit to south quay/i.test(label) || autonomy.actionId?.startsWith("exit:")) {
+    return targetLocationName
+      ? `Rowan is stepping back into South Quay toward ${targetLocationName}.`
+      : "Rowan is stepping back into South Quay.";
+  }
+
+  if (/enter kettle/i.test(label)) {
+    return "Rowan is stepping into Kettle & Lamp.";
+  }
+
+  if (/^Enter /i.test(label) && targetLocationName) {
+    return `Rowan is stepping into ${targetLocationName}.`;
+  }
+
+  if (/kettle|cafe|ada/i.test(label)) {
+    return "Rowan is turning Mara's lead toward Kettle & Lamp.";
+  }
+
+  if (autonomy.mode === "moving" && targetLocationName) {
+    return `Rowan is heading toward ${targetLocationName}.`;
+  }
+
+  if (autonomy.mode === "waiting") {
+    return "Rowan is letting the clock carry this beat.";
+  }
+
+  if (label) {
+    return `Rowan is taking the next visible step: ${label}.`;
+  }
+
+  return "Rowan is choosing the next visible step.";
+}
+
 function normalizeMapAgencyTone(
   mode: StreetGameState["rowanAutonomy"]["mode"],
 ): MapAgencyTone {
@@ -5440,6 +5514,12 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   )
     ? `Finish with ${rowanAutonomy.label.slice("With ".length)}`
     : "Continue conversation";
+  const primaryContinueTargetLocation = rowanAutonomy.targetLocationId
+    ? locationById.get(rowanAutonomy.targetLocationId) ?? null
+    : null;
+  const primaryContinueTargetNpc = rowanAutonomy.npcId
+    ? (game.npcs.find((npc) => npc.id === rowanAutonomy.npcId) ?? null)
+    : null;
   const primaryContinueLabel = snapshot.rowanAutoplayEnabled
     ? firstAfternoonOpening
       ? "Watch Rowan begin"
@@ -5452,9 +5532,12 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       ? "Rowan is carrying the conversation forward."
       : "Let the conversation land."
     : snapshot.rowanAutoplayEnabled
-      ? firstAfternoonOpening
-        ? "Rowan starts by asking Mara."
-        : "Rowan will keep going when this beat lands."
+      ? buildWatchModePrimaryContinueCopy({
+          autonomy: rowanAutonomy,
+          firstAfternoonOpening,
+          targetLocation: primaryContinueTargetLocation,
+          targetNpc: primaryContinueTargetNpc,
+        })
       : rowanAutonomy.mode === "moving"
         ? "Move Rowan there."
         : rowanAutonomy.mode === "waiting"
