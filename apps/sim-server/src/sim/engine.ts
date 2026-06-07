@@ -3188,7 +3188,7 @@ function autonomyDetailForAction(
     : `Rowan can act on this now: ${rationale}.`;
 }
 
-function playerFacingAutonomyRationale(
+export function playerFacingAutonomyRationale(
   world: StreetGameState,
   rationaleText: string | undefined,
 ) {
@@ -3217,6 +3217,10 @@ function playerFacingAutonomyRationale(
   }
 
   if (normalized.includes("morrow house standing built")) {
+    if (objectiveIsNiaBlockLead(world)) {
+      return "Jo's clue points toward Nia now, so Rowan needs South Quay before the block jam gets worse";
+    }
+
     return world.player.energy < 28
       ? "Morrow House is where Rowan can let today's standing settle before he runs himself flat"
       : "Morrow House is where today's standing can turn into a steadier foothold";
@@ -3230,6 +3234,33 @@ function playerFacingAutonomyRationale(
     .replace(/move toward the open objective outcome:\s*/i, "")
     .replace(/\bcurrent objective\b/gi, "next promise")
     .replace(/\bfits the next promise\b/gi, "belongs to the next promise");
+}
+
+function objectiveIsNiaBlockLead(world: StreetGameState) {
+  const objective = world.player.objective;
+  if (!objective) {
+    return false;
+  }
+
+  const objectiveText = [
+    objective.text,
+    objective.routeKey,
+    ...(objective.outcomes ?? []).flatMap((outcome) => [
+      outcome.id,
+      outcome.label,
+      outcome.npcId,
+      outcome.evidence,
+      ...(outcome.blockers ?? []),
+    ]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    /\bnia\b/.test(objectiveText) &&
+    /\b(block|jam|cart|square)\b/.test(objectiveText)
+  );
 }
 
 function buildRowanAutonomyIntent(

@@ -2707,6 +2707,11 @@ function assertNotebookFreshForLateObjective(label, normalizedBody, notebook) {
     /Keep a stable room|Mara is the person most likely|tonight's bed|bed feel less temporary/i,
     `${label}: late Notebook stayed anchored to stale room/shelter authority after the Nia lead surfaced.`,
   );
+  assert.doesNotMatch(
+    normalizedBody,
+    /Morrow House is where Rowan can let today's standing settle|runs himself flat|tonight's bed|room stays mine/i,
+    `${label}: late rail/body mixed the Nia objective shift with stale Morrow House standing rationale.`,
+  );
   assert.match(
     notebookText,
     /Nia|Jo|block|jam|square/i,
