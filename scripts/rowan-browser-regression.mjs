@@ -1430,11 +1430,10 @@ function shouldCaptureScreenshot(label) {
     "exit-cafe-interior",
     "arrive-home",
     "enter-morrow-return",
-    "home-reset",
     "first-afternoon-complete",
-    "exit-morrow-for-repair",
-    "stage-repair-move",
-    "enter-repair-interior",
+    "post-first-afternoon-handoff",
+    "post-first-afternoon-rest",
+    "post-first-afternoon-live-route",
   ]).has(label);
 }
 
@@ -3724,7 +3723,7 @@ function assertNotebookFreshForLateObjective(label, normalizedBody, notebook) {
   const lateNiaLeadVisible =
     /Talk to Nia next while there is still time/i.test(normalizedBody) ||
     /Ask Nia where the block is about to jam/i.test(normalizedBody) ||
-    /Objective shifted/i.test(normalizedBody);
+    /Jo's clue points toward Nia/i.test(normalizedBody);
   if (!lateNiaLeadVisible) {
     return;
   }
@@ -3799,6 +3798,7 @@ function buildTimelineEntry({
     rail: probe.rail,
     screenshot,
     screenshotError: screenshotError ?? null,
+    firstAfternoon: probe.firstAfternoon ?? null,
     visualPlayer: probe.visualPlayer,
     watchMode: probe.watchMode ?? null,
     aiRuntime: probe.aiRuntime ?? null,
@@ -4027,7 +4027,7 @@ function assertHistoricalFieldNoteNextDemoted(label, dom) {
     if (label === "overlay-debug") {
       assert.match(
         bodyText,
-        /AT THE TIME\s+Sleep on the first foothold, then decide whether tomorrow starts with Ada's lead or the dock board\./i,
+        /AT THE TIME\s+Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan\./i,
         `${label}: final first-afternoon field-note guidance should be demoted in the late Nia debug view.`,
       );
     }
@@ -4302,6 +4302,14 @@ async function waitForInhabitTransition(session, beforeSignature, label) {
   );
 }
 
+function isFirstAfternoonCompletionPendingProbe(probe) {
+  return Boolean(
+    probe?.firstAfternoon?.completedAt &&
+      !probe?.firstAfternoon?.completionAcknowledgedAt &&
+      /first afternoon complete/i.test(probe?.autonomy?.label ?? ""),
+  );
+}
+
 async function waitForInhabitCameraProbe(session, label) {
   return waitFor(
     async () => {
@@ -4401,6 +4409,7 @@ async function captureInhabitMoment({
   await session.captureScreenshot(screenshot);
   const moment = {
     activeConversation: probe.activeConversation?.npcId ?? null,
+    autonomy: probe.autonomy ?? null,
     autonomyLabel: probe.autonomy?.label ?? null,
     clock: probe.clock,
     control: controlCandidate
@@ -4415,6 +4424,7 @@ async function captureInhabitMoment({
     firstAfternoon: probe.firstAfternoon,
     label,
     location: probe.location,
+    objective: probe.objective ?? null,
     screenshot,
     userQuestion,
     worldPressure: compactWorldPressureSnapshot(probe.worldPressure),
@@ -4901,10 +4911,11 @@ async function clickUntilInhabitMilestone({
     }
 
     const beforeSignature = playerProbeSignature(probe);
+    const completionAutoContinue = isFirstAfternoonCompletionPendingProbe(probe);
     if (
       probe.watchMode?.enabled &&
       !probe.watchMode?.frozen &&
-      probe.autonomy?.autoContinue
+      (probe.autonomy?.autoContinue || completionAutoContinue)
     ) {
       const dom = await session.readDomSnapshot().catch(() => null);
       const auditEntry = buildObjectiveSequenceAuditEntry({
@@ -4924,21 +4935,27 @@ async function clickUntilInhabitMilestone({
           2,
         )}`,
       );
-      clickLog.push({
+      const logEntry = {
         beforeAutonomyLabel: probe.autonomy?.label ?? null,
         beforeClock: probe.clock,
         beforeLocation: probe.location,
+        completionAutoContinue,
         objectiveSequenceAuditIndex: objectiveSequenceAudit.length - 1,
         kind: "watched-auto-continue",
         milestone: milestone.label,
         sequenceRunId: objectiveSequenceGroupIdForEntry(auditEntry),
-        text: "Watched autoplay carry the beat.",
-      });
+        text: completionAutoContinue
+          ? "Watched autoplay dwell on the completion field note, then open the next live objective."
+          : "Watched autoplay carry the beat.",
+      };
+      clickLog.push(logEntry);
+      const startedAt = Date.now();
       await waitForInhabitTransition(
         session,
         beforeSignature,
         `${milestone.label}-watch-${attempt + 1}`,
       );
+      logEntry.durationMs = Date.now() - startedAt;
       await closeInhabitSupportPanel(session);
       continue;
     }
@@ -5126,6 +5143,16 @@ async function runInhabitGameplayPass(session) {
       userQuestion:
         "Can a player-driven session reach a natural stopping point without direct sim commands?",
     },
+    {
+      label: "post-first-afternoon-handoff",
+      maxClicks: 4,
+      reached: (probe) =>
+        Boolean(probe.firstAfternoon?.completionAcknowledgedAt) &&
+        probe.objective?.routeKey !== "first-afternoon" &&
+        !/first afternoon complete/i.test(probe.autonomy?.label ?? ""),
+      userQuestion:
+        "After the field note, does Rowan open a fresh next objective from live state instead of staying on the completed first-afternoon route?",
+    },
   ];
 
   for (const milestone of milestones) {
@@ -5152,13 +5179,28 @@ async function runInhabitGameplayPass(session) {
   const watchedAutoContinueCount = clickLog.filter(
     (entry) => entry.kind === "watched-auto-continue",
   ).length;
-  assert.ok(
-    visibleControlClickCount <= 10,
-    `Inhabit gameplay pass exposed too many low-level visible control clicks: ${visibleControlClickCount}.`,
+  assert.equal(
+    visibleControlClickCount,
+    0,
+    `Observe/autoplay gameplay must be zero-click, but the pass exposed ${visibleControlClickCount} visible control clicks.`,
   );
   assert.ok(
     watchedAutoContinueCount >= 6,
     `Inhabit gameplay pass did not carry enough objective beats through watch mode: ${watchedAutoContinueCount}.`,
+  );
+  const completionDwell = clickLog.find(
+    (entry) =>
+      entry.kind === "watched-auto-continue" &&
+      entry.milestone === "post-first-afternoon-handoff" &&
+      entry.completionAutoContinue,
+  );
+  assert.ok(
+    completionDwell,
+    "Observe/autoplay did not auto-acknowledge the first-afternoon completion field note as a watched beat.",
+  );
+  assert.ok(
+    (completionDwell.durationMs ?? 0) >= 3000,
+    `First-afternoon completion auto-acknowledgement was too fast to read: ${completionDwell.durationMs ?? 0}ms.`,
   );
   assert.ok(
     clickLog.length >= 10,
@@ -5166,8 +5208,37 @@ async function runInhabitGameplayPass(session) {
   );
   assert.equal(
     milestonesReached.at(-1),
-    "first-afternoon-complete",
-    "Inhabit gameplay pass did not end at first-afternoon completion.",
+    "post-first-afternoon-handoff",
+    "Inhabit gameplay pass did not prove the post-first-afternoon handoff.",
+  );
+  const handoffMoment = moments.find(
+    (moment) => moment.label === "post-first-afternoon-handoff",
+  );
+  assert.ok(
+    handoffMoment,
+    "Inhabit gameplay pass did not capture browser evidence for the post-first-afternoon handoff.",
+  );
+  assert.ok(
+    handoffMoment.firstAfternoon?.completionAcknowledgedAt,
+    "Post-first-afternoon handoff did not acknowledge the completed field-note beat.",
+  );
+  assert.notEqual(
+    handoffMoment.objective?.routeKey,
+    "first-afternoon",
+    "Post-first-afternoon handoff stayed pinned to the completed first-afternoon objective.",
+  );
+  assert.match(
+    [
+      handoffMoment.objective?.text,
+      handoffMoment.autonomy?.label,
+      handoffMoment.autonomy?.detail,
+      handoffMoment.autonomy?.planningTrace?.selectedPressureKind,
+      handoffMoment.autonomy?.planningTrace?.selectedMatchedOutcomeId,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    /rest|yard|work|pump|tool|wrench|energy|predicate|commitment/i,
+    "Post-first-afternoon handoff did not expose a state-derived next objective or pressure.",
   );
   assert.ok(
     moments.every((moment) => moment.screenshot),
@@ -5389,53 +5460,16 @@ function buildRegressionSteps(gameRef) {
       mutate: async () => advanceObjective(gameRef.current.id, false),
     },
     {
-      label: "home-reset",
+      label: "post-first-afternoon-handoff",
       mutate: async () => advanceObjective(gameRef.current.id, true),
     },
     {
-      label: "first-afternoon-complete",
+      label: "post-first-afternoon-rest",
       mutate: async () => advanceObjective(gameRef.current.id, true),
     },
     {
-      label: "exit-morrow-for-repair",
-      mutate: async () =>
-        runGameCommand(gameRef.current.id, {
-          type: "act",
-          actionId: "exit:boarding-house",
-        }),
-    },
-    {
-      label: "stage-repair-move",
-      mutate: async () =>
-        runGameCommand(gameRef.current.id, {
-          type: "move_to",
-          x: 16,
-          y: 9,
-        }),
-    },
-    {
-      label: "enter-repair-interior",
-      mutate: async () =>
-        runGameCommand(gameRef.current.id, {
-          type: "act",
-          actionId: "enter:repair-stall",
-        }),
-    },
-    {
-      label: "repair-jo-live-thread",
-      mutate: async () =>
-        runGameCommand(gameRef.current.id, {
-          type: "act",
-          actionId: "talk:npc-jo",
-        }),
-    },
-    {
-      label: "buy-wrench-interior",
-      mutate: async () =>
-        runGameCommand(gameRef.current.id, {
-          type: "act",
-          actionId: "buy:item-wrench",
-        }),
+      label: "post-first-afternoon-live-route",
+      mutate: async () => advanceObjective(gameRef.current.id, true),
     },
   ];
 }
@@ -5621,11 +5655,6 @@ async function main() {
   );
   assertTimelineRoute(
     byLabel,
-    "stage-repair-move-route-start",
-    "Morrow House to Mercer Repairs",
-  );
-  assertTimelineRoute(
-    byLabel,
     "mara-live-thread-route-start",
     "Morrow House entry to Mara",
     { spaceId: "interior:boarding-house" },
@@ -5653,30 +5682,18 @@ async function main() {
     { spaceId: "interior:boarding-house" },
   );
   assert.ok(
-    byLabel["first-afternoon-complete"],
+    byLabel["enter-morrow-return"],
     "Expected browser evidence for first-afternoon completion after the room route.",
   );
   assert.equal(
-    byLabel["first-afternoon-complete"]?.autonomy?.label,
+    byLabel["enter-morrow-return"]?.autonomy?.label,
     "First afternoon complete",
     "Expected first-afternoon completion to resolve after Rowan reaches the room/take-stock anchor.",
   );
   assert.equal(
-    byLabel["first-afternoon-complete"]?.autonomy?.mode,
+    byLabel["enter-morrow-return"]?.autonomy?.mode,
     "idle",
     "Expected first-afternoon completion to be a settled in-place completion, not another movement route.",
-  );
-  assertTimelineRoute(
-    byLabel,
-    "repair-jo-live-thread-route-start",
-    "Mercer Repairs entry to Jo",
-    { spaceId: "interior:repair-stall" },
-  );
-  assertTimelineRoute(
-    byLabel,
-    "buy-wrench-interior-route-start",
-    "Jo to Mercer Repairs wrench anchor",
-    { minPathPoints: 2, spaceId: "interior:repair-stall" },
   );
 
   assertCleanSettledInteriorFrame(
@@ -5708,31 +5725,6 @@ async function main() {
     byLabel,
     "enter-morrow-return",
     "interior:boarding-house",
-  );
-  assertCleanSettledInteriorFrame(
-    byLabel,
-    "home-reset",
-    "interior:boarding-house",
-  );
-  assertCleanSettledInteriorFrame(
-    byLabel,
-    "first-afternoon-complete",
-    "interior:boarding-house",
-  );
-  assertCleanSettledInteriorFrame(
-    byLabel,
-    "enter-repair-interior",
-    "interior:repair-stall",
-  );
-  assertCleanSettledInteriorFrame(
-    byLabel,
-    "repair-jo-live-thread",
-    "interior:repair-stall",
-  );
-  assertCleanSettledInteriorFrame(
-    byLabel,
-    "buy-wrench-interior",
-    "interior:repair-stall",
   );
 
   assert.equal(
@@ -5874,26 +5866,16 @@ async function main() {
     "Expected Rowan to switch back into the Morrow House interior after arriving home.",
   );
   assert.equal(
-    byLabel["home-reset"]?.location?.id,
-    "boarding-house",
-    "Expected Rowan to stay at Morrow House after routing to the room/take-stock anchor.",
-  );
-  assert.match(
-    byLabel["home-reset"]?.autonomy?.label ?? "",
-    /take stock|first afternoon complete/i,
-    "Expected Rowan to take stock or finish the first-afternoon outcome at Morrow House.",
-  );
-  assert.equal(
-    byLabel["first-afternoon-complete"]?.location?.id,
+    byLabel["enter-morrow-return"]?.location?.id,
     "boarding-house",
     "Expected Rowan to end the first-afternoon loop at Morrow House.",
   );
   assert.match(
-    byLabel["first-afternoon-complete"]?.autonomy?.label ?? "",
+    byLabel["enter-morrow-return"]?.autonomy?.label ?? "",
     /first afternoon complete/i,
     "Expected the browser run to land the complete first-afternoon state.",
   );
-  const finalFieldNote = byLabel["first-afternoon-complete"]?.sim?.fieldNote;
+  const finalFieldNote = byLabel["enter-morrow-return"]?.sim?.fieldNote;
   assert.ok(
     finalFieldNote,
     "Expected the sim to persist the first-afternoon field note.",
@@ -5908,37 +5890,58 @@ async function main() {
     /Ada|Kettle & Lamp|rush/i,
     "Expected the persisted field note to describe the resolved cafe thread.",
   );
-  assert.equal(
-    byLabel["exit-morrow-for-repair"]?.location?.spaceId,
-    "street:south-quay",
-    "Expected Rowan to exit Morrow House before routing to Mercer Repairs.",
-  );
-  assert.equal(
-    byLabel["stage-repair-move"]?.location?.id,
-    "repair-stall",
-    "Expected Rowan to route to Mercer Repairs on the street map.",
-  );
-  assert.equal(
-    byLabel["enter-repair-interior"]?.location?.spaceId,
-    "interior:repair-stall",
-    "Expected the browser run to switch into the Mercer Repairs interior.",
-  );
-  assert.equal(
-    byLabel["repair-jo-live-thread"]?.activeConversation?.npcId,
-    "npc-jo",
-    "Expected Rowan to reach Jo inside Mercer Repairs.",
-  );
-  assert.equal(
-    byLabel["buy-wrench-interior"]?.location?.spaceId,
-    "interior:repair-stall",
-    "Expected Rowan to stay inside Mercer Repairs while buying the wrench.",
-  );
   assert.ok(
-    byLabel["buy-wrench-interior"]?.sim?.inventory?.some(
-      (item) => item.id === "item-wrench",
-    ),
-    "Expected Rowan to buy the wrench at the Mercer Repairs anchor.",
+    byLabel["post-first-afternoon-handoff"]?.firstAfternoon
+      ?.completionAcknowledgedAt,
+    "Expected the browser regression to acknowledge the first-afternoon field-note beat before opening the next objective.",
   );
+  assert.notEqual(
+    byLabel["post-first-afternoon-handoff"]?.objective?.routeKey,
+    "first-afternoon",
+    "Expected the post-first-afternoon handoff to leave the completed first-afternoon route.",
+  );
+  assert.match(
+    [
+      byLabel["post-first-afternoon-handoff"]?.objective?.text,
+      byLabel["post-first-afternoon-handoff"]?.autonomy?.label,
+      byLabel["post-first-afternoon-handoff"]?.autonomy?.detail,
+      byLabel["post-first-afternoon-handoff"]?.autonomy?.planningTrace
+        ?.selectedPressureKind,
+      byLabel["post-first-afternoon-handoff"]?.autonomy?.planningTrace
+        ?.selectedMatchedOutcomeId,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    /rest|yard|work|pump|tool|wrench|energy|predicate|commitment/i,
+    "Expected the post-first-afternoon handoff to expose rest, live work, or pump pressure instead of stale route authority.",
+  );
+  assert.notEqual(
+    byLabel["post-first-afternoon-rest"]?.objective?.routeKey,
+    "first-afternoon",
+    "Expected the first legal post-completion follow-up to stay off the completed first-afternoon route.",
+  );
+  assert.notEqual(
+    byLabel["post-first-afternoon-live-route"]?.objective?.routeKey,
+    "first-afternoon",
+    "Expected the live post-completion sequence to remain state-derived after the first follow-up beat.",
+  );
+  assert.notEqual(
+    byLabel["post-first-afternoon-live-route"]?.autonomy?.actionId,
+    "enter:boarding-house",
+    "Expected the live post-completion route not to backtrack into Morrow House after a dynamic work/tool/help objective opens.",
+  );
+  assert.notEqual(
+    byLabel["post-first-afternoon-live-route"]?.autonomy?.targetLocationId,
+    "boarding-house",
+    "Expected the live post-completion route target to stay aligned with the new state-derived objective, not Morrow House.",
+  );
+  if (byLabel["post-first-afternoon-live-route"]?.objective?.routeKey === "work-yard") {
+    assert.equal(
+      byLabel["post-first-afternoon-live-route"]?.autonomy?.targetLocationId,
+      "freight-yard",
+      "Expected a post-completion work-yard objective to keep freight yard as the selected live-route target.",
+    );
+  }
 
   const screenshotCount = timeline.filter((entry) => entry.screenshot).length;
   const movementAudit = buildMovementAuditSummary(timeline);

@@ -88,7 +88,7 @@ export function buildPlayerObjectiveState(
     previous &&
     explicitText &&
     explicitSource === "conversation" &&
-    shouldKeepFirstAfternoonRoute(previous) &&
+    shouldKeepFirstAfternoonRoute(world, previous) &&
     shouldFirstAfternoonAbsorbConversationRoute(
       explicitFocus ?? classifyObjective(explicitText),
     )
@@ -123,7 +123,7 @@ export function buildPlayerObjectiveState(
 
   if (
     previous &&
-    shouldKeepFirstAfternoonRoute(previous) &&
+    shouldKeepFirstAfternoonRoute(world, previous) &&
     (!conversationRoute ||
       shouldFirstAfternoonAbsorbConversationRoute(
         conversationRoute.route.focus,
@@ -722,9 +722,13 @@ function evaluateObjectiveOutcome(
         evidence: world.player.currentLocationId,
       });
     case "rest-hour":
-      return outcomeEvaluation(hasRecentRest(world), {
-        blockers: ["Rowan has not rested recently."],
-        evidence: world.player.lastRestAt,
+      return outcomeEvaluation(hasRecoveredEnoughToMove(world), {
+        blockers: [
+          hasRecentRest(world)
+            ? "Rowan still does not have enough energy buffer to start the next commitment."
+            : "Rowan has not rested recently.",
+        ],
+        evidence: `${world.player.energy} energy`,
       });
     case "people-talk": {
       const targetNpcId = definition.npcId;
@@ -890,8 +894,14 @@ function objectiveTargetProblem(world: StreetGameState, objectiveText: string) {
   );
 }
 
-function shouldKeepFirstAfternoonRoute(previous: PlayerObjective) {
-  return previous.routeKey === "first-afternoon";
+function shouldKeepFirstAfternoonRoute(
+  world: StreetGameState,
+  previous: PlayerObjective,
+) {
+  return (
+    previous.routeKey === "first-afternoon" &&
+    !world.firstAfternoon?.completionAcknowledgedAt
+  );
 }
 
 function shouldKeepMaraAdaLeadRoute(previous: PlayerObjective) {
@@ -2300,7 +2310,7 @@ function buildRestRoute(
 ): ObjectiveRoute {
   const home = findLocation(world, world.player.homeLocationId);
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
-  const restLanded = hasRecentRest(world);
+  const restLanded = hasRecoveredEnoughToMove(world);
   return {
     key: "rest-home",
     focus: "rest",
@@ -3083,6 +3093,7 @@ function recentConversationTopics(world: StreetGameState) {
 
 function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
   const recentRest = hasRecentRest(world);
+  const needsRecoveryBuffer = !hasRecoveredEnoughToMove(world);
   const topics = recentConversationTopics(world);
   const activeJob = world.jobs.find(
     (job) =>
@@ -3136,8 +3147,8 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
       (activeProblemNeedsTool ? 42 : 0) +
       (topics.has("tool") || topics.has("wrench") ? 10 : 0),
     rest:
-      (!recentRest && world.player.energy < 35 ? 50 : 0) +
-      (!recentRest && world.player.energy < 50 ? 18 : 0) +
+      (needsRecoveryBuffer && world.player.energy < 35 ? 50 : 0) +
+      (needsRecoveryBuffer && world.player.energy < 50 ? 18 : 0) +
       (!recentRest &&
       world.player.currentLocationId !== world.player.homeLocationId &&
       world.player.energy < 45
@@ -3171,6 +3182,10 @@ function hasRecentRest(world: StreetGameState) {
     world.player.lastRestAt,
   );
   return minutesSinceRest !== null && minutesSinceRest < 120;
+}
+
+function hasRecoveredEnoughToMove(world: StreetGameState) {
+  return hasRecentRest(world) && world.player.energy >= 35;
 }
 
 function minutesSinceTimestamp(world: StreetGameState, timestamp?: string) {

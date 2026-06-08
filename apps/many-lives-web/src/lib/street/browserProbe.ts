@@ -334,6 +334,8 @@ export function buildStreetBrowserProbeJson({
     visualEventCues: snapshot.visualEventCues ?? [],
     firstAfternoon: {
       completedAt: game.firstAfternoon?.completedAt ?? null,
+      completionAcknowledgedAt:
+        game.firstAfternoon?.completionAcknowledgedAt ?? null,
       hasFieldNote: Boolean(game.firstAfternoon?.fieldNote),
       hasLeadFieldNote: Boolean(game.firstAfternoon?.leadFieldNote),
       planSettledAt: game.firstAfternoon?.planSettledAt ?? null,

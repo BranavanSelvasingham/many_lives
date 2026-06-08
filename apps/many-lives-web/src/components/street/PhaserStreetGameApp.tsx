@@ -236,6 +236,7 @@ const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
 const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 1800;
 const AUTOPLAY_OPENING_AUTOSTART_DELAY_MS = 1800;
+const FIRST_AFTERNOON_COMPLETION_DWELL_MS = 3600;
 const AUTONOMY_BEAT_DELAY_MS = {
   acting: 1800,
   conversation: 2200,
@@ -254,6 +255,10 @@ const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
 function autoContinueDelayMsForBeat(game: StreetGameState) {
   if (isFirstAfternoonOpening(game)) {
     return AUTOPLAY_OPENING_AUTOSTART_DELAY_MS;
+  }
+
+  if (isFirstAfternoonCompletionAcknowledgementPending(game)) {
+    return FIRST_AFTERNOON_COMPLETION_DWELL_MS;
   }
 
   const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
@@ -291,7 +296,21 @@ function buildWatchModeAdvanceKey(game: StreetGameState | null) {
     return `${game.id}:opening:${game.rowanAutonomy?.key ?? "opening"}`;
   }
 
+  if (isFirstAfternoonCompletionAcknowledgementPending(game)) {
+    return `${game.id}:first-afternoon-complete:${game.firstAfternoon?.completedAt ?? "complete"}`;
+  }
+
   return null;
+}
+
+function isFirstAfternoonCompletionAcknowledgementPending(
+  game: StreetGameState,
+) {
+  return Boolean(
+    game.firstAfternoon?.completedAt &&
+      !game.firstAfternoon?.completionAcknowledgedAt &&
+      /first afternoon complete/i.test(game.rowanAutonomy?.label ?? ""),
+  );
 }
 
 function buildGameSyncKey(game: StreetGameState) {
@@ -1391,6 +1410,9 @@ export function PhaserStreetGameApp() {
 
     const autonomy = game?.rowanAutonomy;
     const openingAutoStart = game ? isFirstAfternoonOpening(game) : false;
+    const completionAutoStart = game
+      ? isFirstAfternoonCompletionAcknowledgementPending(game)
+      : false;
     const autoContinueKey = buildWatchModeAdvanceKey(game);
     if (
       lastObjectiveAutoContinueKeyRef.current &&
@@ -1403,7 +1425,7 @@ export function PhaserStreetGameApp() {
       !game ||
       !rowanAutoplayEnabled ||
       rowanAutoplayFrozen ||
-      (!autonomy?.autoContinue && !openingAutoStart) ||
+      (!autonomy?.autoContinue && !openingAutoStart && !completionAutoStart) ||
       busyLabel ||
       optimisticPlayerPosition ||
       isBlockingRowanPlaybackForGame(rowanPlayback, game)
@@ -1431,9 +1453,14 @@ export function PhaserStreetGameApp() {
       const activeOpeningAutoStart = activeGame
         ? isFirstAfternoonOpening(activeGame)
         : false;
+      const activeCompletionAutoStart = activeGame
+        ? isFirstAfternoonCompletionAcknowledgementPending(activeGame)
+        : false;
       if (
         !activeGame ||
-        (!activeAutonomy?.autoContinue && !activeOpeningAutoStart) ||
+        (!activeAutonomy?.autoContinue &&
+          !activeOpeningAutoStart &&
+          !activeCompletionAutoStart) ||
         busyLabelRef.current ||
         optimisticPlayerRef.current ||
         isBlockingRowanPlaybackForGame(rowanPlaybackRef.current, activeGame)
@@ -5545,6 +5572,11 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   } = getOverlayLayoutMetrics(snapshot.viewport);
   const feedPreview = recentFeed.slice(0, height <= 900 ? 1 : 2);
   const rowanAutonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
+  const firstAfternoonCompletionCanAdvance = Boolean(
+    game.firstAfternoon?.completedAt &&
+      !game.firstAfternoon?.completionAcknowledgedAt &&
+      /first afternoon complete/i.test(rowanAutonomy.label),
+  );
   const railViewport = isPhoneRailViewport(snapshot.viewport)
     ? "phone"
     : isCollapsibleRailViewport(snapshot.viewport)
@@ -5615,10 +5647,10 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const watchModeCarriesObjective =
     snapshot.rowanAutoplayEnabled &&
     !snapshot.rowanAutoplayFrozen &&
-    rowanAutonomy.autoContinue;
+    (rowanAutonomy.autoContinue || firstAfternoonCompletionCanAdvance);
   const showPrimaryContinue =
     canAdvanceObjectiveManually &&
-    rowanAutonomy.autoContinue &&
+    (rowanAutonomy.autoContinue || firstAfternoonCompletionCanAdvance) &&
     !snapshot.busyLabel &&
     !watchModeCarriesObjective;
   const firstAfternoonOpening = isFirstAfternoonOpening(game);
@@ -5634,18 +5666,24 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     ? (game.npcs.find((npc) => npc.id === rowanAutonomy.npcId) ?? null)
     : null;
   const primaryContinueLabel = snapshot.rowanAutoplayEnabled
-    ? firstAfternoonOpening
+    ? firstAfternoonCompletionCanAdvance
+      ? "See what Rowan weighs next"
+      : firstAfternoonOpening
       ? "Watch Rowan begin"
       : "Continue watching"
     : game.activeConversation
       ? activeConversationContinueLabel
-      : rowanAutonomy.label || "Continue";
+      : firstAfternoonCompletionCanAdvance
+        ? "Choose the next live lead"
+        : rowanAutonomy.label || "Continue";
   const primaryContinueCopy = game.activeConversation
     ? buildActiveConversationContinueCopy({
         npc: selectedNpc,
         rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
       })
-    : snapshot.rowanAutoplayEnabled
+    : firstAfternoonCompletionCanAdvance
+      ? "Close the field note, then weigh rest, the yard window, and the Morrow Yard pump."
+      : snapshot.rowanAutoplayEnabled
       ? buildWatchModePrimaryContinueCopy({
           autonomy: rowanAutonomy,
           firstAfternoonOpening,
