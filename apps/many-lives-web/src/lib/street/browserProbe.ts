@@ -18,6 +18,24 @@ export type StreetBrowserMovementDiagnostics = {
     unreachableSegments: number;
     usedVisualHints: boolean;
   }>;
+  scheduledNpcRoutes: Array<{
+    acceptedNoRouteReason: string | null;
+    currentScheduleLocationId: string | null;
+    droppedWaypoints: number;
+    fromLocationId: string;
+    key: string;
+    legal: boolean;
+    nextScheduleLocationId: string | null;
+    npcId: string;
+    pathLength: number;
+    reachesTarget: boolean;
+    routeKind: "current-schedule-stop" | "next-scheduled-stop";
+    routed: boolean;
+    sampledPointsLegal: boolean;
+    toLocationId: string;
+    unreachableSegments: number;
+    visualObstaclesClear: boolean;
+  }>;
   playerRoute: {
     active: boolean;
     diagnostics: {

@@ -3619,6 +3619,68 @@ function buildMovementAuditSummary(timeline) {
       };
     });
 
+  const scheduledNpcRouteSamples = [];
+  const scheduledNpcRoutesByKey = new Map();
+  for (const entry of timeline) {
+    for (const route of entry.movement?.scheduledNpcRoutes ?? []) {
+      const sample = {
+        acceptedNoRouteReason: route.acceptedNoRouteReason ?? null,
+        currentScheduleLocationId: route.currentScheduleLocationId ?? null,
+        fromLocationId: route.fromLocationId,
+        key: route.key,
+        label: entry.label,
+        legal: Boolean(route.legal),
+        nextScheduleLocationId: route.nextScheduleLocationId ?? null,
+        npcId: route.npcId,
+        pathLength: route.pathLength ?? 0,
+        reachesTarget: Boolean(route.reachesTarget),
+        routeKind: route.routeKind,
+        routed: Boolean(route.routed),
+        sampledPointsLegal: Boolean(route.sampledPointsLegal),
+        toLocationId: route.toLocationId,
+        unreachableSegments: route.unreachableSegments ?? 0,
+        visualObstaclesClear: Boolean(route.visualObstaclesClear),
+      };
+      scheduledNpcRouteSamples.push(sample);
+
+      const aggregate = scheduledNpcRoutesByKey.get(route.key) ?? {
+        acceptedNoRouteReason: route.acceptedNoRouteReason ?? null,
+        allLegal: true,
+        allRoutedOrAccepted: true,
+        fromLocationId: route.fromLocationId,
+        labels: [],
+        maxUnreachableSegments: 0,
+        minPathLength: Number.POSITIVE_INFINITY,
+        npcId: route.npcId,
+        routeKind: route.routeKind,
+        sampleCount: 0,
+        toLocationId: route.toLocationId,
+      };
+      aggregate.allLegal =
+        aggregate.allLegal &&
+        (Boolean(route.acceptedNoRouteReason) || Boolean(route.legal));
+      aggregate.allRoutedOrAccepted =
+        aggregate.allRoutedOrAccepted &&
+        (Boolean(route.acceptedNoRouteReason) || Boolean(route.routed));
+      aggregate.labels.push(entry.label);
+      aggregate.maxUnreachableSegments = Math.max(
+        aggregate.maxUnreachableSegments,
+        route.unreachableSegments ?? 0,
+      );
+      aggregate.minPathLength = Math.min(
+        aggregate.minPathLength,
+        route.pathLength ?? 0,
+      );
+      aggregate.sampleCount += 1;
+      scheduledNpcRoutesByKey.set(route.key, aggregate);
+    }
+  }
+
+  const scheduledNpcLocationChanges = buildScheduledNpcLocationChangeAudit({
+    routeSamples: scheduledNpcRouteSamples,
+    timeline,
+  });
+
   const patrolsByLocation = new Map();
   for (const entry of timeline) {
     if (entry.movement?.activeSpaceId !== "street:south-quay") {
@@ -3666,7 +3728,97 @@ function buildMovementAuditSummary(timeline) {
   return {
     npcPatrols,
     playerRoutes,
+    scheduledNpcLocationChanges,
+    scheduledNpcRoutes: [...scheduledNpcRoutesByKey.values()]
+      .map((route) => ({
+        ...route,
+        minPathLength: Number.isFinite(route.minPathLength)
+          ? route.minPathLength
+          : 0,
+      }))
+      .sort((left, right) => left.npcId.localeCompare(right.npcId)),
   };
+}
+
+function buildScheduledNpcLocationChangeAudit({ routeSamples, timeline }) {
+  const routeSampleMatches = ({ fromLocationId, npcId, toLocationId }) =>
+    routeSamples.filter(
+      (route) =>
+        route.npcId === npcId &&
+        route.fromLocationId === fromLocationId &&
+        route.toLocationId === toLocationId,
+    );
+  const changes = [];
+
+  for (let index = 1; index < timeline.length; index += 1) {
+    const previous = timeline[index - 1];
+    const next = timeline[index];
+    const previousSchedules = new Map(
+      (previous.worldPressure?.npcSchedules ?? []).map((npc) => [npc.id, npc]),
+    );
+    const nextSchedules = new Map(
+      (next.worldPressure?.npcSchedules ?? []).map((npc) => [npc.id, npc]),
+    );
+    const npcIds = new Set([...previousSchedules.keys(), ...nextSchedules.keys()]);
+
+    for (const npcId of npcIds) {
+      const previousNpc = previousSchedules.get(npcId);
+      const nextNpc = nextSchedules.get(npcId);
+      if (!previousNpc || !nextNpc) {
+        continue;
+      }
+
+      const fromLocationId = previousNpc.currentLocationId ?? null;
+      const toLocationId = nextNpc.currentLocationId ?? null;
+      const currentStopChanged =
+        fromLocationId && toLocationId && fromLocationId !== toLocationId;
+      const currentScheduleChanged =
+        (previousNpc.currentScheduleLocationId ?? null) !==
+        (nextNpc.currentScheduleLocationId ?? null);
+
+      if (!currentStopChanged && !currentScheduleChanged) {
+        continue;
+      }
+
+      const matchingRoutes = currentStopChanged
+        ? routeSampleMatches({
+            fromLocationId,
+            npcId,
+            toLocationId,
+          })
+        : [];
+      const legalRouteEvidence = matchingRoutes.find(
+        (route) =>
+          route.legal &&
+          route.reachesTarget &&
+          route.sampledPointsLegal &&
+          route.visualObstaclesClear &&
+          route.unreachableSegments === 0,
+      );
+      const acceptedNoRouteReason =
+        !currentStopChanged && fromLocationId === toLocationId
+          ? "same-current-stop/no-route-needed"
+          : null;
+
+      changes.push({
+        acceptedNoRouteReason,
+        currentScheduleChanged,
+        currentStopChanged,
+        fromLabel: previous.label,
+        fromLocationId,
+        matchingRouteKeys: matchingRoutes.map((route) => route.key),
+        npcId,
+        routeEvidenceLabel: legalRouteEvidence?.label ?? null,
+        routeEvidenceKey: legalRouteEvidence?.key ?? null,
+        toLabel: next.label,
+        toLocationId,
+        valid:
+          Boolean(legalRouteEvidence) || Boolean(acceptedNoRouteReason),
+      });
+    }
+  }
+
+  return changes;
 }
 
 function assertMovementAuditSummary(movementAudit) {
@@ -3711,6 +3863,44 @@ function assertMovementAuditSummary(movementAudit) {
       `Expected summary NPC diagnostics for ${locationId} to have a non-empty route.`,
     );
   }
+
+  const actionableScheduledRoutes = movementAudit.scheduledNpcRoutes.filter(
+    (route) => !route.acceptedNoRouteReason,
+  );
+  assert.ok(
+    actionableScheduledRoutes.length >= 2,
+    `Expected at least two named scheduled NPC route samples, got ${actionableScheduledRoutes.length}.`,
+  );
+  assert.ok(
+    actionableScheduledRoutes.every(
+      (route) =>
+        route.allLegal &&
+        route.allRoutedOrAccepted &&
+        route.maxUnreachableSegments === 0 &&
+        route.minPathLength > 1,
+    ),
+    `Expected named scheduled NPC route samples to be legal, routed, and obstacle-clear: ${JSON.stringify(
+      actionableScheduledRoutes,
+      null,
+      2,
+    )}`,
+  );
+
+  const stopChanges = movementAudit.scheduledNpcLocationChanges.filter(
+    (change) => change.currentStopChanged,
+  );
+  assert.ok(
+    stopChanges.length >= 1,
+    "Expected browser evidence for at least one named NPC current-stop change during the run.",
+  );
+  assert.ok(
+    movementAudit.scheduledNpcLocationChanges.every((change) => change.valid),
+    `A scheduled NPC current-stop/schedule change lacked route evidence or an accepted no-route explanation: ${JSON.stringify(
+      movementAudit.scheduledNpcLocationChanges.filter((change) => !change.valid),
+      null,
+      2,
+    )}`,
+  );
 }
 
 function assertCityEventState(label, game) {
@@ -6271,6 +6461,8 @@ async function main() {
     outputDir: OUTPUT_DIR,
     overlayChecks,
     routeDiagnostics: movementAudit.playerRoutes,
+    scheduledNpcDiagnostics: movementAudit.scheduledNpcRoutes,
+    scheduledNpcLocationChanges: movementAudit.scheduledNpcLocationChanges,
     screenshotCount,
     steps: timeline.map((entry) => ({
       activeConversation: entry.activeConversation?.npcId ?? null,
