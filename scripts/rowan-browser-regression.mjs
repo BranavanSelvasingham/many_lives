@@ -1479,7 +1479,9 @@ function buildProbeFromGame(game) {
       : null,
     aiRuntime: aiRuntimeProbeFromGame(game),
     autonomy: {
+      actionId: game.rowanAutonomy.actionId ?? null,
       autoContinue: game.rowanAutonomy.autoContinue,
+      effects: game.rowanAutonomy.effects ?? [],
       intent: game.rowanAutonomy.intent
         ? {
             reason: game.rowanAutonomy.intent.reason,
@@ -1488,7 +1490,9 @@ function buildProbeFromGame(game) {
         : null,
       key: game.rowanAutonomy.key,
       label: game.rowanAutonomy.label,
+      layer: game.rowanAutonomy.layer ?? null,
       mode: game.rowanAutonomy.mode,
+      npcId: game.rowanAutonomy.npcId ?? null,
       planningTrace: planningTraceProbeFromGame(game),
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
@@ -2242,6 +2246,172 @@ function classifyObjectiveSequenceRouteRole({
   return "objective-action";
 }
 
+function compactPlanningTraceOption(option) {
+  if (!option) {
+    return null;
+  }
+
+  return {
+    actionId: option.actionId ?? null,
+    label: compactObjectiveSequenceText(option.label ?? "", 120),
+    matchedOutcomeId: option.matchedOutcomeId ?? null,
+    planKey: option.planKey ?? null,
+    pressureId: option.pressureId ?? null,
+    pressureKind: option.pressureKind ?? null,
+    pressureLabel: compactObjectiveSequenceText(option.pressureLabel ?? "", 120),
+    reason: option.reason ?? null,
+    status: option.status ?? null,
+    targetLocationId: option.targetLocationId ?? null,
+  };
+}
+
+function buildObjectiveSequenceAuthorityEvidence({
+  autonomy,
+  planningTrace,
+  routeRole,
+  selectedActionId,
+}) {
+  if (!planningTrace) {
+    const nonActionResolution = routeRole === "conversation-resolution";
+    const commitmentAction =
+      routeRole === "work" &&
+      Boolean(selectedActionId) &&
+      autonomy?.layer === "commitment";
+    return {
+      authorityKinds: [
+        ...(nonActionResolution ? ["conversation-resolution"] : []),
+        ...(commitmentAction
+          ? ["live-pressure:commitment", "autonomy-action"]
+          : []),
+      ],
+      hasAutonomyAction: commitmentAction,
+      hasLegalSelectedStep: false,
+      hasPlannerTrace: false,
+      nonActionResolution,
+      rejectedStaleOptionCount: 0,
+      rejectedStaleOptions: [],
+      selectedConsideredOption: null,
+      selectedMatchedOutcomeId: null,
+      selectedPressureId: commitmentAction
+        ? `commitment:${selectedActionId}`
+        : null,
+      selectedPressureKind: commitmentAction ? "commitment" : null,
+      selectedPressureLabel: null,
+      selectedStep: commitmentAction
+        ? {
+            actionId: selectedActionId,
+            kind: autonomy?.stepKind ?? null,
+            label: compactObjectiveSequenceText(autonomy?.label ?? "", 120),
+            legal: null,
+            targetLocationId: autonomy?.targetLocationId ?? null,
+            validation:
+              "Commitment loop action; simulator validates execution when the command is applied.",
+          }
+        : null,
+    };
+  }
+
+  const selectedConsideredOption =
+    planningTrace.considered?.find(
+      (option) =>
+        option.status === "selected" &&
+        (!planningTrace.selectedPlanKey ||
+          option.planKey === planningTrace.selectedPlanKey),
+    ) ??
+    planningTrace.considered?.find((option) => option.status === "selected") ??
+    null;
+  const selectedStep =
+    planningTrace.nextSteps?.find(
+      (step) => selectedActionId && step.actionId === selectedActionId,
+    ) ??
+    planningTrace.nextSteps?.[0] ??
+    null;
+  const selectedPressureKind =
+    planningTrace.selectedPressureKind ??
+    selectedConsideredOption?.pressureKind ??
+    null;
+  const selectedMatchedOutcomeId =
+    planningTrace.selectedMatchedOutcomeId ??
+    selectedConsideredOption?.matchedOutcomeId ??
+    null;
+  const selectedPressureId =
+    planningTrace.selectedPressureId ??
+    selectedConsideredOption?.pressureId ??
+    null;
+  const selectedPressureLabel =
+    planningTrace.selectedPressureLabel ??
+    selectedConsideredOption?.pressureLabel ??
+    null;
+  const authorityKinds = [];
+
+  if (selectedMatchedOutcomeId || selectedPressureKind === "predicate") {
+    authorityKinds.push("objective-predicate");
+  }
+  if (
+    selectedPressureKind &&
+    selectedPressureKind !== "predicate"
+  ) {
+    authorityKinds.push(`live-pressure:${selectedPressureKind}`);
+  }
+  if (selectedStep?.legal) {
+    authorityKinds.push("legal-action");
+  }
+  if (routeRole === "conversation-resolution" && !selectedActionId) {
+    authorityKinds.push("conversation-resolution");
+  }
+
+  const stalePattern = /\b(?:stale|poison|route hint|trail|route-key|route key)\b/i;
+  const rejectedStaleOptions = (planningTrace.rejected ?? [])
+    .filter((option) =>
+      stalePattern.test(
+        [
+          option.label,
+          option.reason,
+          option.rationale,
+          option.planKey,
+          option.pressureLabel,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ),
+    )
+    .slice(0, 4)
+    .map(compactPlanningTraceOption);
+
+  return {
+    authorityKinds: [...new Set(authorityKinds)],
+    hasAutonomyAction: false,
+    hasLegalSelectedStep: Boolean(selectedStep?.legal),
+    hasPlannerTrace: true,
+    nonActionResolution: routeRole === "conversation-resolution" && !selectedActionId,
+    rejectedStaleOptionCount: rejectedStaleOptions.length,
+    rejectedStaleOptions,
+    selectedConsideredOption: compactPlanningTraceOption(selectedConsideredOption),
+    selectedMatchedOutcomeId,
+    selectedPressureId,
+    selectedPressureKind,
+    selectedPressureLabel: compactObjectiveSequenceText(selectedPressureLabel ?? "", 120),
+    selectedStep: selectedStep
+      ? {
+          actionId: selectedStep.actionId ?? null,
+          kind: selectedStep.kind ?? null,
+          label: compactObjectiveSequenceText(selectedStep.label ?? "", 120),
+          legal: Boolean(selectedStep.legal),
+          targetLocationId: selectedStep.targetLocationId ?? null,
+          validation: compactObjectiveSequenceText(selectedStep.validation ?? "", 180),
+        }
+      : null,
+  };
+}
+
+function objectiveSequenceEntryNeedsPlannerAuthority(entry) {
+  if (entry.routeRole === "conversation-resolution") {
+    return false;
+  }
+
+  return Boolean(entry.selectedActionId);
+}
+
 function buildObjectiveSequenceAuditEntry({
   control,
   dom,
@@ -2251,7 +2421,10 @@ function buildObjectiveSequenceAuditEntry({
 }) {
   const planningTrace = probe.autonomy?.planningTrace ?? null;
   const selectedActionId =
-    planningTrace?.selectedActionId ?? control?.actionId ?? null;
+    planningTrace?.selectedActionId ??
+    probe.autonomy?.actionId ??
+    control?.actionId ??
+    null;
   const selectedTargetLocationId =
     planningTrace?.selectedTargetLocationId ??
     probe.autonomy?.targetLocationId ??
@@ -2324,8 +2497,14 @@ function buildObjectiveSequenceAuditEntry({
           ? "boarding-house"
           : intentFamilies.includes("ada_kettle_lead") ||
               intentFamilies.includes("cafe_shift")
-            ? "tea-house"
-            : null;
+      ? "tea-house"
+      : null;
+  const authorityEvidence = buildObjectiveSequenceAuthorityEvidence({
+    autonomy: probe.autonomy ?? null,
+    planningTrace,
+    routeRole,
+    selectedActionId,
+  });
   const atExpectedLocation =
     expectedTargetLocationId && currentLocationId === expectedTargetLocationId;
   if (
@@ -2373,8 +2552,54 @@ function buildObjectiveSequenceAuditEntry({
     failureReasons.push("unframed-work-action");
   }
 
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
+    !authorityEvidence.hasPlannerTrace &&
+    !authorityEvidence.hasAutonomyAction
+  ) {
+    failureReasons.push("missing-planner-authority-trace");
+  }
+
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
+    !authorityEvidence.hasLegalSelectedStep &&
+    !authorityEvidence.hasAutonomyAction
+  ) {
+    failureReasons.push("missing-legal-selected-step");
+  }
+
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
+    routeRole === "work" &&
+    !authorityEvidence.hasLegalSelectedStep &&
+    !authorityEvidence.hasAutonomyAction
+  ) {
+    failureReasons.push("missing-work-commitment-authority");
+  }
+
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
+    !authorityEvidence.selectedMatchedOutcomeId &&
+    !authorityEvidence.selectedPressureKind
+  ) {
+    failureReasons.push("missing-outcome-or-live-pressure-authority");
+  }
+
   return {
     activeConversationNpcId: probe.activeConversation?.npcId ?? null,
+    authorityEvidence,
     autonomyLabel: probe.autonomy?.label ?? null,
     clock: probe.clock,
     controlText: compactObjectiveSequenceText(control?.text ?? kind),
@@ -2452,6 +2677,64 @@ function assertObjectiveSequenceAudit(objectiveSequenceAudit) {
       `Objective sequence audit did not observe a ${requiredRole} beat.`,
     );
   }
+
+  const entriesNeedingAuthority = objectiveSequenceAudit.filter(
+    objectiveSequenceEntryNeedsPlannerAuthority,
+  );
+  assert.ok(
+    entriesNeedingAuthority.length >= 8,
+    `Objective sequence audit did not record enough planner-backed action beats: ${entriesNeedingAuthority.length}.`,
+  );
+  const missingAuthority = entriesNeedingAuthority.filter((entry) => {
+    const evidence = entry.authorityEvidence ?? {};
+    return (
+      (!evidence.hasPlannerTrace && !evidence.hasAutonomyAction) ||
+      (!evidence.hasLegalSelectedStep && !evidence.hasAutonomyAction) ||
+      (!evidence.selectedMatchedOutcomeId && !evidence.selectedPressureKind)
+    );
+  });
+  assert.equal(
+    missingAuthority.length,
+    0,
+    `Objective sequence audit found action beats without predicate/live-pressure/legal-action authority: ${JSON.stringify(
+      missingAuthority,
+      null,
+      2,
+    )}`,
+  );
+  const conversationResolutions = objectiveSequenceAudit.filter(
+    (entry) => entry.routeRole === "conversation-resolution",
+  );
+  assert.ok(
+    conversationResolutions.every(
+      (entry) =>
+        (entry.authorityEvidence?.nonActionResolution &&
+          entry.authorityEvidence?.authorityKinds?.includes(
+            "conversation-resolution",
+          )) ||
+        (entry.authorityEvidence?.hasLegalSelectedStep &&
+          Boolean(
+            entry.authorityEvidence?.selectedMatchedOutcomeId ||
+              entry.authorityEvidence?.selectedPressureKind,
+          )),
+    ),
+    "Objective sequence audit must classify conversation-resolution beats as non-action authority or planner-backed follow-through.",
+  );
+  const authorityKinds = new Set(
+    objectiveSequenceAudit.flatMap(
+      (entry) => entry.authorityEvidence?.authorityKinds ?? [],
+    ),
+  );
+  for (const requiredAuthorityKind of [
+    "objective-predicate",
+    "legal-action",
+    "conversation-resolution",
+  ]) {
+    assert.ok(
+      authorityKinds.has(requiredAuthorityKind),
+      `Objective sequence audit did not expose ${requiredAuthorityKind} authority.`,
+    );
+  }
 }
 
 function objectiveSequenceGroupIdForEntry(entry) {
@@ -2521,7 +2804,11 @@ function buildObjectiveSequenceRuns(objectiveSequenceAudit) {
             auditIndexes: [],
             entries: 0,
             failureReasons: [],
+            authorityKinds: [],
             intentFamilies: [],
+            matchedOutcomeIds: [],
+            pressureIds: [],
+            pressureKinds: [],
             routeRoles: [],
             selectedActions: [],
             selectedTargets: [],
@@ -2538,6 +2825,36 @@ function buildObjectiveSequenceRuns(objectiveSequenceAudit) {
     run.auditIndexes.push(auditIndex);
     run.entries += 1;
     run.failureReasons.push(...(entry.failureReasons ?? []));
+    run.authorityKinds = [
+      ...new Set([
+        ...run.authorityKinds,
+        ...(entry.authorityEvidence?.authorityKinds ?? []),
+      ]),
+    ];
+    if (entry.authorityEvidence?.selectedMatchedOutcomeId) {
+      run.matchedOutcomeIds = [
+        ...new Set([
+          ...run.matchedOutcomeIds,
+          entry.authorityEvidence.selectedMatchedOutcomeId,
+        ]),
+      ];
+    }
+    if (entry.authorityEvidence?.selectedPressureId) {
+      run.pressureIds = [
+        ...new Set([
+          ...run.pressureIds,
+          entry.authorityEvidence.selectedPressureId,
+        ]),
+      ];
+    }
+    if (entry.authorityEvidence?.selectedPressureKind) {
+      run.pressureKinds = [
+        ...new Set([
+          ...run.pressureKinds,
+          entry.authorityEvidence.selectedPressureKind,
+        ]),
+      ];
+    }
     run.intentFamilies = [
       ...new Set([...run.intentFamilies, ...(entry.intentFamilies ?? [])]),
     ];
@@ -2604,6 +2921,11 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
     kettleRun?.selectedTargets.includes("tea-house"),
     "Kettle sequence must target Kettle & Lamp.",
   );
+  assert.ok(
+    kettleRun?.authorityKinds.includes("objective-predicate") &&
+      kettleRun?.authorityKinds.includes("legal-action"),
+    "Kettle sequence must expose objective-predicate and legal-action authority.",
+  );
   for (const expectedRole of ["portal-exit", "route-move", "portal-enter", "conversation-start"]) {
     assert.ok(
       kettleRun?.routeRoles.includes(expectedRole),
@@ -2611,10 +2933,23 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
     );
   }
 
+  const workRun = runById.get("work-cup-and-counter-shift");
+  assert.ok(
+    workRun?.authorityKinds.includes("live-pressure:commitment") &&
+      workRun?.authorityKinds.includes("autonomy-action"),
+    "Cafe work sequence must expose live commitment and autonomy-action authority.",
+  );
+
   const returnRun = runById.get("return-to-morrow-house-and-take-stock");
   assert.ok(
     returnRun?.selectedTargets.includes("boarding-house"),
     "Return-home sequence must target Morrow House.",
+  );
+  assert.ok(
+    returnRun?.authorityKinds.includes("legal-action") &&
+      (returnRun?.authorityKinds.includes("objective-predicate") ||
+        returnRun?.authorityKinds.some((kind) => kind.startsWith("live-pressure:"))),
+    "Return-home sequence must expose legal-action plus predicate or live-pressure authority.",
   );
   assert.ok(
     returnRun?.routeRoles.includes("framed-reflection"),
