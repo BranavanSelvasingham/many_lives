@@ -5612,10 +5612,15 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       conversationCanAdvanceDuringReplay) &&
     (!conversationReplayActive || conversationCanAdvanceDuringReplay) &&
     !visualMovePending;
+  const watchModeCarriesObjective =
+    snapshot.rowanAutoplayEnabled &&
+    !snapshot.rowanAutoplayFrozen &&
+    rowanAutonomy.autoContinue;
   const showPrimaryContinue =
     canAdvanceObjectiveManually &&
     rowanAutonomy.autoContinue &&
-    !snapshot.busyLabel;
+    !snapshot.busyLabel &&
+    !watchModeCarriesObjective;
   const firstAfternoonOpening = isFirstAfternoonOpening(game);
   const activeConversationContinueLabel = rowanAutonomy.label.startsWith(
     "With ",
