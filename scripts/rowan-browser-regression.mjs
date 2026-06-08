@@ -2454,6 +2454,174 @@ function assertObjectiveSequenceAudit(objectiveSequenceAudit) {
   }
 }
 
+function objectiveSequenceGroupIdForEntry(entry) {
+  const label = entry.autonomyLabel ?? "";
+
+  if (
+    /^(?:Enter Morrow House|Talk to Mara|With Mara)$/i.test(label) &&
+    entry.clock?.totalMinutes < 720
+  ) {
+    return "establish-room-and-mara-lead";
+  }
+
+  if (
+    /^(?:Exit to South Quay|Head to Kettle & Lamp|Enter Kettle & Lamp|Talk to Ada)$/i.test(
+      label,
+    ) &&
+    (entry.selectedTargetLocationId === "tea-house" ||
+      entry.expectedTargetLocationId === "tea-house")
+  ) {
+    return "follow-mara-lead-to-kettle-lamp";
+  }
+
+  if (/^(?:With Ada|Take Cup-and-counter shift)$/i.test(label)) {
+    return "verify-ada-lead-and-accept-shift";
+  }
+
+  if (
+    /\b(?:Cup-and-counter shift|lunch rush|counter)\b/i.test(label) &&
+    entry.routeRole === "work"
+  ) {
+    return "work-cup-and-counter-shift";
+  }
+
+  if (
+    /^(?:Exit to South Quay|Head to Morrow House|Enter Morrow House|Take stock)$/i.test(
+      label,
+    ) &&
+    (entry.selectedTargetLocationId === "boarding-house" ||
+      entry.expectedTargetLocationId === "boarding-house")
+  ) {
+    return "return-to-morrow-house-and-take-stock";
+  }
+
+  return "other-objective-beat";
+}
+
+const OBJECTIVE_SEQUENCE_GROUP_LABELS = {
+  "establish-room-and-mara-lead": "Ask Mara for the room terms and first lead",
+  "follow-mara-lead-to-kettle-lamp": "Follow Mara's lead to Kettle & Lamp",
+  "verify-ada-lead-and-accept-shift": "Verify Ada's lunch-work lead",
+  "work-cup-and-counter-shift": "Work the cup-and-counter shift",
+  "return-to-morrow-house-and-take-stock": "Return to Morrow House and take stock",
+  "other-objective-beat": "Other objective beat",
+};
+
+function buildObjectiveSequenceRuns(objectiveSequenceAudit) {
+  const runs = [];
+  for (const entry of objectiveSequenceAudit) {
+    const groupId = objectiveSequenceGroupIdForEntry(entry);
+    const previousRun = runs.at(-1);
+    const run =
+      previousRun?.id === groupId
+        ? previousRun
+        : {
+            id: groupId,
+            label: OBJECTIVE_SEQUENCE_GROUP_LABELS[groupId] ?? groupId,
+            auditIndexes: [],
+            entries: 0,
+            failureReasons: [],
+            intentFamilies: [],
+            routeRoles: [],
+            selectedActions: [],
+            selectedTargets: [],
+            validationResult: "passed",
+            visibleControlClicks: 0,
+            watchedAutoContinueBeats: 0,
+          };
+
+    if (run !== previousRun) {
+      runs.push(run);
+    }
+
+    const auditIndex = objectiveSequenceAudit.indexOf(entry);
+    run.auditIndexes.push(auditIndex);
+    run.entries += 1;
+    run.failureReasons.push(...(entry.failureReasons ?? []));
+    run.intentFamilies = [
+      ...new Set([...run.intentFamilies, ...(entry.intentFamilies ?? [])]),
+    ];
+    run.routeRoles = [...new Set([...run.routeRoles, entry.routeRole].filter(Boolean))];
+    if (entry.selectedActionId) {
+      run.selectedActions = [
+        ...new Set([...run.selectedActions, entry.selectedActionId]),
+      ];
+    }
+    if (entry.selectedTargetLocationId) {
+      run.selectedTargets = [
+        ...new Set([...run.selectedTargets, entry.selectedTargetLocationId]),
+      ];
+    }
+    if (entry.kind === "visible-control-click") {
+      run.visibleControlClicks += 1;
+    }
+    if (entry.kind === "watched-auto-continue") {
+      run.watchedAutoContinueBeats += 1;
+    }
+    if (run.failureReasons.length > 0) {
+      run.validationResult = "failed";
+    }
+  }
+
+  return runs;
+}
+
+function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
+  assert.ok(
+    Array.isArray(objectiveSequenceRuns),
+    "Objective sequence runs must be recorded as an array.",
+  );
+
+  const runById = new Map(objectiveSequenceRuns.map((run) => [run.id, run]));
+  for (const requiredRunId of [
+    "establish-room-and-mara-lead",
+    "follow-mara-lead-to-kettle-lamp",
+    "verify-ada-lead-and-accept-shift",
+    "work-cup-and-counter-shift",
+    "return-to-morrow-house-and-take-stock",
+  ]) {
+    assert.ok(
+      runById.has(requiredRunId),
+      `Objective sequence runs did not include ${requiredRunId}.`,
+    );
+  }
+
+  const failingRuns = objectiveSequenceRuns.filter(
+    (run) => run.validationResult !== "passed",
+  );
+  assert.equal(
+    failingRuns.length,
+    0,
+    `Objective sequence runs found failed grouped sequences: ${JSON.stringify(
+      failingRuns,
+      null,
+      2,
+    )}`,
+  );
+
+  const kettleRun = runById.get("follow-mara-lead-to-kettle-lamp");
+  assert.ok(
+    kettleRun?.selectedTargets.includes("tea-house"),
+    "Kettle sequence must target Kettle & Lamp.",
+  );
+  for (const expectedRole of ["portal-exit", "route-move", "portal-enter", "conversation-start"]) {
+    assert.ok(
+      kettleRun?.routeRoles.includes(expectedRole),
+      `Kettle sequence did not carry ${expectedRole}.`,
+    );
+  }
+
+  const returnRun = runById.get("return-to-morrow-house-and-take-stock");
+  assert.ok(
+    returnRun?.selectedTargets.includes("boarding-house"),
+    "Return-home sequence must target Morrow House.",
+  );
+  assert.ok(
+    returnRun?.routeRoles.includes("framed-reflection"),
+    "Return-home sequence must end with framed take-stock reflection.",
+  );
+}
+
 function rectIsInside(inner, outer, tolerance = 2) {
   if (!inner || !outer) {
     return true;
@@ -3766,9 +3934,13 @@ function assertInhabitOpeningCtaProgression(moments) {
     "first-actionable-screen: opening CTA evidence must come from the exterior street space.",
   );
 
+  const enteredMorrowHouseWatchText =
+    enteredMorrowHouse?.control?.text ??
+    enteredMorrowHouse?.autonomyLabel ??
+    "";
   assert.ok(
-    enteredMorrowHouse?.control?.text,
-    "entered-morrow-house: expected continued-watch control text.",
+    enteredMorrowHouseWatchText,
+    "entered-morrow-house: expected continued-watch or autonomy text.",
   );
   assert.equal(
     enteredMorrowHouse.location?.spaceId,
@@ -3776,14 +3948,14 @@ function assertInhabitOpeningCtaProgression(moments) {
     "entered-morrow-house: CTA regression evidence must be captured inside Morrow House.",
   );
   assert.doesNotMatch(
-    enteredMorrowHouse.control.text,
+    enteredMorrowHouseWatchText,
     OPENING_CTA_PATTERN,
     "entered-morrow-house: opening CTA text must not persist after Rowan enters Morrow House.",
   );
   assert.match(
-    enteredMorrowHouse.control.text,
-    /Continue watching/i,
-    "entered-morrow-house: expected established continued-watch CTA copy after the opening beat.",
+    enteredMorrowHouseWatchText,
+    /Continue watching|Talk to Mara|Mara/i,
+    "entered-morrow-house: expected established continued-watch or Mara objective copy after the opening beat.",
   );
 }
 
@@ -4211,31 +4383,7 @@ async function clickUntilInhabitMilestone({
     }
 
     const beforeSignature = playerProbeSignature(probe);
-    let control = await session.readPlayerControlCandidate();
-    let openedSupportForControl = false;
-    if (!control) {
-      const supportToggle = await session.readVisibleElementRect(
-        '[data-toggle-support]',
-      );
-      if (supportToggle) {
-        await session.dispatchMouseClick(
-          supportToggle.rect.centerX,
-          supportToggle.rect.centerY,
-        );
-        openedSupportForControl = true;
-      } else {
-        openedSupportForControl = await session.clickSelector(
-          "[data-toggle-support]",
-        );
-      }
-      if (openedSupportForControl) {
-        openedSupportForControl = true;
-        await sleep(250);
-        control = await session.readPlayerControlCandidate();
-      }
-    }
     if (
-      !control &&
       probe.watchMode?.enabled &&
       !probe.watchMode?.frozen &&
       probe.autonomy?.autoContinue
@@ -4265,6 +4413,7 @@ async function clickUntilInhabitMilestone({
         objectiveSequenceAuditIndex: objectiveSequenceAudit.length - 1,
         kind: "watched-auto-continue",
         milestone: milestone.label,
+        sequenceRunId: objectiveSequenceGroupIdForEntry(auditEntry),
         text: "Watched autoplay carry the beat.",
       });
       await waitForInhabitTransition(
@@ -4274,6 +4423,30 @@ async function clickUntilInhabitMilestone({
       );
       await closeInhabitSupportPanel(session);
       continue;
+    }
+
+    let control = await session.readPlayerControlCandidate();
+    let openedSupportForControl = false;
+    if (!control) {
+      const supportToggle = await session.readVisibleElementRect(
+        '[data-toggle-support]',
+      );
+      if (supportToggle) {
+        await session.dispatchMouseClick(
+          supportToggle.rect.centerX,
+          supportToggle.rect.centerY,
+        );
+        openedSupportForControl = true;
+      } else {
+        openedSupportForControl = await session.clickSelector(
+          "[data-toggle-support]",
+        );
+      }
+      if (openedSupportForControl) {
+        openedSupportForControl = true;
+        await sleep(250);
+        control = await session.readPlayerControlCandidate();
+      }
     }
     if (!control) {
       const dom = await session.readDomSnapshot().catch(() => null);
@@ -4324,6 +4497,7 @@ async function clickUntilInhabitMilestone({
       objectiveSequenceAuditIndex: objectiveSequenceAudit.length - 1,
       openedSupportForControl,
       milestone: milestone.label,
+      sequenceRunId: objectiveSequenceGroupIdForEntry(auditEntry),
       text: control.text,
       waitMinutes: control.waitMinutes ?? null,
     });
@@ -4461,8 +4635,12 @@ async function runInhabitGameplayPass(session) {
     (entry) => entry.kind === "watched-auto-continue",
   ).length;
   assert.ok(
-    visibleControlClickCount >= 4,
-    `Inhabit gameplay pass clicked too few visible controls to count as a player-POV run: ${visibleControlClickCount}.`,
+    visibleControlClickCount <= 10,
+    `Inhabit gameplay pass exposed too many low-level visible control clicks: ${visibleControlClickCount}.`,
+  );
+  assert.ok(
+    watchedAutoContinueCount >= 6,
+    `Inhabit gameplay pass did not carry enough objective beats through watch mode: ${watchedAutoContinueCount}.`,
   );
   assert.ok(
     clickLog.length >= 10,
@@ -4480,6 +4658,8 @@ async function runInhabitGameplayPass(session) {
   assertInhabitOpeningCtaProgression(moments);
   assertInhabitSituatedWatchCtaCopy(moments);
   assertObjectiveSequenceAudit(objectiveSequenceAudit);
+  const objectiveSequenceRuns = buildObjectiveSequenceRuns(objectiveSequenceAudit);
+  assertObjectiveSequenceRuns(objectiveSequenceRuns);
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {
@@ -4491,6 +4671,7 @@ async function runInhabitGameplayPass(session) {
     moments,
     milestonesReached,
     objectiveSequenceAudit,
+    objectiveSequenceRuns,
     panelChecks,
     progressionClicks: clickLog,
     reportPath,

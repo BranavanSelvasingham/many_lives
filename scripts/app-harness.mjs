@@ -534,12 +534,33 @@ async function assertRowanBrowserArtifacts(logLine) {
       }.`,
     );
   }
-  if ((inhabit.visibleControlClickCount ?? 0) < 4) {
+  if ((inhabit.visibleControlClickCount ?? 0) > 10) {
     throw new Error(
-      `Inhabit gameplay pass clicked too few visible player controls: ${
+      `Inhabit gameplay pass exposed too many low-level visible player controls: ${
         inhabit.visibleControlClickCount ?? 0
       }.`,
     );
+  }
+  if ((inhabit.watchedAutoContinueCount ?? 0) < 6) {
+    throw new Error(
+      `Inhabit gameplay pass did not carry enough objective beats through watch mode: ${
+        inhabit.watchedAutoContinueCount ?? 0
+      }.`,
+    );
+  }
+  const objectiveSequenceRunIds = new Set(
+    (inhabit.objectiveSequenceRuns ?? []).map((run) => run.id),
+  );
+  for (const runId of [
+    "establish-room-and-mara-lead",
+    "follow-mara-lead-to-kettle-lamp",
+    "verify-ada-lead-and-accept-shift",
+    "work-cup-and-counter-shift",
+    "return-to-morrow-house-and-take-stock",
+  ]) {
+    if (!objectiveSequenceRunIds.has(runId)) {
+      throw new Error(`Inhabit gameplay pass missing objective sequence run: ${runId}.`);
+    }
   }
 
   const inhabitMomentLabels = new Set(
