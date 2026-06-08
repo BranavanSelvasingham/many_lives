@@ -3002,6 +3002,91 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("lets urgent jobs outrank stale explore route scoring", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-urgent-job-over-explore-route-score");
+    const boardingHouse = world.locations.find(
+      (location) => location.id === "boarding-house",
+    );
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+
+    expect(boardingHouse).toBeDefined();
+    expect(yardJob).toBeDefined();
+    if (!boardingHouse || !yardJob) {
+      return;
+    }
+
+    world.player.x = boardingHouse.entryX;
+    world.player.y = boardingHouse.entryY;
+    world.player.currentLocationId = boardingHouse.id;
+    world.player.knownLocationIds = [
+      ...new Set([
+        ...world.player.knownLocationIds,
+        "boarding-house",
+        "tea-house",
+        "freight-yard",
+      ]),
+    ];
+    world.clock.totalMinutes = 16 * 60 + 30;
+    world.clock.hour = 16;
+    world.clock.minute = 30;
+    world.clock.label = "Afternoon";
+    yardJob.discovered = true;
+    world.activeConversation = undefined;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "explore",
+      outcomes: [],
+      progress: {
+        completed: 0,
+        label: "0/0 route hints met",
+        total: 0,
+      },
+      routeKey: "explore-tea-house",
+      source: "manual",
+      text: "Explore Kettle & Lamp later.",
+      trail: [
+        {
+          detail:
+            "This stale explore route should not suppress the live closing yard job.",
+          done: false,
+          id: "stale-explore-route",
+          targetLocationId: "tea-house",
+          title: "Go back to Kettle & Lamp first.",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:freight-yard",
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("tea-house");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          option.pressureId === "job:job-yard-shift" &&
+          option.pressureKind === "job" &&
+          option.targetLocationId === "freight-yard",
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.targetLocationId === "tea-house",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("lets urgent live pressure outrank stale tool route move intent", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-urgent-job-over-tool-move-intent");

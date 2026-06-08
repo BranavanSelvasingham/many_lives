@@ -14,6 +14,7 @@ import {
 } from "./objectiveState.js";
 import {
   objectiveRouteActionRationale,
+  objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
@@ -5548,32 +5549,6 @@ function scoreLiveStatePressureForAction(
     return objectivePressureScore;
   }
 
-  const predicateAuthority = hasOpenObjectivePredicateAuthority(world);
-
-  if (
-    !predicateAuthority &&
-    input.objective.routeKey.startsWith("explore-") &&
-    input.objective.routeKey !== "explore-district"
-  ) {
-    const targetLocationId = input.objective.routeKey.slice("explore-".length);
-    if (
-      world.player.currentLocationId !== targetLocationId &&
-      input.plan.targetLocationId !== targetLocationId
-    ) {
-      return -58;
-    }
-  }
-
-  if (input.objective.focus === "tool") {
-    if (input.action.id === "buy:item-wrench") {
-      return 36;
-    }
-
-    if (input.action.kind === "talk") {
-      return -18;
-    }
-  }
-
   const pressureActionScore = scoreLiveProblemPressureForAction(
     world,
     input.action,
@@ -5590,6 +5565,17 @@ function scoreLiveStatePressureForAction(
   );
   if (jobPressureActionScore !== 0) {
     return jobPressureActionScore;
+  }
+
+  const routeActionScore = objectiveRouteActionPressureScore(input.objective, {
+    actionId: input.action.id,
+    actionKind: input.action.kind,
+    currentLocationId: world.player.currentLocationId,
+    planTargetLocationId: input.plan.targetLocationId,
+    predicateAuthority: hasOpenObjectivePredicateAuthority(world),
+  });
+  if (routeActionScore !== 0) {
+    return routeActionScore;
   }
 
   if (
