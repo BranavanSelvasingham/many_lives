@@ -2957,6 +2957,188 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
   );
 }
 
+function compactWorldPressureSnapshot(worldPressure) {
+  if (!worldPressure) {
+    return null;
+  }
+
+  return {
+    cityEvents: (worldPressure.cityEvents ?? []).map((event) => ({
+      id: event.id,
+      locationId: event.locationId,
+      outcome: event.outcome ?? null,
+      progress: event.progress ?? null,
+      status: event.status,
+      visibleLabel: event.visibleLabel ?? null,
+    })),
+    jobWindows: (worldPressure.jobWindows ?? []).map((job) => ({
+      accepted: Boolean(job.accepted),
+      completed: Boolean(job.completed),
+      discovered: Boolean(job.discovered),
+      id: job.id,
+      inWindow: Boolean(job.inWindow),
+      locationId: job.locationId,
+      missed: Boolean(job.missed),
+      title: job.title,
+    })),
+    npcPressureMoves: (worldPressure.npcSchedules ?? [])
+      .filter(
+        (npc) =>
+          npc.currentScheduleLocationId &&
+          npc.currentLocationId !== npc.currentScheduleLocationId,
+      )
+      .map((npc) => ({
+        currentConcern: compactObjectiveSequenceText(npc.currentConcern ?? "", 120),
+        currentLocationId: npc.currentLocationId,
+        currentScheduleLocationId: npc.currentScheduleLocationId,
+        id: npc.id,
+        mood: npc.mood ?? null,
+      })),
+    problems: (worldPressure.problems ?? []).map((problem) => ({
+      discovered: Boolean(problem.discovered),
+      escalationLevel: problem.escalationLevel ?? 0,
+      id: problem.id,
+      locationId: problem.locationId,
+      status: problem.status,
+      title: problem.title,
+      urgency: problem.urgency,
+    })),
+  };
+}
+
+function collectPressureTransitions(snapshots, collectionName, stateForEntry) {
+  const statesById = new Map();
+
+  for (const snapshot of snapshots) {
+    for (const entry of snapshot?.[collectionName] ?? []) {
+      const states = statesById.get(entry.id) ?? new Set();
+      states.add(stateForEntry(entry));
+      statesById.set(entry.id, states);
+    }
+  }
+
+  return [...statesById.entries()]
+    .map(([id, states]) => ({
+      id,
+      states: [...states].filter(Boolean),
+    }))
+    .filter((entry) => entry.states.length > 1);
+}
+
+function buildWorldPressureAudit({ moments, objectiveSequenceAudit }) {
+  const snapshots = moments
+    .map((moment) => ({
+      clock: moment.clock ?? null,
+      label: moment.label,
+      worldPressure: moment.worldPressure ?? null,
+    }))
+    .filter((snapshot) => snapshot.worldPressure);
+  const pressureSnapshots = snapshots.map((snapshot) => snapshot.worldPressure);
+  const cityEventTransitions = collectPressureTransitions(
+    pressureSnapshots,
+    "cityEvents",
+    (event) =>
+      [event.status, event.progress, event.outcome].filter(Boolean).join(":"),
+  );
+  const jobWindowTransitions = collectPressureTransitions(
+    pressureSnapshots,
+    "jobWindows",
+    (job) =>
+      [
+        job.discovered ? "discovered" : "hidden",
+        job.inWindow ? "in-window" : "outside-window",
+        job.accepted ? "accepted" : "unaccepted",
+        job.completed ? "completed" : "incomplete",
+        job.missed ? "missed" : "available",
+      ].join(":"),
+  );
+  const problemTransitions = collectPressureTransitions(
+    pressureSnapshots,
+    "problems",
+    (problem) =>
+      [
+        problem.status,
+        `level-${problem.escalationLevel ?? 0}`,
+        `urgency-${problem.urgency ?? 0}`,
+        problem.discovered ? "discovered" : "hidden",
+      ].join(":"),
+  );
+  const liveAuthorityKinds = [
+    ...new Set(
+      objectiveSequenceAudit
+        .flatMap((entry) => entry.authorityEvidence?.authorityKinds ?? [])
+        .filter((kind) => /^live-pressure:/.test(kind)),
+    ),
+  ];
+  const selectedPressureKinds = [
+    ...new Set(
+      objectiveSequenceAudit
+        .map((entry) => entry.authorityEvidence?.selectedPressureKind)
+        .filter(Boolean),
+    ),
+  ];
+  const pressureBackedEntries = objectiveSequenceAudit
+    .filter((entry) => entry.authorityEvidence?.selectedPressureKind)
+    .map((entry) => ({
+      authorityKinds: entry.authorityEvidence?.authorityKinds ?? [],
+      clock: entry.clock ?? null,
+      label: entry.autonomyLabel ?? entry.controlText ?? null,
+      pressureId: entry.authorityEvidence?.selectedPressureId ?? null,
+      pressureKind: entry.authorityEvidence?.selectedPressureKind ?? null,
+      selectedActionId: entry.selectedActionId ?? null,
+      targetLocationId: entry.selectedTargetLocationId ?? null,
+    }));
+
+  return {
+    cityEventTransitions,
+    jobWindowTransitions,
+    liveAuthorityKinds,
+    npcPressureMoveCount: pressureSnapshots.reduce(
+      (count, snapshot) => count + (snapshot.npcPressureMoves?.length ?? 0),
+      0,
+    ),
+    pressureBackedEntries,
+    problemTransitions,
+    selectedPressureKinds,
+    snapshotCount: snapshots.length,
+    snapshots,
+  };
+}
+
+function assertWorldPressureAudit(worldPressureAudit) {
+  assert.ok(
+    worldPressureAudit,
+    "World pressure audit must be recorded in the inhabit gameplay report.",
+  );
+  assert.ok(
+    worldPressureAudit.snapshotCount >= 4,
+    `World pressure audit did not capture enough player-POV snapshots: ${worldPressureAudit.snapshotCount}.`,
+  );
+  assert.ok(
+    worldPressureAudit.cityEventTransitions.length > 0 ||
+      worldPressureAudit.jobWindowTransitions.length > 0 ||
+      worldPressureAudit.problemTransitions.length > 0 ||
+      worldPressureAudit.npcPressureMoveCount > 0,
+    `World pressure audit did not observe any pressure mutation across the player-POV run: ${JSON.stringify(
+      worldPressureAudit,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    worldPressureAudit.liveAuthorityKinds.length > 0,
+    "World pressure audit did not observe any live-pressure-backed objective sequence.",
+  );
+  assert.ok(
+    worldPressureAudit.pressureBackedEntries.some(
+      (entry) =>
+        entry.pressureKind &&
+        (entry.selectedActionId || entry.authorityKinds.includes("autonomy-action")),
+    ),
+    "World pressure audit must connect live pressure to a selected action or autonomy action.",
+  );
+}
+
 function rectIsInside(inner, outer, tolerance = 2) {
   if (!inner || !outer) {
     return true;
@@ -4235,6 +4417,7 @@ async function captureInhabitMoment({
     location: probe.location,
     screenshot,
     userQuestion,
+    worldPressure: compactWorldPressureSnapshot(probe.worldPressure),
     camera: camera
       ? {
           scroll: camera.scroll ?? null,
@@ -4995,6 +5178,11 @@ async function runInhabitGameplayPass(session) {
   assertObjectiveSequenceAudit(objectiveSequenceAudit);
   const objectiveSequenceRuns = buildObjectiveSequenceRuns(objectiveSequenceAudit);
   assertObjectiveSequenceRuns(objectiveSequenceRuns);
+  const worldPressureAudit = buildWorldPressureAudit({
+    moments,
+    objectiveSequenceAudit,
+  });
+  assertWorldPressureAudit(worldPressureAudit);
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {
@@ -5016,6 +5204,7 @@ async function runInhabitGameplayPass(session) {
     visibleControlClickCount,
     watchUrl,
     watchedAutoContinueCount,
+    worldPressureAudit,
   };
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
