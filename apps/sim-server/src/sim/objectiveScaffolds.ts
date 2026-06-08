@@ -83,6 +83,14 @@ interface ActionTargetLocationHint {
   routeKeys?: string[];
 }
 
+interface RouteActionPressureInput {
+  actionId: string;
+  actionKind: string;
+  currentLocationId?: string;
+  planTargetLocationId?: string;
+  predicateAuthority: boolean;
+}
+
 interface ObjectiveRouteScaffold {
   actionRationales?: ActionRationaleHint[];
   actionTargetLocations?: ActionTargetLocationHint[];
@@ -573,6 +581,37 @@ export function objectiveRouteSemanticMoveBonus(
     scaffoldScore +
     routeDerivedSemanticMoveBonus(world, objective, locationId, input)
   );
+}
+
+export function objectiveRouteActionPressureScore(
+  objective: ObjectiveScaffoldDirective,
+  input: RouteActionPressureInput,
+) {
+  if (
+    !input.predicateAuthority &&
+    objective.routeKey.startsWith("explore-") &&
+    objective.routeKey !== "explore-district"
+  ) {
+    const targetLocationId = objective.routeKey.slice("explore-".length);
+    if (
+      input.currentLocationId !== targetLocationId &&
+      input.planTargetLocationId !== targetLocationId
+    ) {
+      return -58;
+    }
+  }
+
+  if (objective.focus === "tool") {
+    if (input.actionId === "buy:item-wrench") {
+      return 36;
+    }
+
+    if (input.actionKind === "talk") {
+      return -18;
+    }
+  }
+
+  return 0;
 }
 
 export function objectiveRouteSpeech(
