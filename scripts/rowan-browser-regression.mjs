@@ -2145,6 +2145,315 @@ function assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom) {
   );
 }
 
+function compactObjectiveSequenceText(text, maxLength = 240) {
+  const normalized = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength - 3).trim()}...`;
+}
+
+function classifyObjectiveSequenceIntent(visibleText, probe) {
+  const families = [];
+  const objectiveText = [
+    visibleText,
+    probe.objective?.text,
+    probe.objective?.focus,
+    probe.objective?.progress?.label,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (
+    /\b(?:Ada|Kettle\s*&?\s*Lamp|cafe|lunch work|cup-and-counter)\b/i.test(
+      objectiveText,
+    )
+  ) {
+    families.push("ada_kettle_lead");
+  }
+
+  if (/\b(?:lunch rush|cup-and-counter|shift|counter|paid)\b/i.test(objectiveText)) {
+    families.push("cafe_shift");
+  }
+
+  if (/\b(?:Morrow House|return home|head back|room|take stock)\b/i.test(objectiveText)) {
+    families.push("return_home");
+  }
+
+  if (/\b(?:take stock|field note|settled|first afternoon complete)\b/i.test(objectiveText)) {
+    families.push("take_stock");
+  }
+
+  return [...new Set(families)];
+}
+
+function classifyObjectiveSequenceRouteRole({
+  activeConversationNpcId,
+  label,
+  mode,
+  selectedActionId,
+  visibleText,
+}) {
+  const normalizedLabel = String(label ?? "");
+  const actionId = String(selectedActionId ?? "");
+
+  if (activeConversationNpcId || /^With\s+/i.test(normalizedLabel)) {
+    return "conversation-resolution";
+  }
+
+  if (/^Talk\s+/i.test(normalizedLabel) || /^talk:/i.test(actionId)) {
+    return "conversation-start";
+  }
+
+  if (/^exit:/i.test(actionId) || /\bExit to South Quay\b/i.test(normalizedLabel)) {
+    return "portal-exit";
+  }
+
+  if (/^enter:/i.test(actionId) || /^Enter\s+/i.test(normalizedLabel)) {
+    return "portal-enter";
+  }
+
+  if (/^move:/i.test(actionId) || mode === "moving" || /^Head\s+/i.test(normalizedLabel)) {
+    return "route-move";
+  }
+
+  if (
+    /^work:/i.test(actionId) ||
+    /\b(?:shift|lunch rush|counter)\b/i.test(normalizedLabel)
+  ) {
+    return "work";
+  }
+
+  if (/^reflect:/i.test(actionId)) {
+    return /\b(?:take stock|choose|decide|weigh|record|note|settle)\b/i.test(
+      visibleText,
+    )
+      ? "framed-reflection"
+      : "internal-reflection";
+  }
+
+  if (mode === "waiting") {
+    return "wait";
+  }
+
+  return "objective-action";
+}
+
+function buildObjectiveSequenceAuditEntry({
+  control,
+  dom,
+  kind,
+  milestone,
+  probe,
+}) {
+  const planningTrace = probe.autonomy?.planningTrace ?? null;
+  const selectedActionId =
+    planningTrace?.selectedActionId ?? control?.actionId ?? null;
+  const selectedTargetLocationId =
+    planningTrace?.selectedTargetLocationId ??
+    probe.autonomy?.targetLocationId ??
+    null;
+  const visibleText = [
+    control?.text,
+    probe.rail?.now,
+    probe.rail?.next,
+    probe.rail?.thought,
+    probe.autonomy?.label,
+    probe.autonomy?.intent?.reason,
+    ...(probe.autonomy?.intent?.signals ?? []),
+    dom?.bodyTextSample,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const intentFamilies = classifyObjectiveSequenceIntent(visibleText, probe);
+  const routeRole = classifyObjectiveSequenceRouteRole({
+    activeConversationNpcId: probe.activeConversation?.npcId ?? null,
+    label: probe.autonomy?.label ?? null,
+    mode: probe.autonomy?.mode ?? null,
+    selectedActionId,
+    visibleText,
+  });
+  const currentLocationId = probe.location?.id ?? null;
+  const genericCopy = /\bDo this step\b/i.test(visibleText);
+  const sourceConversation =
+    probe.activeConversation?.npcId === "npc-mara" &&
+    intentFamilies.includes("ada_kettle_lead");
+  const localPrerequisite =
+    /\b(?:before leaving|before Rowan leaves|local prerequisite|commit(?:s|ted)? to leaving|settle(?:s|d)? the plan|weigh(?:s|ed)? the first move)\b/i.test(
+      visibleText,
+    );
+  const failureReasons = [];
+
+  if (genericCopy) {
+    failureReasons.push("generic-primary-copy");
+  }
+
+  if (
+    intentFamilies.includes("ada_kettle_lead") &&
+    selectedActionId === "reflect:first-afternoon-plan" &&
+    selectedTargetLocationId === "boarding-house" &&
+    !sourceConversation &&
+    !localPrerequisite
+  ) {
+    failureReasons.push("kettle-intent-backed-by-morrow-reflection");
+  }
+
+  const activeBeatText = [
+    control?.text,
+    probe.rail?.now,
+    probe.rail?.next,
+    probe.autonomy?.label,
+    probe.autonomy?.intent?.reason,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const expectedTargetLocationId =
+    /\b(?:toward Morrow House|Head to Morrow House|Enter Morrow House|return home|head back|take stock|room)\b/i.test(
+      activeBeatText,
+    )
+      ? "boarding-house"
+      : /\b(?:Ada|Kettle\s*&?\s*Lamp|cafe|lunch work|cup-and-counter|shift|lunch rush|counter)\b/i.test(
+            activeBeatText,
+          )
+        ? "tea-house"
+        : intentFamilies.includes("take_stock") ||
+            intentFamilies.includes("return_home")
+          ? "boarding-house"
+          : intentFamilies.includes("ada_kettle_lead") ||
+              intentFamilies.includes("cafe_shift")
+            ? "tea-house"
+            : null;
+  const atExpectedLocation =
+    expectedTargetLocationId && currentLocationId === expectedTargetLocationId;
+  if (
+    expectedTargetLocationId &&
+    selectedTargetLocationId &&
+    selectedTargetLocationId !== expectedTargetLocationId &&
+    !atExpectedLocation &&
+    !sourceConversation &&
+    !localPrerequisite
+  ) {
+    failureReasons.push(
+      `intent-target-mismatch:${expectedTargetLocationId}:${selectedTargetLocationId}`,
+    );
+  }
+
+  if (routeRole === "internal-reflection") {
+    failureReasons.push("unframed-internal-reflection");
+  }
+
+  if (
+    routeRole === "portal-exit" &&
+    !/\b(?:exit|step into|south quay|toward)\b/i.test(visibleText)
+  ) {
+    failureReasons.push("unframed-exit-prerequisite");
+  }
+
+  if (
+    routeRole === "portal-enter" &&
+    !/\b(?:enter|step into|inside)\b/i.test(visibleText)
+  ) {
+    failureReasons.push("unframed-enter-prerequisite");
+  }
+
+  if (
+    /^Talk\s+/i.test(probe.autonomy?.label ?? "") &&
+    !/\b(?:talk|ask|conversation|in person)\b/i.test(visibleText)
+  ) {
+    failureReasons.push("unframed-conversation-start");
+  }
+
+  if (
+    routeRole === "work" &&
+    !/\b(?:work|shift|lunch rush|counter|paid)\b/i.test(visibleText)
+  ) {
+    failureReasons.push("unframed-work-action");
+  }
+
+  return {
+    activeConversationNpcId: probe.activeConversation?.npcId ?? null,
+    autonomyLabel: probe.autonomy?.label ?? null,
+    clock: probe.clock,
+    controlText: compactObjectiveSequenceText(control?.text ?? kind),
+    currentLocationId,
+    currentSpaceId: probe.location?.spaceId ?? null,
+    expectedTargetLocationId,
+    failureReasons,
+    intentFamilies,
+    kind,
+    milestone,
+    mode: probe.autonomy?.mode ?? null,
+    objectiveText: compactObjectiveSequenceText(probe.objective?.text ?? ""),
+    railNow: compactObjectiveSequenceText(probe.rail?.now ?? ""),
+    railNext: compactObjectiveSequenceText(probe.rail?.next ?? ""),
+    routeRole,
+    selectedActionId,
+    selectedPlanKey: planningTrace?.selectedPlanKey ?? null,
+    selectedTargetLocationId,
+    stepKind: probe.autonomy?.stepKind ?? null,
+    targetLocationId: probe.autonomy?.targetLocationId ?? null,
+    visibleTextSample: compactObjectiveSequenceText(visibleText, 360),
+  };
+}
+
+function assertObjectiveSequenceAudit(objectiveSequenceAudit) {
+  assert.ok(
+    Array.isArray(objectiveSequenceAudit),
+    "Objective sequence audit must be recorded as an array.",
+  );
+  assert.ok(
+    objectiveSequenceAudit.length >= 10,
+    `Objective sequence audit is too short to cover the first-afternoon path: ${objectiveSequenceAudit.length}.`,
+  );
+
+  const failingEntries = objectiveSequenceAudit.filter(
+    (entry) => (entry.failureReasons ?? []).length > 0,
+  );
+  assert.equal(
+    failingEntries.length,
+    0,
+    `Objective sequence audit found player-facing intent/target/micro-step failures: ${JSON.stringify(
+      failingEntries,
+      null,
+      2,
+    )}`,
+  );
+
+  const familySet = new Set(
+    objectiveSequenceAudit.flatMap((entry) => entry.intentFamilies ?? []),
+  );
+  for (const requiredFamily of [
+    "ada_kettle_lead",
+    "cafe_shift",
+    "return_home",
+    "take_stock",
+  ]) {
+    assert.ok(
+      familySet.has(requiredFamily),
+      `Objective sequence audit did not cover the ${requiredFamily} segment.`,
+    );
+  }
+
+  const routeRoleSet = new Set(
+    objectiveSequenceAudit.map((entry) => entry.routeRole).filter(Boolean),
+  );
+  for (const requiredRole of [
+    "conversation-resolution",
+    "portal-enter",
+    "portal-exit",
+    "route-move",
+    "work",
+  ]) {
+    assert.ok(
+      routeRoleSet.has(requiredRole),
+      `Objective sequence audit did not observe a ${requiredRole} beat.`,
+    );
+  }
+}
+
 function rectIsInside(inner, outer, tolerance = 2) {
   if (!inner || !outer) {
     return true;
@@ -3885,6 +4194,7 @@ async function clickUntilInhabitMilestone({
   clickLog,
   maxClicks,
   milestone,
+  objectiveSequenceAudit,
   session,
 }) {
   for (let attempt = 0; attempt <= maxClicks; attempt += 1) {
@@ -3930,10 +4240,29 @@ async function clickUntilInhabitMilestone({
       !probe.watchMode?.frozen &&
       probe.autonomy?.autoContinue
     ) {
+      const dom = await session.readDomSnapshot().catch(() => null);
+      const auditEntry = buildObjectiveSequenceAuditEntry({
+        control: null,
+        dom,
+        kind: "watched-auto-continue",
+        milestone: milestone.label,
+        probe,
+      });
+      objectiveSequenceAudit.push(auditEntry);
+      assert.equal(
+        auditEntry.failureReasons.length,
+        0,
+        `${milestone.label}: objective-sequence audit failed before watch beat: ${JSON.stringify(
+          auditEntry,
+          null,
+          2,
+        )}`,
+      );
       clickLog.push({
         beforeAutonomyLabel: probe.autonomy?.label ?? null,
         beforeClock: probe.clock,
         beforeLocation: probe.location,
+        objectiveSequenceAuditIndex: objectiveSequenceAudit.length - 1,
         kind: "watched-auto-continue",
         milestone: milestone.label,
         text: "Watched autoplay carry the beat.",
@@ -3963,6 +4292,24 @@ async function clickUntilInhabitMilestone({
         )}`,
       );
     }
+    const dom = await session.readDomSnapshot().catch(() => null);
+    const auditEntry = buildObjectiveSequenceAuditEntry({
+      control,
+      dom,
+      kind: "visible-control-click",
+      milestone: milestone.label,
+      probe,
+    });
+    objectiveSequenceAudit.push(auditEntry);
+    assert.equal(
+      auditEntry.failureReasons.length,
+      0,
+      `${milestone.label}: objective-sequence audit failed before visible click: ${JSON.stringify(
+        auditEntry,
+        null,
+        2,
+      )}`,
+    );
     await session.dispatchMouseClick(
       control.rect.centerX,
       control.rect.centerY,
@@ -3974,6 +4321,7 @@ async function clickUntilInhabitMilestone({
       beforeClock: probe.clock,
       beforeLocation: probe.location,
       kind: "visible-control-click",
+      objectiveSequenceAuditIndex: objectiveSequenceAudit.length - 1,
       openedSupportForControl,
       milestone: milestone.label,
       text: control.text,
@@ -4008,6 +4356,7 @@ async function runInhabitGameplayPass(session) {
   await session.navigate(url);
   const moments = [];
   const clickLog = [];
+  const objectiveSequenceAudit = [];
   const milestonesReached = [];
   let momentIndex = 0;
 
@@ -4092,6 +4441,7 @@ async function runInhabitGameplayPass(session) {
       clickLog,
       maxClicks: milestone.maxClicks,
       milestone,
+      objectiveSequenceAudit,
       session,
     });
     milestonesReached.push(milestone.label);
@@ -4129,6 +4479,7 @@ async function runInhabitGameplayPass(session) {
   );
   assertInhabitOpeningCtaProgression(moments);
   assertInhabitSituatedWatchCtaCopy(moments);
+  assertObjectiveSequenceAudit(objectiveSequenceAudit);
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {
@@ -4139,6 +4490,7 @@ async function runInhabitGameplayPass(session) {
       "Progression is driven by visible browser controls, pointer drags, and normal watch-mode beats; sim probes are read only for assertions.",
     moments,
     milestonesReached,
+    objectiveSequenceAudit,
     panelChecks,
     progressionClicks: clickLog,
     reportPath,

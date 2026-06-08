@@ -5146,6 +5146,36 @@ function buildManualPrimaryContinueCopy({
   return "Let Rowan follow through.";
 }
 
+function buildActiveConversationContinueCopy({
+  npc,
+  rowanAutoplayEnabled,
+}: {
+  npc: NpcState | null;
+  rowanAutoplayEnabled: boolean;
+}) {
+  if (npc?.id === "npc-mara") {
+    return rowanAutoplayEnabled
+      ? "Let Mara's lead about Ada and Kettle & Lamp land."
+      : "Let Mara's lead land.";
+  }
+
+  if (npc?.id === "npc-ada") {
+    return rowanAutoplayEnabled
+      ? "Let Ada answer whether the lunch shift is real."
+      : "Let Ada's answer land.";
+  }
+
+  if (npc) {
+    return rowanAutoplayEnabled
+      ? `Let Rowan hear ${npc.name}'s answer.`
+      : `Let ${npc.name}'s answer land.`;
+  }
+
+  return rowanAutoplayEnabled
+    ? "Let the conversation move forward."
+    : "Let the conversation land.";
+}
+
 function normalizeMapAgencyTone(
   mode: StreetGameState["rowanAutonomy"]["mode"],
 ): MapAgencyTone {
@@ -5606,9 +5636,10 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       ? activeConversationContinueLabel
       : rowanAutonomy.label || "Continue";
   const primaryContinueCopy = game.activeConversation
-    ? snapshot.rowanAutoplayEnabled
-      ? "Rowan is carrying the conversation forward."
-      : "Let the conversation land."
+    ? buildActiveConversationContinueCopy({
+        npc: selectedNpc,
+        rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
+      })
     : snapshot.rowanAutoplayEnabled
       ? buildWatchModePrimaryContinueCopy({
           autonomy: rowanAutonomy,
