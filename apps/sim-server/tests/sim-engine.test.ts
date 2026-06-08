@@ -2741,6 +2741,84 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("keeps route-derived people semantics subordinate to explicit predicate targets", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-predicate-target-over-people-route");
+
+    world.player.currentLocationId = "boarding-house";
+    world.player.knownLocationIds = [
+      ...new Set([...world.player.knownLocationIds, "repair-stall"]),
+    ];
+    world.player.knownNpcIds = [
+      ...new Set([...world.player.knownNpcIds, "npc-mara", "npc-jo"]),
+    ];
+    world.activeConversation = undefined;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "people",
+      outcomes: [
+        {
+          actionId: "buy:item-wrench",
+          blockers: ["The live predicate requires reaching Jo for a wrench."],
+          id: "predicate-jo-wrench",
+          label: "Reach Mercer Repairs and buy the wrench Jo can sell.",
+          status: "open",
+          targetLocationId: "repair-stall",
+          urgency: 3,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "people-npc-mara",
+      source: "manual",
+      text: "Find the person who can actually solve the live tool blocker.",
+      trail: [
+        {
+          detail:
+            "This stale people route points at Mara even though the current predicate points to Jo.",
+          done: false,
+          id: "poisoned-people-route",
+          npcId: "npc-mara",
+          targetLocationId: "boarding-house",
+          title: "Go back to Mara because the old people route says so.",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      targetLocationId: "repair-stall",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "repair-stall",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("boarding-house");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.pressureKind === "predicate" &&
+          option.status === "selected" &&
+          option.targetLocationId === "repair-stall",
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.targetLocationId === "boarding-house",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("prevents stale route-key scoring from outranking an explicit predicate target", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-predicate-target-over-work-route");
