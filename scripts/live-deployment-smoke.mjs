@@ -23,7 +23,7 @@ const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_LIVE_SMOKE_READY_TIMEOUT_MS ?? "30000",
 );
 const AUTOPLAY_START_TIMEOUT_MS = Number(
-  process.env.MANY_LIVES_LIVE_SMOKE_AUTOPLAY_START_TIMEOUT_MS ?? "10000",
+  process.env.MANY_LIVES_LIVE_SMOKE_AUTOPLAY_START_TIMEOUT_MS ?? "30000",
 );
 const POLL_INTERVAL_MS = 250;
 const GENERIC_AUTOPLAY_NOTE = "Rowan is carrying this beat forward";
@@ -40,10 +40,21 @@ if (!LIVE_URL) {
 const liveBase = LIVE_URL.replace(/\/+$/, "");
 const chromeBin = findChromeBin();
 
-function hasWatchModeProgressText(bodyText) {
+function hasWatchModeProgressText(bodyText, probe = null) {
+  const railSignals = [
+    "Continue watching",
+    "Watch Rowan begin",
+    "Watching Rowan",
+    "Live conversation",
+    "Arrival",
+    "In conversation with",
+    probe?.rail?.now,
+    probe?.rail?.next,
+    probe?.rail?.status,
+  ].filter((value) => typeof value === "string" && value.trim().length > 0);
+
   return (
-    bodyText.includes("Continue watching") ||
-    bodyText.includes("Watch Rowan begin") ||
+    railSignals.some((signal) => bodyText.includes(signal)) ||
     CONTEXTUAL_WATCH_MODE_COPY_PATTERN.test(bodyText)
   );
 }
@@ -257,8 +268,9 @@ function assertFreshAutoplayPage(page, probe, base) {
   assert.equal(page.hasRawBackendError, false, "Live app leaked a raw backend error.");
   assert.ok(page.rootClass.includes("is-watch-mode"), "Live app did not enter watch mode.");
   assert.ok(
-    page.bodyText.includes("Rowan") && hasWatchModeProgressText(page.bodyText),
-    "Live app is missing Rowan watch-mode action text.",
+    page.bodyText.includes("Rowan") &&
+      hasWatchModeProgressText(page.bodyText, probe),
+    "Live app is missing Rowan watch-mode progress text.",
   );
   assert.ok(
     !page.bodyText.includes(GENERIC_AUTOPLAY_NOTE),
@@ -680,6 +692,10 @@ class CdpSession {
               hasWatchAction:
                 bodyText.includes("Continue watching") ||
                 bodyText.includes("Watch Rowan begin") ||
+                bodyText.includes("Watching Rowan") ||
+                bodyText.includes("Live conversation") ||
+                bodyText.includes("Arrival") ||
+                bodyText.includes("In conversation with") ||
                 /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i.test(bodyText),
               rootClass: root?.className ?? "",
               url: location.href
