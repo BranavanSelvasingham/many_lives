@@ -3002,6 +3002,94 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("lets urgent live pressure outrank stale tool route move intent", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-urgent-job-over-tool-move-intent");
+    const teaHouse = world.locations.find((location) => location.id === "tea-house");
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+
+    expect(teaHouse).toBeDefined();
+    expect(yardJob).toBeDefined();
+    if (!teaHouse || !yardJob) {
+      return;
+    }
+
+    world.player.x = teaHouse.entryX;
+    world.player.y = teaHouse.entryY;
+    world.player.currentLocationId = teaHouse.id;
+    world.player.knownLocationIds = [
+      ...new Set([
+        ...world.player.knownLocationIds,
+        "tea-house",
+        "freight-yard",
+        "repair-stall",
+      ]),
+    ];
+    world.clock.totalMinutes = 16 * 60 + 30;
+    world.clock.hour = 16;
+    world.clock.minute = 30;
+    world.clock.label = "Afternoon";
+    yardJob.discovered = true;
+    world.activeConversation = undefined;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "tool",
+      outcomes: [],
+      progress: {
+        completed: 0,
+        label: "0/0 route hints met",
+        total: 0,
+      },
+      routeKey: "tool-wrench",
+      source: "manual",
+      text: "Buy the wrench later.",
+      trail: [
+        {
+          actionId: "buy:item-wrench",
+          detail:
+            "This stale tool route should not override the live closing yard work.",
+          done: false,
+          id: "stale-tool-route",
+          targetLocationId: "repair-stall",
+          title: "Buy the wrench at Mercer Repairs.",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:freight-yard",
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("repair-stall");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          option.pressureId === "job:job-yard-shift" &&
+          option.pressureKind === "job" &&
+          option.targetLocationId === "freight-yard",
+      ),
+    ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) =>
+          option.actionId === "move:repair-stall" &&
+          option.planKey.includes("buy:item-wrench") &&
+          option.pressureKind === "tool" &&
+          option.targetLocationId === "repair-stall",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("rejects stale predicate actions when live world state makes them illegal", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-stale-predicate-action-rejected");

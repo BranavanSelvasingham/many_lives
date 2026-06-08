@@ -23,8 +23,9 @@ interface SemanticHint {
 }
 
 interface MoveIntentHint {
+  actionId?: string;
   locationId: string;
-  npcId: string;
+  npcId?: string;
   rationale: string;
   when?: (context: ScaffoldContext) => boolean;
 }
@@ -321,13 +322,14 @@ export function objectiveRouteMoveIntent(
     );
     if (intent) {
       return {
+        actionId: intent.actionId,
         npcId: intent.npcId,
         rationale: intent.rationale,
       };
     }
   }
 
-  return undefined;
+  return routeDerivedMoveIntent(world, objective, locationId);
 }
 
 export function objectiveRouteActionRationale(
@@ -672,6 +674,37 @@ function addRouteDerivedSemanticHints(
   }
 }
 
+function routeDerivedMoveIntent(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective,
+  locationId: string,
+) {
+  if (objective.routeKey.startsWith("people-")) {
+    const npcId = objective.routeKey.slice("people-".length);
+    const npc = npcById(world, npcId);
+    const location = findLocation(world, locationId);
+    if (npcId !== "locals" && npc?.currentLocationId === locationId) {
+      return {
+        npcId,
+        rationale: `Walk to ${location?.name ?? "the next place"} and make a real introduction with ${npc.name}.`,
+      };
+    }
+  }
+
+  if (
+    (objective.focus === "tool" || objective.routeKey.includes("tool")) &&
+    locationId === "repair-stall" &&
+    !hasItem(world, "item-wrench")
+  ) {
+    return {
+      actionId: "buy:item-wrench",
+      rationale: "Walk to Jo's repair stall and buy the wrench the problem needs.",
+    };
+  }
+
+  return undefined;
+}
+
 function routeDerivedSemanticMoveBonus(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
@@ -719,6 +752,10 @@ function routeDerivedSemanticMoveBonus(
 
 function npcById(world: StreetGameState, npcId: string) {
   return world.npcs.find((entry) => entry.id === npcId);
+}
+
+function findLocation(world: StreetGameState, locationId: string) {
+  return world.locations.find((entry) => entry.id === locationId);
 }
 
 function problemById(world: StreetGameState, problemId: string) {
