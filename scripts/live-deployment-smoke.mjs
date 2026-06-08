@@ -55,10 +55,12 @@ async function main() {
   const summary = {
     liveUrl: liveBase,
     outputDir: OUTPUT_DIR,
+    probeSnapshots: {},
     screenshot: null,
     startedAt: new Date().toISOString(),
     status: "running",
   };
+  const probeSnapshots = summary.probeSnapshots;
 
   try {
     summary.health = await readLiveHealth(liveBase);
@@ -73,11 +75,13 @@ async function main() {
     await session.waitForWatchModeUi();
 
     const openingProbe = await session.readBrowserProbe();
+    probeSnapshots.openingProbe = compactProbeSnapshot("openingProbe", openingProbe);
     const firstProbe = await waitForFreshAutoplayAdvance(
       session,
       openingProbe,
       "Live fresh autoplay",
     );
+    probeSnapshots.firstProbe = compactProbeSnapshot("firstProbe", firstProbe);
     const firstPage = await session.inspectPage();
     assertFreshAutoplayPage(firstPage, firstProbe, liveBase);
 
@@ -120,6 +124,7 @@ async function main() {
     await session.waitForAppReady();
     await sleep(500);
     const resumedProbe = await session.readBrowserProbe();
+    probeSnapshots.resumedProbe = compactProbeSnapshot("resumedProbe", resumedProbe);
     assert.equal(
       resumedProbe?.gameId,
       seededGameId,
@@ -132,6 +137,7 @@ async function main() {
     await session.waitForAppReady();
     await sleep(500);
     const freshProbe = await session.readBrowserProbe();
+    probeSnapshots.freshProbe = compactProbeSnapshot("freshProbe", freshProbe);
     assert.ok(freshProbe?.gameId, "Start new run did not create a live game id.");
     assert.notEqual(
       freshProbe.gameId,
@@ -151,6 +157,10 @@ async function main() {
       finishedAt: new Date().toISOString(),
       firstGameId: firstProbe.gameId,
       freshGameId: freshProbe.gameId,
+      livePlannerEvidence: deriveLivePlannerEvidence({
+        health: summary.health,
+        probeSnapshots,
+      }),
       prompt,
       resumedGameId: resumedProbe.gameId,
       seededGameId,
@@ -161,12 +171,19 @@ async function main() {
     console.log(
       `[many-lives:live-smoke] passed: first=${firstProbe.gameId} resumed=${resumedProbe.gameId} fresh=${freshProbe.gameId}`,
     );
+    console.log(
+      `[many-lives:live-smoke] live planner evidence: ${formatLivePlannerEvidence(summary.livePlannerEvidence)}`,
+    );
     console.log(`[many-lives:live-smoke] screenshot: ${screenshotPath}`);
     console.log(`[many-lives:live-smoke] summary: ${SUMMARY_PATH}`);
   } catch (error) {
     Object.assign(summary, {
       error: error instanceof Error ? error.stack ?? error.message : String(error),
       finishedAt: new Date().toISOString(),
+      livePlannerEvidence: deriveLivePlannerEvidence({
+        health: summary.health,
+        probeSnapshots,
+      }),
       status: "failed",
     });
     await writeFile(SUMMARY_PATH, `${JSON.stringify(summary, null, 2)}\n`);
@@ -262,6 +279,182 @@ function assertFreshAutoplayPage(page, probe, base) {
   assert.equal(probe.watchMode?.enabled, true, "Live browser probe did not report watch mode.");
   assert.ok(probe.objective?.text, "Live browser probe is missing Rowan's objective.");
   assert.ok(probe.rail?.now, "Live browser probe is missing Rowan's current rail beat.");
+}
+
+function compactProbeSnapshot(label, probe) {
+  if (!probe) {
+    return {
+      aiRuntime: null,
+      autonomy: null,
+      clock: null,
+      gameId: null,
+      label,
+      location: null,
+      objective: null,
+      rail: null,
+      watchMode: null,
+    };
+  }
+
+  return {
+    aiRuntime: compactAIRuntime(probe.aiRuntime),
+    autonomy: {
+      autoContinue: Boolean(probe.autonomy?.autoContinue),
+      label: probe.autonomy?.label ?? null,
+      mode: probe.autonomy?.mode ?? null,
+      reason: compactText(probe.autonomy?.intent?.reason, 220),
+      signalsCount: Array.isArray(probe.autonomy?.intent?.signals)
+        ? probe.autonomy.intent.signals.length
+        : 0,
+      stepKind: probe.autonomy?.stepKind ?? null,
+    },
+    clock: {
+      iso: probe.clock?.iso ?? null,
+      label: probe.clock?.label ?? null,
+      totalMinutes: probe.clock?.totalMinutes ?? null,
+    },
+    gameId: probe.gameId ?? null,
+    label,
+    location: {
+      id: probe.location?.id ?? null,
+      name: probe.location?.name ?? null,
+      spaceId: probe.location?.spaceId ?? null,
+    },
+    objective: {
+      progress: probe.objective?.progress ?? null,
+      text: compactText(probe.objective?.text, 260),
+    },
+    rail: {
+      next: compactText(probe.rail?.next, 160),
+      now: compactText(probe.rail?.now, 160),
+      status: probe.rail?.status ?? null,
+      thought: compactText(probe.rail?.thought, 260),
+    },
+    watchMode: {
+      autoContinue: Boolean(probe.watchMode?.autoContinue),
+      enabled: Boolean(probe.watchMode?.enabled),
+      frozen: Boolean(probe.watchMode?.frozen),
+      pendingPlayback: Boolean(probe.watchMode?.pendingPlayback),
+      status: probe.watchMode?.status ?? null,
+    },
+  };
+}
+
+function compactAIRuntime(aiRuntime) {
+  if (!aiRuntime) {
+    return null;
+  }
+
+  return {
+    lastLiveCallAt: aiRuntime.lastLiveCallAt ?? null,
+    lastUpdatedAt: aiRuntime.lastUpdatedAt ?? null,
+    model: aiRuntime.model ?? null,
+    provider: aiRuntime.provider ?? null,
+    status: aiRuntime.status ?? null,
+    tasks: compactAITasks(aiRuntime.tasks),
+    totalFallbacks: numericCount(aiRuntime.totalFallbacks),
+    totalSkips: numericCount(aiRuntime.totalSkips),
+    totalSuccesses: numericCount(aiRuntime.totalSuccesses),
+  };
+}
+
+function compactAITasks(tasks) {
+  if (!tasks || typeof tasks !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(tasks).map(([task, summary]) => [
+      task,
+      {
+        fallbacks: numericCount(summary?.fallbacks),
+        lastStatus: summary?.lastStatus ?? null,
+        lastUpdatedAt: summary?.lastUpdatedAt ?? null,
+        skips: numericCount(summary?.skips),
+        successes: numericCount(summary?.successes),
+      },
+    ]),
+  );
+}
+
+function deriveLivePlannerEvidence({ health, probeSnapshots }) {
+  const snapshots = Object.entries(probeSnapshots ?? {});
+  const runtimeSnapshots = snapshots
+    .map(([label, snapshot]) => ({ label, runtime: snapshot?.aiRuntime }))
+    .filter((entry) => entry.runtime);
+  const observedProvider =
+    runtimeSnapshots.find((entry) => entry.runtime.provider)?.runtime.provider ?? null;
+  const plannerSnapshots = runtimeSnapshots.filter(
+    (entry) => numericCount(entry.runtime.tasks?.planStreetNextAction?.successes) > 0,
+  );
+  const successfulTaskSnapshots = runtimeSnapshots
+    .map((entry) => ({
+      label: entry.label,
+      tasks: Object.entries(entry.runtime.tasks ?? {})
+        .filter(([, task]) => numericCount(task?.successes) > 0)
+        .map(([task, taskSummary]) => ({
+          successes: numericCount(taskSummary.successes),
+          task,
+        })),
+    }))
+    .filter((entry) => entry.tasks.length > 0);
+  const observedStatuses = [
+    ...new Set(runtimeSnapshots.map((entry) => entry.runtime.status).filter(Boolean)),
+  ];
+  const observedModels = [
+    ...new Set(runtimeSnapshots.map((entry) => entry.runtime.model).filter(Boolean)),
+  ];
+  const maxPlannerSuccesses = Math.max(
+    0,
+    ...runtimeSnapshots.map((entry) =>
+      numericCount(entry.runtime.tasks?.planStreetNextAction?.successes),
+    ),
+  );
+  const maxTotalSuccesses = Math.max(
+    0,
+    ...runtimeSnapshots.map((entry) => numericCount(entry.runtime.totalSuccesses)),
+  );
+
+  return {
+    configurationProvider: health?.aiProvider ?? null,
+    explanation: plannerSnapshots.length
+      ? "A successful live Rowan planner call was observed in the captured browser probes."
+      : "No successful live Rowan planner call was observed in the captured browser probes; /sim/health provider is configuration evidence only.",
+    observedAnyLiveSuccess: maxTotalSuccesses > 0,
+    observedLivePlannerSuccess: plannerSnapshots.length > 0,
+    observedModels,
+    observedProvider,
+    observedRuntimeStatuses: observedStatuses,
+    plannerSuccessSnapshots: plannerSnapshots.map((entry) => entry.label),
+    successfulTaskSnapshots,
+    totalPlannerSuccessesObserved: maxPlannerSuccesses,
+    totalSuccessesObserved: maxTotalSuccesses,
+  };
+}
+
+function formatLivePlannerEvidence(evidence) {
+  if (!evidence) {
+    return "not captured";
+  }
+
+  return `configured=${evidence.configurationProvider ?? "unknown"} observedProvider=${evidence.observedProvider ?? "unknown"} plannerSuccess=${evidence.observedLivePlannerSuccess ? "yes" : "no"} totalPlannerSuccesses=${evidence.totalPlannerSuccessesObserved}`;
+}
+
+function compactText(value, maxLength) {
+  if (typeof value !== "string") {
+    return value ?? null;
+  }
+
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, Math.max(0, maxLength - 1)).trim()}…`;
+}
+
+function numericCount(value) {
+  return Number.isFinite(value) ? value : 0;
 }
 
 async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
