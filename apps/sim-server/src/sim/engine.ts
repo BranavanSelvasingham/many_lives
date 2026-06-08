@@ -4594,7 +4594,7 @@ function planMatchesObjectivePredicate(
   outcome: ObjectiveOutcomeState,
 ) {
   if (outcome.actionId) {
-    if (plan.actionId === outcome.actionId) {
+    if (plannerActionIdForPlan(plan) === outcome.actionId) {
       return true;
     }
 
@@ -4956,8 +4956,7 @@ function planMatchesExactActionAtLocation(
   actionId: string,
 ) {
   return Boolean(
-    plan.actionId === actionId &&
-      !plan.npcId &&
+    plannerActionIdForPlan(plan) === actionId &&
       plan.targetLocationId === targetLocationIdForActionId(world, actionId),
   );
 }
@@ -4986,7 +4985,7 @@ function scoreObjectivePlanningPressureMatch(
   }
 
   let score = pressure.priority;
-  if (pressure.actionId && plan.actionId === pressure.actionId) {
+  if (pressure.actionId && plannerActionIdForPlan(plan) === pressure.actionId) {
     score += 24;
   } else if (pressure.npcId && plan.npcId === pressure.npcId) {
     score += 22;
@@ -5028,7 +5027,7 @@ function planMatchesObjectivePlanningPressure(
   pressure: ObjectivePlanningPressure,
 ) {
   if (pressure.actionId) {
-    if (plan.actionId === pressure.actionId) {
+    if (plannerActionIdForPlan(plan) === pressure.actionId) {
       return true;
     }
 
@@ -6065,7 +6064,7 @@ function scorePlanForTargetedOutcome(
 ) {
   let score = 0;
 
-  if (outcome.actionId && plan.actionId === outcome.actionId) {
+  if (outcome.actionId && plannerActionIdForPlan(plan) === outcome.actionId) {
     score += outcome.priority * 18;
   }
 

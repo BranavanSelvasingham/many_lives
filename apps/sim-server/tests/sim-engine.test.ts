@@ -1439,6 +1439,82 @@ describe("SimulationEngine street slice", () => {
     ).toMatch(/room|Morrow House|tonight/i);
   });
 
+  it("keeps poisoned route trails from controlling the executed planner action", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-poisoned-trail-current-action");
+
+    world = await enterMorrowHouse(engine, world);
+    world.player.knownNpcIds = [
+      ...new Set([...world.player.knownNpcIds, "npc-mara"]),
+    ];
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "settle",
+      outcomes: [
+        {
+          actionId: "talk:npc-mara",
+          authority: "predicate",
+          blockers: [
+            "Rowan must ask Mara from the current legal action surface.",
+          ],
+          id: "predicate-ask-mara-room-standing",
+          label: "Ask Mara what keeps the Morrow House room stable.",
+          npcId: "npc-mara",
+          status: "open",
+          targetLocationId: "boarding-house",
+          urgency: 95,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "first-afternoon",
+      source: "manual",
+      text: "Find out what makes the room at Morrow House secure.",
+      trail: [
+        {
+          actionId: "move:moss-pier",
+          detail:
+            "This poisoned route hint points at the old pier even though Mara is present and legal here.",
+          done: false,
+          id: "poisoned-old-pier-route",
+          targetLocationId: "moss-pier",
+          title: "Follow the stale route to the old pier.",
+        },
+      ],
+    };
+    expect(world.availableActions.map((action) => action.id)).toContain(
+      "talk:npc-mara",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "move:moss-pier",
+    );
+    expect(world.player.objective?.trail).toEqual([
+      expect.objectContaining({
+        actionId: "move:moss-pier",
+        id: "poisoned-old-pier-route",
+        targetLocationId: "moss-pier",
+      }),
+    ]);
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.currentLocationId).toBe("boarding-house");
+    expect(world.player.pendingObjectiveMove).toBeUndefined();
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(world.activeConversation?.locationId).toBe("boarding-house");
+    expect(
+      world.activeConversation?.lines.find((line) => line.speaker === "player")
+        ?.text,
+    ).toMatch(/room|Morrow House|Mara|standing/i);
+  });
+
   it("turns Mara's grounded lead into a Kettle & Lamp sequence with a planner trace", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-live-fork");
