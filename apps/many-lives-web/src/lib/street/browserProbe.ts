@@ -297,7 +297,9 @@ export function buildStreetBrowserProbeJson({
         }
       : null,
     autonomy: {
+      actionId: game.rowanAutonomy.actionId ?? null,
       autoContinue: game.rowanAutonomy.autoContinue,
+      effects: game.rowanAutonomy.effects ?? [],
       intent: game.rowanAutonomy.intent
         ? {
             reason: game.rowanAutonomy.intent.reason,
@@ -306,7 +308,9 @@ export function buildStreetBrowserProbeJson({
         : null,
       key: game.rowanAutonomy.key,
       label: game.rowanAutonomy.label,
+      layer: game.rowanAutonomy.layer ?? null,
       mode: game.rowanAutonomy.mode,
+      npcId: game.rowanAutonomy.npcId ?? null,
       planningTrace: game.rowanAutonomy.planningTrace
         ? planningTraceProbePayload(game)
         : null,
