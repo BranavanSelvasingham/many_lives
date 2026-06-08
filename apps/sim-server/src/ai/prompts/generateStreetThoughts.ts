@@ -90,6 +90,7 @@ export function buildGenerateStreetThoughtsPrompt(
         supportingRouteHints: objective.trail
           .filter((step) => !step.done)
           .map((step) => ({
+            authority: "supporting_hint",
             id: step.id,
             text: step.title,
             detail: step.detail,
@@ -99,6 +100,7 @@ export function buildGenerateStreetThoughtsPrompt(
             actionId: step.actionId,
           })),
         recentlyFinishedHints: objective.completedTrail.slice(-8).map((step) => ({
+          authority: "historical_hint",
           id: step.id,
           text: step.title,
           detail: step.detail,

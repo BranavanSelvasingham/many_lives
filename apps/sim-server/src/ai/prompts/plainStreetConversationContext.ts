@@ -42,12 +42,13 @@ export function buildPlainPlaceContext(context: StreetConversationContext) {
 export function buildPlainRowanContext(context: StreetConversationContext) {
   const plan = context.rowan.objectiveState;
   const nextMove = context.rowan.cognition.nextMove;
+  const autonomy = context.rowan.autonomy;
 
   return {
     name: context.rowan.name,
     backstory: context.rowan.backstory,
     currentGoal: context.rowan.objective,
-    currentPlan: plan
+    objectiveAuthority: plan
       ? {
           goal: plan.text,
           kind: plan.focus,
@@ -78,6 +79,7 @@ export function buildPlainRowanContext(context: StreetConversationContext) {
           supportingRouteHints: plan.trail
             .filter((step) => !step.done)
             .map((step) => ({
+              authority: "supporting_hint",
               id: step.id,
               text: step.title,
               detail: step.detail,
@@ -87,6 +89,7 @@ export function buildPlainRowanContext(context: StreetConversationContext) {
               action: step.actionId,
             })),
           recentlyFinishedHints: plan.completedTrail.map((step) => ({
+            authority: "historical_hint",
             id: step.id,
             text: step.title,
             detail: step.detail,
@@ -94,6 +97,29 @@ export function buildPlainRowanContext(context: StreetConversationContext) {
           })),
         }
       : undefined,
+    currentAutonomy: autonomy,
+    availableLegalActions: context.rowan.availableActions
+      .filter((action) => !action.disabled)
+      .map((action) => ({
+        id: action.id,
+        label: action.label,
+        kind: action.kind,
+        description: action.description,
+        matchesObjective: action.matchesObjective,
+        where: action.targetLocationId,
+        anchor: action.targetAnchorId,
+        space: action.spaceId,
+      })),
+    unavailableActions: context.rowan.availableActions
+      .filter((action) => action.disabled)
+      .slice(0, 5)
+      .map((action) => ({
+        id: action.id,
+        label: action.label,
+        kind: action.kind,
+        reason: action.disabledReason,
+        where: action.targetLocationId,
+      })),
     currentThought: context.rowan.currentThought,
     money: context.rowan.money,
     energy: context.rowan.energy,

@@ -49,6 +49,8 @@ export function buildGenerateStreetAutonomousLinePrompt(
     "- If this is a followup, build directly on the last reply and ask a simple next question. Prefer specific followups like what should I move first, when does it start, or what are you paying over vague helpfulness.",
     "- Avoid canned tutorial phrasing, generic 'where should I go' filler, or overly broad life-story speeches.",
     "- Do not invent props or procedures. Ask about the actual work, person, place, pay, or timing already in context.",
+    "- Use rowan.objectiveAuthority, currentAutonomy, availableLegalActions, and the current place/person as the authority for what Rowan means to do now.",
+    "- Treat supportingRouteHints and recentlyFinishedHints as optional scaffolding only. Do not turn a route hint or old trail title into Rowan's spoken plan.",
     "- Keep it grounded, direct, and natural to South Quay.",
     ...buildStreetVoicePromptLines(),
     `Context in plain English: ${JSON.stringify(promptContext)}`,
