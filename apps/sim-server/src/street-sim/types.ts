@@ -574,6 +574,13 @@ export interface RowanAutonomyIntent {
   signals: string[];
 }
 
+export type RowanPlanningTraceProvenance =
+  | "legal-action"
+  | "live-pressure"
+  | "objective-predicate"
+  | "route-scaffold"
+  | "stale-predicate";
+
 export interface RowanPlanningTraceOption {
   actionId?: string;
   label: string;
@@ -582,6 +589,7 @@ export interface RowanPlanningTraceOption {
   pressureKind?: string;
   pressureLabel?: string;
   planKey: string;
+  provenance: RowanPlanningTraceProvenance;
   rationale: string;
   reason?: string;
   score: number;
@@ -602,6 +610,7 @@ export interface RowanPlanningTraceStep {
 }
 
 export interface RowanPlanningTraceOutcome {
+  authority?: ObjectiveOutcomeAuthority;
   id: string;
   label: string;
   status: ObjectiveOutcomeStatus;

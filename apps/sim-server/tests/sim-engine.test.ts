@@ -2811,9 +2811,25 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.considered.some(
         (option) =>
           option.status === "selected" &&
-          option.targetLocationId === "tea-house",
+          option.targetLocationId === "tea-house" &&
+          option.provenance === "objective-predicate" &&
+          option.matchedOutcomeId === "predicate-tea-house-visit",
       ),
     ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          ["route-scaffold", "stale-predicate"].includes(option.provenance),
+      ),
+    ).toBe(false);
+    expect(
+      world.rowanAutonomy.planningTrace?.outcomes.find(
+        (outcome) => outcome.id === "predicate-tea-house-visit",
+      ),
+    ).toMatchObject({
+      authority: "predicate",
+    });
     expectCognitionToMirrorAutonomy(world);
   });
 
@@ -3522,9 +3538,17 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.rejected.some(
         (option) =>
           option.actionId === "solve:problem-cart" &&
+          option.provenance === "route-scaffold" &&
           option.reason?.includes("no longer legal"),
       ),
     ).toBe(true);
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          ["route-scaffold", "stale-predicate"].includes(option.provenance),
+      ),
+    ).toBe(false);
   });
 
   it("rebuilds stale pump solve hints as complete after Mara contains the pump", async () => {
@@ -3677,7 +3701,9 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.considered.some(
         (option) =>
           option.status === "selected" &&
-          option.targetLocationId === "freight-yard",
+          option.targetLocationId === "freight-yard" &&
+          option.provenance === "objective-predicate" &&
+          option.matchedOutcomeId === "predicate-yard-visit",
       ),
     ).toBe(true);
     expect(

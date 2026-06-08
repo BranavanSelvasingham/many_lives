@@ -120,6 +120,7 @@ function planningTraceProbePayload(game: StreetGameState) {
     pressureId: option.pressureId ?? null,
     pressureKind: option.pressureKind ?? null,
     pressureLabel: option.pressureLabel ?? null,
+    provenance: option.provenance,
     rationale: option.rationale,
     reason: option.reason ?? null,
     score: option.score,
@@ -141,6 +142,7 @@ function planningTraceProbePayload(game: StreetGameState) {
       validation: step.validation,
     })),
     outcomes: trace.outcomes.map((outcome) => ({
+      authority: outcome.authority ?? null,
       blockers: outcome.blockers ?? [],
       evidence: outcome.evidence ?? null,
       id: outcome.id,
