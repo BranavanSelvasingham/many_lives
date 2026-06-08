@@ -36,6 +36,25 @@ export type StreetBrowserMovementDiagnostics = {
     unreachableSegments: number;
     visualObstaclesClear: boolean;
   }>;
+  scheduledNpcMarkerSamples: Array<{
+    activeSpaceId: string | null;
+    currentLocationId: string;
+    currentScheduleLocationId: string | null;
+    distanceToRoute: number | null;
+    key: string;
+    markerSource: "phaser-marker";
+    nextScheduleLocationId: string | null;
+    npcId: string;
+    onRoute: boolean;
+    position: {
+      x: number;
+      y: number;
+    };
+    routePathLength: number;
+    routeProgress: number | null;
+    toLocationId: string | null;
+    visible: boolean;
+  }>;
   playerRoute: {
     active: boolean;
     diagnostics: {
