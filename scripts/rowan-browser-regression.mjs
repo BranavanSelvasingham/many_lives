@@ -4219,6 +4219,57 @@ function inhabitCameraDelta(before, after) {
   };
 }
 
+function buildWatchPacingAudit(clickLog) {
+  const watchedBeats = clickLog
+    .filter((entry) => entry.kind === "watched-auto-continue")
+    .map((entry) => ({
+      beforeAutonomyLabel: entry.beforeAutonomyLabel ?? null,
+      completionAutoContinue: Boolean(entry.completionAutoContinue),
+      durationMs: entry.durationMs ?? null,
+      milestone: entry.milestone,
+      sequenceRunId: entry.sequenceRunId ?? null,
+    }));
+  const ordinaryBeats = watchedBeats.filter(
+    (entry) => !entry.completionAutoContinue,
+  );
+  const ordinaryDurations = ordinaryBeats
+    .map((entry) => entry.durationMs)
+    .filter((duration) => typeof duration === "number");
+  const shortOrdinaryBeats = ordinaryBeats.filter(
+    (entry) => (entry.durationMs ?? 0) < 2_600,
+  );
+
+  return {
+    ordinaryBeatCount: ordinaryBeats.length,
+    ordinaryMinDurationMs:
+      ordinaryDurations.length > 0 ? Math.min(...ordinaryDurations) : null,
+    readableFloorMs: 2_600,
+    shortOrdinaryBeats,
+    watchedBeats,
+  };
+}
+
+function assertWatchPacingAudit(watchPacingAudit) {
+  assert.ok(
+    watchPacingAudit.ordinaryBeatCount >= 6,
+    `Expected enough ordinary watch beats to judge pacing: ${watchPacingAudit.ordinaryBeatCount}.`,
+  );
+  assert.equal(
+    watchPacingAudit.shortOrdinaryBeats.length,
+    0,
+    `Ordinary watch beats advanced too quickly: ${JSON.stringify(
+      watchPacingAudit.shortOrdinaryBeats,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    (watchPacingAudit.ordinaryMinDurationMs ?? 0) >=
+      watchPacingAudit.readableFloorMs,
+    `Ordinary watch-beat minimum dwell was below ${watchPacingAudit.readableFloorMs}ms: ${watchPacingAudit.ordinaryMinDurationMs}ms.`,
+  );
+}
+
 function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = null) {
   assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
   assert.equal(
@@ -5188,6 +5239,8 @@ async function runInhabitGameplayPass(session) {
     watchedAutoContinueCount >= 6,
     `Inhabit gameplay pass did not carry enough objective beats through watch mode: ${watchedAutoContinueCount}.`,
   );
+  const watchPacingAudit = buildWatchPacingAudit(clickLog);
+  assertWatchPacingAudit(watchPacingAudit);
   const completionDwell = clickLog.find(
     (entry) =>
       entry.kind === "watched-auto-continue" &&
@@ -5273,6 +5326,7 @@ async function runInhabitGameplayPass(session) {
     status: "passed",
     url,
     visibleControlClickCount,
+    watchPacingAudit,
     watchUrl,
     watchedAutoContinueCount,
     worldPressureAudit,

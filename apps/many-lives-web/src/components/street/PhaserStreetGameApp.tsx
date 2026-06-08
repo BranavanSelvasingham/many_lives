@@ -235,13 +235,13 @@ const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
 const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 1800;
-const AUTOPLAY_OPENING_AUTOSTART_DELAY_MS = 1800;
+const AUTOPLAY_OPENING_AUTOSTART_DELAY_MS = 2800;
 const FIRST_AFTERNOON_COMPLETION_DWELL_MS = 3600;
 const AUTONOMY_BEAT_DELAY_MS = {
-  acting: 1800,
-  conversation: 2200,
-  moving: 1400,
-  waiting: 1800,
+  acting: 2800,
+  conversation: 3200,
+  moving: 2800,
+  waiting: 3000,
 } as const;
 const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
   autoContinue: false,
