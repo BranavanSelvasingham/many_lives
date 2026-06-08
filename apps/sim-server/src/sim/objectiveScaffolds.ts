@@ -299,6 +299,8 @@ export function objectiveRouteSemanticHints(
     }
   }
 
+  addRouteDerivedSemanticHints(world, objective, { locationIds, npcIds });
+
   return {
     locationIds: [...locationIds],
     npcIds: [...npcIds],
@@ -548,7 +550,7 @@ export function objectiveRouteSemanticMoveBonus(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
   locationId: string,
-  input: { predicateAuthority: boolean },
+  input: { planningText?: string; predicateAuthority: boolean },
 ) {
   const context = {
     objective,
@@ -556,7 +558,7 @@ export function objectiveRouteSemanticMoveBonus(
     world,
   };
 
-  return activeScaffolds(objective.routeKey)
+  const scaffoldScore = activeScaffolds(objective.routeKey)
     .flatMap((scaffold) => scaffold.semanticMoveBonuses ?? [])
     .filter(
       (bonus) =>
@@ -564,6 +566,11 @@ export function objectiveRouteSemanticMoveBonus(
         (!bonus.when || bonus.when(context)),
     )
     .reduce((total, bonus) => total + bonus.score, 0);
+
+  return (
+    scaffoldScore +
+    routeDerivedSemanticMoveBonus(world, objective, locationId, input)
+  );
 }
 
 export function objectiveRouteSpeech(
@@ -601,6 +608,125 @@ function activeScaffolds(routeKey: string) {
   return OBJECTIVE_ROUTE_SCAFFOLDS.filter((scaffold) =>
     scaffold.routeKeys.includes(routeKey),
   );
+}
+
+function addRouteDerivedSemanticHints(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective,
+  output: {
+    locationIds: Set<string>;
+    npcIds: Set<string>;
+  },
+) {
+  const addProblemLocation = (problemId: string) => {
+    const problem = problemById(world, problemId);
+    if (problem?.locationId) {
+      output.locationIds.add(problem.locationId);
+    }
+  };
+  const addJobLocation = (jobId: string) => {
+    const job = jobById(world, jobId);
+    if (job?.locationId) {
+      output.locationIds.add(job.locationId);
+    }
+  };
+  const planningText = objective.text.toLowerCase();
+
+  if (objective.routeKey.startsWith("people-")) {
+    const npcId = objective.routeKey.slice("people-".length);
+    if (npcId !== "locals") {
+      output.npcIds.add(npcId);
+    }
+  }
+
+  if (objective.routeKey.startsWith("explore-")) {
+    const locationId = objective.routeKey.slice("explore-".length);
+    if (locationId !== "district") {
+      output.locationIds.add(locationId);
+    }
+  }
+
+  if (objective.routeKey.startsWith("commitment-")) {
+    addJobLocation(objective.routeKey.slice("commitment-".length));
+  }
+
+  if (objective.routeKey.includes("pump")) {
+    addProblemLocation("problem-pump");
+    if (!hasItem(world, "item-wrench")) {
+      output.locationIds.add("repair-stall");
+      output.npcIds.add("npc-jo");
+    }
+  }
+
+  if (objective.routeKey.includes("cart")) {
+    addProblemLocation("problem-cart");
+  }
+
+  if (
+    objective.focus === "tool" ||
+    objective.routeKey.includes("tool") ||
+    /\b(tool|wrench|jo|repair)\b/.test(planningText)
+  ) {
+    output.locationIds.add("repair-stall");
+    output.npcIds.add("npc-jo");
+  }
+}
+
+function routeDerivedSemanticMoveBonus(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective,
+  locationId: string,
+  input: { planningText?: string; predicateAuthority: boolean },
+) {
+  const planningText = (input.planningText ?? objective.text).toLowerCase();
+  let score = 0;
+
+  if (!input.predicateAuthority && objective.routeKey.startsWith("people-")) {
+    const npcId = objective.routeKey.slice("people-".length);
+    if (npcById(world, npcId)?.currentLocationId === locationId) {
+      score += 24;
+    }
+  }
+
+  if (!input.predicateAuthority && objective.routeKey.startsWith("explore-")) {
+    const targetLocationId = objective.routeKey.slice("explore-".length);
+    if (targetLocationId === locationId) {
+      score += 22;
+    }
+  }
+
+  if (
+    (objective.focus === "tool" ||
+      (!input.predicateAuthority && objective.routeKey.includes("tool")) ||
+      /\b(tool|wrench|jo|repair)\b/.test(planningText)) &&
+    locationId === "repair-stall" &&
+    !hasItem(world, "item-wrench")
+  ) {
+    score += 28;
+  }
+
+  if (
+    !input.predicateAuthority &&
+    objective.routeKey.includes("pump") &&
+    problemById(world, "problem-pump")?.locationId === locationId &&
+    hasItem(world, "item-wrench")
+  ) {
+    score += 20;
+  }
+
+  return score;
+}
+
+function npcById(world: StreetGameState, npcId: string) {
+  return world.npcs.find((entry) => entry.id === npcId);
+}
+
+function problemById(world: StreetGameState, problemId: string) {
+  return world.problems.find((entry) => entry.id === problemId);
+}
+
+function hasItem(world: StreetGameState, itemId: string) {
+  return world.player.inventory.some((item) => item.id === itemId);
 }
 
 function jobById(world: StreetGameState, jobId: string) {

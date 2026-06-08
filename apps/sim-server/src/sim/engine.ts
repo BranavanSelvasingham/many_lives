@@ -5168,12 +5168,6 @@ function addObjectiveSemanticLocationIds(
   const addNpcLocation = (npcId: string) => {
     addLocation(npcById(world, npcId)?.currentLocationId);
   };
-  const addProblemLocation = (problemId: string) => {
-    addLocation(problemById(world, problemId)?.locationId);
-  };
-  const addJobLocation = (jobId: string) => {
-    addLocation(jobById(world, jobId)?.locationId);
-  };
 
   addMentionedEntityLocations(world, planningText, locationIds);
 
@@ -5183,44 +5177,6 @@ function addObjectiveSemanticLocationIds(
   }
   for (const npcId of scaffoldHints.npcIds) {
     addNpcLocation(npcId);
-  }
-
-  if (objective.routeKey.startsWith("people-")) {
-    const npcId = objective.routeKey.slice("people-".length);
-    if (npcId !== "locals") {
-      addNpcLocation(npcId);
-    }
-  }
-
-  if (objective.routeKey.startsWith("explore-")) {
-    const locationId = objective.routeKey.slice("explore-".length);
-    if (locationId !== "district") {
-      addLocation(locationId);
-    }
-  }
-
-  if (objective.routeKey.startsWith("commitment-")) {
-    addJobLocation(objective.routeKey.slice("commitment-".length));
-  }
-
-  if (objective.routeKey.includes("pump")) {
-    addProblemLocation("problem-pump");
-    if (!hasItem(world, "item-wrench")) {
-      addLocation("repair-stall");
-      addNpcLocation("npc-jo");
-    }
-  }
-
-  if (objective.routeKey.includes("cart")) {
-    addProblemLocation("problem-cart");
-  }
-
-  if (
-    objective.focus === "tool" ||
-    /\b(tool|wrench|jo|repair)\b/.test(planningText)
-  ) {
-    addLocation("repair-stall");
-    addNpcLocation("npc-jo");
   }
 
   addLivePressureLocationIds(world, locationIds);
@@ -5764,44 +5720,12 @@ function scoreSemanticMovePressure(
   });
 
   score += objectiveRouteSemanticMoveBonus(world, input.objective, locationId, {
+    planningText,
     predicateAuthority,
   });
 
-  if (!predicateAuthority && input.objective.routeKey.startsWith("people-")) {
-    const npcId = input.objective.routeKey.slice("people-".length);
-    if (npcById(world, npcId)?.currentLocationId === locationId) {
-      score += 24;
-    }
-  }
-
-  if (!predicateAuthority && input.objective.routeKey.startsWith("explore-")) {
-    const targetLocationId = input.objective.routeKey.slice("explore-".length);
-    if (targetLocationId === locationId) {
-      score += 22;
-    }
-  }
-
-  if (
-    (input.objective.focus === "tool" ||
-      (!predicateAuthority && input.objective.routeKey.includes("tool")) ||
-      /\b(tool|wrench|jo|repair)\b/.test(planningText)) &&
-    locationId === "repair-stall" &&
-    !hasItem(world, "item-wrench")
-  ) {
-    score += 28;
-  }
-
   score += scoreLiveProblemPressureForMove(world, locationId);
   score += scoreLiveJobPressureForMove(world, locationId);
-
-  if (
-    !predicateAuthority &&
-    input.objective.routeKey.includes("pump") &&
-    problemById(world, "problem-pump")?.locationId === locationId &&
-    hasItem(world, "item-wrench")
-  ) {
-    score += 20;
-  }
 
   return score;
 }
