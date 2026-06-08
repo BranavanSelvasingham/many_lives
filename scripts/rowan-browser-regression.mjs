@@ -3012,11 +3012,20 @@ function compactWorldPressureSnapshot(worldPressure) {
         id: npc.id,
         mood: npc.mood ?? null,
       })),
+    npcSchedules: (worldPressure.npcSchedules ?? []).map((npc) => ({
+      currentConcern: compactObjectiveSequenceText(npc.currentConcern ?? "", 120),
+      currentLocationId: npc.currentLocationId,
+      currentScheduleLocationId: npc.currentScheduleLocationId ?? null,
+      id: npc.id,
+      mood: npc.mood ?? null,
+      nextScheduleLocationId: npc.nextScheduleLocationId ?? null,
+    })),
     problems: (worldPressure.problems ?? []).map((problem) => ({
       discovered: Boolean(problem.discovered),
       escalationLevel: problem.escalationLevel ?? 0,
       id: problem.id,
       locationId: problem.locationId,
+      resolvedByNpcId: problem.resolvedByNpcId ?? null,
       status: problem.status,
       title: problem.title,
       urgency: problem.urgency,
@@ -3043,6 +3052,196 @@ function collectPressureTransitions(snapshots, collectionName, stateForEntry) {
     .filter((entry) => entry.states.length > 1);
 }
 
+function pressureEntriesById(snapshot, collectionName) {
+  return new Map(
+    (snapshot?.[collectionName] ?? []).map((entry) => [entry.id, entry]),
+  );
+}
+
+function pressureValue(value) {
+  if (value === undefined) {
+    return null;
+  }
+  return value;
+}
+
+function addPressureTimelineChange(changes, context, change) {
+  if (Object.is(change.from, change.to)) {
+    return;
+  }
+  changes.push({
+    ...change,
+    fromClock: context.from.clock,
+    fromLabel: context.from.label,
+    meaningful: change.meaningful ?? true,
+    toClock: context.to.clock,
+    toLabel: context.to.label,
+  });
+}
+
+function collectFieldChanges(changes, context, options) {
+  const before = pressureEntriesById(context.from.worldPressure, options.collectionName);
+  const after = pressureEntriesById(context.to.worldPressure, options.collectionName);
+  const ids = new Set([...before.keys(), ...after.keys()]);
+
+  for (const id of ids) {
+    if (!before.has(id) || !after.has(id)) {
+      continue;
+    }
+    const previous = before.get(id) ?? {};
+    const next = after.get(id) ?? {};
+    for (const field of options.fields) {
+      const from = pressureValue(previous[field.name]);
+      const to = pressureValue(next[field.name]);
+      if (Object.is(from, to)) {
+        continue;
+      }
+      addPressureTimelineChange(changes, context, {
+        cause: field.cause(previous, next),
+        field: field.name,
+        from,
+        id,
+        kind: options.kind,
+        summary: field.summary(id, from, to, previous, next),
+        to,
+      });
+    }
+  }
+}
+
+function buildWorldPressureTimeline(snapshots) {
+  const changes = [];
+  for (let index = 1; index < snapshots.length; index += 1) {
+    const context = {
+      from: snapshots[index - 1],
+      to: snapshots[index],
+    };
+
+    collectFieldChanges(changes, context, {
+      collectionName: "cityEvents",
+      fields: ["status", "progress", "outcome"].map((name) => ({
+        cause: () => "independent",
+        name,
+        summary: (id, from, to) =>
+          `City event ${id} ${name} changed from ${from ?? "none"} to ${
+            to ?? "none"
+          }.`,
+      })),
+      kind: "city-event",
+    });
+    collectFieldChanges(changes, context, {
+      collectionName: "jobWindows",
+      fields: [
+        {
+          cause: () => "rowan-caused",
+          name: "accepted",
+          summary: (id, from, to) =>
+            `Job ${id} accepted changed from ${from} to ${to}.`,
+        },
+        {
+          cause: () => "rowan-caused",
+          name: "completed",
+          summary: (id, from, to) =>
+            `Job ${id} completed changed from ${from} to ${to}.`,
+        },
+        {
+          cause: () => "rowan-caused",
+          name: "discovered",
+          summary: (id, from, to) =>
+            `Job ${id} discovery changed from ${from} to ${to}.`,
+        },
+        {
+          cause: () => "independent",
+          name: "inWindow",
+          summary: (id, from, to) =>
+            `Job ${id} window changed from ${from ? "open" : "closed"} to ${
+              to ? "open" : "closed"
+            }.`,
+        },
+        {
+          cause: () => "independent",
+          name: "missed",
+          summary: (id, from, to) =>
+            `Job ${id} missed state changed from ${from} to ${to}.`,
+        },
+      ],
+      kind: "job-window",
+    });
+    collectFieldChanges(changes, context, {
+      collectionName: "npcSchedules",
+      fields: [
+        {
+          cause: () => "independent",
+          name: "currentScheduleLocationId",
+          summary: (id, from, to) =>
+            `NPC ${id} schedule target changed from ${from ?? "none"} to ${
+              to ?? "none"
+            }.`,
+        },
+        {
+          cause: () => "independent",
+          name: "currentLocationId",
+          summary: (id, from, to) =>
+            `NPC ${id} current stop changed from ${from ?? "none"} to ${
+              to ?? "none"
+            }.`,
+        },
+        {
+          cause: () => "independent",
+          name: "nextScheduleLocationId",
+          summary: (id, from, to) =>
+            `NPC ${id} next scheduled stop changed from ${from ?? "none"} to ${
+              to ?? "none"
+            }.`,
+        },
+      ],
+      kind: "npc-schedule",
+    });
+    collectFieldChanges(changes, context, {
+      collectionName: "problems",
+      fields: [
+        {
+          cause: () => "rowan-caused",
+          name: "discovered",
+          summary: (id, from, to) =>
+            `Problem ${id} discovery changed from ${from} to ${to}.`,
+        },
+        {
+          cause: () => "independent",
+          name: "escalationLevel",
+          summary: (id, from, to) =>
+            `Problem ${id} escalation changed from ${from} to ${to}.`,
+        },
+        {
+          cause: () => "independent",
+          name: "resolvedByNpcId",
+          summary: (id, from, to) =>
+            `Problem ${id} NPC resolver changed from ${from ?? "none"} to ${
+              to ?? "none"
+            }.`,
+        },
+        {
+          cause: (previous, next) =>
+            next.resolvedByNpcId ? "independent" : "mixed",
+          name: "status",
+          summary: (id, from, to) =>
+            `Problem ${id} status changed from ${from ?? "none"} to ${
+              to ?? "none"
+            }.`,
+        },
+        {
+          cause: () => "independent",
+          name: "urgency",
+          summary: (id, from, to) =>
+            `Problem ${id} urgency changed from ${from} to ${to}.`,
+        },
+      ],
+      kind: "problem",
+    });
+  }
+  return changes;
+}
+
 function buildWorldPressureAudit({ moments, objectiveSequenceAudit }) {
   const snapshots = moments
     .map((moment) => ({
@@ -3052,6 +3251,15 @@ function buildWorldPressureAudit({ moments, objectiveSequenceAudit }) {
     }))
     .filter((snapshot) => snapshot.worldPressure);
   const pressureSnapshots = snapshots.map((snapshot) => snapshot.worldPressure);
+  const worldPressureTimeline = buildWorldPressureTimeline(snapshots);
+  const independentTimelineChanges = worldPressureTimeline.filter(
+    (change) => change.cause === "independent" && change.meaningful,
+  );
+  const independentPressureKeys = [
+    ...new Set(
+      independentTimelineChanges.map((change) => `${change.kind}:${change.id}`),
+    ),
+  ];
   const cityEventTransitions = collectPressureTransitions(
     pressureSnapshots,
     "cityEvents",
@@ -3109,6 +3317,8 @@ function buildWorldPressureAudit({ moments, objectiveSequenceAudit }) {
 
   return {
     cityEventTransitions,
+    independentPressureChangeCount: independentTimelineChanges.length,
+    independentPressureKeys,
     jobWindowTransitions,
     liveAuthorityKinds,
     npcPressureMoveCount: pressureSnapshots.reduce(
@@ -3120,6 +3330,7 @@ function buildWorldPressureAudit({ moments, objectiveSequenceAudit }) {
     selectedPressureKinds,
     snapshotCount: snapshots.length,
     snapshots,
+    worldPressureTimeline,
   };
 }
 
@@ -3139,6 +3350,24 @@ function assertWorldPressureAudit(worldPressureAudit) {
       worldPressureAudit.npcPressureMoveCount > 0,
     `World pressure audit did not observe any pressure mutation across the player-POV run: ${JSON.stringify(
       worldPressureAudit,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    worldPressureAudit.worldPressureTimeline.length > 0,
+    "World pressure audit must include a timeline of pressure changes across observe moments.",
+  );
+  assert.ok(
+    worldPressureAudit.independentPressureChangeCount >= 2 &&
+      worldPressureAudit.independentPressureKeys.length >= 2,
+    `World pressure audit must observe at least two independent/passive pressure changes during zero-click observe. Observed: ${JSON.stringify(
+      {
+        independentPressureChangeCount:
+          worldPressureAudit.independentPressureChangeCount,
+        independentPressureKeys: worldPressureAudit.independentPressureKeys,
+        worldPressureTimeline: worldPressureAudit.worldPressureTimeline,
+      },
       null,
       2,
     )}`,
