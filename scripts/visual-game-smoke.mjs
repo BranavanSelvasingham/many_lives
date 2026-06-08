@@ -1036,12 +1036,31 @@ async function assertWatchModeFeelGuard() {
     ]),
   );
 
+  const openingDelay = readNumericConst(
+    streetSource,
+    "AUTOPLAY_OPENING_AUTOSTART_DELAY_MS",
+  );
+  const completionDelay = readNumericConst(
+    streetSource,
+    "FIRST_AFTERNOON_COMPLETION_DWELL_MS",
+  );
+  const readableDelayRanges = {
+    acting: [2_600, 3_400],
+    conversation: [2_800, 3_800],
+    moving: [2_600, 3_400],
+    opening: [2_600, 3_400],
+    waiting: [2_600, 3_600],
+  };
+  for (const [key, [min, max]] of Object.entries(readableDelayRanges)) {
+    const value = key === "opening" ? openingDelay : delayValues[key];
+    assert.ok(
+      value >= min && value <= max,
+      `Watch-mode ${key} dwell should be readable but bounded (${min}-${max}ms): ${value}ms.`,
+    );
+  }
   assert.ok(
-    delayValues.acting <= 2_500 &&
-      delayValues.conversation <= 3_000 &&
-      delayValues.moving <= 2_000 &&
-      delayValues.waiting <= 2_500,
-    `Watch-mode autoplay is paced too slowly for true observation: ${JSON.stringify(delayValues)}`,
+    completionDelay >= 3_400 && completionDelay <= 4_500,
+    `First-afternoon completion dwell should remain readable but bounded: ${completionDelay}ms.`,
   );
   assert.ok(
     !streetSource.includes("Nudge Rowan"),
