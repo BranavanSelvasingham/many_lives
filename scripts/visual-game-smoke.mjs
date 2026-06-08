@@ -1909,15 +1909,156 @@ async function waitForStoredGameChoice(session) {
 async function inspectStoredGameChoice(session) {
   return session.evaluate(`(() => {
     const text = document.body.innerText || "";
+    const rawBackendError =
+      /\\{"message":|"message"\\s*:\\s*"Game\\s+game-|Game\\s+game-[A-Za-z0-9-]+\\s+was not found/i.test(text);
     return {
       bodyText: text.slice(0, 800),
       hasCompleteState: text.includes("COMPLETE") || text.includes("First afternoon complete"),
+      hasRawBackendError: rawBackendError,
       hasResumeButton: Boolean(document.querySelector("[data-resume-stored-game]")),
       hasStartNewButton: Boolean(document.querySelector("[data-start-new-game]")),
       localStorageGameId: window.localStorage.getItem("many-lives:street-game-id"),
       url: location.href
     };
   })()`);
+}
+
+async function createSmokeGame(baseUrl, label) {
+  const created = await fetchJson(`${baseUrl}/sim/game/new`, {
+    body: "{}",
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const gameId = created?.game?.id;
+  assert.ok(gameId, `${label} could not create a game id.`);
+  return gameId;
+}
+
+async function driftStoredGameIdAfterPrompt(session, promptedGameId) {
+  const driftGameId = await createSmokeGame(
+    activeWebBase,
+    "Stored-game prompt drift check",
+  );
+  assert.notEqual(
+    driftGameId,
+    promptedGameId,
+    "Stored-game prompt drift check reused the prompted game id.",
+  );
+
+  await session.evaluate(`(() => {
+    window.localStorage.setItem(
+      "many-lives:street-game-id",
+      ${JSON.stringify(driftGameId)}
+    );
+    return true;
+  })()`);
+
+  const driftedStorageGameId = await session.evaluate(
+    `window.localStorage.getItem("many-lives:street-game-id")`,
+  );
+  assert.equal(
+    driftedStorageGameId,
+    driftGameId,
+    "Stored-game prompt drift check did not update localStorage.",
+  );
+
+  return driftGameId;
+}
+
+async function waitForStoredGameUnavailable(session) {
+  return waitFor(
+    async () => {
+      try {
+        return await session.evaluate(`(() => {
+          const text = document.body.innerText || "";
+          return Boolean(
+            text.includes("That run is no longer available") &&
+              document.querySelector("[data-start-new-game]") &&
+              !document.querySelector("[data-resume-stored-game]")
+          );
+        })()`);
+      } catch {
+        return false;
+      }
+    },
+    CDP_WAIT_TIMEOUT_MS,
+    "Timed out waiting for the missing stored-game message.",
+  );
+}
+
+async function runMissingStoredGameCheck(session) {
+  const missingGameId = `game-missing-${Date.now()}`;
+  await session.evaluate(`(() => {
+    window.localStorage.setItem(
+      "many-lives:street-game-id",
+      ${JSON.stringify(missingGameId)}
+    );
+    return true;
+  })()`);
+
+  await session.navigate(
+    `${activeWebBase}/?autoplay=1&missingStoredPrompt=${Date.now()}`,
+  );
+  await waitForStoredGameChoice(session);
+  const prompt = await inspectStoredGameChoice(session);
+  assert.equal(
+    prompt.localStorageGameId,
+    missingGameId,
+    "Missing stored-game check did not prompt for the seeded missing id.",
+  );
+
+  await session.clickSelector("[data-resume-stored-game]");
+  await waitForStoredGameUnavailable(session);
+  const unavailable = await inspectStoredGameChoice(session);
+  assert.equal(
+    unavailable.hasRawBackendError,
+    false,
+    "Missing stored-game prompt leaked a raw backend error.",
+  );
+  assert.equal(
+    unavailable.hasResumeButton,
+    false,
+    "Missing stored-game prompt should not offer Resume again.",
+  );
+  assert.equal(
+    unavailable.hasStartNewButton,
+    true,
+    "Missing stored-game prompt should offer Start New.",
+  );
+  const storedAfterMissing = await session.evaluate(
+    `window.localStorage.getItem("many-lives:street-game-id")`,
+  );
+  assert.notEqual(
+    storedAfterMissing,
+    missingGameId,
+    "Missing stored-game id was not removed from localStorage.",
+  );
+  const probe = await session.readBrowserProbe();
+  assert.equal(
+    probe,
+    null,
+    "Missing stored-game resume should not silently load a replacement game.",
+  );
+
+  return {
+    missingGameId,
+    prompt,
+    unavailable,
+  };
+}
+
+function filterExpectedStoredGamePageErrors(pageErrors, storedGameChoice) {
+  const missingGameId = storedGameChoice?.missingStoredGame?.missingGameId;
+  if (!missingGameId) {
+    return pageErrors;
+  }
+
+  return pageErrors.filter((error) => {
+    return !(
+      error.includes("Failed to load resource") &&
+      error.includes(`/sim/game/${missingGameId}/state`)
+    );
+  });
 }
 
 async function runStoredGameChoiceCheck(session) {
@@ -1942,6 +2083,13 @@ async function runStoredGameChoiceCheck(session) {
     false,
     "Stored-game prompt should not bind a game id before the user chooses.",
   );
+  assert.equal(
+    prompt.localStorageGameId,
+    seededGameId,
+    "Stored-game prompt did not capture the seeded storage id.",
+  );
+
+  const driftGameId = await driftStoredGameIdAfterPrompt(session, seededGameId);
 
   await session.clickSelector("[data-resume-stored-game]");
   await session.waitForAppReady();
@@ -1966,8 +2114,12 @@ async function runStoredGameChoiceCheck(session) {
     "Start new run reused the stored game id.",
   );
 
+  const missingStoredGame = await runMissingStoredGameCheck(session);
+
   return {
+    driftGameId,
     freshGameId: freshProbe.gameId,
+    missingStoredGame,
     prompt,
     resumedGameId: resumedProbe.gameId,
     seededGameId,
@@ -1975,13 +2127,10 @@ async function runStoredGameChoiceCheck(session) {
 }
 
 async function createInteriorCameraGame() {
-  const created = await fetchJson(`${activeWebBase}/sim/game/new`, {
-    body: "{}",
-    headers: { "Content-Type": "application/json" },
-    method: "POST",
-  });
-  const gameId = created?.game?.id;
-  assert.ok(gameId, "Interior camera check could not create a game id.");
+  const gameId = await createSmokeGame(
+    activeWebBase,
+    "Interior camera check",
+  );
 
   const entered = await fetchJson(`${activeWebBase}/sim/game/${gameId}/command`, {
     body: JSON.stringify({ actionId: "enter:boarding-house", type: "act" }),
@@ -2172,10 +2321,14 @@ async function main() {
     interiorCamera = await runInteriorCameraCheck(session);
     process.stdout.write("[many-lives] Finished interior camera behavior.\n");
 
-    assert.deepEqual(
+    const unexpectedPageErrors = filterExpectedStoredGamePageErrors(
       session.pageErrors,
+      storedGameChoice,
+    );
+    assert.deepEqual(
+      unexpectedPageErrors,
       [],
-      `Page logged runtime errors:\n${session.pageErrors.join("\n")}`,
+      `Page logged runtime errors:\n${unexpectedPageErrors.join("\n")}`,
     );
 
     await writeFile(
