@@ -5275,7 +5275,8 @@ function buildBrowserMovementDiagnostics(
         snappedWaypoints: entry.snappedWaypoints,
         unreachableSegments: entry.unreachableSegments,
         usedVisualHints: entry.usedVisualHints,
-    })),
+      })),
+    scheduledNpcRoutes: buildScheduledNpcRouteDiagnostics(runtimeState),
     playerRoute:
       !routeSettled && routeWorldPath.length > 1 && motion.path.length > 1
         ? {
@@ -5296,6 +5297,179 @@ function buildBrowserMovementDiagnostics(
           }
         : null,
   };
+}
+
+function buildScheduledNpcRouteDiagnostics(
+  runtimeState: RuntimeState,
+): StreetBrowserMovementDiagnostics["scheduledNpcRoutes"] {
+  const game = runtimeState.snapshot.game;
+  if (!game) {
+    return [];
+  }
+
+  const visualScene = getPlayableVisualScene(game);
+  const streetSurface = buildVisualNavigationSurface(game, visualScene);
+  const locationsById = new Map(
+    game.locations.map((location) => [location.id, location]),
+  );
+  const currentHour = game.clock.hour + game.clock.minute / 60;
+  const diagnostics: StreetBrowserMovementDiagnostics["scheduledNpcRoutes"] = [];
+
+  for (const npc of game.npcs) {
+    const currentLocation = locationsById.get(npc.currentLocationId);
+    if (!currentLocation) {
+      continue;
+    }
+
+    const currentSchedule =
+      npc.schedule.find(
+        (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+      ) ?? null;
+    const nextSchedule =
+      npc.schedule
+        .filter((entry) => entry.fromHour > currentHour)
+        .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
+
+    if (currentSchedule?.locationId) {
+      const targetLocation = locationsById.get(currentSchedule.locationId);
+      if (targetLocation) {
+        diagnostics.push(
+          buildScheduledNpcRouteDiagnostic({
+            currentScheduleLocationId: currentSchedule.locationId,
+            fromLocation: currentLocation,
+            nextScheduleLocationId: nextSchedule?.locationId ?? null,
+            npcId: npc.id,
+            routeKind: "current-schedule-stop",
+            streetSurface,
+            targetLocation,
+            visualScene,
+          }),
+        );
+      }
+    }
+
+    if (nextSchedule?.locationId) {
+      const targetLocation = locationsById.get(nextSchedule.locationId);
+      if (targetLocation) {
+        diagnostics.push(
+          buildScheduledNpcRouteDiagnostic({
+            currentScheduleLocationId: currentSchedule?.locationId ?? null,
+            fromLocation: currentLocation,
+            nextScheduleLocationId: nextSchedule.locationId,
+            npcId: npc.id,
+            routeKind: "next-scheduled-stop",
+            streetSurface,
+            targetLocation,
+            visualScene,
+          }),
+        );
+      }
+    }
+  }
+
+  return diagnostics.sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function buildScheduledNpcRouteDiagnostic({
+  currentScheduleLocationId,
+  fromLocation,
+  nextScheduleLocationId,
+  npcId,
+  routeKind,
+  streetSurface,
+  targetLocation,
+  visualScene,
+}: {
+  currentScheduleLocationId: string | null;
+  fromLocation: LocationState;
+  nextScheduleLocationId: string | null;
+  npcId: string;
+  routeKind: "current-schedule-stop" | "next-scheduled-stop";
+  streetSurface: ReturnType<typeof buildVisualNavigationSurface>;
+  targetLocation: LocationState;
+  visualScene: VisualScene | null;
+}): StreetBrowserMovementDiagnostics["scheduledNpcRoutes"][number] {
+  const key = `${npcId}:${routeKind}:${fromLocation.id}->${targetLocation.id}`;
+  if (fromLocation.id === targetLocation.id) {
+    return {
+      acceptedNoRouteReason: "same-location/no-route-needed",
+      currentScheduleLocationId,
+      droppedWaypoints: 0,
+      fromLocationId: fromLocation.id,
+      key,
+      legal: true,
+      nextScheduleLocationId,
+      npcId,
+      pathLength: 0,
+      reachesTarget: true,
+      routeKind,
+      routed: false,
+      sampledPointsLegal: true,
+      toLocationId: targetLocation.id,
+      unreachableSegments: 0,
+      visualObstaclesClear: true,
+    };
+  }
+
+  const fromPoint = nearestStreetWalkableForLocation({
+    location: fromLocation,
+    streetSurface,
+  });
+  const toPoint = nearestStreetWalkableForLocation({
+    location: targetLocation,
+    streetSurface,
+  });
+  const tilePath =
+    fromPoint && toPoint
+      ? streetSurface.routeFinder(fromPoint.tile, toPoint.tile)
+      : [];
+  const reachesTarget = toPoint
+    ? routeReachesDestination(tilePath, toPoint.tile)
+    : false;
+  const worldPath = tilePath.map((point) =>
+    projectVisualNavigationTileCenter(visualScene, point.x, point.y),
+  );
+  const sampledPointsLegal =
+    reachesTarget &&
+    worldPath.length > 1 &&
+    isVisualWorldPathLegal(worldPath, streetSurface.walkableRuntimePoints);
+  const legal = reachesTarget && sampledPointsLegal;
+
+  return {
+    acceptedNoRouteReason: null,
+    currentScheduleLocationId,
+    droppedWaypoints: fromPoint && toPoint ? 0 : 1,
+    fromLocationId: fromLocation.id,
+    key,
+    legal,
+    nextScheduleLocationId,
+    npcId,
+    pathLength: tilePath.length,
+    reachesTarget,
+    routeKind,
+    routed: tilePath.length > 1,
+    sampledPointsLegal,
+    toLocationId: targetLocation.id,
+    unreachableSegments: legal ? 0 : 1,
+    visualObstaclesClear: sampledPointsLegal,
+  };
+}
+
+function nearestStreetWalkableForLocation({
+  location,
+  streetSurface,
+}: {
+  location: LocationState;
+  streetSurface: ReturnType<typeof buildVisualNavigationSurface>;
+}) {
+  return findNearestWalkablePointByWorldHint(
+    streetSurface.walkableRuntimePoints,
+    mapTileToWorldCenter(location.entryX, location.entryY),
+    {
+      preferredKinds: PUBLIC_TRAVEL_TILE_KINDS,
+      preferredLocationId: location.id,
+    },
+  );
 }
 
 function warmBrowserPatrolDiagnostics(runtimeState: RuntimeState) {
