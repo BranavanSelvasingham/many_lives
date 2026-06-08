@@ -434,7 +434,7 @@ async function assertRowanBrowserArtifacts(logLine) {
       minBytes: 120_000,
     },
     {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "9a-ada-live-thread-route-start.png"),
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "8a-enter-cafe-interior-route-start.png"),
       minBytes: 120_000,
     },
     {
@@ -454,7 +454,7 @@ async function assertRowanBrowserArtifacts(logLine) {
       minBytes: 120_000,
     },
     {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "19a-home-reset-route-start.png"),
+      filePath: path.join(BROWSER_PLAYTEST_DIR, "18a-enter-morrow-return-route-start.png"),
       minBytes: 120_000,
     },
     {

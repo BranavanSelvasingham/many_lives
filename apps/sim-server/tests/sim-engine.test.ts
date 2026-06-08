@@ -620,7 +620,8 @@ describe("SimulationEngine street slice", () => {
       world,
       (nextWorld) =>
         !nextWorld.activeConversation &&
-        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
+        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
       12,
     );
 
@@ -631,6 +632,12 @@ describe("SimulationEngine street slice", () => {
       ...(world.rowanAutonomy.intent?.signals ?? []),
     ].join(" ");
 
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.rowanAutonomy.actionId).not.toBe("reflect:first-afternoon-plan");
+    expect(world.rowanAutonomy.targetLocationId).toBe("tea-house");
+    expect(world.rowanAutonomy.planningTrace?.selectedTargetLocationId).toBe(
+      "tea-house",
+    );
     expect(commitmentCopy).toMatch(/Kettle & Lamp|Ada|cafe|lunch/i);
     expect(commitmentCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
     expect(commitmentCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
@@ -1077,7 +1084,7 @@ describe("SimulationEngine street slice", () => {
     }
   });
 
-  it("does not let the live planner skip required first-afternoon predicate actions", async () => {
+  it("does not expose Mara's Ada lead as a hidden Morrow House reflection step", async () => {
     const setupEngine = new SimulationEngine(new MockAIProvider());
     let world = await setupEngine.createGame("game-ai-planner-predicate-action");
 
@@ -1085,19 +1092,21 @@ describe("SimulationEngine street slice", () => {
       setupEngine,
       world,
       (nextWorld) =>
-        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
+        !nextWorld.activeConversation &&
+        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
     );
 
-    expect(world.firstAfternoon?.planSettledAt).toBeUndefined();
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
-      targetLocationId: "boarding-house",
+      targetLocationId: "tea-house",
     });
+    expect(world.rowanAutonomy.actionId).not.toBe("reflect:first-afternoon-plan");
 
     const provider = new PlanningAIProvider({
       actionId: "reflect:first-afternoon-pump",
       confidence: 0.96,
-      rationale: "Try to take the pump fork before the Ada plan is committed.",
+      rationale: "Try to take the pump fork after the Ada lead is committed.",
     });
     const liveEngine = new SimulationEngine(provider);
 
@@ -1109,12 +1118,11 @@ describe("SimulationEngine street slice", () => {
     const plannerRequest = provider.requests[provider.requests.length - 1];
     const allowedActionIds =
       plannerRequest?.allowedActions.map((action) => action.actionId) ?? [];
-    expect(allowedActionIds).toContain("reflect:first-afternoon-plan");
-    expect(allowedActionIds).not.toContain("move:tea-house");
+    expect(allowedActionIds).toContain("exit:boarding-house");
+    expect(allowedActionIds).not.toContain("reflect:first-afternoon-plan");
     expect(allowedActionIds).not.toContain("reflect:first-afternoon-pump");
     expect(world.firstAfternoon?.planSettledAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "exit:boarding-house",
       targetLocationId: "tea-house",
     });
   });
@@ -1127,16 +1135,13 @@ describe("SimulationEngine street slice", () => {
       setupEngine,
       world,
       (nextWorld) =>
-        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
+        !nextWorld.activeConversation &&
+        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
     );
-    world = await setupEngine.runCommand(world, {
-      type: "act",
-      actionId: "reflect:first-afternoon-plan",
-    });
 
     expect(world.firstAfternoon?.planSettledAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "exit:boarding-house",
       targetLocationId: "tea-house",
     });
 
@@ -1434,7 +1439,7 @@ describe("SimulationEngine street slice", () => {
     ).toMatch(/room|Morrow House|tonight/i);
   });
 
-  it("exposes the first afternoon as competing live choices with a planner trace", async () => {
+  it("turns Mara's grounded lead into a Kettle & Lamp sequence with a planner trace", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-live-fork");
 
@@ -1448,13 +1453,11 @@ describe("SimulationEngine street slice", () => {
       allowTimeSkip: false,
     });
 
-    expect(world.availableActions.map((action) => action.id)).toEqual(
-      expect.arrayContaining([
-        "reflect:first-afternoon-plan",
-        "reflect:first-afternoon-pump",
-        "rest:home",
-      ]),
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "reflect:first-afternoon-plan",
     );
+    expect(world.rowanAutonomy.targetLocationId).toBe("tea-house");
     expect(world.rowanAutonomy.planningTrace).toMatchObject({
       selectedActionId: expect.any(String),
       selectedPlanKey: expect.any(String),
@@ -1468,24 +1471,13 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.considered.map(
         (option) => option.actionId,
       ),
-    ).toEqual(
-      expect.arrayContaining([
-        "reflect:first-afternoon-plan",
-        "reflect:first-afternoon-pump",
-      ]),
-    );
-    expect(
-      world.rowanAutonomy.planningTrace?.rejected.some(
-        (option) => option.actionId === "reflect:first-afternoon-pump",
-      ),
-    ).toBe(true);
+    ).toContain("exit:boarding-house");
     expect(
       world.rowanAutonomy.planningTrace?.considered.find(
         (option) => option.status === "selected",
       ),
     ).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
-      matchedOutcomeId: "first-afternoon-choose-move",
+      targetLocationId: "tea-house",
       planKey: world.rowanAutonomy.planningTrace?.selectedPlanKey,
       pressureKind: "predicate",
     });
@@ -1520,10 +1512,14 @@ describe("SimulationEngine street slice", () => {
         (option) => option.status === "selected",
       ),
     ).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
-      matchedOutcomeId: "first-afternoon-choose-move",
+      targetLocationId: "tea-house",
       pressureKind: "predicate",
     });
+    expect(
+      predicateWorld.rowanAutonomy.planningTrace?.considered.find(
+        (option) => option.status === "selected",
+      )?.actionId,
+    ).not.toBe("reflect:first-afternoon-plan");
 
     const recoverySetup = await buildPostMaraWorld("game-pressure-branch-energy");
     recoverySetup.world.player.energy = 18;
@@ -1651,10 +1647,6 @@ describe("SimulationEngine street slice", () => {
     world = await engine.runCommand(world, {
       type: "advance_objective",
       allowTimeSkip: false,
-    });
-    world = await engine.runCommand(world, {
-      type: "act",
-      actionId: "reflect:first-afternoon-plan",
     });
     world = await enterTeaHouse(engine, world);
     world = await engine.runCommand(world, {
@@ -2044,13 +2036,13 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.activeConversation).toBeUndefined();
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
       autoContinue: true,
       layer: "objective",
-      stepKind: "act",
-      targetLocationId: "boarding-house",
+      targetLocationId: "tea-house",
     });
+    expect(world.rowanAutonomy.actionId).not.toBe("reflect:first-afternoon-plan");
     expectCognitionToMirrorAutonomy(world);
   });
 
@@ -2071,13 +2063,14 @@ describe("SimulationEngine street slice", () => {
     });
     expect(world.activeConversation).toBeUndefined();
     expect(world.player.currentLocationId).toBe("boarding-house");
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
       autoContinue: true,
       layer: "objective",
       stepKind: "act",
-      targetLocationId: "boarding-house",
+      targetLocationId: "tea-house",
     });
+    expect(world.rowanAutonomy.actionId).not.toBe("reflect:first-afternoon-plan");
 
     world = await engine.runCommand(world, {
       type: "advance_objective",
@@ -2087,7 +2080,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy).toMatchObject({
       autoContinue: true,
       layer: "objective",
-      stepKind: "act",
+      stepKind: "move",
       targetLocationId: "tea-house",
     });
 
@@ -2124,15 +2117,18 @@ describe("SimulationEngine street slice", () => {
       engine,
       world,
       (nextWorld) =>
-        nextWorld.rowanAutonomy.actionId === "reflect:first-afternoon-plan",
+        !nextWorld.activeConversation &&
+        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
     );
 
     expect(world.activeConversation).toBeUndefined();
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
       mode: "acting",
-      targetLocationId: "boarding-house",
+      targetLocationId: "tea-house",
     });
+    expect(world.rowanAutonomy.actionId).not.toBe("reflect:first-afternoon-plan");
 
     world = await engine.runCommand(world, {
       type: "advance_objective",
@@ -2140,7 +2136,7 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.rowanAutonomy).toMatchObject({
-      mode: "acting",
+      mode: "moving",
       targetLocationId: "tea-house",
     });
 
@@ -2194,10 +2190,11 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.activeConversation).toBeUndefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
+      actionId: "exit:boarding-house",
       layer: "objective",
       mode: "acting",
       stepKind: "act",
+      targetLocationId: "tea-house",
     });
     expectCognitionToMirrorAutonomy(world);
   });
@@ -2275,12 +2272,12 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.activeConversation).toBeUndefined();
     expect(world.rowanAutonomy).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
+      actionId: "exit:boarding-house",
       autoContinue: true,
       layer: "objective",
       mode: "acting",
       stepKind: "act",
-      targetLocationId: "boarding-house",
+      targetLocationId: "tea-house",
     });
     expectCognitionToMirrorAutonomy(world);
   });
