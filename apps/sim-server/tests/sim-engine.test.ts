@@ -1553,9 +1553,19 @@ describe("SimulationEngine street slice", () => {
         (option) => option.status === "selected",
       ),
     ).toMatchObject({
+      legalBacking: {
+        actionId: "exit:boarding-house",
+        locationId: "boarding-house",
+        source: "current-legal-action-surface",
+      },
       targetLocationId: "tea-house",
       planKey: world.rowanAutonomy.planningTrace?.selectedPlanKey,
       pressureKind: "predicate",
+    });
+    expect(world.rowanAutonomy.planningTrace?.selectedLegalBacking).toMatchObject({
+      actionId: "exit:boarding-house",
+      locationId: "boarding-house",
+      source: "current-legal-action-surface",
     });
   });
 
@@ -2812,10 +2822,18 @@ describe("SimulationEngine street slice", () => {
         (option) =>
           option.status === "selected" &&
           option.targetLocationId === "tea-house" &&
+          option.legalBacking?.actionId === "move:tea-house" &&
+          option.legalBacking?.locationId === "tea-house" &&
+          option.legalBacking?.source === "simulator-validated-move" &&
           option.provenance === "objective-predicate" &&
           option.matchedOutcomeId === "predicate-tea-house-visit",
       ),
     ).toBe(true);
+    expect(world.rowanAutonomy.planningTrace?.selectedLegalBacking).toMatchObject({
+      actionId: "move:tea-house",
+      locationId: "tea-house",
+      source: "simulator-validated-move",
+    });
     expect(
       world.rowanAutonomy.planningTrace?.considered.some(
         (option) =>

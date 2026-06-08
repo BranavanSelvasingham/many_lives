@@ -545,9 +545,24 @@ export type RowanPlanningTraceProvenance =
   | "route-scaffold"
   | "stale-predicate";
 
+export type RowanPlanningTraceLegalBackingSource =
+  | "conversation-resolution"
+  | "current-legal-action-surface"
+  | "destination-preview-legal-action"
+  | "projected-follow-up-legal-action"
+  | "simulator-validated-move"
+  | "simulator-validated-wait";
+
+export interface RowanPlanningTraceLegalBacking {
+  actionId?: string;
+  locationId?: string;
+  source: RowanPlanningTraceLegalBackingSource;
+}
+
 export interface RowanPlanningTraceOption {
   actionId?: string;
   label: string;
+  legalBacking?: RowanPlanningTraceLegalBacking;
   matchedOutcomeId?: string;
   pressureId?: string;
   pressureKind?: string;
@@ -566,6 +581,7 @@ export interface RowanPlanningTraceStep {
   actionId?: string;
   kind: RowanAutonomyStepKind;
   label: string;
+  legalBacking?: RowanPlanningTraceLegalBacking;
   legal: boolean;
   npcId?: string;
   rationale: string;
@@ -591,6 +607,7 @@ export interface RowanPlanningTrace {
   rejected: RowanPlanningTraceOption[];
   selectedActionId?: string;
   selectedLabel?: string;
+  selectedLegalBacking?: RowanPlanningTraceLegalBacking;
   selectedMatchedOutcomeId?: string;
   selectedPlanKey?: string;
   selectedPressureId?: string;

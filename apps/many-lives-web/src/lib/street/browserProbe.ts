@@ -151,6 +151,13 @@ function planningTraceProbePayload(game: StreetGameState) {
   const optionPayload = (option: (typeof trace.considered)[number]) => ({
     actionId: option.actionId ?? null,
     label: option.label,
+    legalBacking: option.legalBacking
+      ? {
+          actionId: option.legalBacking.actionId ?? null,
+          locationId: option.legalBacking.locationId ?? null,
+          source: option.legalBacking.source,
+        }
+      : null,
     matchedOutcomeId: option.matchedOutcomeId ?? null,
     npcId: option.npcId ?? null,
     planKey: option.planKey,
@@ -173,6 +180,13 @@ function planningTraceProbePayload(game: StreetGameState) {
       kind: step.kind,
       label: step.label,
       legal: step.legal,
+      legalBacking: step.legalBacking
+        ? {
+            actionId: step.legalBacking.actionId ?? null,
+            locationId: step.legalBacking.locationId ?? null,
+            source: step.legalBacking.source,
+          }
+        : null,
       npcId: step.npcId ?? null,
       rationale: step.rationale,
       targetLocationId: step.targetLocationId ?? null,
@@ -190,6 +204,13 @@ function planningTraceProbePayload(game: StreetGameState) {
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
+    selectedLegalBacking: trace.selectedLegalBacking
+      ? {
+          actionId: trace.selectedLegalBacking.actionId ?? null,
+          locationId: trace.selectedLegalBacking.locationId ?? null,
+          source: trace.selectedLegalBacking.source,
+        }
+      : null,
     selectedMatchedOutcomeId: trace.selectedMatchedOutcomeId ?? null,
     selectedPlanKey: trace.selectedPlanKey ?? null,
     selectedPressureId: trace.selectedPressureId ?? null,

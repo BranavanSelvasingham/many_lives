@@ -1612,6 +1612,13 @@ function planningTraceProbeFromGame(game) {
   const optionPayload = (option) => ({
     actionId: option.actionId ?? null,
     label: option.label,
+    legalBacking: option.legalBacking
+      ? {
+          actionId: option.legalBacking.actionId ?? null,
+          locationId: option.legalBacking.locationId ?? null,
+          source: option.legalBacking.source ?? null,
+        }
+      : null,
     matchedOutcomeId: option.matchedOutcomeId ?? null,
     npcId: option.npcId ?? null,
     planKey: option.planKey ?? null,
@@ -1634,6 +1641,13 @@ function planningTraceProbeFromGame(game) {
       kind: step.kind,
       label: step.label,
       legal: step.legal,
+      legalBacking: step.legalBacking
+        ? {
+            actionId: step.legalBacking.actionId ?? null,
+            locationId: step.legalBacking.locationId ?? null,
+            source: step.legalBacking.source ?? null,
+          }
+        : null,
       npcId: step.npcId ?? null,
       rationale: step.rationale,
       targetLocationId: step.targetLocationId ?? null,
@@ -1651,6 +1665,13 @@ function planningTraceProbeFromGame(game) {
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
+    selectedLegalBacking: trace.selectedLegalBacking
+      ? {
+          actionId: trace.selectedLegalBacking.actionId ?? null,
+          locationId: trace.selectedLegalBacking.locationId ?? null,
+          source: trace.selectedLegalBacking.source ?? null,
+        }
+      : null,
     selectedMatchedOutcomeId: trace.selectedMatchedOutcomeId ?? null,
     selectedPlanKey: trace.selectedPlanKey ?? null,
     selectedPressureId: trace.selectedPressureId ?? null,
@@ -1867,6 +1888,14 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
 }
 
 function assertPlanningTracePayload(label, planningTrace) {
+  const legalBackingSources = new Set([
+    "conversation-resolution",
+    "current-legal-action-surface",
+    "destination-preview-legal-action",
+    "projected-follow-up-legal-action",
+    "simulator-validated-move",
+    "simulator-validated-wait",
+  ]);
   assert.ok(
     Array.isArray(planningTrace.outcomes),
     `${label}: planner trace is missing outcome predicates.`,
@@ -1883,10 +1912,11 @@ function assertPlanningTracePayload(label, planningTrace) {
         typeof step.legal === "boolean" &&
         step.kind &&
         step.validation &&
+        Object.prototype.hasOwnProperty.call(step, "legalBacking") &&
         Object.prototype.hasOwnProperty.call(step, "targetLocationId") &&
         Object.prototype.hasOwnProperty.call(step, "npcId"),
     ),
-    `${label}: planner trace next steps must expose kind, legality, validation, target, and npc.`,
+    `${label}: planner trace next steps must expose kind, legality, backing, validation, target, and npc.`,
   );
   assert.ok(
     planningTrace.considered.every(
@@ -1901,13 +1931,18 @@ function assertPlanningTracePayload(label, planningTrace) {
         Object.prototype.hasOwnProperty.call(option, "pressureId") &&
         Object.prototype.hasOwnProperty.call(option, "pressureKind") &&
         Object.prototype.hasOwnProperty.call(option, "pressureLabel") &&
+        Object.prototype.hasOwnProperty.call(option, "legalBacking") &&
         Object.prototype.hasOwnProperty.call(option, "provenance"),
     ),
-    `${label}: planner trace considered options must expose plan key, score, rationale, target, npc, outcome, pressure, and provenance metadata.`,
+    `${label}: planner trace considered options must expose plan key, score, rationale, target, npc, outcome, pressure, legal backing, and provenance metadata.`,
   );
   const selectedTraceOption = planningTrace.considered.find(
     (option) => option.status === "selected",
   );
+  const selectedLegalBacking =
+    planningTrace.selectedLegalBacking ??
+    selectedTraceOption?.legalBacking ??
+    null;
   assert.ok(
     planningTrace.selectedPlanKey &&
       selectedTraceOption?.planKey === planningTrace.selectedPlanKey,
@@ -1921,11 +1956,17 @@ function assertPlanningTracePayload(label, planningTrace) {
     `${label}: selected planner option must not have stale predicate or route scaffold provenance.`,
   );
   assert.ok(
+    selectedLegalBacking?.source &&
+      legalBackingSources.has(selectedLegalBacking.source),
+    `${label}: selected planner option must expose a concrete legal backing source.`,
+  );
+  assert.ok(
     Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureId") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureKind") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedMatchedOutcomeId") &&
+      Object.prototype.hasOwnProperty.call(planningTrace, "selectedLegalBacking") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedTargetLocationId"),
-    `${label}: planner trace must expose selected pressure, selected outcome, and selected target metadata.`,
+    `${label}: planner trace must expose selected pressure, selected outcome, selected legal backing, and selected target metadata.`,
   );
   assert.ok(
     planningTrace.rejected.every(
@@ -2280,6 +2321,13 @@ function compactPlanningTraceOption(option) {
   return {
     actionId: option.actionId ?? null,
     label: compactObjectiveSequenceText(option.label ?? "", 120),
+    legalBacking: option.legalBacking
+      ? {
+          actionId: option.legalBacking.actionId ?? null,
+          locationId: option.legalBacking.locationId ?? null,
+          source: option.legalBacking.source ?? null,
+        }
+      : null,
     matchedOutcomeId: option.matchedOutcomeId ?? null,
     planKey: option.planKey ?? null,
     pressureId: option.pressureId ?? null,
@@ -2318,6 +2366,16 @@ function buildObjectiveSequenceAuthorityEvidence({
       rejectedStaleOptionCount: 0,
       rejectedStaleOptions: [],
       selectedConsideredOption: null,
+      selectedLegalBacking: nonActionResolution
+        ? {
+            actionId: null,
+            locationId: autonomy?.targetLocationId ?? null,
+            source: "conversation-resolution",
+          }
+        : null,
+      selectedLegalBackingSource: nonActionResolution
+        ? "conversation-resolution"
+        : null,
       selectedMatchedOutcomeId: null,
       selectedPressureId: commitmentAction
         ? `commitment:${selectedActionId}`
@@ -2329,6 +2387,7 @@ function buildObjectiveSequenceAuthorityEvidence({
             actionId: selectedActionId,
             kind: autonomy?.stepKind ?? null,
             label: compactObjectiveSequenceText(autonomy?.label ?? "", 120),
+            legalBacking: null,
             legal: null,
             targetLocationId: autonomy?.targetLocationId ?? null,
             validation:
@@ -2369,6 +2428,11 @@ function buildObjectiveSequenceAuthorityEvidence({
     planningTrace.selectedPressureLabel ??
     selectedConsideredOption?.pressureLabel ??
     null;
+  const selectedLegalBacking =
+    planningTrace.selectedLegalBacking ??
+    selectedConsideredOption?.legalBacking ??
+    selectedStep?.legalBacking ??
+    null;
   const authorityKinds = [];
   const selectedProvenance = selectedConsideredOption?.provenance ?? null;
 
@@ -2381,8 +2445,9 @@ function buildObjectiveSequenceAuthorityEvidence({
   ) {
     authorityKinds.push(`live-pressure:${selectedPressureKind}`);
   }
-  if (selectedStep?.legal) {
+  if (selectedStep?.legal && selectedLegalBacking?.source) {
     authorityKinds.push("legal-action");
+    authorityKinds.push(`legal-action:${selectedLegalBacking.source}`);
   }
   if (selectedProvenance) {
     authorityKinds.push(`provenance:${selectedProvenance}`);
@@ -2401,12 +2466,20 @@ function buildObjectiveSequenceAuthorityEvidence({
   return {
     authorityKinds: [...new Set(authorityKinds)],
     hasAutonomyAction: false,
-    hasLegalSelectedStep: Boolean(selectedStep?.legal),
+    hasLegalSelectedStep: Boolean(selectedStep?.legal && selectedLegalBacking?.source),
     hasPlannerTrace: true,
     nonActionResolution: routeRole === "conversation-resolution" && !selectedActionId,
     rejectedStaleOptionCount: rejectedStaleOptions.length,
     rejectedStaleOptions,
     selectedConsideredOption: compactPlanningTraceOption(selectedConsideredOption),
+    selectedLegalBacking: selectedLegalBacking
+      ? {
+          actionId: selectedLegalBacking.actionId ?? null,
+          locationId: selectedLegalBacking.locationId ?? null,
+          source: selectedLegalBacking.source ?? null,
+        }
+      : null,
+    selectedLegalBackingSource: selectedLegalBacking?.source ?? null,
     selectedMatchedOutcomeId,
     selectedPressureId,
     selectedPressureKind,
@@ -2417,6 +2490,13 @@ function buildObjectiveSequenceAuthorityEvidence({
           actionId: selectedStep.actionId ?? null,
           kind: selectedStep.kind ?? null,
           label: compactObjectiveSequenceText(selectedStep.label ?? "", 120),
+          legalBacking: selectedStep.legalBacking
+            ? {
+                actionId: selectedStep.legalBacking.actionId ?? null,
+                locationId: selectedStep.legalBacking.locationId ?? null,
+                source: selectedStep.legalBacking.source ?? null,
+              }
+            : null,
           legal: Boolean(selectedStep.legal),
           targetLocationId: selectedStep.targetLocationId ?? null,
           validation: compactObjectiveSequenceText(selectedStep.validation ?? "", 180),
@@ -2600,6 +2680,17 @@ function buildObjectiveSequenceAuditEntry({
       routeRole,
       selectedActionId,
     }) &&
+    authorityEvidence.selectedProvenance === "legal-action" &&
+    !authorityEvidence.selectedLegalBackingSource
+  ) {
+    failureReasons.push("selected-legal-action-missing-backing-source");
+  }
+
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
     routeRole === "work" &&
     !authorityEvidence.hasLegalSelectedStep &&
     !authorityEvidence.hasAutonomyAction
@@ -2729,7 +2820,7 @@ function assertObjectiveSequenceAudit(objectiveSequenceAudit) {
   assert.equal(
     missingAuthority.length,
     0,
-    `Objective sequence audit found action beats without predicate/live-pressure/legal-action authority: ${JSON.stringify(
+    `Objective sequence audit found action beats without predicate/live-pressure/concrete legal-action authority: ${JSON.stringify(
       missingAuthority,
       null,
       2,
@@ -2768,6 +2859,10 @@ function assertObjectiveSequenceAudit(objectiveSequenceAudit) {
       `Objective sequence audit did not expose ${requiredAuthorityKind} authority.`,
     );
   }
+  assert.ok(
+    [...authorityKinds].some((kind) => kind.startsWith("legal-action:")),
+    "Objective sequence audit did not expose a concrete legal-action backing source.",
+  );
 }
 
 function objectiveSequenceGroupIdForEntry(entry) {
@@ -2956,8 +3051,9 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
   );
   assert.ok(
     kettleRun?.authorityKinds.includes("objective-predicate") &&
-      kettleRun?.authorityKinds.includes("legal-action"),
-    "Kettle sequence must expose objective-predicate and legal-action authority.",
+      kettleRun?.authorityKinds.includes("legal-action") &&
+      kettleRun?.authorityKinds.some((kind) => kind.startsWith("legal-action:")),
+    "Kettle sequence must expose objective-predicate and concrete legal-action authority.",
   );
   for (const expectedRole of ["portal-exit", "route-move", "portal-enter", "conversation-start"]) {
     assert.ok(
@@ -2980,9 +3076,10 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
   );
   assert.ok(
     returnRun?.authorityKinds.includes("legal-action") &&
+      returnRun?.authorityKinds.some((kind) => kind.startsWith("legal-action:")) &&
       (returnRun?.authorityKinds.includes("objective-predicate") ||
         returnRun?.authorityKinds.some((kind) => kind.startsWith("live-pressure:"))),
-    "Return-home sequence must expose legal-action plus predicate or live-pressure authority.",
+    "Return-home sequence must expose concrete legal-action plus predicate or live-pressure authority.",
   );
   assert.ok(
     returnRun?.routeRoles.includes("framed-reflection"),
