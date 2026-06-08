@@ -3739,6 +3739,7 @@ function staleObjectiveActionTraceOptions(
         targetLocationId,
         npcId: outcome.npcId,
         planKey: `stale-predicate|${outcome.id}|${outcome.actionId ?? "no-action"}|${targetLocationId ?? "no-location"}`,
+        provenance: "stale-predicate" as const,
       };
     });
   const trailOptions = (world.player.objective?.trail ?? [])
@@ -3765,6 +3766,7 @@ function staleObjectiveActionTraceOptions(
         targetLocationId,
         npcId: step.npcId,
         planKey: `stale-trail|${step.id}|${step.actionId ?? "no-action"}|${targetLocationId ?? "no-location"}`,
+        provenance: "route-scaffold" as const,
       };
     });
 
@@ -4120,6 +4122,7 @@ function planningTraceOptionForPlan(
     currentObjectiveDirective(world),
     plan,
   );
+  const provenance = planningTraceProvenanceForPlan(pressureMatch);
   return {
     actionId,
     label: autonomyLabelForNextBeat(world, plan),
@@ -4129,6 +4132,7 @@ function planningTraceOptionForPlan(
     pressureId: pressureMatch?.pressure.id,
     pressureKind: pressureMatch?.pressure.kind,
     pressureLabel: pressureMatch?.pressure.label,
+    provenance,
     rationale: compactIntentText(
       playerFacingAutonomyRationale(world, plan.rationale) || plan.rationale,
       140,
@@ -4141,6 +4145,20 @@ function planningTraceOptionForPlan(
     status: forcedStatus ?? (selected ? "selected" : "rejected"),
     targetLocationId: plan.targetLocationId,
   };
+}
+
+function planningTraceProvenanceForPlan(
+  pressureMatch: ReturnType<typeof bestObjectivePlanningPressureMatch>,
+): RowanPlanningTraceOption["provenance"] {
+  if (pressureMatch?.pressure.kind === "predicate") {
+    return "objective-predicate";
+  }
+
+  if (pressureMatch) {
+    return "live-pressure";
+  }
+
+  return "legal-action";
 }
 
 function objectivePlanTraceKey(world: StreetGameState, plan: ObjectivePlan) {
@@ -4207,6 +4225,7 @@ function objectivePlanningTraceOutcomes(world: StreetGameState) {
   const objective = currentObjectiveDirective(world);
   const objectiveOutcomes =
     world.player.objective?.outcomes.map((outcome) => ({
+      authority: outcome.authority ?? "predicate",
       blockers: outcome.blockers,
       evidence: outcome.evidence,
       id: outcome.id,
@@ -4220,6 +4239,7 @@ function objectivePlanningTraceOutcomes(world: StreetGameState) {
       ? buildStreetPlanningOutcomes(world, objective)
           .filter((outcome) => !seen.has(outcome.id))
           .map((outcome) => ({
+            authority: "predicate" as const,
             blockers: outcome.blockers,
             evidence: outcome.evidence,
             id: outcome.id,

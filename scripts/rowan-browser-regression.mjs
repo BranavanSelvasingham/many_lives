@@ -1603,6 +1603,7 @@ function planningTraceProbeFromGame(game) {
     pressureId: option.pressureId ?? null,
     pressureKind: option.pressureKind ?? null,
     pressureLabel: option.pressureLabel ?? null,
+    provenance: option.provenance ?? null,
     rationale: option.rationale,
     reason: option.reason ?? null,
     score: option.score,
@@ -1624,6 +1625,7 @@ function planningTraceProbeFromGame(game) {
       validation: step.validation,
     })),
     outcomes: trace.outcomes.map((outcome) => ({
+      authority: outcome.authority ?? null,
       blockers: outcome.blockers ?? [],
       evidence: outcome.evidence ?? null,
       id: outcome.id,
@@ -1883,9 +1885,10 @@ function assertPlanningTracePayload(label, planningTrace) {
         Object.prototype.hasOwnProperty.call(option, "matchedOutcomeId") &&
         Object.prototype.hasOwnProperty.call(option, "pressureId") &&
         Object.prototype.hasOwnProperty.call(option, "pressureKind") &&
-        Object.prototype.hasOwnProperty.call(option, "pressureLabel"),
+        Object.prototype.hasOwnProperty.call(option, "pressureLabel") &&
+        Object.prototype.hasOwnProperty.call(option, "provenance"),
     ),
-    `${label}: planner trace considered options must expose plan key, score, rationale, target, npc, outcome, and pressure metadata.`,
+    `${label}: planner trace considered options must expose plan key, score, rationale, target, npc, outcome, pressure, and provenance metadata.`,
   );
   const selectedTraceOption = planningTrace.considered.find(
     (option) => option.status === "selected",
@@ -1896,6 +1899,13 @@ function assertPlanningTracePayload(label, planningTrace) {
     `${label}: planner trace selectedPlanKey must match the selected considered option.`,
   );
   assert.ok(
+    selectedTraceOption &&
+      !["route-scaffold", "stale-predicate"].includes(
+        selectedTraceOption.provenance,
+      ),
+    `${label}: selected planner option must not have stale predicate or route scaffold provenance.`,
+  );
+  assert.ok(
     Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureId") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureKind") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedMatchedOutcomeId") &&
@@ -1903,10 +1913,12 @@ function assertPlanningTracePayload(label, planningTrace) {
     `${label}: planner trace must expose selected pressure, selected outcome, and selected target metadata.`,
   );
   assert.ok(
-    planningTrace.rejected.every((option) =>
-      Object.prototype.hasOwnProperty.call(option, "reason"),
+    planningTrace.rejected.every(
+      (option) =>
+        Object.prototype.hasOwnProperty.call(option, "reason") &&
+        Object.prototype.hasOwnProperty.call(option, "provenance"),
     ),
-    `${label}: planner trace rejected options must expose rejection reasons.`,
+    `${label}: planner trace rejected options must expose rejection reasons and provenance.`,
   );
 }
 
@@ -2258,6 +2270,7 @@ function compactPlanningTraceOption(option) {
     pressureId: option.pressureId ?? null,
     pressureKind: option.pressureKind ?? null,
     pressureLabel: compactObjectiveSequenceText(option.pressureLabel ?? "", 120),
+    provenance: option.provenance ?? null,
     reason: option.reason ?? null,
     status: option.status ?? null,
     targetLocationId: option.targetLocationId ?? null,
@@ -2342,6 +2355,7 @@ function buildObjectiveSequenceAuthorityEvidence({
     selectedConsideredOption?.pressureLabel ??
     null;
   const authorityKinds = [];
+  const selectedProvenance = selectedConsideredOption?.provenance ?? null;
 
   if (selectedMatchedOutcomeId || selectedPressureKind === "predicate") {
     authorityKinds.push("objective-predicate");
@@ -2355,24 +2369,16 @@ function buildObjectiveSequenceAuthorityEvidence({
   if (selectedStep?.legal) {
     authorityKinds.push("legal-action");
   }
+  if (selectedProvenance) {
+    authorityKinds.push(`provenance:${selectedProvenance}`);
+  }
   if (routeRole === "conversation-resolution" && !selectedActionId) {
     authorityKinds.push("conversation-resolution");
   }
 
-  const stalePattern = /\b(?:stale|poison|route hint|trail|route-key|route key)\b/i;
   const rejectedStaleOptions = (planningTrace.rejected ?? [])
     .filter((option) =>
-      stalePattern.test(
-        [
-          option.label,
-          option.reason,
-          option.rationale,
-          option.planKey,
-          option.pressureLabel,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      ),
+      ["route-scaffold", "stale-predicate"].includes(option.provenance),
     )
     .slice(0, 4)
     .map(compactPlanningTraceOption);
@@ -2390,6 +2396,7 @@ function buildObjectiveSequenceAuthorityEvidence({
     selectedPressureId,
     selectedPressureKind,
     selectedPressureLabel: compactObjectiveSequenceText(selectedPressureLabel ?? "", 120),
+    selectedProvenance,
     selectedStep: selectedStep
       ? {
           actionId: selectedStep.actionId ?? null,
@@ -2583,6 +2590,18 @@ function buildObjectiveSequenceAuditEntry({
     !authorityEvidence.hasAutonomyAction
   ) {
     failureReasons.push("missing-work-commitment-authority");
+  }
+
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
+    ["route-scaffold", "stale-predicate"].includes(
+      authorityEvidence.selectedProvenance,
+    )
+  ) {
+    failureReasons.push("selected-trace-provenance-is-scaffold-only");
   }
 
   if (
