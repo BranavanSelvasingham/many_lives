@@ -5292,35 +5292,24 @@ function objectiveMoveIntentForLocation(
 
   const scaffoldIntent = objectiveRouteMoveIntent(world, objective, location.id);
   if (scaffoldIntent) {
-    const intent = buildNpcIntent(scaffoldIntent.npcId, scaffoldIntent.rationale);
-    if (intent) {
-      return intent;
-    }
-  }
-
-  if (objective.routeKey.startsWith("people-")) {
-    const npcId = objective.routeKey.slice("people-".length);
-    if (npcId !== "locals") {
-      const npc = npcById(world, npcId);
-      const intent = buildNpcIntent(
-        npcId,
-        `Walk to ${location.name} and make a real introduction with ${npc?.name ?? "the next person"}.`,
-      );
+    if (scaffoldIntent.npcId) {
+      const intent = buildNpcIntent(scaffoldIntent.npcId, scaffoldIntent.rationale);
       if (intent) {
-        return intent;
+        return scaffoldIntent.actionId
+          ? {
+              ...intent,
+              actionId: scaffoldIntent.actionId,
+            }
+          : intent;
       }
     }
-  }
 
-  if (
-    (objective.focus === "tool" || objective.routeKey.includes("tool")) &&
-    location.id === "repair-stall" &&
-    !hasItem(world, "item-wrench")
-  ) {
-    return {
-      actionId: "buy:item-wrench",
-      rationale: "Walk to Jo's repair stall and buy the wrench the problem needs.",
-    };
+    if (scaffoldIntent.actionId) {
+      return {
+        actionId: scaffoldIntent.actionId,
+        rationale: scaffoldIntent.rationale,
+      };
+    }
   }
 
   const pressureIntent = livePressureMoveIntentForLocation(world, location);
