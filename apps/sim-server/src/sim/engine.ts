@@ -1076,6 +1076,10 @@ async function advanceObjective(
 
   return executeRowanLoopStep<ThoughtRefreshMode | void>(loopStep, {
     idle: () => {
+      if (acknowledgeFirstAfternoonCompletion(world)) {
+        return "deterministic" as const;
+      }
+
       addFeed(
         world,
         "info",
@@ -1125,6 +1129,30 @@ async function advanceObjective(
       return "deterministic" as const;
     },
   });
+}
+
+function acknowledgeFirstAfternoonCompletion(world: StreetGameState): boolean {
+  if (
+    world.player.objective?.routeKey !== "first-afternoon" ||
+    !world.firstAfternoon?.completedAt ||
+    world.firstAfternoon.completionAcknowledgedAt ||
+    !isCurrentObjectiveComplete(world)
+  ) {
+    return false;
+  }
+
+  world.firstAfternoon.completionAcknowledgedAt = world.currentTime;
+  addFeed(
+    world,
+    "memory",
+    "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.",
+  );
+  rememberIfNew(
+    world,
+    "self",
+    "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.",
+  );
+  return true;
 }
 
 function resolveConversationTarget(world: StreetGameState, npcId: string) {
@@ -7729,17 +7757,18 @@ function completeFirstAfternoon(world: StreetGameState): void {
     world,
     teaShift,
   );
+  discoverProblem(world, "problem-pump");
   world.player.currentThought =
-    "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and tomorrow has a lead. That is enough for a first afternoon.";
+    "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.";
   addFeed(
     world,
     "memory",
-    "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and tomorrow has a real lead.",
+    "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
   );
   remember(
     world,
     "self",
-    "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay.",
+    "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
   );
 }
 
@@ -7771,7 +7800,7 @@ function buildFirstAfternoonFieldNote(
     memory:
       "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
     next:
-      "Sleep on the first foothold, then decide whether tomorrow starts with Ada's lead or the dock board.",
+      "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
   };
 }
 

@@ -710,6 +710,7 @@ export interface StreetGameState {
   cityEvents: CityEventState[];
   firstAfternoon?: {
     completedAt?: string;
+    completionAcknowledgedAt?: string;
     leadFieldNote?: {
       createdAt: string;
       evidence: string;

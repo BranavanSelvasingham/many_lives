@@ -738,7 +738,7 @@ function fieldNoteNextCopy(
   const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
   const stage = game.firstAfternoon?.teaShiftStage;
   if (game.firstAfternoon?.completedAt || game.firstAfternoon?.fieldNote) {
-    return "The first afternoon is settled; rest at Morrow House and decide which lead deserves tomorrow morning.";
+    return "The first afternoon is settled; rest at Morrow House, then weigh the yard work window against the Morrow Yard pump.";
   }
 
   if (teaJob?.completed || stage === "paid") {
@@ -799,15 +799,17 @@ function buildRowanNotebookModel({
   if (completed) {
     return {
       belief:
-        "Tonight's bed holds, Ada has seen Rowan keep up, and the first real money is in hand.",
+        "Tonight's bed holds, Ada has seen Rowan keep up, and the Morrow Yard pump is now a real local problem.",
       clue:
         game.firstAfternoon?.fieldNote?.memory ??
         "Kettle & Lamp now has a memory of Rowan following through.",
       confidence: "Earned.",
-      plan: "Rest at Morrow House and decide which lead deserves tomorrow morning.",
+      plan:
+        currentPlanHint ??
+        "Rest at Morrow House, then weigh the yard work window against the Morrow Yard pump.",
       title: "A foothold, finally",
       uncertainty:
-        "Whether tomorrow starts with Ada's lead, the dock board, or another person who noticed the shift.",
+        "Whether the next useful move is paid yard work, the pump, or another live pressure that changed while Rowan worked.",
     };
   }
 

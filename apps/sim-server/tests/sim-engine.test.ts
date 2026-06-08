@@ -3731,6 +3731,7 @@ describe("SimulationEngine street slice", () => {
     expect(result.finalWorld.firstAfternoon?.fieldNote).toMatchObject({
       evidence: expect.stringContaining("Kettle & Lamp"),
       learned: expect.stringContaining("Ada"),
+      next: expect.stringContaining("Morrow Yard pump"),
     });
     expect(result.finalWorld.firstAfternoon?.leadFieldNote).toMatchObject({
       evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
@@ -3747,6 +3748,12 @@ describe("SimulationEngine street slice", () => {
     expect(result.finalWorld.player.currentThought).toContain(
       "Tonight's bed holds",
     );
+    expect(
+      result.finalWorld.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({
+      discovered: true,
+      status: "active",
+    });
     expect(result.finalWorld.player.objective).toMatchObject({
       routeKey: "first-afternoon",
       progress: {
@@ -3762,5 +3769,95 @@ describe("SimulationEngine street slice", () => {
     expect(result.trace.map((entry) => entry.activeConversation)).toContain(
       "npc-ada",
     );
+  });
+
+  it("hands first-afternoon completion into a fresh state-derived next objective", async () => {
+    const result = await runRowanLoopSmoke({
+      gameId: "game-rowan-post-first-afternoon-handoff",
+    });
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = result.finalWorld;
+
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: false,
+      label: "First afternoon complete",
+      stepKind: "idle",
+    });
+    expect(world.player.objective).toMatchObject({
+      routeKey: "first-afternoon",
+      progress: {
+        completed: 8,
+        total: 8,
+      },
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.firstAfternoon?.completionAcknowledgedAt).toBeDefined();
+    expect(world.player.objective?.routeKey).not.toBe("first-afternoon");
+    expect(world.player.objective?.source).toBe("dynamic");
+    expect(world.player.objective?.progress.completed).toBeLessThan(
+      world.player.objective?.progress.total ?? 0,
+    );
+    expect(world.rowanAutonomy.label).not.toBe("First afternoon complete");
+    expect(world.rowanAutonomy.stepKind).not.toBe("idle");
+    expect(
+      [world.player.objective?.text, world.rowanAutonomy.detail]
+        .filter(Boolean)
+        .join(" "),
+    ).toMatch(/rest|yard|pump|work|wrench|Morrow/i);
+
+    expect(world.player.objective?.routeKey).toBe("rest-home");
+    expect(world.rowanAutonomy.actionId).toBe("rest:home");
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.player.objective?.routeKey).not.toBe("first-afternoon");
+    expect(world.player.objective?.routeKey).toBe("rest-home");
+    expect(world.rowanAutonomy.actionId).toBe("rest:home");
+    expect(world.player.energy).toBeLessThan(35);
+    expect(
+      world.jobs.find((job) => job.id === "job-yard-shift"),
+    ).toMatchObject({
+      discovered: true,
+      completed: false,
+      missed: false,
+    });
+    expect(
+      world.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({
+      discovered: true,
+      status: "active",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.player.objective?.routeKey).not.toBe("first-afternoon");
+    expect(world.player.objective?.routeKey).not.toBe("rest-home");
+    expect(world.rowanAutonomy.actionId).not.toBe("enter:boarding-house");
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("boarding-house");
+    if (world.player.objective?.routeKey === "work-yard") {
+      expect(world.rowanAutonomy.targetLocationId).toBe("freight-yard");
+    }
+    expect(
+      [
+        world.player.objective?.routeKey,
+        world.rowanAutonomy.actionId,
+        world.rowanAutonomy.targetLocationId,
+        world.rowanAutonomy.planningTrace?.selectedPressureKind,
+        world.rowanAutonomy.planningTrace?.selectedMatchedOutcomeId,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    ).toMatch(/rest|work|tool|help|predicate|job|energy|commitment/i);
   });
 });

@@ -322,6 +322,7 @@ export interface PlayerObjective {
 
 export interface FirstAfternoonState {
   completedAt?: string;
+  completionAcknowledgedAt?: string;
   leadFieldNote?: {
     createdAt: string;
     evidence: string;
