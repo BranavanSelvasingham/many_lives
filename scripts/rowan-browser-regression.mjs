@@ -2029,7 +2029,7 @@ function assertGameplayDom(label, game, probe, dom) {
   );
   assert.doesNotMatch(
     dom.bodyText,
-    /Nudge Rowan|This step is ready now|A next step is ready|Advance now|Autoplay is on; this skips|skip the (?:wait|pause)|confirm and commit/i,
+    /Nudge Rowan|Do this step|This step is ready now|A next step is ready|Advance now|Autoplay is on; this skips|skip the (?:wait|pause)|confirm and commit/i,
     `${label}: default Rowan rail leaked stale stepper or scaffold copy.`,
   );
   assert.doesNotMatch(
@@ -2069,9 +2069,10 @@ function assertGameplayDom(label, game, probe, dom) {
     );
   }
 
+  assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom);
   assertRailReadability(label, game, probe, dom);
 
-  if (label === "lunch-rush" || label === "finish-shift") {
+  if (label === "lunch-rush") {
     assert.match(
       dom.bodyText,
       /lunch rush|cup-and-counter|counter/i,
@@ -2100,6 +2101,48 @@ function assertGameplayDom(label, game, probe, dom) {
   }
 
   assertCriticalVisualCoherence(label, dom);
+}
+
+function assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom) {
+  const visibleText = [
+    dom.bodyText,
+    probe.rail?.now,
+    probe.rail?.next,
+    probe.rail?.thought,
+    probe.autonomy?.label,
+    probe.autonomy?.intent?.reason,
+    ...(probe.autonomy?.intent?.signals ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const visibleKettleIntent =
+    /\b(?:Ada|Kettle\s*&?\s*Lamp|cafe|lunch work|cup-and-counter)\b/i.test(
+      visibleText,
+    );
+  if (!visibleKettleIntent) {
+    return;
+  }
+
+  const selectedActionId =
+    probe.autonomy?.planningTrace?.selectedActionId ?? null;
+  const selectedTargetLocationId =
+    probe.autonomy?.planningTrace?.selectedTargetLocationId ??
+    probe.autonomy?.targetLocationId ??
+    null;
+  const genericPrimaryCopy = /\bDo this step\b/i.test(dom.bodyText);
+  const explainedLocalPrerequisite =
+    /\b(?:before leaving|before Rowan leaves|local prerequisite|commit(?:s|ted)? to leaving|settle(?:s|d)? the plan|weigh(?:s|ed)? the first move)\b/i.test(
+      visibleText,
+    );
+
+  assert.ok(
+    !(
+      selectedActionId === "reflect:first-afternoon-plan" &&
+      selectedTargetLocationId === "boarding-house" &&
+      (genericPrimaryCopy || !explainedLocalPrerequisite)
+    ),
+    `${label}: visible Ada/Kettle intent was backed by an unexplained Morrow House reflection micro-step.`,
+  );
 }
 
 function rectIsInside(inner, outer, tolerance = 2) {
@@ -2451,11 +2494,11 @@ function assertCityEventState(label, game) {
     );
   }
 
-  if (label === "lunch-rush") {
+  if (label === "hold-for-shift") {
     assert.equal(
       lunchRush.status,
       "active",
-      `${label}: lunch-rush event should be active during the rush.`,
+      `${label}: lunch-rush event should be active as Rowan waits for the rush.`,
     );
     assert.equal(
       lunchRush.progress,
@@ -2464,11 +2507,11 @@ function assertCityEventState(label, game) {
     );
   }
 
-  if (label === "finish-shift") {
+  if (label === "lunch-rush") {
     assert.equal(
       lunchRush.status,
       "active",
-      `${label}: lunch-rush event should stay active until the paid beat lands.`,
+      `${label}: lunch-rush event should stay active through counter work.`,
     );
     assert.equal(
       lunchRush.progress,
@@ -3182,7 +3225,7 @@ function inhabitCameraDelta(before, after) {
   };
 }
 
-function assertInhabitPlayerDom(label, dom, controlCandidate = null) {
+function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = null) {
   assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
   assert.equal(
     dom.hasFrameworkErrorOverlay,
@@ -3210,7 +3253,8 @@ function assertInhabitPlayerDom(label, dom, controlCandidate = null) {
   );
 
   const complete = /first afternoon complete/i.test(dom.bodyText);
-  if (!complete) {
+  const autoContinuing = Boolean(probe?.autonomy?.autoContinue);
+  if (!complete && !autoContinuing) {
     assert.ok(
       controlCandidate,
       `${label}: expected a visible next player control before completion.`,
@@ -3354,7 +3398,7 @@ async function captureInhabitMoment({
   const probe = await waitForInhabitSettled(session, label);
   const dom = await session.readDomSnapshot();
   const controlCandidate = await session.readPlayerControlCandidate();
-  assertInhabitPlayerDom(label, dom, controlCandidate);
+  assertInhabitPlayerDom(label, dom, controlCandidate, probe);
   const camera = await session.readCameraProbe().catch(() => null);
   const screenshot = path.join(
     OUTPUT_DIR,
@@ -3467,17 +3511,18 @@ function assertInhabitSituatedWatchCtaCopy(moments) {
 
   for (const expectation of expectations) {
     const moment = byLabel[expectation.label];
+    const visibleWatchText = moment?.control?.text ?? moment?.autonomyLabel ?? "";
     assert.ok(
-      moment?.control?.text,
-      `${expectation.label}: expected continued-watch control text.`,
+      visibleWatchText,
+      `${expectation.label}: expected continued-watch or autonomy text.`,
     );
     assert.doesNotMatch(
-      moment.control.text,
+      visibleWatchText,
       GENERIC_WATCH_CTA_COPY_PATTERN,
       `${expectation.label}: continued-watch copy regressed to generic beat-landing copy.`,
     );
     assert.match(
-      moment.control.text,
+      visibleWatchText,
       expectation.pattern,
       expectation.reason,
     );
@@ -4509,12 +4554,12 @@ async function main() {
 
   assertTimelineRoute(
     byLabel,
-    "arrive-cafe-door-route-start",
+    "stage-cafe-move-route-start",
     "Morrow House to Kettle & Lamp",
   );
   assertTimelineRoute(
     byLabel,
-    "arrive-home-route-start",
+    "stage-home-move-route-start",
     "Kettle & Lamp to Morrow House",
   );
   assertTimelineRoute(
@@ -4530,17 +4575,13 @@ async function main() {
   );
   assertTimelineRoute(
     byLabel,
-    "ada-live-thread-route-start",
+    "enter-cafe-interior-route-start",
     "Kettle & Lamp entry to Ada",
     { spaceId: "interior:tea-house" },
   );
   assertCloseConversationLabelSuppressed(
     byLabel,
     "mara-live-thread-route-close",
-  );
-  assertCloseConversationLabelSuppressed(
-    byLabel,
-    "ada-live-thread-route-close",
   );
   assertTimelineRoute(
     byLabel,
@@ -4550,7 +4591,7 @@ async function main() {
   );
   assertTimelineRoute(
     byLabel,
-    "home-reset-route-start",
+    "enter-morrow-return-route-start",
     "Morrow House entry to room",
     { spaceId: "interior:boarding-house" },
   );
@@ -4649,8 +4690,13 @@ async function main() {
   );
   assert.match(
     byLabel["mara-thread-landed"]?.autonomy?.label ?? "",
-    /ada|lunch work|first useful move/i,
-    "Expected Mara's thread to leave Rowan choosing a useful first move from live options.",
+    /Exit to South Quay|Kettle & Lamp|Ada/i,
+    "Expected Mara's thread to leave Rowan on the Kettle & Lamp route sequence.",
+  );
+  assert.equal(
+    byLabel["mara-thread-landed"]?.autonomy?.targetLocationId,
+    "tea-house",
+    "Expected Mara's thread to target Kettle & Lamp instead of a Morrow House reflection step.",
   );
   assert.equal(
     byLabel["head-to-cafe-plan"]?.autonomy?.targetLocationId,
@@ -4658,9 +4704,14 @@ async function main() {
     "Expected Mara's thread to point Rowan toward Kettle & Lamp.",
   );
   assert.equal(
-    byLabel["stage-cafe-move"]?.location?.id,
+    byLabel["stage-cafe-move-route-start"]?.location?.id,
     "boarding-house",
     "Expected the Kettle & Lamp move to stage before the visual arrival.",
+  );
+  assert.equal(
+    byLabel["stage-cafe-move"]?.location?.id,
+    "tea-house",
+    "Expected the staged Kettle & Lamp move to arrive at the cafe.",
   );
   assert.equal(
     byLabel["stage-cafe-move"]?.autonomy?.targetLocationId,
@@ -4668,7 +4719,7 @@ async function main() {
     "Expected the staged move to keep Kettle & Lamp as the target.",
   );
   assert.equal(
-    byLabel["ada-live-thread"]?.activeConversation?.npcId,
+    byLabel["enter-cafe-interior"]?.activeConversation?.npcId,
     "npc-ada",
     "Expected Rowan to reach Ada at Kettle & Lamp.",
   );
@@ -4696,33 +4747,38 @@ async function main() {
   );
   assert.match(
     byLabel["hold-for-shift"]?.autonomy?.label ?? "",
-    /hold for/i,
-    "Expected Rowan to visibly hold for the tea-house shift.",
+    /hold for|lunch rush/i,
+    "Expected Rowan to visibly hold for or begin the tea-house shift.",
+  );
+  assert.equal(
+    byLabel["hold-for-shift"]?.clock?.totalMinutes,
+    741,
+    "Expected the shift-start beat to land at 12:21 after Rowan reaches the counter anchor.",
   );
   assert.equal(
     byLabel["lunch-rush"]?.clock?.totalMinutes,
-    741,
-    "Expected the lunch rush beat to land at 12:21 after Rowan reaches the counter anchor.",
+    766,
+    "Expected the lunch rush counter beat to land at 12:46 after Rowan works the first rush stage.",
   );
   assert.equal(
     byLabel["lunch-rush"]?.sim?.teaShiftStage,
-    "rush",
-    "Expected the cafe rush screenshot to be tied to the rush sim stage.",
+    "counter",
+    "Expected the cafe rush screenshot to show the counter work sim stage after Rowan moves through the rush.",
   );
   assert.match(
     byLabel["lunch-rush"]?.autonomy?.label ?? "",
-    /lunch rush/i,
-    "Expected Rowan to keep the lunch rush moving once the shift begins.",
+    /finish|lunch rush/i,
+    "Expected Rowan to stay on the cafe shift sequence once the rush begins.",
   );
   assert.equal(
     byLabel["finish-shift"]?.sim?.teaShiftStage,
-    "counter",
-    "Expected the finish-shift screenshot to show the counter sim stage before pay.",
+    "paid",
+    "Expected the finish-shift screenshot to show the paid sim stage.",
   );
   assert.match(
     byLabel["finish-shift"]?.autonomy?.label ?? "",
-    /finish/i,
-    "Expected Rowan to finish the cafe shift before heading home.",
+    /home|Morrow|South Quay|exit/i,
+    "Expected Rowan to head home after finishing the cafe shift.",
   );
   assert.equal(
     byLabel["head-home"]?.sim?.teaShiftStage,
@@ -4751,7 +4807,7 @@ async function main() {
     "Expected Rowan to visibly arrive back at Morrow House.",
   );
   assert.match(
-    byLabel["arrive-home"]?.autonomy?.label ?? "",
+    byLabel["stage-home-move"]?.autonomy?.label ?? "",
     /enter/i,
     "Expected Rowan to enter Morrow House after arriving home before resolving the take-stock action.",
   );

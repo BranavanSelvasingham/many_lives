@@ -2973,6 +2973,15 @@ function applyConversationResolution(
     ensureFirstAfternoonLeadFieldNote(world);
   }
 
+  if (
+    npc.id === "npc-mara" &&
+    objective.routeKey === "first-afternoon" &&
+    !world.firstAfternoon?.planSettledAt &&
+    conversationGroundsMaraAdaLead(world, options.closingReply)
+  ) {
+    settleFirstAfternoonPlan(world);
+  }
+
   const objectiveUpdated =
     Boolean(resolution.objectiveText) &&
     normalizeObjectiveText(resolution.objectiveText ?? "") !==
@@ -4566,9 +4575,7 @@ function planMatchesObjectivePredicate(
     );
     return Boolean(
       actionLocationId &&
-        plan.targetLocationId === actionLocationId &&
-        !plan.actionId &&
-        !plan.npcId,
+        planIsRouteTowardLocation(plan, actionLocationId),
     );
   }
 
@@ -4580,9 +4587,7 @@ function planMatchesObjectivePredicate(
     const npcLocationId = npcById(world, outcome.npcId)?.currentLocationId;
     return Boolean(
       npcLocationId &&
-        plan.targetLocationId === npcLocationId &&
-        !plan.actionId &&
-        !plan.npcId,
+        planIsRouteTowardLocation(plan, npcLocationId),
     );
   }
 
@@ -4595,6 +4600,22 @@ function planMatchesObjectivePredicate(
   }
 
   return false;
+}
+
+function planIsRouteTowardLocation(plan: ObjectivePlan, locationId: string) {
+  if (plan.targetLocationId !== locationId || plan.npcId) {
+    return false;
+  }
+
+  if (!plan.actionId) {
+    return true;
+  }
+
+  return (
+    plan.actionId === `move:${locationId}` ||
+    plan.actionId === `enter:${locationId}` ||
+    plan.actionId.startsWith("exit:")
+  );
 }
 
 function shouldSuppressObjectivePlanCandidate(
@@ -4626,6 +4647,7 @@ function buildObjectivePlanningPressures(
   objective?: { text: string; focus: ObjectiveFocus; routeKey: string },
 ) {
   const pressures: ObjectivePlanningPressure[] = [];
+  const finalPredicateRoutePending = hasFinalCurrentObjectivePredicateRoute(world);
   const pushPressure = (pressure: ObjectivePlanningPressure | undefined) => {
     if (!pressure) {
       return;
@@ -4658,7 +4680,8 @@ function buildObjectivePlanningPressures(
   if (
     world.player.energy < 28 &&
     world.player.homeLocationId &&
-    !hasFinalCurrentObjectivePredicateAction(world)
+    !hasFinalCurrentObjectivePredicateAction(world) &&
+    !finalPredicateRoutePending
   ) {
     pushPressure({
       actionId: "rest:home",
@@ -4675,60 +4698,62 @@ function buildObjectivePlanningPressures(
     pushPressure(objectivePlanningPressureFromPredicate(world, outcome));
   }
 
-  for (const job of urgentKnownJobs(world)) {
-    const pressure = jobWindowPressure(world, job);
-    pushPressure({
-      actionId: job.accepted ? `work:${job.id}` : `accept:${job.id}`,
-      id: `job:${job.id}`,
-      kind: "job",
-      label: `${job.title} window is closing`,
-      priority: 134 + pressure * 10 + (job.accepted ? 10 : 0),
-      rationale: `${job.title} closes around ${formatHour(job.endHour)}, so live time pressure can outrank stale route hints.`,
-      targetLocationId: job.locationId,
-    });
-  }
-
-  for (const problem of urgentKnownProblems(world)) {
-    if (hasRequiredProblemItem(world, problem)) {
+  if (!finalPredicateRoutePending) {
+    for (const job of urgentKnownJobs(world)) {
+      const pressure = jobWindowPressure(world, job);
       pushPressure({
-        actionId: `solve:${problem.id}`,
-        id: `problem:${problem.id}`,
+        actionId: job.accepted ? `work:${job.id}` : `accept:${job.id}`,
+        id: `job:${job.id}`,
+        kind: "job",
+        label: `${job.title} window is closing`,
+        priority: 134 + pressure * 10 + (job.accepted ? 10 : 0),
+        rationale: `${job.title} closes around ${formatHour(job.endHour)}, so live time pressure can outrank stale route hints.`,
+        targetLocationId: job.locationId,
+      });
+    }
+
+    for (const problem of urgentKnownProblems(world)) {
+      if (hasRequiredProblemItem(world, problem)) {
+        pushPressure({
+          actionId: `solve:${problem.id}`,
+          id: `problem:${problem.id}`,
+          kind: "problem",
+          label: `${problem.title} is escalating`,
+          priority: 106 + problemPressure(problem) * 9,
+          rationale: `${problem.title} is changing without Rowan, so the planner should route to the actual fix.`,
+          targetLocationId: problem.locationId,
+        });
+        continue;
+      }
+
+      const toolSourceLocationId = toolSourceLocationIdForProblem(problem);
+      if (
+        toolSourceLocationId &&
+        knowsToolSourceForProblem(world, problem) &&
+        canBuyRequiredProblemTool(world, problem)
+      ) {
+        pushPressure({
+          actionId: "buy:item-wrench",
+          id: `tool:${problem.requiredItemId}:${problem.id}`,
+          kind: "tool",
+          label: `${problem.title} needs a tool Rowan can get`,
+          priority: 100 + problemPressure(problem) * 9,
+          rationale: `${problem.title} is blocked by a known tool source, so Rowan should get the tool before returning.`,
+          targetLocationId: toolSourceLocationId,
+        });
+        continue;
+      }
+
+      pushPressure({
+        actionId: `inspect:${problem.id}`,
+        id: `problem:${problem.id}:inspect`,
         kind: "problem",
-        label: `${problem.title} is escalating`,
-        priority: 106 + problemPressure(problem) * 9,
-        rationale: `${problem.title} is changing without Rowan, so the planner should route to the actual fix.`,
+        label: `${problem.title} needs a reachable next read`,
+        priority: 78 + problemPressure(problem) * 7,
+        rationale: `${problem.title} is urgent, but the fix is still blocked; inspect the site instead of pretending the tool exists.`,
         targetLocationId: problem.locationId,
       });
-      continue;
     }
-
-    const toolSourceLocationId = toolSourceLocationIdForProblem(problem);
-    if (
-      toolSourceLocationId &&
-      knowsToolSourceForProblem(world, problem) &&
-      canBuyRequiredProblemTool(world, problem)
-    ) {
-      pushPressure({
-        actionId: "buy:item-wrench",
-        id: `tool:${problem.requiredItemId}:${problem.id}`,
-        kind: "tool",
-        label: `${problem.title} needs a tool Rowan can get`,
-        priority: 100 + problemPressure(problem) * 9,
-        rationale: `${problem.title} is blocked by a known tool source, so Rowan should get the tool before returning.`,
-        targetLocationId: toolSourceLocationId,
-      });
-      continue;
-    }
-
-    pushPressure({
-      actionId: `inspect:${problem.id}`,
-      id: `problem:${problem.id}:inspect`,
-      kind: "problem",
-      label: `${problem.title} needs a reachable next read`,
-      priority: 78 + problemPressure(problem) * 7,
-      rationale: `${problem.title} is urgent, but the fix is still blocked; inspect the site instead of pretending the tool exists.`,
-      targetLocationId: problem.locationId,
-    });
   }
 
   if (objective?.focus === "tool" && !hasItem(world, "item-wrench")) {
@@ -4827,11 +4852,47 @@ function hasFinalCurrentObjectivePredicateAction(world: StreetGameState) {
   );
 }
 
+function hasFinalCurrentObjectivePredicateRoute(world: StreetGameState) {
+  const openOutcomes = openObjectivePredicateOutcomes(world);
+  if (openOutcomes.length !== 1) {
+    return false;
+  }
+
+  const [outcome] = openOutcomes;
+  if (
+    !outcome ||
+    !outcome.actionId ||
+    !isFinalCurrentObjectivePredicateOutcome(world, outcome, {
+      requireCurrentLocation: false,
+      requireLegalAction: false,
+    })
+  ) {
+    return false;
+  }
+
+  const targetLocationId =
+    targetLocationIdForActionId(world, outcome.actionId) ??
+    outcome.targetLocationId;
+  return Boolean(
+    targetLocationId && targetLocationId !== world.player.currentLocationId,
+  );
+}
+
 function isFinalCurrentObjectivePredicateOutcome(
   world: StreetGameState,
   outcome: ObjectiveOutcomeState,
+  options: {
+    requireCurrentLocation?: boolean;
+    requireLegalAction?: boolean;
+  } = {},
 ) {
-  if (!outcome.actionId || !world.player.currentLocationId) {
+  const requireCurrentLocation = options.requireCurrentLocation ?? true;
+  const requireLegalAction = options.requireLegalAction ?? true;
+
+  if (
+    !outcome.actionId ||
+    (requireCurrentLocation && !world.player.currentLocationId)
+  ) {
     return false;
   }
 
@@ -4844,8 +4905,15 @@ function isFinalCurrentObjectivePredicateOutcome(
     world,
     outcome.actionId,
   );
-  if (actionTargetLocationId !== world.player.currentLocationId) {
+  if (
+    requireCurrentLocation &&
+    actionTargetLocationId !== world.player.currentLocationId
+  ) {
     return false;
+  }
+
+  if (!requireLegalAction) {
+    return Boolean(actionTargetLocationId ?? outcome.targetLocationId);
   }
 
   return buildAvailableActions(world).some(
@@ -4937,9 +5005,7 @@ function planMatchesObjectivePlanningPressure(
 
     return Boolean(
       pressure.targetLocationId &&
-        plan.targetLocationId === pressure.targetLocationId &&
-        !plan.actionId &&
-        !plan.npcId &&
+        planIsRouteTowardLocation(plan, pressure.targetLocationId) &&
         plan.targetLocationId !== world.player.currentLocationId,
     );
   }
@@ -4951,18 +5017,14 @@ function planMatchesObjectivePlanningPressure(
 
     return Boolean(
       pressure.targetLocationId &&
-        plan.targetLocationId === pressure.targetLocationId &&
-        !plan.actionId &&
-        !plan.npcId &&
+        planIsRouteTowardLocation(plan, pressure.targetLocationId) &&
         plan.targetLocationId !== world.player.currentLocationId,
     );
   }
 
   return Boolean(
     pressure.targetLocationId &&
-      plan.targetLocationId === pressure.targetLocationId &&
-      !plan.npcId &&
-      (!plan.actionId || plan.actionId === `move:${pressure.targetLocationId}`),
+      planIsRouteTowardLocation(plan, pressure.targetLocationId),
   );
 }
 

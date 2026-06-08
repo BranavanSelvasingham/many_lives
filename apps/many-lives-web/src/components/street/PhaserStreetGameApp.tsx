@@ -5087,6 +5087,65 @@ function buildWatchModePrimaryContinueCopy({
   return "Rowan is choosing the next visible step.";
 }
 
+function buildManualPrimaryContinueCopy({
+  autonomy,
+  firstAfternoonOpening,
+  targetLocation,
+  targetNpc,
+}: {
+  autonomy: StreetGameState["rowanAutonomy"];
+  firstAfternoonOpening: boolean;
+  targetLocation: LocationState | null;
+  targetNpc: NpcState | null;
+}) {
+  if (firstAfternoonOpening) {
+    return "Start with the person who runs Morrow House.";
+  }
+
+  const label = autonomy.label.trim();
+  const targetLocationName = targetLocation
+    ? mapAgencyLocationName(targetLocation)
+    : null;
+
+  if (autonomy.mode === "moving") {
+    return targetLocationName
+      ? `Move Rowan toward ${targetLocationName}.`
+      : "Move Rowan there.";
+  }
+
+  if (autonomy.mode === "waiting") {
+    return "Let the clock carry this beat.";
+  }
+
+  if (autonomy.mode === "conversation") {
+    if (targetNpc) {
+      return `Start the conversation with ${targetNpc.name}.`;
+    }
+
+    return "Start the conversation.";
+  }
+
+  if (/lunch rush/i.test(label) || autonomy.actionId?.startsWith("work:")) {
+    return "Work the lunch rush.";
+  }
+
+  if (/exit to south quay/i.test(label) || autonomy.actionId?.startsWith("exit:")) {
+    return targetLocationName
+      ? `Step into South Quay toward ${targetLocationName}.`
+      : "Step into South Quay.";
+  }
+
+  if (/^Enter /i.test(label) && targetLocationName) {
+    return `Enter ${targetLocationName}.`;
+  }
+
+  if (label) {
+    return label.endsWith(".") ? label : `${label}.`;
+  }
+
+  return "Let Rowan follow through.";
+}
+
 function normalizeMapAgencyTone(
   mode: StreetGameState["rowanAutonomy"]["mode"],
 ): MapAgencyTone {
@@ -5557,15 +5616,12 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           targetLocation: primaryContinueTargetLocation,
           targetNpc: primaryContinueTargetNpc,
         })
-      : rowanAutonomy.mode === "moving"
-        ? "Move Rowan there."
-        : rowanAutonomy.mode === "waiting"
-          ? "Let the clock pass."
-          : rowanAutonomy.mode === "conversation"
-            ? firstAfternoonOpening
-              ? "Start with the person who runs Morrow House."
-              : "Start the conversation."
-            : "Do this step.";
+      : buildManualPrimaryContinueCopy({
+          autonomy: rowanAutonomy,
+          firstAfternoonOpening,
+          targetLocation: primaryContinueTargetLocation,
+          targetNpc: primaryContinueTargetNpc,
+        });
   const conversationEntry = selectedNpc
     ? {
         id: `conversation-${selectedNpc.id}`,
