@@ -3867,6 +3867,7 @@ function buildMovementAuditSummary(timeline) {
     ),
     scheduledNpcMarkerSamples,
     scheduledNpcLocationChanges,
+    scheduledNpcRouteSamples,
     scheduledNpcRoutes: [...scheduledNpcRoutesByKey.values()]
       .map((route) => ({
         ...route,
@@ -3876,6 +3877,199 @@ function buildMovementAuditSummary(timeline) {
       }))
       .sort((left, right) => left.npcId.localeCompare(right.npcId)),
   };
+}
+
+function isLegalScheduledNpcRouteSample(route) {
+  return (
+    !route.acceptedNoRouteReason &&
+    route.legal &&
+    route.reachesTarget &&
+    route.routed &&
+    route.sampledPointsLegal &&
+    route.visualObstaclesClear &&
+    route.unreachableSegments === 0 &&
+    route.pathLength > 1
+  );
+}
+
+function isValidVisibleScheduledNpcMarkerSample(marker) {
+  return (
+    marker.visible &&
+    marker.onRoute &&
+    marker.routePathLength > 1 &&
+    typeof marker.routeProgress === "number" &&
+    marker.position
+  );
+}
+
+function compactScheduledNpcRouteSample(route) {
+  return {
+    currentScheduleLocationId: route.currentScheduleLocationId ?? null,
+    fromLocationId: route.fromLocationId,
+    key: route.key,
+    label: route.label,
+    legal: Boolean(route.legal),
+    nextScheduleLocationId: route.nextScheduleLocationId ?? null,
+    npcId: route.npcId,
+    pathLength: route.pathLength ?? 0,
+    reachesTarget: Boolean(route.reachesTarget),
+    routeKind: route.routeKind,
+    routed: Boolean(route.routed),
+    sampledPointsLegal: Boolean(route.sampledPointsLegal),
+    toLocationId: route.toLocationId,
+    unreachableSegments: route.unreachableSegments ?? 0,
+    visualObstaclesClear: Boolean(route.visualObstaclesClear),
+  };
+}
+
+function compactScheduledNpcMarkerSample(marker) {
+  return {
+    activeSpaceId: marker.activeSpaceId ?? null,
+    currentLocationId: marker.currentLocationId ?? null,
+    currentScheduleLocationId: marker.currentScheduleLocationId ?? null,
+    distanceToRoute: marker.distanceToRoute ?? null,
+    key: marker.key,
+    label: marker.label,
+    nextScheduleLocationId: marker.nextScheduleLocationId ?? null,
+    npcId: marker.npcId,
+    onRoute: Boolean(marker.onRoute),
+    position: marker.position ?? null,
+    routePathLength: marker.routePathLength ?? 0,
+    routeProgress: marker.routeProgress ?? null,
+    timelineIndex: marker.timelineIndex,
+    toLocationId: marker.toLocationId ?? null,
+    visible: Boolean(marker.visible),
+  };
+}
+
+function buildScheduledNpcSpatialEvidence({ movementAudit, worldPressureAudit }) {
+  const legalRouteSamples = movementAudit.scheduledNpcRouteSamples
+    .filter(isLegalScheduledNpcRouteSample)
+    .slice(0, 8)
+    .map(compactScheduledNpcRouteSample);
+  const validVisibleMarkerSamples = movementAudit.scheduledNpcMarkerSamples
+    .filter(isValidVisibleScheduledNpcMarkerSample)
+    .slice(0, 8)
+    .map(compactScheduledNpcMarkerSample);
+  const routeSampleByKey = new Map(
+    movementAudit.scheduledNpcRouteSamples.map((route) => [route.key, route]),
+  );
+  const markerSamplesForChange = ({ fromLocationId, npcId, toLocationId }) =>
+    movementAudit.scheduledNpcMarkerSamples
+      .filter(
+        (marker) =>
+          marker.npcId === npcId &&
+          marker.currentLocationId === fromLocationId &&
+          marker.toLocationId === toLocationId,
+      )
+      .filter(isValidVisibleScheduledNpcMarkerSample)
+      .slice(0, 3)
+      .map(compactScheduledNpcMarkerSample);
+  const npcSchedulePressureChanges =
+    worldPressureAudit.worldPressureTimeline.filter(
+      (change) => change.kind === "npc-schedule" && change.cause === "independent",
+    );
+  const currentLocationPressureChanges = npcSchedulePressureChanges.filter(
+    (change) => change.field === "currentLocationId",
+  );
+
+  const locationChanges = movementAudit.scheduledNpcLocationChanges.map(
+    (change) => {
+      const route =
+        (change.routeEvidenceKey &&
+          routeSampleByKey.get(change.routeEvidenceKey)) ??
+        null;
+      const pressureFields = npcSchedulePressureChanges
+        .filter(
+          (pressureChange) =>
+            pressureChange.id === change.npcId &&
+            pressureChange.fromLabel === change.fromLabel &&
+            pressureChange.toLabel === change.toLabel,
+        )
+        .map((pressureChange) => pressureChange.field);
+
+      return {
+        acceptedNoRouteReason: change.acceptedNoRouteReason,
+        continuityGapReason: change.continuityGapReason,
+        currentScheduleChanged: Boolean(change.currentScheduleChanged),
+        currentStopChanged: Boolean(change.currentStopChanged),
+        fromLabel: change.fromLabel,
+        fromLocationId: change.fromLocationId,
+        markerEvidence: change.markerEvidence,
+        markerSamples: markerSamplesForChange(change),
+        npcId: change.npcId,
+        pressureFields,
+        routeEvidence: route ? compactScheduledNpcRouteSample(route) : null,
+        routeEvidenceKey: change.routeEvidenceKey,
+        toLabel: change.toLabel,
+        toLocationId: change.toLocationId,
+        valid: Boolean(change.valid),
+      };
+    },
+  );
+
+  return {
+    continuityGaps: locationChanges.filter(
+      (change) => change.continuityGapReason,
+    ),
+    counts: {
+      currentLocationPressureChangeCount: currentLocationPressureChanges.length,
+      currentStopChangeCount: movementAudit.scheduledNpcLocationChanges.filter(
+        (change) => change.currentStopChanged,
+      ).length,
+      legalRouteSampleCount: movementAudit.scheduledNpcRouteSamples.filter(
+        isLegalScheduledNpcRouteSample,
+      ).length,
+      locationChangeCount: movementAudit.scheduledNpcLocationChanges.length,
+      npcSchedulePressureChangeCount: npcSchedulePressureChanges.length,
+      pressureMoveSnapshotCount: worldPressureAudit.npcPressureMoveCount,
+      routeSampleCount: movementAudit.scheduledNpcRouteSamples.length,
+      validVisibleMarkerSampleCount:
+        movementAudit.scheduledNpcMarkerSamples.filter(
+          isValidVisibleScheduledNpcMarkerSample,
+        ).length,
+      visibleMarkerSampleCount: movementAudit.scheduledNpcMarkerSamples.filter(
+        (marker) => marker.visible,
+      ).length,
+    },
+    legalRouteSamples,
+    locationChanges,
+    pressureChanges: npcSchedulePressureChanges.slice(0, 12).map((change) => ({
+      field: change.field,
+      from: change.from ?? null,
+      fromClock: change.fromClock ?? null,
+      fromLabel: change.fromLabel,
+      id: change.id,
+      to: change.to ?? null,
+      toClock: change.toClock ?? null,
+      toLabel: change.toLabel,
+    })),
+    validVisibleMarkerSamples,
+  };
+}
+
+function assertScheduledNpcSpatialEvidence(scheduledNpcSpatialEvidence) {
+  assert.ok(
+    scheduledNpcSpatialEvidence,
+    "Scheduled NPC spatial evidence must be recorded in the inhabit gameplay report.",
+  );
+
+  const observedSchedulePressure =
+    scheduledNpcSpatialEvidence.counts.pressureMoveSnapshotCount > 0 ||
+    scheduledNpcSpatialEvidence.counts.currentLocationPressureChangeCount > 0;
+  if (!observedSchedulePressure) {
+    return;
+  }
+
+  assert.ok(
+    scheduledNpcSpatialEvidence.legalRouteSamples.length > 0 ||
+      scheduledNpcSpatialEvidence.validVisibleMarkerSamples.length > 0,
+    `World pressure observed NPC schedule movement, but the inhabit report did not include legal route or valid visible marker evidence: ${JSON.stringify(
+      scheduledNpcSpatialEvidence.counts,
+      null,
+      2,
+    )}`,
+  );
 }
 
 function buildScheduledNpcLocationChangeAudit({
@@ -5134,6 +5328,7 @@ async function captureInhabitMoment({
     firstAfternoon: probe.firstAfternoon,
     label,
     location: probe.location,
+    movement: probe.movement ?? null,
     objective: probe.objective ?? null,
     screenshot,
     userQuestion,
@@ -5148,6 +5343,12 @@ async function captureInhabitMoment({
   };
   moments.push(moment);
   return moment;
+}
+
+function compactInhabitReportMoment(moment) {
+  const reportMoment = { ...moment };
+  delete reportMoment.movement;
+  return reportMoment;
 }
 
 function assertInhabitOpeningCtaProgression(moments) {
@@ -5966,6 +6167,12 @@ async function runInhabitGameplayPass(session) {
     objectiveSequenceAudit,
   });
   assertWorldPressureAudit(worldPressureAudit);
+  const movementAudit = buildMovementAuditSummary(moments);
+  const scheduledNpcSpatialEvidence = buildScheduledNpcSpatialEvidence({
+    movementAudit,
+    worldPressureAudit,
+  });
+  assertScheduledNpcSpatialEvidence(scheduledNpcSpatialEvidence);
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {
@@ -5974,7 +6181,7 @@ async function runInhabitGameplayPass(session) {
     directSimCommandsUsed: false,
     evidenceStandard:
       "Progression is driven by visible browser controls, pointer drags, and normal watch-mode beats; sim probes are read only for assertions.",
-    moments,
+    moments: moments.map(compactInhabitReportMoment),
     milestonesReached,
     objectiveSequenceAudit,
     objectiveSequenceRuns,
@@ -5982,6 +6189,7 @@ async function runInhabitGameplayPass(session) {
     progressionClicks: clickLog,
     reportPath,
     rowanNotebookClick,
+    scheduledNpcSpatialEvidence,
     status: "passed",
     url,
     visibleControlClickCount,
