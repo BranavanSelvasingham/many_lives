@@ -5276,6 +5276,7 @@ function buildBrowserMovementDiagnostics(
         unreachableSegments: entry.unreachableSegments,
         usedVisualHints: entry.usedVisualHints,
       })),
+    scheduledNpcMarkerSamples: buildScheduledNpcMarkerSamples(runtimeState),
     scheduledNpcRoutes: buildScheduledNpcRouteDiagnostics(runtimeState),
     playerRoute:
       !routeSettled && routeWorldPath.length > 1 && motion.path.length > 1
@@ -5297,6 +5298,94 @@ function buildBrowserMovementDiagnostics(
           }
         : null,
   };
+}
+
+function buildScheduledNpcMarkerSamples(
+  runtimeState: RuntimeState,
+): StreetBrowserMovementDiagnostics["scheduledNpcMarkerSamples"] {
+  const game = runtimeState.snapshot.game;
+  const objects = runtimeState.objects;
+  if (
+    !game ||
+    !objects ||
+    runtimeState.indices.activeSpaceId !== "street:south-quay"
+  ) {
+    return [];
+  }
+
+  const currentHour = game.clock.hour + game.clock.minute / 60;
+  return game.npcs
+    .map((npc) => {
+      const marker = objects.npcMarkers.get(npc.id);
+      const location = runtimeState.indices.locationsById.get(
+        npc.currentLocationId,
+      );
+      if (!marker || !location || !marker.container.visible) {
+        return null;
+      }
+
+      const currentSchedule =
+        npc.schedule.find(
+          (entry) =>
+            currentHour >= entry.fromHour && currentHour < entry.toHour,
+        ) ?? null;
+      const nextLocation = nextScheduledLocation(
+        npc,
+        currentHour,
+        runtimeState.indices.locationsById,
+      );
+      const toLocationId = nextLocation?.id ?? location.id;
+      const patrolPath = getCachedPatrolPath(runtimeState.indices, {
+        door: runtimeState.indices.primaryDoorByLocation.get(location.id),
+        findRoute: runtimeState.indices.routeFinder,
+        location,
+        nextLocation,
+        props: runtimeState.indices.propsByLocation.get(location.id) ?? [],
+        visualHints: getVisualPatrolHints(runtimeState.indices, location.id),
+        walkableRuntimePoints: runtimeState.indices.walkableRuntimePoints,
+      });
+      const worldPath = patrolPath.map((point) =>
+        projectRuntimePoint(runtimeState.indices, point),
+      );
+      const routePosition =
+        worldPath.length > 1
+          ? nearestPointOnLoopPathWithProgress(
+              {
+                x: marker.container.x,
+                y: marker.container.y,
+              },
+              worldPath,
+            )
+          : null;
+
+      return {
+        activeSpaceId: runtimeState.indices.activeSpaceId,
+        currentLocationId: location.id,
+        currentScheduleLocationId: currentSchedule?.locationId ?? null,
+        distanceToRoute: routePosition
+          ? roundBrowserNumber(routePosition.distance)
+          : null,
+        key: `${npc.id}:marker:${location.id}->${toLocationId}`,
+        markerSource: "phaser-marker" as const,
+        nextScheduleLocationId: nextLocation?.id ?? null,
+        npcId: npc.id,
+        onRoute: routePosition
+          ? routePosition.distance <= CELL * 0.9
+          : toLocationId === location.id,
+        position: roundBrowserPoint({
+          x: marker.container.x,
+          y: marker.container.y,
+        }),
+        routePathLength: worldPath.length,
+        routeProgress: routePosition
+          ? roundBrowserNumber(routePosition.progress)
+          : null,
+        toLocationId,
+        visible: true,
+      };
+    })
+    .filter(isPresent)
+    .sort((left, right) => left.key.localeCompare(right.key));
 }
 
 function buildScheduledNpcRouteDiagnostics(
@@ -8056,6 +8145,41 @@ function nearestPointOnPolyline(point: Point, path: Point[]) {
   }
 
   return nearest;
+}
+
+function nearestPointOnLoopPathWithProgress(point: Point, path: Point[]) {
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  let nearestProgress = 0;
+  const totalDistance = loopPathDistance(path);
+
+  if (path.length <= 1 || totalDistance <= 0) {
+    return {
+      distance: distanceBetween(point, path[0] ?? point),
+      progress: 0,
+    };
+  }
+
+  let coveredDistance = 0;
+  for (let index = 0; index < path.length; index += 1) {
+    const start = path[index];
+    const end = path[(index + 1) % path.length];
+    const segmentDistance = distanceBetween(start, end);
+    const candidate = nearestPointOnSegment(point, start, end);
+    const candidateDistance = distanceBetween(point, candidate);
+
+    if (candidateDistance < nearestDistance) {
+      nearestDistance = candidateDistance;
+      nearestProgress =
+        (coveredDistance + distanceBetween(start, candidate)) / totalDistance;
+    }
+
+    coveredDistance += segmentDistance;
+  }
+
+  return {
+    distance: nearestDistance,
+    progress: clamp(nearestProgress, 0, 1),
+  };
 }
 
 function nearestPointOnSegment(point: Point, start: Point, end: Point) {
