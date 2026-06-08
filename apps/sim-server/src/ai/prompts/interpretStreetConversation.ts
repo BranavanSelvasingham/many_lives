@@ -40,6 +40,8 @@ export function buildInterpretStreetConversationPrompt(
     "- When you set `objectiveText`, make it sound like Rowan's next practical goal.",
     "- Keep `objectiveText` concise: one sentence or sentence fragment Rowan could carry as his live objective, ideally under 18 words.",
     "- If the decision points Rowan toward a specific person or place, let `objectiveText` explain why that contact or location matters instead of only repeating 'talk to X next'.",
+    "- Use rowan.objectiveAuthority, currentAutonomy, availableLegalActions, and the actual exchange as the authority for what changed.",
+    "- Treat supportingRouteHints and recentlyFinishedHints as optional scaffolding only. Do not summarize an old route hint as the live decision if the conversation and legal actions point elsewhere.",
     "- `summary` should explain what changed in this exchange in one natural sentence.",
     "- `memoryKind` must be one of place, person, job, problem, or self when `memoryText` is present.",
     "- `memoryText` should capture a durable thing Rowan learned or realized from the exchange.",

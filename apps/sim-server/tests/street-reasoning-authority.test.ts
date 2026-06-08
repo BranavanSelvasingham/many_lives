@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { buildGenerateStreetThoughtsPrompt } from "../src/ai/prompts/generateStreetThoughts.js";
+import { buildGenerateStreetAutonomousLinePrompt } from "../src/ai/prompts/generateStreetAutonomousLine.js";
+import { buildGenerateStreetReplyPrompt } from "../src/ai/prompts/generateStreetReply.js";
+import { buildInterpretStreetConversationPrompt } from "../src/ai/prompts/interpretStreetConversation.js";
 import { buildPlainRowanContext } from "../src/ai/prompts/plainStreetConversationContext.js";
 import {
   buildStreetConversationContext,
@@ -66,6 +69,28 @@ function worldWithPoisonedTrail(): StreetGameState {
     stepKind: "talk",
     targetLocationId: "boarding-house",
   };
+  world.availableActions = [
+    {
+      description: "Ask Mara what actually keeps the room stable.",
+      emphasis: "high",
+      id: "talk:npc-mara",
+      kind: "talk",
+      label: "Talk to Mara",
+      matchesObjective: true,
+      targetLocationId: "boarding-house",
+    },
+    {
+      description: "The stale route hint is not a legal current-state action.",
+      disabled: true,
+      disabledReason: "Rowan has no current reason to go to the old pier.",
+      emphasis: "low",
+      id: "move:pier",
+      kind: "inspect",
+      label: "Head to the old pier",
+      matchesObjective: false,
+      targetLocationId: "pier",
+    },
+  ];
 
   return world;
 }
@@ -88,6 +113,7 @@ describe("street reasoning authority", () => {
     expect(prompt).toContain("Rowan's objective authority");
     expect(prompt).toContain("desiredOutcomes");
     expect(prompt).toContain("currentAutonomy");
+    expect(prompt).toContain("supporting_hint");
     expect(prompt).toContain("supportingRouteHints");
     expect(prompt).toContain("Follow the stale route to the old pier");
     expect(prompt).not.toContain("Rowan's current plan");
@@ -95,7 +121,7 @@ describe("street reasoning authority", () => {
     expect(prompt).not.toContain('"trail"');
   });
 
-  it("exposes conversation current plan as outcomes first and route hints second", () => {
+  it("exposes conversation authority as outcomes, autonomy, and legal actions first", () => {
     const world = worldWithPoisonedTrail();
 
     const context = buildStreetConversationContext({
@@ -105,14 +131,77 @@ describe("street reasoning authority", () => {
         "What should I do first if I want to keep the room and find honest work?",
     });
     const rowan = buildPlainRowanContext(context);
-    const planText = JSON.stringify(rowan.currentPlan);
+    const rowanText = JSON.stringify(rowan);
+    const rowanRecord = rowan as Record<string, unknown>;
 
-    expect(planText).toContain("desiredOutcomes");
-    expect(planText).toContain("openDesiredOutcomes");
-    expect(planText).toContain("Ask Mara what keeps the Morrow House room stable");
-    expect(planText).toContain("supportingRouteHints");
-    expect(planText).toContain("Follow the stale route to the old pier");
-    expect(planText).not.toContain("nextSteps");
+    expect(rowanRecord.currentPlan).toBeUndefined();
+    expect(rowanText).toContain("objectiveAuthority");
+    expect(rowanText).toContain("desiredOutcomes");
+    expect(rowanText).toContain("openDesiredOutcomes");
+    expect(rowanText).toContain("Ask Mara what keeps the Morrow House room stable");
+    expect(rowanText).toContain("currentAutonomy");
+    expect(rowanText).toContain("Mara is here, so Rowan can ask the question in person.");
+    expect(rowanText).toContain("availableLegalActions");
+    expect(rowanText).toContain("talk:npc-mara");
+    expect(rowanText).toContain("supportingRouteHints");
+    expect(rowanText).toContain("supporting_hint");
+    expect(rowanText).toContain("Follow the stale route to the old pier");
+    expect(rowanText).not.toContain("nextSteps");
+  });
+
+  it("keeps stale route hints out of authoritative dialogue prompt fields", () => {
+    const world = worldWithPoisonedTrail();
+
+    const prompt = buildGenerateStreetReplyPrompt({
+      game: world,
+      npcId: "npc-mara",
+      playerText:
+        "What should I do first if I want to keep the room and find honest work?",
+    });
+
+    expect(prompt).toContain("rowan.objectiveAuthority");
+    expect(prompt).toContain("currentAutonomy");
+    expect(prompt).toContain("availableLegalActions");
+    expect(prompt).toContain("supportingRouteHints");
+    expect(prompt).toContain("supporting_hint");
+    expect(prompt).toContain("Follow the stale route to the old pier");
+    expect(prompt).not.toContain('"currentPlan"');
+    expect(prompt).not.toContain('"nextSteps"');
+    expect(prompt).not.toContain('"trail"');
+  });
+
+  it("uses the same objective authority contract for Rowan speech and conversation interpretation", () => {
+    const world = worldWithPoisonedTrail();
+    const objective = {
+      focus: world.player.objective?.focus ?? "settle",
+      routeKey: world.player.objective?.routeKey ?? "first-afternoon",
+      text: world.player.objective?.text ?? "Ask Mara what keeps the room stable",
+    };
+
+    const autonomousPrompt = buildGenerateStreetAutonomousLinePrompt({
+      game: world,
+      npcId: "npc-mara",
+      objective,
+      purpose: "opener",
+    });
+    const interpretPrompt = buildInterpretStreetConversationPrompt({
+      closingReply: "Ask Ada at Kettle & Lamp before lunch if you need work today.",
+      discussedTopics: ["room", "work", "Ada"],
+      game: world,
+      npcId: "npc-mara",
+      objective,
+    });
+
+    for (const prompt of [autonomousPrompt, interpretPrompt]) {
+      expect(prompt).toContain("rowan.objectiveAuthority");
+      expect(prompt).toContain("currentAutonomy");
+      expect(prompt).toContain("availableLegalActions");
+      expect(prompt).toContain("supportingRouteHints");
+      expect(prompt).toContain("supporting_hint");
+      expect(prompt).not.toContain('"currentPlan"');
+      expect(prompt).not.toContain('"nextSteps"');
+      expect(prompt).not.toContain('"trail"');
+    }
   });
 
   it("does not let poisoned trail text dominate deterministic dialogue selection", () => {

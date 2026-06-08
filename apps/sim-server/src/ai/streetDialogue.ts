@@ -4,6 +4,7 @@ import type {
   MemoryEntry,
   NpcState,
   ObjectiveOutcomeStatus,
+  RowanAutonomyState,
   StreetGameState,
 } from "../street-sim/types.js";
 import { normalizeStreetVoice } from "./streetVoice.js";
@@ -103,6 +104,32 @@ export interface StreetConversationContext {
         done?: boolean;
       }>;
     };
+    availableActions: Array<{
+      id: string;
+      label: string;
+      description: string;
+      kind: string;
+      matchesObjective?: boolean;
+      disabled?: boolean;
+      disabledReason?: string;
+      targetLocationId?: string;
+      targetAnchorId?: string;
+      spaceId?: string;
+    }>;
+    autonomy: Pick<
+      RowanAutonomyState,
+      | "actionId"
+      | "autoContinue"
+      | "detail"
+      | "intent"
+      | "key"
+      | "label"
+      | "layer"
+      | "mode"
+      | "npcId"
+      | "stepKind"
+      | "targetLocationId"
+    >;
     currentThought?: string;
     money: number;
     energy: number;
@@ -232,6 +259,31 @@ export function buildStreetConversationContext(
       money: input.game.player.money,
       energy: input.game.player.energy,
       cognition,
+      availableActions: input.game.availableActions.map((action) => ({
+        id: action.id,
+        label: action.label,
+        description: action.description,
+        kind: action.kind,
+        matchesObjective: action.matchesObjective,
+        disabled: action.disabled,
+        disabledReason: action.disabledReason,
+        targetLocationId: action.targetLocationId,
+        targetAnchorId: action.targetAnchorId,
+        spaceId: action.spaceId,
+      })),
+      autonomy: {
+        actionId: input.game.rowanAutonomy.actionId,
+        autoContinue: input.game.rowanAutonomy.autoContinue,
+        detail: input.game.rowanAutonomy.detail,
+        intent: input.game.rowanAutonomy.intent,
+        key: input.game.rowanAutonomy.key,
+        label: input.game.rowanAutonomy.label,
+        layer: input.game.rowanAutonomy.layer,
+        mode: input.game.rowanAutonomy.mode,
+        npcId: input.game.rowanAutonomy.npcId,
+        stepKind: input.game.rowanAutonomy.stepKind,
+        targetLocationId: input.game.rowanAutonomy.targetLocationId,
+      },
       memories: selectRelevantMemories(input.game, location, npc),
     },
     npc: npc

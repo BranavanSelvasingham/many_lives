@@ -52,6 +52,8 @@ export function buildGenerateStreetReplyPrompt(
     "- When it fits, include one concrete thing Rowan could do next.",
     "- Treat Rowan as new to Brackenport: a place to stay, steady income, and a few real friends matter underneath most questions, but do not make every answer heavy.",
     "- Use Rowan's current goal, needs, and likely next move as background only. The line should still sound like casual speech.",
+    "- Use rowan.objectiveAuthority, currentAutonomy, availableLegalActions, and openPossibilities as the authority for what matters now.",
+    "- Treat supportingRouteHints and recentlyFinishedHints as optional scaffolding only. Never present a route hint or old trail title as Rowan's plan if live outcomes/actions point elsewhere.",
     "- Use conversationSoFar so the person does not repeat themself.",
     "- Let time of day, open windows, nearby places, and unresolved local problems shape what sounds urgent right now.",
     "- Do not repeat the same phrasing as recent lines; vary wording, opening, and closing across turns.",
