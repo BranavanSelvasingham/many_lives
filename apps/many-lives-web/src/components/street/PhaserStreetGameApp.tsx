@@ -553,6 +553,7 @@ type AdvanceObjectiveOptions = {
 type LoadGameOptions = {
   forceNew?: boolean;
   resumeStored?: boolean;
+  resumeStoredGameId?: string | null;
 };
 
 type PhaserStreetExperienceProps = {
@@ -1140,10 +1141,12 @@ export function PhaserStreetGameApp() {
   const loadGame = useCallback(async (options: LoadGameOptions = {}) => {
     const requestId = nextRequestId();
     const shouldCreateFreshGame = forceFreshGame || options.forceNew === true;
-    const storedGameId =
-      requestedGameId || shouldCreateFreshGame
+    const promptedStoredGameId = options.resumeStoredGameId?.trim() || null;
+    const storageBackedStoredGameId =
+      requestedGameId || shouldCreateFreshGame || promptedStoredGameId
         ? null
         : readStoredStreetGameId();
+    const storedGameId = promptedStoredGameId ?? storageBackedStoredGameId;
 
     if (storedGameId && !options.resumeStored) {
       setError(null);
@@ -1167,16 +1170,7 @@ export function PhaserStreetGameApp() {
 
     try {
       const nextGame = gameIdToOpen
-        ? await loadStreetGame(gameIdToOpen).catch(async (loadError) => {
-            if (!isMissingStreetGameError(loadError)) {
-              throw loadError;
-            }
-
-            if (storedGameId) {
-              forgetStoredStreetGameId(storedGameId);
-            }
-            return createStreetGame();
-          })
+        ? await loadStreetGame(gameIdToOpen)
         : await createStreetGame();
       rememberStreetGameId(nextGame.id);
       if (
@@ -1201,6 +1195,10 @@ export function PhaserStreetGameApp() {
       publishWaypoint(null);
       applyGameUpdate(nextGame, requestId);
     } catch (loadError) {
+      if (storedGameId && isMissingStreetGameError(loadError)) {
+        forgetStoredStreetGameId(storedGameId);
+        setStoredGamePromptId(storedGameId);
+      }
       setError(
         formatStreetRuntimeError(
           loadError,
@@ -1223,8 +1221,15 @@ export function PhaserStreetGameApp() {
   ]);
 
   const handleResumeStoredGame = useCallback(() => {
-    void loadGame({ resumeStored: true });
-  }, [loadGame]);
+    if (!storedGamePromptId) {
+      return;
+    }
+
+    void loadGame({
+      resumeStored: true,
+      resumeStoredGameId: storedGamePromptId,
+    });
+  }, [loadGame, storedGamePromptId]);
 
   const handleStartNewGame = useCallback(() => {
     void loadGame({ forceNew: true });

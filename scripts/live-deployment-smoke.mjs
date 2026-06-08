@@ -130,6 +130,13 @@ async function main() {
       false,
       "Stored-run prompt leaked a raw backend error.",
     );
+    assert.equal(
+      prompt.localStorageGameId,
+      seededGameId,
+      "Stored-run prompt did not capture the seeded storage id.",
+    );
+
+    const driftGameId = await driftStoredGameIdAfterPrompt(session, seededGameId);
 
     await session.clickSelector("[data-resume-stored-game]");
     await session.waitForAppReady();
@@ -166,6 +173,7 @@ async function main() {
 
     Object.assign(summary, {
       finishedAt: new Date().toISOString(),
+      driftGameId,
       firstGameId: firstProbe.gameId,
       freshGameId: freshProbe.gameId,
       livePlannerEvidence: deriveLivePlannerEvidence({
@@ -469,6 +477,48 @@ function numericCount(value) {
   return Number.isFinite(value) ? value : 0;
 }
 
+async function createLiveSmokeGame(baseUrl, label) {
+  const created = await fetchJson(`${baseUrl}/sim/game/new`, {
+    body: "{}",
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const gameId = created?.game?.id;
+  assert.ok(gameId, `${label} could not create a game id.`);
+  return gameId;
+}
+
+async function driftStoredGameIdAfterPrompt(session, promptedGameId) {
+  const driftGameId = await createLiveSmokeGame(
+    liveBase,
+    "Stored-run prompt drift check",
+  );
+  assert.notEqual(
+    driftGameId,
+    promptedGameId,
+    "Stored-run prompt drift check reused the prompted game id.",
+  );
+
+  await session.evaluate(`(() => {
+    window.localStorage.setItem(
+      "many-lives:street-game-id",
+      ${JSON.stringify(driftGameId)}
+    );
+    return true;
+  })()`);
+
+  const driftedStorageGameId = await session.evaluate(
+    `window.localStorage.getItem("many-lives:street-game-id")`,
+  );
+  assert.equal(
+    driftedStorageGameId,
+    driftGameId,
+    "Stored-run prompt drift check did not update localStorage.",
+  );
+
+  return driftGameId;
+}
+
 async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
   assert.ok(openingProbe?.gameId, `${label}: opening probe is missing a game id.`);
   assert.equal(
@@ -764,6 +814,7 @@ class CdpSession {
         hasRawBackendError: rawBackendError,
         hasResumeButton: Boolean(document.querySelector("[data-resume-stored-game]")),
         hasStartNewButton: Boolean(document.querySelector("[data-start-new-game]")),
+        localStorageGameId: window.localStorage.getItem("many-lives:street-game-id"),
         rail: railRect ? {
           height: Math.round(railRect.height),
           width: Math.round(railRect.width),
@@ -1048,8 +1099,11 @@ class CdpSession {
   }
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+async function fetchJson(url, init) {
+  const response = await fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(8_000),
+  });
 
   if (!response.ok) {
     const detail = await response.text();

@@ -128,15 +128,19 @@ export function buildLoadingHtml(
           )}
         </div>
         ${
-          snapshot.storedGameId && !snapshot.error
+          snapshot.storedGameId
             ? `<div class="ml-loading-actions">
-                <button class="ml-loading-button is-primary" data-resume-stored-game="true" type="button">Continue Saved Run</button>
+                ${
+                  snapshot.error
+                    ? ""
+                    : `<button class="ml-loading-button is-primary" data-resume-stored-game="true" type="button">Continue Saved Run</button>`
+                }
                 <button class="ml-loading-button is-secondary" data-start-new-game="true" type="button">Start New Run</button>
               </div>`
             : ""
         }
         ${
-          snapshot.error
+          snapshot.error && !snapshot.storedGameId
             ? `<button class="ml-loading-button" data-reload="true" type="button">Try Again</button>`
             : ""
         }
