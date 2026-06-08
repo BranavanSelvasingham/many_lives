@@ -58,6 +58,7 @@ import type {
   RowanAutonomyIntent,
   RowanAutonomyStepKind,
   RowanPlanningTrace,
+  RowanPlanningTraceLegalBacking,
   RowanPlanningTraceOption,
   RowanPlanningTraceStep,
   SceneNote,
@@ -3646,6 +3647,9 @@ function buildObjectivePlanningTrace(
         selected,
       )
     : undefined;
+  const selectedLegalBacking = selected
+    ? planningTraceLegalBackingForPlan(world, selected)
+    : undefined;
   const selectedLabel = selected
     ? autonomyLabelForNextBeat(world, selected)
     : undefined;
@@ -3701,6 +3705,7 @@ function buildObjectivePlanningTrace(
     ]).slice(0, 5),
     selectedActionId,
     selectedLabel,
+    selectedLegalBacking,
     selectedMatchedOutcomeId: selectedPressureMatch?.pressure.matchedOutcomeId,
     selectedPlanKey: selectedTraceKey,
     selectedPressureId: selectedPressureMatch?.pressure.id,
@@ -3880,6 +3885,14 @@ function buildProjectedDestinationFollowUpTraceSteps(
         kind: "talk",
         label: action?.label ?? `Talk to ${npc?.name ?? "someone nearby"}`,
         legal,
+        legalBacking:
+          legal && action
+            ? {
+                actionId,
+                locationId: location.id,
+                source: "destination-preview-legal-action",
+              }
+            : undefined,
         npcId: selected.npcId,
         rationale: `After reaching ${location.name}, re-evaluate the legal conversation surface before Rowan asks the next question.`,
         targetLocationId: location.id,
@@ -3905,6 +3918,14 @@ function buildProjectedDestinationFollowUpTraceSteps(
       kind: isTimeSkippingAction(selected.actionId) ? "wait" : "act",
       label: action?.label ?? autonomyLabelForAction(preview, selected.actionId),
       legal,
+      legalBacking:
+        legal && action
+          ? {
+              actionId: selected.actionId,
+              locationId: location.id,
+              source: "destination-preview-legal-action",
+            }
+          : undefined,
       rationale: `After reaching ${location.name}, re-check this action against the destination's legal action surface before applying consequences.`,
       targetLocationId: location.id,
       validation: legal
@@ -3920,11 +3941,15 @@ function traceStepForPlan(
   overrides: Partial<RowanPlanningTraceStep> = {},
 ): RowanPlanningTraceStep {
   const kind = loopKindForObjectivePlan(world, plan);
-  const actionId = plannerActionIdForPlan(plan);
+  const actionId = overrides.actionId ?? plannerActionIdForPlan(plan);
+  const legalBacking =
+    overrides.legalBacking ??
+    planningTraceLegalBackingForStep(world, plan, actionId, kind);
   return {
     actionId,
     kind,
     label: autonomyLabelForNextBeat(world, plan),
+    legalBacking,
     legal: true,
     npcId: plan.npcId,
     rationale: compactIntentText(plan.rationale, 160),
@@ -4041,6 +4066,14 @@ function buildLiveProblemFollowUpTraceSteps(
       steps.push({
         actionId: `solve:${problem.id}`,
         kind: "act",
+        legalBacking:
+          solveAction && !solveAction.disabled
+            ? {
+                actionId: `solve:${problem.id}`,
+                locationId: repairLocation.id,
+                source: "projected-follow-up-legal-action",
+              }
+            : undefined,
         label: solveAction?.label ?? `Solve ${problem.title.toLowerCase()}`,
         legal: Boolean(solveAction && !solveAction.disabled),
         rationale: `Solve ${problem.title.toLowerCase()} after the move and purchase have both been validated.`,
@@ -4096,6 +4129,16 @@ function traceLegalActionStepAtLocation(
           ? action.label
           : `Head to ${location.name}`,
       legal: !action.disabled,
+      legalBacking: action.disabled
+        ? undefined
+        : {
+            actionId,
+            locationId: location.id,
+            source:
+              world.player.currentLocationId === location.id
+                ? "current-legal-action-surface"
+                : "destination-preview-legal-action",
+          },
       validation: action.disabled
         ? `Blocked in the legal action surface: ${action.disabledReason ?? "disabled"}.`
         : "Action appears in a cloned legal action surface at this location; execution still requires arrival and simulator validation.",
@@ -4123,9 +4166,11 @@ function planningTraceOptionForPlan(
     plan,
   );
   const provenance = planningTraceProvenanceForPlan(pressureMatch);
+  const legalBacking = planningTraceLegalBackingForPlan(world, plan);
   return {
     actionId,
     label: autonomyLabelForNextBeat(world, plan),
+    legalBacking,
     matchedOutcomeId: pressureMatch?.pressure.matchedOutcomeId,
     npcId: plan.npcId,
     planKey: objectivePlanTraceKey(world, plan),
@@ -4159,6 +4204,159 @@ function planningTraceProvenanceForPlan(
   }
 
   return "legal-action";
+}
+
+function planningTraceLegalBackingForPlan(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+): RowanPlanningTraceLegalBacking | undefined {
+  const followUpActionId = projectedFollowUpActionIdForPlan(plan);
+  if (
+    plan.targetLocationId &&
+    plan.targetLocationId !== world.player.currentLocationId &&
+    followUpActionId
+  ) {
+    const destinationBacking = legalActionBackingAtLocation(
+      world,
+      plan.targetLocationId,
+      followUpActionId,
+      "destination-preview-legal-action",
+    );
+    if (destinationBacking) {
+      return destinationBacking;
+    }
+  }
+
+  const currentActionId = currentPlannerActionIdForPlan(world, plan);
+  if (plan.waitUntilMinutes !== undefined) {
+    return {
+      actionId: currentActionId,
+      locationId: world.player.currentLocationId,
+      source: "simulator-validated-wait",
+    };
+  }
+
+  const currentBacking = currentLegalActionBacking(world, currentActionId);
+  if (currentBacking) {
+    return currentBacking;
+  }
+
+  if (
+    currentActionId?.startsWith("move:") &&
+    plan.targetLocationId &&
+    findLocation(world, plan.targetLocationId)
+  ) {
+    return {
+      actionId: currentActionId,
+      locationId: plan.targetLocationId,
+      source: "simulator-validated-move",
+    };
+  }
+
+  if (followUpActionId && plan.targetLocationId) {
+    return legalActionBackingAtLocation(
+      world,
+      plan.targetLocationId,
+      followUpActionId,
+      "destination-preview-legal-action",
+    );
+  }
+
+  return undefined;
+}
+
+function planningTraceLegalBackingForStep(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  actionId: string | undefined,
+  kind: RowanAutonomyStepKind,
+): RowanPlanningTraceLegalBacking | undefined {
+  const currentBacking = currentLegalActionBacking(world, actionId);
+  if (currentBacking) {
+    return currentBacking;
+  }
+
+  if (kind === "wait" && plan.waitUntilMinutes !== undefined) {
+    return {
+      actionId,
+      locationId: world.player.currentLocationId,
+      source: "simulator-validated-wait",
+    };
+  }
+
+  if (
+    (kind === "move" || actionId?.startsWith("move:")) &&
+    plan.targetLocationId &&
+    findLocation(world, plan.targetLocationId)
+  ) {
+    return {
+      actionId,
+      locationId: plan.targetLocationId,
+      source: "simulator-validated-move",
+    };
+  }
+
+  return undefined;
+}
+
+function currentLegalActionBacking(
+  world: StreetGameState,
+  actionId: string | undefined,
+): RowanPlanningTraceLegalBacking | undefined {
+  if (!actionId) {
+    return undefined;
+  }
+
+  const action = buildAvailableActions(world).find(
+    (candidate) => candidate.id === actionId && !candidate.disabled,
+  );
+  if (!action) {
+    return undefined;
+  }
+
+  return {
+    actionId,
+    locationId: world.player.currentLocationId,
+    source: "current-legal-action-surface",
+  };
+}
+
+function legalActionBackingAtLocation(
+  world: StreetGameState,
+  locationId: string,
+  actionId: string,
+  source: RowanPlanningTraceLegalBacking["source"],
+): RowanPlanningTraceLegalBacking | undefined {
+  const preview = previewWorldAtLocation(world, locationId);
+  const action = buildAvailableActions(preview).find(
+    (candidate) =>
+      candidate.id === actionId &&
+      !candidate.disabled &&
+      canAutoPlanAction(world, locationId, candidate, preview),
+  );
+  if (!action) {
+    return undefined;
+  }
+
+  return {
+    actionId,
+    locationId,
+    source,
+  };
+}
+
+function projectedFollowUpActionIdForPlan(
+  plan: ObjectivePlan,
+): string | undefined {
+  if (plan.actionId) {
+    return plan.actionId;
+  }
+
+  if (plan.npcId) {
+    return `talk:${plan.npcId}`;
+  }
+
+  return undefined;
 }
 
 function objectivePlanTraceKey(world: StreetGameState, plan: ObjectivePlan) {
