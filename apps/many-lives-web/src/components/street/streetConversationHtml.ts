@@ -240,6 +240,7 @@ export function buildConversationPanelHtml(options: {
   };
   threadObjectiveStillCurrent?: boolean;
   talkableNpcIds: Set<string>;
+  watchMode?: boolean;
   willCarryForward?: boolean;
   willAutostart?: boolean;
 }) {
@@ -260,6 +261,7 @@ export function buildConversationPanelHtml(options: {
     startAction,
     threadObjectiveStillCurrent = false,
     talkableNpcIds,
+    watchMode = false,
     willCarryForward = false,
     willAutostart = false,
   } = options;
@@ -347,6 +349,8 @@ export function buildConversationPanelHtml(options: {
   return `
     <div class="ml-chat-shell ${isLiveConversation ? "is-live" : ""} ${
       isRailMode ? "is-rail" : ""
+    } ${watchMode ? "is-watch-mode" : ""} ${
+      watchMode && isLiveConversation ? "is-watch-conversation" : ""
     }" data-conversation-panel="true">
       <div class="ml-chat-header">
         <div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>
@@ -470,6 +474,7 @@ export function buildConversationPanelHtml(options: {
                 : visibleConversationEntries
                     .map((entry) => {
                       const isPlayer = entry.speaker === "player";
+                      const isWatchModeRowanLine = watchMode && isPlayer;
                       const displayText =
                         entry.id === replay.streamingEntryId
                           ? revealConversationText(
@@ -487,7 +492,13 @@ export function buildConversationPanelHtml(options: {
                                 : `<div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>`
                             }
                             <div class="ml-chat-bubble-wrap">
-                              <div class="ml-chat-bubble ${isPlayer ? "is-player" : ""}">
+                              <div class="ml-chat-bubble ${isPlayer ? "is-player" : ""} ${
+                                isWatchModeRowanLine ? "is-watch-transcript" : ""
+                              }" ${
+                                isWatchModeRowanLine
+                                  ? 'data-watch-mode-transcript-line="rowan"'
+                                  : ""
+                              }>
                                 ${escapeHtml(displayText)}${
                                   entry.id === replay.streamingEntryId
                                     ? '<span class="ml-chat-caret"></span>'
@@ -495,7 +506,7 @@ export function buildConversationPanelHtml(options: {
                                 }
                               </div>
                               <div class="ml-chat-meta ${isPlayer ? "is-player" : ""}">${escapeHtml(
-                                `${isPlayer ? "Rowan" : entry.speakerName} • ${formatClock(entry.time)}`,
+                                `${isPlayer ? (watchMode ? "Rowan replies automatically" : "Rowan") : entry.speakerName} • ${formatClock(entry.time)}`,
                               )}</div>
                             </div>
                           </div>
@@ -515,7 +526,15 @@ export function buildConversationPanelHtml(options: {
                         : `<div class="ml-chat-avatar">${escapeHtml(npcInitials)}</div>`
                     }
                     <div class="ml-chat-bubble-wrap">
-                      <div class="ml-chat-bubble ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">
+                      <div class="ml-chat-bubble ${effectiveTypingState.actor === "rowan" ? "is-player" : ""} ${
+                        watchMode && effectiveTypingState.actor === "rowan"
+                          ? "is-watch-transcript"
+                          : ""
+                      }" ${
+                        watchMode && effectiveTypingState.actor === "rowan"
+                          ? 'data-watch-mode-transcript-line="rowan"'
+                          : ""
+                      }>
                         <div class="ml-chat-typing">
                           <span class="ml-chat-dot"></span>
                           <span class="ml-chat-dot"></span>
@@ -523,7 +542,9 @@ export function buildConversationPanelHtml(options: {
                         </div>
                       </div>
                       <div class="ml-chat-meta ${effectiveTypingState.actor === "rowan" ? "is-player" : ""}">${escapeHtml(
-                        effectiveTypingState.label,
+                        watchMode && effectiveTypingState.actor === "rowan"
+                          ? "Rowan is replying automatically..."
+                          : effectiveTypingState.label,
                       )}</div>
                     </div>
                   </div>
@@ -568,13 +589,17 @@ export function buildConversationPanelHtml(options: {
           : canSpeak
             ? `
             <div class="ml-chat-rail-note">${escapeHtml(
-              "Rowan will keep the conversation moving from here.",
+              watchMode
+                ? "Rowan replies automatically as this conversation moves."
+                : "Rowan will keep the conversation moving from here.",
             )}</div>
           `
             : talkableNpcIds.has(npc.id) && isLiveConversation && isTranscriptInMotion
               ? `
             <div class="ml-chat-rail-note">${escapeHtml(
-              "Wait for the current lines to finish. Rowan can answer after that.",
+              watchMode
+                ? "The current lines are landing. Rowan will answer automatically after that."
+                : "Wait for the current lines to finish. Rowan can answer after that.",
             )}</div>
           `
             : talkableNpcIds.has(npc.id)

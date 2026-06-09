@@ -6492,6 +6492,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 (railActiveConversation?.locationId ??
                   railConversationThread?.locationId)),
           talkableNpcIds,
+          watchMode: watchModeUiEnabled,
           willCarryForward:
             railConversationNpc.id === selectedNpc?.id
               ? conversationWillCarryForward

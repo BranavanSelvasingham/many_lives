@@ -861,6 +861,36 @@ class CdpSession {
             waitMinutes: element.getAttribute("data-wait-minutes")
           }))
       );
+      const watchModeReplyAffordances = (() => {
+        if (!document.querySelector(".ml-root.is-watch-mode")) {
+          return [];
+        }
+
+        const looksLikeBlueReplyAction = (element) => {
+          const style = window.getComputedStyle(element);
+          const paint = [style.backgroundImage, style.backgroundColor].join(" ");
+          return /(?:#2f95ff|#0a84ff|rgb\\(47,\\s*149,\\s*255\\)|rgb\\(10,\\s*132,\\s*255\\))/i.test(paint);
+        };
+
+        return Array.from(
+          document.querySelectorAll("[data-conversation-panel] .ml-chat-bubble.is-player"),
+        )
+          .filter(isVisibleEnabled)
+          .filter((element) => {
+            const passiveTranscript =
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan";
+            const clickableAncestor = element.closest(
+              "button,[role='button'],a[href],[data-action-id],[data-advance-objective],[data-wait-minutes]",
+            );
+            return !passiveTranscript || Boolean(clickableAncestor) || looksLikeBlueReplyAction(element);
+          })
+          .map((element) => ({
+            passiveTranscript:
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan",
+            rect: rectFromElement(element),
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          }));
+      })();
       const rectForElements = (elements) => {
         const rects = elements
           .map((element) => element.getBoundingClientRect())
@@ -988,6 +1018,7 @@ class CdpSession {
           frameworkErrorText
         ),
         hasRail: Boolean(rail),
+        watchModeReplyAffordances,
         visibleProgressionControls,
         layout: {
           chatBubbles: chatBubbles.map((element) => ({
@@ -2571,6 +2602,27 @@ function assertNoVisibleWatchModeProgressionControls(label, probe, dom) {
       2,
     )}`,
   );
+
+  assert.deepEqual(
+    dom.watchModeReplyAffordances ?? [],
+    [],
+    `${label}: watch mode exposed reply/action-looking conversation affordances: ${JSON.stringify(
+      dom.watchModeReplyAffordances ?? [],
+      null,
+      2,
+    )}`,
+  );
+
+  if (probe.activeConversation) {
+    const visibleConversationCopy = [dom.conversationText, dom.bodyText]
+      .filter(Boolean)
+      .join(" ");
+    assert.match(
+      visibleConversationCopy,
+      /Rowan (?:replies automatically|is replying automatically|will answer automatically|will keep the conversation moving|is carrying the conversation)/i,
+      `${label}: watch-mode conversation does not expose passive carry-forward copy.`,
+    );
+  }
 }
 
 function assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom) {

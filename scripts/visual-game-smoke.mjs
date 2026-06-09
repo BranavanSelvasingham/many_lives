@@ -510,6 +510,35 @@ class CdpSession {
             waitMinutes: element.getAttribute("data-wait-minutes")
           }))
       );
+      const watchModeReplyAffordances = (() => {
+        if (!root?.classList.contains("is-watch-mode")) {
+          return [];
+        }
+
+        const looksLikeBlueReplyAction = (element) => {
+          const style = window.getComputedStyle(element);
+          const paint = [style.backgroundImage, style.backgroundColor].join(" ");
+          return /(?:#2f95ff|#0a84ff|rgb\\(47,\\s*149,\\s*255\\)|rgb\\(10,\\s*132,\\s*255\\))/i.test(paint);
+        };
+
+        return Array.from(
+          document.querySelectorAll("[data-conversation-panel] .ml-chat-bubble.is-player"),
+        )
+          .filter(isVisibleEnabled)
+          .filter((element) => {
+            const passiveTranscript =
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan";
+            const clickableAncestor = element.closest(
+              "button,[role='button'],a[href],[data-action-id],[data-advance-objective],[data-wait-minutes]",
+            );
+            return !passiveTranscript || Boolean(clickableAncestor) || looksLikeBlueReplyAction(element);
+          })
+          .map((element) => ({
+            passiveTranscript:
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan",
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          }));
+      })();
       const canvasRect = canvas?.getBoundingClientRect();
       const compactPrimaryActionRect =
         compactPrimaryAction?.getBoundingClientRect();
@@ -606,6 +635,7 @@ class CdpSession {
         } : null,
         title: document.title,
         url: location.href,
+        watchModeReplyAffordances,
         visibleProgressionControls,
         whyNowVisible
       };
@@ -1478,6 +1508,18 @@ function assertVisibleDecisionArtifactDom(decisionArtifact, label) {
   );
 }
 
+function assertNoWatchModeReplyAffordances(page, label) {
+  assert.deepEqual(
+    page.watchModeReplyAffordances ?? [],
+    [],
+    `${label}: watch mode exposed reply/action-looking conversation affordances: ${JSON.stringify(
+      page.watchModeReplyAffordances ?? [],
+      null,
+      2,
+    )}`,
+  );
+}
+
 function cameraScrollDistance(first, second) {
   return Math.hypot(
     (second?.scroll?.x ?? 0) - (first?.scroll?.x ?? 0),
@@ -1593,6 +1635,14 @@ async function runFreshAutoplayStartCheck(session) {
       page.visibleProgressionControls,
     )}`,
   );
+  assertNoWatchModeReplyAffordances(page, "fresh autoplay");
+  if (advancedProbe.activeConversation?.npcId) {
+    assert.match(
+      page.bodyText,
+      /Rowan (?:replies automatically|is replying automatically|will answer automatically|is carrying the conversation)/i,
+      "fresh autoplay conversation did not expose passive carry-forward copy.",
+    );
+  }
   assertVisibleDecisionArtifactPayload(
     advancedProbe.autonomy?.visibleDecisionArtifact,
     "fresh autoplay",
@@ -1620,6 +1670,7 @@ async function runFreshAutoplayStartCheck(session) {
       rail: advancedProbe.rail,
       visibleDecisionArtifact: advancedProbe.autonomy?.visibleDecisionArtifact,
       watchMode: advancedProbe.watchMode,
+      watchModeReplyAffordances: page.watchModeReplyAffordances,
     },
     opening: {
       autonomy: openingProbe.autonomy,
@@ -1750,6 +1801,7 @@ async function runViewportCheck(session, viewport) {
     page.rootClass.includes("is-watch-mode"),
     `${viewport.name}: autoplay run did not mark the overlay as watch mode.`,
   );
+  assertNoWatchModeReplyAffordances(page, viewport.name);
   if (viewport.width <= 960) {
     assert.ok(
       page.compactPrimaryAction,
