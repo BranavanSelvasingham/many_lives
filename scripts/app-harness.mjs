@@ -519,6 +519,27 @@ async function assertRowanBrowserArtifacts(logLine) {
   if (inhabit.directSimCommandsUsed !== false) {
     throw new Error("Inhabit gameplay browser pass must not use direct sim commands.");
   }
+  if (!inhabit.postFirstAfternoonLivePressureEvidence) {
+    throw new Error(
+      "Inhabit gameplay browser pass did not report post-first-afternoon live-pressure follow-through evidence.",
+    );
+  }
+  if (inhabit.postFirstAfternoonLivePressureEvidence.status !== "passed") {
+    throw new Error(
+      "Post-first-afternoon live-pressure follow-through evidence did not pass.",
+    );
+  }
+  if (
+    inhabit.postFirstAfternoonLivePressureEvidence.zeroClick
+      ?.visibleControlClickCount !== 0
+  ) {
+    throw new Error(
+      `Post-first-afternoon follow-through must remain zero-click; got ${
+        inhabit.postFirstAfternoonLivePressureEvidence.zeroClick
+          ?.visibleControlClickCount ?? "missing"
+      }.`,
+    );
+  }
   if ((inhabit.progressionClicks ?? []).length < 10) {
     throw new Error(
       `Inhabit gameplay pass had too few player-facing progression beats: ${
@@ -564,6 +585,9 @@ async function assertRowanBrowserArtifacts(logLine) {
     "ada-conversation",
     "shift-in-motion",
     "first-afternoon-complete",
+    "post-first-afternoon-handoff",
+    "post-first-afternoon-rest",
+    "post-first-afternoon-live-route",
   ]) {
     if (!inhabitMomentLabels.has(label)) {
       throw new Error(`Inhabit gameplay pass missing player milestone: ${label}.`);
