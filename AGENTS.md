@@ -34,4 +34,8 @@ The target is a clean first 3 to 5 minutes: the app should load clearly, show Ro
 
 When reviewing Rowan autonomy, objectives, autoplay, or AI planning, explicitly audit whether objectives are desired outcomes with route hints or whether `advance_objective` is still primarily following hardcoded trail steps. Flag hardcoded route-following as the core agency gap, even if the resulting path is playable.
 
+Also audit whether Rowan's next meaningful action has a visible decision artifact: current objective, relevant constraints, considered or rejected options, selected action, and concise rationale from the planner/LLM callback after simulator validation. Flag any meaningful autonomous action with no visible reasoning callback as an alignment gap.
+
+For observe/autoplay, explicitly verify whether Rowan carries on with zero visible progression, reply, wait, or action-button clicks. A required next-action click in watch mode is a regression, not acceptable pacing.
+
 When reviewing, lead with functional regressions, then visual or tone regressions, then structural cleanup. Keep unrelated refactors out of fixes unless they are needed to make the current behavior reliable.

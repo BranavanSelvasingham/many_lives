@@ -295,6 +295,13 @@ function assertFreshAutoplayPage(page, probe, base) {
     !page.bodyText.includes("Watch Rowan begin"),
     "Live autoplay stayed on the opening watch action instead of starting Rowan.",
   );
+  assert.deepEqual(
+    page.visibleProgressionControls ?? [],
+    [],
+    `Live autoplay exposed visible progression/action controls: ${JSON.stringify(
+      page.visibleProgressionControls ?? [],
+    )}`,
+  );
   assert.ok(probe?.gameId, "Live browser probe is missing a game id.");
   assert.equal(probe.watchMode?.enabled, true, "Live browser probe did not report watch mode.");
   assert.ok(probe.objective?.text, "Live browser probe is missing Rowan's objective.");
@@ -799,6 +806,37 @@ class CdpSession {
       const bodyText = document.body?.innerText ?? "";
       const canvasRect = canvas?.getBoundingClientRect();
       const railRect = rail?.getBoundingClientRect();
+      const isVisibleEnabled = (element) => {
+        if (!element) {
+          return false;
+        }
+
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          !element.disabled &&
+          element.getAttribute("aria-disabled") !== "true"
+        );
+      };
+      const visibleProgressionControls = [
+        "[data-advance-objective]:not([disabled])",
+        "[data-action-id]:not([disabled])",
+        "[data-wait-minutes]:not([disabled])"
+      ].flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector))
+          .filter(isVisibleEnabled)
+          .map((element) => ({
+            actionId: element.getAttribute("data-action-id"),
+            advancesObjective: element.hasAttribute("data-advance-objective"),
+            selector,
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+            waitMinutes: element.getAttribute("data-wait-minutes")
+          }))
+      );
       const rawBackendError =
         /\\{"message":|"message"\\s*:\\s*"Game\\s+game-|Game\\s+game-[A-Za-z0-9-]+\\s+was not found/i.test(bodyText);
       return {
@@ -823,7 +861,8 @@ class CdpSession {
         } : null,
         rootClass: root?.className ?? "",
         title: document.title,
-        url: location.href
+        url: location.href,
+        visibleProgressionControls
       };
     })()`);
   }

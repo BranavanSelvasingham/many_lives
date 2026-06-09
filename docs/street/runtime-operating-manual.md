@@ -59,7 +59,10 @@ Autoplay is a watch mode for Rowan's current autonomy policy. It should feel lik
 - Autoplay does not choose which game to load; URL and storage rules still decide that.
 - Rowan's behavior should come from current sim state, available actions, objectives, conversations, and local policy helpers. It should not depend on a fixed prerecorded movement list.
 - Objectives describe desired outcomes. They may provide progress scaffolding and route hints, but they must not be the primary source of Rowan's next move. Rowan's next move should come from the current world state and legal action surface, with deterministic validation and fallback.
+- Rowan's next meaningful action should be explained by a visible decision artifact: current objective, relevant constraints, options considered or rejected, selected action, and concise rationale from the planner/LLM callback.
+- The planner/LLM callback is advisory until the simulator validates the selected action. Do not expose raw hidden chain-of-thought, system prompts, or backend-shaped debug state as player UI.
 - The rail and playback beats explain what Rowan is doing. They are not the source of truth.
+- In `?autoplay=1` or `observe=1`, Rowan must not wait for the viewer to click a progression, reply, wait, or action button. Showing a required next-action button in watch mode is a bug unless it is clearly outside observe/autoplay mode.
 - The map must support user panning while autoplay runs, so the viewer can look around without fighting camera snaps.
 - Ambient citizens should move at believable human scale and speed. They are part of the "living city" read, not tiny decorative markers.
 
@@ -81,6 +84,8 @@ For planning work on this axis, use [docs/street/living-world-simulation-plan.md
 - Rowan's decision loop should consider current location, time, money, energy, memory, active conversations, known places, known people, jobs, problems, city events, commitments, and available actions.
 - NPCs, jobs, problems, and city events should keep evolving as time advances whether Rowan acts on them or not.
 - AI planning may choose only from validated allowed actions. The simulator remains authoritative for movement, time, consequences, and state mutation.
+- The UI or browser artifacts should expose Rowan's decision rationale as a summarized callback: what he knows, what he is trying to do, what options were available, why one was chosen, and what was rejected. Reviews should flag any meaningful autonomous action that lacks this evidence.
+- Reviews must report whether observe/autoplay is truly zero-click for the scenario under test. A visible required action button in watch mode is a first-order autoplay regression, not a minor UI preference.
 - If a change only makes a scripted path more polished, call that out explicitly. Do not describe it as AI-driven or living-world behavior unless Rowan can choose among state-derived legal actions and the world can change independently.
 
 ## Conversation And Tone Contract
@@ -152,6 +157,8 @@ Use this checklist when the user asks whether the app is playable, ready, or dep
 - Resume saved run and confirm the game id matches storage.
 - Start new from the saved-run prompt and confirm the new id differs.
 - Watch autoplay for 3 to 5 minutes or until the first stopping point.
+- Confirm observe/autoplay does not require visible progression, reply, wait, or action-button clicks.
+- Confirm Rowan's next meaningful action has a visible decision artifact or browser artifact: objective, constraints, considered/rejected options, selected action, and rationale.
 - Run the final player-POV browser regression: the inhabit gameplay pass must progress from a fresh browser session by visible clicks and pointer drags, not direct sim commands.
 - Confirm Rowan's objective decisions come from current world state and available legal actions, not just the next hardcoded objective trail item.
 - Pan to each map edge and confirm the user can tell when the edge is reached.
