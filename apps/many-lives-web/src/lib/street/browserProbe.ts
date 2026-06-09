@@ -100,6 +100,7 @@ export type StreetBrowserProbeSnapshot = {
   >;
   rowanAutoplayEnabled?: boolean;
   rowanAutoplayFrozen?: boolean;
+  rowanWatchModeEnabled?: boolean;
   visualEventCues?: Array<{
     cue: string;
     locationId: string;
@@ -434,7 +435,7 @@ export function buildStreetBrowserProbeJson({
     },
     watchMode: {
       autoContinue: game.rowanAutonomy.autoContinue,
-      enabled: Boolean(snapshot.rowanAutoplayEnabled),
+      enabled: Boolean(snapshot.rowanWatchModeEnabled),
       frozen: Boolean(snapshot.rowanAutoplayFrozen),
       pendingPlayback: Boolean(
         snapshot.rowanPlayback?.activeBeat ||
@@ -442,7 +443,7 @@ export function buildStreetBrowserProbeJson({
       ),
       status: snapshot.rowanAutoplayFrozen
         ? "frozen"
-        : !snapshot.rowanAutoplayEnabled
+        : !snapshot.rowanWatchModeEnabled
           ? "off"
           : game.rowanAutonomy.autoContinue
             ? "watching"

@@ -479,6 +479,36 @@ class CdpSession {
       const timePill = document.querySelector(".ml-time-pill");
       const whyNow = document.querySelector(".ml-rowan-story-card-reason");
       const text = document.body.innerText || "";
+      const isVisibleEnabled = (element) => {
+        if (!element) {
+          return false;
+        }
+
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          !element.disabled
+        );
+      };
+      const visibleProgressionControls = [
+        "[data-advance-objective]:not([disabled])",
+        "[data-action-id]:not([disabled])",
+        "[data-wait-minutes]:not([disabled])"
+      ].flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector))
+          .filter(isVisibleEnabled)
+          .map((element) => ({
+            actionId: element.getAttribute("data-action-id"),
+            advancesObjective: element.hasAttribute("data-advance-objective"),
+            selector,
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+            waitMinutes: element.getAttribute("data-wait-minutes")
+          }))
+      );
       const canvasRect = canvas?.getBoundingClientRect();
       const compactPrimaryActionRect =
         compactPrimaryAction?.getBoundingClientRect();
@@ -542,6 +572,7 @@ class CdpSession {
         } : null,
         title: document.title,
         url: location.href,
+        visibleProgressionControls,
         whyNowVisible
       };
     })()`);
@@ -1398,6 +1429,13 @@ async function runFreshAutoplayStartCheck(session) {
   assert.ok(
     !page.bodyText.includes(GENERIC_AUTOPLAY_NOTE),
     "fresh autoplay exposed the generic carry-forward note instead of contextual watch-mode copy.",
+  );
+  assert.deepEqual(
+    page.visibleProgressionControls,
+    [],
+    `fresh autoplay exposed visible progression/action controls: ${JSON.stringify(
+      page.visibleProgressionControls,
+    )}`,
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");

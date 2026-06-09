@@ -539,6 +539,7 @@ type StreetAppSnapshot = {
   rowanPlayback?: RowanPlaybackState;
   rowanAutoplayEnabled: boolean;
   rowanAutoplayFrozen: boolean;
+  rowanWatchModeEnabled: boolean;
   storedGameId?: string | null;
   waypointNonce: number;
   waypointTarget?: Point;
@@ -555,6 +556,14 @@ type LoadGameOptions = {
   resumeStored?: boolean;
   resumeStoredGameId?: string | null;
 };
+
+function isWatchModeUiEnabled(snapshot: StreetAppSnapshot) {
+  return snapshot.rowanWatchModeEnabled;
+}
+
+function suppressWatchModeProgressionControls(snapshot: StreetAppSnapshot) {
+  return isWatchModeUiEnabled(snapshot) && !snapshot.rowanAutoplayFrozen;
+}
 
 type PhaserStreetExperienceProps = {
   onAction: (actionId: string, label: string) => void;
@@ -948,6 +957,8 @@ export function PhaserStreetGameApp() {
   const boundGameObserverEnabled = useMemo(() => {
     return isTruthyQueryValue(searchParams.get("observe"));
   }, [searchParams]);
+  const rowanWatchModeEnabled =
+    rowanAutoplayEnabled || boundGameObserverEnabled;
 
   useEffect(() => {
     gameRef.current = game;
@@ -1558,6 +1569,7 @@ export function PhaserStreetGameApp() {
       rowanPlayback,
       rowanAutoplayEnabled,
       rowanAutoplayFrozen,
+      rowanWatchModeEnabled,
       storedGameId: storedGamePromptId,
       waypointNonce,
       waypointTarget: waypointTarget ?? undefined,
@@ -1577,6 +1589,7 @@ export function PhaserStreetGameApp() {
       rowanPlayback,
       rowanAutoplayEnabled,
       rowanAutoplayFrozen,
+      rowanWatchModeEnabled,
       sceneOverrideVersion,
       storedGamePromptId,
       viewport,
@@ -2944,6 +2957,9 @@ function bindOverlayEvents(
 
     const actionButton = target.closest<HTMLElement>("[data-action-id]");
     if (actionButton) {
+      if (suppressWatchModeProgressionControls(runtimeState.snapshot)) {
+        return;
+      }
       const actionId = actionButton.dataset.actionId;
       const actionLabel = actionButton.dataset.actionLabel ?? "Doing that";
       if (actionId) {
@@ -2964,6 +2980,9 @@ function bindOverlayEvents(
 
     const waitButton = target.closest<HTMLElement>("[data-wait-minutes]");
     if (waitButton) {
+      if (suppressWatchModeProgressionControls(runtimeState.snapshot)) {
+        return;
+      }
       const minutes = Number(waitButton.dataset.waitMinutes ?? "0");
       const label = waitButton.dataset.waitLabel ?? "Waiting...";
       if (minutes > 0) {
@@ -2976,6 +2995,9 @@ function bindOverlayEvents(
       "[data-advance-objective]",
     );
     if (advanceButton) {
+      if (suppressWatchModeProgressionControls(runtimeState.snapshot)) {
+        return;
+      }
       const snapshotGame = runtimeState.snapshot.game;
       const canAdvanceConversation =
         Boolean(snapshotGame?.activeConversation) &&
@@ -5119,6 +5141,40 @@ function buildWatchModePrimaryContinueCopy({
   return "Rowan is choosing the next visible step.";
 }
 
+function buildWatchModePassiveStatusCopy({
+  activeConversationNpc,
+  autonomy,
+  firstAfternoonCompletionCanAdvance,
+  primaryContinueCopy,
+}: {
+  activeConversationNpc: NpcState | null;
+  autonomy: StreetGameState["rowanAutonomy"];
+  firstAfternoonCompletionCanAdvance: boolean;
+  primaryContinueCopy: string;
+}) {
+  if (activeConversationNpc) {
+    return `Rowan is carrying the conversation with ${activeConversationNpc.name} automatically.`;
+  }
+
+  if (firstAfternoonCompletionCanAdvance) {
+    return "Rowan is weighing the field note, then continuing automatically.";
+  }
+
+  if (autonomy.mode === "conversation") {
+    return "Rowan is starting the next conversation automatically.";
+  }
+
+  if (autonomy.mode === "waiting") {
+    return "Rowan is letting the clock carry this beat automatically.";
+  }
+
+  if (primaryContinueCopy) {
+    return `${primaryContinueCopy.replace(/\.$/, "")} automatically.`;
+  }
+
+  return "Rowan is continuing automatically.";
+}
+
 function buildManualPrimaryContinueCopy({
   autonomy,
   firstAfternoonOpening,
@@ -5850,7 +5906,10 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     : isCollapsibleRailViewport(snapshot.viewport)
       ? "tablet"
       : "desktop";
-  const watchModeClass = snapshot.rowanAutoplayEnabled
+  const watchModeUiEnabled = isWatchModeUiEnabled(snapshot);
+  const watchModeProgressionControlsSuppressed =
+    suppressWatchModeProgressionControls(snapshot);
+  const watchModeClass = watchModeUiEnabled
     ? "is-watch-mode"
     : "";
   const railExpanded = railViewport === "desktop" ? true : ui.railExpanded;
@@ -5886,7 +5945,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     game,
     playback: snapshot.rowanPlayback,
     quietStatusLabel: game.currentScene.title,
-    watchMode: snapshot.rowanAutoplayEnabled,
+    watchMode: watchModeUiEnabled,
   });
   const latestRailConversation = railConversationLines.at(-1);
   const railConversationTimestamp =
@@ -5920,7 +5979,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     canAdvanceObjectiveManually &&
     (rowanAutonomy.autoContinue || firstAfternoonCompletionCanAdvance) &&
     !snapshot.busyLabel &&
-    !watchModeCarriesObjective;
+    !watchModeCarriesObjective &&
+    !watchModeProgressionControlsSuppressed;
   const firstAfternoonOpening = isFirstAfternoonOpening(game);
   const activeConversationContinueLabel = rowanAutonomy.label.startsWith(
     "With ",
@@ -5933,7 +5993,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const primaryContinueTargetNpc = rowanAutonomy.npcId
     ? (game.npcs.find((npc) => npc.id === rowanAutonomy.npcId) ?? null)
     : null;
-  const primaryContinueLabel = snapshot.rowanAutoplayEnabled
+  const primaryContinueLabel = watchModeUiEnabled
     ? firstAfternoonCompletionCanAdvance
       ? "See what Rowan weighs next"
       : firstAfternoonOpening
@@ -5947,11 +6007,11 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const primaryContinueCopy = game.activeConversation
     ? buildActiveConversationContinueCopy({
         npc: selectedNpc,
-        rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
+        rowanAutoplayEnabled: watchModeUiEnabled,
       })
     : firstAfternoonCompletionCanAdvance
       ? "Close the field note, then weigh rest, the yard window, and the Morrow Yard pump."
-      : snapshot.rowanAutoplayEnabled
+      : watchModeUiEnabled
       ? buildWatchModePrimaryContinueCopy({
           autonomy: rowanAutonomy,
           firstAfternoonOpening,
@@ -5964,6 +6024,20 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           targetLocation: primaryContinueTargetLocation,
           targetNpc: primaryContinueTargetNpc,
         });
+  const watchModePassiveStatusCopy =
+    watchModeProgressionControlsSuppressed &&
+    (rowanAutonomy.autoContinue ||
+      firstAfternoonCompletionCanAdvance ||
+      game.activeConversation)
+      ? buildWatchModePassiveStatusCopy({
+          activeConversationNpc: game.activeConversation
+            ? (railConversationNpc ?? selectedNpc)
+            : null,
+          autonomy: rowanAutonomy,
+          firstAfternoonCompletionCanAdvance,
+          primaryContinueCopy,
+        })
+      : "";
   const conversationEntry = selectedNpc
     ? {
         id: `conversation-${selectedNpc.id}`,
@@ -6099,7 +6173,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         })
       : "";
   const availableActionsForRail =
-    hasConversationFocus && selectedTalkAction
+    watchModeProgressionControlsSuppressed
+      ? []
+      : hasConversationFocus && selectedTalkAction
       ? actions.filter((action) => action.id !== selectedTalkAction.id)
       : actions;
   const firstAfternoonComplete = Boolean(game.firstAfternoon?.completedAt);
@@ -6165,7 +6241,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const showManualTimeControls =
     !firstAfternoonComplete &&
     !railActiveConversation &&
-    !isBlockingRowanPlaybackForGame(snapshot.rowanPlayback, game);
+    !isBlockingRowanPlaybackForGame(snapshot.rowanPlayback, game) &&
+    !watchModeProgressionControlsSuppressed;
   const debugRailHtml = buildRuntimeDebugHtml(game);
   const hasRailMore =
     railContextEntries.length > 0 ||
@@ -6226,6 +6303,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       movement: buildBrowserMovementDiagnostics(runtimeState),
       rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
       rowanAutoplayFrozen: snapshot.rowanAutoplayFrozen,
+      rowanWatchModeEnabled: snapshot.rowanWatchModeEnabled,
       visualEventCues: runtimeState.visualEventCues,
     },
   });
@@ -6330,7 +6408,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           <div class="ml-dock-copy">${escapeHtml(
             focusMeta?.subtitle ??
               upcomingCommitmentLabel ??
-              (snapshot.rowanAutoplayEnabled
+              (watchModeUiEnabled
                 ? "Drag the map to look around. Open Locals, Journal, or Notebook when you want details."
                 : "Scroll or drag the map to look around. Click a street tile to move, or open People, Journal, and Notebook for details."),
           )}</div>
@@ -6403,9 +6481,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                     )}</span>
                   </button>
                 `
-                  : snapshot.rowanAutoplayEnabled && rowanAutonomy.autoContinue
+                  : watchModePassiveStatusCopy
                     ? `<div class="ml-autoplay-note">${escapeHtml(
-                        primaryContinueCopy,
+                        watchModePassiveStatusCopy,
                       )}</div>`
                     : ""
               }
@@ -6736,15 +6814,15 @@ function syncUiState(runtimeState: RuntimeState) {
         game,
         playback: runtimeState.snapshot.rowanPlayback,
         quietStatusLabel: game.currentScene.title,
-        watchMode: runtimeState.snapshot.rowanAutoplayEnabled,
+        watchMode: isWatchModeUiEnabled(runtimeState.snapshot),
       }).shouldAutoOpen
     : false;
   const collapsibleRailViewport = isCollapsibleRailViewport(
     runtimeState.snapshot.viewport,
   );
-  const compactAutoplayWatchMode =
+  const compactWatchMode =
     collapsibleRailViewport &&
-    runtimeState.snapshot.rowanAutoplayEnabled &&
+    isWatchModeUiEnabled(runtimeState.snapshot) &&
     !runtimeState.ui.focusPanel &&
     !runtimeState.ui.supportExpanded;
 
@@ -6764,7 +6842,7 @@ function syncUiState(runtimeState: RuntimeState) {
   if (game.activeConversation?.npcId) {
     if (
       collapsibleRailViewport &&
-      !compactAutoplayWatchMode &&
+      !compactWatchMode &&
       !runtimeState.ui.railExpanded
     ) {
       runtimeState.ui.railExpanded = true;
@@ -6800,7 +6878,7 @@ function syncUiState(runtimeState: RuntimeState) {
   if (
     collapsibleRailViewport &&
     shouldAutoOpenRail &&
-    !compactAutoplayWatchMode &&
+    !compactWatchMode &&
     !runtimeState.ui.railExpanded
   ) {
     runtimeState.ui.railExpanded = true;
