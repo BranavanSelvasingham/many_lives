@@ -1640,6 +1640,23 @@ export function buildStreetOverlayStyle({
         background: linear-gradient(180deg, #2f95ff 0%, #0a84ff 100%);
         color: #ffffff;
       }
+      .ml-chat-shell.is-watch-mode .ml-chat-bubble.is-player {
+        border-color: rgba(124, 197, 188, 0.24);
+        background: rgba(20, 29, 34, 0.82);
+        color: rgba(232, 239, 242, 0.92);
+        box-shadow: none;
+      }
+      .ml-chat-shell.is-watch-mode .ml-chat-bubble.is-player.is-watch-transcript {
+        border-bottom-left-radius: 22px;
+        border-bottom-right-radius: 8px;
+      }
+      .ml-chat-shell.is-watch-mode .ml-chat-meta.is-player {
+        color: rgba(124, 197, 188, 0.68);
+      }
+      .ml-chat-shell.is-watch-mode .ml-chat-bubble.is-player .ml-chat-caret,
+      .ml-chat-shell.is-watch-mode .ml-chat-bubble.is-player .ml-chat-dot {
+        background: rgba(124, 197, 188, 0.78);
+      }
       .ml-chat-meta {
         margin-top: 4px;
         padding: 0 4px;
