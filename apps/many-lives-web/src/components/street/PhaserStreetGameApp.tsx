@@ -6656,7 +6656,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       : 112;
   const compactRailExpandedHeight =
     railViewport === "phone" && firstAfternoonOpening
-      ? Math.max(400, Math.min(Math.round(height * 0.48), height - 240))
+      ? Math.max(400, Math.min(Math.round(height * 0.58), height - 168))
       : railViewport === "phone"
       ? Math.max(320, Math.min(Math.round(height * 0.58), height - 152))
       : Math.max(340, Math.min(Math.round(height * 0.56), height - 160));

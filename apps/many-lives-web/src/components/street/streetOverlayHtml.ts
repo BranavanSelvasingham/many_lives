@@ -232,6 +232,7 @@ export function buildVisibleDecisionArtifactHtml(
       ${
         constraints.length
           ? `<div class="ml-decision-chip-row" aria-label="Relevant constraints">
+              <strong>Signals</strong>
               ${constraints
                 .map(
                   (constraint) =>
