@@ -548,6 +548,7 @@ export function buildStreetOverlayStyle({
       }
       .ml-decision-line span,
       .ml-decision-rationale span,
+      .ml-decision-next-check span,
       .ml-decision-options > span,
       .ml-decision-passed-over > span {
         display: block;
@@ -602,6 +603,14 @@ export function buildStreetOverlayStyle({
         font-size: 11px;
         line-height: 1.48;
         color: rgba(227, 235, 238, 0.82);
+      }
+      .ml-decision-next-check {
+        margin-top: 8px;
+        border-top: 1px solid rgba(138, 151, 161, 0.1);
+        padding-top: 7px;
+        font-size: 11px;
+        line-height: 1.42;
+        color: rgba(247, 227, 187, 0.82);
       }
       .ml-decision-artifact.is-compact .ml-decision-rationale {
         margin-top: 8px;

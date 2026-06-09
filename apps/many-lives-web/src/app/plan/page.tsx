@@ -12,7 +12,7 @@ const authorityChain = [
   "Objectives define desired-state predicates: outcomes, blockers, evidence, urgency, and completion checks.",
   "The simulator exposes legal actions from current state.",
   "Rowan's planner chooses from legal actions using current world pressure, objective predicates, memory, location, energy, money, conversations, jobs, problems, and schedules.",
-  "The planner or LLM returns a player-facing decision artifact: objective, constraints, options considered, selected action, rejected reasons, and concise rationale.",
+  "The planner or LLM returns a player-facing decision artifact: objective, constraints, options considered, selected action, rejected reasons, concise rationale, and the next check when the trace can support one.",
   "The simulator validates and applies the chosen action.",
   "The renderer projects the validated state through the visual map; movement follows legal routed paths.",
   "Browser probes and tests expose the chain so it can be audited.",
@@ -36,7 +36,7 @@ const obligations = [
   },
   {
     evidence: "Rail UI, browser probe, visual smoke, and inhabit report",
-    pass: "Before or during each meaningful autonomous action, the player sees Rowan's objective, constraints, considered options, selected action, rejected reasons, and concise rationale without raw planner/debug labels.",
+    pass: "Before or during each meaningful autonomous action, the player sees Rowan's objective, constraints, considered options, selected action, rejected reasons, concise rationale, and trace-backed next check without raw planner/debug labels.",
     title: "Rowan's Reasoning Is Visible",
   },
   {
@@ -82,7 +82,7 @@ const acceptanceCriteria = [
   "A poisoned objective trail cannot make Rowan follow the wrong route or skip live objective state.",
   "An objective can complete from desired-state predicates even when route hints are absent, stale, or wrong.",
   "Rowan's selected action is traceable to legal actions, world pressure, and objective predicates.",
-  "Rowan's selected action is accompanied by a visible reasoning callback with objective, constraints, options, selected action, rejected reasons, and concise rationale.",
+  "Rowan's selected action is accompanied by a visible reasoning callback with objective, constraints, options, selected action, rejected reasons, concise rationale, and trace-backed next check.",
   "Time advancement mutates NPC locations, job availability, city events, and at least one problem independently of Rowan's route.",
   "Browser diagnostics expose objective predicates, planner trace, visible decision artifact, world pressure, Rowan route legality, and NPC route legality.",
   "Rowan and sampled NPCs render on legal routed paths through the projected walkable map.",

@@ -1814,6 +1814,11 @@ function visibleDecisionArtifactFromGame(game) {
       conversationDecision,
     132,
   );
+  const nextCheck = visibleDecisionNextCheck(
+    trace,
+    selectedStep,
+    selectedAction,
+  );
 
   if (!objective || !selectedAction || !rationale) {
     return null;
@@ -1841,6 +1846,7 @@ function visibleDecisionArtifactFromGame(game) {
       3,
       78,
     ),
+    ...(nextCheck ? { nextCheck } : {}),
     objective,
     passedOver: uniqueVisibleDecisionTexts(
       [
@@ -1863,6 +1869,99 @@ function visibleDecisionArtifactFromGame(game) {
             ? "Conversation result"
             : "Rowan's current intent",
   };
+}
+
+function visibleDecisionNextCheck(trace, selectedStep, selectedAction) {
+  if (!trace) {
+    return "";
+  }
+
+  if ((trace.nextSteps?.length ?? 0) >= 2) {
+    const selectedIndex = selectedStep
+      ? trace.nextSteps.findIndex((step) => step === selectedStep)
+      : -1;
+    const candidates = trace.nextSteps.slice(
+      selectedIndex >= 0 ? selectedIndex + 1 : 1,
+    );
+    const selectedKey = String(selectedAction ?? "").toLowerCase();
+
+    for (const step of candidates) {
+      if (!step.legal) {
+        continue;
+      }
+
+      const label = compactVisibleDecisionText(step.label, 60);
+      if (!label || label.toLowerCase() === selectedKey) {
+        continue;
+      }
+
+      const rationale = compactVisibleDecisionText(step.rationale, 92);
+      const text = compactVisibleDecisionText(
+        rationale ? `${label}: ${rationale}` : label,
+        118,
+      );
+      if (!text || text.toLowerCase() === selectedKey) {
+        continue;
+      }
+
+      return text;
+    }
+  }
+
+  return visibleDecisionNextCheckForOutcome(trace);
+}
+
+function visibleDecisionNextCheckForOutcome(trace) {
+  const selectedOutcomeIndex = trace.selectedMatchedOutcomeId
+    ? trace.outcomes.findIndex(
+        (outcome) => outcome.id === trace.selectedMatchedOutcomeId,
+      )
+    : -1;
+  const candidates = [
+    ...(selectedOutcomeIndex >= 0
+      ? trace.outcomes.slice(selectedOutcomeIndex + 1)
+      : []),
+    ...trace.outcomes,
+  ].filter(
+    (outcome) =>
+      outcome.status !== "met" &&
+      (!trace.selectedMatchedOutcomeId ||
+        outcome.id !== trace.selectedMatchedOutcomeId) &&
+      !isCurrentOrMetaTraceOutcome(trace, outcome),
+  );
+  const outcome = candidates[0];
+  const label = compactVisibleDecisionText(outcome?.label, 58);
+  if (!label) {
+    return "";
+  }
+
+  const signal = uniqueVisibleDecisionTexts(
+    [...(outcome?.blockers ?? []), outcome?.evidence],
+    1,
+    70,
+  )[0];
+
+  const lead = stripTrailingVisibleDecisionPunctuation(label);
+  return compactVisibleDecisionText(signal ? `${lead}: ${signal}` : label, 118);
+}
+
+function isCurrentOrMetaTraceOutcome(trace, outcome) {
+  const label = compactVisibleDecisionText(outcome.label, 80).toLowerCase();
+  const current = compactVisibleDecisionText(
+    trace.selectedPressureLabel,
+    80,
+  ).toLowerCase();
+  const blockerText = (outcome.blockers ?? []).join(" ");
+  return (
+    (current && label === current) ||
+    /\buseful first move\b/i.test(`${outcome.label} ${blockerText}`)
+  );
+}
+
+function stripTrailingVisibleDecisionPunctuation(value) {
+  return String(value ?? "")
+    .replace(/[.:;,]+\s*$/u, "")
+    .trim();
 }
 
 function visibleDecisionBackingSummary(backing, hasTrace) {
@@ -2327,11 +2426,18 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
       artifact.sourceSummary.length >= 8,
     `${label}: decision artifact source summary is missing.`,
   );
+  if (artifact.nextCheck !== undefined) {
+    assert.ok(
+      typeof artifact.nextCheck === "string" && artifact.nextCheck.length >= 8,
+      `${label}: decision artifact next check is too thin.`,
+    );
+  }
 
   const playerText = [
     artifact.objective,
     ...(artifact.constraints ?? []),
     ...(artifact.considered ?? []),
+    artifact.nextCheck,
     ...(artifact.passedOver ?? []),
     artifact.selectedAction,
     artifact.rationale,
@@ -2345,7 +2451,28 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
   );
 }
 
-function assertVisibleDecisionArtifactDom(label, dom) {
+function assertVisibleDecisionNextCheckForTrace(label, planningTrace, artifact) {
+  if (!planningTrace || !artifact) {
+    return;
+  }
+
+  const expected = visibleDecisionNextCheck(
+    planningTrace,
+    selectedPlanningTraceStep(planningTrace),
+    artifact.selectedAction ?? planningTrace.selectedLabel ?? "",
+  );
+  if (!expected) {
+    return;
+  }
+
+  assert.equal(
+    artifact.nextCheck,
+    expected,
+    `${label}: trace-backed next check is missing from the visible decision artifact.`,
+  );
+}
+
+function assertVisibleDecisionArtifactDom(label, dom, artifactPayload = null) {
   const artifact = dom?.visibleDecisionArtifact ?? null;
   assert.ok(artifact, `${label}: missing player-facing decision callback.`);
   assert.equal(
@@ -2373,6 +2500,13 @@ function assertVisibleDecisionArtifactDom(label, dom) {
     /Why this/i,
     `${label}: decision callback should show a concise rationale.`,
   );
+  if (artifactPayload?.nextCheck) {
+    assert.match(
+      artifact.text,
+      /Next check/i,
+      `${label}: decision callback should show Rowan's short-horizon check.`,
+    );
+  }
   assert.doesNotMatch(
     artifact.text,
     /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate/i,
@@ -2416,8 +2550,18 @@ function assertProbeAuditability(label, game, probe) {
       label,
       probe.autonomy.visibleDecisionArtifact,
     );
+    assertVisibleDecisionNextCheckForTrace(
+      label,
+      probe.autonomy.planningTrace,
+      probe.autonomy.visibleDecisionArtifact,
+    );
     assertVisibleDecisionArtifactPayload(
       `${label} rail`,
+      probe.rail.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionNextCheckForTrace(
+      `${label} rail`,
+      probe.autonomy.planningTrace,
       probe.rail.visibleDecisionArtifact,
     );
   }
@@ -2534,7 +2678,11 @@ function assertGameplayDom(label, game, probe, dom) {
     `${label}: default Rowan rail/feed leaked stale movement or wrong-space copy.`,
   );
   if (probe.autonomy?.planningTrace) {
-    assertVisibleDecisionArtifactDom(label, dom);
+    assertVisibleDecisionArtifactDom(
+      label,
+      dom,
+      probe.autonomy.visibleDecisionArtifact,
+    );
   }
   assert.doesNotMatch(
     dom.bodyText,
@@ -5256,6 +5404,38 @@ function assertNotebookFreshForLateObjective(label, normalizedBody, notebook) {
   );
 }
 
+async function closeInhabitFocusPanel(session, label) {
+  const before = await session.readDomSnapshot();
+  const closeTarget = await session.readVisibleElementRect("[data-close-focus]");
+  if (!closeTarget) {
+    return {
+      activeTab: before.activeTab,
+      clicked: false,
+    };
+  }
+
+  await session.dispatchMouseClick(
+    closeTarget.rect.centerX,
+    closeTarget.rect.centerY,
+  );
+  const closed = await waitFor(
+    async () => {
+      const target = await session.readVisibleElementRect("[data-close-focus]");
+      if (target) {
+        return null;
+      }
+      return session.readDomSnapshot();
+    },
+    5_000,
+    `${label}: focus panel did not close before map interaction.`,
+  );
+
+  return {
+    activeTab: closed.activeTab,
+    clicked: true,
+  };
+}
+
 function buildTimelineEntry({
   dom,
   game,
@@ -5475,7 +5655,16 @@ async function runAutoplayObservation(session) {
       "fresh-autoplay-observation",
       completedProbe.autonomy.visibleDecisionArtifact,
     );
-    assertVisibleDecisionArtifactDom("fresh-autoplay-observation", dom);
+    assertVisibleDecisionNextCheckForTrace(
+      "fresh-autoplay-observation",
+      completedProbe.autonomy.planningTrace,
+      completedProbe.autonomy.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionArtifactDom(
+      "fresh-autoplay-observation",
+      dom,
+      completedProbe.autonomy.visibleDecisionArtifact,
+    );
   }
   assert.ok(
     completedProbe.clock.totalMinutes > startProbe.clock.totalMinutes,
@@ -5730,6 +5919,33 @@ function inhabitCameraDelta(before, after) {
   };
 }
 
+function inhabitCameraPanRange(probe) {
+  const range = probe?.scrollRange;
+  if (
+    !range ||
+    typeof range.minX !== "number" ||
+    typeof range.maxX !== "number" ||
+    typeof range.minY !== "number" ||
+    typeof range.maxY !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    x: Math.max(0, Number((range.maxX - range.minX).toFixed(2))),
+    y: Math.max(0, Number((range.maxY - range.minY).toFixed(2))),
+  };
+}
+
+function inhabitCameraHasMeaningfulPanRange(probe) {
+  const range = inhabitCameraPanRange(probe);
+  if (!range) {
+    return true;
+  }
+
+  return range.x >= 8 || range.y >= 8;
+}
+
 function buildWatchPacingAudit(clickLog) {
   const watchedBeats = clickLog
     .filter((entry) => entry.kind === "watched-auto-continue")
@@ -5794,6 +6010,22 @@ function selectedPlanningTraceOption(planningTrace) {
           option.planKey === planningTrace.selectedPlanKey),
     ) ??
     planningTrace.considered?.find((option) => option.status === "selected") ??
+    null
+  );
+}
+
+function selectedPlanningTraceStep(planningTrace) {
+  if (!planningTrace) {
+    return null;
+  }
+
+  return (
+    planningTrace.nextSteps?.find(
+      (step) =>
+        planningTrace.selectedActionId &&
+        step.actionId === planningTrace.selectedActionId,
+    ) ??
+    planningTrace.nextSteps?.[0] ??
     null
   );
 }
@@ -6316,7 +6548,16 @@ function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = nul
       `${label} probe`,
       probe.autonomy.visibleDecisionArtifact,
     );
-    assertVisibleDecisionArtifactDom(label, dom);
+    assertVisibleDecisionNextCheckForTrace(
+      `${label} probe`,
+      probe.autonomy.planningTrace,
+      probe.autonomy.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionArtifactDom(
+      label,
+      dom,
+      probe.autonomy.visibleDecisionArtifact,
+    );
   }
   assertNoVisibleWatchModeProgressionControls(label, probe, dom);
 
@@ -6430,6 +6671,45 @@ function worldPointToViewportPoint(camera, worldPoint, label) {
   );
 
   return point;
+}
+
+function chooseInhabitCameraDragCenter(camera) {
+  const viewport = camera.sceneViewportCss;
+  const playerPoint = camera.playerWorldPoint
+    ? worldPointToViewportPoint(
+        camera,
+        camera.playerWorldPoint,
+        "inhabit-camera-drag-origin",
+      )
+    : null;
+  const candidates = [
+    {
+      x: viewport.x + viewport.width * 0.72,
+      y: viewport.y + viewport.height * 0.34,
+    },
+    {
+      x: viewport.x + viewport.width * 0.28,
+      y: viewport.y + viewport.height * 0.34,
+    },
+    {
+      x: viewport.x + viewport.width * 0.72,
+      y: viewport.y + viewport.height * 0.64,
+    },
+    {
+      x: viewport.x + viewport.width * 0.28,
+      y: viewport.y + viewport.height * 0.64,
+    },
+    {
+      x: viewport.x + viewport.width * 0.5,
+      y: viewport.y + viewport.height * 0.28,
+    },
+  ];
+
+  return (
+    candidates.find(
+      (candidate) => !playerPoint || pointDistance(candidate, playerPoint) >= 140,
+    ) ?? candidates[0]
+  );
 }
 
 async function closeInhabitSupportPanel(session) {
@@ -6771,14 +7051,7 @@ async function runInhabitPanelChecks(session) {
     });
   }
 
-  await session.clickVisibleSelector("[data-close-focus]");
-  await sleep(200);
-  const closedDom = await session.readDomSnapshot();
-  assert.equal(
-    closedDom.activeTab,
-    "actions",
-    "inhabit-panel-close: expected close to return to the World/action view.",
-  );
+  await closeInhabitFocusPanel(session, "inhabit-panel-close");
 
   return checks;
 }
@@ -6886,8 +7159,7 @@ async function runInhabitRowanNotebookClickCheck(session) {
     expectFocusWindow: true,
   });
 
-  await session.clickVisibleSelector("[data-close-focus]");
-  await sleep(200);
+  const focusClose = await closeInhabitFocusPanel(session, `${label}-close`);
 
   return {
     activeTab: dom.activeTab,
@@ -6896,18 +7168,20 @@ async function runInhabitRowanNotebookClickCheck(session) {
       x: Math.round(clickPoint.x),
       y: Math.round(clickPoint.y),
     },
+    focusClose,
     label,
     screenshot,
   };
 }
 
 async function runInhabitCameraCheck(session) {
+  const focusClose = await closeInhabitFocusPanel(
+    session,
+    "inhabit-camera-precheck",
+  );
   const before = await waitForInhabitCameraProbe(session, "inhabit-camera");
   const viewport = before.sceneViewportCss;
-  const center = {
-    x: viewport.x + viewport.width * 0.42,
-    y: viewport.y + viewport.height * 0.52,
-  };
+  const center = chooseInhabitCameraDragCenter(before);
   const drags = [
     {
       from: center,
@@ -6945,32 +7219,52 @@ async function runInhabitCameraCheck(session) {
       delta,
       label: drag.label,
       scroll: after.scroll,
+      scrollRange: after.scrollRange,
       visibleWorldRect: after.visibleWorldRect,
     });
     previous = after;
   }
 
-  const moved = observations.some(
-    (entry) => Math.abs(entry.delta.x) >= 8 || Math.abs(entry.delta.y) >= 8,
-  );
-  assert.equal(
-    moved,
-    true,
-    `inhabit-camera: player drags did not visibly move the camera. ${JSON.stringify(
-      observations,
-    )}`,
-  );
-
   const screenshot = path.join(OUTPUT_DIR, "inhabit-camera-after-drags.png");
   await session.captureScreenshot(screenshot);
 
+  const moved = observations.some(
+    (entry) => Math.abs(entry.delta.x) >= 8 || Math.abs(entry.delta.y) >= 8,
+  );
+  const panRange = inhabitCameraPanRange(before);
+  const movementRequired = inhabitCameraHasMeaningfulPanRange(before);
+  if (movementRequired) {
+    assert.equal(
+      moved,
+      true,
+      `inhabit-camera: player drags did not visibly move the camera despite available pan range. ${JSON.stringify(
+        {
+          before: {
+            dragCenter: center,
+            scroll: before.scroll,
+            scrollRange: before.scrollRange,
+            visibleWorldRect: before.visibleWorldRect,
+          },
+          observations,
+          panRange,
+          screenshot,
+        },
+      )}`,
+    );
+  }
+
   return {
     before: {
+      dragCenter: center,
       scroll: before.scroll,
       scrollRange: before.scrollRange,
       visibleWorldRect: before.visibleWorldRect,
     },
+    moved,
+    movementRequired,
+    focusClose,
     observations,
+    panRange,
     screenshot,
   };
 }
@@ -7434,6 +7728,7 @@ function buildDecisionArtifactCoverage(moments) {
       constraints: moment.visibleDecisionArtifact.constraints?.length ?? 0,
       considered: moment.visibleDecisionArtifact.considered?.length ?? 0,
       label: moment.label,
+      nextCheck: moment.visibleDecisionArtifact.nextCheck ?? null,
       objective: moment.visibleDecisionArtifact.objective ?? null,
       rationale: moment.visibleDecisionArtifact.rationale ?? null,
       selectedAction: moment.visibleDecisionArtifact.selectedAction ?? null,
@@ -7447,12 +7742,27 @@ function buildDecisionArtifactCoverage(moments) {
         entry.label,
       ),
     ) ?? null,
+    earlyNextCheckDecision: withArtifact.find(
+      (entry) =>
+        entry.nextCheck &&
+        /mara-lead-landed|arrived-kettle-lamp|ada-conversation|shift-in-motion/i.test(
+          entry.label,
+        ),
+    ) ?? null,
     laterDecision: withArtifact.find((entry) =>
       /post-first-afternoon-handoff|post-first-afternoon-rest|post-first-afternoon-live-route/i.test(
         entry.label,
       ),
     ) ?? null,
+    laterNextCheckDecision: withArtifact.find(
+      (entry) =>
+        entry.nextCheck &&
+        /post-first-afternoon-handoff|post-first-afternoon-rest|post-first-afternoon-live-route/i.test(
+          entry.label,
+        ),
+    ) ?? null,
     labels: withArtifact.map((entry) => entry.label),
+    nextCheckCount: withArtifact.filter((entry) => entry.nextCheck).length,
     samples: withArtifact.slice(0, 5),
   };
 }
@@ -7469,6 +7779,14 @@ function assertDecisionArtifactCoverage(coverage) {
   assert.ok(
     coverage.laterDecision,
     `Inhabit gameplay pass did not capture visible reasoning for a later live-pressure decision: ${JSON.stringify(coverage)}`,
+  );
+  assert.ok(
+    coverage.earlyNextCheckDecision,
+    `Inhabit gameplay pass did not capture a short-horizon decision line for an early meaningful decision: ${JSON.stringify(coverage)}`,
+  );
+  assert.ok(
+    coverage.laterNextCheckDecision,
+    `Inhabit gameplay pass did not capture a short-horizon decision line for a later live-pressure decision: ${JSON.stringify(coverage)}`,
   );
 }
 

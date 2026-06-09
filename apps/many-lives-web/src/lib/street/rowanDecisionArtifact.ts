@@ -4,6 +4,7 @@ export type RowanVisibleDecisionArtifact = {
   backingSummary: string;
   considered: string[];
   constraints: string[];
+  nextCheck?: string;
   objective: string;
   passedOver: string[];
   rationale: string;
@@ -91,6 +92,11 @@ export function buildRowanVisibleDecisionArtifactFromState({
     selectedOption,
     selectedStep,
   );
+  const nextCheck = nextCheckForTrace(
+    planningTrace,
+    selectedStep,
+    selectedAction,
+  );
   const considered = uniqueCompact(
     [
       ...(planningTrace?.considered ?? []).map((option) => option.label),
@@ -130,6 +136,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
     backingSummary,
     considered,
     constraints,
+    ...(nextCheck ? { nextCheck } : {}),
     objective,
     passedOver,
     rationale,
@@ -155,6 +162,104 @@ function selectedPlanningOption(trace?: PlanningTrace) {
     trace.considered.find((option) => option.status === "selected") ??
     null
   );
+}
+
+function nextCheckForTrace(
+  trace: PlanningTrace | undefined,
+  selectedStep: ReturnType<typeof selectedPlanningStep>,
+  selectedAction: string,
+) {
+  if (!trace) {
+    return "";
+  }
+
+  if (trace.nextSteps.length >= 2) {
+    const selectedIndex = selectedStep
+      ? trace.nextSteps.findIndex((step) => step === selectedStep)
+      : -1;
+    const candidates = trace.nextSteps.slice(
+      selectedIndex >= 0 ? selectedIndex + 1 : 1,
+    );
+    const selectedKey = selectedAction.toLowerCase();
+
+    for (const step of candidates) {
+      if (!step.legal) {
+        continue;
+      }
+
+      const label = compactDecisionText(step.label, 60);
+      if (!label || label.toLowerCase() === selectedKey) {
+        continue;
+      }
+
+      const rationale = compactDecisionText(step.rationale, 92);
+      const text = compactDecisionText(
+        rationale ? `${label}: ${rationale}` : label,
+        118,
+      );
+      if (!text || text.toLowerCase() === selectedKey) {
+        continue;
+      }
+
+      return text;
+    }
+  }
+
+  return nextCheckForTraceOutcome(trace);
+}
+
+function nextCheckForTraceOutcome(trace: PlanningTrace) {
+  const selectedOutcomeIndex = trace.selectedMatchedOutcomeId
+    ? trace.outcomes.findIndex(
+        (outcome) => outcome.id === trace.selectedMatchedOutcomeId,
+      )
+    : -1;
+  const candidates = [
+    ...(selectedOutcomeIndex >= 0
+      ? trace.outcomes.slice(selectedOutcomeIndex + 1)
+      : []),
+    ...trace.outcomes,
+  ].filter(
+    (outcome) =>
+      outcome.status !== "met" &&
+      (!trace.selectedMatchedOutcomeId ||
+        outcome.id !== trace.selectedMatchedOutcomeId) &&
+      !isCurrentOrMetaTraceOutcome(trace, outcome),
+  );
+  const outcome = candidates[0];
+  const label = compactDecisionText(outcome?.label, 58);
+  if (!label) {
+    return "";
+  }
+
+  const signal = uniqueCompact(
+    [...(outcome?.blockers ?? []), outcome?.evidence],
+    1,
+    70,
+  )[0];
+
+  const lead = stripTrailingDecisionPunctuation(label);
+  return compactDecisionText(signal ? `${lead}: ${signal}` : label, 118);
+}
+
+function isCurrentOrMetaTraceOutcome(
+  trace: PlanningTrace,
+  outcome: PlanningTrace["outcomes"][number],
+) {
+  const label = compactDecisionText(outcome.label, 80).toLowerCase();
+  const current = compactDecisionText(
+    trace.selectedPressureLabel,
+    80,
+  ).toLowerCase();
+  const blockerText = (outcome.blockers ?? []).join(" ");
+  return (
+    (current && label === current) ||
+    /\buseful first move\b/i.test(`${outcome.label} ${blockerText}`)
+  );
+}
+
+function stripTrailingDecisionPunctuation(value: string) {
+  return value.replace(/[.:;,]+\s*$/u, "").trim();
 }
 
 function selectedPlanningStep(trace?: PlanningTrace) {
