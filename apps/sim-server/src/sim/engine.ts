@@ -60,6 +60,7 @@ import type {
   RowanPlanningTrace,
   RowanPlanningTraceLegalBacking,
   RowanPlanningTraceOption,
+  RowanPlanningTraceSelectedRecommendation,
   RowanPlanningTraceStep,
   SceneNote,
   SpaceDefinition,
@@ -144,6 +145,14 @@ type ObjectivePlan = {
 
 type ObjectivePlanChoice = ObjectivePlan & {
   plannerAction: StreetPlanningAllowedAction;
+};
+
+type AcceptedStreetPlannerRecommendation = {
+  confidence: number;
+  model: string;
+  provider: string;
+  rationale: string;
+  sourceKind: "live-llm";
 };
 
 type ObjectivePlanningPressureKind =
@@ -1547,7 +1556,7 @@ async function resolveAiPlannedObjectiveLoopStep(
     objective,
   });
   const choice = selectPlannerChoice(planned, choices);
-  if (!choice) {
+  if (!choice || !planned) {
     return undefined;
   }
 
@@ -1555,7 +1564,13 @@ async function resolveAiPlannedObjectiveLoopStep(
     world,
     objective,
     choice,
-    buildObjectivePlanningTrace(world, objective, choice, choices),
+    buildObjectivePlanningTrace(world, objective, choice, choices, {
+      confidence: planned.confidence,
+      model: aiProvider.model,
+      provider: aiProvider.name,
+      rationale: planned.rationale,
+      sourceKind: "live-llm",
+    }),
   );
 }
 
@@ -3633,6 +3648,7 @@ function buildObjectivePlanningTrace(
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   selected: ObjectivePlan | undefined,
   candidates: ObjectivePlan[],
+  acceptedRecommendation?: AcceptedStreetPlannerRecommendation,
 ): RowanPlanningTrace {
   const selectedActionId = selected
     ? currentPlannerActionIdForPlan(world, selected)
@@ -3649,6 +3665,15 @@ function buildObjectivePlanningTrace(
     : undefined;
   const selectedLegalBacking = selected
     ? planningTraceLegalBackingForPlan(world, selected)
+    : undefined;
+  const selectedRecommendation = selected
+    ? buildSelectedPlanningTraceRecommendation(
+        world,
+        selected,
+        selectedActionId,
+        selectedLegalBacking,
+        acceptedRecommendation,
+      )
     : undefined;
   const selectedLabel = selected
     ? autonomyLabelForNextBeat(world, selected)
@@ -3711,8 +3736,72 @@ function buildObjectivePlanningTrace(
     selectedPressureId: selectedPressureMatch?.pressure.id,
     selectedPressureKind: selectedPressureMatch?.pressure.kind,
     selectedPressureLabel: selectedPressureMatch?.pressure.label,
+    selectedRecommendation,
     selectedTargetLocationId: selected?.targetLocationId,
   };
+}
+
+function buildSelectedPlanningTraceRecommendation(
+  world: StreetGameState,
+  selected: ObjectivePlan,
+  selectedActionId: string | undefined,
+  selectedLegalBacking: RowanPlanningTraceLegalBacking | undefined,
+  acceptedRecommendation: AcceptedStreetPlannerRecommendation | undefined,
+): RowanPlanningTraceSelectedRecommendation {
+  const validationBacking = planningTraceLegalBackingForStep(
+    world,
+    selected,
+    selectedActionId,
+    loopKindForObjectivePlan(world, selected),
+  );
+  const validationSource =
+    validationBacking?.source ?? selectedLegalBacking?.source;
+  const legalBackingSource = selectedLegalBacking?.source ?? validationSource;
+  const sourceKind =
+    acceptedRecommendation?.sourceKind ?? "deterministic-planner";
+
+  return {
+    accepted: true,
+    advisory: sourceKind === "live-llm",
+    confidence:
+      acceptedRecommendation?.confidence !== undefined
+        ? Math.round(acceptedRecommendation.confidence * 100) / 100
+        : undefined,
+    legalBackingSource,
+    model: acceptedRecommendation?.model,
+    provider: acceptedRecommendation?.provider,
+    rationale: acceptedRecommendation?.rationale
+      ? compactIntentText(
+          playerFacingAutonomyRationale(
+            world,
+            acceptedRecommendation.rationale,
+          ) || acceptedRecommendation.rationale,
+          140,
+        )
+      : undefined,
+    sourceKind,
+    validationSource,
+    validationStatus: planningTraceValidationStatusForSource(validationSource),
+  };
+}
+
+function planningTraceValidationStatusForSource(
+  source: RowanPlanningTraceLegalBacking["source"] | undefined,
+): RowanPlanningTraceSelectedRecommendation["validationStatus"] {
+  switch (source) {
+    case "conversation-resolution":
+      return "conversation-resolution";
+    case "current-legal-action-surface":
+      return "legal-action-surface-validated";
+    case "destination-preview-legal-action":
+    case "projected-follow-up-legal-action":
+      return "projected-legal-action";
+    case "simulator-validated-move":
+    case "simulator-validated-wait":
+      return "simulator-validated";
+    default:
+      return "unvalidated";
+  }
 }
 
 function staleObjectiveActionTraceOptions(

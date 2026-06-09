@@ -24,29 +24,37 @@ import {
   exitToStreet,
 } from "./street-test-helpers.js";
 
+type PlanningAIProviderResult =
+  | StreetPlanningResult
+  | null
+  | ((input: StreetPlanningRequest) => StreetPlanningResult | null);
+
 class PlanningAIProvider extends MockAIProvider {
   override readonly name = "openai";
+  override readonly model = "test-live-planner";
   readonly requests: StreetPlanningRequest[] = [];
 
-  constructor(private readonly result: StreetPlanningResult | null) {
+  constructor(private readonly result: PlanningAIProviderResult) {
     super();
   }
 
   override async planStreetNextAction(input: StreetPlanningRequest) {
     this.requests.push(input);
-    if (!this.result?.actionId || this.result.planKey) {
-      return this.result;
+    const result =
+      typeof this.result === "function" ? this.result(input) : this.result;
+    if (!result?.actionId || result.planKey) {
+      return result;
     }
 
     const matchingAllowedActions = input.allowedActions.filter(
-      (action) => action.actionId === this.result?.actionId,
+      (action) => action.actionId === result.actionId,
     );
     if (matchingAllowedActions.length !== 1) {
-      return this.result;
+      return result;
     }
 
     return {
-      ...this.result,
+      ...result,
       planKey: matchingAllowedActions[0].planKey,
     };
   }
@@ -1040,6 +1048,77 @@ describe("SimulationEngine street slice", () => {
     });
   });
 
+  it("records accepted OpenAI planner recommendations as advisory until simulator validation", async () => {
+    const provider = new PlanningAIProvider((input) => {
+      const moveToTeaHouse = input.allowedActions.find(
+        (action) =>
+          action.actionId === "move:tea-house" &&
+          action.targetLocationId === "tea-house",
+      );
+      return {
+        actionId: "move:tea-house",
+        confidence: 0.91,
+        planKey: moveToTeaHouse?.planKey,
+        rationale:
+          "The cafe is the best place to learn the district before Rowan commits elsewhere.",
+      };
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-ai-planner-provenance");
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Explore the district and get your bearings.",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    const trace = world.rowanAutonomy.planningTrace;
+    expect(provider.requests).toHaveLength(1);
+    expect(
+      provider.requests[0].allowedActions.map((action) => action.actionId),
+    ).toContain("move:tea-house");
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "move:tea-house",
+      targetLocationId: "tea-house",
+    });
+    expect(trace).toMatchObject({
+      selectedActionId: "move:tea-house",
+      selectedLegalBacking: {
+        actionId: "exit:tea-house",
+        locationId: "tea-house",
+        source: "destination-preview-legal-action",
+      },
+      selectedRecommendation: {
+        accepted: true,
+        advisory: true,
+        confidence: 0.91,
+        legalBackingSource: "destination-preview-legal-action",
+        model: "test-live-planner",
+        provider: "openai",
+        sourceKind: "live-llm",
+        validationSource: "simulator-validated-move",
+        validationStatus: "simulator-validated",
+      },
+    });
+    expect(trace?.selectedRecommendation?.rationale).toMatch(
+      /best place to learn the district/i,
+    );
+    expect(
+      trace?.nextSteps.find((step) => step.actionId === "move:tea-house"),
+    ).toMatchObject({
+      legal: true,
+      legalBacking: {
+        actionId: "move:tea-house",
+        locationId: "tea-house",
+        source: "simulator-validated-move",
+      },
+      validation: expect.stringMatching(/Simulator must validate the move/i),
+    });
+  });
+
   it("exposes travel-first plans to the planner as move actions", async () => {
     const provider = new PlanningAIProvider({
       actionId: "move:tea-house",
@@ -1367,6 +1446,17 @@ describe("SimulationEngine street slice", () => {
     expect(world.activeSpaceId).toBe("interior:boarding-house");
     expect(world.activeConversation).toBeUndefined();
     expect(world.rowanAutonomy.npcId).toBe("npc-mara");
+    expect(world.rowanAutonomy.planningTrace?.selectedRecommendation).toMatchObject({
+      accepted: true,
+      advisory: false,
+      sourceKind: "deterministic-planner",
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.selectedRecommendation?.sourceKind,
+    ).not.toBe("live-llm");
+    expect(
+      world.rowanAutonomy.planningTrace?.selectedRecommendation?.confidence,
+    ).toBeUndefined();
   });
 
   it("falls back when an OpenAI planner is low confidence", async () => {
@@ -1387,6 +1477,17 @@ describe("SimulationEngine street slice", () => {
     expect(world.activeSpaceId).toBe("interior:boarding-house");
     expect(world.activeConversation).toBeUndefined();
     expect(world.rowanAutonomy.npcId).toBe("npc-mara");
+    expect(world.rowanAutonomy.planningTrace?.selectedRecommendation).toMatchObject({
+      accepted: true,
+      advisory: false,
+      sourceKind: "deterministic-planner",
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.selectedRecommendation?.sourceKind,
+    ).not.toBe("live-llm");
+    expect(
+      world.rowanAutonomy.planningTrace?.selectedRecommendation?.confidence,
+    ).toBeUndefined();
   });
 
   it("keeps no-OpenAI objective advance deterministic", async () => {
