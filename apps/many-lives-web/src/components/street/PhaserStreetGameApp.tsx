@@ -23,6 +23,7 @@ import {
   toFirstPersonText,
 } from "@/components/street/streetFormatting";
 import {
+  buildCompactVisibleDecisionArtifactHtml,
   buildFirstAfternoonFieldNoteHtml,
   buildJournalTabHtml,
   buildLoadingHtml,
@@ -6619,6 +6620,14 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           ${escapeHtml(buildNarrativePreview(rowanRail.now.reason, 148))}
         </div>`
       : "";
+  const rowanDecisionArtifact =
+    rowanRail.now.decisionArtifact ?? rowanRail.next?.decisionArtifact ?? null;
+  const compactRailDecisionArtifactHtml =
+    railExpanded &&
+    rowanDecisionArtifact &&
+    (railViewport !== "desktop" || rowanRail.useConversationTranscript)
+      ? buildCompactVisibleDecisionArtifactHtml(rowanDecisionArtifact)
+      : "";
   const browserProbeJson = buildStreetBrowserProbeJson({
     activeConversation: railActiveConversation,
     conversationNpcName: railConversationNpc?.name,
@@ -6759,6 +6768,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
               <div class="ml-rail-peek-label">${escapeHtml(railPeekLabel)}</div>
               <div class="ml-rail-thought">${escapeHtml(railThought)}</div>
               ${compactRailWhyNowHtml}
+              ${compactRailDecisionArtifactHtml}
               ${compactPrimaryActionHtml}
             </div>
             ${

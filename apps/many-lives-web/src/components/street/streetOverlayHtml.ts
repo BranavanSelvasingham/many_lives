@@ -6,6 +6,7 @@ import type {
   MemoryThread,
   ObjectivePlanItem,
 } from "@/lib/street/journalModel";
+import type { RowanVisibleDecisionArtifact } from "@/lib/street/rowanDecisionArtifact";
 import type { StreetGameState } from "@/lib/street/types";
 
 type OverlayActiveTab = "actions" | "journal" | "mind" | "people";
@@ -152,6 +153,7 @@ export function buildLoadingHtml(
 export function buildRowanStoryCardHtml(
   kicker: string,
   card: {
+    decisionArtifact?: RowanVisibleDecisionArtifact | null;
     detail: string;
     planningTrace?: StreetGameState["rowanAutonomy"]["planningTrace"];
     reason?: string;
@@ -169,6 +171,7 @@ export function buildRowanStoryCardHtml(
     >
       <div class="ml-kicker">${escapeHtml(kicker)}</div>
       <div class="ml-rowan-story-card-title">${escapeHtml(card.title)}</div>
+      ${card.decisionArtifact ? buildVisibleDecisionArtifactHtml(card.decisionArtifact) : ""}
       <div class="ml-rowan-story-card-copy">${escapeHtml(
         buildNarrativePreview(card.detail, primary ? 176 : 152),
       )}</div>
@@ -195,6 +198,117 @@ export function buildRowanStoryCardHtml(
             </div>`
           : ""
       }
+    </div>
+  `;
+}
+
+export function buildVisibleDecisionArtifactHtml(
+  artifact: RowanVisibleDecisionArtifact,
+) {
+  const considered = artifact.considered.slice(0, 3);
+  const passedOver = artifact.passedOver.slice(0, 2);
+  const constraints = artifact.constraints.slice(0, 3);
+
+  return `
+    <div
+      class="ml-decision-artifact"
+      data-visible-decision-artifact="true"
+      data-decision-source="${escapeHtml(artifact.sourceSummary)}"
+    >
+      <div class="ml-decision-head">
+        <span>Rowan weighs</span>
+        <strong>${escapeHtml(buildNarrativePreview(artifact.sourceSummary, 36))}</strong>
+      </div>
+      <div class="ml-decision-grid">
+        <div class="ml-decision-line">
+          <span>Aim</span>
+          <p>${escapeHtml(buildNarrativePreview(artifact.objective, 112))}</p>
+        </div>
+        <div class="ml-decision-line">
+          <span>Choice</span>
+          <p>${escapeHtml(buildNarrativePreview(artifact.selectedAction, 84))}</p>
+        </div>
+      </div>
+      ${
+        constraints.length
+          ? `<div class="ml-decision-chip-row" aria-label="Relevant constraints">
+              ${constraints
+                .map(
+                  (constraint) =>
+                    `<span>${escapeHtml(buildNarrativePreview(constraint, 62))}</span>`,
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+      <div class="ml-decision-rationale">
+        <span>Why this</span>
+        ${escapeHtml(buildNarrativePreview(artifact.rationale, 132))}
+      </div>
+      ${
+        considered.length
+          ? `<div class="ml-decision-options">
+              <span>Options</span>
+              ${considered
+                .map(
+                  (option) =>
+                    `<em>${escapeHtml(buildNarrativePreview(option, 58))}</em>`,
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+      ${
+        passedOver.length
+          ? `<div class="ml-decision-passed-over">
+              <span>Passed over</span>
+              ${passedOver
+                .map(
+                  (option) =>
+                    `<em>${escapeHtml(buildNarrativePreview(option, 64))}</em>`,
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+      <div class="ml-decision-backing">${escapeHtml(
+        buildNarrativePreview(artifact.backingSummary, 96),
+      )}</div>
+    </div>
+  `;
+}
+
+export function buildCompactVisibleDecisionArtifactHtml(
+  artifact: RowanVisibleDecisionArtifact,
+) {
+  const considered = artifact.considered[0];
+  const signals = artifact.constraints.slice(0, 2).join("; ");
+
+  return `
+    <div
+      class="ml-decision-artifact is-compact"
+      data-visible-decision-artifact="true"
+      data-decision-source="${escapeHtml(artifact.sourceSummary)}"
+    >
+      <div class="ml-decision-head">
+        <span>Rowan weighs</span>
+        <strong>${escapeHtml(buildNarrativePreview(artifact.sourceSummary, 30))}</strong>
+      </div>
+      <div class="ml-decision-compact-copy">
+        <span>Aim: ${escapeHtml(buildNarrativePreview(artifact.objective, 54))}</span>
+        ${
+          signals
+            ? `<span>Signals: ${escapeHtml(buildNarrativePreview(signals, 58))}</span>`
+            : ""
+        }
+        <span>Choice: ${escapeHtml(buildNarrativePreview(artifact.selectedAction, 42))}</span>
+        <span>Why this: ${escapeHtml(buildNarrativePreview(artifact.rationale, 64))}</span>
+        ${
+          considered
+            ? `<span>Options: ${escapeHtml(buildNarrativePreview(considered, 42))}</span>`
+            : ""
+        }
+      </div>
     </div>
   `;
 }

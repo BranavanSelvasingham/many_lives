@@ -488,6 +488,147 @@ export function buildStreetOverlayStyle({
         max-width: 34ch;
         background: rgba(9, 25, 29, 0.34);
       }
+      .ml-decision-artifact {
+        margin-top: 12px;
+        border-radius: 14px;
+        border: 1px solid rgba(141, 208, 205, 0.2);
+        background: rgba(7, 20, 25, 0.42);
+        padding: 10px;
+      }
+      .ml-decision-artifact.is-compact {
+        max-width: 35ch;
+        padding: 8px 9px;
+      }
+      .ml-decision-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 9px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(141, 208, 205, 0.78);
+      }
+      .ml-decision-head strong {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 10px;
+        letter-spacing: 0;
+        text-transform: none;
+        color: rgba(239, 246, 248, 0.9);
+      }
+      .ml-decision-compact-copy {
+        display: grid;
+        gap: 3px;
+        margin-top: 6px;
+        font-size: 10px;
+        line-height: 1.25;
+        color: rgba(219, 228, 233, 0.76);
+      }
+      .ml-decision-compact-copy span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ml-decision-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 7px;
+        margin-top: 9px;
+      }
+      .ml-decision-artifact.is-compact .ml-decision-grid {
+        gap: 6px;
+        margin-top: 7px;
+      }
+      .ml-decision-line {
+        border-left: 2px solid rgba(205, 174, 115, 0.42);
+        padding-left: 8px;
+      }
+      .ml-decision-line span,
+      .ml-decision-rationale span,
+      .ml-decision-options > span,
+      .ml-decision-passed-over > span {
+        display: block;
+        margin-bottom: 3px;
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(205, 174, 115, 0.72);
+      }
+      .ml-decision-line p {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.38;
+        font-weight: 700;
+        color: rgba(242, 247, 249, 0.92);
+      }
+      .ml-decision-artifact.is-compact .ml-decision-line p {
+        font-size: 11px;
+        line-height: 1.32;
+      }
+      .ml-decision-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 9px;
+      }
+      .ml-decision-chip-row span {
+        max-width: 100%;
+        border-radius: 999px;
+        border: 1px solid rgba(141, 208, 205, 0.16);
+        background: rgba(9, 25, 29, 0.38);
+        padding: 4px 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 9px;
+        line-height: 1.1;
+        color: rgba(219, 232, 235, 0.72);
+      }
+      .ml-decision-rationale {
+        margin-top: 10px;
+        border-top: 1px solid rgba(138, 151, 161, 0.12);
+        padding-top: 8px;
+        font-size: 11px;
+        line-height: 1.48;
+        color: rgba(227, 235, 238, 0.82);
+      }
+      .ml-decision-artifact.is-compact .ml-decision-rationale {
+        margin-top: 8px;
+        padding-top: 7px;
+        font-size: 10px;
+        line-height: 1.38;
+      }
+      .ml-decision-options,
+      .ml-decision-passed-over {
+        display: grid;
+        gap: 5px;
+        margin-top: 9px;
+      }
+      .ml-decision-options em,
+      .ml-decision-passed-over em {
+        display: block;
+        border-radius: 10px;
+        background: rgba(6, 16, 22, 0.28);
+        padding: 5px 7px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-size: 10px;
+        line-height: 1.32;
+        font-style: normal;
+        color: rgba(219, 228, 233, 0.72);
+      }
+      .ml-decision-options em:first-of-type {
+        color: rgba(247, 227, 187, 0.88);
+      }
+      .ml-decision-backing {
+        margin-top: 8px;
+        font-size: 10px;
+        line-height: 1.36;
+        color: rgba(141, 208, 205, 0.68);
+      }
       .ml-planner-trace {
         margin-top: 11px;
         border-radius: 14px;
