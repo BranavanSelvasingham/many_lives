@@ -8,7 +8,7 @@ The root problem is not that Rowan needs a prettier route or more authored beats
 
 ## Build Goal
 
-Convert the street app into an auditable living-world loop where seeded world state defines places, NPCs, schedules, jobs, problems, memories, and desired objective outcomes; the world exposes legal actions from current state; Rowan's planner chooses among those actions; the simulator validates consequences; and the renderer shows the resulting movement on the same spatial model.
+Convert the street app into an auditable living-world loop where seeded world state defines places, NPCs, schedules, jobs, problems, memories, and desired objective outcomes; the world exposes legal actions from current state; Rowan's planner chooses among those actions through a visible reasoning callback; the simulator validates consequences; and the renderer shows the resulting movement on the same spatial model.
 
 ## Authority Chain
 
@@ -19,15 +19,18 @@ This is the order of authority. Do not invert it.
 3. Objectives define desired-state predicates: outcomes, blockers, evidence, urgency, and completion checks.
 4. The simulator exposes legal actions from current state.
 5. Rowan's planner chooses from legal actions using current world pressure, objective predicates, memory, location, energy, money, conversations, jobs, problems, and schedules.
-6. The simulator validates and applies the chosen action.
-7. The renderer projects the validated state through the visual map; movement follows legal routed paths.
-8. Browser probes and tests expose the chain so it can be audited.
+6. The planner or LLM returns a decision artifact: situation summary, options considered, selected action, rejected-action reasons, and concise rationale.
+7. The simulator validates and applies the chosen action.
+8. The renderer projects the validated state through the visual map; movement follows legal routed paths.
+9. Browser probes and tests expose the chain so it can be audited.
 
 Objective trails, authored anchors, route hints, and UI labels are explanatory scaffolding only. They must not be the primary progress mechanism.
 
+The decision artifact is product-facing rationale, not raw hidden model chain-of-thought. It should make Rowan's reasoning legible without exposing system prompts, backend internals, or unvalidated model authority.
+
 ## Scope
 
-- In: Rowan autonomy, objective evaluation, legal action planning, sim consequences, independent world evolution, visual route legality, browser diagnostics, and adversarial regression tests.
+- In: Rowan autonomy, objective evaluation, legal action planning, LLM/planner reasoning callbacks, sim consequences, independent world evolution, visual route legality, browser diagnostics, and adversarial regression tests.
 - Out: full procedural world generation, unsandboxed LLM authority over state mutation, new engine migration, large new content arcs, and decorative route polish that leaves control flow scripted.
 - Requires approval: destructive git operations, direct pushes to `main`, production deployment changes, or any operation outside the repo's normal local validation flow.
 
@@ -59,6 +62,7 @@ For implementation audits, inspect the relevant current files:
 | Objectives are desired outcomes, not route scripts. | Source audit and sim tests. | Objective completion is based on predicate outcomes, blockers, evidence, and urgency; trail state is not authoritative. | Add adversarial stale-trail tests before changing planner behavior. |
 | Rowan chooses from legal current-state actions. | Planner trace and sim tests. | The selected action appears in the current legal action surface or as a validated legal move; rejected options include reasons. | Fail closed with a blocked/idle loop step and diagnostic trace. |
 | Seeded hints cannot override live state. | Poisoned route/trail regression. | Wrong, stale, impossible, or lower-priority route hints do not control the chosen action. | Remove scoring or routing code that reads trail hints as planner authority. |
+| Rowan's reasoning is visible. | Rail/notebook UI, planner trace, and browser artifacts. | Before or during each meaningful autonomous action, the user can see Rowan's current objective, relevant constraints, considered options or rejected reasons, selected action, and concise rationale. | Add a structured decision artifact before adding more actions or visual polish. |
 | The world changes without Rowan solving everything. | Time-advance tests and browser probe `worldPressure`. | NPC schedules, job windows, problems, and city events mutate while Rowan does unrelated actions or waits. | Add deterministic passive evolution before adding more objectives. |
 | Movement reflects the actual map. | Browser regression route diagnostics and screenshots. | Rowan and sampled NPC paths follow projected walkable graph routes or approved same-tile approach points. | Report dropped waypoints or blocked routes with diagnostics instead of drawing illegal shortcuts. |
 | The loop is auditable in the browser. | `window.__manyLivesStreetProbe()` or browser regression artifacts. | Probe exposes objective predicates, planner considered/selected/rejected options, route legality, NPC route diagnostics, and world pressure. | Add probe fields before claiming behavior is AI-driven. |
@@ -74,15 +78,36 @@ For implementation audits, inspect the relevant current files:
 6. Repair: if verification fails, fix the cause and rerun the relevant check. If an assumption cannot be verified, mark it as a visibility gap.
 7. Report: summarize the behavior change, the evidence, and any remaining hardcoded-control risk.
 
+## Review Alignment Delta
+
+Every review of Rowan autonomy, objectives, autoplay, or AI planning should state
+the current delta from this target:
+
+- Can a user watch Rowan continue in observe/autoplay mode without pressing a
+  progression or action button?
+- Is there a visible decision artifact for the next meaningful action?
+- Does that artifact show objective, constraints, options, selected action,
+  rejected reasons, and concise rationale?
+- Is the selected action backed by current legal actions and simulator
+  validation?
+- Are LLM outputs advisory until validated, or can the model mutate state
+  directly?
+- Does the UI explain enough for a normal viewer without becoming a debug
+  dashboard?
+
+If any answer is no, report it as an alignment gap with the exact missing
+evidence and the smallest validation that would catch a regression.
+
 ## Priority Path
 
 1. Objective predicates: every objective has desired state, blockers, urgency, evidence, and completion evaluators.
 2. Legal action planner: Rowan ranks legal current-state actions and emits a trace with considered, selected, and rejected options.
-3. Independent world pressure: NPC schedules, job windows, problem escalation, and city events keep evolving while Rowan waits or does unrelated work.
-4. Spatial authority: Rowan and NPC rendering route through the same projected walkable map graph.
-5. Adversarial regression coverage: stale hints, poisoned trails, blocked routes, impossible anchors, missed jobs, and ignored problems fail loudly.
-6. Short-horizon planning: Rowan can form a small plan, but every step is still validated one action at a time by the simulator.
-7. Player readability and delight: the UI explains why Rowan moved or waited without turning the game into a debug dashboard.
+3. Reasoning callback: Rowan's next decision appears as a readable planner/LLM-backed rationale, with model output kept advisory until simulator validation.
+4. Independent world pressure: NPC schedules, job windows, problem escalation, and city events keep evolving while Rowan waits or does unrelated work.
+5. Spatial authority: Rowan and NPC rendering route through the same projected walkable map graph.
+6. Adversarial regression coverage: stale hints, poisoned trails, blocked routes, impossible anchors, missed jobs, and ignored problems fail loudly.
+7. Short-horizon planning: Rowan can form a small plan, but every step is still validated one action at a time by the simulator.
+8. Player readability and delight: the UI explains why Rowan moved or waited without turning the game into a debug dashboard.
 
 ## Acceptance Criteria
 
@@ -91,23 +116,25 @@ This path is reached only when the following are directly evidenced:
 - A poisoned objective trail cannot make Rowan follow the wrong route or skip the live objective state.
 - An objective can complete from desired-state predicates even if its route hints are absent, stale, or wrong.
 - Rowan's selected action is traceable to current legal actions, current world pressure, and objective predicates.
+- Rowan's selected action is accompanied by a user-visible decision artifact that summarizes the relevant objective, constraints, options, rejected reasons, and chosen next action.
 - Time advancement mutates NPC locations, job availability, city events, and at least one problem outcome independently of Rowan's chosen route.
 - Browser diagnostics expose objective predicates, planner trace, world pressure, Rowan route legality, and NPC route legality.
 - Rowan and sampled NPCs render on legal routed paths through the projected walkable map.
 - A fresh `/?new=1&autoplay=1` run for the first 3 to 5 minutes reads as Rowan finding his way in a living city, not a replay of a fixed route.
+- Observe/autoplay mode carries the run without visible progression/action-button clicks.
 
 ## `/plan` Command Statement
 
 When the user asks for `/plan` in this repo, use this statement:
 
 ```text
-Advance Many Lives one verifiable step toward a seeded living-world simulation: authored data seeds the city, objective predicates define desired outcomes, the world exposes legal current-state actions, Rowan's planner chooses among those actions with an auditable trace, the simulator validates consequences, the visual map renders only legal routed movement, and independent NPCs, jobs, problems, and city events continue evolving whether Rowan acts on them or not.
+Advance Many Lives one verifiable step toward a seeded living-world simulation: authored data seeds the city, objective predicates define desired outcomes, the world exposes legal current-state actions, Rowan's planner chooses among those actions through a visible LLM/planner reasoning callback, the simulator validates consequences, the visual map renders only legal routed movement, and independent NPCs, jobs, problems, and city events continue evolving whether Rowan acts on them or not.
 ```
 
 Then produce a short turn plan with:
 
 - the specific authority gap being addressed;
+- the reasoning-visibility delta, if Rowan is deciding or planning;
 - the files to inspect or change;
 - the adversarial test that should fail if hardcoded route-following returns;
 - the validation commands and screenshots/probe artifacts required before reporting success.
-

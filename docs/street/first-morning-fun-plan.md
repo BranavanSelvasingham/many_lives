@@ -17,6 +17,7 @@ The player should feel:
 - "I want to watch this little place keep moving."
 - "Rowan seems like a person in a town, not a task runner."
 - "I can understand what he thinks, where he is going, and why."
+- "I can watch Rowan reason through the next decision, then carry it out."
 - "The city has small surprises worth noticing."
 
 ## Public Pitch
@@ -31,6 +32,7 @@ Under the fun surface, Many Lives can become an inspectable human-agent collabor
 - grounded report-back;
 - interruption and correction;
 - agent intention visibility;
+- LLM/planner reasoning callbacks that explain options and selected actions;
 - world-state evidence;
 - trust and reputation effects.
 
@@ -51,6 +53,11 @@ Good objective text:
 > Verify Mara's lead by walking to Kettle & Lamp, asking Ada about lunch work, and recording what Rowan learns.
 
 The loop is complete when Rowan has reached Kettle & Lamp, spoken to Ada, learned whether lunch work is available, created a field note with evidence, and opened at least one next action from that knowledge.
+
+The loop should also expose Rowan's reasoning at each meaningful decision. A
+viewer should see the current objective, the important constraints, the options
+Rowan is considering, the selected next action, and why the validated action is
+worth doing now.
 
 ### Core Beat
 
@@ -89,6 +96,21 @@ Clicking Rowan should reveal a compact notebook-style panel:
 - next uncertainty: "Does Ada actually need help today?"
 
 This makes the agent legible without making the app feel like a dashboard.
+
+### Rowan's Reasoning Callback
+
+Before a meaningful autonomous action, the rail or notebook should show a
+compact decision callback:
+
+- objective: "Verify Mara's lead before lunch gets busy."
+- known facts: "Mara trusts Ada's read of the room. Rowan has enough energy to walk."
+- options: "Ask more at Morrow House, walk to Kettle & Lamp, or wait."
+- choice: "Walk to Kettle & Lamp."
+- rejected: "Waiting risks missing the lunch window."
+
+This should be a concise game-facing rationale generated from the planner/LLM
+callback and simulator validation. It should not expose raw prompts, hidden
+chain-of-thought, or backend diagnostic fields.
 
 ### Field Note Ending
 
@@ -153,7 +175,25 @@ Validation:
 - user can answer: "What does Rowan think is true right now?"
 - no raw debug labels or backend-shaped terms appear in the notebook.
 
-### Step 4: Add The Field Note
+### Step 4: Show Rowan's Decision Callback
+
+Goal: make the player able to watch Rowan decide what to do next.
+
+Work:
+
+- show a compact reasoning callback before meaningful actions;
+- include objective, constraints, considered options, selected action, and a
+  short rationale;
+- make the callback update as Rowan learns new facts;
+- keep autoplay/observe moving without requiring a next-action click.
+
+Validation:
+
+- user can answer: "Why did Rowan choose that next action?"
+- observe/autoplay has zero visible progression/action clicks;
+- the rationale is grounded in current legal actions and simulator validation.
+
+### Step 5: Add The Field Note
 
 Goal: end the first beat with a satisfying artifact.
 
@@ -185,6 +225,8 @@ The first morning slice is working when:
 
 - the first 3 minutes are understandable without explanation;
 - Rowan has a visible reason to move;
+- Rowan's reasoning for the next action is visible and grounded;
+- observe/autoplay carries Rowan forward without requiring action-button clicks;
 - the town does at least 2 charming things on its own;
 - clicking Rowan answers what he believes and plans;
 - the ending field note feels earned;

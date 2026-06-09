@@ -16,6 +16,11 @@ The game starts small and concrete:
 - find somewhere safe to return to
 - find a problem worth solving
 
+The primary experience is watching Rowan decide and act. Rowan should read the
+world, weigh current objectives against legal actions and memory, make a
+visible decision, then carry the task forward without the player pressing the
+next-action button for him.
+
 The older multi-self version is not the current foundation.
 
 It may return later, but only after the single-character city simulation is genuinely fun on its own.
@@ -49,7 +54,7 @@ Importance should emerge later from:
 
 ## Core Systems
 
-The game currently has 4 primary systems.
+The game currently has 5 primary systems.
 
 ### 1. World
 
@@ -166,6 +171,34 @@ Knowledge should often come from presence, not from abstract menus.
 
 If a job, problem, or person matters, the player should usually have to go there.
 
+### 5. Agency And Reasoning
+
+Rowan is not just an avatar following authored steps.
+
+He should have a visible decision loop:
+
+- understand the current objective;
+- read the live world state, including location, time, money, energy, memory,
+  people, jobs, problems, and available legal actions;
+- ask the planner or LLM for a next-action recommendation when appropriate;
+- receive a concise decision artifact with options, tradeoffs, rejected choices,
+  and the selected action;
+- execute the simulator-validated choice;
+- update memory, plan, and next uncertainty after the result.
+
+The player-facing version of this reasoning should be a readable callback, not
+a raw model transcript. It should answer:
+
+- What is Rowan trying to accomplish?
+- What facts or constraints matter right now?
+- Which options did Rowan consider?
+- Why did he choose this next action?
+- What changed after he did it?
+
+Do not expose hidden chain-of-thought, prompts, or backend-shaped debug state as
+game UI. Do expose a grounded rationale and planner trace that make Rowan feel
+like a person making decisions in the city.
+
 ## Clean Loop
 
 The canonical game loop is:
@@ -173,11 +206,12 @@ The canonical game loop is:
 1. Wake up or step into the city.
 2. Move through the map.
 3. Notice places, people, work, and trouble.
-4. Choose where to go and what to do.
-5. Spend time, money, and energy.
-6. The world advances.
-7. Memory and reputation update.
-8. New jobs, relationships, and problems become available.
+4. Reason over the current objective, live constraints, and legal actions.
+5. Choose where to go and what to do.
+6. Spend time, money, and energy.
+7. The world advances.
+8. Memory and reputation update.
+9. New jobs, relationships, and problems become available.
 
 This loop should work before any larger narrative layer is added.
 
@@ -236,6 +270,8 @@ At a minimum, the simulation should converge on these canonical concepts:
 - `JobState`
 - `ProblemState`
 - `InteractionState`
+- `PlannerTrace`
+- `DecisionRationale`
 - `SimulationTick`
 
 ## Working Rule
@@ -247,6 +283,8 @@ When making architecture or content decisions, prefer the option that makes the 
 - local work, local people, local problems
 - remembered consequences
 - knowledge earned by going places
+- visible reasoning over objectives and legal actions
+- Rowan carrying validated plans forward without manual next-action clicks
 
 And less like:
 
@@ -255,6 +293,8 @@ And less like:
 - a task manager
 - a static quest list
 - a game that starts abstract before it becomes human
+- an opaque auto-runner where the player cannot tell why Rowan acted
+- a stepper where the player must click every next action in observe mode
 
 ## Update Rule
 
@@ -265,3 +305,4 @@ Update this document whenever one of these changes:
 - what memory fundamentally does
 - what the map and embodiment layer fundamentally require
 - what the canonical loop is
+- what Rowan's decision reasoning must expose
