@@ -134,11 +134,10 @@ export function buildRowanVisibleDecisionArtifactFromState({
     passedOver,
     rationale,
     selectedAction,
-    sourceSummary: planningTrace
-      ? "Planner callback"
-      : activeConversationDecision
-        ? "Conversation result"
-        : "Rowan's current intent",
+    sourceSummary: sourceSummaryForDecisionArtifact(
+      planningTrace,
+      activeConversationDecision,
+    ),
   };
 }
 
@@ -203,6 +202,25 @@ function backingSummaryForTrace(
         ? "Checked against the current choices."
         : "Grounded in Rowan's current situation.";
   }
+}
+
+function sourceSummaryForDecisionArtifact(
+  planningTrace: PlanningTrace | undefined,
+  activeConversationDecision: string | undefined,
+) {
+  if (planningTrace?.selectedRecommendation?.sourceKind === "live-llm") {
+    return "Live planner recommendation, checked before acting";
+  }
+
+  if (planningTrace) {
+    return "Planner recommendation, checked before acting";
+  }
+
+  if (activeConversationDecision) {
+    return "Conversation result";
+  }
+
+  return "Rowan's current intent";
 }
 
 function uniqueCompact(values: Array<string | null | undefined>, limit: number, max: number) {

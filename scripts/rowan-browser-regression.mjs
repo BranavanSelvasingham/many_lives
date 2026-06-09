@@ -1718,6 +1718,22 @@ function planningTraceProbeFromGame(game) {
     selectedPressureId: trace.selectedPressureId ?? null,
     selectedPressureKind: trace.selectedPressureKind ?? null,
     selectedPressureLabel: trace.selectedPressureLabel ?? null,
+    selectedRecommendation: trace.selectedRecommendation
+      ? {
+          accepted: trace.selectedRecommendation.accepted,
+          advisory: trace.selectedRecommendation.advisory,
+          confidence: trace.selectedRecommendation.confidence ?? null,
+          legalBackingSource:
+            trace.selectedRecommendation.legalBackingSource ?? null,
+          model: trace.selectedRecommendation.model ?? null,
+          provider: trace.selectedRecommendation.provider ?? null,
+          rationale: trace.selectedRecommendation.rationale ?? null,
+          sourceKind: trace.selectedRecommendation.sourceKind,
+          validationSource:
+            trace.selectedRecommendation.validationSource ?? null,
+          validationStatus: trace.selectedRecommendation.validationStatus,
+        }
+      : null,
     selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
   };
 }
@@ -1807,11 +1823,14 @@ function visibleDecisionArtifactFromGame(game) {
     ),
     rationale,
     selectedAction,
-    sourceSummary: trace
-      ? "Planner callback"
-      : conversationDecision
-        ? "Conversation result"
-        : "Rowan's current intent",
+    sourceSummary:
+      trace?.selectedRecommendation?.sourceKind === "live-llm"
+        ? "Live planner recommendation, checked before acting"
+        : trace
+          ? "Planner recommendation, checked before acting"
+          : conversationDecision
+            ? "Conversation result"
+            : "Rowan's current intent",
   };
 }
 
@@ -2108,6 +2127,17 @@ function assertPlanningTracePayload(label, planningTrace) {
     "simulator-validated-move",
     "simulator-validated-wait",
   ]);
+  const recommendationSourceKinds = new Set([
+    "deterministic-planner",
+    "live-llm",
+  ]);
+  const validationStatuses = new Set([
+    "conversation-resolution",
+    "legal-action-surface-validated",
+    "projected-legal-action",
+    "simulator-validated",
+    "unvalidated",
+  ]);
   assert.ok(
     Array.isArray(planningTrace.outcomes),
     `${label}: planner trace is missing outcome predicates.`,
@@ -2177,9 +2207,52 @@ function assertPlanningTracePayload(label, planningTrace) {
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureKind") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedMatchedOutcomeId") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedLegalBacking") &&
+      Object.prototype.hasOwnProperty.call(planningTrace, "selectedRecommendation") &&
       Object.prototype.hasOwnProperty.call(planningTrace, "selectedTargetLocationId"),
-    `${label}: planner trace must expose selected pressure, selected outcome, selected legal backing, and selected target metadata.`,
+    `${label}: planner trace must expose selected pressure, selected outcome, selected legal backing, selected recommendation provenance, and selected target metadata.`,
   );
+  const selectedRecommendation = planningTrace.selectedRecommendation ?? null;
+  const selectedHasAction = Boolean(
+    planningTrace.selectedActionId ?? selectedTraceOption?.actionId,
+  );
+  assert.ok(
+    selectedRecommendation &&
+      recommendationSourceKinds.has(selectedRecommendation.sourceKind) &&
+      typeof selectedRecommendation.accepted === "boolean" &&
+      typeof selectedRecommendation.advisory === "boolean" &&
+      validationStatuses.has(selectedRecommendation.validationStatus),
+    `${label}: planner trace selected recommendation must expose source kind, accepted/advisory flags, and validation status.`,
+  );
+  if (selectedHasAction) {
+    assert.ok(
+      selectedRecommendation.validationSource &&
+        legalBackingSources.has(selectedRecommendation.validationSource) &&
+        selectedRecommendation.legalBackingSource &&
+        legalBackingSources.has(selectedRecommendation.legalBackingSource),
+      `${label}: selected action recommendation must expose legal backing and validation sources.`,
+    );
+  }
+  assert.ok(
+    !selectedHasAction ||
+      selectedRecommendation.validationStatus !== "unvalidated",
+    `${label}: selected action recommendation cannot remain unvalidated.`,
+  );
+  if (selectedRecommendation.sourceKind === "live-llm") {
+    assert.ok(
+      selectedRecommendation.accepted === true &&
+        selectedRecommendation.advisory === true &&
+        typeof selectedRecommendation.provider === "string" &&
+        selectedRecommendation.provider.length > 0 &&
+        typeof selectedRecommendation.model === "string" &&
+        selectedRecommendation.model.length > 0 &&
+        typeof selectedRecommendation.confidence === "number" &&
+        selectedRecommendation.confidence >= 0 &&
+        selectedRecommendation.confidence <= 1 &&
+        typeof selectedRecommendation.rationale === "string" &&
+        selectedRecommendation.rationale.length >= 8,
+      `${label}: accepted live-LLM planner recommendation must expose provider, model, confidence, rationale, and advisory acceptance.`,
+    );
+  }
   assert.ok(
     planningTrace.rejected.every(
       (option) =>
@@ -2666,6 +2739,28 @@ function compactPlanningTraceOption(option) {
   };
 }
 
+function compactPlanningTraceRecommendation(recommendation) {
+  if (!recommendation) {
+    return null;
+  }
+
+  return {
+    accepted: Boolean(recommendation.accepted),
+    advisory: Boolean(recommendation.advisory),
+    confidence:
+      typeof recommendation.confidence === "number"
+        ? recommendation.confidence
+        : null,
+    legalBackingSource: recommendation.legalBackingSource ?? null,
+    model: recommendation.model ?? null,
+    provider: recommendation.provider ?? null,
+    rationale: compactObjectiveSequenceText(recommendation.rationale ?? "", 160),
+    sourceKind: recommendation.sourceKind ?? null,
+    validationSource: recommendation.validationSource ?? null,
+    validationStatus: recommendation.validationStatus ?? null,
+  };
+}
+
 function buildObjectiveSequenceAuthorityEvidence({
   autonomy,
   planningTrace,
@@ -2720,6 +2815,7 @@ function buildObjectiveSequenceAuthorityEvidence({
               "Commitment loop action; simulator validates execution when the command is applied.",
           }
         : null,
+      selectedRecommendation: null,
     };
   }
 
@@ -2759,6 +2855,9 @@ function buildObjectiveSequenceAuthorityEvidence({
     selectedConsideredOption?.legalBacking ??
     selectedStep?.legalBacking ??
     null;
+  const selectedRecommendation = compactPlanningTraceRecommendation(
+    planningTrace.selectedRecommendation ?? null,
+  );
   const authorityKinds = [];
   const selectedProvenance = selectedConsideredOption?.provenance ?? null;
 
@@ -2777,6 +2876,17 @@ function buildObjectiveSequenceAuthorityEvidence({
   }
   if (selectedProvenance) {
     authorityKinds.push(`provenance:${selectedProvenance}`);
+  }
+  if (selectedRecommendation?.sourceKind) {
+    authorityKinds.push(`planner-source:${selectedRecommendation.sourceKind}`);
+  }
+  if (selectedRecommendation?.advisory) {
+    authorityKinds.push("planner-advisory");
+  }
+  if (selectedRecommendation?.validationStatus) {
+    authorityKinds.push(
+      `planner-validation:${selectedRecommendation.validationStatus}`,
+    );
   }
   if (routeRole === "conversation-resolution" && !selectedActionId) {
     authorityKinds.push("conversation-resolution");
@@ -2811,6 +2921,7 @@ function buildObjectiveSequenceAuthorityEvidence({
     selectedPressureKind,
     selectedPressureLabel: compactObjectiveSequenceText(selectedPressureLabel ?? "", 120),
     selectedProvenance,
+    selectedRecommendation,
     selectedStep: selectedStep
       ? {
           actionId: selectedStep.actionId ?? null,
@@ -2932,6 +3043,10 @@ function buildObjectiveSequenceAuditEntry({
     routeRole,
     selectedActionId,
   });
+  const visibleDecisionArtifact =
+    probe.autonomy?.visibleDecisionArtifact ??
+    probe.rail?.visibleDecisionArtifact ??
+    null;
   const atExpectedLocation =
     expectedTargetLocationId && currentLocationId === expectedTargetLocationId;
   if (
@@ -3045,6 +3160,43 @@ function buildObjectiveSequenceAuditEntry({
     !authorityEvidence.selectedPressureKind
   ) {
     failureReasons.push("missing-outcome-or-live-pressure-authority");
+  }
+
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
+    visibleDecisionArtifact &&
+    authorityEvidence.hasPlannerTrace
+  ) {
+    const recommendation = authorityEvidence.selectedRecommendation;
+    if (!recommendation?.sourceKind) {
+      failureReasons.push("missing-advisory-vs-validated-provenance");
+    }
+    if (recommendation?.accepted !== true) {
+      failureReasons.push("selected-recommendation-not-accepted");
+    }
+    if (
+      !recommendation?.validationStatus ||
+      recommendation.validationStatus === "unvalidated" ||
+      !recommendation.validationSource
+    ) {
+      failureReasons.push("selected-recommendation-not-validated");
+    }
+    if (!recommendation?.legalBackingSource) {
+      failureReasons.push("selected-recommendation-missing-legal-backing");
+    }
+    if (
+      recommendation?.sourceKind === "live-llm" &&
+      (!recommendation.advisory ||
+        !recommendation.provider ||
+        !recommendation.model ||
+        typeof recommendation.confidence !== "number" ||
+        !recommendation.rationale)
+    ) {
+      failureReasons.push("live-llm-recommendation-missing-diagnostics");
+    }
   }
 
   return {
@@ -3188,6 +3340,14 @@ function assertObjectiveSequenceAudit(objectiveSequenceAudit) {
   assert.ok(
     [...authorityKinds].some((kind) => kind.startsWith("legal-action:")),
     "Objective sequence audit did not expose a concrete legal-action backing source.",
+  );
+  assert.ok(
+    [...authorityKinds].some((kind) => kind.startsWith("planner-source:")),
+    "Objective sequence audit did not expose planner source-kind provenance.",
+  );
+  assert.ok(
+    [...authorityKinds].some((kind) => kind.startsWith("planner-validation:")),
+    "Objective sequence audit did not expose selected recommendation validation status.",
   );
 }
 

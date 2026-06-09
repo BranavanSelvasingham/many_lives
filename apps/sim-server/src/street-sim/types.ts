@@ -589,10 +589,34 @@ export type RowanPlanningTraceLegalBackingSource =
   | "simulator-validated-move"
   | "simulator-validated-wait";
 
+export type RowanPlanningTraceRecommendationSourceKind =
+  | "deterministic-planner"
+  | "live-llm";
+
+export type RowanPlanningTraceValidationStatus =
+  | "conversation-resolution"
+  | "legal-action-surface-validated"
+  | "projected-legal-action"
+  | "simulator-validated"
+  | "unvalidated";
+
 export interface RowanPlanningTraceLegalBacking {
   actionId?: string;
   locationId?: string;
   source: RowanPlanningTraceLegalBackingSource;
+}
+
+export interface RowanPlanningTraceSelectedRecommendation {
+  accepted: boolean;
+  advisory: boolean;
+  confidence?: number;
+  legalBackingSource?: RowanPlanningTraceLegalBackingSource;
+  model?: string;
+  provider?: string;
+  rationale?: string;
+  sourceKind: RowanPlanningTraceRecommendationSourceKind;
+  validationSource?: RowanPlanningTraceLegalBackingSource;
+  validationStatus: RowanPlanningTraceValidationStatus;
 }
 
 export interface RowanPlanningTraceOption {
@@ -649,6 +673,7 @@ export interface RowanPlanningTrace {
   selectedPressureId?: string;
   selectedPressureKind?: string;
   selectedPressureLabel?: string;
+  selectedRecommendation?: RowanPlanningTraceSelectedRecommendation;
   selectedTargetLocationId?: string;
 }
 

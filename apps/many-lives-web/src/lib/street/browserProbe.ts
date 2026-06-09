@@ -246,6 +246,22 @@ function planningTraceProbePayload(game: StreetGameState) {
     selectedPressureId: trace.selectedPressureId ?? null,
     selectedPressureKind: trace.selectedPressureKind ?? null,
     selectedPressureLabel: trace.selectedPressureLabel ?? null,
+    selectedRecommendation: trace.selectedRecommendation
+      ? {
+          accepted: trace.selectedRecommendation.accepted,
+          advisory: trace.selectedRecommendation.advisory,
+          confidence: trace.selectedRecommendation.confidence ?? null,
+          legalBackingSource:
+            trace.selectedRecommendation.legalBackingSource ?? null,
+          model: trace.selectedRecommendation.model ?? null,
+          provider: trace.selectedRecommendation.provider ?? null,
+          rationale: trace.selectedRecommendation.rationale ?? null,
+          sourceKind: trace.selectedRecommendation.sourceKind,
+          validationSource:
+            trace.selectedRecommendation.validationSource ?? null,
+          validationStatus: trace.selectedRecommendation.validationStatus,
+        }
+      : null,
     selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
   };
 }
