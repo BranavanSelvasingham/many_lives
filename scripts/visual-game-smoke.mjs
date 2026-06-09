@@ -1418,7 +1418,7 @@ function assertScheduledNpcVisualCues(browserProbe, viewportName) {
   );
 }
 
-function assertVisibleDecisionArtifactPayload(artifact, label) {
+function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = null) {
   assert.ok(artifact, `${label}: missing visible decision artifact payload.`);
   assert.ok(
     typeof artifact.objective === "string" && artifact.objective.length >= 8,
@@ -1446,10 +1446,18 @@ function assertVisibleDecisionArtifactPayload(artifact, label) {
       artifact.backingSummary.length >= 10,
     `${label}: decision artifact backing summary is missing.`,
   );
+  if (artifact.nextCheck !== undefined) {
+    assert.ok(
+      typeof artifact.nextCheck === "string" && artifact.nextCheck.length >= 8,
+      `${label}: decision artifact next check is too thin.`,
+    );
+  }
+  assertVisibleDecisionNextCheckForTrace(label, planningTrace, artifact);
   const playerText = [
     artifact.objective,
     ...(artifact.constraints ?? []),
     ...(artifact.considered ?? []),
+    artifact.nextCheck,
     ...(artifact.passedOver ?? []),
     artifact.selectedAction,
     artifact.rationale,
@@ -1464,7 +1472,200 @@ function assertVisibleDecisionArtifactPayload(artifact, label) {
   );
 }
 
-function assertVisibleDecisionArtifactDom(decisionArtifact, label) {
+function assertVisibleDecisionNextCheckForTrace(label, planningTrace, artifact) {
+  if (!planningTrace || !artifact) {
+    return;
+  }
+
+  const expected = visibleDecisionNextCheck(
+    planningTrace,
+    selectedPlanningTraceStep(planningTrace),
+    artifact.selectedAction ?? planningTrace.selectedLabel ?? "",
+  );
+  if (!expected) {
+    return;
+  }
+
+  assert.equal(
+    artifact.nextCheck,
+    expected,
+    `${label}: trace-backed next check is missing from the visible decision artifact.`,
+  );
+}
+
+function selectedPlanningTraceStep(planningTrace) {
+  if (!planningTrace) {
+    return null;
+  }
+
+  return (
+    planningTrace.nextSteps?.find(
+      (step) =>
+        planningTrace.selectedActionId &&
+        step.actionId === planningTrace.selectedActionId,
+    ) ??
+    planningTrace.nextSteps?.[0] ??
+    null
+  );
+}
+
+function visibleDecisionNextCheck(planningTrace, selectedStep, selectedAction) {
+  if (!planningTrace) {
+    return "";
+  }
+
+  if ((planningTrace.nextSteps?.length ?? 0) >= 2) {
+    const selectedIndex = selectedStep
+      ? planningTrace.nextSteps.findIndex((step) => step === selectedStep)
+      : -1;
+    const candidates = planningTrace.nextSteps.slice(
+      selectedIndex >= 0 ? selectedIndex + 1 : 1,
+    );
+    const selectedKey = String(selectedAction ?? "").toLowerCase();
+
+    for (const step of candidates) {
+      if (!step.legal) {
+        continue;
+      }
+
+      const label = compactVisibleDecisionText(step.label, 60);
+      if (!label || label.toLowerCase() === selectedKey) {
+        continue;
+      }
+
+      const rationale = compactVisibleDecisionText(step.rationale, 92);
+      const text = compactVisibleDecisionText(
+        rationale ? `${label}: ${rationale}` : label,
+        118,
+      );
+      if (!text || text.toLowerCase() === selectedKey) {
+        continue;
+      }
+
+      return text;
+    }
+  }
+
+  return visibleDecisionNextCheckForOutcome(planningTrace);
+}
+
+function visibleDecisionNextCheckForOutcome(planningTrace) {
+  const selectedOutcomeIndex = planningTrace.selectedMatchedOutcomeId
+    ? planningTrace.outcomes.findIndex(
+        (outcome) => outcome.id === planningTrace.selectedMatchedOutcomeId,
+      )
+    : -1;
+  const candidates = [
+    ...(selectedOutcomeIndex >= 0
+      ? planningTrace.outcomes.slice(selectedOutcomeIndex + 1)
+      : []),
+    ...planningTrace.outcomes,
+  ].filter(
+    (outcome) =>
+      outcome.status !== "met" &&
+      (!planningTrace.selectedMatchedOutcomeId ||
+        outcome.id !== planningTrace.selectedMatchedOutcomeId) &&
+      !isCurrentOrMetaTraceOutcome(planningTrace, outcome),
+  );
+  const outcome = candidates[0];
+  const label = compactVisibleDecisionText(outcome?.label, 58);
+  if (!label) {
+    return "";
+  }
+
+  const signal = uniqueVisibleDecisionTexts(
+    [...(outcome?.blockers ?? []), outcome?.evidence],
+    1,
+    70,
+  )[0];
+
+  const lead = stripTrailingVisibleDecisionPunctuation(label);
+  return compactVisibleDecisionText(signal ? `${lead}: ${signal}` : label, 118);
+}
+
+function isCurrentOrMetaTraceOutcome(planningTrace, outcome) {
+  const label = compactVisibleDecisionText(outcome.label, 80).toLowerCase();
+  const current = compactVisibleDecisionText(
+    planningTrace.selectedPressureLabel,
+    80,
+  ).toLowerCase();
+  const blockerText = (outcome.blockers ?? []).join(" ");
+  return (
+    (current && label === current) ||
+    /\buseful first move\b/i.test(`${outcome.label} ${blockerText}`)
+  );
+}
+
+function stripTrailingVisibleDecisionPunctuation(value) {
+  return String(value ?? "")
+    .replace(/[.:;,]+\s*$/u, "")
+    .trim();
+}
+
+function uniqueVisibleDecisionTexts(values, limit, max) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    const compact = compactVisibleDecisionText(value, max);
+    if (!compact) {
+      continue;
+    }
+    const key = compact.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(compact);
+    if (result.length >= limit) {
+      break;
+    }
+  }
+
+  return result;
+}
+
+function compactVisibleDecisionText(value, max) {
+  if (!value) {
+    return "";
+  }
+  let text = String(value).replace(/\s+/g, " ").trim();
+  text = text
+    .replace(/\badvance_objective\b/gi, "")
+    .replace(/\bplanningTrace\b/gi, "")
+    .replace(/\brouteKey\b/gi, "")
+    .replace(/\bworldPressure\b/gi, "")
+    .replace(/\bcityEvents\b/gi, "")
+    .replace(/\bjobWindows\b/gi, "")
+    .replace(/\bnpcSchedules\b/gi, "")
+    .replace(/\bselectedPlanKey\b/gi, "")
+    .replace(/\bplanKey\b/gi, "")
+    .replace(/\btargetLocationId\b/gi, "")
+    .replace(/\bactionId\b/gi, "")
+    .replace(/^Action:\s*/i, "")
+    .replace(/\bcurrent objective\b/gi, "current aim")
+    .replace(/\bplanner trace\b/gi, "Rowan weighs")
+    .replace(/\bis an open desired-state predicate\b/gi, "")
+    .replace(/\bdesired-state predicate\b/gi, "aim")
+    .replace(/\bstale predicate\b/gi, "stale lead")
+    .replace(/\bpredicate\b/gi, "aim")
+    .replace(/\bRejected because\b/gi, "")
+    .replace(/\bdominant live pressure\b/gi, "strongest current reason")
+    .replace(/\blive pressure\b/gi, "current reason")
+    .replace(/\broute hint action\b/gi, "suggested move")
+    .replace(/\broute hint\b/gi, "suggested path")
+    .replace(/\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}...`;
+}
+
+function assertVisibleDecisionArtifactDom(
+  decisionArtifact,
+  label,
+  artifactPayload = null,
+) {
   assert.ok(decisionArtifact, `${label}: missing visible decision artifact DOM.`);
   assert.equal(
     decisionArtifact.visible,
@@ -1496,6 +1697,13 @@ function assertVisibleDecisionArtifactDom(decisionArtifact, label) {
     /Why this/i,
     `${label}: decision artifact should show a concise rationale.`,
   );
+  if (artifactPayload?.nextCheck) {
+    assert.match(
+      decisionArtifact.text,
+      /Next check/i,
+      `${label}: decision artifact should show Rowan's short-horizon check.`,
+    );
+  }
   assert.match(
     decisionArtifact.text,
     /Options/i,
@@ -1646,14 +1854,18 @@ async function runFreshAutoplayStartCheck(session) {
   assertVisibleDecisionArtifactPayload(
     advancedProbe.autonomy?.visibleDecisionArtifact,
     "fresh autoplay",
+    advancedProbe.autonomy?.planningTrace,
   );
   assertVisibleDecisionArtifactPayload(
     advancedProbe.rail?.visibleDecisionArtifact,
     "fresh autoplay rail",
+    advancedProbe.autonomy?.planningTrace,
   );
   assertVisibleDecisionArtifactDom(
     page.decisionArtifact,
     "fresh autoplay",
+    advancedProbe.rail?.visibleDecisionArtifact ??
+      advancedProbe.autonomy?.visibleDecisionArtifact,
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");
@@ -1703,10 +1915,12 @@ async function runResponsiveDecisionArtifactCheck(session) {
   assertVisibleDecisionArtifactPayload(
     advancedProbe.autonomy?.visibleDecisionArtifact,
     `${viewport.name} responsive decision probe`,
+    advancedProbe.autonomy?.planningTrace,
   );
   assertVisibleDecisionArtifactPayload(
     advancedProbe.rail?.visibleDecisionArtifact,
     `${viewport.name} responsive decision rail probe`,
+    advancedProbe.autonomy?.planningTrace,
   );
 
   let page = await session.inspectPage();
@@ -1723,6 +1937,8 @@ async function runResponsiveDecisionArtifactCheck(session) {
   assertVisibleDecisionArtifactDom(
     page.decisionArtifact,
     `${viewport.name} responsive decision rail`,
+    advancedProbe.rail?.visibleDecisionArtifact ??
+      advancedProbe.autonomy?.visibleDecisionArtifact,
   );
 
   const screenshotPath = path.join(
@@ -1873,17 +2089,20 @@ async function runViewportCheck(session, viewport) {
     assertVisibleDecisionArtifactPayload(
       browserProbe.autonomy.visibleDecisionArtifact,
       `${viewport.name} probe`,
+      browserProbe.autonomy?.planningTrace,
     );
   }
   if (browserProbe.rail?.visibleDecisionArtifact) {
     assertVisibleDecisionArtifactPayload(
       browserProbe.rail.visibleDecisionArtifact,
       `${viewport.name} rail probe`,
+      browserProbe.autonomy?.planningTrace,
     );
     if (viewport.width > 960) {
       assertVisibleDecisionArtifactDom(
         page.decisionArtifact,
         `${viewport.name} rail`,
+        browserProbe.rail.visibleDecisionArtifact,
       );
     }
   }
@@ -1915,6 +2134,7 @@ async function runViewportCheck(session, viewport) {
       assertVisibleDecisionArtifactDom(
         expandedPage.decisionArtifact,
         `${viewport.name} expanded rail`,
+        browserProbe.rail.visibleDecisionArtifact,
       );
       expandedDecisionArtifact = expandedPage.decisionArtifact;
     }

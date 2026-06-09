@@ -230,6 +230,14 @@ export function buildVisibleDecisionArtifactHtml(
         </div>
       </div>
       ${
+        artifact.nextCheck
+          ? `<div class="ml-decision-next-check">
+              <span>Next check</span>
+              ${escapeHtml(buildNarrativePreview(artifact.nextCheck, 118))}
+            </div>`
+          : ""
+      }
+      ${
         constraints.length
           ? `<div class="ml-decision-chip-row" aria-label="Relevant constraints">
               <strong>Signals</strong>
@@ -304,6 +312,11 @@ export function buildCompactVisibleDecisionArtifactHtml(
         }
         <span>Choice: ${escapeHtml(buildNarrativePreview(artifact.selectedAction, 42))}</span>
         <span>Why this: ${escapeHtml(buildNarrativePreview(artifact.rationale, 64))}</span>
+        ${
+          artifact.nextCheck
+            ? `<span>Next check: ${escapeHtml(buildNarrativePreview(artifact.nextCheck, 62))}</span>`
+            : ""
+        }
         ${
           considered
             ? `<span>Options: ${escapeHtml(buildNarrativePreview(considered, 42))}</span>`
