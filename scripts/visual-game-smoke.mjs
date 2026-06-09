@@ -1322,6 +1322,38 @@ function assertFirstRouteEventCues(browserProbe, viewportName) {
   );
 }
 
+function assertScheduledNpcVisualCues(browserProbe, viewportName) {
+  const cues = browserProbe?.movement?.scheduledNpcVisualCues ?? [];
+  assert.ok(
+    cues.length >= 1,
+    `${viewportName}: expected at least one visible scheduled NPC movement cue in the first-route probe.`,
+  );
+  assert.ok(
+    cues.some(
+      (cue) =>
+        cue.visible &&
+        cue.onRoute &&
+        cue.routeLegal &&
+        cue.routePathLength > 1 &&
+        typeof cue.routeProgress === "number" &&
+        cue.cueLabel &&
+        cue.npcId &&
+        cue.fromLocationId &&
+        cue.toLocationId,
+    ),
+    `${viewportName}: scheduled NPC movement cue did not include visible route/progress evidence: ${JSON.stringify(cues)}.`,
+  );
+  assert.ok(
+    cues.every(
+      (cue) =>
+        !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
+          `${cue.cueLabel ?? ""} ${cue.cueSignal ?? ""}`,
+        ),
+    ),
+    `${viewportName}: scheduled NPC cue evidence must use player-facing labels, got ${JSON.stringify(cues)}.`,
+  );
+}
+
 function cameraScrollDistance(first, second) {
   return Math.hypot(
     (second?.scroll?.x ?? 0) - (first?.scroll?.x ?? 0),
@@ -1559,6 +1591,7 @@ async function runViewportCheck(session, viewport) {
   const browserProbe = await session.readBrowserProbe();
   assert.ok(browserProbe, `${viewport.name}: missing browser probe.`);
   assertFirstRouteEventCues(browserProbe, viewport.name);
+  assertScheduledNpcVisualCues(browserProbe, viewport.name);
   assert.ok(
     browserProbe.autonomy?.intent?.reason,
     `${viewport.name}: autonomy probe is missing a state-based reason.`,
@@ -1897,6 +1930,8 @@ async function runViewportCheck(session, viewport) {
     eventCues: browserProbe.visualEventCues ?? [],
     mapAgency,
     page,
+    scheduledNpcVisualCues:
+      browserProbe.movement?.scheduledNpcVisualCues ?? [],
     pan: {
       after: panAfter,
       before: panBefore,

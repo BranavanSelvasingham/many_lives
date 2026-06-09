@@ -55,6 +55,34 @@ export type StreetBrowserMovementDiagnostics = {
     toLocationId: string | null;
     visible: boolean;
   }>;
+  scheduledNpcVisualCues: Array<{
+    activeSpaceId: string | null;
+    cueKind:
+      | "current-schedule-stop"
+      | "local-schedule-round"
+      | "next-scheduled-stop";
+    cueLabel: string;
+    cueSignal: string;
+    currentLocationId: string;
+    currentScheduleLocationId: string | null;
+    distanceToRoute: number | null;
+    fromLocationId: string;
+    key: string;
+    nextScheduleLocationId: string | null;
+    nextScheduleStartsInMinutes: number | null;
+    npcId: string;
+    npcName: string;
+    onRoute: boolean;
+    position: {
+      x: number;
+      y: number;
+    };
+    routeLegal: boolean;
+    routePathLength: number;
+    routeProgress: number | null;
+    toLocationId: string;
+    visible: boolean;
+  }>;
   playerRoute: {
     active: boolean;
     diagnostics: {

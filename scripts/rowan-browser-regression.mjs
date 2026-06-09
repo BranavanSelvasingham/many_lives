@@ -3781,6 +3781,7 @@ function buildMovementAuditSummary(timeline) {
 
   const scheduledNpcMarkerSamples = [];
   const scheduledNpcRouteSamples = [];
+  const scheduledNpcVisualCueSamples = [];
   const scheduledNpcRoutesByKey = new Map();
   for (const [timelineIndex, entry] of timeline.entries()) {
     for (const marker of entry.movement?.scheduledNpcMarkerSamples ?? []) {
@@ -3800,6 +3801,33 @@ function buildMovementAuditSummary(timeline) {
         timelineIndex,
         toLocationId: marker.toLocationId ?? null,
         visible: Boolean(marker.visible),
+      });
+    }
+
+    for (const cue of entry.movement?.scheduledNpcVisualCues ?? []) {
+      scheduledNpcVisualCueSamples.push({
+        activeSpaceId: cue.activeSpaceId ?? null,
+        cueKind: cue.cueKind,
+        cueLabel: cue.cueLabel,
+        cueSignal: cue.cueSignal,
+        currentLocationId: cue.currentLocationId ?? null,
+        currentScheduleLocationId: cue.currentScheduleLocationId ?? null,
+        distanceToRoute: cue.distanceToRoute ?? null,
+        fromLocationId: cue.fromLocationId ?? null,
+        key: cue.key,
+        label: entry.label,
+        nextScheduleLocationId: cue.nextScheduleLocationId ?? null,
+        nextScheduleStartsInMinutes: cue.nextScheduleStartsInMinutes ?? null,
+        npcId: cue.npcId,
+        npcName: cue.npcName ?? cue.npcId,
+        onRoute: Boolean(cue.onRoute),
+        position: cue.position ?? null,
+        routeLegal: Boolean(cue.routeLegal),
+        routePathLength: cue.routePathLength ?? 0,
+        routeProgress: cue.routeProgress ?? null,
+        timelineIndex,
+        toLocationId: cue.toLocationId ?? null,
+        visible: Boolean(cue.visible),
       });
     }
 
@@ -3916,6 +3944,7 @@ function buildMovementAuditSummary(timeline) {
     scheduledNpcMarkerSamples,
     scheduledNpcLocationChanges,
     scheduledNpcRouteSamples,
+    scheduledNpcVisualCueSamples,
     scheduledNpcRoutes: [...scheduledNpcRoutesByKey.values()]
       .map((route) => ({
         ...route,
@@ -3947,6 +3976,22 @@ function isValidVisibleScheduledNpcMarkerSample(marker) {
     marker.routePathLength > 1 &&
     typeof marker.routeProgress === "number" &&
     marker.position
+  );
+}
+
+function isValidScheduledNpcVisualCueSample(cue) {
+  return (
+    cue.visible &&
+    cue.onRoute &&
+    cue.routeLegal &&
+    cue.routePathLength > 1 &&
+    typeof cue.routeProgress === "number" &&
+    cue.position &&
+    typeof cue.cueLabel === "string" &&
+    cue.cueLabel.length > 0 &&
+    !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
+      `${cue.cueLabel} ${cue.cueSignal}`,
+    )
   );
 }
 
@@ -3990,6 +4035,33 @@ function compactScheduledNpcMarkerSample(marker) {
   };
 }
 
+function compactScheduledNpcVisualCueSample(cue) {
+  return {
+    activeSpaceId: cue.activeSpaceId ?? null,
+    cueKind: cue.cueKind,
+    cueLabel: cue.cueLabel,
+    cueSignal: cue.cueSignal,
+    currentLocationId: cue.currentLocationId ?? null,
+    currentScheduleLocationId: cue.currentScheduleLocationId ?? null,
+    distanceToRoute: cue.distanceToRoute ?? null,
+    fromLocationId: cue.fromLocationId ?? null,
+    key: cue.key,
+    label: cue.label,
+    nextScheduleLocationId: cue.nextScheduleLocationId ?? null,
+    nextScheduleStartsInMinutes: cue.nextScheduleStartsInMinutes ?? null,
+    npcId: cue.npcId,
+    npcName: cue.npcName ?? cue.npcId,
+    onRoute: Boolean(cue.onRoute),
+    position: cue.position ?? null,
+    routeLegal: Boolean(cue.routeLegal),
+    routePathLength: cue.routePathLength ?? 0,
+    routeProgress: cue.routeProgress ?? null,
+    timelineIndex: cue.timelineIndex,
+    toLocationId: cue.toLocationId ?? null,
+    visible: Boolean(cue.visible),
+  };
+}
+
 function buildScheduledNpcSpatialEvidence({ movementAudit, worldPressureAudit }) {
   const legalRouteSamples = movementAudit.scheduledNpcRouteSamples
     .filter(isLegalScheduledNpcRouteSample)
@@ -3999,6 +4071,10 @@ function buildScheduledNpcSpatialEvidence({ movementAudit, worldPressureAudit })
     .filter(isValidVisibleScheduledNpcMarkerSample)
     .slice(0, 8)
     .map(compactScheduledNpcMarkerSample);
+  const visibleCueSamples = movementAudit.scheduledNpcVisualCueSamples
+    .filter(isValidScheduledNpcVisualCueSample)
+    .slice(0, 8)
+    .map(compactScheduledNpcVisualCueSample);
   const routeSampleByKey = new Map(
     movementAudit.scheduledNpcRouteSamples.map((route) => [route.key, route]),
   );
@@ -4079,6 +4155,15 @@ function buildScheduledNpcSpatialEvidence({ movementAudit, worldPressureAudit })
       visibleMarkerSampleCount: movementAudit.scheduledNpcMarkerSamples.filter(
         (marker) => marker.visible,
       ).length,
+      visibleScheduleCueSampleCount:
+        movementAudit.scheduledNpcVisualCueSamples.filter(
+          isValidScheduledNpcVisualCueSample,
+        ).length,
+      visibleScheduleCueNpcCount: new Set(
+        movementAudit.scheduledNpcVisualCueSamples
+          .filter(isValidScheduledNpcVisualCueSample)
+          .map((cue) => cue.npcId),
+      ).size,
     },
     legalRouteSamples,
     locationChanges,
@@ -4093,6 +4178,7 @@ function buildScheduledNpcSpatialEvidence({ movementAudit, worldPressureAudit })
       toLabel: change.toLabel,
     })),
     validVisibleMarkerSamples,
+    visibleCueSamples,
   };
 }
 
@@ -4111,8 +4197,17 @@ function assertScheduledNpcSpatialEvidence(scheduledNpcSpatialEvidence) {
 
   assert.ok(
     scheduledNpcSpatialEvidence.legalRouteSamples.length > 0 ||
-      scheduledNpcSpatialEvidence.validVisibleMarkerSamples.length > 0,
+      scheduledNpcSpatialEvidence.validVisibleMarkerSamples.length > 0 ||
+      scheduledNpcSpatialEvidence.visibleCueSamples.length > 0,
     `World pressure observed NPC schedule movement, but the inhabit report did not include legal route or valid visible marker evidence: ${JSON.stringify(
+      scheduledNpcSpatialEvidence.counts,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    scheduledNpcSpatialEvidence.visibleCueSamples.length > 0,
+    `Expected at least one player-visible scheduled NPC movement cue in the browser report: ${JSON.stringify(
       scheduledNpcSpatialEvidence.counts,
       null,
       2,
@@ -4352,6 +4447,16 @@ function assertMovementAuditSummary(movementAudit) {
     stopChanges.some((change) => change.markerEvidence?.valid),
     `Expected at least one scheduled NPC current-stop transition to include visible marker movement along the scheduled route: ${JSON.stringify(
       stopChanges,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    movementAudit.scheduledNpcVisualCueSamples.some(
+      isValidScheduledNpcVisualCueSample,
+    ),
+    `Expected at least one scheduled NPC movement cue to be visible in player-facing browser evidence: ${JSON.stringify(
+      movementAudit.scheduledNpcVisualCueSamples.slice(0, 8),
       null,
       2,
     )}`,
@@ -7500,6 +7605,7 @@ async function main() {
     scheduledNpcDiagnostics: movementAudit.scheduledNpcRoutes,
     scheduledNpcLocationChanges: movementAudit.scheduledNpcLocationChanges,
     scheduledNpcMarkerSamples: movementAudit.scheduledNpcMarkerSamples,
+    scheduledNpcVisualCues: movementAudit.scheduledNpcVisualCueSamples,
     screenshotCount,
     steps: timeline.map((entry) => ({
       activeConversation: entry.activeConversation?.npcId ?? null,
