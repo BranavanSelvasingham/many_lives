@@ -1670,6 +1670,134 @@ describe("SimulationEngine street slice", () => {
     });
   });
 
+  it("drops first-afternoon Ada route authority after the lunch window slips", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-stale-ada-route");
+
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.rowanAutonomy.targetLocationId).toBe("tea-house");
+
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    expect(teaJob).toBeDefined();
+    expect(yardJob).toBeDefined();
+    if (!teaJob || !yardJob) {
+      return;
+    }
+
+    world.clock.totalMinutes = 16 * 60 + 30;
+    world.clock.hour = 16;
+    world.clock.minute = 30;
+    world.clock.label = "Afternoon";
+    teaJob.discovered = true;
+    teaJob.accepted = false;
+    teaJob.completed = false;
+    teaJob.missed = true;
+    yardJob.discovered = true;
+    yardJob.accepted = false;
+    yardJob.completed = false;
+    yardJob.missed = false;
+    world.player.activeJobId = undefined;
+    world.activeConversation = undefined;
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    const firstAfternoonObjective = world.player.objective as PlayerObjective;
+    const staleAdaOutcomes = firstAfternoonObjective.outcomes.filter(
+      (outcome) =>
+        outcome.id.startsWith("first-afternoon") &&
+        (outcome.actionId === "reflect:first-afternoon-plan" ||
+          outcome.actionId === "accept:job-tea-shift" ||
+          outcome.actionId === "work:job-tea-shift" ||
+          outcome.npcId === "npc-ada" ||
+          outcome.targetLocationId === "tea-house"),
+    );
+    const staleAdaSteps = firstAfternoonObjective.trail.filter(
+      (step) =>
+        step.id.startsWith("first-afternoon") &&
+        !step.done &&
+        (step.actionId === "reflect:first-afternoon-plan" ||
+          step.actionId === "accept:job-tea-shift" ||
+          step.actionId === "work:job-tea-shift" ||
+          step.npcId === "npc-ada" ||
+          step.targetLocationId === "tea-house"),
+    );
+
+    expect(firstAfternoonObjective.routeKey).toBe("first-afternoon");
+    expect(staleAdaOutcomes).toEqual([]);
+    expect(staleAdaSteps).toEqual([]);
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "reflect:first-afternoon-plan",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "accept:job-tea-shift",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "work:job-tea-shift",
+    );
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    const selected = world.rowanAutonomy.planningTrace?.considered.find(
+      (option) => option.status === "selected",
+    );
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:freight-yard",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.actionId).not.toBe("reflect:first-afternoon-plan");
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("tea-house");
+    expect(selected).toMatchObject({
+      actionId: "move:freight-yard",
+      pressureId: "job:job-yard-shift",
+      pressureKind: "job",
+      provenance: "live-pressure",
+      targetLocationId: "freight-yard",
+    });
+    expect(selected?.legalBacking?.actionId).toMatch(
+      /^move:freight-yard$|^accept:job-yard-shift$/,
+    );
+    expect(selected?.legalBacking?.source).toMatch(
+      /^current-legal-action-surface$|^destination-preview-legal-action$/,
+    );
+    expect(selected?.provenance).not.toBe("route-scaffold");
+    expect(selected?.provenance).not.toBe("stale-predicate");
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          option.provenance === "route-scaffold" &&
+          option.targetLocationId === "tea-house",
+      ),
+    ).toBe(false);
+    const staleAdaOutcome = world.rowanAutonomy.planningTrace?.outcomes.find(
+      (outcome) => outcome.id === "first-afternoon-ada-lead",
+    );
+    expect(staleAdaOutcome).toMatchObject({
+      blockers: expect.arrayContaining([
+        "Ada's lunch work is no longer a live lead.",
+      ]),
+    });
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("branches the same seeded objective through generic live pressure", async () => {
     const buildPostMaraWorld = async (gameId: string) => {
       const engine = new SimulationEngine(new MockAIProvider());

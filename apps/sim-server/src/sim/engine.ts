@@ -8857,11 +8857,20 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     });
   }
 
+  const teaJob = jobById(world, "job-tea-shift");
+  const firstAfternoonAdaLeadViable = Boolean(
+    teaJob &&
+      !teaJob.completed &&
+      !teaJob.missed &&
+      currentHour(world) < teaJob.endHour,
+  );
+
   if (
     actionSpaceReady &&
     location?.id === world.player.homeLocationId &&
     !world.firstAfternoon?.planSettledAt &&
-    countPlayerConversationsWithNpc(world, "npc-mara") > 0
+    countPlayerConversationsWithNpc(world, "npc-mara") > 0 &&
+    firstAfternoonAdaLeadViable
   ) {
     const actionId = "reflect:first-afternoon-plan";
     actions.push({
@@ -8889,7 +8898,6 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     }
   }
 
-  const teaJob = jobById(world, "job-tea-shift");
   if (
     actionSpaceReady &&
     location?.id === "tea-house" &&
