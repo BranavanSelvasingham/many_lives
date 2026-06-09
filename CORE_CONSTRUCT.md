@@ -16,9 +16,13 @@ The game starts small and concrete:
 - find somewhere safe to return to
 - find a problem worth solving
 
-The primary experience is watching Rowan decide and act. Rowan should read the
-world, weigh current objectives against legal actions and memory, make a
-visible decision, then carry the task forward without the player pressing the
+The primary experience is **watchable agency**: Rowan should feel like a
+person making grounded decisions in a changing city, not an avatar waiting for
+the player to approve every next step.
+
+Rowan should read the world, weigh current objectives against legal actions and
+memory, make a visible decision, carry the validated task forward, and update
+what he knows or needs to check next without the player pressing the
 next-action button for him.
 
 The older multi-self version is not the current foundation.
@@ -95,7 +99,12 @@ The world should not feel like a static quest board.
 
 ### 2. Character
 
-The player controls one character directly.
+The player is attached to one embodied character: Rowan.
+
+Rowan should be directly inspectable and steerable, but in watch/autoplay mode
+he should carry ordinary moment-to-moment decisions himself. The player's role
+is to observe, understand, inspect, and occasionally intervene or redirect, not
+to click through every action approval.
 
 The character needs a simple, grounded state:
 
@@ -175,14 +184,16 @@ If a job, problem, or person matters, the player should usually have to go there
 
 Rowan is not just an avatar following authored steps.
 
-He should have a visible decision loop:
+He should have a visible decision loop. Before or during each meaningful
+autonomous action, the player should be able to watch Rowan's public reasoning
+callback:
 
 - understand the current objective;
 - read the live world state, including location, time, money, energy, memory,
   people, jobs, problems, and available legal actions;
 - ask the planner or LLM for a next-action recommendation when appropriate;
 - receive a concise decision artifact with options, tradeoffs, rejected choices,
-  and the selected action;
+  selected action, and next uncertainty when the trace can support one;
 - execute the simulator-validated choice;
 - update memory, plan, and next uncertainty after the result.
 
@@ -193,11 +204,16 @@ a raw model transcript. It should answer:
 - What facts or constraints matter right now?
 - Which options did Rowan consider?
 - Why did he choose this next action?
+- What does Rowan expect to check next?
 - What changed after he did it?
 
 Do not expose hidden chain-of-thought, prompts, or backend-shaped debug state as
 game UI. Do expose a grounded rationale and planner trace that make Rowan feel
 like a person making decisions in the city.
+
+In watch/autoplay mode, this loop should continue without visible progression,
+reply, wait, or action-button clicks. A required approval click turns Rowan
+back into a stepper and breaks the core fantasy.
 
 ## Clean Loop
 
@@ -283,7 +299,7 @@ When making architecture or content decisions, prefer the option that makes the 
 - local work, local people, local problems
 - remembered consequences
 - knowledge earned by going places
-- visible reasoning over objectives and legal actions
+- visible reasoning over objectives, legal actions, and next uncertainty
 - Rowan carrying validated plans forward without manual next-action clicks
 
 And less like:
