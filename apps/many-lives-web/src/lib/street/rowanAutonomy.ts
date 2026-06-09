@@ -156,7 +156,20 @@ export function buildObjectiveAutoContinueKey(
     return null;
   }
 
-  return `${game.id}:${game.rowanAutonomy.key}`;
+  return [
+    game.id,
+    game.currentTime,
+    game.activeSpaceId ?? "",
+    game.player.spaceId ?? "",
+    game.player.currentLocationId ?? "",
+    game.player.x,
+    game.player.y,
+    game.player.energy,
+    game.player.money,
+    game.player.objective?.routeKey ?? "",
+    game.player.objective?.progress?.label ?? "",
+    game.rowanAutonomy.key,
+  ].join(":");
 }
 
 export function buildConversationAutostartKey(

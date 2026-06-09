@@ -12,6 +12,25 @@ import {
 } from "../../many-lives-web/src/lib/street/rowanAutonomy.js";
 import { enterMorrowHouse } from "./street-test-helpers.js";
 
+function expectedObjectiveAutoContinueKey(
+  world: Awaited<ReturnType<SimulationEngine["createGame"]>>,
+) {
+  return [
+    world.id,
+    world.currentTime,
+    world.activeSpaceId ?? "",
+    world.player.spaceId ?? "",
+    world.player.currentLocationId ?? "",
+    world.player.x,
+    world.player.y,
+    world.player.energy,
+    world.player.money,
+    world.player.objective?.routeKey ?? "",
+    world.player.objective?.progress?.label ?? "",
+    world.rowanAutonomy.key,
+  ].join(":");
+}
+
 describe("Rowan autonomy helper seams", () => {
   it("keeps pending conversation state aligned with the current source", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
@@ -74,7 +93,7 @@ describe("Rowan autonomy helper seams", () => {
     world = await enterMorrowHouse(engine, world);
 
     expect(buildObjectiveAutoContinueKey(world)).toBe(
-      `${world.id}:${world.rowanAutonomy.key}`,
+      expectedObjectiveAutoContinueKey(world),
     );
 
     expect(
@@ -104,6 +123,46 @@ describe("Rowan autonomy helper seams", () => {
         selectedNpcId: "npc-mara",
       }),
     ).toBeNull();
+  });
+
+  it("changes the objective auto-continue key when the same action reappears after state advances", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-repeated-autocontinue-key");
+    world = await enterMorrowHouse(engine, world);
+
+    const firstRestWorld = structuredClone(world);
+    firstRestWorld.currentTime = "2026-03-21T16:26:00.000Z";
+    firstRestWorld.player.currentLocationId = "boarding-house";
+    firstRestWorld.player.energy = 28;
+    firstRestWorld.player.objective = {
+      ...(firstRestWorld.player.objective ?? {}),
+      progress: { completed: 1, label: "1/2 outcomes met", total: 2 },
+      routeKey: "rest-home",
+    } as typeof firstRestWorld.player.objective;
+    firstRestWorld.rowanAutonomy = {
+      ...firstRestWorld.rowanAutonomy,
+      actionId: "rest:home",
+      autoContinue: true,
+      key: "action:rest:home",
+      label: "Rest for an hour",
+      mode: "waiting",
+      stepKind: "act",
+      targetLocationId: "boarding-house",
+    };
+
+    const secondRestWorld = structuredClone(firstRestWorld);
+    secondRestWorld.currentTime = "2026-03-21T17:26:00.000Z";
+    secondRestWorld.player.energy = 44;
+
+    expect(secondRestWorld.player.objective?.routeKey).toBe("rest-home");
+    expect(secondRestWorld.rowanAutonomy.actionId).toBe("rest:home");
+    expect(secondRestWorld.rowanAutonomy.key).toBe(firstRestWorld.rowanAutonomy.key);
+    expect(buildObjectiveAutoContinueKey(secondRestWorld)).not.toBe(
+      buildObjectiveAutoContinueKey(firstRestWorld),
+    );
+    expect(buildObjectiveAutoContinueKey(secondRestWorld)).toBe(
+      expectedObjectiveAutoContinueKey(secondRestWorld),
+    );
   });
 
   it("falls back safely when the client snapshot is missing rowan autonomy", async () => {

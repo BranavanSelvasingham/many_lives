@@ -5123,6 +5123,510 @@ function assertWatchPacingAudit(watchPacingAudit) {
   );
 }
 
+function selectedPlanningTraceOption(planningTrace) {
+  if (!planningTrace) {
+    return null;
+  }
+
+  return (
+    planningTrace.considered?.find(
+      (option) =>
+        option.status === "selected" &&
+        (!planningTrace.selectedPlanKey ||
+          option.planKey === planningTrace.selectedPlanKey),
+    ) ??
+    planningTrace.considered?.find((option) => option.status === "selected") ??
+    null
+  );
+}
+
+function selectedPlanningEvidence(moment) {
+  const planningTrace = moment?.autonomy?.planningTrace ?? null;
+  const selectedOption = selectedPlanningTraceOption(planningTrace);
+  const selectedLegalBacking =
+    planningTrace?.selectedLegalBacking ??
+    selectedOption?.legalBacking ??
+    planningTrace?.nextSteps?.[0]?.legalBacking ??
+    null;
+
+  return {
+    actionId:
+      planningTrace?.selectedActionId ??
+      selectedOption?.actionId ??
+      moment?.autonomy?.actionId ??
+      null,
+    label:
+      planningTrace?.selectedLabel ??
+      selectedOption?.label ??
+      moment?.autonomy?.label ??
+      null,
+    legalBacking: selectedLegalBacking
+      ? {
+          actionId: selectedLegalBacking.actionId ?? null,
+          locationId: selectedLegalBacking.locationId ?? null,
+          source: selectedLegalBacking.source ?? null,
+        }
+      : null,
+    matchedOutcomeId:
+      planningTrace?.selectedMatchedOutcomeId ??
+      selectedOption?.matchedOutcomeId ??
+      null,
+    planKey: planningTrace?.selectedPlanKey ?? selectedOption?.planKey ?? null,
+    pressureId:
+      planningTrace?.selectedPressureId ??
+      selectedOption?.pressureId ??
+      null,
+    pressureKind:
+      planningTrace?.selectedPressureKind ??
+      selectedOption?.pressureKind ??
+      null,
+    pressureLabel: compactObjectiveSequenceText(
+      planningTrace?.selectedPressureLabel ??
+        selectedOption?.pressureLabel ??
+        "",
+      160,
+    ),
+    provenance: selectedOption?.provenance ?? null,
+    targetLocationId:
+      planningTrace?.selectedTargetLocationId ??
+      selectedOption?.targetLocationId ??
+      moment?.autonomy?.targetLocationId ??
+      null,
+  };
+}
+
+function compactPostFirstAfternoonMoment(moment) {
+  if (!moment) {
+    return null;
+  }
+
+  const selected = selectedPlanningEvidence(moment);
+  return {
+    clock: moment.clock ?? null,
+    firstAfternoon: {
+      completedAt: moment.firstAfternoon?.completedAt ?? null,
+      completionAcknowledgedAt:
+        moment.firstAfternoon?.completionAcknowledgedAt ?? null,
+      hasFieldNote: Boolean(moment.firstAfternoon?.hasFieldNote),
+      hasLeadFieldNote: Boolean(moment.firstAfternoon?.hasLeadFieldNote),
+      teaShiftStage: moment.firstAfternoon?.teaShiftStage ?? null,
+    },
+    label: moment.label,
+    location: moment.location ?? null,
+    objective: {
+      focus: moment.objective?.focus ?? null,
+      progress: moment.objective?.progress ?? null,
+      routeKey: moment.objective?.routeKey ?? null,
+      source: moment.objective?.source ?? null,
+      text: moment.objective?.text ?? null,
+    },
+    outcomes: (moment.objective?.outcomes ?? []).map((outcome) => ({
+      actionId: outcome.actionId ?? null,
+      blockers: outcome.blockers ?? [],
+      evidence: outcome.evidence ?? null,
+      id: outcome.id,
+      label: outcome.label,
+      status: outcome.status,
+      targetLocationId: outcome.targetLocationId ?? null,
+      urgency: outcome.urgency ?? null,
+    })),
+    screenshot: moment.screenshot ?? null,
+    selected,
+  };
+}
+
+function postFirstAfternoonLivePressureFacts(moment) {
+  const worldPressure = moment?.worldPressure ?? {};
+  return {
+    activeProblems: (worldPressure.problems ?? [])
+      .filter((problem) => problem.discovered && problem.status === "active")
+      .map((problem) => ({
+        escalationLevel: problem.escalationLevel ?? 0,
+        id: problem.id,
+        locationId: problem.locationId,
+        requiredItemId: problem.requiredItemId ?? null,
+        title: problem.title,
+        urgency: problem.urgency,
+      })),
+    discoveredJobs: (worldPressure.jobWindows ?? [])
+      .filter((job) => job.discovered)
+      .map((job) => ({
+        completed: Boolean(job.completed),
+        id: job.id,
+        inWindow: Boolean(job.inWindow),
+        locationId: job.locationId,
+        missed: Boolean(job.missed),
+        title: job.title,
+      })),
+    npcPressureMoves: (worldPressure.npcPressureMoves ?? []).map((npc) => ({
+      currentConcern: npc.currentConcern ?? "",
+      currentLocationId: npc.currentLocationId ?? null,
+      currentScheduleLocationId: npc.currentScheduleLocationId ?? null,
+      id: npc.id,
+    })),
+  };
+}
+
+function livePressurePlannerOptions(moment) {
+  const trace = moment?.autonomy?.planningTrace ?? null;
+  if (!trace) {
+    return [];
+  }
+
+  const optionsByKey = new Map();
+  for (const option of [
+    ...(trace.considered ?? []),
+    ...(trace.rejected ?? []),
+  ]) {
+    const searchableText = [
+      option.pressureId,
+      option.pressureKind,
+      option.pressureLabel,
+      option.label,
+      option.rationale,
+      option.targetLocationId,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const isLiveProblemOrJob =
+      /^(?:job|problem)$/.test(option.pressureKind ?? "") ||
+      /(?:^|:)job-|(?:^|:)problem-|pump|yard|work|tool|wrench/i.test(
+        searchableText,
+      );
+    if (!isLiveProblemOrJob) {
+      continue;
+    }
+    const key =
+      option.planKey ??
+      `${option.status}:${option.actionId}:${option.targetLocationId}:${option.pressureId}`;
+    optionsByKey.set(key, compactPlanningTraceOption(option));
+  }
+
+  return [...optionsByKey.values()];
+}
+
+function staleRoutePlannerOptions(moment) {
+  const trace = moment?.autonomy?.planningTrace ?? null;
+  if (!trace) {
+    return [];
+  }
+
+  return [...(trace.considered ?? []), ...(trace.rejected ?? [])]
+    .filter((option) =>
+      ["route-scaffold", "stale-predicate"].includes(option.provenance),
+    )
+    .map(compactPlanningTraceOption);
+}
+
+function restHourEnergyFromObjective(objective) {
+  const restOutcome = (objective?.outcomes ?? []).find(
+    (outcome) => outcome.id === "rest-hour",
+  );
+  const match = /(\d+)\s+energy/i.exec(restOutcome?.evidence ?? "");
+  return match ? Number(match[1]) : null;
+}
+
+function restHourEnergyFromMoment(moment) {
+  return restHourEnergyFromObjective(moment?.objective);
+}
+
+function postFirstAfternoonRestAdvancedProbe(probe) {
+  return (
+    Boolean(probe.firstAfternoon?.completionAcknowledgedAt) &&
+    probe.objective?.routeKey === "rest-home" &&
+    probe.autonomy?.actionId === "rest:home" &&
+    (restHourEnergyFromObjective(probe.objective) ?? 0) > 12
+  );
+}
+
+function postFirstAfternoonLiveRouteProbe(probe) {
+  const selected = selectedPlanningEvidence(probe);
+  return (
+    Boolean(probe.firstAfternoon?.completionAcknowledgedAt) &&
+    probe.objective?.source === "dynamic" &&
+    !["first-afternoon", "rest-home"].includes(
+      probe.objective?.routeKey ?? "",
+    ) &&
+    Boolean(selected.actionId) &&
+    Boolean(selected.legalBacking?.source) &&
+    Boolean(
+      selected.pressureId ||
+        selected.pressureKind ||
+        selected.matchedOutcomeId,
+    ) &&
+    !["route-scaffold", "stale-predicate"].includes(selected.provenance)
+  );
+}
+
+function isRestOrShelterSelection(summary) {
+  const selectedText = [
+    summary?.objective?.focus,
+    summary?.objective?.routeKey,
+    summary?.objective?.text,
+    summary?.selected?.matchedOutcomeId,
+    summary?.selected?.pressureId,
+    summary?.selected?.pressureKind,
+    summary?.selected?.pressureLabel,
+    summary?.selected?.label,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return /\b(?:rest|shelter|home|room)\b/i.test(selectedText);
+}
+
+function buildPostFirstAfternoonLivePressureEvidence({
+  clickLog,
+  moments,
+  visibleControlClickCount,
+  watchedAutoContinueCount,
+}) {
+  const byLabel = Object.fromEntries(
+    moments.map((moment) => [moment.label, moment]),
+  );
+  const handoff = byLabel["post-first-afternoon-handoff"] ?? null;
+  const rest = byLabel["post-first-afternoon-rest"] ?? null;
+  const liveRoute = byLabel["post-first-afternoon-live-route"] ?? null;
+  const handoffSummary = compactPostFirstAfternoonMoment(handoff);
+  const restSummary = compactPostFirstAfternoonMoment(rest);
+  const liveRouteSummary = compactPostFirstAfternoonMoment(liveRoute);
+  const handoffLivePressureOptions = livePressurePlannerOptions(handoff);
+  const restLivePressureOptions = livePressurePlannerOptions(rest);
+  const liveRoutePressureOptions = livePressurePlannerOptions(liveRoute);
+
+  return {
+    assertionSemantics:
+      "Player-POV zero-click follow-through from first-afternoon completion acknowledgement, through rest, into the next dynamic current-state route/action.",
+    directSimCommandsUsed: false,
+    handoff: handoffSummary,
+    livePressure: {
+      atHandoff: postFirstAfternoonLivePressureFacts(handoff),
+      afterRest: postFirstAfternoonLivePressureFacts(rest),
+      atLiveRoute: postFirstAfternoonLivePressureFacts(liveRoute),
+      plannerOptionsAtHandoff: handoffLivePressureOptions,
+      plannerOptionsAfterRest: restLivePressureOptions,
+      plannerOptionsAtLiveRoute: liveRoutePressureOptions,
+    },
+    liveRoute: liveRouteSummary,
+    progressionBeats: clickLog
+      .filter((entry) =>
+        [
+          "post-first-afternoon-handoff",
+          "post-first-afternoon-rest",
+          "post-first-afternoon-live-route",
+        ].includes(entry.milestone),
+      )
+      .map((entry) => ({
+        beforeAutonomyLabel: entry.beforeAutonomyLabel ?? null,
+        completionAutoContinue: Boolean(entry.completionAutoContinue),
+        durationMs: entry.durationMs ?? null,
+        kind: entry.kind,
+        milestone: entry.milestone,
+        sequenceRunId: entry.sequenceRunId ?? null,
+      })),
+    rest: {
+      ...restSummary,
+      restHourEnergy: restHourEnergyFromMoment(rest),
+    },
+    staleRouteEvidence: {
+      atHandoff: staleRoutePlannerOptions(handoff),
+      afterRest: staleRoutePlannerOptions(rest),
+      atLiveRoute: staleRoutePlannerOptions(liveRoute),
+    },
+    status: "passed",
+    zeroClick: {
+      visibleControlClickCount,
+      watchedAutoContinueCount,
+    },
+  };
+}
+
+function assertPostFirstAfternoonLivePressureEvidence(evidence) {
+  assert.ok(
+    evidence?.handoff,
+    "Post-first-afternoon follow-through evidence is missing the handoff moment.",
+  );
+  assert.ok(
+    evidence?.rest,
+    "Post-first-afternoon follow-through evidence is missing the rest moment.",
+  );
+  assert.ok(
+    evidence?.liveRoute,
+    "Post-first-afternoon follow-through evidence is missing the live-route moment.",
+  );
+  assert.equal(
+    evidence.directSimCommandsUsed,
+    false,
+    "Post-first-afternoon follow-through evidence must come from the player-POV browser pass.",
+  );
+  assert.equal(
+    evidence.zeroClick?.visibleControlClickCount,
+    0,
+    `Post-first-afternoon follow-through must remain zero-click: ${evidence.zeroClick?.visibleControlClickCount}.`,
+  );
+  assert.ok(
+    (evidence.zeroClick?.watchedAutoContinueCount ?? 0) >= 8,
+    `Post-first-afternoon follow-through did not include enough watch-mode beats: ${evidence.zeroClick?.watchedAutoContinueCount}.`,
+  );
+
+  for (const summary of [evidence.handoff, evidence.rest, evidence.liveRoute]) {
+    assert.notEqual(
+      summary.objective?.routeKey,
+      "first-afternoon",
+      `${summary.label}: post-first-afternoon evidence stayed on first-afternoon route authority.`,
+    );
+  }
+
+  assert.equal(
+    evidence.handoff.selected?.actionId,
+    "rest:home",
+    "Post-first-afternoon handoff must select the legal home-rest action.",
+  );
+  assert.equal(
+    evidence.handoff.selected?.targetLocationId,
+    "boarding-house",
+    "Post-first-afternoon rest handoff should target Morrow House.",
+  );
+  assert.equal(
+    evidence.handoff.selected?.legalBacking?.source,
+    "current-legal-action-surface",
+    "Post-first-afternoon rest handoff must expose current legal-action backing.",
+  );
+  assert.equal(
+    evidence.handoff.selected?.pressureKind,
+    "predicate",
+    "Post-first-afternoon rest handoff must be backed by a desired-state predicate.",
+  );
+  assert.equal(
+    evidence.handoff.selected?.matchedOutcomeId,
+    "rest-hour",
+    "Post-first-afternoon rest handoff must match the rest-hour outcome.",
+  );
+  assert.equal(
+    evidence.handoff.selected?.provenance,
+    "objective-predicate",
+    "Post-first-afternoon rest handoff must not be route-scaffold authority.",
+  );
+  assert.ok(
+    evidence.handoff.firstAfternoon?.completionAcknowledgedAt,
+    "Post-first-afternoon handoff must acknowledge the completed field-note beat.",
+  );
+
+  const livePressureBeforeLiveRoute = [
+    ...(evidence.livePressure?.plannerOptionsAtHandoff ?? []),
+    ...(evidence.livePressure?.plannerOptionsAfterRest ?? []),
+  ];
+  assert.ok(
+    livePressureBeforeLiveRoute.length > 0,
+    "Post-first-afternoon handoff/rest evidence did not expose current job or problem pressure.",
+  );
+  const unexplainedLivePressure = livePressureBeforeLiveRoute.filter(
+    (option) => option.status !== "selected" && !option.reason,
+  );
+  assert.equal(
+    unexplainedLivePressure.length,
+    0,
+    `Rejected post-first-afternoon job/problem pressure needs a current-state reason: ${JSON.stringify(
+      unexplainedLivePressure,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    (evidence.livePressure?.atHandoff?.activeProblems ?? []).some(
+      (problem) => problem.id === "problem-pump" && problem.locationId === "courtyard",
+    ) ||
+      (evidence.livePressure?.afterRest?.activeProblems ?? []).some(
+        (problem) =>
+          problem.id === "problem-pump" && problem.locationId === "courtyard",
+      ),
+    "Post-first-afternoon evidence must keep the live pump pressure visible at Morrow Yard.",
+  );
+  assert.ok(
+    (evidence.livePressure?.atHandoff?.discoveredJobs ?? []).some(
+      (job) => job.id === "job-yard-shift",
+    ) ||
+      (evidence.livePressure?.afterRest?.discoveredJobs ?? []).some(
+        (job) => job.id === "job-yard-shift",
+      ),
+    "Post-first-afternoon evidence must keep the live yard-work pressure visible.",
+  );
+
+  assert.ok(
+    (evidence.rest.restHourEnergy ?? 0) > 12,
+    `Post-first-afternoon rest evidence did not show rest advancing Rowan's recovery state: ${evidence.rest.restHourEnergy}.`,
+  );
+  assert.ok(
+    evidence.liveRoute.clock?.totalMinutes > evidence.rest.clock?.totalMinutes,
+    "Post-first-afternoon live-route evidence must occur after the rest evidence.",
+  );
+  assert.equal(
+    evidence.liveRoute.objective?.source,
+    "dynamic",
+    "Post-rest live route must come from a dynamic current-state objective.",
+  );
+  assert.notEqual(
+    evidence.liveRoute.objective?.routeKey,
+    "rest-home",
+    "Post-rest live route must leave the rest objective once recovery opens the next route.",
+  );
+  assert.ok(
+    evidence.liveRoute.selected?.actionId,
+    "Post-rest live route must expose the next selected action.",
+  );
+  assert.ok(
+    evidence.liveRoute.selected?.legalBacking?.source,
+    "Post-rest live route must expose an explicit legal backing source.",
+  );
+  assert.ok(
+    evidence.liveRoute.selected?.pressureId ||
+      evidence.liveRoute.selected?.matchedOutcomeId ||
+      evidence.liveRoute.selected?.pressureKind,
+    "Post-rest live route must expose current-state predicate or live-pressure authority.",
+  );
+  assert.ok(
+    !["route-scaffold", "stale-predicate"].includes(
+      evidence.liveRoute.selected?.provenance,
+    ),
+    `Post-rest live route selected stale route authority: ${evidence.liveRoute.selected?.provenance}.`,
+  );
+
+  const liveRouteTarget = evidence.liveRoute.selected?.targetLocationId ?? null;
+  if (evidence.liveRoute.objective?.routeKey === "work-yard") {
+    assert.equal(
+      liveRouteTarget,
+      "freight-yard",
+      "Post-rest yard-work route must target the freight yard.",
+    );
+  }
+  const liveRouteText = [
+    evidence.liveRoute.objective?.routeKey,
+    evidence.liveRoute.objective?.focus,
+    evidence.liveRoute.objective?.text,
+    evidence.liveRoute.selected?.pressureId,
+    evidence.liveRoute.selected?.pressureLabel,
+    evidence.liveRoute.selected?.matchedOutcomeId,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (/\b(?:pump|tool|wrench|help|repair)\b/i.test(liveRouteText)) {
+    assert.ok(
+      ["courtyard", "repair-stall"].includes(liveRouteTarget),
+      `Post-rest pump/tool/help route must target the live problem/tool location, got ${liveRouteTarget}.`,
+    );
+  }
+  if (liveRouteTarget === "boarding-house") {
+    assert.ok(
+      isRestOrShelterSelection(evidence.liveRoute),
+      "Post-rest live route backtracked to Morrow House without explicit rest/shelter pressure.",
+    );
+    assert.notEqual(
+      evidence.liveRoute.objective?.routeKey,
+      "first-afternoon",
+      "Post-rest Morrow House target must not be stale first-afternoon authority.",
+    );
+  }
+}
+
 function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = null) {
   assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
   assert.equal(
@@ -6064,6 +6568,20 @@ async function runInhabitGameplayPass(session) {
       userQuestion:
         "After the field note, does Rowan open a fresh next objective from live state instead of staying on the completed first-afternoon route?",
     },
+    {
+      label: "post-first-afternoon-rest",
+      maxClicks: 4,
+      reached: postFirstAfternoonRestAdvancedProbe,
+      userQuestion:
+        "Does watch mode carry Rowan through the selected rest action without clicks and update the recovery state?",
+    },
+    {
+      label: "post-first-afternoon-live-route",
+      maxClicks: 4,
+      reached: postFirstAfternoonLiveRouteProbe,
+      userQuestion:
+        "After resting, does Rowan choose a current-state live pressure route instead of looping on Morrow House or the first-afternoon scaffold?",
+    },
   ];
 
   for (const milestone of milestones) {
@@ -6121,8 +6639,8 @@ async function runInhabitGameplayPass(session) {
   );
   assert.equal(
     milestonesReached.at(-1),
-    "post-first-afternoon-handoff",
-    "Inhabit gameplay pass did not prove the post-first-afternoon handoff.",
+    "post-first-afternoon-live-route",
+    "Inhabit gameplay pass did not prove the post-rest live-pressure route.",
   );
   const handoffMoment = moments.find(
     (moment) => moment.label === "post-first-afternoon-handoff",
@@ -6152,6 +6670,38 @@ async function runInhabitGameplayPass(session) {
       .join(" "),
     /rest|yard|work|pump|tool|wrench|energy|predicate|commitment/i,
     "Post-first-afternoon handoff did not expose a state-derived next objective or pressure.",
+  );
+  const restMoment = moments.find(
+    (moment) => moment.label === "post-first-afternoon-rest",
+  );
+  assert.ok(
+    restMoment,
+    "Inhabit gameplay pass did not capture browser evidence for post-first-afternoon rest.",
+  );
+  assert.ok(
+    postFirstAfternoonRestAdvancedProbe(restMoment),
+    "Post-first-afternoon rest evidence did not show the browser pass carrying through the selected rest action.",
+  );
+  const liveRouteMoment = moments.find(
+    (moment) => moment.label === "post-first-afternoon-live-route",
+  );
+  assert.ok(
+    liveRouteMoment,
+    "Inhabit gameplay pass did not capture browser evidence for the post-rest live route.",
+  );
+  assert.ok(
+    postFirstAfternoonLiveRouteProbe(liveRouteMoment),
+    "Post-rest browser evidence did not expose a dynamic legal-backed live-pressure route.",
+  );
+  const postFirstAfternoonLivePressureEvidence =
+    buildPostFirstAfternoonLivePressureEvidence({
+      clickLog,
+      moments,
+      visibleControlClickCount,
+      watchedAutoContinueCount,
+    });
+  assertPostFirstAfternoonLivePressureEvidence(
+    postFirstAfternoonLivePressureEvidence,
   );
   assert.ok(
     moments.every((moment) => moment.screenshot),
@@ -6186,6 +6736,7 @@ async function runInhabitGameplayPass(session) {
     objectiveSequenceAudit,
     objectiveSequenceRuns,
     panelChecks,
+    postFirstAfternoonLivePressureEvidence,
     progressionClicks: clickLog,
     reportPath,
     rowanNotebookClick,
