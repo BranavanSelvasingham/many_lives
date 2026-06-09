@@ -451,6 +451,7 @@ function evaluateObjectiveOutcome(
   definition: ObjectiveOutcomeDefinition,
 ): ObjectiveOutcomeEvaluation | undefined {
   const teaJob = jobById(world, "job-tea-shift");
+  const teaLeadViable = firstAfternoonAdaLeadViable(world, teaJob);
   const pumpProblem = problemById(world, "problem-pump");
   const cartProblem = problemById(world, "problem-cart");
   const hasWrench = hasItem(world, "item-wrench");
@@ -479,7 +480,11 @@ function evaluateObjectiveOutcome(
       });
     case "first-afternoon-choose-move":
       return outcomeEvaluation(Boolean(world.firstAfternoon?.planSettledAt), {
-        blockers: ["Rowan has not chosen the useful first move yet."],
+        blockers: [
+          teaLeadViable
+            ? "Rowan has not chosen the useful first move yet."
+            : "Ada's lunch window has slipped; Rowan needs a current live alternative.",
+        ],
         evidence: world.firstAfternoon?.planSettledAt,
       });
     case "mara-ada-walk-route":
@@ -495,7 +500,11 @@ function evaluateObjectiveOutcome(
         countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
           Boolean(teaJob?.accepted || teaJob?.completed),
         {
-          blockers: ["Ada has not confirmed the Kettle & Lamp lead yet."],
+          blockers: [
+            teaLeadViable
+              ? "Ada has not confirmed the Kettle & Lamp lead yet."
+              : "Ada's lunch work is no longer a live lead.",
+          ],
           evidence: teaJob?.discovered ? "Kettle & Lamp work is discovered." : undefined,
         },
       );
@@ -510,7 +519,7 @@ function evaluateObjectiveOutcome(
         Boolean(
           world.firstAfternoon?.leadFieldNote &&
             teaJob?.discovered &&
-            !teaJob.missed,
+            teaLeadViable,
         ),
         {
           blockers: ["The lead has not opened a legal work choice yet."],
@@ -1122,6 +1131,7 @@ function buildMaraAdaLeadRoute(
 ): ObjectiveRoute {
   const home = findLocation(world, world.player.homeLocationId);
   const teaJob = jobById(world, "job-tea-shift");
+  const teaLeadViable = firstAfternoonAdaLeadViable(world, teaJob);
   const hasTalkedToMara =
     countPlayerConversationsWithNpc(world, "npc-mara") > 0;
   const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
@@ -1129,7 +1139,7 @@ function buildMaraAdaLeadRoute(
   const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
   const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
   const hasOpenWorkChoice = Boolean(
-    hasLeadFieldNote && teaJob?.discovered && !teaJob.missed,
+    hasLeadFieldNote && teaJob?.discovered && teaLeadViable,
   );
   const hasReachedTeaHouse =
     world.player.currentLocationId === "tea-house" ||
@@ -1138,6 +1148,7 @@ function buildMaraAdaLeadRoute(
   const outcomes = buildMaraAdaLeadOutcomeDefinitions({
     hasFormedVerificationIntent,
     hasLeadFieldNote,
+    hasLeadViable: teaLeadViable,
     hasOpenWorkChoice,
     hasReachedTeaHouse,
     hasTalkedToAda,
@@ -1174,10 +1185,13 @@ function buildMaraAdaLeadRoute(
           : "Choose the useful move",
         done: hasFormedVerificationIntent,
         actionId:
-          hasTalkedToMara && !hasFormedVerificationIntent
+          hasTalkedToMara && !hasFormedVerificationIntent && teaLeadViable
             ? "reflect:first-afternoon-plan"
             : undefined,
-        targetLocationId: home?.id,
+        targetLocationId:
+          hasTalkedToMara && !hasFormedVerificationIntent && teaLeadViable
+            ? home?.id
+            : undefined,
       }),
       makeStep({
         id: "mara-ada-walk-route",
@@ -1186,7 +1200,7 @@ function buildMaraAdaLeadRoute(
           "The knowledge only counts if Rowan gets there in person and asks the right person.",
         progress: hasReachedTeaHouse ? "At Kettle & Lamp" : "On the way",
         done: hasReachedTeaHouse,
-        targetLocationId: "tea-house",
+        targetLocationId: teaLeadViable ? "tea-house" : undefined,
       }),
       makeStep({
         id: "mara-ada-ask-directly",
@@ -1196,8 +1210,8 @@ function buildMaraAdaLeadRoute(
           : "Ask Ada whether lunch actually needs help today.",
         progress: hasTalkedToAda ? "Ada asked" : "Ask Ada",
         done: hasTalkedToAda,
-        npcId: "npc-ada",
-        targetLocationId: "tea-house",
+        npcId: teaLeadViable ? "npc-ada" : undefined,
+        targetLocationId: teaLeadViable ? "tea-house" : undefined,
       }),
       makeStep({
         id: "mara-ada-record-evidence",
@@ -1207,7 +1221,10 @@ function buildMaraAdaLeadRoute(
           : "Capture the learned fact, the source, the place, and what remains uncertain.",
         progress: hasLeadFieldNote ? "Field note made" : "Needs evidence",
         done: hasLeadFieldNote,
-        targetLocationId: "tea-house",
+        targetLocationId:
+          hasTalkedToAda || hasLeadFieldNote || teaLeadViable
+            ? "tea-house"
+            : undefined,
       }),
       makeStep({
         id: "mara-ada-open-choice",
@@ -1217,7 +1234,7 @@ function buildMaraAdaLeadRoute(
           : "The loop should end with an actual choice, not a vague lead.",
         progress: hasOpenWorkChoice ? "Choice unlocked" : "No offer yet",
         done: hasOpenWorkChoice,
-        targetLocationId: "tea-house",
+        targetLocationId: teaLeadViable ? "tea-house" : undefined,
       }),
     ],
   };
@@ -1226,6 +1243,7 @@ function buildMaraAdaLeadRoute(
 function buildMaraAdaLeadOutcomeDefinitions(input: {
   hasFormedVerificationIntent: boolean;
   hasLeadFieldNote: boolean;
+  hasLeadViable: boolean;
   hasOpenWorkChoice: boolean;
   hasReachedTeaHouse: boolean;
   hasTalkedToAda: boolean;
@@ -1249,27 +1267,37 @@ function buildMaraAdaLeadOutcomeDefinitions(input: {
       label: "Ada verification intent formed",
       urgency: 5,
       actionId:
-        input.hasTalkedToMara && !input.hasFormedVerificationIntent
+        input.hasTalkedToMara &&
+        !input.hasFormedVerificationIntent &&
+        input.hasLeadViable
           ? "reflect:first-afternoon-plan"
           : undefined,
-      targetLocationId: input.hasFormedVerificationIntent
-        ? undefined
-        : input.homeLocationId,
+      targetLocationId:
+        input.hasFormedVerificationIntent || !input.hasLeadViable
+          ? undefined
+          : input.homeLocationId,
     },
     {
       id: "mara-ada-walk-route",
       label: "Kettle & Lamp reached",
       urgency: 4,
-      targetLocationId: input.hasReachedTeaHouse ? undefined : "tea-house",
+      targetLocationId:
+        input.hasReachedTeaHouse || !input.hasLeadViable
+          ? undefined
+          : "tea-house",
     },
     {
       id: "mara-ada-ask-directly",
       label: "Ada lead verified directly",
       urgency: 3,
       npcId:
-        input.hasTalkedToAda || input.hasLeadFieldNote ? undefined : "npc-ada",
+        input.hasTalkedToAda || input.hasLeadFieldNote || !input.hasLeadViable
+          ? undefined
+          : "npc-ada",
       targetLocationId:
-        input.hasTalkedToAda || input.hasLeadFieldNote ? undefined : "tea-house",
+        input.hasTalkedToAda || input.hasLeadFieldNote || !input.hasLeadViable
+          ? undefined
+          : "tea-house",
     },
     {
       id: "mara-ada-record-evidence",
@@ -1283,7 +1311,7 @@ function buildMaraAdaLeadOutcomeDefinitions(input: {
       label: "Lead opened a real choice",
       urgency: 1,
       targetLocationId:
-        input.hasLeadFieldNote && !input.hasOpenWorkChoice
+        input.hasLeadFieldNote && !input.hasOpenWorkChoice && input.hasLeadViable
           ? "tea-house"
           : undefined,
     },
@@ -1296,6 +1324,7 @@ function buildFirstAfternoonRoute(
 ): ObjectiveRoute {
   const home = findLocation(world, world.player.homeLocationId);
   const teaJob = jobById(world, "job-tea-shift");
+  const teaLeadViable = firstAfternoonAdaLeadViable(world, teaJob);
   const hasTalkedToMara =
     countPlayerConversationsWithNpc(world, "npc-mara") > 0;
   const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
@@ -1337,11 +1366,13 @@ function buildFirstAfternoonRoute(
         label: "Useful first move chosen",
         urgency: 7,
         actionId:
-          hasTalkedToMara && !hasSettledPlan
+          hasTalkedToMara && !hasSettledPlan && teaLeadViable
             ? "reflect:first-afternoon-plan"
             : undefined,
         targetLocationId:
-          hasTalkedToMara && !hasSettledPlan ? home?.id : undefined,
+          hasTalkedToMara && !hasSettledPlan && teaLeadViable
+            ? home?.id
+            : undefined,
       },
       {
         id: "first-afternoon-ada-lead",
@@ -1351,14 +1382,16 @@ function buildFirstAfternoonRoute(
           hasSettledPlan &&
           !hasTalkedToAda &&
           !hasTakenTeaShift &&
-          !hasFinishedTeaShift
+          !hasFinishedTeaShift &&
+          teaLeadViable
             ? "npc-ada"
             : undefined,
         targetLocationId:
           hasSettledPlan &&
           !hasTalkedToAda &&
           !hasTakenTeaShift &&
-          !hasFinishedTeaShift
+          !hasFinishedTeaShift &&
+          teaLeadViable
             ? "tea-house"
             : undefined,
       },
@@ -1373,13 +1406,13 @@ function buildFirstAfternoonRoute(
         label: "Cup-and-counter shift accepted",
         urgency: 4,
         actionId:
-          hasLeadFieldNote && teaJob && !hasTakenTeaShift && !teaJob.missed
+          hasLeadFieldNote && teaJob && !hasTakenTeaShift && teaLeadViable
             ? teaJob.discovered
               ? `accept:${teaJob.id}`
               : undefined
             : undefined,
         targetLocationId:
-          hasLeadFieldNote && !hasTakenTeaShift && !teaJob?.missed
+          hasLeadFieldNote && !hasTakenTeaShift && teaLeadViable
             ? "tea-house"
             : undefined,
       },
@@ -1442,10 +1475,13 @@ function buildFirstAfternoonRoute(
         progress: hasSettledPlan ? "Ada chosen" : "Weigh the options",
         done: hasSettledPlan,
         actionId:
-          hasTalkedToMara && !hasSettledPlan
+          hasTalkedToMara && !hasSettledPlan && teaLeadViable
             ? "reflect:first-afternoon-plan"
             : undefined,
-        targetLocationId: home?.id,
+        targetLocationId:
+          hasTalkedToMara && !hasSettledPlan && teaLeadViable
+            ? home?.id
+            : undefined,
       }),
       makeStep({
         id: "first-afternoon-ada-lead",
@@ -1455,8 +1491,8 @@ function buildFirstAfternoonRoute(
           : "Ask Ada directly if there is work Rowan can do today.",
         progress: hasTalkedToAda ? "Ada asked" : "Find Ada",
         done: hasTalkedToAda || hasTakenTeaShift || hasFinishedTeaShift,
-        npcId: "npc-ada",
-        targetLocationId: "tea-house",
+        npcId: teaLeadViable ? "npc-ada" : undefined,
+        targetLocationId: teaLeadViable ? "tea-house" : undefined,
       }),
       makeStep({
         id: "first-afternoon-record-lead",
@@ -1466,7 +1502,10 @@ function buildFirstAfternoonRoute(
           : "Write down what Ada said, where it happened, and what choice it opened.",
         progress: hasLeadFieldNote ? "Lead grounded" : "Needs field note",
         done: hasLeadFieldNote,
-        targetLocationId: "tea-house",
+        targetLocationId:
+          hasTalkedToAda || hasLeadFieldNote || teaLeadViable
+            ? "tea-house"
+            : undefined,
       }),
       makeStep({
         id: "first-afternoon-take-shift",
@@ -1481,14 +1520,14 @@ function buildFirstAfternoonRoute(
             : "Need the offer",
         done: hasTakenTeaShift || hasFinishedTeaShift,
         actionId:
-          teaJob && !teaJob.completed && !teaJob.missed
+          teaJob && !teaJob.completed && teaLeadViable
             ? teaJob.accepted || world.player.activeJobId === teaJob.id
               ? `work:${teaJob.id}`
               : teaJob.discovered
                 ? `accept:${teaJob.id}`
                 : undefined
             : undefined,
-        targetLocationId: "tea-house",
+        targetLocationId: teaLeadViable ? "tea-house" : undefined,
       }),
       makeStep({
         id: "first-afternoon-start-shift",
@@ -1502,7 +1541,10 @@ function buildFirstAfternoonRoute(
           teaJob && teaJob.accepted && !teaJob.completed && !teaJob.missed
             ? `work:${teaJob.id}`
             : undefined,
-        targetLocationId: "tea-house",
+        targetLocationId:
+          teaJob && teaJob.accepted && !teaJob.completed && !teaJob.missed
+            ? "tea-house"
+            : undefined,
       }),
       makeStep({
         id: "first-afternoon-finish-shift",
@@ -1518,7 +1560,10 @@ function buildFirstAfternoonRoute(
           teaJob && !teaJob.completed && !teaJob.missed
             ? `work:${teaJob.id}`
             : undefined,
-        targetLocationId: "tea-house",
+        targetLocationId:
+          teaJob && hasStartedTeaShift && !teaJob.completed && !teaJob.missed
+            ? "tea-house"
+            : undefined,
       }),
       makeStep({
         id: "first-afternoon-take-stock",
@@ -2888,6 +2933,18 @@ function findLocation(world: StreetGameState, locationId: string) {
 
 function currentHour(world: StreetGameState) {
   return world.clock.hour + world.clock.minute / 60;
+}
+
+function firstAfternoonAdaLeadViable(
+  world: StreetGameState,
+  teaJob = jobById(world, "job-tea-shift"),
+) {
+  return Boolean(
+    teaJob &&
+      !teaJob.completed &&
+      !teaJob.missed &&
+      currentHour(world) < teaJob.endHour,
+  );
 }
 
 function formatHour(hour: number) {

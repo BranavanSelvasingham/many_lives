@@ -124,7 +124,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         npcId: "npc-ada",
         when: ({ objective, world }) =>
           objective.routeKey === "mara-ada-lead" ||
-          Boolean(world.firstAfternoon?.planSettledAt),
+          Boolean(
+            world.firstAfternoon?.planSettledAt &&
+              firstAfternoonAdaLeadViable(world),
+          ),
       },
       {
         locationId: ({ world }) => world.player.homeLocationId,
@@ -141,6 +144,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           objective.routeKey === "mara-ada-lead" ||
           (objective.routeKey === "first-afternoon" &&
             Boolean(world.firstAfternoon?.planSettledAt) &&
+            firstAfternoonAdaLeadViable(world) &&
             countPlayerConversationsWithNpc(world, "npc-ada") === 0),
       },
     ],
@@ -820,6 +824,10 @@ function jobWindowOpen(world: StreetGameState, job: JobState | undefined) {
       !job.missed &&
       jobWindowMinutesRemaining(world, job) > 0,
   );
+}
+
+function firstAfternoonAdaLeadViable(world: StreetGameState) {
+  return jobWindowOpen(world, jobById(world, "job-tea-shift"));
 }
 
 function jobWindowClosed(world: StreetGameState, job: JobState | undefined) {
