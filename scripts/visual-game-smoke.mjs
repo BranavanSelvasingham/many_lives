@@ -1453,6 +1453,11 @@ function assertVisibleDecisionArtifactDom(decisionArtifact, label) {
   );
   assert.match(
     decisionArtifact.text,
+    /Signals/i,
+    `${label}: decision artifact should show relevant constraints or signals.`,
+  );
+  assert.match(
+    decisionArtifact.text,
     /Choice/i,
     `${label}: decision artifact should show the selected choice.`,
   );
@@ -1460,6 +1465,11 @@ function assertVisibleDecisionArtifactDom(decisionArtifact, label) {
     decisionArtifact.text,
     /Why this/i,
     `${label}: decision artifact should show a concise rationale.`,
+  );
+  assert.match(
+    decisionArtifact.text,
+    /Options/i,
+    `${label}: decision artifact should show considered options.`,
   );
   assert.doesNotMatch(
     decisionArtifact.text,

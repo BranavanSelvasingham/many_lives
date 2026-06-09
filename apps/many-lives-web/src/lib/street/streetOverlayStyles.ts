@@ -571,8 +571,16 @@ export function buildStreetOverlayStyle({
       .ml-decision-chip-row {
         display: flex;
         flex-wrap: wrap;
+        align-items: center;
         gap: 5px;
         margin-top: 9px;
+      }
+      .ml-decision-chip-row strong {
+        flex-basis: 100%;
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(205, 174, 115, 0.72);
       }
       .ml-decision-chip-row span {
         max-width: 100%;
