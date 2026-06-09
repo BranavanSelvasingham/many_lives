@@ -2,6 +2,7 @@ import type {
   RowanPlaybackState,
   RowanRailViewModel,
 } from "./rowanPlayback";
+import { buildRowanVisibleDecisionArtifact } from "./rowanDecisionArtifact";
 import type { StreetGameState } from "./types";
 
 export type StreetBrowserMovementDiagnostics = {
@@ -362,6 +363,7 @@ export function buildStreetBrowserProbeJson({
   const currentLocation = game.locations.find(
     (location) => location.id === game.player.currentLocationId,
   );
+  const visibleDecisionArtifact = buildRowanVisibleDecisionArtifact(game);
   const payload = {
     activeConversation: activeConversation
       ? {
@@ -405,6 +407,7 @@ export function buildStreetBrowserProbeJson({
         : null,
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
+      visibleDecisionArtifact,
     },
     rowanCognition: game.rowanCognition
       ? {
@@ -486,6 +489,8 @@ export function buildStreetBrowserProbeJson({
       status: rowanRail.statusLabel,
       thought: rowanRail.thought,
       useConversationTranscript: rowanRail.useConversationTranscript,
+      visibleDecisionArtifact:
+        rowanRail.now.decisionArtifact ?? rowanRail.next?.decisionArtifact ?? null,
     },
   };
 

@@ -478,6 +478,7 @@ class CdpSession {
       const root = document.querySelector(".ml-root");
       const timePill = document.querySelector(".ml-time-pill");
       const whyNow = document.querySelector(".ml-rowan-story-card-reason");
+      const decisionArtifact = document.querySelector("[data-visible-decision-artifact='true']");
       const text = document.body.innerText || "";
       const isVisibleEnabled = (element) => {
         if (!element) {
@@ -517,6 +518,7 @@ class CdpSession {
       const rightStackRect = rightStack?.getBoundingClientRect();
       const timePillRect = timePill?.getBoundingClientRect();
       const whyNowRect = whyNow?.getBoundingClientRect();
+      const decisionArtifactRect = decisionArtifact?.getBoundingClientRect();
       const whyNowVisible = Boolean(
         whyNowRect &&
           railRect &&
@@ -524,6 +526,29 @@ class CdpSession {
           whyNowRect.bottom <= railRect.bottom &&
           whyNowRect.bottom <= window.innerHeight
       );
+      const decisionArtifactVisible = (() => {
+        if (!decisionArtifactRect || !railRect) {
+          return false;
+        }
+
+        const visibleBottom = Math.min(
+          decisionArtifactRect.bottom,
+          railRect.bottom,
+          window.innerHeight
+        );
+        const visibleTop = Math.max(decisionArtifactRect.top, railRect.top, 0);
+        const visibleHeight = visibleBottom - visibleTop;
+        const minimumReadableHeight = Math.min(
+          decisionArtifactRect.height,
+          railRect.height,
+          140
+        );
+        return (
+          decisionArtifactRect.width > 0 &&
+          decisionArtifactRect.height > 0 &&
+          visibleHeight >= minimumReadableHeight - 1
+        );
+      })();
       return {
         bodyText: text.slice(0, 4000),
         canvas: canvasRect ? {
@@ -544,6 +569,15 @@ class CdpSession {
           width: Math.round(dockRect.width),
           x: Math.round(dockRect.x),
           y: Math.round(dockRect.y)
+        } : null,
+        decisionArtifact: decisionArtifactRect ? {
+          height: Math.round(decisionArtifactRect.height),
+          source: decisionArtifact.getAttribute("data-decision-source"),
+          text: decisionArtifact.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          visible: decisionArtifactVisible,
+          width: Math.round(decisionArtifactRect.width),
+          x: Math.round(decisionArtifactRect.x),
+          y: Math.round(decisionArtifactRect.y)
         } : null,
         hasFrameworkOverlay:
           text.includes("Unhandled Runtime Error") ||
@@ -1354,6 +1388,86 @@ function assertScheduledNpcVisualCues(browserProbe, viewportName) {
   );
 }
 
+function assertVisibleDecisionArtifactPayload(artifact, label) {
+  assert.ok(artifact, `${label}: missing visible decision artifact payload.`);
+  assert.ok(
+    typeof artifact.objective === "string" && artifact.objective.length >= 8,
+    `${label}: decision artifact objective is missing or too thin.`,
+  );
+  assert.ok(
+    Array.isArray(artifact.constraints) && artifact.constraints.length >= 1,
+    `${label}: decision artifact must expose at least one constraint or signal.`,
+  );
+  assert.ok(
+    Array.isArray(artifact.considered) && artifact.considered.length >= 1,
+    `${label}: decision artifact must expose considered options.`,
+  );
+  assert.ok(
+    typeof artifact.selectedAction === "string" &&
+      artifact.selectedAction.length >= 4,
+    `${label}: decision artifact selected action is missing.`,
+  );
+  assert.ok(
+    typeof artifact.rationale === "string" && artifact.rationale.length >= 12,
+    `${label}: decision artifact rationale is missing.`,
+  );
+  assert.ok(
+    typeof artifact.backingSummary === "string" &&
+      artifact.backingSummary.length >= 10,
+    `${label}: decision artifact backing summary is missing.`,
+  );
+  const playerText = [
+    artifact.objective,
+    ...(artifact.constraints ?? []),
+    ...(artifact.considered ?? []),
+    ...(artifact.passedOver ?? []),
+    artifact.selectedAction,
+    artifact.rationale,
+    artifact.backingSummary,
+    artifact.sourceSummary,
+  ].join(" ");
+  assert.ok(
+    !/\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate)\b/i.test(
+      playerText,
+    ),
+    `${label}: decision artifact leaked backend-shaped labels: ${playerText}`,
+  );
+}
+
+function assertVisibleDecisionArtifactDom(decisionArtifact, label) {
+  assert.ok(decisionArtifact, `${label}: missing visible decision artifact DOM.`);
+  assert.equal(
+    decisionArtifact.visible,
+    true,
+    `${label}: decision artifact exists but is not readable in the rail viewport.`,
+  );
+  assert.match(
+    decisionArtifact.text,
+    /Rowan weighs/i,
+    `${label}: decision artifact should read as Rowan's decision callback.`,
+  );
+  assert.match(
+    decisionArtifact.text,
+    /Aim/i,
+    `${label}: decision artifact should show Rowan's aim.`,
+  );
+  assert.match(
+    decisionArtifact.text,
+    /Choice/i,
+    `${label}: decision artifact should show the selected choice.`,
+  );
+  assert.match(
+    decisionArtifact.text,
+    /Why this/i,
+    `${label}: decision artifact should show a concise rationale.`,
+  );
+  assert.doesNotMatch(
+    decisionArtifact.text,
+    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate/i,
+    `${label}: decision artifact leaked debug/planner language.`,
+  );
+}
+
 function cameraScrollDistance(first, second) {
   return Math.hypot(
     (second?.scroll?.x ?? 0) - (first?.scroll?.x ?? 0),
@@ -1469,6 +1583,18 @@ async function runFreshAutoplayStartCheck(session) {
       page.visibleProgressionControls,
     )}`,
   );
+  assertVisibleDecisionArtifactPayload(
+    advancedProbe.autonomy?.visibleDecisionArtifact,
+    "fresh autoplay",
+  );
+  assertVisibleDecisionArtifactPayload(
+    advancedProbe.rail?.visibleDecisionArtifact,
+    "fresh autoplay rail",
+  );
+  assertVisibleDecisionArtifactDom(
+    page.decisionArtifact,
+    "fresh autoplay",
+  );
 
   const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");
   await session.captureScreenshot(screenshotPath);
@@ -1482,6 +1608,7 @@ async function runFreshAutoplayStartCheck(session) {
       clock: advancedProbe.clock,
       location: advancedProbe.location,
       rail: advancedProbe.rail,
+      visibleDecisionArtifact: advancedProbe.autonomy?.visibleDecisionArtifact,
       watchMode: advancedProbe.watchMode,
     },
     opening: {
@@ -1492,6 +1619,71 @@ async function runFreshAutoplayStartCheck(session) {
       watchMode: openingProbe.watchMode,
     },
     screenshotPath,
+  };
+}
+
+async function runResponsiveDecisionArtifactCheck(session) {
+  const viewport =
+    VIEWPORTS.find((candidate) => candidate.name === "codex-compact") ??
+    VIEWPORTS.find((candidate) => candidate.width <= 960) ??
+    VIEWPORTS[0];
+  const url = `${activeWebBase}/?new=1&autoplay=1&responsiveDecision=${viewport.name}-${Date.now()}`;
+  await session.setViewport(viewport);
+  await session.navigate(url);
+  await session.waitForAppReady();
+  await session.waitForWatchModeUi(viewport);
+
+  const openingProbe = await session.readBrowserProbe();
+  const advancedProbe = await waitForFreshAutoplayAdvance(
+    session,
+    openingProbe,
+    `${viewport.name} responsive decision`,
+  );
+  assertVisibleDecisionArtifactPayload(
+    advancedProbe.autonomy?.visibleDecisionArtifact,
+    `${viewport.name} responsive decision probe`,
+  );
+  assertVisibleDecisionArtifactPayload(
+    advancedProbe.rail?.visibleDecisionArtifact,
+    `${viewport.name} responsive decision rail probe`,
+  );
+
+  let page = await session.inspectPage();
+  if (page.railState !== "expanded") {
+    await session.clickSelector(".ml-rail-toggle");
+    await sleep(160);
+    page = await session.inspectPage();
+  }
+  assert.equal(
+    page.railState,
+    "expanded",
+    `${viewport.name}: responsive decision check could not expand the rail.`,
+  );
+  assertVisibleDecisionArtifactDom(
+    page.decisionArtifact,
+    `${viewport.name} responsive decision rail`,
+  );
+
+  const screenshotPath = path.join(
+    OUTPUT_DIR,
+    `${viewport.name}-decision-artifact.png`,
+  );
+  await session.captureScreenshot(screenshotPath);
+  const screenshot = await readFile(screenshotPath);
+  assertPngScreenshot(screenshot, viewport);
+
+  return {
+    advanced: {
+      autonomy: advancedProbe.autonomy,
+      clock: advancedProbe.clock,
+      location: advancedProbe.location,
+      rail: advancedProbe.rail,
+      visibleDecisionArtifact: advancedProbe.autonomy?.visibleDecisionArtifact,
+      watchMode: advancedProbe.watchMode,
+    },
+    expandedDecisionArtifact: page.decisionArtifact,
+    screenshotPath,
+    viewport,
   };
 }
 
@@ -1615,8 +1807,27 @@ async function runViewportCheck(session, viewport) {
     railShowsWhyNow,
     `${viewport.name}: Rowan rail does not show why the next step is happening.`,
   );
+  if (browserProbe.autonomy?.visibleDecisionArtifact) {
+    assertVisibleDecisionArtifactPayload(
+      browserProbe.autonomy.visibleDecisionArtifact,
+      `${viewport.name} probe`,
+    );
+  }
+  if (browserProbe.rail?.visibleDecisionArtifact) {
+    assertVisibleDecisionArtifactPayload(
+      browserProbe.rail.visibleDecisionArtifact,
+      `${viewport.name} rail probe`,
+    );
+    if (viewport.width > 960) {
+      assertVisibleDecisionArtifactDom(
+        page.decisionArtifact,
+        `${viewport.name} rail`,
+      );
+    }
+  }
 
   let expandedRailScreenshotPath = null;
+  let expandedDecisionArtifact = null;
   if (viewport.width <= 960) {
     const collapsedRailHeight = page.rail?.height ?? 0;
     await session.clickSelector(".ml-rail-toggle");
@@ -1638,6 +1849,13 @@ async function runViewportCheck(session, viewport) {
       true,
       `${viewport.name}: expanded rail does not visibly reveal the Why Now context.`,
     );
+    if (browserProbe.rail?.visibleDecisionArtifact) {
+      assertVisibleDecisionArtifactDom(
+        expandedPage.decisionArtifact,
+        `${viewport.name} expanded rail`,
+      );
+      expandedDecisionArtifact = expandedPage.decisionArtifact;
+    }
     expandedRailScreenshotPath = path.join(
       OUTPUT_DIR,
       `${viewport.name}-rail-expanded.png`,
@@ -1932,6 +2150,8 @@ async function runViewportCheck(session, viewport) {
     page,
     scheduledNpcVisualCues:
       browserProbe.movement?.scheduledNpcVisualCues ?? [],
+    visibleDecisionArtifact:
+      browserProbe.autonomy?.visibleDecisionArtifact ?? null,
     pan: {
       after: panAfter,
       before: panBefore,
@@ -1955,6 +2175,7 @@ async function runViewportCheck(session, viewport) {
     screenshotPath,
     southPanScreenshotPath,
     expandedRailScreenshotPath,
+    expandedDecisionArtifact,
     westPanScreenshotPath,
   };
 }
@@ -2371,6 +2592,7 @@ async function main() {
   const results = [];
   let freshAutoplayStart = null;
   let interiorCamera = null;
+  let responsiveDecisionArtifact = null;
   let storedGameChoice = null;
   const summaryPath = path.join(OUTPUT_DIR, "summary.json");
   let visualError = null;
@@ -2379,6 +2601,10 @@ async function main() {
     process.stdout.write("[many-lives] Checking fresh autoplay start behavior...\n");
     freshAutoplayStart = await runFreshAutoplayStartCheck(session);
     process.stdout.write("[many-lives] Finished fresh autoplay start behavior.\n");
+    process.stdout.write("[many-lives] Checking responsive decision callback...\n");
+    responsiveDecisionArtifact =
+      await runResponsiveDecisionArtifactCheck(session);
+    process.stdout.write("[many-lives] Finished responsive decision callback.\n");
     for (const viewport of VIEWPORTS) {
       process.stdout.write(`[many-lives] Checking ${viewport.name} viewport...\n`);
       results.push({
@@ -2411,6 +2637,7 @@ async function main() {
           freshAutoplayStart,
           outputDir: OUTPUT_DIR,
           interiorCamera,
+          responsiveDecisionArtifact,
           results,
           storedGameChoice,
           webBase: activeWebBase,

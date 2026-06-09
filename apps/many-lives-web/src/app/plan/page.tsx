@@ -4,7 +4,7 @@ import Link from "next/link";
 import styles from "./plan.module.css";
 
 const commandStatement =
-  "Advance Many Lives one verifiable step toward a seeded living-world simulation: authored data seeds the city, objective predicates define desired outcomes, the world exposes legal current-state actions, Rowan's planner chooses among those actions with an auditable trace, the simulator validates consequences, the visual map renders only legal routed movement, and independent NPCs, jobs, problems, and city events continue evolving whether Rowan acts on them or not.";
+  "Advance Many Lives one verifiable step toward a seeded living-world simulation: authored data seeds the city, objective predicates define desired outcomes, the world exposes legal current-state actions, Rowan's planner chooses among those actions through a visible LLM/planner reasoning callback, the simulator validates consequences, the visual map renders only legal routed movement, and independent NPCs, jobs, problems, and city events continue evolving whether Rowan acts on them or not.";
 
 const authorityChain = [
   "Seed data creates the initial world: map, places, NPCs, jobs, problems, events, schedules, memories, and objective definitions.",
@@ -12,6 +12,7 @@ const authorityChain = [
   "Objectives define desired-state predicates: outcomes, blockers, evidence, urgency, and completion checks.",
   "The simulator exposes legal actions from current state.",
   "Rowan's planner chooses from legal actions using current world pressure, objective predicates, memory, location, energy, money, conversations, jobs, problems, and schedules.",
+  "The planner or LLM returns a player-facing decision artifact: objective, constraints, options considered, selected action, rejected reasons, and concise rationale.",
   "The simulator validates and applies the chosen action.",
   "The renderer projects the validated state through the visual map; movement follows legal routed paths.",
   "Browser probes and tests expose the chain so it can be audited.",
@@ -34,6 +35,11 @@ const obligations = [
     title: "Seeded Hints Cannot Override Live State",
   },
   {
+    evidence: "Rail UI, browser probe, visual smoke, and inhabit report",
+    pass: "Before or during each meaningful autonomous action, the player sees Rowan's objective, constraints, considered options, selected action, rejected reasons, and concise rationale without raw planner/debug labels.",
+    title: "Rowan's Reasoning Is Visible",
+  },
+  {
     evidence: "Time-advance tests and browser probe world pressure",
     pass: "NPC schedules, job windows, problems, and city events mutate while Rowan does unrelated work or waits.",
     title: "The World Changes Without Rowan",
@@ -45,7 +51,7 @@ const obligations = [
   },
   {
     evidence: "Browser probe and regression artifacts",
-    pass: "Probe exposes predicates, planner trace, route legality, NPC diagnostics, and world pressure.",
+    pass: "Probe exposes predicates, planner trace, visible decision artifact, route legality, NPC diagnostics, and world pressure.",
     title: "The Loop Is Auditable",
   },
 ];
@@ -53,6 +59,7 @@ const obligations = [
 const executionLoop = [
   "Orient: read the required docs, check git status, and identify the touched authority layer.",
   "Plan: name the exact authority gap and the regression that would fail if scripted routing returns.",
+  "Expose: show the player-facing reasoning callback for Rowan's next meaningful action before or while watch mode carries it out.",
   "Act: make the narrowest change while keeping seeded content as data and sim validation authoritative.",
   "Verify: run the narrowest sufficient commands, broadening to the full harness for gameplay, routing, or sim changes.",
   "Inspect: review browser output or screenshots for visual and gameplay claims.",
@@ -63,6 +70,7 @@ const executionLoop = [
 const priorityPath = [
   "Objective predicates",
   "Legal action planner",
+  "Reasoning callback",
   "Independent world pressure",
   "Spatial authority",
   "Adversarial regression coverage",
@@ -74,8 +82,9 @@ const acceptanceCriteria = [
   "A poisoned objective trail cannot make Rowan follow the wrong route or skip live objective state.",
   "An objective can complete from desired-state predicates even when route hints are absent, stale, or wrong.",
   "Rowan's selected action is traceable to legal actions, world pressure, and objective predicates.",
+  "Rowan's selected action is accompanied by a visible reasoning callback with objective, constraints, options, selected action, rejected reasons, and concise rationale.",
   "Time advancement mutates NPC locations, job availability, city events, and at least one problem independently of Rowan's route.",
-  "Browser diagnostics expose objective predicates, planner trace, world pressure, Rowan route legality, and NPC route legality.",
+  "Browser diagnostics expose objective predicates, planner trace, visible decision artifact, world pressure, Rowan route legality, and NPC route legality.",
   "Rowan and sampled NPCs render on legal routed paths through the projected walkable map.",
   "A fresh autoplay run reads as Rowan finding his way in a living city, not replaying a fixed route.",
 ];
@@ -84,6 +93,10 @@ const turnPlanShape = [
   {
     body: "Name the exact place where seeded content, objective trails, authored anchors, or UI playback still has more authority than the simulator and planner.",
     title: "Authority gap",
+  },
+  {
+    body: "State whether Rowan's next meaningful action has a player-facing callback with objective, constraints, options, selected action, rejected reasons, rationale, and simulator backing.",
+    title: "Reasoning visibility",
   },
   {
     body: "List only the files that prove or change that layer. Start with the operating manual, then objective, planner, world evolution, routing, probe, or test files as needed.",

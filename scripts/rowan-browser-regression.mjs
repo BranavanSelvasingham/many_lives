@@ -841,6 +841,7 @@ class CdpSession {
       const activeConversation = document.querySelector("[data-conversation-panel]");
       const commandRail = document.querySelector('[data-preserve-scroll="command-rail"]');
       const rowanDirective = document.querySelector('[data-rowan-directive="true"]');
+      const decisionArtifact = document.querySelector("[data-visible-decision-artifact='true']");
       const chatBubbles = Array.from(document.querySelectorAll(".ml-chat-bubble"));
       const latestChatBubble = chatBubbles.at(-1) ?? null;
       const chatRows = Array.from(document.querySelectorAll(".ml-chat-row"));
@@ -974,6 +975,13 @@ class CdpSession {
           key: element.getAttribute("data-field-note"),
           text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
         })),
+        visibleDecisionArtifact: decisionArtifact
+          ? {
+              source: decisionArtifact.getAttribute("data-decision-source"),
+              text: decisionArtifact.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+              visible: isVisibleEnabled(decisionArtifact),
+            }
+          : null,
         hasCanvas: Boolean(canvas),
         hasFieldNote: Boolean(fieldNote),
         hasFrameworkErrorOverlay: /Unhandled Runtime Error|Runtime Error|Build Error|Failed to compile|Application error/i.test(
@@ -1541,6 +1549,7 @@ function buildProbeFromGame(game) {
       planningTrace: planningTraceProbeFromGame(game),
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
+      visibleDecisionArtifact: visibleDecisionArtifactFromGame(game),
     },
     cityEvents: activeCityEvents(game),
     clock: {
@@ -1580,6 +1589,7 @@ function buildProbeFromGame(game) {
         game.player.objective?.text ??
         "",
       useConversationTranscript: Boolean(activeConversation),
+      visibleDecisionArtifact: visibleDecisionArtifactFromGame(game),
     },
   };
 }
@@ -1710,6 +1720,177 @@ function planningTraceProbeFromGame(game) {
     selectedPressureLabel: trace.selectedPressureLabel ?? null,
     selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
   };
+}
+
+function visibleDecisionArtifactFromGame(game) {
+  const trace = game.rowanAutonomy?.planningTrace ?? null;
+  const conversationDecision = game.activeConversation?.decision ?? null;
+  const autonomyReason = game.rowanAutonomy?.intent?.reason ?? null;
+
+  if (!trace && !conversationDecision) {
+    return null;
+  }
+
+  const selectedOption = selectedPlanningTraceOption(trace);
+  const selectedStep =
+    trace?.nextSteps?.find(
+      (step) => trace.selectedActionId && step.actionId === trace.selectedActionId,
+    ) ??
+    trace?.nextSteps?.[0] ??
+    null;
+  const backingSummary = visibleDecisionBackingSummary(
+    trace?.selectedLegalBacking ??
+      selectedOption?.legalBacking ??
+      selectedStep?.legalBacking ??
+      null,
+    Boolean(trace),
+  );
+  const objective = compactVisibleDecisionText(
+    trace?.selectedPressureLabel ??
+      trace?.outcomes?.find((outcome) => outcome.status !== "met")?.label ??
+      game.player.objective?.text ??
+      conversationDecision ??
+      game.rowanAutonomy?.label,
+    112,
+  );
+  const selectedAction = compactVisibleDecisionText(
+    trace?.selectedLabel ??
+      selectedOption?.label ??
+      selectedStep?.label ??
+      game.rowanAutonomy?.label,
+    72,
+  );
+  const rationale = compactVisibleDecisionText(
+    selectedOption?.rationale ??
+      selectedStep?.rationale ??
+      autonomyReason ??
+      conversationDecision,
+    132,
+  );
+
+  if (!objective || !selectedAction || !rationale) {
+    return null;
+  }
+
+  return {
+    backingSummary,
+    considered: uniqueVisibleDecisionTexts(
+      [
+        ...(trace?.considered ?? []).map((option) => option.label),
+        ...(trace?.nextSteps ?? []).map((step) => step.label),
+        trace ? undefined : selectedAction,
+      ],
+      3,
+      64,
+    ),
+    constraints: uniqueVisibleDecisionTexts(
+      [
+        ...(game.rowanAutonomy?.intent?.signals ?? []),
+        selectedOption?.pressureLabel,
+        selectedStep?.validation,
+        conversationDecision,
+        backingSummary,
+      ],
+      3,
+      78,
+    ),
+    objective,
+    passedOver: uniqueVisibleDecisionTexts(
+      [
+        ...(trace?.rejected ?? []).map((option) =>
+          option.reason ? `${option.label}: ${option.reason}` : option.label,
+        ),
+        ...(trace?.blockers ?? []),
+      ],
+      2,
+      72,
+    ),
+    rationale,
+    selectedAction,
+    sourceSummary: trace
+      ? "Planner callback"
+      : conversationDecision
+        ? "Conversation result"
+        : "Rowan's current intent",
+  };
+}
+
+function visibleDecisionBackingSummary(backing, hasTrace) {
+  switch (backing?.source) {
+    case "conversation-resolution":
+      return "Grounded in the conversation result.";
+    case "current-legal-action-surface":
+      return "Available from the current choices.";
+    case "destination-preview-legal-action":
+      return "The destination was checked before committing.";
+    case "projected-follow-up-legal-action":
+      return "The follow-up was checked before committing.";
+    case "simulator-validated-move":
+      return "The move was validated before Rowan carries it out.";
+    case "simulator-validated-wait":
+      return "The wait was validated before Rowan spends the time.";
+    default:
+      return hasTrace
+        ? "Checked against the current choices."
+        : "Grounded in Rowan's current situation.";
+  }
+}
+
+function uniqueVisibleDecisionTexts(values, limit, max) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const compact = compactVisibleDecisionText(value, max);
+    if (!compact) {
+      continue;
+    }
+    const key = compact.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(compact);
+    if (result.length >= limit) {
+      break;
+    }
+  }
+  return result;
+}
+
+function compactVisibleDecisionText(value, max) {
+  if (!value) {
+    return "";
+  }
+  let text = String(value).replace(/\s+/g, " ").trim();
+  text = text
+    .replace(/\badvance_objective\b/gi, "")
+    .replace(/\bplanningTrace\b/gi, "")
+    .replace(/\brouteKey\b/gi, "")
+    .replace(/\bworldPressure\b/gi, "")
+    .replace(/\bcityEvents\b/gi, "")
+    .replace(/\bjobWindows\b/gi, "")
+    .replace(/\bnpcSchedules\b/gi, "")
+    .replace(/\bselectedPlanKey\b/gi, "")
+    .replace(/\bplanKey\b/gi, "")
+    .replace(/\btargetLocationId\b/gi, "")
+    .replace(/\bactionId\b/gi, "")
+    .replace(/^Action:\s*/i, "")
+    .replace(/\bcurrent objective\b/gi, "current aim")
+    .replace(/\bplanner trace\b/gi, "Rowan weighs")
+    .replace(/\bis an open desired-state predicate\b/gi, "")
+    .replace(/\bdesired-state predicate\b/gi, "aim")
+    .replace(/\bstale predicate\b/gi, "stale lead")
+    .replace(/\bpredicate\b/gi, "aim")
+    .replace(/\bRejected because\b/gi, "")
+    .replace(/\bdominant live pressure\b/gi, "strongest current reason")
+    .replace(/\blive pressure\b/gi, "current reason")
+    .replace(/\broute hint action\b/gi, "suggested move")
+    .replace(/\broute hint\b/gi, "suggested path")
+    .replace(/\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}...`;
 }
 
 function worldPressureFromGame(game) {
@@ -2009,6 +2190,92 @@ function assertPlanningTracePayload(label, planningTrace) {
   );
 }
 
+function assertVisibleDecisionArtifactPayload(label, artifact) {
+  assert.ok(artifact, `${label}: missing visible decision artifact payload.`);
+  assert.ok(
+    typeof artifact.objective === "string" && artifact.objective.length >= 8,
+    `${label}: decision artifact objective is missing or too thin.`,
+  );
+  assert.ok(
+    Array.isArray(artifact.constraints) && artifact.constraints.length >= 1,
+    `${label}: decision artifact must expose at least one constraint or signal.`,
+  );
+  assert.ok(
+    Array.isArray(artifact.considered) && artifact.considered.length >= 1,
+    `${label}: decision artifact must expose considered options.`,
+  );
+  assert.ok(
+    typeof artifact.selectedAction === "string" &&
+      artifact.selectedAction.length >= 4,
+    `${label}: decision artifact selected action is missing.`,
+  );
+  assert.ok(
+    typeof artifact.rationale === "string" && artifact.rationale.length >= 12,
+    `${label}: decision artifact rationale is missing.`,
+  );
+  assert.ok(
+    typeof artifact.backingSummary === "string" &&
+      artifact.backingSummary.length >= 10,
+    `${label}: decision artifact backing summary is missing.`,
+  );
+  assert.ok(
+    typeof artifact.sourceSummary === "string" &&
+      artifact.sourceSummary.length >= 8,
+    `${label}: decision artifact source summary is missing.`,
+  );
+
+  const playerText = [
+    artifact.objective,
+    ...(artifact.constraints ?? []),
+    ...(artifact.considered ?? []),
+    ...(artifact.passedOver ?? []),
+    artifact.selectedAction,
+    artifact.rationale,
+    artifact.backingSummary,
+    artifact.sourceSummary,
+  ].join(" ");
+  assert.doesNotMatch(
+    playerText,
+    /\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate)\b/i,
+    `${label}: decision artifact leaked backend-shaped labels.`,
+  );
+}
+
+function assertVisibleDecisionArtifactDom(label, dom) {
+  const artifact = dom?.visibleDecisionArtifact ?? null;
+  assert.ok(artifact, `${label}: missing player-facing decision callback.`);
+  assert.equal(
+    artifact.visible,
+    true,
+    `${label}: decision callback exists but is not visible.`,
+  );
+  assert.match(
+    artifact.text,
+    /Rowan weighs/i,
+    `${label}: decision callback should read as Rowan weighing a choice.`,
+  );
+  assert.match(
+    artifact.text,
+    /Aim/i,
+    `${label}: decision callback should show Rowan's current aim.`,
+  );
+  assert.match(
+    artifact.text,
+    /Choice/i,
+    `${label}: decision callback should show Rowan's selected choice.`,
+  );
+  assert.match(
+    artifact.text,
+    /Why this/i,
+    `${label}: decision callback should show a concise rationale.`,
+  );
+  assert.doesNotMatch(
+    artifact.text,
+    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate/i,
+    `${label}: decision callback leaked debug/planner language.`,
+  );
+}
+
 function assertProbeAuditability(label, game, probe) {
   if (game.player.objective?.outcomes?.length) {
     assert.ok(
@@ -2041,6 +2308,14 @@ function assertProbeAuditability(label, game, probe) {
 
   if (probe.autonomy.planningTrace) {
     assertPlanningTracePayload(label, probe.autonomy.planningTrace);
+    assertVisibleDecisionArtifactPayload(
+      label,
+      probe.autonomy.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionArtifactPayload(
+      `${label} rail`,
+      probe.rail.visibleDecisionArtifact,
+    );
   }
 
   assert.ok(
@@ -2154,6 +2429,9 @@ function assertGameplayDom(label, game, probe, dom) {
     /is not here right now|Rowan heads to [A-Z][^.\n]+ to [A-Z][^.\n]+ is the next stop|to morrow House/,
     `${label}: default Rowan rail/feed leaked stale movement or wrong-space copy.`,
   );
+  if (probe.autonomy?.planningTrace) {
+    assertVisibleDecisionArtifactDom(label, dom);
+  }
   assert.doesNotMatch(
     dom.bodyText,
     /\{"message":|"message"\s*:\s*"Game\s+game-|Game\s+game-[A-Za-z0-9-]+\s+was not found/i,
@@ -4980,6 +5258,13 @@ async function runAutoplayObservation(session) {
     true,
     "Completed autoplay observation lost watch-mode diagnostics.",
   );
+  if (completedProbe.autonomy?.planningTrace) {
+    assertVisibleDecisionArtifactPayload(
+      "fresh-autoplay-observation",
+      completedProbe.autonomy.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionArtifactDom("fresh-autoplay-observation", dom);
+  }
   assert.ok(
     completedProbe.clock.totalMinutes > startProbe.clock.totalMinutes,
     "Autoplay observation did not advance game time.",
@@ -4998,6 +5283,8 @@ async function runAutoplayObservation(session) {
       firstAfternoon: completedProbe.firstAfternoon,
       gameId: completedProbe.gameId,
       location: completedProbe.location,
+      visibleDecisionArtifact:
+        completedProbe.autonomy?.visibleDecisionArtifact ?? null,
       watchMode: completedProbe.watchMode,
     },
     screenshot: screenshotPath,
@@ -5812,6 +6099,13 @@ function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = nul
     /Planner trace|Rejected:|Blocked:|Action:/i,
     `${label}: default player view leaked debug/planner language.`,
   );
+  if (probe?.autonomy?.planningTrace) {
+    assertVisibleDecisionArtifactPayload(
+      `${label} probe`,
+      probe.autonomy.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionArtifactDom(label, dom);
+  }
   assertNoVisibleWatchModeProgressionControls(label, probe, dom);
 
   const complete = /first afternoon complete/i.test(dom.bodyText);
@@ -5996,6 +6290,10 @@ async function captureInhabitMoment({
     objective: probe.objective ?? null,
     screenshot,
     userQuestion,
+    visibleDecisionArtifact:
+      probe.autonomy?.visibleDecisionArtifact ??
+      probe.rail?.visibleDecisionArtifact ??
+      null,
     worldPressure: compactWorldPressureSnapshot(probe.worldPressure),
     camera: camera
       ? {
@@ -6883,12 +7181,15 @@ async function runInhabitGameplayPass(session) {
     worldPressureAudit,
   });
   assertScheduledNpcSpatialEvidence(scheduledNpcSpatialEvidence);
+  const decisionArtifactCoverage = buildDecisionArtifactCoverage(moments);
+  assertDecisionArtifactCoverage(decisionArtifactCoverage);
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {
     cameraCheck,
     clickCount: clickLog.length,
     directSimCommandsUsed: false,
+    decisionArtifactCoverage,
     evidenceStandard:
       "Progression is driven by visible browser controls, pointer drags, and normal watch-mode beats; sim probes are read only for assertions.",
     moments: moments.map(compactInhabitReportMoment),
@@ -6912,6 +7213,51 @@ async function runInhabitGameplayPass(session) {
   await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 
   return report;
+}
+
+function buildDecisionArtifactCoverage(moments) {
+  const withArtifact = moments
+    .filter((moment) => moment.visibleDecisionArtifact)
+    .map((moment) => ({
+      constraints: moment.visibleDecisionArtifact.constraints?.length ?? 0,
+      considered: moment.visibleDecisionArtifact.considered?.length ?? 0,
+      label: moment.label,
+      objective: moment.visibleDecisionArtifact.objective ?? null,
+      rationale: moment.visibleDecisionArtifact.rationale ?? null,
+      selectedAction: moment.visibleDecisionArtifact.selectedAction ?? null,
+      sourceSummary: moment.visibleDecisionArtifact.sourceSummary ?? null,
+    }));
+
+  return {
+    count: withArtifact.length,
+    earlyDecision: withArtifact.find((entry) =>
+      /mara-lead-landed|arrived-kettle-lamp|ada-conversation|shift-in-motion/i.test(
+        entry.label,
+      ),
+    ) ?? null,
+    laterDecision: withArtifact.find((entry) =>
+      /post-first-afternoon-handoff|post-first-afternoon-rest|post-first-afternoon-live-route/i.test(
+        entry.label,
+      ),
+    ) ?? null,
+    labels: withArtifact.map((entry) => entry.label),
+    samples: withArtifact.slice(0, 5),
+  };
+}
+
+function assertDecisionArtifactCoverage(coverage) {
+  assert.ok(
+    coverage.count >= 2,
+    `Inhabit gameplay pass captured too few visible decision artifacts: ${JSON.stringify(coverage)}`,
+  );
+  assert.ok(
+    coverage.earlyDecision,
+    `Inhabit gameplay pass did not capture visible reasoning for the first meaningful route/conversation decision: ${JSON.stringify(coverage)}`,
+  );
+  assert.ok(
+    coverage.laterDecision,
+    `Inhabit gameplay pass did not capture visible reasoning for a later live-pressure decision: ${JSON.stringify(coverage)}`,
+  );
 }
 
 async function createVisualEvidence({ overlayChecks, timeline }) {

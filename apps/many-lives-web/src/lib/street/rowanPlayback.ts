@@ -1,4 +1,8 @@
 import { estimateConversationPlaybackMs } from "./rowanAutonomy";
+import {
+  buildRowanVisibleDecisionArtifact,
+  type RowanVisibleDecisionArtifact,
+} from "./rowanDecisionArtifact";
 import type { StreetGameState } from "./types";
 
 export const ROWAN_PLAYBACK_TIMING_MS = {
@@ -59,6 +63,7 @@ export type RowanPlaybackState = {
 };
 
 export type RowanRailCard = {
+  decisionArtifact?: RowanVisibleDecisionArtifact | null;
   detail: string;
   planningTrace?: StreetGameState["rowanAutonomy"]["planningTrace"];
   reason?: string;
@@ -607,6 +612,10 @@ export function buildRowanRailViewModel({
     game.rowanAutonomy?.layer === "objective" &&
     !game.rowanAutonomy.autoContinue;
   const autonomyCard = {
+    decisionArtifact:
+      game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
+        ? buildRowanVisibleDecisionArtifact(game)
+        : null,
     detail:
       game.rowanAutonomy?.autoContinue || completedObjectiveAutonomy
         ? game.rowanAutonomy.detail
@@ -632,6 +641,7 @@ export function buildRowanRailViewModel({
   };
   const openingBeat = isFirstAfternoonOpening(game);
   const openingNowCard: RowanRailCard = {
+    decisionArtifact: autonomyCard.decisionArtifact,
     detail:
       "Rowan has $12, tonight's bed at Morrow House, and one useful first person to ask: Mara.",
     reason: game.rowanAutonomy?.intent?.reason,
@@ -645,8 +655,14 @@ export function buildRowanRailViewModel({
     title: "Ask Mara how to keep tonight's room.",
     tone: "objective",
   };
-  const nowCard = activeBeat
-    ? railCardFromBeat(activeBeat)
+  const activeBeatCard = activeBeat
+    ? {
+        ...railCardFromBeat(activeBeat),
+        decisionArtifact: autonomyCard.decisionArtifact,
+      }
+    : null;
+  const nowCard = activeBeatCard
+    ? activeBeatCard
     : openingBeat
       ? openingNowCard
       : autonomyCard;
