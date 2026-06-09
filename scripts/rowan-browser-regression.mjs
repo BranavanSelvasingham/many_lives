@@ -747,6 +747,21 @@ class CdpSession {
         };
       };
       const rectFor = (selector) => rectFromElement(document.querySelector(selector));
+      const isVisibleEnabled = (element) => {
+        if (!element) {
+          return false;
+        }
+
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          !element.disabled
+        );
+      };
       const elementLabel = (element) => {
         if (!element) {
           return null;
@@ -830,6 +845,21 @@ class CdpSession {
       const latestChatBubble = chatBubbles.at(-1) ?? null;
       const chatRows = Array.from(document.querySelectorAll(".ml-chat-row"));
       const latestChatRow = chatRows.at(-1) ?? null;
+      const visibleProgressionControls = [
+        "[data-advance-objective]:not([disabled])",
+        "[data-action-id]:not([disabled])",
+        "[data-wait-minutes]:not([disabled])"
+      ].flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector))
+          .filter(isVisibleEnabled)
+          .map((element) => ({
+            actionId: element.getAttribute("data-action-id"),
+            advancesObjective: element.hasAttribute("data-advance-objective"),
+            selector,
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+            waitMinutes: element.getAttribute("data-wait-minutes")
+          }))
+      );
       const rectForElements = (elements) => {
         const rects = elements
           .map((element) => element.getBoundingClientRect())
@@ -950,6 +980,7 @@ class CdpSession {
           frameworkErrorText
         ),
         hasRail: Boolean(rail),
+        visibleProgressionControls,
         layout: {
           chatBubbles: chatBubbles.map((element) => ({
             rect: rectFromElement(element),
@@ -2141,6 +2172,7 @@ function assertGameplayDom(label, game, probe, dom) {
   }
 
   assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom);
+  assertNoVisibleWatchModeProgressionControls(label, probe, dom);
   assertRailReadability(label, game, probe, dom);
 
   if (label === "lunch-rush") {
@@ -2172,6 +2204,22 @@ function assertGameplayDom(label, game, probe, dom) {
   }
 
   assertCriticalVisualCoherence(label, dom);
+}
+
+function assertNoVisibleWatchModeProgressionControls(label, probe, dom) {
+  if (!probe?.watchMode?.enabled || probe.watchMode.frozen) {
+    return;
+  }
+
+  assert.deepEqual(
+    dom.visibleProgressionControls ?? [],
+    [],
+    `${label}: watch mode exposed visible progression/action controls: ${JSON.stringify(
+      dom.visibleProgressionControls ?? [],
+      null,
+      2,
+    )}`,
+  );
 }
 
 function assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom) {
@@ -4641,6 +4689,7 @@ function buildTimelineEntry({
           hasFieldNote: dom.hasFieldNote,
           layout: dom.layout,
           tabLabels: dom.tabLabels,
+          visibleProgressionControls: dom.visibleProgressionControls,
         }
       : null,
     label,
@@ -4806,6 +4855,11 @@ async function runAutoplayObservation(session) {
     "Autoplay did not reach first-afternoon completion without manual advance clicks.",
   );
   const dom = await session.readDomSnapshot();
+  assertNoVisibleWatchModeProgressionControls(
+    "fresh-autoplay-observation",
+    completedProbe,
+    dom,
+  );
   assert.doesNotMatch(
     dom.bodyText,
     /Nudge Rowan/i,
@@ -5653,6 +5707,7 @@ function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = nul
     /Planner trace|Rejected:|Blocked:|Action:/i,
     `${label}: default player view leaked debug/planner language.`,
   );
+  assertNoVisibleWatchModeProgressionControls(label, probe, dom);
 
   const complete = /first afternoon complete/i.test(dom.bodyText);
   const autoContinuing = Boolean(probe?.autonomy?.autoContinue);
