@@ -85,6 +85,7 @@ const OPENING_CTA_PATTERN =
   /Watch Rowan begin|Rowan starts by asking Mara\./i;
 const GENERIC_WATCH_CTA_COPY_PATTERN =
   /Rowan will keep going when this beat lands/i;
+const OPENING_PLAYER_LOCATION_MAX_DISTANCE = 90;
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
 
 let activeWebBase = DEFAULT_WEB_BASE;
@@ -4644,10 +4645,19 @@ function buildMovementAuditSummary(timeline) {
     });
 
   const scheduledNpcMarkerSamples = [];
+  const playerLocationGeometrySamples = [];
   const scheduledNpcRouteSamples = [];
   const scheduledNpcVisualCueSamples = [];
   const scheduledNpcRoutesByKey = new Map();
   for (const [timelineIndex, entry] of timeline.entries()) {
+    if (entry.movement?.playerLocationGeometry) {
+      playerLocationGeometrySamples.push({
+        ...entry.movement.playerLocationGeometry,
+        label: entry.label,
+        timelineIndex,
+      });
+    }
+
     for (const marker of entry.movement?.scheduledNpcMarkerSamples ?? []) {
       scheduledNpcMarkerSamples.push({
         activeSpaceId: marker.activeSpaceId ?? null,
@@ -4801,6 +4811,7 @@ function buildMovementAuditSummary(timeline) {
 
   return {
     npcPatrols,
+    playerLocationGeometrySamples,
     playerRoutes,
     scheduledNpcContinuityGaps: scheduledNpcLocationChanges.filter(
       (change) => change.continuityGapReason,
@@ -4856,6 +4867,50 @@ function isValidScheduledNpcVisualCueSample(cue) {
     !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
       `${cue.cueLabel} ${cue.cueSignal}`,
     )
+  );
+}
+
+function assertOpeningPlayerLocationGeometrySample(movementAudit, label) {
+  const sample = movementAudit.playerLocationGeometrySamples.find(
+    (candidate) => candidate.label === label,
+  );
+  assert.ok(
+    sample,
+    `${label}: expected opening player location geometry evidence.`,
+  );
+  assert.equal(
+    sample.currentLocationId,
+    "boarding-house",
+    `${label}: Rowan should be located at Morrow House in the opening geometry sample.`,
+  );
+  assert.equal(
+    sample.actionId,
+    "enter:boarding-house",
+    `${label}: opening geometry should reflect the Enter Morrow House action.`,
+  );
+  assert.equal(
+    sample.anchorLocationId,
+    "boarding-house",
+    `${label}: opening geometry should target the Morrow House anchor.`,
+  );
+  assert.equal(
+    sample.anchorKind,
+    "door",
+    `${label}: opening geometry should measure Rowan against the Morrow House door anchor.`,
+  );
+  assert.equal(
+    sample.nearActionLocation,
+    true,
+    `${label}: Rowan marker is not near the opening action location: ${JSON.stringify(sample)}.`,
+  );
+  assert.ok(
+    sample.playerWorldPoint && sample.anchorWorldPoint,
+    `${label}: opening geometry must include player and anchor world points: ${JSON.stringify(sample)}.`,
+  );
+  assert.ok(
+    typeof sample.distanceToAnchor === "number" &&
+      sample.distanceToAnchor <= OPENING_PLAYER_LOCATION_MAX_DISTANCE,
+    `${label}: Rowan marker is too far from the Morrow House entrance: ${JSON.stringify(sample)}.`,
   );
 }
 
@@ -5251,6 +5306,10 @@ function assertMovementAuditSummary(movementAudit) {
         route.worldPathLength >= 2,
     ),
     "Expected every exported player route diagnostic to be legal, obstacle-clear, and at least two points.",
+  );
+  assertOpeningPlayerLocationGeometrySample(
+    movementAudit,
+    "initial-morrow-exterior",
   );
 
   const patrolByLocationId = new Map(
@@ -7943,6 +8002,10 @@ async function runInhabitGameplayPass(session) {
   });
   assertWorldPressureAudit(worldPressureAudit);
   const movementAudit = buildMovementAuditSummary(moments);
+  assertOpeningPlayerLocationGeometrySample(
+    movementAudit,
+    "first-actionable-screen",
+  );
   const scheduledNpcSpatialEvidence = buildScheduledNpcSpatialEvidence({
     movementAudit,
     worldPressureAudit,
@@ -7964,6 +8027,8 @@ async function runInhabitGameplayPass(session) {
     objectiveSequenceAudit,
     objectiveSequenceRuns,
     panelChecks,
+    playerLocationGeometryEvidence:
+      movementAudit.playerLocationGeometrySamples,
     postFirstAfternoonLivePressureEvidence,
     progressionClicks: clickLog,
     reportPath,
@@ -8752,6 +8817,8 @@ async function main() {
     npcDiagnostics: movementAudit.npcPatrols,
     outputDir: OUTPUT_DIR,
     overlayChecks,
+    playerLocationGeometryEvidence:
+      movementAudit.playerLocationGeometrySamples,
     routeDiagnostics: movementAudit.playerRoutes,
     scheduledNpcContinuityGaps: movementAudit.scheduledNpcContinuityGaps,
     scheduledNpcDiagnostics: movementAudit.scheduledNpcRoutes,

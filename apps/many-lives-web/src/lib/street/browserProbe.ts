@@ -19,6 +19,31 @@ export type StreetBrowserMovementDiagnostics = {
     unreachableSegments: number;
     usedVisualHints: boolean;
   }>;
+  playerLocationGeometry: {
+    actionId: string | null;
+    actionLabel: string | null;
+    anchorKind: "door" | "frontage" | "player-approach" | "projected-tile";
+    anchorLocationId: string | null;
+    anchorLocationName: string | null;
+    anchorWorldPoint: {
+      x: number;
+      y: number;
+    } | null;
+    currentLocationId: string | null;
+    currentLocationName: string | null;
+    currentSpaceId: string | null;
+    distanceToAnchor: number | null;
+    nearActionLocation: boolean;
+    playerTile: {
+      x: number;
+      y: number;
+    };
+    playerWorldPoint: {
+      x: number;
+      y: number;
+    };
+    targetLocationId: string | null;
+  } | null;
   scheduledNpcRoutes: Array<{
     acceptedNoRouteReason: string | null;
     currentScheduleLocationId: string | null;

@@ -5394,6 +5394,10 @@ function buildBrowserMovementDiagnostics(
         unreachableSegments: entry.unreachableSegments,
         usedVisualHints: entry.usedVisualHints,
       })),
+    playerLocationGeometry: buildPlayerLocationGeometryDiagnostics(
+      runtimeState,
+      now,
+    ),
     scheduledNpcMarkerSamples: buildScheduledNpcMarkerSamples(runtimeState),
     scheduledNpcRoutes: buildScheduledNpcRouteDiagnostics(runtimeState),
     scheduledNpcVisualCues: buildScheduledNpcVisualCueSamples(runtimeState),
@@ -5417,6 +5421,158 @@ function buildBrowserMovementDiagnostics(
           }
         : null,
   };
+}
+
+const PLAYER_LOCATION_ACTION_ANCHOR_NEAR_DISTANCE = 90;
+
+type PlayerLocationGeometryAnchorKind = NonNullable<
+  StreetBrowserMovementDiagnostics["playerLocationGeometry"]
+>["anchorKind"];
+
+function buildPlayerLocationGeometryDiagnostics(
+  runtimeState: RuntimeState,
+  now: number,
+): StreetBrowserMovementDiagnostics["playerLocationGeometry"] {
+  const game = runtimeState.snapshot.game;
+  if (!game) {
+    return null;
+  }
+
+  const actionId = game.rowanAutonomy.actionId ?? null;
+  const actionLabel = game.rowanAutonomy.label ?? null;
+  const playerTile = samplePlayerTile(runtimeState.playerMotion, now);
+  const playerWorldPoint = samplePlayerWorld(runtimeState, playerTile, now);
+  const actionTargetLocationId =
+    extractLocationActionTargetId(actionId) ??
+    game.rowanAutonomy.targetLocationId ??
+    null;
+  const anchorLocationId =
+    actionTargetLocationId ?? game.player.currentLocationId ?? null;
+  const anchor = resolvePlayerLocationGeometryAnchor(
+    runtimeState.indices,
+    anchorLocationId,
+    actionId,
+    playerTile,
+  );
+  const distanceToAnchor = anchor.worldPoint
+    ? distanceBetween(playerWorldPoint, anchor.worldPoint)
+    : null;
+
+  return {
+    actionId,
+    actionLabel,
+    anchorKind: anchor.kind,
+    anchorLocationId,
+    anchorLocationName: resolveBrowserProbeLocationName(
+      game,
+      runtimeState.indices,
+      anchorLocationId,
+    ),
+    anchorWorldPoint: anchor.worldPoint
+      ? roundBrowserPoint(anchor.worldPoint)
+      : null,
+    currentLocationId: game.player.currentLocationId ?? null,
+    currentLocationName: resolveBrowserProbeLocationName(
+      game,
+      runtimeState.indices,
+      game.player.currentLocationId ?? null,
+    ),
+    currentSpaceId: game.activeSpaceId ?? game.player.spaceId ?? null,
+    distanceToAnchor:
+      distanceToAnchor === null ? null : roundBrowserNumber(distanceToAnchor),
+    nearActionLocation:
+      distanceToAnchor !== null &&
+      distanceToAnchor <= PLAYER_LOCATION_ACTION_ANCHOR_NEAR_DISTANCE,
+    playerTile: roundBrowserPoint(playerTile),
+    playerWorldPoint: roundBrowserPoint(playerWorldPoint),
+    targetLocationId: actionTargetLocationId,
+  };
+}
+
+function resolvePlayerLocationGeometryAnchor(
+  indices: RuntimeIndices,
+  locationId: string | null,
+  actionId: string | null,
+  playerTile: Point,
+): {
+  kind: PlayerLocationGeometryAnchorKind;
+  worldPoint: Point | null;
+} {
+  if (!locationId) {
+    return {
+      kind: "projected-tile",
+      worldPoint: projectRuntimeTileCenter(indices, playerTile.x, playerTile.y),
+    };
+  }
+
+  const anchors = indices.visualScene?.locationAnchors[locationId];
+  if (!anchors) {
+    return {
+      kind: "projected-tile",
+      worldPoint: projectRuntimeTileCenter(indices, playerTile.x, playerTile.y),
+    };
+  }
+
+  if (actionId === `enter:${locationId}`) {
+    return {
+      kind: "door",
+      worldPoint: {
+        x: anchors.door.x,
+        y: anchors.door.y,
+      },
+    };
+  }
+
+  if (anchors.frontage) {
+    return {
+      kind: "frontage",
+      worldPoint: {
+        x: anchors.frontage.x,
+        y: anchors.frontage.y,
+      },
+    };
+  }
+
+  const firstApproach = anchors.playerApproaches?.[0];
+  if (firstApproach) {
+    return {
+      kind: "player-approach",
+      worldPoint: {
+        x: firstApproach.x,
+        y: firstApproach.y,
+      },
+    };
+  }
+
+  return {
+    kind: "projected-tile",
+    worldPoint: projectRuntimeTileCenter(indices, playerTile.x, playerTile.y),
+  };
+}
+
+function extractLocationActionTargetId(actionId: string | null) {
+  if (!actionId) {
+    return null;
+  }
+
+  const [kind, targetId] = actionId.split(":");
+  return (kind === "enter" || kind === "move") && targetId ? targetId : null;
+}
+
+function resolveBrowserProbeLocationName(
+  game: StreetGameState,
+  indices: RuntimeIndices,
+  locationId: string | null,
+) {
+  if (!locationId) {
+    return null;
+  }
+
+  return (
+    indices.locationsById.get(locationId)?.name ??
+    game.locations.find((location) => location.id === locationId)?.name ??
+    null
+  );
 }
 
 function buildScheduledNpcMarkerSamples(
