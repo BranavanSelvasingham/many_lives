@@ -64,6 +64,9 @@ const FIXED_DEVTOOLS_PORT = process.env.MANY_LIVES_BROWSER_DEVTOOLS_PORT
 const CDP_WAIT_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_CDP_WAIT_TIMEOUT_MS ?? "30000",
 );
+const APP_READY_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_APP_READY_TIMEOUT_MS ?? "120000",
+);
 const SIM_WAIT_TIMEOUT_MS = 15_000;
 const WEB_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_WEB_START_TIMEOUT_MS ?? "45000",
@@ -401,6 +404,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, timeoutMs, message) {
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeout);
+  });
+}
+
 async function waitFor(condition, timeoutMs, errorMessage) {
   const startedAt = Date.now();
 
@@ -470,7 +484,11 @@ class CdpSession {
   }
 
   async navigate(url) {
-    const loadEvent = this.waitForEvent("Page.loadEventFired");
+    const loadEvent = withTimeout(
+      this.waitForEvent("Page.loadEventFired"),
+      APP_READY_TIMEOUT_MS,
+      `Timed out waiting for Chrome load event after navigating to ${url}.`,
+    );
     await this.send("Page.navigate", { url });
     await loadEvent;
     await this.waitForProbe();
@@ -1087,17 +1105,197 @@ class CdpSession {
     })()`);
   }
 
-  async waitForProbe() {
-    return waitFor(
-      async () => {
-        try {
-          return await this.readBrowserProbe();
-        } catch {
+  async inspectAppReadiness() {
+    return this.evaluate(`(() => {
+      const bodyText = document.body?.innerText ?? "";
+      const bodyContent = document.body?.textContent ?? "";
+      const textFor = (element, limit = 1000) =>
+        element?.textContent?.replace(/\\s+/g, " ").trim().slice(0, limit) ?? "";
+      const rectFor = (element) => {
+        if (!element) {
           return null;
         }
-      },
-      CDP_WAIT_TIMEOUT_MS,
-      "Timed out waiting for #ml-browser-probe to appear in the browser.",
+        const rect = element.getBoundingClientRect();
+        return {
+          bottom: Math.round(rect.bottom),
+          height: Math.round(rect.height),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+        };
+      };
+      const isVisible = (element) => {
+        if (!element) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none"
+        );
+      };
+      const canvases = Array.from(document.querySelectorAll("canvas"));
+      const probe = document.querySelector("#ml-browser-probe");
+      const rail = document.querySelector(".ml-rail-shell");
+      const root = document.querySelector(".ml-root");
+      const overlaySelectors = [
+        "nextjs-portal",
+        "[data-nextjs-dialog-overlay]",
+        "[data-nextjs-toast]",
+        "[data-nextjs-errors-dialog-left-right]",
+        "#webpack-dev-server-client-overlay"
+      ];
+      const overlays = overlaySelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)).map((element) => ({
+          rect: rectFor(element),
+          selector,
+          textSample: textFor(element, 1000),
+          visible: isVisible(element)
+        }))
+      );
+      const overlayText = overlays
+        .map((overlay) => overlay.textSample)
+        .filter(Boolean)
+        .join(" ");
+      const frameworkText = overlayText + " " + bodyContent;
+      return {
+        bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 1600),
+        canvasCount: canvases.length,
+        canvasRects: canvases.slice(0, 4).map((canvas) => ({
+          rect: rectFor(canvas),
+          visible: isVisible(canvas)
+        })),
+        document: {
+          clientHeight: document.documentElement.clientHeight,
+          clientWidth: document.documentElement.clientWidth,
+          readyState: document.readyState,
+          scrollHeight: document.documentElement.scrollHeight,
+          scrollWidth: document.documentElement.scrollWidth,
+        },
+        frameworkOverlayTextSample: overlayText.slice(0, 1200),
+        hasCanvas: canvases.length > 0,
+        hasFrameworkOverlay: /Unhandled Runtime Error|Runtime Error|Build Error|Failed to compile|Application error/i.test(frameworkText),
+        hasMapAgencyProbe: Boolean(document.querySelector("#ml-browser-map-agency-probe")),
+        hasProbe: Boolean(probe),
+        hasProbeFunction: typeof window.__manyLivesStreetProbe === "function",
+        hasRail: Boolean(rail),
+        hasRightStack: Boolean(document.querySelector(".ml-right-stack")),
+        hasRoot: Boolean(root),
+        hasRowanText: bodyText.includes("Rowan"),
+        hasTimePill: Boolean(document.querySelector(".ml-time-pill")),
+        looksLikeNotFound: /404|This page could not be found|Not Found/i.test(bodyText),
+        looksLikeStillCompiling: /Compiling|Loading|webpack|Turbopack|building/i.test(frameworkText),
+        overlayCount: overlays.length,
+        overlays,
+        probeTextLength: probe?.textContent?.length ?? 0,
+        probeTextSample: probe?.textContent?.replace(/\\s+/g, " ").trim().slice(0, 600) ?? "",
+        railRect: rectFor(rail),
+        railTextSample: textFor(rail, 1200),
+        rootClass: root?.className ?? "",
+        title: document.title,
+        url: location.href,
+        visibleCanvasCount: canvases.filter(isVisible).length,
+        viewport: {
+          height: window.innerHeight,
+          width: window.innerWidth,
+        }
+      };
+    })()`);
+  }
+
+  async writeProbeTimeoutDiagnostics({ lastError, lastState, timeoutMs }) {
+    await mkdir(this.outputDir, { recursive: true });
+    const timestamp = Date.now();
+    const screenshotPath = path.join(
+      this.outputDir,
+      `probe-timeout-${timestamp}.png`,
+    );
+    const diagnosticsPath = path.join(
+      this.outputDir,
+      `probe-timeout-${timestamp}.json`,
+    );
+    let screenshot = screenshotPath;
+    let screenshotError = null;
+
+    try {
+      await this.captureScreenshot(screenshotPath);
+    } catch (error) {
+      screenshot = null;
+      screenshotError = error instanceof Error ? error.message : String(error);
+    }
+
+    const diagnostics = {
+      currentUrl: lastState?.url ?? null,
+      lastError,
+      lastState,
+      pageErrors: this.pageErrors.slice(-20),
+      requestedUrl: this.url,
+      screenshot,
+      screenshotError,
+      timedOutAt: new Date().toISOString(),
+      timeoutMs,
+    };
+
+    await writeFile(
+      diagnosticsPath,
+      `${JSON.stringify(diagnostics, null, 2)}\n`,
+      "utf8",
+    );
+
+    return {
+      diagnostics,
+      diagnosticsPath,
+      screenshot,
+    };
+  }
+
+  async waitForProbe() {
+    const startedAt = Date.now();
+    let lastError = null;
+    let lastState = null;
+
+    while (Date.now() - startedAt < APP_READY_TIMEOUT_MS) {
+      try {
+        const probe = await this.readBrowserProbe();
+        if (probe) {
+          return probe;
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+      }
+
+      try {
+        lastState = await this.inspectAppReadiness();
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        lastState = {
+          error: lastError,
+        };
+      }
+
+      await sleep(PROBE_POLL_INTERVAL_MS);
+    }
+
+    const { diagnostics, diagnosticsPath, screenshot } =
+      await this.writeProbeTimeoutDiagnostics({
+        lastError,
+        lastState,
+        timeoutMs: APP_READY_TIMEOUT_MS,
+      });
+    const screenshotDetail = screenshot
+      ? ` Screenshot: ${screenshot}.`
+      : ` Screenshot capture failed: ${diagnostics.screenshotError}.`;
+
+    throw new Error(
+      `Timed out after ${APP_READY_TIMEOUT_MS}ms waiting for the browser probe ` +
+        `(#ml-browser-probe or window.__manyLivesStreetProbe) to appear. ` +
+        `Diagnostics: ${diagnosticsPath}.${screenshotDetail} Last state: ${JSON.stringify(
+          diagnostics.lastState,
+        )}`,
     );
   }
 
@@ -1291,7 +1489,7 @@ class CdpSession {
 
       const message = JSON.parse(frame.payload.toString("utf8"));
       if (message.method === "Runtime.exceptionThrown") {
-        this.pageErrors.push({
+        this.recordPageError({
           method: message.method,
           text:
             message.params?.exceptionDetails?.exception?.description ??
@@ -1302,9 +1500,25 @@ class CdpSession {
         message.method === "Log.entryAdded" &&
         message.params?.entry?.level === "error"
       ) {
-        this.pageErrors.push({
+        this.recordPageError({
           method: message.method,
           text: message.params.entry.text ?? "Browser log error",
+        });
+      } else if (
+        message.method === "Runtime.consoleAPICalled" &&
+        ["assert", "error"].includes(message.params?.type)
+      ) {
+        this.recordPageError({
+          method: message.method,
+          text: (message.params?.args ?? [])
+            .map((argument) => {
+              if (typeof argument.value === "string") {
+                return argument.value;
+              }
+              return argument.description ?? JSON.stringify(argument.value ?? null);
+            })
+            .join(" ")
+            .trim(),
         });
       }
 
@@ -1386,6 +1600,13 @@ class CdpSession {
 
   writeControlFrame(opcode, payload = Buffer.alloc(0)) {
     this.socket.write(Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]));
+  }
+
+  recordPageError(error) {
+    this.pageErrors.push(error);
+    if (this.pageErrors.length > 40) {
+      this.pageErrors.splice(0, this.pageErrors.length - 40);
+    }
   }
 
   writeFrame(text) {
