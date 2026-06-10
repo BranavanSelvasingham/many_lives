@@ -217,4 +217,17 @@ describe("street reasoning authority", () => {
     expect(reply.reply).toMatch(/Ada|Kettle|Lamp|lunch|work|shift|counter|pay/i);
     expect(reply.reply).not.toMatch(/old pier|poisoned|stale route/i);
   });
+
+  it("lets a current Mara predicate outrank first-afternoon route-key fallback dialogue", () => {
+    const world = worldWithPoisonedTrail();
+
+    const reply = buildDeterministicStreetReply({
+      game: world,
+      npcId: "npc-mara",
+      playerText: "What matters most right now?",
+    });
+
+    expect(reply.reply).toMatch(/room|Morrow House|shared spaces|pay|house/i);
+    expect(reply.reply).not.toMatch(/Ada|Kettle|Lamp|lunch|old pier|poisoned|route/i);
+  });
 });

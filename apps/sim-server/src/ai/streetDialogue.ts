@@ -200,6 +200,9 @@ export interface StreetConversationContext {
   };
 }
 
+type ConversationObjectiveOutcome =
+  NonNullable<StreetConversationContext["rowan"]["objectiveState"]>["outcomes"][number];
+
 export function buildStreetConversationContext(
   input: StreetDialogueRequest,
 ): StreetConversationContext {
@@ -348,6 +351,7 @@ export function buildDeterministicStreetReply(
   const cartProblem = input.game.problems.find((problem) => problem.id === "problem-cart");
   const hasWrench = input.game.player.inventory.some((item) => item.id === "item-wrench");
   const nearbyPlaceName = context.nearbyPlaces[0]?.name;
+  const currentNpcObjectiveOutcome = selectCurrentNpcObjectiveOutcome(context, npc.id);
 
   switch (npc.id) {
     case "npc-mara":
@@ -494,6 +498,10 @@ export function buildDeterministicStreetReply(
             "mara-home-followup",
           ),
         };
+      }
+
+      if (currentNpcObjectiveOutcome && !topicsRequestSpecificLead(topics)) {
+        return buildMaraCurrentObjectiveReply(currentNpcObjectiveOutcome, context);
       }
 
       if (context.rowan.objectiveState?.routeKey === "first-afternoon") {
@@ -1161,6 +1169,83 @@ function generatedReplyHasToneDrift(normalized: string): boolean {
 
 function normalizePlayerText(text: string): string {
   return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function selectCurrentNpcObjectiveOutcome(
+  context: StreetConversationContext,
+  npcId: string,
+): ConversationObjectiveOutcome | undefined {
+  return context.rowan.objectiveState?.outcomes
+    .filter(
+      (outcome) =>
+        outcome.status === "open" &&
+        outcome.npcId === npcId &&
+        !outcome.id.startsWith("first-afternoon"),
+    )
+    .sort((left, right) => right.urgency - left.urgency)[0];
+}
+
+function topicsRequestSpecificLead(topics: Set<string>): boolean {
+  return [
+    "cart",
+    "gossip",
+    "help",
+    "money",
+    "pump",
+    "repair",
+    "rumor",
+    "tool",
+    "work",
+    "yard",
+  ].some((topic) => topics.has(topic));
+}
+
+function buildMaraCurrentObjectiveReply(
+  outcome: ConversationObjectiveOutcome,
+  context: StreetConversationContext,
+): StreetDialogueResult {
+  const normalizedLabel = normalizeText(
+    `${outcome.label} ${outcome.evidence ?? ""} ${(outcome.blockers ?? []).join(" ")}`,
+  );
+  const isRoomStanding =
+    /\broom\b|\bmorrow house\b|\bstable\b|\bstanding\b|\bbed\b|\bstay\b/.test(
+      normalizedLabel,
+    );
+
+  return {
+    reply: chooseConversationLine(
+      isRoomStanding
+        ? [
+            "Keeping the room is less dramatic than finding it. Pay when you say you will, be kind in the shared spaces, and do one useful thing before the day gets away from you.",
+            "A room turns steady when you make the house easier to wake up in. Keep your word, keep the shared spaces kind, and notice what needs doing.",
+            "Morrow House keeps people who are plain with their money and useful without making a ceremony of it.",
+          ]
+        : [
+            "Start with the question that is true right here. Ask it plainly, then use the answer you actually get.",
+            "Do the thing you can verify from this room first. The rest can wait until the answer is real.",
+            "If that is the question in front of you, do not chase an old errand. Ask it here and let the answer change the next step.",
+          ],
+      context,
+      isRoomStanding ? "mara-current-room-objective" : "mara-current-objective",
+    ),
+    followupThought: pickFollowupThought(
+      isRoomStanding
+        ? [
+            "The room has terms.",
+            "Make the house easier.",
+            "That answer fits now.",
+          ]
+        : [
+            "Ask what is true here.",
+            "Use the live answer.",
+            "Do not chase old hints.",
+          ],
+      context,
+      isRoomStanding
+        ? "mara-current-room-objective-followup"
+        : "mara-current-objective-followup",
+    ),
+  };
 }
 
 function detectTopics(text: string): Set<string> {
