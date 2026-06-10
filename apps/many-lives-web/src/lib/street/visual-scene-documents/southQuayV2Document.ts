@@ -523,12 +523,12 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       ],
       "playerApproaches": [
         {
-          "x": 354,
-          "y": 806
+          "x": 344,
+          "y": 766
         },
         {
-          "x": 430,
-          "y": 804
+          "x": 396,
+          "y": 768
         }
       ]
     },

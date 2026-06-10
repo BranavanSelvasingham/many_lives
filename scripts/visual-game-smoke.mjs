@@ -47,6 +47,7 @@ const RUNTIME_VIEWPORT_PATH = path.join(
 const VISUAL_SMOKE_PATH = path.join(ROOT, "scripts/visual-game-smoke.mjs");
 const HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX = -660;
 const GENERIC_AUTOPLAY_NOTE = "Rowan is carrying this beat forward";
+const OPENING_PLAYER_LOCATION_MAX_DISTANCE = 90;
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i;
 
@@ -708,6 +709,22 @@ class CdpSession {
       element.click();
       return true;
     })()`);
+  }
+
+  async closeFocusPanelIfOpen() {
+    const closed = await this.evaluate(`(() => {
+      const closeButton = document.querySelector("[data-close-focus='true']");
+      if (!(closeButton instanceof HTMLElement)) {
+        return false;
+      }
+
+      closeButton.click();
+      return true;
+    })()`);
+    if (closed) {
+      await sleep(80);
+    }
+    return Boolean(closed);
   }
 
   async dragMouse({ from, steps = 5, to }) {
@@ -1418,6 +1435,44 @@ function assertScheduledNpcVisualCues(browserProbe, viewportName) {
   );
 }
 
+function assertOpeningPlayerLocationGeometry(browserProbe, viewportName) {
+  const geometry = browserProbe?.movement?.playerLocationGeometry;
+  assert.ok(
+    geometry,
+    `${viewportName}: missing opening player location geometry evidence.`,
+  );
+  assert.equal(
+    geometry.currentLocationId,
+    "boarding-house",
+    `${viewportName}: opening player geometry should start at Morrow House.`,
+  );
+  assert.equal(
+    geometry.actionId,
+    "enter:boarding-house",
+    `${viewportName}: opening player geometry should target Enter Morrow House.`,
+  );
+  assert.equal(
+    geometry.anchorLocationId,
+    "boarding-house",
+    `${viewportName}: opening player geometry should use the Morrow House anchor.`,
+  );
+  assert.equal(
+    geometry.anchorKind,
+    "door",
+    `${viewportName}: opening player geometry should measure against the Morrow House door.`,
+  );
+  assert.equal(
+    geometry.nearActionLocation,
+    true,
+    `${viewportName}: Rowan marker is not near the opening action location: ${JSON.stringify(geometry)}.`,
+  );
+  assert.ok(
+    typeof geometry.distanceToAnchor === "number" &&
+      geometry.distanceToAnchor <= OPENING_PLAYER_LOCATION_MAX_DISTANCE,
+    `${viewportName}: Rowan marker is too far from the Morrow House entrance: ${JSON.stringify(geometry)}.`,
+  );
+}
+
 function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = null) {
   assert.ok(artifact, `${label}: missing visible decision artifact payload.`);
   assert.ok(
@@ -2061,6 +2116,7 @@ async function runViewportCheck(session, viewport) {
   const browserProbe = await session.readBrowserProbe();
   assert.ok(browserProbe, `${viewport.name}: missing browser probe.`);
   assertFirstRouteEventCues(browserProbe, viewport.name);
+  assertOpeningPlayerLocationGeometry(browserProbe, viewport.name);
   assertScheduledNpcVisualCues(browserProbe, viewport.name);
   assert.ok(
     browserProbe.autonomy?.intent?.reason,
@@ -2147,6 +2203,7 @@ async function runViewportCheck(session, viewport) {
     assertPngScreenshot(expandedRailScreenshot, viewport);
     await session.clickSelector(".ml-rail-toggle");
     await sleep(80);
+    await session.closeFocusPanelIfOpen();
   }
 
   const panBefore = await session.readCameraProbe();
@@ -2184,6 +2241,9 @@ async function runViewportCheck(session, viewport) {
     to: { x: dragToX, y: dragY },
   });
   await sleep(120);
+  if (viewport.width <= 960) {
+    await session.closeFocusPanelIfOpen();
+  }
   const panAfter = await session.readCameraProbe();
   assert.ok(panAfter, `${viewport.name}: missing camera probe after eastward drag.`);
   const offsetDelta =
@@ -2430,6 +2490,8 @@ async function runViewportCheck(session, viewport) {
     eventCues: browserProbe.visualEventCues ?? [],
     mapAgency,
     page,
+    playerLocationGeometry:
+      browserProbe.movement?.playerLocationGeometry ?? null,
     scheduledNpcVisualCues:
       browserProbe.movement?.scheduledNpcVisualCues ?? [],
     visibleDecisionArtifact:
