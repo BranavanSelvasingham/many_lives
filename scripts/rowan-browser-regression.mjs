@@ -82,6 +82,7 @@ const OPENING_CTA_PATTERN =
   /Watch Rowan begin|Rowan starts by asking Mara\./i;
 const GENERIC_WATCH_CTA_COPY_PATTERN =
   /Rowan will keep going when this beat lands/i;
+const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
@@ -3409,10 +3410,13 @@ function buildObjectiveSequenceAuditEntry({
     currentSpaceId: probe.location?.spaceId ?? null,
     expectedTargetLocationId,
     failureReasons,
+    firstAfternoonCompletionAcknowledgedAt:
+      probe.firstAfternoon?.completionAcknowledgedAt ?? null,
     intentFamilies,
     kind,
     milestone,
     mode: probe.autonomy?.mode ?? null,
+    objectiveRouteKey: probe.objective?.routeKey ?? null,
     objectiveText: compactObjectiveSequenceText(probe.objective?.text ?? ""),
     railNow: compactObjectiveSequenceText(probe.rail?.now ?? ""),
     railNext: compactObjectiveSequenceText(probe.rail?.next ?? ""),
@@ -3586,6 +3590,7 @@ function objectiveSequenceGroupIdForEntry(entry) {
     /^(?:Exit to South Quay|Head to Morrow House|Enter Morrow House|Take stock)$/i.test(
       label,
     ) &&
+    !entry.firstAfternoonCompletionAcknowledgedAt &&
     (entry.selectedTargetLocationId === "boarding-house" ||
       entry.expectedTargetLocationId === "boarding-house")
   ) {
@@ -6217,15 +6222,25 @@ function restHourEnergyFromObjective(objective) {
 }
 
 function restHourEnergyFromMoment(moment) {
-  return restHourEnergyFromObjective(moment?.objective);
+  return (
+    restHourEnergyFromObjective(moment?.objective) ??
+    moment?.player?.energy ??
+    moment?.sim?.energy ??
+    null
+  );
 }
 
 function postFirstAfternoonRestAdvancedProbe(probe) {
+  const energyAfterRest =
+    restHourEnergyFromObjective(probe.objective) ??
+    probe.player?.energy ??
+    probe.sim?.energy ??
+    0;
   return (
     Boolean(probe.firstAfternoon?.completionAcknowledgedAt) &&
-    probe.objective?.routeKey === "rest-home" &&
-    probe.autonomy?.actionId === "rest:home" &&
-    (restHourEnergyFromObjective(probe.objective) ?? 0) > 12
+    probe.objective?.source === "dynamic" &&
+    energyAfterRest >= POST_FIRST_AFTERNOON_RECOVERY_ENERGY &&
+    probe.autonomy?.actionId !== "rest:home"
   );
 }
 
@@ -6244,7 +6259,11 @@ function postFirstAfternoonLiveRouteProbe(probe) {
         selected.pressureKind ||
         selected.matchedOutcomeId,
     ) &&
-    !["route-scaffold", "stale-predicate"].includes(selected.provenance)
+    !["route-scaffold", "stale-predicate"].includes(selected.provenance) &&
+    !(
+      selected.actionId === "exit:boarding-house" &&
+      probe.location?.spaceId === "interior:boarding-house"
+    )
   );
 }
 
@@ -6442,12 +6461,32 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   );
 
   assert.ok(
-    (evidence.rest.restHourEnergy ?? 0) > 12,
+    (evidence.rest.restHourEnergy ?? 0) >= POST_FIRST_AFTERNOON_RECOVERY_ENERGY,
     `Post-first-afternoon rest evidence did not show rest advancing Rowan's recovery state: ${evidence.rest.restHourEnergy}.`,
   );
+  assert.notEqual(
+    evidence.rest.objective?.routeKey,
+    "rest-home",
+    "Post-first-afternoon rest evidence must leave rest-home once Rowan has recovered enough energy.",
+  );
+  assert.notEqual(
+    evidence.rest.selected?.actionId,
+    "rest:home",
+    "Post-first-afternoon rest evidence must not select another rest:home after Rowan has recovered enough energy.",
+  );
   assert.ok(
-    evidence.liveRoute.clock?.totalMinutes > evidence.rest.clock?.totalMinutes,
-    "Post-first-afternoon live-route evidence must occur after the rest evidence.",
+    evidence.rest.selected?.legalBacking?.source,
+    "Post-first-afternoon rest follow-through must expose legal backing for the next non-rest action.",
+  );
+  const liveRouteProgressedBeyondRest =
+    (evidence.liveRoute.clock?.totalMinutes ?? 0) >
+      (evidence.rest.clock?.totalMinutes ?? 0) ||
+    evidence.liveRoute.location?.spaceId !== evidence.rest.location?.spaceId ||
+    evidence.liveRoute.location?.id !== evidence.rest.location?.id ||
+    evidence.liveRoute.selected?.actionId !== evidence.rest.selected?.actionId;
+  assert.ok(
+    liveRouteProgressedBeyondRest,
+    "Post-first-afternoon live-route evidence must progress beyond the first non-rest post-recovery selection.",
   );
   assert.equal(
     evidence.liveRoute.objective?.source,
@@ -6780,6 +6819,7 @@ async function captureInhabitMoment({
     location: probe.location,
     movement: probe.movement ?? null,
     objective: probe.objective ?? null,
+    player: probe.player ?? null,
     screenshot,
     userQuestion,
     visibleDecisionArtifact:
@@ -8427,6 +8467,21 @@ async function main() {
     byLabel["post-first-afternoon-rest"]?.objective?.routeKey,
     "first-afternoon",
     "Expected the first legal post-completion follow-up to stay off the completed first-afternoon route.",
+  );
+  assert.ok(
+    (byLabel["post-first-afternoon-rest"]?.sim?.energy ?? 0) >=
+      POST_FIRST_AFTERNOON_RECOVERY_ENERGY,
+    "Expected the post-first-afternoon rest beat to recover enough energy for the next grounded commitment.",
+  );
+  assert.notEqual(
+    byLabel["post-first-afternoon-rest"]?.objective?.routeKey,
+    "rest-home",
+    "Expected the post-first-afternoon rest beat to leave rest-home once Rowan recovered enough energy.",
+  );
+  assert.notEqual(
+    byLabel["post-first-afternoon-rest"]?.autonomy?.actionId,
+    "rest:home",
+    "Expected the post-first-afternoon rest beat not to select rest:home again once Rowan recovered enough energy.",
   );
   assert.notEqual(
     byLabel["post-first-afternoon-live-route"]?.objective?.routeKey,

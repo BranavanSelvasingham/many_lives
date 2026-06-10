@@ -7930,7 +7930,7 @@ function restAtHome(world: StreetGameState): void {
   const pumpSolved = problemById(world, "problem-pump")?.status === "solved";
   advanceWorld(world, 60);
   world.player.energy = clamp(
-    world.player.energy + (pumpSolved ? 24 : 16),
+    world.player.energy + (pumpSolved ? 28 : 24),
     12,
     100,
   );
