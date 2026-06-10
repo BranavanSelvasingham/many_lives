@@ -119,11 +119,36 @@ function buildPlayerThought(game: StreetGameState) {
     return buildActiveCommitmentThought(game, activeJob);
   }
 
+  const liveAutonomyThought = buildLiveAutonomyThought(game);
+  if (liveAutonomyThought) {
+    return sanitizeThought(liveAutonomyThought);
+  }
+
+  const immediateObjectiveThought = buildImmediateObjectiveThought(
+    game,
+    nextObjectiveText,
+  );
+  if (immediateObjectiveThought) {
+    return sanitizeThought(immediateObjectiveThought);
+  }
+
   if (
     game.player.objective?.routeKey === "first-afternoon" &&
     game.firstAfternoon?.completedAt
   ) {
     return "Tonight's bed holds. I earned real money, and tomorrow has a lead.";
+  }
+
+  if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
+    return "I need a wrench first.";
+  }
+
+  if (pumpProblem?.discovered && pumpProblem.status === "active" && hasWrench) {
+    return "I should go fix that pump.";
+  }
+
+  if (cartProblem?.discovered && cartProblem.status === "active") {
+    return "I need to move that cart.";
   }
 
   if (
@@ -146,31 +171,6 @@ function buildPlayerThought(game: StreetGameState) {
     game.firstAfternoon?.teaShiftStage === "rush"
   ) {
     return "The room is filling. Cups first, tables second, keep moving.";
-  }
-
-  const liveAutonomyThought = buildLiveAutonomyThought(game);
-  if (liveAutonomyThought) {
-    return sanitizeThought(liveAutonomyThought);
-  }
-
-  const immediateObjectiveThought = buildImmediateObjectiveThought(
-    game,
-    nextObjectiveText,
-  );
-  if (immediateObjectiveThought) {
-    return sanitizeThought(immediateObjectiveThought);
-  }
-
-  if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
-    return "I need a wrench first.";
-  }
-
-  if (pumpProblem?.discovered && pumpProblem.status === "active" && hasWrench) {
-    return "I should go fix that pump.";
-  }
-
-  if (cartProblem?.discovered && cartProblem.status === "active") {
-    return "I need to move that cart.";
   }
 
   if (game.player.energy < 38) {
@@ -477,6 +477,18 @@ function buildLiveAutonomyThought(game: StreetGameState) {
 
   if (autonomy.actionId?.startsWith("enter:") && targetLocation) {
     return `I should step inside ${targetLocation.name}.`;
+  }
+
+  if (autonomy.actionId?.includes("problem-pump")) {
+    return autonomy.actionId.startsWith("solve:")
+      ? "I should go fix that pump."
+      : "I should check that pump.";
+  }
+
+  if (autonomy.actionId?.includes("problem-cart")) {
+    return autonomy.actionId.startsWith("solve:")
+      ? "I need to move that cart."
+      : "I should check that cart.";
   }
 
   if (targetLocation) {
