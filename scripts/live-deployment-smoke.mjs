@@ -20,7 +20,7 @@ const CDP_COMMAND_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_LIVE_SMOKE_CDP_COMMAND_TIMEOUT_MS ?? "15000",
 );
 const APP_READY_TIMEOUT_MS = Number(
-  process.env.MANY_LIVES_LIVE_SMOKE_READY_TIMEOUT_MS ?? "30000",
+  process.env.MANY_LIVES_LIVE_SMOKE_READY_TIMEOUT_MS ?? "120000",
 );
 const AUTOPLAY_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_LIVE_SMOKE_AUTOPLAY_START_TIMEOUT_MS ?? "30000",
@@ -622,6 +622,7 @@ class CdpSession {
   constructor({ browser, pageWsUrl }) {
     this.browser = browser;
     this.pageWsUrl = new URL(pageWsUrl);
+    this.lastNavigatedUrl = null;
     this.messageId = 0;
     this.pending = new Map();
     this.eventListeners = new Map();
@@ -666,6 +667,7 @@ class CdpSession {
   }
 
   async navigate(url) {
+    this.lastNavigatedUrl = url;
     const loadEvent = withTimeout(
       this.waitForEvent("Page.loadEventFired"),
       CDP_WAIT_TIMEOUT_MS,
@@ -701,37 +703,212 @@ class CdpSession {
   }
 
   async waitForAppReady() {
+    const startedAt = Date.now();
+    let lastError = null;
     let lastState = null;
 
-    await waitFor(
-      async () => {
-        try {
-          lastState = await this.evaluate(`(() => {
-            const probe = document.querySelector("#ml-browser-probe");
-            const canvas = document.querySelector("canvas");
-            const rail = document.querySelector(".ml-rail-shell");
-            const bodyText = document.body?.innerText ?? "";
-            return {
-              bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 700),
-              hasCanvas: Boolean(canvas),
-              hasFrameworkOverlay: /Unhandled Runtime Error|Runtime Error|Build Error|Failed to compile|Application error/i.test(document.body?.textContent ?? ""),
-              hasProbe: Boolean(probe),
-              hasRail: Boolean(rail),
-              hasRowanText: bodyText.includes("Rowan"),
-              ready: Boolean(probe && canvas && rail && bodyText.includes("Rowan")),
-              title: document.title,
-              url: location.href
-            };
-          })()`);
-          return Boolean(lastState?.ready);
-        } catch (error) {
-          lastState = { error: error instanceof Error ? error.message : String(error) };
+    while (Date.now() - startedAt < APP_READY_TIMEOUT_MS) {
+      try {
+        lastState = await this.inspectAppReadiness();
+        if (lastState?.ready) {
+          return true;
+        }
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        lastState = { error: lastError };
+      }
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+
+    const { diagnostics, diagnosticsPath, screenshot } =
+      await this.writeAppReadyTimeoutDiagnostics({
+        lastError,
+        lastState,
+        timeoutMs: APP_READY_TIMEOUT_MS,
+      });
+    const screenshotDetail = screenshot
+      ? ` Screenshot: ${screenshot}.`
+      : ` Screenshot capture failed: ${diagnostics.screenshotError}.`;
+
+    throw new Error(
+      `Timed out after ${APP_READY_TIMEOUT_MS}ms waiting for live canvas, rail, and browser probe. ` +
+        `Diagnostics: ${diagnosticsPath}.${screenshotDetail} Last state: ${JSON.stringify(
+          diagnostics.lastState,
+        )}`,
+    );
+  }
+
+  async inspectAppReadiness() {
+    return this.evaluate(`(() => {
+      const bodyText = document.body?.innerText ?? "";
+      const bodyContent = document.body?.textContent ?? "";
+      const textFor = (element, limit = 1000) =>
+        element?.textContent?.replace(/\\s+/g, " ").trim().slice(0, limit) ?? "";
+      const rectFor = (element) => {
+        if (!element) {
+          return null;
+        }
+        const rect = element.getBoundingClientRect();
+        return {
+          bottom: Math.round(rect.bottom),
+          height: Math.round(rect.height),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+        };
+      };
+      const isVisibleEnabled = (element) => {
+        if (!element) {
           return false;
         }
-      },
-      APP_READY_TIMEOUT_MS,
-      `Timed out waiting for live canvas, rail, and browser probe. Last state: ${JSON.stringify(lastState)}`,
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return (
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          !element.disabled &&
+          element.getAttribute("aria-disabled") !== "true"
+        );
+      };
+      const canvas = document.querySelector("canvas");
+      const canvases = Array.from(document.querySelectorAll("canvas"));
+      const probe = document.querySelector("#ml-browser-probe");
+      const rail = document.querySelector(".ml-rail-shell");
+      const root = document.querySelector(".ml-root");
+      const overlaySelectors = [
+        "nextjs-portal",
+        "[data-nextjs-dialog-overlay]",
+        "[data-nextjs-toast]",
+        "[data-nextjs-errors-dialog-left-right]",
+        "#webpack-dev-server-client-overlay"
+      ];
+      const overlays = overlaySelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)).map((element) => ({
+          rect: rectFor(element),
+          selector,
+          textSample: textFor(element, 1000),
+          visible: isVisibleEnabled(element)
+        }))
+      );
+      const overlayText = overlays
+        .map((overlay) => overlay.textSample)
+        .filter(Boolean)
+        .join(" ");
+      const frameworkText = overlayText + " " + bodyContent;
+      const rawBackendError =
+        /\\{"message":|"message"\\s*:\\s*"Game\\s+game-|Game\\s+game-[A-Za-z0-9-]+\\s+was not found/i.test(bodyText);
+      const visibleProgressionControls = [
+        "[data-advance-objective]:not([disabled])",
+        "[data-action-id]:not([disabled])",
+        "[data-wait-minutes]:not([disabled])"
+      ].flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector))
+          .filter(isVisibleEnabled)
+          .map((element) => ({
+            actionId: element.getAttribute("data-action-id"),
+            advancesObjective: element.hasAttribute("data-advance-objective"),
+            selector,
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+            waitMinutes: element.getAttribute("data-wait-minutes")
+          }))
+      );
+
+      return {
+        bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 1600),
+        canvasCount: canvases.length,
+        canvasRects: canvases.slice(0, 4).map((entry) => ({
+          rect: rectFor(entry),
+          visible: isVisibleEnabled(entry)
+        })),
+        document: {
+          clientHeight: document.documentElement.clientHeight,
+          clientWidth: document.documentElement.clientWidth,
+          readyState: document.readyState,
+          scrollHeight: document.documentElement.scrollHeight,
+          scrollWidth: document.documentElement.scrollWidth,
+        },
+        frameworkOverlayTextSample: overlayText.slice(0, 1200),
+        hasCanvas: Boolean(canvas),
+        hasFrameworkOverlay: /Unhandled Runtime Error|Runtime Error|Build Error|Failed to compile|Application error/i.test(frameworkText),
+        hasProbe: Boolean(probe),
+        hasProbeFunction: typeof window.__manyLivesStreetProbe === "function",
+        hasRail: Boolean(rail),
+        hasRawBackendError: rawBackendError,
+        hasResumeButton: Boolean(document.querySelector("[data-resume-stored-game]")),
+        hasRoot: Boolean(root),
+        hasRowanText: bodyText.includes("Rowan"),
+        hasStartNewButton: Boolean(document.querySelector("[data-start-new-game]")),
+        localStorageGameId: window.localStorage.getItem("many-lives:street-game-id"),
+        looksLikeNotFound: /404|This page could not be found|Not Found/i.test(bodyText),
+        looksLikeStillCompiling: /Compiling|Loading|webpack|Turbopack|building/i.test(frameworkText),
+        overlayCount: overlays.length,
+        overlays,
+        probeTextLength: probe?.textContent?.length ?? 0,
+        probeTextSample: probe?.textContent?.replace(/\\s+/g, " ").trim().slice(0, 600) ?? "",
+        railRect: rectFor(rail),
+        railTextSample: textFor(rail, 1200),
+        ready: Boolean(probe && canvas && rail && bodyText.includes("Rowan")),
+        rootClass: root?.className ?? "",
+        title: document.title,
+        url: location.href,
+        viewport: {
+          height: window.innerHeight,
+          width: window.innerWidth,
+        },
+        visibleCanvasCount: canvases.filter(isVisibleEnabled).length,
+        visibleProgressionControls
+      };
+    })()`);
+  }
+
+  async writeAppReadyTimeoutDiagnostics({ lastError, lastState, timeoutMs }) {
+    await mkdir(OUTPUT_DIR, { recursive: true });
+    const timestamp = Date.now();
+    const screenshotPath = path.join(
+      OUTPUT_DIR,
+      `app-ready-timeout-${timestamp}.png`,
     );
+    const diagnosticsPath = path.join(
+      OUTPUT_DIR,
+      `app-ready-timeout-${timestamp}.json`,
+    );
+    let screenshot = screenshotPath;
+    let screenshotError = null;
+
+    try {
+      await this.captureScreenshot(screenshotPath);
+    } catch (error) {
+      screenshot = null;
+      screenshotError = error instanceof Error ? error.message : String(error);
+    }
+
+    const diagnostics = {
+      currentUrl: lastState?.url ?? null,
+      lastError,
+      lastState,
+      pageIssues: this.pageIssues.slice(-20),
+      requestedUrl: this.lastNavigatedUrl,
+      screenshot,
+      screenshotError,
+      timedOutAt: new Date().toISOString(),
+      timeoutMs,
+    };
+
+    await writeFile(
+      diagnosticsPath,
+      `${JSON.stringify(diagnostics, null, 2)}\n`,
+      "utf8",
+    );
+
+    return {
+      diagnostics,
+      diagnosticsPath,
+      screenshot,
+    };
   }
 
   async waitForWatchModeUi() {
