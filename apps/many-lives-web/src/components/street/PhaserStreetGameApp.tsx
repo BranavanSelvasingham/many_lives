@@ -652,6 +652,7 @@ type ScheduledNpcVisualCue = {
   fromLocationId: string;
   key: string;
   markerPosition: Point;
+  markerSource: "phaser-marker" | "schedule-route-cue";
   nextScheduleLocationId: string | null;
   nextScheduleStartsInMinutes: number | null;
   npcId: string;
@@ -839,8 +840,9 @@ const AMBIENT_CITY_ROUTES: AmbientCityRoute[] = [
   },
 ];
 
-const SCHEDULED_NPC_VISUAL_CUE_LIMIT = 2;
+const SCHEDULED_NPC_VISUAL_CUE_LIMIT = 3;
 const SCHEDULED_NPC_DESTINATION_CUE_WINDOW_MINUTES = 5 * 60;
+const SCHEDULED_NPC_ROUTE_CUE_HORIZON_MINUTES = 12 * 60;
 
 type FocusPanel = "journal" | "mind" | "people";
 
@@ -5602,7 +5604,7 @@ function buildScheduledNpcMarkerSamples(
   }
 
   const currentHour = game.clock.hour + game.clock.minute / 60;
-  return game.npcs
+  const markerSamples = game.npcs
     .map((npc) => {
       const marker = objects.npcMarkers.get(npc.id);
       const location = runtimeState.indices.locationsById.get(
@@ -5674,6 +5676,35 @@ function buildScheduledNpcMarkerSamples(
     })
     .filter(isPresent)
     .sort((left, right) => left.key.localeCompare(right.key));
+  const physicalMarkerNpcIds = new Set(
+    markerSamples.map((sample) => sample.npcId),
+  );
+  const routeCueSamples = buildScheduledNpcVisualCues(runtimeState)
+    .filter(
+      (cue) =>
+        cue.markerSource === "schedule-route-cue" &&
+        !physicalMarkerNpcIds.has(cue.npcId),
+    )
+    .map((cue) => ({
+      activeSpaceId: cue.activeSpaceId,
+      currentLocationId: cue.currentLocationId,
+      currentScheduleLocationId: cue.currentScheduleLocationId,
+      distanceToRoute: cue.distanceToRoute,
+      key: `${cue.npcId}:marker:${cue.currentLocationId}->${cue.toLocationId}`,
+      markerSource: cue.markerSource,
+      nextScheduleLocationId: cue.nextScheduleLocationId,
+      npcId: cue.npcId,
+      onRoute: cue.onRoute,
+      position: roundBrowserPoint(cue.markerPosition),
+      routePathLength: cue.routePath.length,
+      routeProgress: cue.routeProgress,
+      toLocationId: cue.toLocationId,
+      visible: cue.visible,
+    }));
+
+  return [...markerSamples, ...routeCueSamples].sort((left, right) =>
+    left.key.localeCompare(right.key),
+  );
 }
 
 function buildScheduledNpcVisualCueSamples(
@@ -5689,6 +5720,7 @@ function buildScheduledNpcVisualCueSamples(
     distanceToRoute: cue.distanceToRoute,
     fromLocationId: cue.fromLocationId,
     key: cue.key,
+    markerSource: cue.markerSource,
     nextScheduleLocationId: cue.nextScheduleLocationId,
     nextScheduleStartsInMinutes: cue.nextScheduleStartsInMinutes,
     npcId: cue.npcId,
@@ -5757,20 +5789,11 @@ function buildScheduledNpcVisualCueForNpc({
   if (!currentLocation) {
     return null;
   }
-
-  const markerVisible = animatedNpc ? true : Boolean(marker?.container.visible);
-  if (!markerVisible) {
-    return null;
-  }
-
-  const markerPosition = animatedNpc
+  const phaserMarkerPosition = animatedNpc
     ? { x: animatedNpc.x, y: animatedNpc.y }
-    : marker
+    : marker?.container.visible
       ? { x: marker.container.x, y: marker.container.y }
       : null;
-  if (!markerPosition) {
-    return null;
-  }
 
   const currentSchedule = currentScheduledStop(npc, currentHour);
   const nextSchedule = nextScheduledStop(npc, currentHour);
@@ -5784,6 +5807,7 @@ function buildScheduledNpcVisualCueForNpc({
     ? minutesUntilScheduleStop(nextSchedule, currentHour)
     : null;
   const cueTarget = resolveScheduledNpcCueTarget({
+    allowDistantNextSchedule: !phaserMarkerPosition,
     currentLocation,
     currentScheduleLocation: currentScheduleLocation ?? null,
     nextScheduleLocation: nextScheduleLocation ?? null,
@@ -5809,6 +5833,24 @@ function buildScheduledNpcVisualCueForNpc({
   const routePath = patrolPath.map((point) =>
     projectRuntimePoint(runtimeState.indices, point),
   );
+  const markerPosition =
+    phaserMarkerPosition ??
+    scheduledNpcRouteCuePosition({
+      cueKind: cueTarget.kind,
+      cuePhaseKey: [
+        runtimeState.snapshot.game?.currentTime ?? "",
+        runtimeState.snapshot.game?.player.currentLocationId ?? "",
+        runtimeState.indices.activeSpaceId ?? "",
+        runtimeState.snapshot.game?.rowanAutonomy.key ?? "",
+      ].join("|"),
+      currentHour,
+      nextScheduleStartsInMinutes,
+      npcId: npc.id,
+      routePath,
+    });
+  if (!markerPosition) {
+    return null;
+  }
   const routePosition =
     routePath.length > 1
       ? nearestPointOnLoopPathWithProgress(markerPosition, routePath)
@@ -5845,6 +5887,7 @@ function buildScheduledNpcVisualCueForNpc({
     fromLocationId: currentLocation.id,
     key: `${npc.id}:visual-cue:${cueTarget.kind}:${currentLocation.id}->${cueTarget.location.id}`,
     markerPosition,
+    markerSource: phaserMarkerPosition ? "phaser-marker" : "schedule-route-cue",
     nextScheduleLocationId: nextSchedule?.locationId ?? null,
     nextScheduleStartsInMinutes,
     npcId: npc.id,
@@ -5856,16 +5899,64 @@ function buildScheduledNpcVisualCueForNpc({
       ? roundBrowserNumber(routePosition.progress)
       : null,
     toLocationId: cueTarget.location.id,
-    visible: markerVisible,
+    visible: true,
   };
 }
 
+function scheduledNpcRouteCuePosition({
+  cueKind,
+  cuePhaseKey,
+  currentHour,
+  nextScheduleStartsInMinutes,
+  npcId,
+  routePath,
+}: {
+  cueKind: ScheduledNpcVisualCueKind;
+  cuePhaseKey: string;
+  currentHour: number;
+  nextScheduleStartsInMinutes: number | null;
+  npcId: string;
+  routePath: Point[];
+}) {
+  const cleanPath = dedupePointSequence(routePath);
+  if (cleanPath.length <= 1) {
+    return null;
+  }
+
+  const hashPhase = (hashString(npcId) % 997) / 997;
+  const destinationUrgency =
+    nextScheduleStartsInMinutes === null
+      ? 0
+      : 1 -
+        clamp(
+          nextScheduleStartsInMinutes /
+            SCHEDULED_NPC_ROUTE_CUE_HORIZON_MINUTES,
+          0,
+          1,
+        );
+  const baseProgress =
+    cueKind === "next-scheduled-stop"
+      ? 0.12 + destinationUrgency * 0.54
+      : cueKind === "current-schedule-stop"
+        ? 0.58
+        : 0.34;
+  const clockDrift =
+    Math.sin(currentHour * 0.9 + hashPhase * Math.PI * 2) * 0.08;
+  const stateDrift =
+    (((hashString(`${npcId}:${cuePhaseKey}`) % 1000) / 1000) - 0.5) * 0.18;
+  const progress = clamp(baseProgress + clockDrift + stateDrift, 0.08, 0.92);
+
+  return samplePolylinePoint(cleanPath, progress);
+}
+
 function resolveScheduledNpcCueTarget({
+  allowDistantNextSchedule = false,
   currentLocation,
   currentScheduleLocation,
   nextScheduleLocation,
   nextScheduleStartsInMinutes,
 }: {
+  allowDistantNextSchedule?: boolean;
   currentLocation: LocationState;
   currentScheduleLocation: LocationState | null;
   nextScheduleLocation: LocationState | null;
@@ -5885,7 +5976,8 @@ function resolveScheduledNpcCueTarget({
     nextScheduleLocation &&
     nextScheduleLocation.id !== currentLocation.id &&
     nextScheduleStartsInMinutes !== null &&
-    nextScheduleStartsInMinutes <= SCHEDULED_NPC_DESTINATION_CUE_WINDOW_MINUTES
+    (allowDistantNextSchedule ||
+      nextScheduleStartsInMinutes <= SCHEDULED_NPC_DESTINATION_CUE_WINDOW_MINUTES)
   ) {
     return {
       kind: "next-scheduled-stop",
@@ -5935,11 +6027,20 @@ function compareScheduledNpcVisualCues(
     return leftPriority - rightPriority;
   }
 
-  if (left.npcId === "npc-nia" && right.npcId !== "npc-nia") {
-    return -1;
-  }
-  if (right.npcId === "npc-nia" && left.npcId !== "npc-nia") {
-    return 1;
+  const npcPriority = (cue: ScheduledNpcVisualCue) => {
+    switch (cue.npcId) {
+      case "npc-mara":
+        return 0;
+      case "npc-nia":
+        return 1;
+      default:
+        return 2;
+    }
+  };
+  const leftNpcPriority = npcPriority(left);
+  const rightNpcPriority = npcPriority(right);
+  if (leftNpcPriority !== rightNpcPriority) {
+    return leftNpcPriority - rightNpcPriority;
   }
 
   return left.key.localeCompare(right.key);

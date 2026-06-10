@@ -68,7 +68,7 @@ export type StreetBrowserMovementDiagnostics = {
     currentScheduleLocationId: string | null;
     distanceToRoute: number | null;
     key: string;
-    markerSource: "phaser-marker";
+    markerSource: "phaser-marker" | "schedule-route-cue";
     nextScheduleLocationId: string | null;
     npcId: string;
     onRoute: boolean;
@@ -94,6 +94,7 @@ export type StreetBrowserMovementDiagnostics = {
     distanceToRoute: number | null;
     fromLocationId: string;
     key: string;
+    markerSource: "phaser-marker" | "schedule-route-cue";
     nextScheduleLocationId: string | null;
     nextScheduleStartsInMinutes: number | null;
     npcId: string;
