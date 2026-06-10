@@ -51,6 +51,7 @@ interface ObjectiveOutcomeEvaluation {
 
 const OBJECTIVE_TRAIL_LIMIT = 10;
 const JOB_WINDOW_PRESSURE_MINUTES = 45;
+const RECOVERY_ENERGY_THRESHOLD = 35;
 
 function problemClosedByWorld(
   problem: ReturnType<typeof problemById>,
@@ -2382,8 +2383,8 @@ function buildRestRoute(
           "The point is to stop fighting the block long enough to get your legs back.",
         progress: restLanded ? "Recovered" : `Energy ${world.player.energy}`,
         done: restLanded,
-        actionId: "rest:home",
-        targetLocationId: home?.id,
+        actionId: restLanded ? undefined : "rest:home",
+        targetLocationId: restLanded ? undefined : home?.id,
       }),
     ],
   };
@@ -3204,7 +3205,9 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
       (activeProblemNeedsTool ? 42 : 0) +
       (topics.has("tool") || topics.has("wrench") ? 10 : 0),
     rest:
-      (needsRecoveryBuffer && world.player.energy < 35 ? 50 : 0) +
+      (needsRecoveryBuffer && world.player.energy < RECOVERY_ENERGY_THRESHOLD
+        ? 50
+        : 0) +
       (needsRecoveryBuffer && world.player.energy < 50 ? 18 : 0) +
       (!recentRest &&
       world.player.currentLocationId !== world.player.homeLocationId &&
@@ -3242,7 +3245,9 @@ function hasRecentRest(world: StreetGameState) {
 }
 
 function hasRecoveredEnoughToMove(world: StreetGameState) {
-  return hasRecentRest(world) && world.player.energy >= 35;
+  return (
+    hasRecentRest(world) && world.player.energy >= RECOVERY_ENERGY_THRESHOLD
+  );
 }
 
 function minutesSinceTimestamp(world: StreetGameState, timestamp?: string) {

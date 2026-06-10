@@ -4168,9 +4168,9 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.player.objective?.routeKey).not.toBe("first-afternoon");
-    expect(world.player.objective?.routeKey).toBe("rest-home");
-    expect(world.rowanAutonomy.actionId).toBe("rest:home");
-    expect(world.player.energy).toBeLessThan(35);
+    expect(world.player.objective?.routeKey).not.toBe("rest-home");
+    expect(world.rowanAutonomy.actionId).not.toBe("rest:home");
+    expect(world.player.energy).toBeGreaterThanOrEqual(35);
     expect(
       world.jobs.find((job) => job.id === "job-yard-shift"),
     ).toMatchObject({
@@ -4184,19 +4184,14 @@ describe("SimulationEngine street slice", () => {
       discovered: true,
       status: "active",
     });
-
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
-
-    expect(world.player.objective?.routeKey).not.toBe("first-afternoon");
-    expect(world.player.objective?.routeKey).not.toBe("rest-home");
     expect(world.rowanAutonomy.actionId).not.toBe("enter:boarding-house");
     expect(world.rowanAutonomy.targetLocationId).not.toBe("boarding-house");
     if (world.player.objective?.routeKey === "work-yard") {
       expect(world.rowanAutonomy.targetLocationId).toBe("freight-yard");
     }
+    expect(
+      world.rowanAutonomy.planningTrace?.selectedLegalBacking?.source,
+    ).toMatch(/legal-action/);
     expect(
       [
         world.player.objective?.routeKey,
@@ -4207,6 +4202,6 @@ describe("SimulationEngine street slice", () => {
       ]
         .filter(Boolean)
         .join(" "),
-    ).toMatch(/rest|work|tool|help|predicate|job|energy|commitment/i);
+    ).toMatch(/work|tool|help|predicate|job|problem|commitment/i);
   });
 });

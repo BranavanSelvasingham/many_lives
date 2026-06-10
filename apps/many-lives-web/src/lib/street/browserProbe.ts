@@ -456,6 +456,11 @@ export function buildStreetBrowserProbeJson({
       x: game.player.x,
       y: game.player.y,
     },
+    player: {
+      energy: game.player.energy,
+      lastRestAt: game.player.lastRestAt ?? null,
+      money: game.player.money,
+    },
     objective: objectiveProbePayload(game),
     cityEvents: (game.cityEvents ?? [])
       .filter((event) => event.status === "active")
