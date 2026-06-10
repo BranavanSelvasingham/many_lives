@@ -236,7 +236,7 @@ const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
 const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 1800;
-const AUTOPLAY_OPENING_AUTOSTART_DELAY_MS = 3400;
+const AUTOPLAY_OPENING_AUTOSTART_DELAY_MS = 900;
 const FIRST_AFTERNOON_COMPLETION_DWELL_MS = 3600;
 const AUTONOMY_BEAT_DELAY_MS = {
   acting: 3400,
@@ -563,7 +563,7 @@ function isWatchModeUiEnabled(snapshot: StreetAppSnapshot) {
 }
 
 function suppressWatchModeProgressionControls(snapshot: StreetAppSnapshot) {
-  return isWatchModeUiEnabled(snapshot) && !snapshot.rowanAutoplayFrozen;
+  return isWatchModeUiEnabled(snapshot);
 }
 
 type PhaserStreetExperienceProps = {
@@ -5105,6 +5105,13 @@ function buildMapAgencyDetail({
     return compactMapAgencyCopy(`Goal: ${pendingMove.objectiveText}`, 58);
   }
 
+  if (
+    isFirstAfternoonOpening(game) &&
+    autonomy.actionId === "enter:boarding-house"
+  ) {
+    return "Rowan is stepping inside Morrow House to ask Mara.";
+  }
+
   if (autonomy.intent?.reason) {
     return compactMapAgencyCopy(autonomy.intent.reason, 58);
   }
@@ -5136,7 +5143,7 @@ function buildWatchModePrimaryContinueCopy({
   targetNpc: NpcState | null;
 }) {
   if (firstAfternoonOpening) {
-    return "Rowan starts by asking Mara.";
+    return "Rowan is stepping inside Morrow House to ask Mara.";
   }
 
   const label = autonomy.label.trim();
@@ -5201,14 +5208,20 @@ function buildWatchModePrimaryContinueCopy({
 function buildWatchModePassiveStatusCopy({
   activeConversationNpc,
   autonomy,
+  firstAfternoonOpening,
   firstAfternoonCompletionCanAdvance,
   primaryContinueCopy,
 }: {
   activeConversationNpc: NpcState | null;
   autonomy: StreetGameState["rowanAutonomy"];
+  firstAfternoonOpening: boolean;
   firstAfternoonCompletionCanAdvance: boolean;
   primaryContinueCopy: string;
 }) {
+  if (firstAfternoonOpening) {
+    return "Rowan is stepping inside Morrow House to ask Mara.";
+  }
+
   if (activeConversationNpc) {
     return `Rowan is carrying the conversation with ${activeConversationNpc.name} automatically.`;
   }
@@ -5244,7 +5257,7 @@ function buildManualPrimaryContinueCopy({
   targetNpc: NpcState | null;
 }) {
   if (firstAfternoonOpening) {
-    return "Start with the person who runs Morrow House.";
+    return "Enter Morrow House and ask Mara.";
   }
 
   const label = autonomy.label.trim();
@@ -6517,6 +6530,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             ? (railConversationNpc ?? selectedNpc)
             : null,
           autonomy: rowanAutonomy,
+          firstAfternoonOpening,
           firstAfternoonCompletionCanAdvance,
           primaryContinueCopy,
         })
@@ -6750,7 +6764,12 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     .join(" • ");
   const railStatusLabel = rowanRail.statusLabel;
   const railPeekLabel = rowanRail.peekLabel;
-  const railThought = buildNarrativePreview(rowanRail.thought, 120);
+  const railThought = buildNarrativePreview(
+    firstAfternoonOpening && watchModeProgressionControlsSuppressed
+      ? primaryContinueCopy
+      : rowanRail.thought,
+    120,
+  );
   const compactPrimaryActionHtml = showPrimaryContinue
     ? `
       <button
@@ -6785,6 +6804,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     (railViewport !== "desktop" || rowanRail.useConversationTranscript)
       ? buildCompactVisibleDecisionArtifactHtml(rowanDecisionArtifact)
       : "";
+  const compactOpeningWatchStatus =
+    firstAfternoonOpening && watchModeProgressionControlsSuppressed;
   const browserProbeJson = buildStreetBrowserProbeJson({
     activeConversation: railActiveConversation,
     conversationNpcName: railConversationNpc?.name,
@@ -6808,6 +6829,10 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     ? railViewport === "phone"
       ? 218
       : 158
+    : compactOpeningWatchStatus
+      ? railViewport === "phone"
+        ? 176
+        : 204
     : railViewport === "phone"
       ? 176
       : 112;

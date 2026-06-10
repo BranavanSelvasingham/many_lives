@@ -1160,7 +1160,7 @@ async function assertWatchModeFeelGuard() {
     acting: [2_600, 3_400],
     conversation: [2_800, 3_800],
     moving: [2_600, 3_400],
-    opening: [2_600, 3_400],
+    opening: [600, 1_400],
     waiting: [2_600, 3_600],
   };
   for (const [key, [min, max]] of Object.entries(readableDelayRanges)) {
@@ -1471,6 +1471,49 @@ function assertOpeningPlayerLocationGeometry(browserProbe, viewportName) {
       geometry.distanceToAnchor <= OPENING_PLAYER_LOCATION_MAX_DISTANCE,
     `${viewportName}: Rowan marker is too far from the Morrow House entrance: ${JSON.stringify(geometry)}.`,
   );
+}
+
+function assertOpeningActionCarryForward(
+  browserProbe,
+  label,
+  expectedStatuses = ["queued", "in_progress", "completed"],
+) {
+  const carryForward = browserProbe?.openingActionCarryForward;
+  assert.ok(
+    carryForward,
+    `${label}: missing opening action carry-forward evidence.`,
+  );
+  assert.equal(
+    carryForward.selectedActionId,
+    "enter:boarding-house",
+    `${label}: opening carry-forward should select Enter Morrow House: ${JSON.stringify(carryForward)}.`,
+  );
+  assert.equal(
+    carryForward.targetLocationId,
+    "boarding-house",
+    `${label}: opening carry-forward should target Morrow House: ${JSON.stringify(carryForward)}.`,
+  );
+  assert.ok(
+    expectedStatuses.includes(carryForward.status),
+    `${label}: opening carry-forward has the wrong status: ${JSON.stringify(carryForward)}.`,
+  );
+  assert.equal(
+    carryForward.watchMode?.enabled,
+    true,
+    `${label}: opening carry-forward should be watch-mode evidence: ${JSON.stringify(carryForward)}.`,
+  );
+  assert.equal(
+    carryForward.requiredVisibleInput,
+    false,
+    `${label}: watch-mode opening carry-forward should not require visible input: ${JSON.stringify(carryForward)}.`,
+  );
+  if (carryForward.status !== "completed") {
+    assert.equal(
+      carryForward.geometry?.nearActionLocation,
+      true,
+      `${label}: queued opening action should keep Rowan near the Morrow House door: ${JSON.stringify(carryForward)}.`,
+    );
+  }
 }
 
 function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = null) {
@@ -1872,19 +1915,42 @@ async function runFreshAutoplayStartCheck(session) {
   await session.waitForWatchModeUi(viewport);
 
   const openingProbe = await session.readBrowserProbe();
+  assertOpeningActionCarryForward(openingProbe, "fresh autoplay opening", [
+    "queued",
+    "in_progress",
+    "completed",
+  ]);
   const advancedProbe = await waitForFreshAutoplayAdvance(
     session,
     openingProbe,
     "fresh autoplay",
   );
-  const page = await session.inspectPage();
+  assertOpeningActionCarryForward(advancedProbe, "fresh autoplay advanced", [
+    "completed",
+  ]);
+  const continued = await waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      const page = await session.inspectPage();
+      const continuedText =
+        hasWatchModeProgressText(page.bodyText) ||
+        Boolean(probe.activeConversation?.npcId);
+      const stillOpeningCta = page.bodyText.includes("Watch Rowan begin");
+
+      return continuedText && !stillOpeningCta ? { page, probe } : false;
+    },
+    AUTOPLAY_START_TIMEOUT_MS,
+    "fresh autoplay did not present a continued watch-mode state after starting.",
+  );
+  const page = continued.page;
+  const continuedProbe = continued.probe;
   assert.ok(
     !page.bodyText.includes("Watch Rowan begin"),
     "fresh autoplay remained stuck on Watch Rowan begin after the start delay.",
   );
   assert.ok(
     hasWatchModeProgressText(page.bodyText) ||
-      Boolean(advancedProbe.activeConversation?.npcId),
+      Boolean(continuedProbe.activeConversation?.npcId),
     "fresh autoplay did not present a continued watch-mode state after starting.",
   );
   assert.ok(
@@ -1899,7 +1965,7 @@ async function runFreshAutoplayStartCheck(session) {
     )}`,
   );
   assertNoWatchModeReplyAffordances(page, "fresh autoplay");
-  if (advancedProbe.activeConversation?.npcId) {
+  if (continuedProbe.activeConversation?.npcId) {
     assert.match(
       page.bodyText,
       /Rowan (?:replies automatically|is replying automatically|will answer automatically|is carrying the conversation)/i,
@@ -1907,20 +1973,20 @@ async function runFreshAutoplayStartCheck(session) {
     );
   }
   assertVisibleDecisionArtifactPayload(
-    advancedProbe.autonomy?.visibleDecisionArtifact,
+    continuedProbe.autonomy?.visibleDecisionArtifact,
     "fresh autoplay",
-    advancedProbe.autonomy?.planningTrace,
+    continuedProbe.autonomy?.planningTrace,
   );
   assertVisibleDecisionArtifactPayload(
-    advancedProbe.rail?.visibleDecisionArtifact,
+    continuedProbe.rail?.visibleDecisionArtifact,
     "fresh autoplay rail",
-    advancedProbe.autonomy?.planningTrace,
+    continuedProbe.autonomy?.planningTrace,
   );
   assertVisibleDecisionArtifactDom(
     page.decisionArtifact,
     "fresh autoplay",
-    advancedProbe.rail?.visibleDecisionArtifact ??
-      advancedProbe.autonomy?.visibleDecisionArtifact,
+    continuedProbe.rail?.visibleDecisionArtifact ??
+      continuedProbe.autonomy?.visibleDecisionArtifact,
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");
@@ -1930,19 +1996,30 @@ async function runFreshAutoplayStartCheck(session) {
 
   return {
     advanced: {
+      activeConversation: continuedProbe.activeConversation,
+      autonomy: continuedProbe.autonomy,
+      clock: continuedProbe.clock,
+      location: continuedProbe.location,
+      openingActionCarryForward: continuedProbe.openingActionCarryForward,
+      rail: continuedProbe.rail,
+      visibleDecisionArtifact: continuedProbe.autonomy?.visibleDecisionArtifact,
+      watchMode: continuedProbe.watchMode,
+      watchModeReplyAffordances: page.watchModeReplyAffordances,
+    },
+    firstActionTransition: {
       activeConversation: advancedProbe.activeConversation,
       autonomy: advancedProbe.autonomy,
       clock: advancedProbe.clock,
       location: advancedProbe.location,
+      openingActionCarryForward: advancedProbe.openingActionCarryForward,
       rail: advancedProbe.rail,
-      visibleDecisionArtifact: advancedProbe.autonomy?.visibleDecisionArtifact,
       watchMode: advancedProbe.watchMode,
-      watchModeReplyAffordances: page.watchModeReplyAffordances,
     },
     opening: {
       autonomy: openingProbe.autonomy,
       clock: openingProbe.clock,
       location: openingProbe.location,
+      openingActionCarryForward: openingProbe.openingActionCarryForward,
       rail: openingProbe.rail,
       watchMode: openingProbe.watchMode,
     },
@@ -1962,6 +2039,10 @@ async function runResponsiveDecisionArtifactCheck(session) {
   await session.waitForWatchModeUi(viewport);
 
   const openingProbe = await session.readBrowserProbe();
+  assertOpeningActionCarryForward(
+    openingProbe,
+    `${viewport.name} responsive decision opening`,
+  );
   const advancedProbe = await waitForFreshAutoplayAdvance(
     session,
     openingProbe,
@@ -2073,20 +2154,17 @@ async function runViewportCheck(session, viewport) {
     `${viewport.name}: autoplay run did not mark the overlay as watch mode.`,
   );
   assertNoWatchModeReplyAffordances(page, viewport.name);
+  assert.deepEqual(
+    page.visibleProgressionControls,
+    [],
+    `${viewport.name}: watch mode exposed visible progression/action controls: ${JSON.stringify(
+      page.visibleProgressionControls,
+    )}`,
+  );
   if (viewport.width <= 960) {
     assert.ok(
-      page.compactPrimaryAction,
-      `${viewport.name}: compact collapsed rail is missing its primary action.`,
-    );
-    assert.ok(
-      page.compactPrimaryAction.width >= Math.min(210, viewport.width * 0.56) &&
-        page.compactPrimaryAction.height >= 34,
-      `${viewport.name}: compact primary action is too small (${page.compactPrimaryAction.width}x${page.compactPrimaryAction.height}).`,
-    );
-    assert.ok(
-      page.compactPrimaryAction.text.includes("Watch Rowan begin") ||
-        page.compactPrimaryAction.text.includes("Continue watching"),
-      `${viewport.name}: compact primary action text is not the current Rowan action: ${page.compactPrimaryAction.text}`,
+      !page.compactPrimaryAction,
+      `${viewport.name}: compact watch mode should show carry-forward status, not a visible primary action: ${JSON.stringify(page.compactPrimaryAction)}.`,
     );
   }
   if (viewport.name === "desktop") {
@@ -2117,6 +2195,7 @@ async function runViewportCheck(session, viewport) {
   assert.ok(browserProbe, `${viewport.name}: missing browser probe.`);
   assertFirstRouteEventCues(browserProbe, viewport.name);
   assertOpeningPlayerLocationGeometry(browserProbe, viewport.name);
+  assertOpeningActionCarryForward(browserProbe, viewport.name, ["queued"]);
   assertScheduledNpcVisualCues(browserProbe, viewport.name);
   assert.ok(
     browserProbe.autonomy?.intent?.reason,
