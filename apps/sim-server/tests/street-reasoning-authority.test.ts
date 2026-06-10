@@ -95,6 +95,90 @@ function worldWithPoisonedTrail(): StreetGameState {
   return world;
 }
 
+function worldWithStaleFirstAfternoonThoughtAndLivePump(): StreetGameState {
+  const world = seedStreetGame("game-reasoning-stale-first-afternoon-thought");
+
+  world.player.currentLocationId = "boarding-house";
+  world.player.inventory.push({
+    description: "A worn wrench that can handle the yard pump.",
+    id: "item-wrench",
+    name: "Old wrench",
+  });
+  world.firstAfternoon = {
+    completedAt: world.currentTime,
+    fieldNote: {
+      createdAt: world.currentTime,
+      evidence: "Rowan already finished the first afternoon route.",
+      learned: "The original first-afternoon loop is complete.",
+      memory: "The old route should not control later thought.",
+      next: "Follow the live problem instead.",
+    },
+    teaShiftStage: "paid",
+  };
+
+  const pump = world.problems.find((problem) => problem.id === "problem-pump");
+  if (pump) {
+    pump.discovered = true;
+    pump.status = "active";
+  }
+
+  world.rowanAutonomy = {
+    actionId: "solve:problem-pump",
+    autoContinue: true,
+    detail: "The pump is active and Rowan has the wrench, so fixing it is the live useful move.",
+    intent: {
+      reason:
+        "The pump is active and Rowan has the wrench, so fixing it is the live useful move.",
+      signals: ["Problem: pump active", "Tool: wrench owned"],
+    },
+    key: "objective:solve:pump",
+    label: "Fix the pump",
+    layer: "objective",
+    mode: "acting",
+    stepKind: "act",
+    targetLocationId: "boarding-house",
+  };
+  world.availableActions = [
+    {
+      description: "Fix the yard pump with the wrench.",
+      emphasis: "high",
+      id: "solve:problem-pump",
+      kind: "solve",
+      label: "Fix the pump",
+      matchesObjective: true,
+      targetLocationId: "boarding-house",
+    },
+  ];
+
+  return world;
+}
+
+function worldWithActiveTeaCommitment(): StreetGameState {
+  const world = seedStreetGame("game-reasoning-active-tea-thought");
+  const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+
+  world.player.currentLocationId = "tea-house";
+  world.player.activeJobId = "job-tea-shift";
+  world.clock = {
+    day: 1,
+    hour: 12,
+    label: "Afternoon",
+    minute: 30,
+    totalMinutes: 12 * 60 + 30,
+  };
+  world.currentTime = "2026-03-21T12:30:00.000Z";
+  world.firstAfternoon = {
+    teaShiftStage: "rush",
+  };
+  if (teaJob) {
+    teaJob.accepted = true;
+    teaJob.completed = false;
+    teaJob.missed = false;
+  }
+
+  return world;
+}
+
 describe("street reasoning authority", () => {
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
     const world = worldWithPoisonedTrail();
@@ -229,5 +313,23 @@ describe("street reasoning authority", () => {
 
     expect(reply.reply).toMatch(/room|Morrow House|shared spaces|pay|house/i);
     expect(reply.reply).not.toMatch(/Ada|Kettle|Lamp|lunch|old pier|poisoned|route/i);
+  });
+
+  it("lets live autonomy and discovered problems outrank stale first-afternoon thought copy", () => {
+    const world = worldWithStaleFirstAfternoonThoughtAndLivePump();
+
+    const thoughts = buildDeterministicStreetThoughts(world);
+
+    expect(thoughts.playerThought).toMatch(/pump/i);
+    expect(thoughts.playerThought).not.toMatch(/bed|tomorrow|lead|Morrow House|let today land/i);
+  });
+
+  it("keeps first-afternoon cafe-stage thoughts when the tea shift is the active commitment", () => {
+    const world = worldWithActiveTeaCommitment();
+
+    const thoughts = buildDeterministicStreetThoughts(world);
+
+    expect(thoughts.playerThought).toMatch(/cups|tables|room/i);
+    expect(thoughts.playerThought).not.toMatch(/pump|wrench|Morrow House/i);
   });
 });
