@@ -6241,8 +6241,15 @@ function buildWatchPacingAudit(clickLog) {
       milestone: entry.milestone,
       sequenceRunId: entry.sequenceRunId ?? null,
     }));
+  const openingFirstActionBeats = watchedBeats.filter(
+    (entry) =>
+      entry.milestone === "entered-morrow-house" &&
+      /enter morrow house/i.test(entry.beforeAutonomyLabel ?? ""),
+  );
   const ordinaryBeats = watchedBeats.filter(
-    (entry) => !entry.completionAutoContinue,
+    (entry) =>
+      !entry.completionAutoContinue &&
+      !openingFirstActionBeats.includes(entry),
   );
   const ordinaryDurations = ordinaryBeats
     .map((entry) => entry.durationMs)
@@ -6252,6 +6259,7 @@ function buildWatchPacingAudit(clickLog) {
   );
 
   return {
+    openingFirstActionBeats,
     ordinaryBeatCount: ordinaryBeats.length,
     ordinaryMinDurationMs:
       ordinaryDurations.length > 0 ? Math.min(...ordinaryDurations) : null,
@@ -6262,6 +6270,16 @@ function buildWatchPacingAudit(clickLog) {
 }
 
 function assertWatchPacingAudit(watchPacingAudit) {
+  assert.ok(
+    watchPacingAudit.openingFirstActionBeats.every(
+      (entry) => (entry.durationMs ?? Infinity) <= 1_600,
+    ),
+    `Opening first-action watch beat should carry forward promptly: ${JSON.stringify(
+      watchPacingAudit.openingFirstActionBeats,
+      null,
+      2,
+    )}`,
+  );
   assert.ok(
     watchPacingAudit.ordinaryBeatCount >= 6,
     `Expected enough ordinary watch beats to judge pacing: ${watchPacingAudit.ordinaryBeatCount}.`,
@@ -7099,6 +7117,7 @@ async function captureInhabitMoment({
     location: probe.location,
     movement: probe.movement ?? null,
     objective: probe.objective ?? null,
+    openingActionCarryForward: probe.openingActionCarryForward ?? null,
     player: probe.player ?? null,
     screenshot,
     userQuestion,
@@ -7132,14 +7151,30 @@ function assertInhabitOpeningCtaProgression(moments) {
   const firstActionable = byLabel["first-actionable-screen"];
   const enteredMorrowHouse = byLabel["entered-morrow-house"];
 
+  const firstActionCarryForward = firstActionable?.openingActionCarryForward;
   assert.ok(
-    firstActionable?.control?.text,
-    "first-actionable-screen: expected opening CTA control text.",
+    firstActionCarryForward,
+    "first-actionable-screen: expected opening carry-forward probe evidence.",
   );
-  assert.match(
-    firstActionable.control.text,
-    OPENING_CTA_PATTERN,
-    "first-actionable-screen: expected the true exterior opening to invite watching Rowan begin.",
+  assert.equal(
+    firstActionCarryForward.selectedActionId,
+    "enter:boarding-house",
+    `first-actionable-screen: expected the selected opening action to be Enter Morrow House: ${JSON.stringify(firstActionCarryForward)}.`,
+  );
+  assert.equal(
+    firstActionCarryForward.status,
+    "queued",
+    `first-actionable-screen: expected the exterior opening action to be queued for watch carry-forward: ${JSON.stringify(firstActionCarryForward)}.`,
+  );
+  assert.equal(
+    firstActionCarryForward.requiredVisibleInput,
+    false,
+    `first-actionable-screen: watch-mode opening action should not require visible input: ${JSON.stringify(firstActionCarryForward)}.`,
+  );
+  assert.equal(
+    firstActionable.control,
+    null,
+    `first-actionable-screen: watch mode should show carry-forward status, not an opening CTA control: ${JSON.stringify(firstActionable.control)}.`,
   );
   assert.equal(
     firstActionable.location?.spaceId,
@@ -7159,6 +7194,11 @@ function assertInhabitOpeningCtaProgression(moments) {
     enteredMorrowHouse.location?.spaceId,
     "interior:boarding-house",
     "entered-morrow-house: CTA regression evidence must be captured inside Morrow House.",
+  );
+  assert.equal(
+    enteredMorrowHouse?.openingActionCarryForward?.status,
+    "completed",
+    `entered-morrow-house: opening carry-forward should be completed after entering: ${JSON.stringify(enteredMorrowHouse?.openingActionCarryForward)}.`,
   );
   assert.doesNotMatch(
     enteredMorrowHouseWatchText,

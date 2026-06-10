@@ -143,6 +143,7 @@ export type StreetBrowserMovementDiagnostics = {
 };
 
 export type StreetBrowserProbeSnapshot = {
+  busyLabel?: string | null;
   movement?: StreetBrowserMovementDiagnostics;
   optimisticPlayerPosition?: {
     x: number;
@@ -386,6 +387,101 @@ function worldPressureProbePayload(game: StreetGameState) {
   };
 }
 
+function openingActionCarryForwardProbePayload({
+  game,
+  rowanRail,
+  snapshot,
+}: {
+  game: StreetGameState;
+  rowanRail: RowanRailViewModel;
+  snapshot: StreetBrowserProbeSnapshot;
+}) {
+  const firstAfternoonActive =
+    game.player.objective?.routeKey === "first-afternoon" &&
+    !game.firstAfternoon?.planSettledAt &&
+    !game.firstAfternoon?.teaShiftStage &&
+    !game.firstAfternoon?.completedAt;
+  const geometry = snapshot.movement?.playerLocationGeometry ?? null;
+  const currentSpaceId = game.activeSpaceId ?? game.player.spaceId ?? null;
+  const completed =
+    currentSpaceId === "interior:boarding-house" ||
+    game.activeConversation?.npcId === "npc-mara";
+  const selectedActionId =
+    geometry?.actionId ??
+    game.rowanAutonomy.actionId ??
+    (completed ? "enter:boarding-house" : null);
+  const selectedActionLabel =
+    geometry?.actionLabel ??
+    game.rowanAutonomy.label ??
+    (completed ? "Enter Morrow House" : null);
+  const targetLocationId =
+    geometry?.targetLocationId ??
+    game.rowanAutonomy.targetLocationId ??
+    (completed ? "boarding-house" : null);
+  const targetLocation = targetLocationId
+    ? game.locations.find((location) => location.id === targetLocationId)
+    : null;
+  const openingActionSelected =
+    selectedActionId === "enter:boarding-house" ||
+    targetLocationId === "boarding-house" ||
+    completed;
+
+  if (!firstAfternoonActive || !openingActionSelected) {
+    return null;
+  }
+
+  const inProgress = Boolean(
+    snapshot.optimisticPlayerPosition ||
+      snapshot.movement?.playerRoute?.active ||
+      snapshot.busyLabel,
+  );
+  const watchModeEnabled = Boolean(snapshot.rowanWatchModeEnabled);
+  const status = completed
+    ? "completed"
+    : inProgress
+      ? "in_progress"
+      : watchModeEnabled
+        ? "queued"
+        : "ready";
+
+  return {
+    assertion: watchModeEnabled
+      ? "Watch mode has the opening action selected and does not require a visible input."
+      : "Player mode leaves the opening action ready for explicit input.",
+    currentLocationId: game.player.currentLocationId ?? null,
+    currentLocationName:
+      game.locations.find(
+        (location) => location.id === game.player.currentLocationId,
+      )?.name ?? null,
+    currentSpaceId,
+    geometry: geometry
+      ? {
+          anchorLocationId: geometry.anchorLocationId,
+          distanceToAnchor: geometry.distanceToAnchor,
+          nearActionLocation: geometry.nearActionLocation,
+          playerTile: geometry.playerTile,
+          playerWorldPoint: geometry.playerWorldPoint,
+        }
+      : null,
+    requiredVisibleInput: !watchModeEnabled,
+    selectedActionId,
+    selectedActionLabel,
+    status,
+    targetLocationId,
+    targetLocationName: targetLocation?.name ?? null,
+    watchMode: {
+      autoplayEnabled: Boolean(snapshot.rowanAutoplayEnabled),
+      enabled: watchModeEnabled,
+      frozen: Boolean(snapshot.rowanAutoplayFrozen),
+    },
+    rail: {
+      now: rowanRail.now.title,
+      status: rowanRail.statusLabel,
+      thought: rowanRail.thought,
+    },
+  };
+}
+
 type BuildStreetBrowserProbeJsonOptions = {
   activeConversation: StreetGameState["activeConversation"];
   conversationNpcName?: string;
@@ -487,6 +583,11 @@ export function buildStreetBrowserProbeJson({
       money: game.player.money,
     },
     objective: objectiveProbePayload(game),
+    openingActionCarryForward: openingActionCarryForwardProbePayload({
+      game,
+      rowanRail,
+      snapshot,
+    }),
     cityEvents: (game.cityEvents ?? [])
       .filter((event) => event.status === "active")
       .map((event) => ({
