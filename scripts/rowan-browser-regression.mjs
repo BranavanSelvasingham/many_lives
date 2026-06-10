@@ -4666,6 +4666,7 @@ function buildMovementAuditSummary(timeline) {
         distanceToRoute: marker.distanceToRoute ?? null,
         key: marker.key,
         label: entry.label,
+        markerSource: marker.markerSource ?? null,
         nextScheduleLocationId: marker.nextScheduleLocationId ?? null,
         npcId: marker.npcId,
         onRoute: Boolean(marker.onRoute),
@@ -4690,6 +4691,7 @@ function buildMovementAuditSummary(timeline) {
         fromLocationId: cue.fromLocationId ?? null,
         key: cue.key,
         label: entry.label,
+        markerSource: cue.markerSource ?? null,
         nextScheduleLocationId: cue.nextScheduleLocationId ?? null,
         nextScheduleStartsInMinutes: cue.nextScheduleStartsInMinutes ?? null,
         npcId: cue.npcId,
@@ -4942,6 +4944,7 @@ function compactScheduledNpcMarkerSample(marker) {
     distanceToRoute: marker.distanceToRoute ?? null,
     key: marker.key,
     label: marker.label,
+    markerSource: marker.markerSource ?? null,
     nextScheduleLocationId: marker.nextScheduleLocationId ?? null,
     npcId: marker.npcId,
     onRoute: Boolean(marker.onRoute),
@@ -4966,6 +4969,7 @@ function compactScheduledNpcVisualCueSample(cue) {
     fromLocationId: cue.fromLocationId ?? null,
     key: cue.key,
     label: cue.label,
+    markerSource: cue.markerSource ?? null,
     nextScheduleLocationId: cue.nextScheduleLocationId ?? null,
     nextScheduleStartsInMinutes: cue.nextScheduleStartsInMinutes ?? null,
     npcId: cue.npcId,
@@ -5132,6 +5136,24 @@ function assertScheduledNpcSpatialEvidence(scheduledNpcSpatialEvidence) {
       2,
     )}`,
   );
+  assert.deepEqual(
+    scheduledNpcSpatialEvidence.continuityGaps,
+    [],
+    `Scheduled NPC current-stop changes must include visible marker movement before the stop changes: ${JSON.stringify(
+      scheduledNpcSpatialEvidence.continuityGaps.map((gap) => ({
+        continuityGapReason: gap.continuityGapReason,
+        fromLabel: gap.fromLabel,
+        fromLocationId: gap.fromLocationId,
+        markerEvidence: gap.markerEvidence,
+        npcId: gap.npcId,
+        routeEvidenceKey: gap.routeEvidenceKey,
+        toLabel: gap.toLabel,
+        toLocationId: gap.toLocationId,
+      })),
+      null,
+      2,
+    )}`,
+  );
 }
 
 function buildScheduledNpcLocationChangeAudit({
@@ -5234,8 +5256,7 @@ function buildScheduledNpcLocationChangeAudit({
         toLocationId,
         valid:
           Boolean(acceptedNoRouteReason) ||
-          (Boolean(legalRouteEvidence) &&
-            (markerEvidence.valid || Boolean(continuityGapReason))),
+          (Boolean(legalRouteEvidence) && markerEvidence.valid),
       });
     }
   }
