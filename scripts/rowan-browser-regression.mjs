@@ -8435,12 +8435,15 @@ async function captureInhabitMoment({
   index,
   label,
   moments,
+  probeOverride,
   session,
   userQuestion,
 }) {
   await closeInhabitSupportPanel(session);
-  const probe = await waitForInhabitSettled(session, label);
-  const dom = await session.readDomSnapshot();
+  const probe = probeOverride ?? (await waitForInhabitSettled(session, label));
+  const dom = probe.independentNpcSurface
+    ? await waitForInhabitIndependentNpcSurfaceDom(session, label, probe)
+    : await session.readDomSnapshot();
   const controlCandidate = await session.readPlayerControlCandidate();
   assertInhabitPlayerDom(label, dom, controlCandidate, probe);
   const camera = await session.readCameraProbe().catch(() => null);
@@ -8491,6 +8494,34 @@ async function captureInhabitMoment({
   };
   moments.push(moment);
   return moment;
+}
+
+async function waitForInhabitIndependentNpcSurfaceDom(session, label, probe) {
+  const surface = probe.independentNpcSurface;
+  return waitFor(
+    async () => {
+      const dom = await session.readDomSnapshot();
+      if (domContainsIndependentNpcSurface(dom, surface)) {
+        return dom;
+      }
+      return null;
+    },
+    5_000,
+    `${label}: independent NPC surface reached the probe but not the visible browser text.`,
+  );
+}
+
+function domContainsIndependentNpcSurface(dom, surface) {
+  const bodyText = dom?.bodyText ?? "";
+  if (!surface || !bodyText) {
+    return false;
+  }
+
+  const title = surface.title ?? "";
+  const detail = surface.detail ?? "";
+  return [title, detail]
+    .filter((text) => text.length >= 12)
+    .some((text) => bodyText.includes(text.slice(0, 48)));
 }
 
 function compactInhabitReportMoment(moment) {
@@ -9187,6 +9218,79 @@ async function clickUntilInhabitMilestone({
   );
 }
 
+async function watchUntilIndependentNpcResolution({
+  maxWaitMs,
+  session,
+}) {
+  const milestoneLabel = "independent-npc-resolution";
+  let lastProbe = null;
+
+  return waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (!probe) {
+        return null;
+      }
+      lastProbe = probe;
+
+      if (
+        (probe.independentNpcActions ?? []).length > 0 &&
+        probe.independentNpcSurface
+      ) {
+        return probe;
+      }
+
+      const playbackPending = Boolean(
+        probe.playback?.activeKind || (probe.playback?.queuedCount ?? 0) > 0,
+      );
+      if (
+        !(
+          probe.watchMode?.enabled &&
+          (probe.autonomy?.autoContinue || playbackPending)
+        )
+      ) {
+        const control = await session.readPlayerControlCandidate();
+        assert.fail(
+          `${milestoneLabel}: observe/autoplay stopped before an independent NPC resolution surfaced. State: ${JSON.stringify(
+            {
+              autonomy: probe.autonomy ?? null,
+              clock: probe.clock ?? null,
+              control: control
+                ? {
+                    actionId: control.actionId ?? null,
+                    text: control.text,
+                    waitMinutes: control.waitMinutes ?? null,
+                  }
+                : null,
+              independentNpcActions: probe.independentNpcActions ?? [],
+              independentNpcSurface: probe.independentNpcSurface ?? null,
+              location: probe.location ?? null,
+              watchMode: probe.watchMode ?? null,
+            },
+            null,
+            2,
+          )}`,
+        );
+      }
+
+      return null;
+    },
+    maxWaitMs,
+    `${milestoneLabel}: player-POV run did not observe a surfaced independent NPC resolution. Last state: ${JSON.stringify(
+      {
+        autonomy: lastProbe?.autonomy ?? null,
+        clock: lastProbe?.clock ?? null,
+        independentNpcActions: lastProbe?.independentNpcActions ?? [],
+        independentNpcSurface: lastProbe?.independentNpcSurface ?? null,
+        location: lastProbe?.location ?? null,
+        worldPressure: lastProbe?.worldPressure ?? null,
+      },
+      null,
+      2,
+    )}`,
+  );
+}
+
 async function runInhabitGameplayPass(session) {
   const url = `${getWebBase()}?new=1&autoplay=1&freezeAutoplay=1&inhabitGameplay=${Date.now()}`;
   await session.navigate(url);
@@ -9314,6 +9418,21 @@ async function runInhabitGameplayPass(session) {
     });
   }
 
+  const independentNpcResolutionProbe = await watchUntilIndependentNpcResolution({
+    maxWaitMs: 240_000,
+    session,
+  });
+  milestonesReached.push("independent-npc-resolution");
+  await captureInhabitMoment({
+    index: momentIndex++,
+    label: "independent-npc-resolution",
+    moments,
+    probeOverride: independentNpcResolutionProbe,
+    session,
+    userQuestion:
+      "Can I see that another South Quay local solved a live problem without Rowan?",
+  });
+
   const visibleControlClickCount = clickLog.filter(
     (entry) => entry.kind === "visible-control-click",
   ).length;
@@ -9349,10 +9468,11 @@ async function runInhabitGameplayPass(session) {
     clickLog.length >= 10,
     `Inhabit gameplay pass had too few player-facing interactions/watch beats: ${clickLog.length}.`,
   );
-  assert.equal(
-    milestonesReached.at(-1),
-    "post-first-afternoon-live-route",
-    "Inhabit gameplay pass did not prove the post-rest live-pressure route.",
+  assert.ok(
+    milestonesReached.includes("post-first-afternoon-live-route"),
+    `Inhabit gameplay pass did not prove the post-rest live-pressure route before independent NPC resolution: ${JSON.stringify(
+      milestonesReached,
+    )}.`,
   );
   const handoffMoment = moments.find(
     (moment) => moment.label === "post-first-afternoon-handoff",
@@ -9441,9 +9561,13 @@ async function runInhabitGameplayPass(session) {
     moments,
     worldPressureAudit,
   );
+  assertIndependentNpcActionEvidence(independentNpcActionEvidence);
   const cityEventVisualEvidence = buildCityEventVisualEvidence(moments);
   assertCityEventVisualEvidence(cityEventVisualEvidence);
-  const movementAudit = buildMovementAuditSummary(moments);
+  const movementAuditMoments = moments.filter(
+    (moment) => moment.label !== "independent-npc-resolution",
+  );
+  const movementAudit = buildMovementAuditSummary(movementAuditMoments);
   assertOpeningPlayerLocationGeometrySample(
     movementAudit,
     "first-actionable-screen",
