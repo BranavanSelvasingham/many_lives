@@ -47,6 +47,12 @@ interface ConversationThoughtHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+interface PlayerThoughtHint {
+  routeKeys?: string[];
+  thought: string;
+  when?: (context: ScaffoldContext) => boolean;
+}
+
 interface ConversationTopicSuppression {
   npcId: string;
   routeKeys?: string[];
@@ -111,6 +117,7 @@ interface ObjectiveRouteScaffold {
   deterministicOpeningNpcIds?: string[];
   deterministicOpeningRouteKeys?: string[];
   moveIntents?: MoveIntentHint[];
+  playerThoughts?: PlayerThoughtHint[];
   routeKeys: string[];
   semanticMoveBonuses?: SemanticMoveBonus[];
   semanticHints?: SemanticHint[];
@@ -288,6 +295,15 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         actionId: "reflect:first-afternoon-compare",
         locationId: "tea-house",
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+      },
+    ],
+    playerThoughts: [
+      {
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        thought: "I should head back to Morrow House and let today land.",
+        when: ({ world }) =>
+          world.firstAfternoon?.teaShiftStage === "paid" &&
+          world.player.currentLocationId !== world.player.homeLocationId,
       },
     ],
     speechHints: [
@@ -494,6 +510,29 @@ export function objectiveRouteConversationThought(
     const thought = (scaffold.conversationThoughts ?? []).find(
       (candidate) =>
         candidate.npcId === npc.id &&
+        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.when || candidate.when(context)),
+    );
+    if (thought) {
+      return thought.thought;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRoutePlayerThought(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const thought = (scaffold.playerThoughts ?? []).find(
+      (candidate) =>
         (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );
