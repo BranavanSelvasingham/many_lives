@@ -400,7 +400,7 @@ async function runGameCommand(gameId, command) {
 }
 
 function browserUrl(gameId) {
-  return `${getWebBase()}?gameId=${encodeURIComponent(gameId)}&autoplay=0&observe=1`;
+  return `${getWebBase()}?gameId=${encodeURIComponent(gameId)}&autoplay=0&observe=1&freezeAutoplay=1`;
 }
 
 function slug(label) {
@@ -6022,6 +6022,88 @@ async function runAutoplayObservation(session) {
   };
 }
 
+async function runObserveOnlyCarryForwardObservation(session) {
+  const url = `${getWebBase()}?new=1&autoplay=0&observe=1&observeCarryForward=${Date.now()}`;
+  await session.navigate(url);
+  const startProbe = await session.readBrowserProbe();
+  const carryForward = startProbe.openingActionCarryForward;
+  assert.equal(
+    startProbe.watchMode?.enabled,
+    true,
+    "Observe-only run did not enter watch mode.",
+  );
+  assert.equal(
+    carryForward?.watchMode?.autoplayEnabled,
+    false,
+    "Observe-only run unexpectedly reported autoplay enabled.",
+  );
+  assert.equal(
+    carryForward?.requiredVisibleInput,
+    false,
+    "Observe-only run reported watch mode but still required visible input.",
+  );
+  assert.ok(
+    startProbe.autonomy?.autoContinue || carryForward?.selectedActionId,
+    "Observe-only run did not expose a selected Rowan carry-forward action.",
+  );
+
+  const startSignature = playerProbeSignature(startProbe);
+  const progressedProbe = await waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (!probe || probe.gameId !== startProbe.gameId) {
+        return null;
+      }
+      const nextCarryForward = probe.openingActionCarryForward;
+      const signatureChanged = playerProbeSignature(probe) !== startSignature;
+      const progressionStarted =
+        probe.visualPlayer?.isMovingToServerState ||
+        probe.movement?.playerRoute?.active ||
+        probe.activeConversation ||
+        probe.clock?.totalMinutes > startProbe.clock.totalMinutes ||
+        nextCarryForward?.status === "in_progress" ||
+        nextCarryForward?.status === "completed";
+      return signatureChanged && progressionStarted ? probe : null;
+    },
+    35_000,
+    "Observe-only watch mode exposed a recommended action but did not carry it forward.",
+  );
+  const dom = await session.readDomSnapshot();
+  assertNoVisibleWatchModeProgressionControls(
+    "observe-only-carry-forward",
+    progressedProbe,
+    dom,
+  );
+
+  const screenshotPath = path.join(
+    OUTPUT_DIR,
+    "observe-only-carry-forward.png",
+  );
+  await session.captureScreenshot(screenshotPath);
+
+  return {
+    progressed: {
+      activeConversation: progressedProbe.activeConversation ?? null,
+      autonomyLabel: progressedProbe.autonomy?.label ?? null,
+      clock: progressedProbe.clock,
+      gameId: progressedProbe.gameId,
+      location: progressedProbe.location,
+      openingActionCarryForward:
+        progressedProbe.openingActionCarryForward ?? null,
+      visualPlayer: progressedProbe.visualPlayer ?? null,
+      watchMode: progressedProbe.watchMode,
+    },
+    screenshot: screenshotPath,
+    start: {
+      autonomyLabel: startProbe.autonomy?.label ?? null,
+      clock: startProbe.clock,
+      gameId: startProbe.gameId,
+      openingActionCarryForward: carryForward ?? null,
+      watchMode: startProbe.watchMode,
+    },
+  };
+}
+
 const STALE_HISTORICAL_FIELD_NOTE_NEXT_PATTERNS = [
   /NEXT\s+The first afternoon is settled; rest at Morrow House and decide which lead deserves tomorrow morning\./i,
   /NEXT\s+Sleep on the first foothold, then decide whether tomorrow starts with Ada's lead or the dock board\./i,
@@ -8398,6 +8480,7 @@ async function main() {
   const gameRef = { current: game };
   let overlayChecks = [];
   let autoplayObservation = null;
+  let observeOnlyCarryForward = null;
   let inhabitGameplay = null;
   const session = USE_CHROME_DRIVER
     ? await launchBrowserSession(browserUrl(game.id))
@@ -8535,6 +8618,10 @@ async function main() {
       traceRegression("autoplay-observation-start");
       autoplayObservation = await runAutoplayObservation(session);
       traceRegression("autoplay-observation-done");
+      traceRegression("observe-only-carry-forward-start");
+      observeOnlyCarryForward =
+        await runObserveOnlyCarryForwardObservation(session);
+      traceRegression("observe-only-carry-forward-done");
       traceRegression("inhabit-gameplay-start");
       inhabitGameplay = await runInhabitGameplayPass(session);
       traceRegression("inhabit-gameplay-done");
@@ -8893,6 +8980,7 @@ async function main() {
       objective: game.player.objective?.text ?? null,
     },
     inhabitGameplay,
+    observeOnlyCarryForward,
     npcDiagnostics: movementAudit.npcPatrols,
     outputDir: OUTPUT_DIR,
     overlayChecks,
