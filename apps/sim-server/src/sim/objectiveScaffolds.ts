@@ -58,6 +58,16 @@ interface ConversationTopicSuppression {
   ) => boolean;
 }
 
+interface ConversationFallbackHint {
+  choiceKey: string;
+  followupChoiceKey: string;
+  followupThoughts: string[];
+  npcId: string;
+  replyLines: string[];
+  routeKeys?: string[];
+  when?: (context: ScaffoldContext) => boolean;
+}
+
 interface ActionRationaleHint {
   actionId?: string;
   npcId?: string;
@@ -95,6 +105,7 @@ interface RouteActionPressureInput {
 interface ObjectiveRouteScaffold {
   actionRationales?: ActionRationaleHint[];
   actionTargetLocations?: ActionTargetLocationHint[];
+  conversationFallbacks?: ConversationFallbackHint[];
   conversationTopicSuppressions?: ConversationTopicSuppression[];
   conversationThoughts?: ConversationThoughtHint[];
   deterministicOpeningNpcIds?: string[];
@@ -170,6 +181,70 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         topic: "pump",
         when: ({ playerAskedTopic, world }) =>
           !world.firstAfternoon?.planSettledAt && !playerAskedTopic,
+      },
+    ],
+    conversationFallbacks: [
+      {
+        choiceKey: "mara-first-afternoon-tea-closed-yard-open",
+        followupChoiceKey: "mara-first-afternoon-work-closed-followup",
+        followupThoughts: [
+          "The old route is not the current answer.",
+          "The hour changed the advice.",
+          "That keeps Rowan out of a stale errand.",
+        ],
+        npcId: "npc-mara",
+        replyLines: [
+          "Kettle & Lamp was the right first bet this morning, but lunch is gone. Go ask Tomas before the yard closes.",
+          "Ada's window moved on. If Rowan still wants today's work, North Crane Yard is the live lead now.",
+          "Do not walk to a closed lunch shift. Try Tomas at the yard while there is still daylight.",
+        ],
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "mara-first-afternoon-work-closed",
+        followupChoiceKey: "mara-first-afternoon-work-closed-followup",
+        followupThoughts: [
+          "The old route is not the current answer.",
+          "The hour changed the advice.",
+          "That keeps Rowan out of a stale errand.",
+        ],
+        npcId: "npc-mara",
+        replyLines: [
+          "Kettle & Lamp was the right first bet this morning, but that window is closed now. Come back and take stock.",
+          "Do not walk to a closed lunch shift. The useful move now is to count what the day left you.",
+          "Ada's window moved on. Stop chasing the morning route and bring the day back to Morrow House.",
+        ],
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "mara-first-afternoon-next",
+        followupChoiceKey: "mara-first-afternoon-next-followup",
+        followupThoughts: [
+          "That gives Rowan a clear first errand.",
+          "A direct next step is easier to trust.",
+          "Ada is the right first bet.",
+        ],
+        npcId: "npc-mara",
+        replyLines: [
+          "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.",
+          "Start with Ada at Kettle & Lamp. If lunch still needs hands, that gives you coin and a reason to be seen.",
+          "Make Kettle & Lamp your next stop. Ask Ada directly about lunch work, then bring what you learn back here.",
+        ],
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          return !jobWindowClosed(world, teaJob);
+        },
       },
     ],
     actionRationales: [
@@ -424,6 +499,32 @@ export function objectiveRouteConversationThought(
     );
     if (thought) {
       return thought.thought;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteConversationFallback(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  npc: NpcState,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const fallback = (scaffold.conversationFallbacks ?? []).find(
+      (candidate) =>
+        candidate.npcId === npc.id &&
+        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.when || candidate.when(context)),
+    );
+    if (fallback) {
+      return fallback;
     }
   }
 
