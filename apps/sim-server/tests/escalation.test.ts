@@ -4,6 +4,22 @@ import { SimulationEngine } from "../src/sim/engine.js";
 import { enterMorrowHouse, enterTeaHouse } from "./street-test-helpers.js";
 
 describe("World time pressure", () => {
+  function setClock(world: Awaited<ReturnType<SimulationEngine["createGame"]>>, {
+    hour,
+    minute,
+  }: {
+    hour: number;
+    minute: number;
+  }) {
+    world.clock.hour = hour;
+    world.clock.minute = minute;
+    world.clock.totalMinutes = hour * 60 + minute;
+    world.clock.label = hour >= 17 ? "Evening" : "Afternoon";
+    world.currentTime = `2026-03-21T${String(hour).padStart(2, "0")}:${String(
+      minute,
+    ).padStart(2, "0")}:00.000Z`;
+  }
+
   it("lets jobs expire if the player drifts past their window", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-expiring-jobs");
@@ -169,6 +185,116 @@ describe("World time pressure", () => {
     expect(world.feed.map((entry) => entry.text)).toContain(
       "Mara got the pump contained before evening, but Morrow House had to solve that strain without Rowan.",
     );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-pump",
+    );
+  });
+
+  it("surfaces Mara's pump resolution during long work and lets Rowan finish started work", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-work-pauses-for-mara-pump");
+
+    setClock(world, { hour: 16, minute: 50 });
+    world.activeSpaceId = "street:south-quay";
+    world.player.spaceId = "street:south-quay";
+    world.player.currentLocationId = "freight-yard";
+    world.player.x = 18;
+    world.player.y = 10;
+    world.player.energy = 80;
+    world.player.activeJobId = "job-yard-shift";
+
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    if (yardJob) {
+      yardJob.accepted = true;
+      yardJob.discovered = true;
+      yardJob.completed = false;
+      yardJob.missed = false;
+      yardJob.progressMinutes = undefined;
+    }
+
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    if (pump) {
+      pump.discovered = true;
+      pump.escalationLevel = 2;
+      pump.status = "active";
+      pump.urgency = 5;
+    }
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "work:job-yard-shift",
+    });
+
+    expect(world.clock.totalMinutes).toBe(17.5 * 60);
+    expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
+      resolvedAt: "2026-03-21T17:30:00.000Z",
+      resolvedByNpcId: "npc-mara",
+      status: "resolved",
+    });
+    expect(world.jobs.find((job) => job.id === "job-yard-shift")).toMatchObject({
+      accepted: true,
+      completed: false,
+      missed: false,
+      progressMinutes: 40,
+    });
+    expect(world.player.activeJobId).toBe("job-yard-shift");
+    expect(world.availableActions.map((action) => action.id)).toContain(
+      "work:job-yard-shift",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-pump",
+    );
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "work:job-yard-shift",
+      label: "Finish Freight yard lift",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "work:job-yard-shift",
+    });
+
+    expect(world.jobs.find((job) => job.id === "job-yard-shift")).toMatchObject({
+      completed: true,
+      missed: false,
+      progressMinutes: 90,
+    });
+    expect(world.player.activeJobId).toBeUndefined();
+  });
+
+  it("surfaces Mara's pump resolution during a long home rest", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-rest-pauses-for-mara-pump");
+
+    setClock(world, { hour: 17, minute: 21 });
+    world.activeSpaceId = "interior:boarding-house";
+    world.player.spaceId = "interior:boarding-house";
+    world.player.currentLocationId = "boarding-house";
+    world.player.x = 7;
+    world.player.y = 6;
+    world.player.energy = 34;
+
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    if (pump) {
+      pump.discovered = true;
+      pump.escalationLevel = 2;
+      pump.status = "active";
+      pump.urgency = 5;
+    }
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "rest:home",
+    });
+
+    expect(world.clock.totalMinutes).toBeGreaterThanOrEqual(17.5 * 60);
+    expect(world.clock.totalMinutes).toBeLessThanOrEqual(17.5 * 60 + 10);
+    expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
+      resolvedByNpcId: "npc-mara",
+      status: "resolved",
+    });
+    expect(world.player.energy).toBeGreaterThan(34);
+    expect(world.availableActions.map((action) => action.id)).toContain("rest:home");
     expect(world.availableActions.map((action) => action.id)).not.toContain(
       "solve:problem-pump",
     );

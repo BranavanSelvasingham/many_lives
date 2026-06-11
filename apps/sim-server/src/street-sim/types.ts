@@ -424,6 +424,7 @@ export interface JobState {
   accepted: boolean;
   completed: boolean;
   missed: boolean;
+  progressMinutes?: number;
   missedAt?: string;
   consequenceAppliedAt?: string;
   deferredUntilMinutes?: number;

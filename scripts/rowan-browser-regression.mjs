@@ -91,6 +91,7 @@ const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
   minY: 550,
 };
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
+const INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES = 10;
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
@@ -5178,6 +5179,10 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
       }
       actionsByKey.set(key, {
         ...action,
+        observedDelayMinutes: minutesBetweenIso(
+          action.resolvedAt,
+          moment.clock?.iso,
+        ),
         firstObservedClock: moment.clock ?? null,
         firstObservedLabel: moment.label ?? null,
         firstObservedScreenshot: moment.screenshot ?? null,
@@ -5199,6 +5204,10 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
     }
     surfacedByKey.set(key, {
       ...surfaced,
+      surfaceDelayMinutes: minutesBetweenIso(
+        surfaced.resolvedAt,
+        moment.clock?.iso,
+      ),
       firstSurfacedClock: moment.clock ?? null,
       firstSurfacedLabel: moment.label ?? null,
       firstSurfacedScreenshot: moment.screenshot ?? null,
@@ -5222,6 +5231,16 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
     surfacedActionCount: surfacedByKey.size,
     surfacedActions: [...surfacedByKey.values()],
   };
+}
+
+function minutesBetweenIso(fromIso, toIso) {
+  const fromTime = fromIso ? Date.parse(fromIso) : NaN;
+  const toTime = toIso ? Date.parse(toIso) : NaN;
+  if (!Number.isFinite(fromTime) || !Number.isFinite(toTime)) {
+    return null;
+  }
+
+  return Math.round((toTime - fromTime) / 60_000);
 }
 
 function assertIndependentNpcActionEvidence(evidence) {
@@ -5287,6 +5306,68 @@ function assertIndependentNpcActionEvidence(evidence) {
       null,
       2,
     )}`,
+  );
+  assert.ok(
+    evidence.surfacedActions.some(
+      (action) =>
+        ["problem-pump", "problem-cart"].includes(action.problemId) &&
+        action.surfaceDelayMinutes !== null &&
+        action.surfaceDelayMinutes >= 0 &&
+        action.surfaceDelayMinutes <=
+          INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES,
+    ),
+    `Independent NPC rail beats must surface within ${INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES} sim minutes of resolvedAt. Evidence: ${JSON.stringify(
+      evidence,
+      null,
+      2,
+    )}`,
+  );
+}
+
+function assertIndependentResolutionDecisionArtifact(moments) {
+  const moment = (moments ?? []).find(
+    (entry) =>
+      entry.independentNpcSurface &&
+      entry.visibleDecisionArtifact &&
+      ["problem-pump", "problem-cart"].includes(
+        entry.independentNpcSurface.problemId,
+      ),
+  );
+  assert.ok(
+    moment,
+    "Independent NPC resolution moment must include Rowan's adjacent visible decision artifact.",
+  );
+
+  const surface = moment.independentNpcSurface;
+  const artifactText = [
+    moment.visibleDecisionArtifact.objective,
+    ...(moment.visibleDecisionArtifact.constraints ?? []),
+    ...(moment.visibleDecisionArtifact.considered ?? []),
+    moment.visibleDecisionArtifact.selectedAction,
+    moment.visibleDecisionArtifact.rationale,
+    moment.visibleDecisionArtifact.nextCheck,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  assert.match(
+    artifactText,
+    new RegExp(
+      `${escapeRegExp(surface.resolverName)}.*(?:contained|cleared|resolved)|(?:contained|cleared|resolved).*${escapeRegExp(
+        surface.problemTitle.replace(/^Leaking /i, ""),
+      )}`,
+      "i",
+    ),
+    `Rowan's decision artifact after the independent resolution must account for the removed pressure. Artifact: ${JSON.stringify(
+      moment.visibleDecisionArtifact,
+      null,
+      2,
+    )}`,
+  );
+  assert.doesNotMatch(
+    artifactText,
+    /\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i,
+    "Independent resolution decision artifact leaked backend-shaped fields.",
   );
 }
 
@@ -9562,6 +9643,7 @@ async function runInhabitGameplayPass(session) {
     worldPressureAudit,
   );
   assertIndependentNpcActionEvidence(independentNpcActionEvidence);
+  assertIndependentResolutionDecisionArtifact(moments);
   const cityEventVisualEvidence = buildCityEventVisualEvidence(moments);
   assertCityEventVisualEvidence(cityEventVisualEvidence);
   const movementAuditMoments = moments.filter(
@@ -10408,7 +10490,6 @@ async function main() {
   assertMovementAuditSummary(movementAudit);
   const independentNpcActionEvidence =
     buildIndependentNpcActionEvidence(timeline);
-  assertIndependentNpcActionEvidence(independentNpcActionEvidence);
   const evidence = await createVisualEvidence({
     overlayChecks,
     timeline,

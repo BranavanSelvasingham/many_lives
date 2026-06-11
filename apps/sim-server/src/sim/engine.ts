@@ -271,7 +271,7 @@ export class SimulationEngine {
         await performAction(nextWorld, command.actionId, this.aiProvider);
         break;
       case "wait":
-        advanceWorld(nextWorld, command.minutes);
+        advanceWorldUntilIndependentNpcAction(nextWorld, command.minutes);
         thoughtRefreshMode = "deterministic";
         if (!command.silent) {
           addFeed(
@@ -441,6 +441,55 @@ function advanceWorld(
     syncCityEvents(world);
     remainingMinutes -= chunkMinutes;
   }
+}
+
+function independentNpcActionKeys(world: StreetGameState): Set<string> {
+  return new Set(
+    (world.problems ?? [])
+      .filter((problem) => problem.status === "resolved" && problem.resolvedByNpcId)
+      .map(
+        (problem) =>
+          `${problem.id}|${problem.resolvedByNpcId}|${problem.resolvedAt ?? "none"}`,
+      ),
+  );
+}
+
+function advanceWorldUntilIndependentNpcAction(
+  world: StreetGameState,
+  minutes: number,
+  options: { workingJobId?: string } = {},
+): { advancedMinutes: number; interrupted: boolean } {
+  const normalizedMinutes = Math.max(0, Math.round(minutes));
+
+  if (normalizedMinutes === 0) {
+    return { advancedMinutes: 0, interrupted: false };
+  }
+
+  const knownIndependentActions = independentNpcActionKeys(world);
+  let advancedMinutes = 0;
+  let remainingMinutes = normalizedMinutes;
+
+  while (remainingMinutes > 0) {
+    const chunkMinutes = Math.min(remainingMinutes, 5);
+    world.clock.totalMinutes += chunkMinutes;
+    advancedMinutes += chunkMinutes;
+    updateClock(world.clock);
+    world.currentTime = isoFor(world.clock.totalMinutes);
+    updateNpcLocations(world);
+    updatePlayerLocation(world);
+    resolvePassiveState(world, { workingJobId: options.workingJobId });
+    syncCityEvents(world);
+    remainingMinutes -= chunkMinutes;
+
+    const nextIndependentActions = independentNpcActionKeys(world);
+    if (
+      [...nextIndependentActions].some((key) => !knownIndependentActions.has(key))
+    ) {
+      return { advancedMinutes, interrupted: true };
+    }
+  }
+
+  return { advancedMinutes, interrupted: false };
 }
 
 function movePlayer(world: StreetGameState, x: number, y: number): void {
@@ -1445,19 +1494,27 @@ function resolveCommittedJobLoopStep(
     };
   }
 
-  if (currentHour(world) < committedJob.endHour && world.player.energy >= 28) {
+  const workAlreadyStarted = jobIsStartedCommitment(world, committedJob);
+  if (
+    (currentHour(world) < committedJob.endHour || workAlreadyStarted) &&
+    world.player.energy >= 28
+  ) {
     const isFirstAfternoonTeaShift = committedJob.id === "job-tea-shift";
     return {
       actionId: `work:${committedJob.id}`,
       autoContinue: true,
       detail: isFirstAfternoonTeaShift
         ? teaShiftWatchDetail(world)
-        : "The shift window is open now. Rowan can start working.",
+        : workAlreadyStarted
+          ? "Rowan already started this shift before the window closed, so he can finish the work in hand."
+          : "The shift window is open now. Rowan can start working.",
       key: `job-work:${committedJob.id}:${world.clock.totalMinutes}:${world.firstAfternoon?.teaShiftStage ?? "ready"}`,
       kind: "act",
       label: isFirstAfternoonTeaShift
         ? teaShiftWatchLabel(world)
-        : `Start ${committedJob.title}`,
+        : workAlreadyStarted
+          ? `Finish ${committedJob.title}`
+          : `Start ${committedJob.title}`,
       layer: "commitment",
       targetLocationId: committedJob.locationId,
     };
@@ -7674,7 +7731,12 @@ function workJob(world: StreetGameState, jobId: string): void {
     return;
   }
 
-  if (currentHour(world) < job.startHour || currentHour(world) >= job.endHour) {
+  const workAlreadyStarted = jobIsStartedCommitment(world, job);
+
+  if (
+    currentHour(world) < job.startHour ||
+    (currentHour(world) >= job.endHour && !workAlreadyStarted)
+  ) {
     addFeed(
       world,
       "info",
@@ -7742,11 +7804,41 @@ function workJob(world: StreetGameState, jobId: string): void {
           totalMinutesForDayHour(world.clock.day, job.endHour) -
             world.clock.totalMinutes,
         )
-      : job.durationMinutes;
+      : Math.max(5, job.durationMinutes - (job.progressMinutes ?? 0));
 
-  advanceWorld(world, workMinutes, { workingJobId: job.id });
+  const workAdvance = advanceWorldUntilIndependentNpcAction(world, workMinutes, {
+    workingJobId: job.id,
+  });
+  const totalProgressMinutes = Math.min(
+    job.durationMinutes,
+    (job.progressMinutes ?? 0) + workAdvance.advancedMinutes,
+  );
+  const energyCost = Math.max(
+    1,
+    Math.round((14 * workAdvance.advancedMinutes) / job.durationMinutes),
+  );
+
+  if (workAdvance.interrupted && totalProgressMinutes < job.durationMinutes) {
+    job.progressMinutes = totalProgressMinutes;
+    world.player.energy = clamp(world.player.energy - energyCost, 12, 100);
+    world.player.activeJobId = job.id;
+    job.accepted = true;
+    addFeed(
+      world,
+      "job",
+      `Rowan kept ${job.title.toLowerCase()} moving until the city changed around him; the work is still in hand.`,
+    );
+    rememberIfNew(
+      world,
+      "job",
+      `Rowan started ${job.title.toLowerCase()} before the window closed and still needs to finish it.`,
+    );
+    return;
+  }
+
+  job.progressMinutes = job.durationMinutes;
   world.player.money += job.pay;
-  world.player.energy = clamp(world.player.energy - 14, 12, 100);
+  world.player.energy = clamp(world.player.energy - energyCost, 12, 100);
   world.player.activeJobId = undefined;
   job.accepted = false;
   job.completed = true;
@@ -7980,8 +8072,21 @@ function contributeToLocation(
     return;
   }
 
-  advanceWorld(world, 60);
-  world.player.energy = clamp(world.player.energy - 10, 12, 100);
+  const choreAdvance = advanceWorldUntilIndependentNpcAction(world, 60);
+  const energyCost = Math.max(
+    1,
+    Math.round((10 * choreAdvance.advancedMinutes) / 60),
+  );
+  world.player.energy = clamp(world.player.energy - energyCost, 12, 100);
+  if (choreAdvance.interrupted && choreAdvance.advancedMinutes < 60) {
+    addFeed(
+      world,
+      "memory",
+      "Rowan kept the house moving until city news cut through the hour; the chores still need finishing.",
+    );
+    return;
+  }
+
   world.player.reputation.morrow_house = clamp(
     (world.player.reputation.morrow_house ?? 0) + 1,
     0,
@@ -8043,13 +8148,27 @@ function restAtHome(world: StreetGameState): void {
   }
 
   const pumpSolved = problemById(world, "problem-pump")?.status === "solved";
-  advanceWorld(world, 60);
+  const restAdvance = advanceWorldUntilIndependentNpcAction(world, 60);
+  const fullRestEnergy = pumpSolved ? 28 : 24;
+  const energyGain = Math.max(
+    1,
+    Math.round((fullRestEnergy * restAdvance.advancedMinutes) / 60),
+  );
   world.player.energy = clamp(
-    world.player.energy + (pumpSolved ? 28 : 24),
+    world.player.energy + energyGain,
     12,
     100,
   );
   world.player.lastRestAt = world.currentTime;
+  if (restAdvance.interrupted && restAdvance.advancedMinutes < 60) {
+    addFeed(
+      world,
+      "memory",
+      "Rowan caught part of the hour at Morrow House before the city changed loudly enough to matter.",
+    );
+    return;
+  }
+
   addFeed(
     world,
     "memory",
@@ -8281,7 +8400,8 @@ function resolvePassiveState(
     teaJob &&
     !teaJob.completed &&
     currentHour(world) >= teaJob.endHour &&
-    options.workingJobId !== teaJob.id
+    options.workingJobId !== teaJob.id &&
+    !jobIsStartedCommitment(world, teaJob)
   ) {
     missJobFromPassiveWorld(world, teaJob);
   }
@@ -8291,7 +8411,8 @@ function resolvePassiveState(
     yardJob &&
     !yardJob.completed &&
     currentHour(world) >= yardJob.endHour &&
-    options.workingJobId !== yardJob.id
+    options.workingJobId !== yardJob.id &&
+    !jobIsStartedCommitment(world, yardJob)
   ) {
     missJobFromPassiveWorld(world, yardJob);
   }
@@ -8331,6 +8452,10 @@ function resolvePassiveState(
   resolveIndependentNpcActions(world);
 }
 
+function jobIsStartedCommitment(world: StreetGameState, job: JobState): boolean {
+  return world.player.activeJobId === job.id && (job.progressMinutes ?? 0) > 0;
+}
+
 function missJobFromPassiveWorld(
   world: StreetGameState,
   job: JobState,
@@ -8344,6 +8469,7 @@ function missJobFromPassiveWorld(
   job.missed = true;
   job.missedAt ??= world.currentTime;
   job.deferredUntilMinutes = undefined;
+  job.progressMinutes = undefined;
   if (world.player.activeJobId === job.id) {
     world.player.activeJobId = undefined;
   }
@@ -8852,25 +8978,32 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     } else {
       const firstAfternoonTeaShift = job.id === "job-tea-shift";
       const actionId = `work:${job.id}`;
+      const workAlreadyStarted = jobIsStartedCommitment(world, job);
+      const remainingWorkMinutes = Math.max(
+        5,
+        job.durationMinutes - (job.progressMinutes ?? 0),
+      );
       actions.push({
         id: actionId,
         label: firstAfternoonTeaShift
           ? teaShiftWatchLabel(world)
-          : `Work ${job.title}`,
+          : workAlreadyStarted
+            ? `Finish ${job.title}`
+            : `Work ${job.title}`,
         description: firstAfternoonTeaShift
           ? teaShiftWatchDetail(world)
-          : `${job.durationMinutes} minutes for $${job.pay}.`,
+          : `${remainingWorkMinutes} minutes for $${job.pay}.`,
         kind: "work_job",
         emphasis: "high",
         ...spatial(actionId, job.locationId),
         disabled:
           currentHour(world) < job.startHour ||
-          currentHour(world) >= job.endHour ||
+          (currentHour(world) >= job.endHour && !workAlreadyStarted) ||
           world.player.energy < 28,
         disabledReason:
           currentHour(world) < job.startHour
             ? "Too early for the shift."
-            : currentHour(world) >= job.endHour
+            : currentHour(world) >= job.endHour && !workAlreadyStarted
               ? "The shift has already slipped."
               : world.player.energy < 28
                 ? "You are too drained for this work."
