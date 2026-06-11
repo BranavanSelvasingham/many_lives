@@ -35,6 +35,7 @@ export function buildRowanVisibleDecisionArtifact(
 ): RowanVisibleDecisionArtifact | null {
   return buildRowanVisibleDecisionArtifactFromState({
     activeConversationDecision: game.activeConversation?.decision,
+    autonomyActionId: game.rowanAutonomy?.actionId,
     autonomyLabel: game.rowanAutonomy?.label,
     autonomyReason: game.rowanAutonomy?.intent?.reason,
     autonomySignals: game.rowanAutonomy?.intent?.signals,
@@ -46,6 +47,7 @@ export function buildRowanVisibleDecisionArtifact(
 
 export function buildRowanVisibleDecisionArtifactFromState({
   activeConversationDecision,
+  autonomyActionId,
   autonomyLabel,
   autonomyReason,
   autonomySignals,
@@ -54,6 +56,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   travelPhase,
 }: {
   activeConversationDecision?: string;
+  autonomyActionId?: string;
   autonomyLabel?: string;
   autonomyReason?: string;
   autonomySignals?: string[];
@@ -67,10 +70,16 @@ export function buildRowanVisibleDecisionArtifactFromState({
 
   const selectedOption = selectedPlanningOption(planningTrace);
   const selectedStep = selectedPlanningStep(planningTrace);
+  const selectedRuntimeActionLabel =
+    planningTrace?.selectedActionId &&
+    autonomyActionId === planningTrace.selectedActionId
+      ? autonomyLabel
+      : undefined;
   const selectedActionBase = compactDecisionText(
-    planningTrace?.selectedLabel ??
-      selectedOption?.label ??
+    selectedRuntimeActionLabel ??
       selectedStep?.label ??
+      planningTrace?.selectedLabel ??
+      selectedOption?.label ??
       autonomyLabel,
     72,
   );
@@ -78,11 +87,30 @@ export function buildRowanVisibleDecisionArtifactFromState({
     travelPhase === "route-progress" && selectedActionBase
       ? compactDecisionText(`Following through: ${selectedActionBase}`, 72)
       : selectedActionBase;
+  const selectedFollowUpLabel = compactDecisionText(
+    selectedRuntimeActionLabel &&
+      selectedStep?.label &&
+      selectedStep.label !== selectedRuntimeActionLabel
+      ? selectedStep.label
+      : selectedRuntimeActionLabel &&
+          selectedOption?.label &&
+          selectedOption.label !== selectedRuntimeActionLabel
+        ? selectedOption.label
+        : undefined,
+    44,
+  );
   const rationaleBase = compactDecisionText(
-    selectedOption?.rationale ??
-      selectedStep?.rationale ??
-      autonomyReason ??
-      activeConversationDecision,
+    selectedFollowUpLabel
+      ? `${selectedFollowUpLabel}: ${
+          selectedOption?.rationale ??
+          selectedStep?.rationale ??
+          autonomyReason ??
+          activeConversationDecision
+        }`
+      : selectedOption?.rationale ??
+          selectedStep?.rationale ??
+          autonomyReason ??
+          activeConversationDecision,
     132,
   );
   const rationale =
