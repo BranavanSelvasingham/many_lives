@@ -2,6 +2,7 @@ import type {
   NpcState,
   StreetGameState,
 } from "../street-sim/types.js";
+import { objectiveRoutePlayerThought } from "../sim/objectiveScaffolds.js";
 import { normalizeStreetVoice } from "./streetVoice.js";
 import { getNpcNarrative } from "../street-sim/npcNarratives.js";
 
@@ -151,12 +152,12 @@ function buildPlayerThought(game: StreetGameState) {
     return "I need to move that cart.";
   }
 
-  if (
-    game.player.objective?.routeKey === "first-afternoon" &&
-    game.firstAfternoon?.teaShiftStage === "paid" &&
-    game.player.currentLocationId !== game.player.homeLocationId
-  ) {
-    return "I should head back to Morrow House and let today land.";
+  const scaffoldPlayerThought = objectiveRoutePlayerThought(
+    game,
+    game.player.objective,
+  );
+  if (scaffoldPlayerThought) {
+    return sanitizeThought(scaffoldPlayerThought);
   }
 
   if (

@@ -18,6 +18,8 @@ const FIRST_AFTERNOON_PLAN_RATIONALE =
   "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
 const FIRST_AFTERNOON_DIALOGUE_FALLBACK =
   "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.";
+const FIRST_AFTERNOON_RETURN_HOME_THOUGHT =
+  "I should head back to Morrow House and let today land.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -185,6 +187,17 @@ function worldWithActiveTeaCommitment(): StreetGameState {
   return world;
 }
 
+function worldWithPaidFirstAfternoonReturnThought(): StreetGameState {
+  const world = seedStreetGame("game-reasoning-paid-first-afternoon-return");
+
+  world.player.currentLocationId = "freight-yard";
+  world.firstAfternoon = {
+    teaShiftStage: "paid",
+  };
+
+  return world;
+}
+
 describe("street reasoning authority", () => {
   it("keeps first-afternoon action rationale in scaffold data, not engine control flow", () => {
     const engineSource = readFileSync(
@@ -213,6 +226,20 @@ describe("street reasoning authority", () => {
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain('routeKey === "first-afternoon"');
+  });
+
+  it("keeps first-afternoon return-home thought copy in scaffold data, not thought control flow", () => {
+    const thoughtsSource = readFileSync(
+      new URL("../src/ai/streetThoughts.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scaffoldSource).toContain(FIRST_AFTERNOON_RETURN_HOME_THOUGHT);
+    expect(thoughtsSource).not.toContain(FIRST_AFTERNOON_RETURN_HOME_THOUGHT);
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
@@ -366,5 +393,13 @@ describe("street reasoning authority", () => {
 
     expect(thoughts.playerThought).toMatch(/cups|tables|room/i);
     expect(thoughts.playerThought).not.toMatch(/pump|wrench|Morrow House/i);
+  });
+
+  it("keeps first-afternoon return-home thought visible through scaffold data", () => {
+    const world = worldWithPaidFirstAfternoonReturnThought();
+
+    const thoughts = buildDeterministicStreetThoughts(world);
+
+    expect(thoughts.playerThought).toBe(FIRST_AFTERNOON_RETURN_HOME_THOUGHT);
   });
 });
