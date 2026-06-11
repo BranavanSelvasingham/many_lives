@@ -41,6 +41,18 @@ test("tea-house anchors stay on the cafe frontage in South Quay v2", async () =>
   );
   assert.match(
     source,
-    /"npc-jo": \{\s+"x": 1306,\s+"y": 634/s,
+    /"repair-stall": \{[\s\S]*?"door": \{\s+"x": 1324,\s+"y": 930/s,
+  );
+  assert.match(
+    source,
+    /"repair-stall": \{[\s\S]*?"frontage": \{\s+"x": 1324,\s+"y": 914/s,
+  );
+  assert.match(
+    source,
+    /"repair-stall": \{[\s\S]*?"npcStands": \[[\s\S]*?"x": 1282,\s+"y": 954[\s\S]*?"x": 1368,\s+"y": 948/s,
+  );
+  assert.match(
+    source,
+    /"npc-jo": \{\s+"x": 1282,\s+"y": 954/s,
   );
 });

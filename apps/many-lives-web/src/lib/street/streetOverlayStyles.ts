@@ -1208,6 +1208,8 @@ export function buildStreetOverlayStyle({
       .ml-rail-toggle:focus-visible,
       .ml-compact-primary-action:focus-visible,
       .ml-primary-action:focus-visible,
+      .ml-release-button:focus-visible,
+      .ml-release-close:focus-visible,
       .ml-submit:focus-visible,
       .ml-focus-close:focus-visible,
       .ml-loading-button:focus-visible {
@@ -1844,6 +1846,127 @@ export function buildStreetOverlayStyle({
         line-height: 1.5;
         color: rgba(247, 213, 210, 0.96);
       }
+      .ml-release-widget {
+        position: absolute;
+        bottom: var(--ml-inset);
+        left: min(
+          calc(var(--ml-inset) + var(--ml-dock-width) + 10px),
+          calc(100% - var(--ml-inset) - 30px)
+        );
+        z-index: 5;
+        pointer-events: auto;
+      }
+      .ml-release-button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 999px;
+        border: 1px solid rgba(138, 151, 161, 0.2);
+        background: rgba(9, 14, 19, 0.62);
+        color: rgba(225, 234, 238, 0.68);
+        box-shadow: 0 10px 22px rgba(0, 0, 0, 0.2);
+        cursor: pointer;
+        transition:
+          background 140ms ease,
+          border-color 140ms ease,
+          color 140ms ease,
+          transform 140ms ease;
+      }
+      .ml-release-button:hover,
+      .ml-release-widget.is-open .ml-release-button {
+        border-color: rgba(205, 174, 115, 0.3);
+        background: rgba(20, 29, 34, 0.86);
+        color: rgba(247, 227, 187, 0.94);
+      }
+      .ml-release-button span {
+        display: block;
+        font-size: 13px;
+        line-height: 1;
+        font-weight: 800;
+        font-family: ui-serif, Georgia, serif;
+      }
+      .ml-release-panel {
+        position: absolute;
+        bottom: 36px;
+        left: 0;
+        width: min(310px, calc(100vw - var(--ml-inset) * 2));
+        max-height: min(46vh, 340px);
+        overflow-y: auto;
+        border-radius: 18px;
+        border: 1px solid rgba(138, 151, 161, 0.2);
+        background: linear-gradient(180deg, rgba(14, 21, 26, 0.98), rgba(8, 13, 18, 0.96));
+        box-shadow: 0 24px 54px rgba(0, 0, 0, 0.34);
+        padding: 12px;
+      }
+      .ml-release-panel-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .ml-release-title {
+        margin-top: 5px;
+        font-size: 16px;
+        line-height: 1.1;
+        font-weight: 800;
+        color: rgba(247, 249, 250, 0.98);
+      }
+      .ml-release-close {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        border: 1px solid rgba(138, 151, 161, 0.18);
+        background: rgba(24, 32, 38, 0.72);
+        color: rgba(232, 238, 241, 0.82);
+        cursor: pointer;
+        font-size: 16px;
+        line-height: 1;
+      }
+      .ml-release-build {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .ml-release-build span {
+        border-radius: 999px;
+        border: 1px solid rgba(205, 174, 115, 0.18);
+        background: rgba(205, 174, 115, 0.08);
+        padding: 5px 7px;
+        font-size: 9px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: rgba(241, 214, 160, 0.9);
+      }
+      .ml-release-feature-list {
+        display: grid;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .ml-release-feature {
+        border-radius: 14px;
+        border: 1px solid rgba(138, 151, 161, 0.14);
+        background: rgba(20, 29, 34, 0.68);
+        padding: 10px;
+      }
+      .ml-release-feature-title {
+        font-size: 12px;
+        line-height: 1.25;
+        font-weight: 800;
+        color: rgba(239, 243, 245, 0.94);
+      }
+      .ml-release-feature-copy {
+        margin-top: 5px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: rgba(219, 228, 233, 0.74);
+      }
       .ml-dock-copy {
         margin-top: 8px;
         font-size: 11px;
@@ -2037,6 +2160,15 @@ export function buildStreetOverlayStyle({
           width: 100%;
           transform: none;
         }
+        .ml-release-widget {
+          left: auto;
+          right: var(--ml-inset);
+          bottom: calc(max(var(--ml-inset), env(safe-area-inset-bottom)) + 88px);
+        }
+        .ml-release-panel {
+          right: 0;
+          left: auto;
+        }
         .ml-title {
           font-size: 24px;
         }
@@ -2093,6 +2225,10 @@ export function buildStreetOverlayStyle({
           transform: none;
           width: auto;
           z-index: 3;
+        }
+        .ml-release-widget {
+          right: var(--ml-inset);
+          bottom: calc(max(var(--ml-inset), env(safe-area-inset-bottom)) + 88px);
         }
         .ml-right-stack {
           right: var(--ml-inset);
@@ -2327,6 +2463,26 @@ export function buildStreetOverlayStyle({
         bottom: max(var(--ml-inset), env(safe-area-inset-bottom));
         width: auto;
         z-index: 4;
+      }
+      .ml-root.is-collapsible-rail .ml-release-widget {
+        right: var(--ml-inset);
+        bottom: calc(
+          max(var(--ml-inset), env(safe-area-inset-bottom)) +
+            var(--ml-compact-rail-bottom) +
+            var(--ml-compact-rail-collapsed-height) + 10px
+        );
+        left: auto;
+      }
+      .ml-root.is-collapsible-rail.is-rail-expanded .ml-release-widget {
+        bottom: calc(
+          max(var(--ml-inset), env(safe-area-inset-bottom)) +
+            var(--ml-compact-rail-bottom) +
+            var(--ml-compact-rail-expanded-height) + 10px
+        );
+      }
+      .ml-root.is-collapsible-rail .ml-release-panel {
+        right: 0;
+        left: auto;
       }
       .ml-root.is-collapsible-rail .ml-dock-panel {
         padding: 10px;

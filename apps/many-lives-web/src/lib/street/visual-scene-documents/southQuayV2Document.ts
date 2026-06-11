@@ -393,10 +393,10 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "id": "landmark-v2-repair-stall",
       "locationId": "repair-stall",
       "rect": {
-        "x": 1188,
-        "y": 366,
-        "width": 282,
-        "height": 226,
+        "x": 1164,
+        "y": 682,
+        "width": 320,
+        "height": 236,
         "radius": 24
       },
       "style": "workshop"
@@ -534,42 +534,42 @@ const SOUTH_QUAY_V2_DOCUMENT = {
     },
     "repair-stall": {
       "door": {
-        "x": 1328,
-        "y": 608
+        "x": 1324,
+        "y": 930
       },
       "frontage": {
-        "x": 1320,
-        "y": 594
+        "x": 1324,
+        "y": 914
       },
       "highlight": {
-        "x": 1183,
-        "y": 361,
-        "width": 292,
-        "height": 236,
+        "x": 1156,
+        "y": 674,
+        "width": 336,
+        "height": 256,
         "radius": 24
       },
       "label": {
-        "x": 1328,
-        "y": 392
+        "x": 1324,
+        "y": 710
       },
       "npcStands": [
         {
-          "x": 1306,
-          "y": 634
+          "x": 1282,
+          "y": 954
         },
         {
-          "x": 1360,
-          "y": 628
+          "x": 1368,
+          "y": 948
         }
       ],
       "playerApproaches": [
         {
-          "x": 1280,
-          "y": 666
+          "x": 1260,
+          "y": 980
         },
         {
-          "x": 1366,
-          "y": 662
+          "x": 1392,
+          "y": 976
         }
       ]
     },
@@ -752,8 +752,8 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "y": 606
     },
     "npc-jo": {
-      "x": 1306,
-      "y": 634
+      "x": 1282,
+      "y": 954
     },
     "npc-mara": {
       "x": 292,
