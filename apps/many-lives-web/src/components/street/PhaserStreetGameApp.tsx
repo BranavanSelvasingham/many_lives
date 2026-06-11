@@ -5898,8 +5898,8 @@ function buildScheduledNpcVisualCueForNpc({
     cueLabel,
     cueSignal:
       cueTarget.kind === "local-schedule-round"
-        ? "route glint and round badge"
-        : "route glint and destination badge",
+        ? "nearby footfall trace"
+        : "footfall trace and small intent notch",
     currentLocationId: currentLocation.id,
     currentScheduleLocationId: currentSchedule?.locationId ?? null,
     distanceToRoute: routePosition
@@ -9960,10 +9960,6 @@ function drawScheduledNpcVisualCues(
   for (const cue of cues) {
     drawScheduledNpcCuePath(layer, cue, now);
   }
-
-  for (const cue of cues) {
-    drawScheduledNpcCueMarker(layer, cue, now);
-  }
 }
 
 function drawScheduledNpcCuePath(
@@ -9976,93 +9972,112 @@ function drawScheduledNpcCuePath(
     return;
   }
 
-  const color = scheduledNpcCueColor(cue);
+  const palette = scheduledNpcCuePalette(cue);
   const routeDistance = polylineDistance(cleanPath);
-  const markerCount = clamp(Math.round(routeDistance / 58), 3, 14);
-  const pulse = 0.58 + Math.sin(now / 420 + hashString(cue.key) * 0.01) * 0.1;
-  const lineAlpha =
-    cue.cueKind === "local-schedule-round" ? 0.1 + pulse * 0.025 : 0.15;
+  const routeProgress = cue.routeProgress ?? 0.5;
+  const baseProgress = clamp(routeProgress, 0.08, 0.92);
+  const localSpan = clamp(CELL * 1.45 / Math.max(routeDistance, 1), 0.04, 0.12);
+  const phase =
+    Math.sin(now / 680 + (hashString(cue.key) % 137) * 0.045) * localSpan * 0.18;
+  const footprintCount = cue.cueKind === "local-schedule-round" ? 2 : 3;
 
-  layer.lineStyle(1.8, color, lineAlpha);
-  for (let index = 1; index < cleanPath.length; index += 1) {
-    layer.lineBetween(
-      cleanPath[index - 1].x,
-      cleanPath[index - 1].y,
-      cleanPath[index].x,
-      cleanPath[index].y,
-    );
-  }
-
-  const flow = positiveModulo(now / 2400 + (hashString(cue.key) % 173) / 173, 1);
-  for (let index = 0; index < markerCount; index += 1) {
-    const progress = positiveModulo((index + flow) / markerCount, 1);
-    if (progress < 0.05 || progress > 0.95) {
-      continue;
-    }
-
+  for (let index = 0; index < footprintCount; index += 1) {
+    const stagger = (index - (footprintCount - 1) / 2) * localSpan;
+    const progress = clamp(baseProgress + stagger + phase, 0.06, 0.94);
     const point = samplePolylinePoint(cleanPath, progress);
-    const size = cue.cueKind === "local-schedule-round" ? 2.2 : 2.8;
-    layer.fillStyle(0x091015, 0.12);
-    layer.fillCircle(point.x + 1, point.y + 1.2, size + 0.7);
-    layer.fillStyle(color, cue.cueKind === "local-schedule-round" ? 0.3 : 0.4);
-    layer.fillCircle(point.x, point.y, size);
+    const ahead = samplePolylinePoint(
+      cleanPath,
+      clamp(progress + localSpan * 0.42, 0.07, 0.95),
+    );
+    const behind = samplePolylinePoint(
+      cleanPath,
+      clamp(progress - localSpan * 0.42, 0.05, 0.93),
+    );
+    const angle = Math.atan2(ahead.y - behind.y, ahead.x - behind.x);
+    const side = index % 2 === 0 ? 1 : -1;
+    const center = offsetPoint(point, angle + Math.PI / 2, side * 3.4);
+    const alpha = cue.cueKind === "local-schedule-round" ? 0.26 : 0.34;
+    drawScheduledNpcFootfall(layer, center, angle, palette.trace, alpha);
   }
 
   if (cue.cueKind !== "local-schedule-round") {
-    const arrowTip = samplePolylinePoint(cleanPath, 0.96);
-    const arrowBack = samplePolylinePoint(cleanPath, 0.88);
-    const angle = Math.atan2(
-      arrowTip.y - arrowBack.y,
-      arrowTip.x - arrowBack.x,
+    const leadProgress = clamp(baseProgress + localSpan * 1.6, 0.1, 0.96);
+    const lead = samplePolylinePoint(cleanPath, leadProgress);
+    const back = samplePolylinePoint(
+      cleanPath,
+      clamp(leadProgress - localSpan * 0.9, 0.06, 0.9),
     );
-    const wing = 6.8;
-    layer.fillStyle(color, 0.38);
-    layer.fillTriangle(
-      arrowTip.x,
-      arrowTip.y,
-      arrowTip.x - Math.cos(angle - 0.72) * wing,
-      arrowTip.y - Math.sin(angle - 0.72) * wing,
-      arrowTip.x - Math.cos(angle + 0.72) * wing,
-      arrowTip.y - Math.sin(angle + 0.72) * wing,
-    );
+    const angle = Math.atan2(lead.y - back.y, lead.x - back.x);
+    drawScheduledNpcIntentNotch(layer, lead, angle, palette);
   }
 }
 
-function drawScheduledNpcCueMarker(
+function drawScheduledNpcFootfall(
   layer: PhaserType.GameObjects.Graphics,
-  cue: ScheduledNpcVisualCue,
-  now: number,
+  point: Point,
+  angle: number,
+  color: number,
+  alpha: number,
 ) {
-  const color = scheduledNpcCueColor(cue);
-  const pulse = 0.62 + Math.sin(now / 300 + hashString(cue.npcId) * 0.01) * 0.1;
-  const marker = {
-    x: cue.markerPosition.x,
-    y: cue.markerPosition.y - CELL * 0.08,
-  };
-  const ringRadius = CELL * (0.42 + pulse * 0.06);
+  const length = CELL * 0.27;
+  const width = CELL * 0.075;
+  const start = offsetPoint(point, angle, -length / 2);
+  const end = offsetPoint(point, angle, length / 2);
 
-  layer.fillStyle(color, 0.045);
-  layer.fillCircle(marker.x, marker.y, CELL * 0.58);
-  layer.lineStyle(1.9, color, 0.28 + pulse * 0.08);
-  layer.strokeCircle(marker.x, marker.y, ringRadius);
-  layer.lineStyle(1.2, 0xffefc8, 0.24 + pulse * 0.06);
-  layer.strokeCircle(marker.x, marker.y, ringRadius * 0.58);
-
-  const tickY = marker.y - ringRadius - CELL * 0.18;
-  layer.lineStyle(1.6, color, 0.28);
-  layer.lineBetween(marker.x, marker.y - ringRadius * 0.8, marker.x, tickY);
-  layer.fillStyle(0xffefc8, 0.72);
-  layer.fillCircle(marker.x, tickY, 3.2);
+  layer.lineStyle(width + 2.2, 0x071015, alpha * 0.28);
+  layer.lineBetween(start.x + 0.9, start.y + 1.1, end.x + 0.9, end.y + 1.1);
+  layer.lineStyle(width, color, alpha);
+  layer.lineBetween(start.x, start.y, end.x, end.y);
 }
 
-function scheduledNpcCueColor(cue: ScheduledNpcVisualCue) {
+function drawScheduledNpcIntentNotch(
+  layer: PhaserType.GameObjects.Graphics,
+  point: Point,
+  angle: number,
+  palette: ReturnType<typeof scheduledNpcCuePalette>,
+) {
+  const tip = offsetPoint(point, angle, CELL * 0.12);
+  const back = offsetPoint(point, angle, -CELL * 0.12);
+  const left = offsetPoint(back, angle + Math.PI / 2, CELL * 0.07);
+  const right = offsetPoint(back, angle - Math.PI / 2, CELL * 0.07);
+
+  layer.fillStyle(0x071015, 0.2);
+  layer.fillTriangle(
+    tip.x + 1,
+    tip.y + 1.2,
+    left.x + 1,
+    left.y + 1.2,
+    right.x + 1,
+    right.y + 1.2,
+  );
+  layer.fillStyle(palette.pin, 0.42);
+  layer.fillTriangle(tip.x, tip.y, left.x, left.y, right.x, right.y);
+}
+
+function offsetPoint(point: Point, angle: number, distance: number): Point {
+  return {
+    x: point.x + Math.cos(angle) * distance,
+    y: point.y + Math.sin(angle) * distance,
+  };
+}
+
+function scheduledNpcCuePalette(cue: ScheduledNpcVisualCue) {
   switch (cue.cueKind) {
     case "current-schedule-stop":
-      return 0xe7bf78;
+      return {
+        pin: 0xb98a5e,
+        trace: 0xd7c49a,
+      };
     case "next-scheduled-stop":
-      return 0x8dd0cd;
+      return {
+        pin: 0xa87752,
+        trace: 0xcdbb93,
+      };
     case "local-schedule-round":
-      return 0xf0cf8c;
+      return {
+        pin: 0x9f8462,
+        trace: 0xc5b58f,
+      };
   }
 }
 

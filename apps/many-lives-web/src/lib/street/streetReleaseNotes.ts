@@ -11,19 +11,19 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.0",
-  build: "9313de6",
-  source: "PR #82",
+  version: "0.1.1",
+  build: "cue-polish",
+  source: "PR #84",
   features: [
     {
-      title: "Scheduled NPC continuity cues",
+      title: "Cleaner NPC routine cues",
       body:
-        "Offscreen and indoor NPC movement now leaves restrained route cues, so scheduled stop changes are visible and auditable.",
+        "Scheduled NPC movement now uses subtle footfall traces instead of route-dot breadcrumbs, keeping independent routines visible without visual noise.",
     },
     {
-      title: "Regression guard",
+      title: "Release notes kept current",
       body:
-        "The browser regression now fails if a scheduled NPC changes stops without visible continuity evidence.",
+        "The bottom release icon now reflects this release's visible changes, so the deployed popup is not left one PR behind.",
     },
   ],
 };
