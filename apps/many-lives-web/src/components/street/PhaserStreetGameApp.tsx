@@ -1117,7 +1117,7 @@ export function PhaserStreetGameApp() {
           previousGame,
           nextGame,
           visualRoute,
-          { watchMode: rowanAutoplayEnabled || boundGameObserverEnabled },
+          { watchMode: rowanWatchModeEnabled },
         );
         const deferredPlaybackBeats = nextPlaybackBeats.map((beat) =>
           beat.kind === "move" ? { ...beat, durationMs: transitionMs } : beat,
@@ -1178,10 +1178,9 @@ export function PhaserStreetGameApp() {
       return true;
     },
     [
-      boundGameObserverEnabled,
       clearPendingVisualGameUpdate,
       publishWaypoint,
-      rowanAutoplayEnabled,
+      rowanWatchModeEnabled,
     ],
   );
 
@@ -1475,7 +1474,7 @@ export function PhaserStreetGameApp() {
 
     if (
       !game ||
-      !rowanAutoplayEnabled ||
+      !rowanWatchModeEnabled ||
       rowanAutoplayFrozen ||
       (!autonomy?.autoContinue && !openingAutoStart && !completionAutoStart) ||
       busyLabel ||
@@ -1558,8 +1557,8 @@ export function PhaserStreetGameApp() {
     handleAdvanceObjective,
     optimisticPlayerPosition,
     rowanPlayback,
-    rowanAutoplayEnabled,
     rowanAutoplayFrozen,
+    rowanWatchModeEnabled,
   ]);
 
   useEffect(() => {
@@ -6603,7 +6602,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     (!conversationReplayActive || conversationCanAdvanceDuringReplay) &&
     !visualMovePending;
   const watchModeCarriesObjective =
-    snapshot.rowanAutoplayEnabled &&
+    snapshot.rowanWatchModeEnabled &&
     !snapshot.rowanAutoplayFrozen &&
     (rowanAutonomy.autoContinue || firstAfternoonCompletionCanAdvance);
   const showPrimaryContinue =
@@ -7540,7 +7539,7 @@ function syncUiState(runtimeState: RuntimeState) {
 
   if (
     collapsibleRailViewport &&
-    runtimeState.snapshot.rowanAutoplayEnabled &&
+    runtimeState.snapshot.rowanWatchModeEnabled &&
     !game.activeConversation &&
     !runtimeState.ui.focusPanel &&
     !runtimeState.ui.supportExpanded &&
@@ -7570,7 +7569,7 @@ function maybeAutostartConversation(
   const game = runtimeState.snapshot.game;
   if (
     !game ||
-    !runtimeState.snapshot.rowanAutoplayEnabled ||
+    !runtimeState.snapshot.rowanWatchModeEnabled ||
     runtimeState.snapshot.busyLabel ||
     game.activeConversation ||
     isBlockingRowanPlaybackForGame(runtimeState.snapshot.rowanPlayback, game)
@@ -7653,7 +7652,7 @@ function maybeAutostartConversation(
     runtimeState.ui.focusPanel = null;
     if (
       isCollapsibleRailViewport(runtimeState.snapshot.viewport) &&
-      !runtimeState.snapshot.rowanAutoplayEnabled
+      !runtimeState.snapshot.rowanWatchModeEnabled
     ) {
       runtimeState.ui.railExpanded = true;
     }
@@ -8391,7 +8390,7 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   });
   const path = visualRoute.tilePath.length > 0 ? visualRoute.tilePath : [fromPoint];
   const playerMoveMsPerTile = derivePlayerMoveMsPerTile(runtimeState);
-  const playerMoveMaxDurationMs = runtimeState.snapshot.rowanAutoplayEnabled
+  const playerMoveMaxDurationMs = runtimeState.snapshot.rowanWatchModeEnabled
     ? WATCH_PLAYER_MAX_MOVE_DURATION_MS
     : PLAYER_MAX_MOVE_DURATION_MS;
   const durationMs =
@@ -8521,7 +8520,7 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
   }
 
   if (runtimeState.indices.activeSpace) {
-    return runtimeState.snapshot.rowanAutoplayEnabled ? 420 : 340;
+    return runtimeState.snapshot.rowanWatchModeEnabled ? 420 : 340;
   }
 
   const currentLocation = game.player.currentLocationId
@@ -8550,11 +8549,11 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
 
   const rawMsPerTile =
     (patrolCycleSeconds(currentLocation.type) * 1000) / patrolDistance;
-  const watchMultiplier = runtimeState.snapshot.rowanAutoplayEnabled ? 1.24 : 1;
+  const watchMultiplier = runtimeState.snapshot.rowanWatchModeEnabled ? 1.24 : 1;
   return clamp(
     rawMsPerTile * PLAYER_MOVE_DURATION_MULTIPLIER * watchMultiplier,
-    runtimeState.snapshot.rowanAutoplayEnabled ? 360 : 300,
-    runtimeState.snapshot.rowanAutoplayEnabled ? 880 : 760,
+    runtimeState.snapshot.rowanWatchModeEnabled ? 360 : 300,
+    runtimeState.snapshot.rowanWatchModeEnabled ? 880 : 760,
   );
 }
 
