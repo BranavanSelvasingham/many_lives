@@ -45,15 +45,14 @@ const CHROME_BIN = USE_CHROME_DRIVER ? findChromeBin() : null;
 const CAPTURE_ALL_CHROME_STEPS =
   USE_CHROME_DRIVER && process.env.MANY_LIVES_BROWSER_CAPTURE_ALL !== "0";
 const REQUIRE_SCREENSHOTS =
-  USE_CHROME_DRIVER && process.env.MANY_LIVES_BROWSER_REQUIRE_SCREENSHOTS !== "0";
+  USE_CHROME_DRIVER &&
+  process.env.MANY_LIVES_BROWSER_REQUIRE_SCREENSHOTS !== "0";
 const REQUIRE_RECORDING =
   USE_CHROME_DRIVER && process.env.MANY_LIVES_BROWSER_REQUIRE_RECORDING !== "0";
-const TRACE_REGRESSION =
-  process.env.MANY_LIVES_BROWSER_TRACE === "1";
+const TRACE_REGRESSION = process.env.MANY_LIVES_BROWSER_TRACE === "1";
 const DEFAULT_WEB_BASE =
   process.env.MANY_LIVES_WEB_BASE_URL ?? "http://127.0.0.1:3001";
-const FORCE_LOCAL_WEB =
-  process.env.MANY_LIVES_BROWSER_FORCE_LOCAL_WEB !== "0";
+const FORCE_LOCAL_WEB = process.env.MANY_LIVES_BROWSER_FORCE_LOCAL_WEB !== "0";
 const OUTPUT_DIR =
   process.env.MANY_LIVES_BROWSER_PLAYTEST_DIR ??
   path.join(tmpdir(), `manylives-rowan-browser-${Date.now()}`);
@@ -81,8 +80,7 @@ const REQUIRED_NPC_PATROL_LOCATION_IDS = [
   "market-square",
   "freight-yard",
 ];
-const OPENING_CTA_PATTERN =
-  /Watch Rowan begin|Rowan starts by asking Mara\./i;
+const OPENING_CTA_PATTERN = /Watch Rowan begin|Rowan starts by asking Mara\./i;
 const GENERIC_WATCH_CTA_COPY_PATTERN =
   /Rowan will keep going when this beat lands/i;
 const OPENING_PLAYER_LOCATION_MAX_DISTANCE = 72;
@@ -404,7 +402,10 @@ function browserUrl(gameId) {
 }
 
 function slug(label) {
-  return label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return label
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function sleep(ms) {
@@ -437,12 +438,7 @@ async function waitFor(condition, timeoutMs, errorMessage) {
 }
 
 class CdpSession {
-  constructor({
-    browser,
-    outputDir,
-    pageWsUrl,
-    url,
-  }) {
+  constructor({ browser, outputDir, pageWsUrl, url }) {
     this.browser = browser;
     this.outputDir = outputDir;
     this.pageWsUrl = new URL(pageWsUrl);
@@ -456,10 +452,7 @@ class CdpSession {
   }
 
   async connect() {
-    const port =
-      this.pageWsUrl.port === ""
-        ? 80
-        : Number(this.pageWsUrl.port);
+    const port = this.pageWsUrl.port === "" ? 80 : Number(this.pageWsUrl.port);
     this.socket = createConnection({
       host: this.pageWsUrl.hostname,
       port,
@@ -586,7 +579,9 @@ class CdpSession {
     })()`);
 
     if (probe?.parseError) {
-      throw new Error(`Could not parse #ml-browser-camera-probe: ${probe.parseError}`);
+      throw new Error(
+        `Could not parse #ml-browser-camera-probe: ${probe.parseError}`,
+      );
     }
 
     return probe;
@@ -678,7 +673,10 @@ class CdpSession {
 
   async clickVisibleSelector(selector) {
     const target = await this.readVisibleElementRect(selector);
-    assert.ok(target, `Expected visible clickable element for selector ${selector}.`);
+    assert.ok(
+      target,
+      `Expected visible clickable element for selector ${selector}.`,
+    );
     await this.dispatchMouseClick(target.rect.centerX, target.rect.centerY);
     return target;
   }
@@ -1488,7 +1486,7 @@ class CdpSession {
       }
 
       if (frame.opcode === 0x9) {
-        this.writeControlFrame(0xA, frame.payload);
+        this.writeControlFrame(0xa, frame.payload);
         continue;
       }
 
@@ -1528,7 +1526,9 @@ class CdpSession {
               if (typeof argument.value === "string") {
                 return argument.value;
               }
-              return argument.description ?? JSON.stringify(argument.value ?? null);
+              return (
+                argument.description ?? JSON.stringify(argument.value ?? null)
+              );
             })
             .join(" ")
             .trim(),
@@ -1612,7 +1612,9 @@ class CdpSession {
   }
 
   writeControlFrame(opcode, payload = Buffer.alloc(0)) {
-    this.socket.write(Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]));
+    this.socket.write(
+      Buffer.concat([Buffer.from([0x80 | opcode, payload.length]), payload]),
+    );
   }
 
   recordPageError(error) {
@@ -1791,10 +1793,10 @@ function buildProbeFromGame(game) {
           lines: activeConversation.lines.length,
           npcId: activeConversation.npcId,
           npcName:
-            game.npcs.find((npc) => npc.id === activeConversation.npcId)?.name ??
-            null,
+            game.npcs.find((npc) => npc.id === activeConversation.npcId)
+              ?.name ?? null,
           updatedAt: activeConversation.updatedAt,
-      }
+        }
       : null,
     aiRuntime: aiRuntimeProbeFromGame(game),
     autonomy: {
@@ -1849,7 +1851,9 @@ function buildProbeFromGame(game) {
       justHappened: null,
       next: null,
       now: game.rowanAutonomy.label,
-      status: game.rowanAutonomy.autoContinue ? "Autoplay" : game.currentScene.title,
+      status: game.rowanAutonomy.autoContinue
+        ? "Autoplay"
+        : game.currentScene.title,
       thought:
         game.rowanAutonomy.detail ??
         game.summary ??
@@ -1961,7 +1965,9 @@ function planningTraceProbeFromGame(game) {
   return {
     blockers: trace.blockers,
     considered: trace.considered.map(optionPayload),
-    immediateAction: trace.immediateAction ? stepPayload(trace.immediateAction) : null,
+    immediateAction: trace.immediateAction
+      ? stepPayload(trace.immediateAction)
+      : null,
     intendedFollowUp: trace.intendedFollowUp
       ? stepPayload(trace.intendedFollowUp)
       : null,
@@ -2037,7 +2043,8 @@ function visibleDecisionArtifactFromGame(game) {
   const selectedOption = selectedPlanningTraceOption(trace);
   const selectedStep =
     trace?.nextSteps?.find(
-      (step) => trace.selectedActionId && step.actionId === trace.selectedActionId,
+      (step) =>
+        trace.selectedActionId && step.actionId === trace.selectedActionId,
     ) ??
     trace?.nextSteps?.[0] ??
     null;
@@ -2071,7 +2078,10 @@ function visibleDecisionArtifactFromGame(game) {
   );
   const selectedAction =
     travelPhase === "route-progress" && selectedActionBase
-      ? compactVisibleDecisionText(`Following through: ${selectedActionBase}`, 72)
+      ? compactVisibleDecisionText(
+          `Following through: ${selectedActionBase}`,
+          72,
+        )
       : selectedActionBase;
   const selectedFollowUpLabel = compactVisibleDecisionText(
     selectedRuntimeActionLabel &&
@@ -2093,10 +2103,10 @@ function visibleDecisionArtifactFromGame(game) {
           autonomyReason ??
           conversationDecision
         }`
-      : selectedOption?.rationale ??
+      : (selectedOption?.rationale ??
           selectedStep?.rationale ??
           autonomyReason ??
-          conversationDecision,
+          conversationDecision),
     132,
   );
   const rationale =
@@ -2157,12 +2167,12 @@ function visibleDecisionArtifactFromGame(game) {
       travelPhase === "route-progress"
         ? "Validated route progress"
         : trace?.selectedRecommendation?.sourceKind === "live-llm"
-        ? "Live planner recommendation, checked before acting"
-        : trace
-          ? "Planner recommendation, checked before acting"
-          : conversationDecision
-            ? "Conversation result"
-            : "Rowan's current intent",
+          ? "Live planner recommendation, checked before acting"
+          : trace
+            ? "Planner recommendation, checked before acting"
+            : conversationDecision
+              ? "Conversation result"
+              : "Rowan's current intent",
   };
 }
 
@@ -2330,7 +2340,10 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\blive pressure\b/gi, "current reason")
     .replace(/\broute hint action\b/gi, "suggested move")
     .replace(/\broute hint\b/gi, "suggested path")
-    .replace(/\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi, "")
+    .replace(
+      /\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi,
+      "",
+    )
     .replace(/\s{2,}/g, " ")
     .trim();
 
@@ -2393,7 +2406,8 @@ function worldPressureFromGame(game) {
     npcSchedules: (game.npcs ?? []).map((npc) => {
       const currentSchedule =
         npc.schedule.find(
-          (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+          (entry) =>
+            currentHour >= entry.fromHour && currentHour < entry.toHour,
         ) ?? null;
       const nextSchedule =
         npc.schedule
@@ -2454,7 +2468,11 @@ function simCityEventSnapshot(game) {
   }));
 }
 
-function independentNpcActionSummary({ problemId, problemTitle, resolverName }) {
+function independentNpcActionSummary({
+  problemId,
+  problemTitle,
+  resolverName,
+}) {
   if (problemId === "problem-pump") {
     return `${resolverName} contained the ${problemTitle.toLowerCase()} before it became evening house strain.`;
   }
@@ -2467,10 +2485,13 @@ function independentNpcActionSummary({ problemId, problemTitle, resolverName }) 
 function independentNpcActionsFromGame(game) {
   const npcsById = new Map((game.npcs ?? []).map((npc) => [npc.id, npc]));
   return (game.problems ?? [])
-    .filter((problem) => problem.status === "resolved" && problem.resolvedByNpcId)
+    .filter(
+      (problem) => problem.status === "resolved" && problem.resolvedByNpcId,
+    )
     .map((problem) => {
       const resolver = npcsById.get(problem.resolvedByNpcId);
-      const resolverName = resolver?.name ?? problem.resolvedByNpcId ?? "A local";
+      const resolverName =
+        resolver?.name ?? problem.resolvedByNpcId ?? "A local";
       return {
         afterStatus: problem.status,
         beforeStatus: "active",
@@ -2490,8 +2511,12 @@ function independentNpcActionsFromGame(game) {
       };
     })
     .sort((left, right) => {
-      const leftTime = left.resolvedAt ? Date.parse(left.resolvedAt) : Number.NEGATIVE_INFINITY;
-      const rightTime = right.resolvedAt ? Date.parse(right.resolvedAt) : Number.NEGATIVE_INFINITY;
+      const leftTime = left.resolvedAt
+        ? Date.parse(left.resolvedAt)
+        : Number.NEGATIVE_INFINITY;
+      const rightTime = right.resolvedAt
+        ? Date.parse(right.resolvedAt)
+        : Number.NEGATIVE_INFINITY;
       if (leftTime !== rightTime) {
         return rightTime - leftTime;
       }
@@ -2505,7 +2530,11 @@ function findCityEvent(game, id) {
 }
 
 function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
-  assert.equal(probe.gameId, game.id, `${label}: browser loaded the wrong game id.`);
+  assert.equal(
+    probe.gameId,
+    game.id,
+    `${label}: browser loaded the wrong game id.`,
+  );
   assert.equal(
     probe.clock.iso,
     game.currentTime,
@@ -2683,11 +2712,26 @@ function assertPlanningTracePayload(label, planningTrace) {
   );
   assert.ok(
     Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureId") &&
-      Object.prototype.hasOwnProperty.call(planningTrace, "selectedPressureKind") &&
-      Object.prototype.hasOwnProperty.call(planningTrace, "selectedMatchedOutcomeId") &&
-      Object.prototype.hasOwnProperty.call(planningTrace, "selectedLegalBacking") &&
-      Object.prototype.hasOwnProperty.call(planningTrace, "selectedRecommendation") &&
-      Object.prototype.hasOwnProperty.call(planningTrace, "selectedTargetLocationId"),
+      Object.prototype.hasOwnProperty.call(
+        planningTrace,
+        "selectedPressureKind",
+      ) &&
+      Object.prototype.hasOwnProperty.call(
+        planningTrace,
+        "selectedMatchedOutcomeId",
+      ) &&
+      Object.prototype.hasOwnProperty.call(
+        planningTrace,
+        "selectedLegalBacking",
+      ) &&
+      Object.prototype.hasOwnProperty.call(
+        planningTrace,
+        "selectedRecommendation",
+      ) &&
+      Object.prototype.hasOwnProperty.call(
+        planningTrace,
+        "selectedTargetLocationId",
+      ),
     `${label}: planner trace must expose selected pressure, selected outcome, selected legal backing, selected recommendation provenance, and selected target metadata.`,
   );
   const selectedRecommendation = planningTrace.selectedRecommendation ?? null;
@@ -2842,7 +2886,11 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
   );
 }
 
-function assertVisibleDecisionNextCheckForTrace(label, planningTrace, artifact) {
+function assertVisibleDecisionNextCheckForTrace(
+  label,
+  planningTrace,
+  artifact,
+) {
   if (!planningTrace || !artifact) {
     return;
   }
@@ -3034,11 +3082,13 @@ function assertProbeAuditability(label, game, probe) {
     `${label}: world pressure probe is missing job windows.`,
   );
   assert.ok(
-    (probe.worldPressure?.problems ?? []).length >= (game.problems ?? []).length,
+    (probe.worldPressure?.problems ?? []).length >=
+      (game.problems ?? []).length,
     `${label}: world pressure probe is missing problems.`,
   );
   assert.ok(
-    (probe.worldPressure?.npcSchedules ?? []).length >= (game.npcs ?? []).length,
+    (probe.worldPressure?.npcSchedules ?? []).length >=
+      (game.npcs ?? []).length,
     `${label}: world pressure probe is missing NPC schedules.`,
   );
   assert.ok(
@@ -3367,15 +3417,25 @@ function classifyObjectiveSequenceIntent(visibleText, probe) {
     families.push("ada_kettle_lead");
   }
 
-  if (/\b(?:lunch rush|cup-and-counter|shift|counter|paid)\b/i.test(objectiveText)) {
+  if (
+    /\b(?:lunch rush|cup-and-counter|shift|counter|paid)\b/i.test(objectiveText)
+  ) {
     families.push("cafe_shift");
   }
 
-  if (/\b(?:Morrow House|return home|head back|room|take stock)\b/i.test(objectiveText)) {
+  if (
+    /\b(?:Morrow House|return home|head back|room|take stock)\b/i.test(
+      objectiveText,
+    )
+  ) {
     families.push("return_home");
   }
 
-  if (/\b(?:take stock|field note|settled|first afternoon complete)\b/i.test(objectiveText)) {
+  if (
+    /\b(?:take stock|field note|settled|first afternoon complete)\b/i.test(
+      objectiveText,
+    )
+  ) {
     families.push("take_stock");
   }
 
@@ -3400,7 +3460,10 @@ function classifyObjectiveSequenceRouteRole({
     return "conversation-start";
   }
 
-  if (/^exit:/i.test(actionId) || /\bExit to South Quay\b/i.test(normalizedLabel)) {
+  if (
+    /^exit:/i.test(actionId) ||
+    /\bExit to South Quay\b/i.test(normalizedLabel)
+  ) {
     return "portal-exit";
   }
 
@@ -3408,7 +3471,11 @@ function classifyObjectiveSequenceRouteRole({
     return "portal-enter";
   }
 
-  if (/^move:/i.test(actionId) || mode === "moving" || /^Head\s+/i.test(normalizedLabel)) {
+  if (
+    /^move:/i.test(actionId) ||
+    mode === "moving" ||
+    /^Head\s+/i.test(normalizedLabel)
+  ) {
     return "route-move";
   }
 
@@ -3453,7 +3520,10 @@ function compactPlanningTraceOption(option) {
     planKey: option.planKey ?? null,
     pressureId: option.pressureId ?? null,
     pressureKind: option.pressureKind ?? null,
-    pressureLabel: compactObjectiveSequenceText(option.pressureLabel ?? "", 120),
+    pressureLabel: compactObjectiveSequenceText(
+      option.pressureLabel ?? "",
+      120,
+    ),
     provenance: option.provenance ?? null,
     reason: option.reason ?? null,
     status: option.status ?? null,
@@ -3497,7 +3567,10 @@ function compactPlanningTracePlannerIntent(intent) {
     planKey: intent.planKey ?? null,
     pressureId: intent.pressureId ?? null,
     pressureKind: intent.pressureKind ?? null,
-    pressureLabel: compactObjectiveSequenceText(intent.pressureLabel ?? "", 120),
+    pressureLabel: compactObjectiveSequenceText(
+      intent.pressureLabel ?? "",
+      120,
+    ),
     rationale: compactObjectiveSequenceText(intent.rationale ?? "", 160),
     targetLocationId: intent.targetLocationId ?? null,
   };
@@ -3518,7 +3591,10 @@ function compactPlanningTraceRecommendation(recommendation) {
     legalBackingSource: recommendation.legalBackingSource ?? null,
     model: recommendation.model ?? null,
     provider: recommendation.provider ?? null,
-    rationale: compactObjectiveSequenceText(recommendation.rationale ?? "", 160),
+    rationale: compactObjectiveSequenceText(
+      recommendation.rationale ?? "",
+      160,
+    ),
     sourceKind: recommendation.sourceKind ?? null,
     validationSource: recommendation.validationSource ?? null,
     validationStatus: recommendation.validationStatus ?? null,
@@ -3667,10 +3743,7 @@ function buildObjectiveSequenceAuthorityEvidence({
   if (selectedMatchedOutcomeId || selectedPressureKind === "predicate") {
     authorityKinds.push("objective-predicate");
   }
-  if (
-    selectedPressureKind &&
-    selectedPressureKind !== "predicate"
-  ) {
+  if (selectedPressureKind && selectedPressureKind !== "predicate") {
     authorityKinds.push(`live-pressure:${selectedPressureKind}`);
   }
   if (selectedStep?.legal && selectedLegalBacking?.source) {
@@ -3705,17 +3778,24 @@ function buildObjectiveSequenceAuthorityEvidence({
   return {
     authorityKinds: [...new Set(authorityKinds)],
     hasAutonomyAction: false,
-    hasLegalSelectedStep: Boolean(selectedStep?.legal && selectedLegalBacking?.source),
+    hasLegalSelectedStep: Boolean(
+      selectedStep?.legal && selectedLegalBacking?.source,
+    ),
     hasPlannerTrace: true,
     immediateAction: compactPlanningTraceStep(
       planningTrace.immediateAction ?? selectedStep,
     ),
     intendedFollowUp: compactPlanningTraceStep(planningTrace.intendedFollowUp),
-    nonActionResolution: routeRole === "conversation-resolution" && !selectedActionId,
-    plannerIntent: compactPlanningTracePlannerIntent(planningTrace.plannerIntent),
+    nonActionResolution:
+      routeRole === "conversation-resolution" && !selectedActionId,
+    plannerIntent: compactPlanningTracePlannerIntent(
+      planningTrace.plannerIntent,
+    ),
     rejectedStaleOptionCount: rejectedStaleOptions.length,
     rejectedStaleOptions,
-    selectedConsideredOption: compactPlanningTraceOption(selectedConsideredOption),
+    selectedConsideredOption: compactPlanningTraceOption(
+      selectedConsideredOption,
+    ),
     selectedLegalBacking: selectedLegalBacking
       ? {
           actionId: selectedLegalBacking.actionId ?? null,
@@ -3727,8 +3807,14 @@ function buildObjectiveSequenceAuthorityEvidence({
     selectedMatchedOutcomeId,
     selectedPressureId,
     selectedPressureKind,
-    selectedPressureLabel: compactObjectiveSequenceText(selectedPressureLabel ?? "", 120),
-    selectedLabel: compactObjectiveSequenceText(planningTrace.selectedLabel ?? "", 120),
+    selectedPressureLabel: compactObjectiveSequenceText(
+      selectedPressureLabel ?? "",
+      120,
+    ),
+    selectedLabel: compactObjectiveSequenceText(
+      planningTrace.selectedLabel ?? "",
+      120,
+    ),
     selectedProvenance,
     selectedRecommendation,
     selectedStep: compactPlanningTraceStep(selectedStep),
@@ -3828,8 +3914,8 @@ function buildObjectiveSequenceAuditEntry({
           ? "boarding-house"
           : intentFamilies.includes("ada_kettle_lead") ||
               intentFamilies.includes("cafe_shift")
-      ? "tea-house"
-      : null;
+            ? "tea-house"
+            : null;
   const authorityEvidence = buildObjectiveSequenceAuthorityEvidence({
     autonomy: probe.autonomy ?? null,
     planningTrace,
@@ -4131,7 +4217,7 @@ function assertObjectiveSequenceAudit(objectiveSequenceAudit) {
         (entry.authorityEvidence?.hasLegalSelectedStep &&
           Boolean(
             entry.authorityEvidence?.selectedMatchedOutcomeId ||
-              entry.authorityEvidence?.selectedPressureKind,
+            entry.authorityEvidence?.selectedPressureKind,
           )),
     ),
     "Objective sequence audit must classify conversation-resolution beats as non-action authority or planner-backed follow-through.",
@@ -4215,7 +4301,8 @@ const OBJECTIVE_SEQUENCE_GROUP_LABELS = {
   "follow-mara-lead-to-kettle-lamp": "Follow Mara's lead to Kettle & Lamp",
   "verify-ada-lead-and-accept-shift": "Verify Ada's lunch-work lead",
   "work-cup-and-counter-shift": "Work the cup-and-counter shift",
-  "return-to-morrow-house-and-take-stock": "Return to Morrow House and take stock",
+  "return-to-morrow-house-and-take-stock":
+    "Return to Morrow House and take stock",
   "other-objective-beat": "Other objective beat",
 };
 
@@ -4287,7 +4374,9 @@ function buildObjectiveSequenceRuns(objectiveSequenceAudit) {
     run.intentFamilies = [
       ...new Set([...run.intentFamilies, ...(entry.intentFamilies ?? [])]),
     ];
-    run.routeRoles = [...new Set([...run.routeRoles, entry.routeRole].filter(Boolean))];
+    run.routeRoles = [
+      ...new Set([...run.routeRoles, entry.routeRole].filter(Boolean)),
+    ];
     if (entry.selectedActionId) {
       run.selectedActions = [
         ...new Set([...run.selectedActions, entry.selectedActionId]),
@@ -4353,10 +4442,17 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
   assert.ok(
     kettleRun?.authorityKinds.includes("objective-predicate") &&
       kettleRun?.authorityKinds.includes("legal-action") &&
-      kettleRun?.authorityKinds.some((kind) => kind.startsWith("legal-action:")),
+      kettleRun?.authorityKinds.some((kind) =>
+        kind.startsWith("legal-action:"),
+      ),
     "Kettle sequence must expose objective-predicate and concrete legal-action authority.",
   );
-  for (const expectedRole of ["portal-exit", "route-move", "portal-enter", "conversation-start"]) {
+  for (const expectedRole of [
+    "portal-exit",
+    "route-move",
+    "portal-enter",
+    "conversation-start",
+  ]) {
     assert.ok(
       kettleRun?.routeRoles.includes(expectedRole),
       `Kettle sequence did not carry ${expectedRole}.`,
@@ -4377,9 +4473,13 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
   );
   assert.ok(
     returnRun?.authorityKinds.includes("legal-action") &&
-      returnRun?.authorityKinds.some((kind) => kind.startsWith("legal-action:")) &&
+      returnRun?.authorityKinds.some((kind) =>
+        kind.startsWith("legal-action:"),
+      ) &&
       (returnRun?.authorityKinds.includes("objective-predicate") ||
-        returnRun?.authorityKinds.some((kind) => kind.startsWith("live-pressure:"))),
+        returnRun?.authorityKinds.some((kind) =>
+          kind.startsWith("live-pressure:"),
+        )),
     "Return-home sequence must expose concrete legal-action plus predicate or live-pressure authority.",
   );
   assert.ok(
@@ -4670,14 +4770,20 @@ function compactWorldPressureSnapshot(worldPressure) {
           npc.currentLocationId !== npc.currentScheduleLocationId,
       )
       .map((npc) => ({
-        currentConcern: compactObjectiveSequenceText(npc.currentConcern ?? "", 120),
+        currentConcern: compactObjectiveSequenceText(
+          npc.currentConcern ?? "",
+          120,
+        ),
         currentLocationId: npc.currentLocationId,
         currentScheduleLocationId: npc.currentScheduleLocationId,
         id: npc.id,
         mood: npc.mood ?? null,
       })),
     npcSchedules: (worldPressure.npcSchedules ?? []).map((npc) => ({
-      currentConcern: compactObjectiveSequenceText(npc.currentConcern ?? "", 120),
+      currentConcern: compactObjectiveSequenceText(
+        npc.currentConcern ?? "",
+        120,
+      ),
       currentLocationId: npc.currentLocationId,
       currentScheduleLocationId: npc.currentScheduleLocationId ?? null,
       id: npc.id,
@@ -4744,8 +4850,14 @@ function addPressureTimelineChange(changes, context, change) {
 }
 
 function collectFieldChanges(changes, context, options) {
-  const before = pressureEntriesById(context.from.worldPressure, options.collectionName);
-  const after = pressureEntriesById(context.to.worldPressure, options.collectionName);
+  const before = pressureEntriesById(
+    context.from.worldPressure,
+    options.collectionName,
+  );
+  const after = pressureEntriesById(
+    context.to.worldPressure,
+    options.collectionName,
+  );
   const ids = new Set([...before.keys(), ...after.keys()]);
 
   for (const id of ids) {
@@ -5044,7 +5156,8 @@ function assertWorldPressureAudit(worldPressureAudit) {
     worldPressureAudit.pressureBackedEntries.some(
       (entry) =>
         entry.pressureKind &&
-        (entry.selectedActionId || entry.authorityKinds.includes("autonomy-action")),
+        (entry.selectedActionId ||
+          entry.authorityKinds.includes("autonomy-action")),
     ),
     "World pressure audit must connect live pressure to a selected action or autonomy action.",
   );
@@ -5191,10 +5304,10 @@ const REQUIRED_CITY_EVENT_VISUAL_CUES = [
 function cityEventBackingMatchesPressure(backing, pressureEvent) {
   return Boolean(
     pressureEvent &&
-      pressureEvent.locationId === backing.locationId &&
-      pressureEvent.status === backing.status &&
-      (pressureEvent.progress ?? null) === (backing.progress ?? null) &&
-      (pressureEvent.outcome ?? null) === (backing.outcome ?? null),
+    pressureEvent.locationId === backing.locationId &&
+    pressureEvent.status === backing.status &&
+    (pressureEvent.progress ?? null) === (backing.progress ?? null) &&
+    (pressureEvent.outcome ?? null) === (backing.outcome ?? null),
   );
 }
 
@@ -5214,7 +5327,10 @@ function buildCityEventVisualEvidence(moments) {
       const backingEvents = cue.backingEvents ?? [];
       const matchedPressureEventIds = backingEvents
         .filter((backing) =>
-          cityEventBackingMatchesPressure(backing, cityEventsById.get(backing.id)),
+          cityEventBackingMatchesPressure(
+            backing,
+            cityEventsById.get(backing.id),
+          ),
         )
         .map((backing) => backing.id);
       const backed =
@@ -5226,9 +5342,10 @@ function buildCityEventVisualEvidence(moments) {
         cue.signal,
         cue.visibleLabel,
       ].join(" ");
-      const playerFacing = !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
-        playerFacingText,
-      );
+      const playerFacing =
+        !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
+          playerFacingText,
+        );
       const sample = {
         backed,
         backingEvents,
@@ -5333,10 +5450,12 @@ function assertRailReadability(label, game, probe, dom) {
     assert.notEqual(
       commandRail.anchorVisible,
       false,
-      `${label}: active Rowan rail card is clipped or scrolled out of view (${JSON.stringify({
-        commandRail,
-        directive: dom.layout?.rowanDirective,
-      })}).`,
+      `${label}: active Rowan rail card is clipped or scrolled out of view (${JSON.stringify(
+        {
+          commandRail,
+          directive: dom.layout?.rowanDirective,
+        },
+      )}).`,
     );
   }
 
@@ -5354,18 +5473,22 @@ function assertRailReadability(label, game, probe, dom) {
 
   assert.ok(
     rectIsInside(dom.layout?.latestChatBubble, commandRail?.rect, 3),
-    `${label}: latest conversation bubble is clipped outside the command rail (${JSON.stringify({
-      bubble: dom.layout?.latestChatBubble,
-      commandRail: commandRail?.rect,
-    })}).`,
+    `${label}: latest conversation bubble is clipped outside the command rail (${JSON.stringify(
+      {
+        bubble: dom.layout?.latestChatBubble,
+        commandRail: commandRail?.rect,
+      },
+    )}).`,
   );
   if (dom.layout?.latestChatExchange?.fitsCommandRail) {
     assert.ok(
       rectIsInside(dom.layout.latestChatExchange.rect, commandRail?.rect, 3),
-      `${label}: latest conversation exchange is clipped outside the command rail (${JSON.stringify({
-        commandRail: commandRail?.rect,
-        exchange: dom.layout.latestChatExchange,
-      })}).`,
+      `${label}: latest conversation exchange is clipped outside the command rail (${JSON.stringify(
+        {
+          commandRail: commandRail?.rect,
+          exchange: dom.layout.latestChatExchange,
+        },
+      )}).`,
     );
   }
 }
@@ -5697,7 +5820,10 @@ function buildMovementAuditSummary(timeline) {
         current.maxUnreachableSegments,
         patrol.unreachableSegments ?? 0,
       );
-      current.minPathLength = Math.min(current.minPathLength, patrol.pathLength);
+      current.minPathLength = Math.min(
+        current.minPathLength,
+        patrol.pathLength,
+      );
       current.sampleCount += 1;
       current.usedVisualHints =
         current.usedVisualHints || Boolean(patrol.usedVisualHints);
@@ -5811,8 +5937,7 @@ function assertOpeningPlayerLocationGeometrySample(movementAudit, label) {
         OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.maxX &&
       sample.anchorWorldPoint.y >=
         OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.minY &&
-      sample.anchorWorldPoint.y <=
-        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.maxY,
+      sample.anchorWorldPoint.y <= OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.maxY,
     `${label}: Morrow House door anchor is detached from the visible entrance: ${JSON.stringify(sample)}.`,
   );
   assert.equal(
@@ -5900,7 +6025,10 @@ function compactScheduledNpcVisualCueSample(cue) {
   };
 }
 
-function buildScheduledNpcSpatialEvidence({ movementAudit, worldPressureAudit }) {
+function buildScheduledNpcSpatialEvidence({
+  movementAudit,
+  worldPressureAudit,
+}) {
   const legalRouteSamples = movementAudit.scheduledNpcRouteSamples
     .filter(isLegalScheduledNpcRouteSample)
     .slice(0, 8)
@@ -5929,7 +6057,8 @@ function buildScheduledNpcSpatialEvidence({ movementAudit, worldPressureAudit })
       .map(compactScheduledNpcMarkerSample);
   const npcSchedulePressureChanges =
     worldPressureAudit.worldPressureTimeline.filter(
-      (change) => change.kind === "npc-schedule" && change.cause === "independent",
+      (change) =>
+        change.kind === "npc-schedule" && change.cause === "independent",
     );
   const currentLocationPressureChanges = npcSchedulePressureChanges.filter(
     (change) => change.field === "currentLocationId",
@@ -6101,7 +6230,10 @@ function buildScheduledNpcLocationChangeAudit({
     const nextSchedules = new Map(
       (next.worldPressure?.npcSchedules ?? []).map((npc) => [npc.id, npc]),
     );
-    const npcIds = new Set([...previousSchedules.keys(), ...nextSchedules.keys()]);
+    const npcIds = new Set([
+      ...previousSchedules.keys(),
+      ...nextSchedules.keys(),
+    ]);
 
     for (const npcId of npcIds) {
       const previousNpc = previousSchedules.get(npcId);
@@ -6215,7 +6347,9 @@ function summarizeScheduledNpcMarkerEvidence(samples) {
     labels: usableSamples.map((sample) => sample.label),
     maxDistanceToRoute:
       usableSamples.length > 0
-        ? Math.max(...usableSamples.map((sample) => sample.distanceToRoute ?? 0))
+        ? Math.max(
+            ...usableSamples.map((sample) => sample.distanceToRoute ?? 0),
+          )
         : null,
     maxPositionDelta: roundAuditNumber(maxPositionDelta),
     progressRange: roundAuditNumber(progressRange),
@@ -6253,10 +6387,7 @@ function assertMovementAuditSummary(movementAudit) {
   );
   for (const locationId of REQUIRED_NPC_PATROL_LOCATION_IDS) {
     const patrol = patrolByLocationId.get(locationId);
-    assert.ok(
-      patrol,
-      `Expected summary NPC diagnostics for ${locationId}.`,
-    );
+    assert.ok(patrol, `Expected summary NPC diagnostics for ${locationId}.`);
     assert.equal(
       patrol.allRouted,
       true,
@@ -6323,7 +6454,9 @@ function assertMovementAuditSummary(movementAudit) {
   assert.ok(
     movementAudit.scheduledNpcLocationChanges.every((change) => change.valid),
     `A scheduled NPC current-stop/schedule change lacked route evidence, visible marker movement evidence, or an accepted no-route explanation: ${JSON.stringify(
-      movementAudit.scheduledNpcLocationChanges.filter((change) => !change.valid),
+      movementAudit.scheduledNpcLocationChanges.filter(
+        (change) => !change.valid,
+      ),
       null,
       2,
     )}`,
@@ -6392,7 +6525,13 @@ function assertCityEventState(label, game) {
   }
 }
 
-function assertRectsDoNotOverlap(label, firstRect, secondRect, firstName, secondName) {
+function assertRectsDoNotOverlap(
+  label,
+  firstRect,
+  secondRect,
+  firstName,
+  secondName,
+) {
   assert.ok(firstRect, `${label}: missing ${firstName} layout bounds.`);
   assert.ok(secondRect, `${label}: missing ${secondName} layout bounds.`);
 
@@ -6495,7 +6634,12 @@ function assertCriticalVisualCoherence(label, dom, options = {}) {
   );
 
   if (options.expectFocusWindow) {
-    assertRectInsideViewport(label, layout.focusWindow, "focus panel", viewport);
+    assertRectInsideViewport(
+      label,
+      layout.focusWindow,
+      "focus panel",
+      viewport,
+    );
     assertNoAncestorClipping(
       label,
       layout.clippingAncestors?.focusWindow,
@@ -6581,15 +6725,29 @@ function assertNotebookUsesCognitionAuthority(label, dom, probe) {
     /\b(worldPressure|cityEvents|jobWindows|npcSchedules|planningTrace|routeKey)\b/i,
     `${label}: player-facing Notebook should not leak backend-shaped debug labels.`,
   );
-  assertNotebookFreshForLateObjective(label, normalizedBody, notebook);
+  assertNotebookFreshForLateObjective(label, normalizedBody, notebook, probe);
 }
 
-function assertNotebookFreshForLateObjective(label, normalizedBody, notebook) {
+const STALE_LATE_NOTEBOOK_AUTHORITY_PATTERN =
+  /Keep a stable room|Mara is the person most likely|Enter Morrow House|tonight's bed|bed feel less temporary|turning temporary again/i;
+
+function assertNotebookFreshForLateObjective(
+  label,
+  normalizedBody,
+  notebook,
+  probe,
+) {
   const lateNiaLeadVisible =
     /Talk to Nia next while there is still time/i.test(normalizedBody) ||
     /Ask Nia where the block is about to jam/i.test(normalizedBody) ||
     /Jo's clue points toward Nia/i.test(normalizedBody);
-  if (!lateNiaLeadVisible) {
+  const postFirstAfternoonShiftVisible =
+    Boolean(probe?.firstAfternoon?.completionAcknowledgedAt) ||
+    (Boolean(probe?.firstAfternoon?.completedAt) &&
+      /rest|recover|yard work|Morrow Yard pump|live pressure|Ask Nia|block is about to jam/i.test(
+        normalizedBody,
+      ));
+  if (!lateNiaLeadVisible && !postFirstAfternoonShiftVisible) {
     return;
   }
 
@@ -6605,29 +6763,115 @@ function assertNotebookFreshForLateObjective(label, normalizedBody, notebook) {
 
   assert.doesNotMatch(
     notebookText,
-    /Keep a stable room|Mara is the person most likely|tonight's bed|bed feel less temporary/i,
-    `${label}: late Notebook stayed anchored to stale room/shelter authority after the Nia lead surfaced.`,
+    STALE_LATE_NOTEBOOK_AUTHORITY_PATTERN,
+    `${label}: late Notebook stayed anchored to stale opening room/shelter authority after the objective shifted.`,
   );
   assert.doesNotMatch(
     normalizedBody,
     /Morrow House is where Rowan can let today's standing settle|runs himself flat|tonight's bed|room stays mine/i,
-    `${label}: late rail/body mixed the Nia objective shift with stale Morrow House standing rationale.`,
+    `${label}: late rail/body mixed the objective shift with stale Morrow House standing rationale.`,
   );
-  assert.match(
-    notebookText,
-    /Nia|Jo|block|jam|square/i,
-    `${label}: late Notebook should reflect the current Nia/block-jam lead.`,
-  );
+  assertLateNotebookMatchesCurrentPressure(label, notebook, probe);
   assert.notEqual(
     notebook.authority?.notebookNeedKey,
     "shelter",
-    `${label}: late Notebook should not keep shelter as the active need after the objective shifted to Nia/local pressure.`,
+    `${label}: late Notebook should not keep shelter as the active need after the objective shifted to rest/live pressure.`,
   );
+  assert.notEqual(
+    notebook.authority?.primaryNeedKey,
+    "shelter",
+    `${label}: late Notebook should not keep shelter as the hidden primary need after the objective shifted to rest/live pressure.`,
+  );
+}
+
+function assertLateNotebookMatchesCurrentPressure(label, notebook, probe) {
+  const notebookText = compactNotebookText(notebook);
+  const routeKey = probe?.objective?.routeKey ?? "";
+  const focus = probe?.objective?.focus ?? "";
+  const objectiveText = probe?.objective?.text ?? "";
+  const selectedText = [
+    probe?.autonomy?.label,
+    probe?.autonomy?.detail,
+    probe?.autonomy?.planningTrace?.selectedPressureKind,
+    probe?.autonomy?.planningTrace?.selectedPressureLabel,
+    probe?.autonomy?.planningTrace?.selectedMatchedOutcomeId,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const currentPressureText = [
+    routeKey,
+    focus,
+    objectiveText,
+    selectedText,
+    notebookText,
+  ].join(" ");
+
+  if (routeKey === "rest-home" || focus === "rest") {
+    assert.match(
+      notebookText,
+      /rest|recover|energy|field note|yard work|pump|live pressure/i,
+      `${label}: post-first-afternoon rest Notebook should explain recovery and the next live pressure, got ${JSON.stringify(notebook)}.`,
+    );
+    assert.doesNotMatch(
+      notebook.plan ?? "",
+      /^Enter Morrow House$/i,
+      `${label}: rest Notebook plan should not expose the low-level entry action as Rowan's current plan.`,
+    );
+    return;
+  }
+
+  if (/work-yard|yard|freight|Tomas/i.test(currentPressureText)) {
+    assert.match(
+      notebookText,
+      /yard|work|Tomas|freight|income|paid/i,
+      `${label}: late Notebook should reflect the current yard-work pressure, got ${JSON.stringify(notebook)}.`,
+    );
+    return;
+  }
+
+  if (
+    /help-pump|tool-pump|pump|wrench|Morrow Yard/i.test(currentPressureText)
+  ) {
+    assert.match(
+      notebookText,
+      /pump|wrench|tool|Morrow Yard|house problem/i,
+      `${label}: late Notebook should reflect the current pump/tool pressure, got ${JSON.stringify(notebook)}.`,
+    );
+    return;
+  }
+
+  if (/Nia|block|jam|cart|square/i.test(currentPressureText)) {
+    assert.match(
+      notebookText,
+      /Nia|Jo|block|jam|square/i,
+      `${label}: late Notebook should reflect the current Nia/block-jam lead, got ${JSON.stringify(notebook)}.`,
+    );
+    return;
+  }
+
+  assert.match(
+    notebookText,
+    /field note|rest|recover|yard|pump|work|Nia|block|live pressure|current/i,
+    `${label}: late Notebook should explain the current post-first-afternoon pressure, got ${JSON.stringify(notebook)}.`,
+  );
+}
+
+function compactNotebookText(notebook) {
+  return [
+    notebook?.title,
+    notebook?.belief,
+    notebook?.clue,
+    notebook?.plan,
+    notebook?.uncertainty,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 async function closeInhabitFocusPanel(session, label) {
   const before = await session.readDomSnapshot();
-  const closeTarget = await session.readVisibleElementRect("[data-close-focus]");
+  const closeTarget =
+    await session.readVisibleElementRect("[data-close-focus]");
   if (!closeTarget) {
     return {
       activeTab: before.activeTab,
@@ -7068,7 +7312,12 @@ async function runOverlayPanelChecks(session) {
         /City Pulse/i,
         /South Quay is moving/i,
       ],
-      rejectedText: [/worldPressure/i, /cityEvents/i, /jobWindows/i, /npcSchedules/i],
+      rejectedText: [
+        /worldPressure/i,
+        /cityEvents/i,
+        /jobWindows/i,
+        /npcSchedules/i,
+      ],
     },
     {
       label: "overlay-journal",
@@ -7229,12 +7478,12 @@ function playerProbeSignature(probe) {
 
 function inhabitCameraDelta(before, after) {
   return {
-    x: Math.round(
-      ((after?.scroll?.x ?? 0) - (before?.scroll?.x ?? 0)) * 100,
-    ) / 100,
-    y: Math.round(
-      ((after?.scroll?.y ?? 0) - (before?.scroll?.y ?? 0)) * 100,
-    ) / 100,
+    x:
+      Math.round(((after?.scroll?.x ?? 0) - (before?.scroll?.x ?? 0)) * 100) /
+      100,
+    y:
+      Math.round(((after?.scroll?.y ?? 0) - (before?.scroll?.y ?? 0)) * 100) /
+      100,
   };
 }
 
@@ -7282,8 +7531,7 @@ function buildWatchPacingAudit(clickLog) {
   );
   const ordinaryBeats = watchedBeats.filter(
     (entry) =>
-      !entry.completionAutoContinue &&
-      !openingFirstActionBeats.includes(entry),
+      !entry.completionAutoContinue && !openingFirstActionBeats.includes(entry),
   );
   const ordinaryDurations = ordinaryBeats
     .map((entry) => entry.durationMs)
@@ -7402,9 +7650,7 @@ function selectedPlanningEvidence(moment) {
       null,
     planKey: planningTrace?.selectedPlanKey ?? selectedOption?.planKey ?? null,
     pressureId:
-      planningTrace?.selectedPressureId ??
-      selectedOption?.pressureId ??
-      null,
+      planningTrace?.selectedPressureId ?? selectedOption?.pressureId ?? null,
     pressureKind:
       planningTrace?.selectedPressureKind ??
       selectedOption?.pressureKind ??
@@ -7415,7 +7661,9 @@ function selectedPlanningEvidence(moment) {
         "",
       160,
     ),
-    plannerIntent: compactPlanningTracePlannerIntent(planningTrace?.plannerIntent),
+    plannerIntent: compactPlanningTracePlannerIntent(
+      planningTrace?.plannerIntent,
+    ),
     provenance: selectedOption?.provenance ?? null,
     targetLocationId:
       planningTrace?.selectedTargetLocationId ??
@@ -7443,6 +7691,7 @@ function compactPostFirstAfternoonMoment(moment) {
     },
     label: moment.label,
     location: moment.location ?? null,
+    notebook: moment.notebook ?? null,
     objective: {
       focus: moment.objective?.focus ?? null,
       progress: moment.objective?.progress ?? null,
@@ -7590,9 +7839,7 @@ function postFirstAfternoonLiveRouteProbe(probe) {
     Boolean(selected.actionId) &&
     Boolean(selected.legalBacking?.source) &&
     Boolean(
-      selected.pressureId ||
-        selected.pressureKind ||
-        selected.matchedOutcomeId,
+      selected.pressureId || selected.pressureKind || selected.matchedOutcomeId,
     ) &&
     !["route-scaffold", "stale-predicate"].includes(selected.provenance) &&
     !(
@@ -7651,6 +7898,11 @@ function buildPostFirstAfternoonLivePressureEvidence({
       plannerOptionsAtLiveRoute: liveRoutePressureOptions,
     },
     liveRoute: liveRouteSummary,
+    notebookFreshness: {
+      afterRest: restSummary?.notebook ?? null,
+      atHandoff: handoffSummary?.notebook ?? null,
+      atLiveRoute: liveRouteSummary?.notebook ?? null,
+    },
     progressionBeats: clickLog
       .filter((entry) =>
         [
@@ -7682,6 +7934,42 @@ function buildPostFirstAfternoonLivePressureEvidence({
       watchedAutoContinueCount,
     },
   };
+}
+
+function assertPostFirstAfternoonNotebookSummary(summary) {
+  const notebook = summary?.notebook;
+  assert.ok(
+    notebook,
+    `${summary?.label ?? "post-first-afternoon"}: missing late Notebook cognition evidence.`,
+  );
+  const notebookText = compactNotebookText(notebook);
+  assert.doesNotMatch(
+    notebookText,
+    STALE_LATE_NOTEBOOK_AUTHORITY_PATTERN,
+    `${summary.label}: late Notebook kept stale opening shelter authority: ${JSON.stringify(notebook)}.`,
+  );
+  assert.notEqual(
+    notebook.authority?.notebookNeedKey,
+    "shelter",
+    `${summary.label}: late Notebook authority still names shelter as the active need.`,
+  );
+  assert.notEqual(
+    notebook.authority?.primaryNeedKey,
+    "shelter",
+    `${summary.label}: late Notebook authority still names shelter as the hidden primary need.`,
+  );
+  assertLateNotebookMatchesCurrentPressure(summary.label, notebook, {
+    autonomy: {
+      detail: summary.selected?.pressureLabel ?? null,
+      label: summary.selected?.label ?? null,
+      planningTrace: {
+        selectedMatchedOutcomeId: summary.selected?.matchedOutcomeId ?? null,
+        selectedPressureKind: summary.selected?.pressureKind ?? null,
+        selectedPressureLabel: summary.selected?.pressureLabel ?? null,
+      },
+    },
+    objective: summary.objective,
+  });
 }
 
 function assertPostFirstAfternoonLivePressureEvidence(evidence) {
@@ -7718,6 +8006,7 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
       "first-afternoon",
       `${summary.label}: post-first-afternoon evidence stayed on first-afternoon route authority.`,
     );
+    assertPostFirstAfternoonNotebookSummary(summary);
   }
 
   assert.equal(
@@ -7777,7 +8066,8 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   );
   assert.ok(
     (evidence.livePressure?.atHandoff?.activeProblems ?? []).some(
-      (problem) => problem.id === "problem-pump" && problem.locationId === "courtyard",
+      (problem) =>
+        problem.id === "problem-pump" && problem.locationId === "courtyard",
     ) ||
       (evidence.livePressure?.afterRest?.activeProblems ?? []).some(
         (problem) =>
@@ -7891,7 +8181,12 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   }
 }
 
-function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = null) {
+function assertInhabitPlayerDom(
+  label,
+  dom,
+  controlCandidate = null,
+  probe = null,
+) {
   assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
   assert.equal(
     dom.hasFrameworkErrorOverlay,
@@ -7967,7 +8262,10 @@ async function waitForInhabitSettled(session, label) {
       if (probe.visualPlayer?.isMovingToServerState) {
         return null;
       }
-      if (probe.playback?.activeKind || (probe.playback?.queuedCount ?? 0) > 0) {
+      if (
+        probe.playback?.activeKind ||
+        (probe.playback?.queuedCount ?? 0) > 0
+      ) {
         return null;
       }
       return probe;
@@ -7987,7 +8285,10 @@ async function waitForInhabitTransition(session, beforeSignature, label) {
       if (probe.visualPlayer?.isMovingToServerState) {
         return null;
       }
-      if (probe.playback?.activeKind || (probe.playback?.queuedCount ?? 0) > 0) {
+      if (
+        probe.playback?.activeKind ||
+        (probe.playback?.queuedCount ?? 0) > 0
+      ) {
         return null;
       }
       return probe;
@@ -8000,8 +8301,8 @@ async function waitForInhabitTransition(session, beforeSignature, label) {
 function isFirstAfternoonCompletionPendingProbe(probe) {
   return Boolean(
     probe?.firstAfternoon?.completedAt &&
-      !probe?.firstAfternoon?.completionAcknowledgedAt &&
-      /first afternoon complete/i.test(probe?.autonomy?.label ?? ""),
+    !probe?.firstAfternoon?.completionAcknowledgedAt &&
+    /first afternoon complete/i.test(probe?.autonomy?.label ?? ""),
   );
 }
 
@@ -8020,8 +8321,14 @@ async function waitForInhabitCameraProbe(session, label) {
 }
 
 function worldPointToViewportPoint(camera, worldPoint, label) {
-  assert.ok(camera?.sceneViewportCss, `${label}: missing scene viewport bounds.`);
-  assert.ok(camera?.visibleWorldRect, `${label}: missing visible world bounds.`);
+  assert.ok(
+    camera?.sceneViewportCss,
+    `${label}: missing scene viewport bounds.`,
+  );
+  assert.ok(
+    camera?.visibleWorldRect,
+    `${label}: missing visible world bounds.`,
+  );
   assert.ok(worldPoint, `${label}: missing Rowan world point.`);
 
   const viewport = camera.sceneViewportCss;
@@ -8087,7 +8394,8 @@ function chooseInhabitCameraDragCenter(camera) {
 
   return (
     candidates.find(
-      (candidate) => !playerPoint || pointDistance(candidate, playerPoint) >= 140,
+      (candidate) =>
+        !playerPoint || pointDistance(candidate, playerPoint) >= 140,
     ) ?? candidates[0]
   );
 }
@@ -8161,6 +8469,7 @@ async function captureInhabitMoment({
     label,
     location: probe.location,
     movement: probe.movement ?? null,
+    notebook: compactCognitionNotebook(probe),
     objective: probe.objective ?? null,
     openingActionCarryForward: probe.openingActionCarryForward ?? null,
     player: probe.player ?? null,
@@ -8188,6 +8497,29 @@ function compactInhabitReportMoment(moment) {
   const reportMoment = { ...moment };
   delete reportMoment.movement;
   return reportMoment;
+}
+
+function compactCognitionNotebook(probe) {
+  const notebook = probe?.rowanCognition?.notebook;
+  if (!notebook) {
+    return null;
+  }
+
+  return {
+    authority: {
+      beliefId: notebook.authority?.beliefId ?? null,
+      beliefSource: notebook.authority?.beliefSource ?? null,
+      nextMoveActionId: notebook.authority?.nextMoveActionId ?? null,
+      notebookNeedKey: notebook.authority?.notebookNeedKey ?? null,
+      primaryNeedKey: notebook.authority?.primaryNeedKey ?? null,
+    },
+    belief: notebook.belief ?? null,
+    clue: notebook.clue ?? null,
+    confidence: notebook.confidence ?? null,
+    plan: notebook.plan ?? null,
+    title: notebook.title ?? null,
+    uncertainty: notebook.uncertainty ?? null,
+  };
 }
 
 function assertInhabitOpeningCtaProgression(moments) {
@@ -8306,7 +8638,8 @@ function assertInhabitSituatedWatchCtaCopy(moments) {
 
   for (const expectation of expectations) {
     const moment = byLabel[expectation.label];
-    const visibleWatchText = moment?.control?.text ?? moment?.autonomyLabel ?? "";
+    const visibleWatchText =
+      moment?.control?.text ?? moment?.autonomyLabel ?? "";
     assert.ok(
       visibleWatchText,
       `${expectation.label}: expected continued-watch or autonomy text.`,
@@ -8316,11 +8649,7 @@ function assertInhabitSituatedWatchCtaCopy(moments) {
       GENERIC_WATCH_CTA_COPY_PATTERN,
       `${expectation.label}: continued-watch copy regressed to generic beat-landing copy.`,
     );
-    assert.match(
-      visibleWatchText,
-      expectation.pattern,
-      expectation.reason,
-    );
+    assert.match(visibleWatchText, expectation.pattern, expectation.reason);
   }
 }
 
@@ -8484,11 +8813,7 @@ async function runInhabitRowanNotebookClickCheck(session) {
     x: camera.playerWorldPoint.x,
     y: camera.playerWorldPoint.y + 96,
   };
-  const clickPoint = worldPointToViewportPoint(
-    camera,
-    avatarWorldPoint,
-    label,
-  );
+  const clickPoint = worldPointToViewportPoint(camera, avatarWorldPoint, label);
 
   await session.evaluate(`(() => {
     window.__manyLivesRowanClickEvents = [];
@@ -8555,9 +8880,10 @@ async function runInhabitRowanNotebookClickCheck(session) {
   assert.equal(
     dom.activeTab,
     "mind",
-    `${label}: clicking Rowan should open the Notebook tab. ${JSON.stringify(
-      { clickDebug, screenshot },
-    )}`,
+    `${label}: clicking Rowan should open the Notebook tab. ${JSON.stringify({
+      clickDebug,
+      screenshot,
+    })}`,
   );
 
   for (const expectedText of [
@@ -8711,7 +9037,8 @@ async function clickUntilInhabitMilestone({
     }
 
     const beforeSignature = playerProbeSignature(probe);
-    const completionAutoContinue = isFirstAfternoonCompletionPendingProbe(probe);
+    const completionAutoContinue =
+      isFirstAfternoonCompletionPendingProbe(probe);
     if (
       probe.watchMode?.enabled &&
       !probe.watchMode?.frozen &&
@@ -8764,7 +9091,7 @@ async function clickUntilInhabitMilestone({
     let openedSupportForControl = false;
     if (!control) {
       const supportToggle = await session.readVisibleElementRect(
-        '[data-toggle-support]',
+        "[data-toggle-support]",
       );
       if (supportToggle) {
         await session.dispatchMouseClick(
@@ -9095,7 +9422,9 @@ async function runInhabitGameplayPass(session) {
   assertInhabitOpeningCtaProgression(moments);
   assertInhabitSituatedWatchCtaCopy(moments);
   assertObjectiveSequenceAudit(objectiveSequenceAudit);
-  const objectiveSequenceRuns = buildObjectiveSequenceRuns(objectiveSequenceAudit);
+  const objectiveSequenceRuns = buildObjectiveSequenceRuns(
+    objectiveSequenceAudit,
+  );
   assertObjectiveSequenceRuns(objectiveSequenceRuns);
   const earlyAgencyAuthorityLedger = buildEarlyAgencyAuthorityLedger({
     moments,
@@ -9143,8 +9472,7 @@ async function runInhabitGameplayPass(session) {
     objectiveSequenceAudit,
     objectiveSequenceRuns,
     panelChecks,
-    playerLocationGeometryEvidence:
-      movementAudit.playerLocationGeometrySamples,
+    playerLocationGeometryEvidence: movementAudit.playerLocationGeometrySamples,
     postFirstAfternoonLivePressureEvidence,
     progressionClicks: clickLog,
     reportPath,
@@ -9179,30 +9507,34 @@ function buildDecisionArtifactCoverage(moments) {
 
   return {
     count: withArtifact.length,
-    earlyDecision: withArtifact.find((entry) =>
-      /mara-lead-landed|arrived-kettle-lamp|ada-conversation|shift-in-motion/i.test(
-        entry.label,
-      ),
-    ) ?? null,
-    earlyNextCheckDecision: withArtifact.find(
-      (entry) =>
-        entry.nextCheck &&
+    earlyDecision:
+      withArtifact.find((entry) =>
         /mara-lead-landed|arrived-kettle-lamp|ada-conversation|shift-in-motion/i.test(
           entry.label,
         ),
-    ) ?? null,
-    laterDecision: withArtifact.find((entry) =>
-      /post-first-afternoon-handoff|post-first-afternoon-rest|post-first-afternoon-live-route/i.test(
-        entry.label,
-      ),
-    ) ?? null,
-    laterNextCheckDecision: withArtifact.find(
-      (entry) =>
-        entry.nextCheck &&
+      ) ?? null,
+    earlyNextCheckDecision:
+      withArtifact.find(
+        (entry) =>
+          entry.nextCheck &&
+          /mara-lead-landed|arrived-kettle-lamp|ada-conversation|shift-in-motion/i.test(
+            entry.label,
+          ),
+      ) ?? null,
+    laterDecision:
+      withArtifact.find((entry) =>
         /post-first-afternoon-handoff|post-first-afternoon-rest|post-first-afternoon-live-route/i.test(
           entry.label,
         ),
-    ) ?? null,
+      ) ?? null,
+    laterNextCheckDecision:
+      withArtifact.find(
+        (entry) =>
+          entry.nextCheck &&
+          /post-first-afternoon-handoff|post-first-afternoon-rest|post-first-afternoon-live-route/i.test(
+            entry.label,
+          ),
+      ) ?? null,
     labels: withArtifact.map((entry) => entry.label),
     nextCheckCount: withArtifact.filter((entry) => entry.nextCheck).length,
     samples: withArtifact.slice(0, 5),
@@ -9266,7 +9598,10 @@ async function createVisualEvidence({ overlayChecks, timeline }) {
   );
 
   const recordingPath = path.join(OUTPUT_DIR, "rowan-gameplay-regression.mp4");
-  const frameListPath = path.join(OUTPUT_DIR, "rowan-gameplay-regression.frames.txt");
+  const frameListPath = path.join(
+    OUTPUT_DIR,
+    "rowan-gameplay-regression.frames.txt",
+  );
   const manifestPath = path.join(OUTPUT_DIR, "visual-evidence.json");
   const concatLines = [];
 
@@ -9305,7 +9640,7 @@ async function createVisualEvidence({ overlayChecks, timeline }) {
     }
     await writeFile(
       path.join(OUTPUT_DIR, "rowan-gameplay-regression.recording-error.txt"),
-      `${error instanceof Error ? error.stack ?? error.message : String(error)}\n`,
+      `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
       "utf8",
     );
   }
@@ -9317,7 +9652,11 @@ async function createVisualEvidence({ overlayChecks, timeline }) {
     recordingPath,
     screenshots,
   };
-  await writeFile(manifestPath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+  await writeFile(
+    manifestPath,
+    `${JSON.stringify(evidence, null, 2)}\n`,
+    "utf8",
+  );
 
   return {
     manifestPath,
@@ -9491,7 +9830,11 @@ async function main() {
             screenshotError: routeStartCapture.screenshotError,
           }),
         );
-        await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+        await writeFile(
+          timelinePath,
+          `${JSON.stringify(timeline, null, 2)}\n`,
+          "utf8",
+        );
 
         const routeMidProbe = await session.waitForVisualRouteProgress(
           previousGame,
@@ -9517,7 +9860,11 @@ async function main() {
             screenshotError: routeMidCapture.screenshotError,
           }),
         );
-        await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+        await writeFile(
+          timelinePath,
+          `${JSON.stringify(timeline, null, 2)}\n`,
+          "utf8",
+        );
 
         if (shouldCaptureCloseConversationRoute(step.label)) {
           const routeCloseProbe = await session.waitForVisualRouteProgress(
@@ -9544,7 +9891,11 @@ async function main() {
               screenshotError: routeCloseCapture.screenshotError,
             }),
           );
-          await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+          await writeFile(
+            timelinePath,
+            `${JSON.stringify(timeline, null, 2)}\n`,
+            "utf8",
+          );
         }
       }
       gameRef.current = game;
@@ -9571,7 +9922,11 @@ async function main() {
           screenshotError: capture.screenshotError,
         }),
       );
-      await writeFile(timelinePath, `${JSON.stringify(timeline, null, 2)}\n`, "utf8");
+      await writeFile(
+        timelinePath,
+        `${JSON.stringify(timeline, null, 2)}\n`,
+        "utf8",
+      );
       traceRegression(`step-written:${index}:${step.label}`);
     }
 
@@ -9680,11 +10035,7 @@ async function main() {
     "ada-live-thread",
     "interior:tea-house",
   );
-  assertCleanSettledInteriorFrame(
-    byLabel,
-    "lunch-rush",
-    "interior:tea-house",
-  );
+  assertCleanSettledInteriorFrame(byLabel, "lunch-rush", "interior:tea-house");
   assertCleanSettledInteriorFrame(
     byLabel,
     "enter-morrow-return",
@@ -9914,7 +10265,10 @@ async function main() {
     "boarding-house",
     "Expected the live post-completion route target to stay aligned with the new state-derived objective, not Morrow House.",
   );
-  if (byLabel["post-first-afternoon-live-route"]?.objective?.routeKey === "work-yard") {
+  if (
+    byLabel["post-first-afternoon-live-route"]?.objective?.routeKey ===
+    "work-yard"
+  ) {
     assert.equal(
       byLabel["post-first-afternoon-live-route"]?.autonomy?.targetLocationId,
       "freight-yard",
@@ -9955,8 +10309,7 @@ async function main() {
     npcDiagnostics: movementAudit.npcPatrols,
     outputDir: OUTPUT_DIR,
     overlayChecks,
-    playerLocationGeometryEvidence:
-      movementAudit.playerLocationGeometrySamples,
+    playerLocationGeometryEvidence: movementAudit.playerLocationGeometrySamples,
     routeDiagnostics: movementAudit.playerRoutes,
     scheduledNpcContinuityGaps: movementAudit.scheduledNpcContinuityGaps,
     scheduledNpcDiagnostics: movementAudit.scheduledNpcRoutes,
