@@ -12,8 +12,8 @@ export type StreetReleaseInfo = {
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
   version: "0.1.4",
-  build: "draft",
-  source: "PR TBD",
+  build: "cb9d1d6",
+  source: "PR #93",
   features: [
     {
       title: "Independent city beats",
