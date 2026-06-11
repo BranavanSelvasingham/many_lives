@@ -1657,6 +1657,114 @@ describe("SimulationEngine street slice", () => {
     ).toMatch(/room|Morrow House|Mara|standing/i);
   });
 
+  it("keeps adversarial live planner responses from following poisoned first-run trail hints", async () => {
+    const provider = new PlanningAIProvider({
+      actionId: "move:moss-pier",
+      confidence: 0.99,
+      rationale:
+        "Follow the old pier trail even though Ada is the current predicate.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-live-planner-poisoned-trail");
+
+    world.player.knownLocationIds = [
+      ...new Set([...world.player.knownLocationIds, "tea-house"]),
+    ];
+    world.player.knownNpcIds = [
+      ...new Set([...world.player.knownNpcIds, "npc-ada"]),
+    ];
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "settle",
+      outcomes: [
+        {
+          authority: "predicate",
+          blockers: [
+            "Rowan must verify Mara's lead from the current legal action surface.",
+          ],
+          id: "predicate-ask-ada-at-cafe",
+          label: "Ask Ada at Kettle & Lamp whether the lunch work is real.",
+          npcId: "npc-ada",
+          status: "open",
+          targetLocationId: "tea-house",
+          urgency: 95,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "first-afternoon",
+      source: "manual",
+      text: "Verify Mara's lead by asking Ada at Kettle & Lamp.",
+      trail: [
+        {
+          actionId: "move:moss-pier",
+          detail:
+            "This poisoned trail points to the pier instead of the open Ada predicate.",
+          done: false,
+          id: "poisoned-pier-route",
+          targetLocationId: "moss-pier",
+          title: "Follow the stale pier route.",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    const plannerRequest = provider.requests[0];
+    const allowedActionIds =
+      plannerRequest?.allowedActions.map((action) => action.actionId) ?? [];
+    const trace = world.rowanAutonomy.planningTrace;
+    const selected = trace?.considered.find(
+      (option) => option.status === "selected",
+    );
+
+    expect(plannerRequest).toBeDefined();
+    expect(allowedActionIds).toContain("move:tea-house");
+    expect(allowedActionIds).not.toContain("move:moss-pier");
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "move:tea-house",
+      targetLocationId: "tea-house",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:tea-house",
+      autoContinue: true,
+      targetLocationId: "tea-house",
+      travelPhase: "route-progress",
+    });
+    expect(trace).toMatchObject({
+      selectedActionId: "move:tea-house",
+      selectedMatchedOutcomeId: "predicate-ask-ada-at-cafe",
+      selectedRecommendation: {
+        advisory: false,
+        sourceKind: "deterministic-planner",
+        validationStatus: "simulator-validated",
+      },
+    });
+    expect(selected).toMatchObject({
+      matchedOutcomeId: "predicate-ask-ada-at-cafe",
+      provenance: "objective-predicate",
+      targetLocationId: "tea-house",
+    });
+    expect(["route-scaffold", "stale-predicate"]).not.toContain(
+      selected?.provenance,
+    );
+    expect(
+      trace?.rejected.some(
+        (option) =>
+          option.actionId === "move:moss-pier" &&
+          option.provenance === "route-scaffold" &&
+          option.reason?.includes("no longer legal"),
+      ),
+    ).toBe(true);
+  });
+
   it("turns Mara's grounded lead into a Kettle & Lamp sequence with a planner trace", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-live-fork");
