@@ -3763,16 +3763,42 @@ describe("SimulationEngine street slice", () => {
       x: 10,
       y: 7,
     });
+    world = await engine.tick(world, 3);
+    const activeCart = world.problems.find(
+      (problem) => problem.id === "problem-cart",
+    );
+    if (activeCart) {
+      activeCart.discovered = true;
+    }
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "inspect:problem-cart",
     });
-    world = await engine.tick(world, 11);
+    world = await engine.tick(world, 9);
 
     expect(world.problems.find((problem) => problem.id === "problem-cart")).toMatchObject({
+      resolvedAt: "2026-03-21T16:30:00.000Z",
       resolvedByNpcId: "npc-nia",
       status: "resolved",
     });
+    expect(
+      world.npcs.find((npc) => npc.id === "npc-nia"),
+    ).toMatchObject({
+      currentConcern:
+        "The square is moving again, but it had to handle the cart itself.",
+      mood: "satisfied",
+    });
+    expect(
+      world.npcs.find((npc) => npc.id === "npc-nia")?.memory,
+    ).toContain(
+      "Nia cleared the handcart after the square got tired of bending around it.",
+    );
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "Nia got the jammed handcart rolling while Rowan was elsewhere; the square solved that one without him.",
+    );
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      "The jammed cart did not wait for Rowan. Nia cleared it once the square pressure peaked.",
+    );
 
     world.player.objective = {
       ...(world.player.objective as PlayerObjective),
@@ -3822,6 +3848,14 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy.planningTrace?.selectedActionId).not.toBe(
       "solve:problem-cart",
     );
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) =>
+          option.actionId === "solve:problem-cart" &&
+          option.provenance === "stale-predicate" &&
+          option.reason?.includes("no longer legal"),
+      ),
+    ).toBe(true);
     expect(
       world.rowanAutonomy.planningTrace?.rejected.some(
         (option) =>

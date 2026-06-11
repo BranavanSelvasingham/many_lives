@@ -2404,6 +2404,43 @@ function simCityEventSnapshot(game) {
   }));
 }
 
+function independentNpcActionSummary({ problemId, problemTitle, resolverName }) {
+  if (problemId === "problem-pump") {
+    return `${resolverName} contained ${problemTitle.toLowerCase()} before it became evening house strain.`;
+  }
+  if (problemId === "problem-cart") {
+    return `${resolverName} cleared ${problemTitle.toLowerCase()} before Quay Square spent the afternoon bent around it.`;
+  }
+  return `${resolverName} resolved ${problemTitle.toLowerCase()} without Rowan taking the work.`;
+}
+
+function independentNpcActionsFromGame(game) {
+  const npcsById = new Map((game.npcs ?? []).map((npc) => [npc.id, npc]));
+  return (game.problems ?? [])
+    .filter((problem) => problem.status === "resolved" && problem.resolvedByNpcId)
+    .map((problem) => {
+      const resolver = npcsById.get(problem.resolvedByNpcId);
+      const resolverName = resolver?.name ?? problem.resolvedByNpcId ?? "A local";
+      return {
+        afterStatus: problem.status,
+        beforeStatus: "active",
+        locationId: problem.locationId,
+        playerFacingSummary: independentNpcActionSummary({
+          problemId: problem.id,
+          problemTitle: problem.title,
+          resolverName,
+        }),
+        problemId: problem.id,
+        problemTitle: problem.title,
+        resolvedAt: problem.resolvedAt ?? null,
+        resolverConcern: resolver?.currentConcern ?? null,
+        resolverMood: resolver?.mood ?? null,
+        resolverName,
+        resolverNpcId: problem.resolvedByNpcId,
+      };
+    });
+}
+
 function findCityEvent(game, id) {
   return (game.cityEvents ?? []).find((event) => event.id === id) ?? null;
 }
@@ -2459,6 +2496,11 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
     probe.cityEvents ?? [],
     activeCityEvents(game),
     `${label}: browser active city events diverged from sim.`,
+  );
+  assert.deepEqual(
+    probe.independentNpcActions ?? [],
+    independentNpcActionsFromGame(game),
+    `${label}: browser independent NPC action evidence diverged from sim.`,
   );
   assert.deepEqual(
     probe.objective,
@@ -2835,6 +2877,23 @@ function assertProbeAuditability(label, game, probe) {
   assert.ok(
     (probe.worldPressure?.npcSchedules ?? []).length >= (game.npcs ?? []).length,
     `${label}: world pressure probe is missing NPC schedules.`,
+  );
+  assert.ok(
+    (probe.independentNpcActions ?? []).every(
+      (action) =>
+        action.problemId &&
+        action.problemTitle &&
+        action.resolverNpcId &&
+        action.resolverName &&
+        action.beforeStatus === "active" &&
+        action.afterStatus === "resolved" &&
+        action.resolvedAt &&
+        action.playerFacingSummary &&
+        !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
+          action.playerFacingSummary,
+        ),
+    ),
+    `${label}: independent NPC action probe must expose compact resolver, before/after, time, and player-facing summary evidence.`,
   );
 }
 
@@ -4723,6 +4782,81 @@ function assertWorldPressureAudit(worldPressureAudit) {
   );
 }
 
+function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
+  const actionsByKey = new Map();
+  for (const moment of moments ?? []) {
+    for (const action of moment.independentNpcActions ?? []) {
+      const key = [
+        action.problemId,
+        action.resolverNpcId,
+        action.resolvedAt,
+      ].join("|");
+      if (actionsByKey.has(key)) {
+        continue;
+      }
+      actionsByKey.set(key, {
+        ...action,
+        firstObservedClock: moment.clock ?? null,
+        firstObservedLabel: moment.label ?? null,
+        firstObservedScreenshot: moment.screenshot ?? null,
+      });
+    }
+  }
+
+  const resolverTimelineChanges = (
+    worldPressureAudit?.worldPressureTimeline ?? []
+  ).filter(
+    (change) =>
+      change.kind === "problem" &&
+      change.cause === "independent" &&
+      ["resolvedByNpcId", "status"].includes(change.field) &&
+      (change.field !== "status" || change.to === "resolved"),
+  );
+
+  return {
+    actions: [...actionsByKey.values()],
+    observedActionCount: actionsByKey.size,
+    resolverTimelineChanges,
+  };
+}
+
+function assertIndependentNpcActionEvidence(evidence) {
+  assert.ok(
+    evidence,
+    "Independent NPC action evidence must be recorded in the browser report.",
+  );
+  assert.ok(
+    evidence.observedActionCount > 0,
+    `Browser report must capture at least one independent NPC-owned problem resolution. Evidence: ${JSON.stringify(
+      evidence,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    evidence.actions.some(
+      (action) =>
+        ["problem-pump", "problem-cart"].includes(action.problemId) &&
+        action.problemTitle &&
+        action.resolverNpcId &&
+        action.resolverName &&
+        action.beforeStatus === "active" &&
+        action.afterStatus === "resolved" &&
+        action.resolvedAt &&
+        action.firstObservedLabel &&
+        action.playerFacingSummary &&
+        !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
+          action.playerFacingSummary,
+        ),
+    ),
+    `Independent NPC action evidence must connect problem, resolver, before/after state, time, report moment, and player-facing summary. Evidence: ${JSON.stringify(
+      evidence,
+      null,
+      2,
+    )}`,
+  );
+}
+
 const REQUIRED_CITY_EVENT_VISUAL_CUES = [
   {
     cue: "warm cafe prep",
@@ -6243,6 +6377,7 @@ function buildTimelineEntry({
     screenshot,
     screenshotError: screenshotError ?? null,
     firstAfternoon: probe.firstAfternoon ?? null,
+    independentNpcActions: probe.independentNpcActions ?? [],
     visualEventCues: probe.visualEventCues ?? [],
     visualPlayer: probe.visualPlayer,
     watchMode: probe.watchMode ?? null,
@@ -7678,6 +7813,7 @@ async function captureInhabitMoment({
         }
       : null,
     firstAfternoon: probe.firstAfternoon,
+    independentNpcActions: probe.independentNpcActions ?? [],
     label,
     location: probe.location,
     movement: probe.movement ?? null,
@@ -8613,6 +8749,10 @@ async function runInhabitGameplayPass(session) {
     objectiveSequenceAudit,
   });
   assertWorldPressureAudit(worldPressureAudit);
+  const independentNpcActionEvidence = buildIndependentNpcActionEvidence(
+    moments,
+    worldPressureAudit,
+  );
   const cityEventVisualEvidence = buildCityEventVisualEvidence(moments);
   assertCityEventVisualEvidence(cityEventVisualEvidence);
   const movementAudit = buildMovementAuditSummary(moments);
@@ -8638,6 +8778,7 @@ async function runInhabitGameplayPass(session) {
     earlyAgencyAuthorityLedger,
     evidenceStandard:
       "Progression is driven by visible browser controls, pointer drags, and normal watch-mode beats; sim probes are read only for assertions.",
+    independentNpcActionEvidence,
     moments: moments.map(compactInhabitReportMoment),
     milestonesReached,
     objectiveSequenceAudit,
@@ -8920,6 +9061,15 @@ function buildRegressionSteps(gameRef) {
     {
       label: "post-first-afternoon-live-route",
       mutate: async () => advanceObjective(gameRef.current.id, true),
+    },
+    {
+      label: "independent-npc-resolution",
+      mutate: async () =>
+        runGameCommand(gameRef.current.id, {
+          minutes: 65,
+          silent: false,
+          type: "wait",
+        }),
     },
   ];
 }
@@ -9414,8 +9564,14 @@ async function main() {
   }
 
   const screenshotCount = timeline.filter((entry) => entry.screenshot).length;
-  const movementAudit = buildMovementAuditSummary(timeline);
+  const movementAuditTimeline = timeline.filter(
+    (entry) => entry.label !== "independent-npc-resolution",
+  );
+  const movementAudit = buildMovementAuditSummary(movementAuditTimeline);
   assertMovementAuditSummary(movementAudit);
+  const independentNpcActionEvidence =
+    buildIndependentNpcActionEvidence(timeline);
+  assertIndependentNpcActionEvidence(independentNpcActionEvidence);
   const evidence = await createVisualEvidence({
     overlayChecks,
     timeline,
@@ -9435,6 +9591,7 @@ async function main() {
       objective: game.player.objective?.text ?? null,
     },
     inhabitGameplay,
+    independentNpcActionEvidence,
     observeOnlyCarryForward,
     npcDiagnostics: movementAudit.npcPatrols,
     outputDir: OUTPUT_DIR,
