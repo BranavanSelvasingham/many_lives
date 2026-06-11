@@ -1381,9 +1381,53 @@ function cameraProbeInRange(probe, tolerance = 0.5) {
   );
 }
 
+function assertVisualEventCueBackedByCurrentPressure(cue, browserProbe, viewportName) {
+  const cityEventsById = new Map(
+    (browserProbe?.worldPressure?.cityEvents ?? []).map((event) => [
+      event.id,
+      event,
+    ]),
+  );
+  const backingEvents = cue?.backingEvents ?? [];
+  assert.ok(
+    backingEvents.length > 0,
+    `${viewportName}: visual event cue has no current event backing: ${JSON.stringify(cue)}.`,
+  );
+  for (const backing of backingEvents) {
+    const pressureEvent = cityEventsById.get(backing.id);
+    assert.ok(
+      pressureEvent,
+      `${viewportName}: visual cue backing does not exist in current world pressure: ${JSON.stringify(
+        cue,
+      )}.`,
+    );
+    assert.equal(
+      pressureEvent.locationId,
+      backing.locationId,
+      `${viewportName}: visual cue backing location diverged from current pressure for ${backing.id}.`,
+    );
+    assert.equal(
+      pressureEvent.status,
+      backing.status,
+      `${viewportName}: visual cue backing status diverged from current pressure for ${backing.id}.`,
+    );
+    assert.equal(
+      pressureEvent.progress ?? null,
+      backing.progress ?? null,
+      `${viewportName}: visual cue backing progress diverged from current pressure for ${backing.id}.`,
+    );
+    assert.equal(
+      pressureEvent.outcome ?? null,
+      backing.outcome ?? null,
+      `${viewportName}: visual cue backing outcome diverged from current pressure for ${backing.id}.`,
+    );
+  }
+}
+
 function assertFirstRouteEventCues(browserProbe, viewportName) {
   const cues = browserProbe?.visualEventCues ?? [];
   const cueNames = new Set(cues.map((cue) => cue.cue));
+  const cueByName = new Map(cues.map((cue) => [cue.cue, cue]));
   assert.ok(
     cues.length >= 2,
     `${viewportName}: expected at least two visible city event cues in the first-route probe, got ${JSON.stringify(cues)}.`,
@@ -1396,6 +1440,21 @@ function assertFirstRouteEventCues(browserProbe, viewportName) {
     cueNames.has("square crossing bustle"),
     `${viewportName}: missing square crossing bustle cue evidence in the first-route probe.`,
   );
+  assert.ok(
+    cueByName
+      .get("warm cafe prep")
+      ?.backingEvents?.some((event) => event.id === "event-cafe-prep"),
+    `${viewportName}: warm cafe prep cue is not backed by the current cafe prep event.`,
+  );
+  assert.ok(
+    cueByName
+      .get("square crossing bustle")
+      ?.backingEvents?.some((event) => event.id === "event-market-crossing"),
+    `${viewportName}: square crossing bustle cue is not backed by the current square crossing event.`,
+  );
+  for (const cue of cues) {
+    assertVisualEventCueBackedByCurrentPressure(cue, browserProbe, viewportName);
+  }
   assert.ok(
     cues.every(
       (cue) =>

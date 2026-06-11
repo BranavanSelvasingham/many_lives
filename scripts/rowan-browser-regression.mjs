@@ -4705,6 +4705,143 @@ function assertWorldPressureAudit(worldPressureAudit) {
   );
 }
 
+const REQUIRED_CITY_EVENT_VISUAL_CUES = [
+  {
+    cue: "warm cafe prep",
+    requiredBackingId: "event-cafe-prep",
+  },
+  {
+    cue: "square crossing bustle",
+    requiredBackingId: "event-market-crossing",
+  },
+];
+
+function cityEventBackingMatchesPressure(backing, pressureEvent) {
+  return Boolean(
+    pressureEvent &&
+      pressureEvent.locationId === backing.locationId &&
+      pressureEvent.status === backing.status &&
+      (pressureEvent.progress ?? null) === (backing.progress ?? null) &&
+      (pressureEvent.outcome ?? null) === (backing.outcome ?? null),
+  );
+}
+
+function buildCityEventVisualEvidence(moments) {
+  const samples = [];
+  const missingBacking = [];
+
+  for (const moment of moments) {
+    const cityEventsById = new Map(
+      (moment.worldPressure?.cityEvents ?? []).map((event) => [
+        event.id,
+        event,
+      ]),
+    );
+
+    for (const cue of moment.visualEventCues ?? []) {
+      const backingEvents = cue.backingEvents ?? [];
+      const matchedPressureEventIds = backingEvents
+        .filter((backing) =>
+          cityEventBackingMatchesPressure(backing, cityEventsById.get(backing.id)),
+        )
+        .map((backing) => backing.id);
+      const backed =
+        backingEvents.length > 0 &&
+        matchedPressureEventIds.length === backingEvents.length;
+      const playerFacingText = [
+        cue.cue,
+        cue.locationName,
+        cue.signal,
+        cue.visibleLabel,
+      ].join(" ");
+      const playerFacing = !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
+        playerFacingText,
+      );
+      const sample = {
+        backed,
+        backingEvents,
+        clock: moment.clock?.label ?? null,
+        cue: cue.cue,
+        label: moment.label,
+        locationId: cue.locationId,
+        locationName: cue.locationName,
+        matchedPressureEventIds,
+        playerFacing,
+        signal: cue.signal,
+        visibleLabel: cue.visibleLabel ?? null,
+      };
+      samples.push(sample);
+      if (!backed || !playerFacing) {
+        missingBacking.push(sample);
+      }
+    }
+  }
+
+  const requiredCues = REQUIRED_CITY_EVENT_VISUAL_CUES.map((requirement) => {
+    const matches = samples.filter((sample) => sample.cue === requirement.cue);
+    const backedMatches = matches.filter(
+      (sample) =>
+        sample.backed &&
+        sample.backingEvents.some(
+          (event) => event.id === requirement.requiredBackingId,
+        ),
+    );
+    return {
+      cue: requirement.cue,
+      requiredBackingId: requirement.requiredBackingId,
+      sampleCount: matches.length,
+      backedSampleCount: backedMatches.length,
+      labels: backedMatches.map((sample) => sample.label),
+    };
+  });
+
+  return {
+    backedCueCount: samples.filter((sample) => sample.backed).length,
+    missingBacking,
+    requiredCues,
+    sampleCount: samples.length,
+    samples: samples.slice(0, 16),
+    status:
+      missingBacking.length === 0 &&
+      requiredCues.every((cue) => cue.backedSampleCount > 0)
+        ? "passed"
+        : "failed",
+  };
+}
+
+function assertCityEventVisualEvidence(evidence) {
+  assert.ok(
+    evidence,
+    "City event visual evidence must be recorded in the inhabit gameplay report.",
+  );
+  assert.ok(
+    evidence.sampleCount >= 2,
+    `Expected at least two player-facing city event visual cue samples: ${JSON.stringify(
+      evidence,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    evidence.missingBacking.length,
+    0,
+    `Every city event visual cue must be backed by current world pressure and player-facing text: ${JSON.stringify(
+      evidence.missingBacking,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    evidence.status,
+    "passed",
+    `City event visual evidence did not pass required cue backing: ${JSON.stringify(
+      evidence,
+      null,
+      2,
+    )}`,
+  );
+}
+
 function rectIsInside(inner, outer, tolerance = 2) {
   if (!inner || !outer) {
     return true;
@@ -6088,6 +6225,7 @@ function buildTimelineEntry({
     screenshot,
     screenshotError: screenshotError ?? null,
     firstAfternoon: probe.firstAfternoon ?? null,
+    visualEventCues: probe.visualEventCues ?? [],
     visualPlayer: probe.visualPlayer,
     watchMode: probe.watchMode ?? null,
     aiRuntime: probe.aiRuntime ?? null,
@@ -7534,6 +7672,7 @@ async function captureInhabitMoment({
       probe.autonomy?.visibleDecisionArtifact ??
       probe.rail?.visibleDecisionArtifact ??
       null,
+    visualEventCues: probe.visualEventCues ?? [],
     worldPressure: compactWorldPressureSnapshot(probe.worldPressure),
     camera: camera
       ? {
@@ -8456,6 +8595,8 @@ async function runInhabitGameplayPass(session) {
     objectiveSequenceAudit,
   });
   assertWorldPressureAudit(worldPressureAudit);
+  const cityEventVisualEvidence = buildCityEventVisualEvidence(moments);
+  assertCityEventVisualEvidence(cityEventVisualEvidence);
   const movementAudit = buildMovementAuditSummary(moments);
   assertOpeningPlayerLocationGeometrySample(
     movementAudit,
@@ -8472,6 +8613,7 @@ async function runInhabitGameplayPass(session) {
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {
     cameraCheck,
+    cityEventVisualEvidence,
     clickCount: clickLog.length,
     directSimCommandsUsed: false,
     decisionArtifactCoverage,

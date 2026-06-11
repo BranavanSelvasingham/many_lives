@@ -917,11 +917,30 @@ type RuntimeState = {
 };
 
 type VisualEventCue = {
+  backingEvents: VisualEventCueBacking[];
   cue: string;
   locationId: string;
   locationName: string;
   signal: string;
   visibleLabel: string | null;
+};
+
+type VisualEventCueBacking = {
+  id: string;
+  locationId: string;
+  outcome: string | null;
+  progress: string | null;
+  status: string;
+  visibleLabel: string | null;
+};
+
+type CityEventRenderOptions = {
+  includeResolved?: boolean;
+  includeUpcoming?: boolean;
+};
+
+type CityEventCueBackingRequest = CityEventRenderOptions & {
+  eventId: string;
 };
 
 type RuntimeHandle = {
@@ -9082,7 +9101,7 @@ function ambientRouteIsActive(
 function cityEventIsRenderable(
   game: StreetGameState,
   eventId: string,
-  options: { includeResolved?: boolean; includeUpcoming?: boolean } = {},
+  options: CityEventRenderOptions = {},
 ) {
   const event = game.cityEvents?.find((candidate) => candidate.id === eventId);
   if (!event) {
@@ -9099,7 +9118,7 @@ function cityEventIsRenderable(
 function cityEventVisibleLabel(
   game: StreetGameState,
   eventId: string,
-  options: { includeResolved?: boolean; includeUpcoming?: boolean } = {},
+  options: CityEventRenderOptions = {},
 ) {
   const event = game.cityEvents?.find((candidate) => candidate.id === eventId);
   if (!event || !cityEventIsRenderable(game, eventId, options)) {
@@ -9107,6 +9126,29 @@ function cityEventVisibleLabel(
   }
 
   return event.visibleLabel ?? event.title ?? null;
+}
+
+function cityEventCueBacking(
+  game: StreetGameState,
+  requests: CityEventCueBackingRequest[],
+): VisualEventCueBacking[] {
+  return requests.flatMap(({ eventId, ...options }) => {
+    const event = game.cityEvents?.find((candidate) => candidate.id === eventId);
+    if (!event || !cityEventIsRenderable(game, eventId, options)) {
+      return [];
+    }
+
+    return [
+      {
+        id: event.id,
+        locationId: event.locationId,
+        outcome: event.outcome ?? null,
+        progress: event.progress ?? null,
+        status: event.status,
+        visibleLabel: event.visibleLabel ?? null,
+      },
+    ];
+  });
 }
 
 function locationNameForCue(
@@ -9162,6 +9204,14 @@ function drawCafeWarmWindowEvent(
   }
 
   registerVisualEventCue(runtimeState, {
+    backingEvents: cityEventCueBacking(game, [
+      { eventId: "event-cafe-prep", includeResolved: true },
+      {
+        eventId: "event-lunch-rush",
+        includeResolved: true,
+        includeUpcoming: true,
+      },
+    ]),
     cue: "warm cafe prep",
     locationId: "tea-house",
     locationName: locationNameForCue(game, "tea-house", "Kettle & Lamp"),
@@ -9350,6 +9400,9 @@ function drawDockCartEvent(
   }
 
   registerVisualEventCue(runtimeState, {
+    backingEvents: cityEventCueBacking(game, [
+      { eventId: "event-square-cart", includeUpcoming: true },
+    ]),
     cue: "square handcart",
     locationId: "market-square",
     locationName: locationNameForCue(game, "market-square", "Quay Square"),
@@ -9480,6 +9533,10 @@ function drawSquarePasserbyBeat(
   }
 
   registerVisualEventCue(runtimeState, {
+    backingEvents: cityEventCueBacking(game, [
+      { eventId: "event-market-crossing" },
+      { eventId: "event-square-cart", includeUpcoming: true },
+    ]),
     cue: "square crossing bustle",
     locationId: "market-square",
     locationName: locationNameForCue(game, "market-square", "Quay Square"),
