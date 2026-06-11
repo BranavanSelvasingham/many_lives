@@ -3190,6 +3190,41 @@ function compactPlanningTraceRecommendation(recommendation) {
   };
 }
 
+function compactVisibleDecisionArtifact(artifact) {
+  if (!artifact) {
+    return null;
+  }
+
+  return {
+    backingSummary: compactObjectiveSequenceText(
+      artifact.backingSummary ?? "",
+      140,
+    ),
+    considered: (artifact.considered ?? []).map((entry) =>
+      compactObjectiveSequenceText(entry, 120),
+    ),
+    constraints: (artifact.constraints ?? []).map((entry) =>
+      compactObjectiveSequenceText(entry, 120),
+    ),
+    nextCheck: artifact.nextCheck
+      ? compactObjectiveSequenceText(artifact.nextCheck, 160)
+      : null,
+    objective: compactObjectiveSequenceText(artifact.objective ?? "", 160),
+    passedOver: (artifact.passedOver ?? []).map((entry) =>
+      compactObjectiveSequenceText(entry, 140),
+    ),
+    rationale: compactObjectiveSequenceText(artifact.rationale ?? "", 180),
+    selectedAction: compactObjectiveSequenceText(
+      artifact.selectedAction ?? "",
+      140,
+    ),
+    sourceSummary: compactObjectiveSequenceText(
+      artifact.sourceSummary ?? "",
+      140,
+    ),
+  };
+}
+
 function buildObjectiveSequenceAuthorityEvidence({
   autonomy,
   planningTrace,
@@ -3654,6 +3689,9 @@ function buildObjectiveSequenceAuditEntry({
     selectedTargetLocationId,
     stepKind: probe.autonomy?.stepKind ?? null,
     targetLocationId: probe.autonomy?.targetLocationId ?? null,
+    visibleDecisionArtifact: compactVisibleDecisionArtifact(
+      visibleDecisionArtifact,
+    ),
     visibleTextSample: compactObjectiveSequenceText(visibleText, 360),
   };
 }
@@ -4003,6 +4041,256 @@ function assertObjectiveSequenceRuns(objectiveSequenceRuns) {
   assert.ok(
     returnRun?.routeRoles.includes("framed-reflection"),
     "Return-home sequence must end with framed take-stock reflection.",
+  );
+}
+
+const EARLY_AGENCY_SEQUENCE_RUN_IDS = [
+  "establish-room-and-mara-lead",
+  "follow-mara-lead-to-kettle-lamp",
+  "verify-ada-lead-and-accept-shift",
+];
+
+function compactEarlyAgencyDecisionEntry(entry, index) {
+  const evidence = entry.authorityEvidence ?? {};
+
+  return {
+    authorityKinds: evidence.authorityKinds ?? [],
+    clock: entry.clock ?? null,
+    currentLocationId: entry.currentLocationId ?? null,
+    index,
+    milestone: entry.milestone,
+    objectiveRouteKey: entry.objectiveRouteKey ?? null,
+    objectiveText: compactObjectiveSequenceText(entry.objectiveText ?? "", 180),
+    rejectedStaleOptionCount: evidence.rejectedStaleOptionCount ?? 0,
+    rejectedStaleOptions: evidence.rejectedStaleOptions ?? [],
+    routeRole: entry.routeRole ?? null,
+    selectedActionId: entry.selectedActionId ?? null,
+    selectedLegalBacking: evidence.selectedLegalBacking ?? null,
+    selectedMatchedOutcomeId: evidence.selectedMatchedOutcomeId ?? null,
+    selectedPressureId: evidence.selectedPressureId ?? null,
+    selectedPressureKind: evidence.selectedPressureKind ?? null,
+    selectedPressureLabel: evidence.selectedPressureLabel ?? null,
+    selectedProvenance: evidence.selectedProvenance ?? null,
+    selectedRecommendation: evidence.selectedRecommendation ?? null,
+    selectedStep: evidence.selectedStep ?? null,
+    selectedTargetLocationId: entry.selectedTargetLocationId ?? null,
+    sequenceRunId: objectiveSequenceGroupIdForEntry(entry),
+    visibleDecisionArtifact: entry.visibleDecisionArtifact ?? null,
+  };
+}
+
+function buildEarlyAgencyAuthorityLedger({
+  moments,
+  objectiveSequenceAudit,
+  objectiveSequenceRuns,
+}) {
+  const runById = new Map(objectiveSequenceRuns.map((run) => [run.id, run]));
+  const earlyEntries = objectiveSequenceAudit
+    .map((entry, index) => ({
+      entry,
+      index,
+      sequenceRunId: objectiveSequenceGroupIdForEntry(entry),
+    }))
+    .filter(({ sequenceRunId }) =>
+      EARLY_AGENCY_SEQUENCE_RUN_IDS.includes(sequenceRunId),
+    );
+  const decisionEntries = earlyEntries
+    .filter(({ entry }) => objectiveSequenceEntryNeedsPlannerAuthority(entry))
+    .map(({ entry, index }) => compactEarlyAgencyDecisionEntry(entry, index));
+  const selectedRouteScaffoldEntries = decisionEntries.filter((entry) =>
+    ["route-scaffold", "stale-predicate"].includes(
+      entry.selectedProvenance ?? "",
+    ),
+  );
+  const missingLegalBackingEntries = decisionEntries.filter(
+    (entry) =>
+      !entry.selectedLegalBacking?.source &&
+      !entry.authorityKinds.includes("autonomy-action"),
+  );
+  const missingRecommendationEntries = decisionEntries.filter(
+    (entry) =>
+      !entry.selectedRecommendation?.sourceKind &&
+      !entry.authorityKinds.includes("autonomy-action"),
+  );
+  const unvalidatedRecommendationEntries = decisionEntries.filter(
+    (entry) =>
+      entry.selectedRecommendation &&
+      (entry.selectedRecommendation.validationStatus === "unvalidated" ||
+        !entry.selectedRecommendation.validationSource ||
+        !entry.selectedRecommendation.legalBackingSource),
+  );
+  const missingVisibleArtifactEntries = decisionEntries.filter(
+    (entry) =>
+      !entry.visibleDecisionArtifact &&
+      !entry.authorityKinds.includes("autonomy-action"),
+  );
+  const earlyMomentLabels = new Set([
+    "first-actionable-screen",
+    "entered-morrow-house",
+    "mara-conversation",
+    "mara-lead-landed",
+    "arrived-kettle-lamp",
+    "ada-conversation",
+    "shift-in-motion",
+  ]);
+  const earlyMomentArtifacts = moments
+    .filter(
+      (moment) =>
+        earlyMomentLabels.has(moment.label) && moment.visibleDecisionArtifact,
+    )
+    .map((moment) => ({
+      clock: moment.clock ?? null,
+      label: moment.label,
+      selected: selectedPlanningEvidence(moment),
+      visibleDecisionArtifact: compactVisibleDecisionArtifact(
+        moment.visibleDecisionArtifact,
+      ),
+    }));
+
+  return {
+    assertionSemantics:
+      "Early South Quay autonomous decisions are selected from simulator-visible legal actions or objective predicates, with route hints only allowed as scaffold/rejected evidence.",
+    decisionEntries,
+    missingLegalBackingEntries,
+    missingRecommendationEntries,
+    missingVisibleArtifactEntries,
+    runSummaries: EARLY_AGENCY_SEQUENCE_RUN_IDS.map((id) => {
+      const run = runById.get(id);
+      return {
+        authorityKinds: run?.authorityKinds ?? [],
+        entries: run?.entries ?? 0,
+        id,
+        label: run?.label ?? OBJECTIVE_SEQUENCE_GROUP_LABELS[id] ?? id,
+        matchedOutcomeIds: run?.matchedOutcomeIds ?? [],
+        pressureKinds: run?.pressureKinds ?? [],
+        routeRoles: run?.routeRoles ?? [],
+        selectedActions: run?.selectedActions ?? [],
+        selectedTargets: run?.selectedTargets ?? [],
+        validationResult: run?.validationResult ?? "missing",
+        visibleControlClicks: run?.visibleControlClicks ?? 0,
+        watchedAutoContinueBeats: run?.watchedAutoContinueBeats ?? 0,
+      };
+    }),
+    selectedRouteScaffoldEntries,
+    status: "passed",
+    unvalidatedRecommendationEntries,
+    visibleDecisionArtifactSamples: earlyMomentArtifacts.slice(0, 4),
+    visibleDecisionArtifactSampleCount: earlyMomentArtifacts.length,
+  };
+}
+
+function assertEarlyAgencyAuthorityLedger(ledger) {
+  assert.ok(
+    ledger,
+    "Early agency authority ledger must be recorded in the inhabit gameplay report.",
+  );
+
+  const missingRuns = ledger.runSummaries.filter(
+    (run) => run.validationResult === "missing",
+  );
+  assert.equal(
+    missingRuns.length,
+    0,
+    `Early agency ledger is missing required run summaries: ${JSON.stringify(
+      missingRuns,
+      null,
+      2,
+    )}`,
+  );
+
+  const failingRuns = ledger.runSummaries.filter(
+    (run) => run.validationResult !== "passed",
+  );
+  assert.equal(
+    failingRuns.length,
+    0,
+    `Early agency ledger found failing run summaries: ${JSON.stringify(
+      failingRuns,
+      null,
+      2,
+    )}`,
+  );
+
+  assert.ok(
+    ledger.decisionEntries.length >= 3,
+    `Early agency ledger captured too few meaningful decision beats: ${ledger.decisionEntries.length}.`,
+  );
+  assert.equal(
+    ledger.selectedRouteScaffoldEntries.length,
+    0,
+    `Early agency selected route-scaffold/stale authority: ${JSON.stringify(
+      ledger.selectedRouteScaffoldEntries,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    ledger.missingLegalBackingEntries.length,
+    0,
+    `Early agency decisions are missing concrete legal backing: ${JSON.stringify(
+      ledger.missingLegalBackingEntries,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    ledger.missingRecommendationEntries.length,
+    0,
+    `Early agency decisions are missing planner source/advisory provenance: ${JSON.stringify(
+      ledger.missingRecommendationEntries,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    ledger.unvalidatedRecommendationEntries.length,
+    0,
+    `Early agency decisions expose unvalidated planner recommendations: ${JSON.stringify(
+      ledger.unvalidatedRecommendationEntries,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    ledger.missingVisibleArtifactEntries.length,
+    0,
+    `Early agency decisions are missing visible decision artifacts: ${JSON.stringify(
+      ledger.missingVisibleArtifactEntries,
+      null,
+      2,
+    )}`,
+  );
+
+  const authorityKinds = new Set(
+    ledger.decisionEntries.flatMap((entry) => entry.authorityKinds ?? []),
+  );
+  for (const requiredAuthority of ["objective-predicate", "legal-action"]) {
+    assert.ok(
+      authorityKinds.has(requiredAuthority),
+      `Early agency ledger did not expose ${requiredAuthority} authority.`,
+    );
+  }
+  assert.ok(
+    [...authorityKinds].some((kind) => kind.startsWith("legal-action:")),
+    "Early agency ledger did not expose a concrete legal-action backing source.",
+  );
+  assert.ok(
+    [...authorityKinds].some((kind) => kind.startsWith("planner-source:")),
+    "Early agency ledger did not expose planner source-kind provenance.",
+  );
+  assert.ok(
+    [...authorityKinds].some((kind) => kind.startsWith("planner-validation:")),
+    "Early agency ledger did not expose planner validation status.",
+  );
+  assert.ok(
+    ledger.visibleDecisionArtifactSampleCount >= 2,
+    `Early agency ledger captured too few visible decision artifact samples: ${ledger.visibleDecisionArtifactSampleCount}.`,
+  );
+  assert.ok(
+    ledger.visibleDecisionArtifactSamples.some(
+      (sample) => sample.visibleDecisionArtifact?.nextCheck,
+    ),
+    "Early agency ledger did not capture a visible next uncertainty/check.",
   );
 }
 
@@ -8157,6 +8445,12 @@ async function runInhabitGameplayPass(session) {
   assertObjectiveSequenceAudit(objectiveSequenceAudit);
   const objectiveSequenceRuns = buildObjectiveSequenceRuns(objectiveSequenceAudit);
   assertObjectiveSequenceRuns(objectiveSequenceRuns);
+  const earlyAgencyAuthorityLedger = buildEarlyAgencyAuthorityLedger({
+    moments,
+    objectiveSequenceAudit,
+    objectiveSequenceRuns,
+  });
+  assertEarlyAgencyAuthorityLedger(earlyAgencyAuthorityLedger);
   const worldPressureAudit = buildWorldPressureAudit({
     moments,
     objectiveSequenceAudit,
@@ -8181,6 +8475,7 @@ async function runInhabitGameplayPass(session) {
     clickCount: clickLog.length,
     directSimCommandsUsed: false,
     decisionArtifactCoverage,
+    earlyAgencyAuthorityLedger,
     evidenceStandard:
       "Progression is driven by visible browser controls, pointer drags, and normal watch-mode beats; sim probes are read only for assertions.",
     moments: moments.map(compactInhabitReportMoment),
