@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 
 import { buildGenerateStreetThoughtsPrompt } from "../src/ai/prompts/generateStreetThoughts.js";
 import { buildGenerateStreetAutonomousLinePrompt } from "../src/ai/prompts/generateStreetAutonomousLine.js";
@@ -12,6 +13,9 @@ import {
 import { buildDeterministicStreetThoughts } from "../src/ai/streetThoughts.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
 import type { PlayerObjective, StreetGameState } from "../src/street-sim/types.js";
+
+const FIRST_AFTERNOON_PLAN_RATIONALE =
+  "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -180,6 +184,20 @@ function worldWithActiveTeaCommitment(): StreetGameState {
 }
 
 describe("street reasoning authority", () => {
+  it("keeps first-afternoon action rationale in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scaffoldSource).toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
+    expect(engineSource).not.toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
+  });
+
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
     const world = worldWithPoisonedTrail();
 
