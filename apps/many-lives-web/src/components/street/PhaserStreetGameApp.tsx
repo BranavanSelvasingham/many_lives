@@ -4756,7 +4756,11 @@ function buildMapAgencyCue(
       getMapAgencyLocationWorldPoint(runtimeState, targetNpc.currentLocationId)
     : null;
   const locationWorld = targetLocationId
-    ? getMapAgencyLocationWorldPoint(runtimeState, targetLocationId)
+    ? getMapAgencyLocationWorldPoint(
+        runtimeState,
+        targetLocationId,
+        autonomy.actionId ?? null,
+      )
     : null;
   const locationTile = targetLocation
     ? {
@@ -4990,11 +4994,20 @@ function getAnimatedNpcWorldPoint(
 function getMapAgencyLocationWorldPoint(
   runtimeState: RuntimeState,
   locationId: string,
+  actionId?: string | null,
 ) {
   const game = runtimeState.snapshot.game;
   const location = runtimeState.indices.locationsById.get(locationId);
   if (!game || !location) {
     return null;
+  }
+
+  const visualAnchors = runtimeState.indices.visualScene?.locationAnchors[locationId];
+  if (visualAnchors && actionId === `enter:${locationId}`) {
+    return {
+      x: visualAnchors.door.x,
+      y: visualAnchors.door.y,
+    };
   }
 
   const point = {
@@ -5459,7 +5472,7 @@ function buildBrowserMovementDiagnostics(
   };
 }
 
-const PLAYER_LOCATION_ACTION_ANCHOR_NEAR_DISTANCE = 90;
+const PLAYER_LOCATION_ACTION_ANCHOR_NEAR_DISTANCE = 72;
 
 type PlayerLocationGeometryAnchorKind = NonNullable<
   StreetBrowserMovementDiagnostics["playerLocationGeometry"]
@@ -10741,6 +10754,7 @@ function snapAuthoredLocationWorldPoint(
   locationId: string,
   point: Point,
 ) {
+  const maxAuthoredLocationSnapDistance = CELL * 1.25;
   const nearestPoint = findNearestWalkablePointByWorldHint(
     indices.walkableRuntimePoints,
     point,
@@ -10751,7 +10765,14 @@ function snapAuthoredLocationWorldPoint(
     },
   );
 
-  return nearestPoint?.world ?? point;
+  if (
+    nearestPoint &&
+    distanceBetween(nearestPoint.world, point) <= maxAuthoredLocationSnapDistance
+  ) {
+    return nearestPoint.world;
+  }
+
+  return point;
 }
 
 function colorToCssRgba(color: number, alpha: number) {

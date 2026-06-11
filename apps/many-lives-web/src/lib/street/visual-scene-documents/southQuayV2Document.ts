@@ -493,12 +493,12 @@ const SOUTH_QUAY_V2_DOCUMENT = {
     },
     "boarding-house": {
       "door": {
-        "x": 344,
-        "y": 744
+        "x": 222,
+        "y": 584
       },
       "frontage": {
-        "x": 344,
-        "y": 724
+        "x": 222,
+        "y": 602
       },
       "highlight": {
         "x": 151,
@@ -513,22 +513,22 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       "npcStands": [
         {
-          "x": 292,
-          "y": 788
+          "x": 184,
+          "y": 628
         },
         {
-          "x": 404,
-          "y": 786
+          "x": 262,
+          "y": 628
         }
       ],
       "playerApproaches": [
         {
-          "x": 344,
-          "y": 766
+          "x": 196,
+          "y": 616
         },
         {
-          "x": 396,
-          "y": 768
+          "x": 222,
+          "y": 616
         }
       ]
     },
