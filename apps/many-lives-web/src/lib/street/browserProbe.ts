@@ -158,6 +158,14 @@ export type StreetBrowserProbeSnapshot = {
   rowanAutoplayFrozen?: boolean;
   rowanWatchModeEnabled?: boolean;
   visualEventCues?: Array<{
+    backingEvents: Array<{
+      id: string;
+      locationId: string;
+      outcome: string | null;
+      progress: string | null;
+      status: string;
+      visibleLabel: string | null;
+    }>;
     cue: string;
     locationId: string;
     locationName: string;
