@@ -3684,9 +3684,24 @@ function buildObjectivePlanningTrace(
         acceptedRecommendation,
       )
     : undefined;
-  const selectedLabel = selected
-    ? autonomyLabelForNextBeat(world, selected)
+  const nextSteps = buildObjectivePlanningTraceNextSteps(world, selected);
+  const immediateAction = selectedImmediatePlanningTraceStep(
+    nextSteps,
+    selectedActionId,
+  );
+  const intendedFollowUp = selectedIntendedFollowUpTraceStep(
+    nextSteps,
+    immediateAction,
+  );
+  const plannerIntent = selected
+    ? planningTracePlannerIntentForPlan(
+        world,
+        selected,
+        selectedTraceKey,
+        selectedPressureMatch,
+      )
     : undefined;
+  const selectedLabel = immediateAction?.label;
   const sortedCandidates = dedupeObjectivePlans([
     ...(selected ? [selected] : []),
     ...candidates,
@@ -3731,8 +3746,11 @@ function buildObjectivePlanningTrace(
   return {
     blockers: objectivePlanningBlockers(world),
     considered,
-    nextSteps: buildObjectivePlanningTraceNextSteps(world, selected),
+    immediateAction,
+    intendedFollowUp,
+    nextSteps,
     outcomes: objectivePlanningTraceOutcomes(world),
+    plannerIntent,
     rejected: dedupePlanningTraceOptions([
       ...staleActionRejected,
       ...rejected,
@@ -3747,6 +3765,59 @@ function buildObjectivePlanningTrace(
     selectedPressureLabel: selectedPressureMatch?.pressure.label,
     selectedRecommendation,
     selectedTargetLocationId: selected?.targetLocationId,
+  };
+}
+
+function selectedImmediatePlanningTraceStep(
+  nextSteps: RowanPlanningTraceStep[],
+  selectedActionId: string | undefined,
+) {
+  return (
+    nextSteps.find(
+      (step) => selectedActionId && step.actionId === selectedActionId,
+    ) ??
+    nextSteps[0] ??
+    undefined
+  );
+}
+
+function selectedIntendedFollowUpTraceStep(
+  nextSteps: RowanPlanningTraceStep[],
+  immediateAction: RowanPlanningTraceStep | undefined,
+) {
+  if (!immediateAction) {
+    return undefined;
+  }
+
+  return nextSteps.find(
+    (step) =>
+      step !== immediateAction &&
+      step.legal &&
+      (!step.actionId || step.actionId !== immediateAction.actionId),
+  );
+}
+
+function planningTracePlannerIntentForPlan(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  selectedTraceKey: string | undefined,
+  selectedPressureMatch: ObjectivePlanningPressureMatch | undefined,
+) {
+  const plannerActionId = plannerActionIdForPlan(plan);
+  return {
+    actionId: plannerActionId,
+    label: autonomyLabelForNextBeat(world, plan),
+    matchedOutcomeId: selectedPressureMatch?.pressure.matchedOutcomeId,
+    npcId: plan.npcId,
+    planKey: selectedTraceKey,
+    pressureId: selectedPressureMatch?.pressure.id,
+    pressureKind: selectedPressureMatch?.pressure.kind,
+    pressureLabel: selectedPressureMatch?.pressure.label,
+    rationale: compactIntentText(
+      playerFacingAutonomyRationale(world, plan.rationale) || plan.rationale,
+      140,
+    ),
+    targetLocationId: plan.targetLocationId,
   };
 }
 
@@ -3923,9 +3994,11 @@ function buildObjectivePlanningTraceNextSteps(
     return [];
   }
 
+  const selectedActionId = currentPlannerActionIdForPlan(world, selected);
   const steps = [
     traceStepForPlan(world, selected, {
-      actionId: currentPlannerActionIdForPlan(world, selected),
+      actionId: selectedActionId,
+      label: immediatePlannerActionLabel(world, selected, selectedActionId),
     }),
     ...buildProjectedDestinationFollowUpTraceSteps(world, selected),
     ...buildLiveProblemFollowUpTraceSteps(world, selected),
@@ -3950,13 +4023,37 @@ function buildObjectivePlanningTraceNextSteps(
     .slice(0, 4);
 }
 
+function immediatePlannerActionLabel(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+  actionId: string | undefined,
+) {
+  if (!actionId) {
+    return autonomyLabelForNextBeat(world, plan);
+  }
+
+  if (actionId.startsWith("move:")) {
+    const locationId = actionId.slice("move:".length);
+    const location = findLocation(world, locationId);
+    return `Head to ${location?.name ?? "the next stop"}`;
+  }
+
+  if (actionId.startsWith("wait:") && plan.waitUntilMinutes !== undefined) {
+    return `Wait until ${formatClockAt(world, plan.waitUntilMinutes)}`;
+  }
+
+  return autonomyLabelForAction(world, actionId);
+}
+
 function buildProjectedDestinationFollowUpTraceSteps(
   world: StreetGameState,
   selected: ObjectivePlan,
 ): RowanPlanningTraceStep[] {
+  const requiresInteriorEntry = planRequiresInteriorEntry(world, selected);
   if (
     !selected.targetLocationId ||
-    selected.targetLocationId === world.player.currentLocationId ||
+    (selected.targetLocationId === world.player.currentLocationId &&
+      !requiresInteriorEntry) ||
     (!selected.actionId && !selected.npcId)
   ) {
     return [];
@@ -4062,11 +4159,20 @@ function validationTextForTracePlan(
   plan: ObjectivePlan,
   kind: RowanAutonomyStepKind,
 ) {
+  const currentActionId = currentPlannerActionIdForPlan(world, plan);
+
   if (
     plan.targetLocationId &&
     plan.targetLocationId !== world.player.currentLocationId
   ) {
     return "Simulator must validate the move before any action consequence applies.";
+  }
+
+  if (
+    currentActionId?.startsWith("enter:") ||
+    currentActionId?.startsWith("exit:")
+  ) {
+    return "Portal action is present in the current legal action surface before Rowan changes spaces.";
   }
 
   if (plan.actionId) {

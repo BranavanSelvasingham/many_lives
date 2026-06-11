@@ -240,27 +240,34 @@ function planningTraceProbePayload(game: StreetGameState) {
     status: option.status,
     targetLocationId: option.targetLocationId ?? null,
   });
+  const stepPayload = (step: (typeof trace.nextSteps)[number]) => ({
+    actionId: step.actionId ?? null,
+    kind: step.kind,
+    label: step.label,
+    legal: step.legal,
+    legalBacking: step.legalBacking
+      ? {
+          actionId: step.legalBacking.actionId ?? null,
+          locationId: step.legalBacking.locationId ?? null,
+          source: step.legalBacking.source,
+        }
+      : null,
+    npcId: step.npcId ?? null,
+    rationale: step.rationale,
+    targetLocationId: step.targetLocationId ?? null,
+    validation: step.validation,
+  });
 
   return {
     blockers: trace.blockers,
     considered: trace.considered.map(optionPayload),
-    nextSteps: (trace.nextSteps ?? []).map((step) => ({
-      actionId: step.actionId ?? null,
-      kind: step.kind,
-      label: step.label,
-      legal: step.legal,
-      legalBacking: step.legalBacking
-        ? {
-            actionId: step.legalBacking.actionId ?? null,
-            locationId: step.legalBacking.locationId ?? null,
-            source: step.legalBacking.source,
-          }
-        : null,
-      npcId: step.npcId ?? null,
-      rationale: step.rationale,
-      targetLocationId: step.targetLocationId ?? null,
-      validation: step.validation,
-    })),
+    immediateAction: trace.immediateAction
+      ? stepPayload(trace.immediateAction)
+      : null,
+    intendedFollowUp: trace.intendedFollowUp
+      ? stepPayload(trace.intendedFollowUp)
+      : null,
+    nextSteps: (trace.nextSteps ?? []).map(stepPayload),
     outcomes: trace.outcomes.map((outcome) => ({
       authority: outcome.authority ?? null,
       blockers: outcome.blockers ?? [],
@@ -270,6 +277,20 @@ function planningTraceProbePayload(game: StreetGameState) {
       status: outcome.status,
       urgency: outcome.urgency,
     })),
+    plannerIntent: trace.plannerIntent
+      ? {
+          actionId: trace.plannerIntent.actionId ?? null,
+          label: trace.plannerIntent.label,
+          matchedOutcomeId: trace.plannerIntent.matchedOutcomeId ?? null,
+          npcId: trace.plannerIntent.npcId ?? null,
+          planKey: trace.plannerIntent.planKey ?? null,
+          pressureId: trace.plannerIntent.pressureId ?? null,
+          pressureKind: trace.plannerIntent.pressureKind ?? null,
+          pressureLabel: trace.plannerIntent.pressureLabel ?? null,
+          rationale: trace.plannerIntent.rationale,
+          targetLocationId: trace.plannerIntent.targetLocationId ?? null,
+        }
+      : null,
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
@@ -462,13 +483,17 @@ function openingActionCarryForwardProbePayload({
     currentSpaceId === "interior:boarding-house" ||
     game.activeConversation?.npcId === "npc-mara";
   const selectedActionId =
-    geometry?.actionId ??
-    game.rowanAutonomy.actionId ??
-    (completed ? "enter:boarding-house" : null);
-  const selectedActionLabel =
+    completed
+      ? "enter:boarding-house"
+      : geometry?.actionId ?? game.rowanAutonomy.actionId ?? null;
+  const rawSelectedActionLabel =
     geometry?.actionLabel ??
     game.rowanAutonomy.label ??
     (completed ? "Enter Morrow House" : null);
+  const selectedActionLabel =
+    selectedActionId === "enter:boarding-house"
+      ? "Enter Morrow House"
+      : rawSelectedActionLabel;
   const targetLocationId =
     geometry?.targetLocationId ??
     game.rowanAutonomy.targetLocationId ??

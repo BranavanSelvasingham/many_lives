@@ -1940,27 +1940,32 @@ function planningTraceProbeFromGame(game) {
     status: option.status,
     targetLocationId: option.targetLocationId ?? null,
   });
+  const stepPayload = (step) => ({
+    actionId: step.actionId ?? null,
+    kind: step.kind,
+    label: step.label,
+    legal: step.legal,
+    legalBacking: step.legalBacking
+      ? {
+          actionId: step.legalBacking.actionId ?? null,
+          locationId: step.legalBacking.locationId ?? null,
+          source: step.legalBacking.source ?? null,
+        }
+      : null,
+    npcId: step.npcId ?? null,
+    rationale: step.rationale,
+    targetLocationId: step.targetLocationId ?? null,
+    validation: step.validation,
+  });
 
   return {
     blockers: trace.blockers,
     considered: trace.considered.map(optionPayload),
-    nextSteps: (trace.nextSteps ?? []).map((step) => ({
-      actionId: step.actionId ?? null,
-      kind: step.kind,
-      label: step.label,
-      legal: step.legal,
-      legalBacking: step.legalBacking
-        ? {
-            actionId: step.legalBacking.actionId ?? null,
-            locationId: step.legalBacking.locationId ?? null,
-            source: step.legalBacking.source ?? null,
-          }
-        : null,
-      npcId: step.npcId ?? null,
-      rationale: step.rationale,
-      targetLocationId: step.targetLocationId ?? null,
-      validation: step.validation,
-    })),
+    immediateAction: trace.immediateAction ? stepPayload(trace.immediateAction) : null,
+    intendedFollowUp: trace.intendedFollowUp
+      ? stepPayload(trace.intendedFollowUp)
+      : null,
+    nextSteps: (trace.nextSteps ?? []).map(stepPayload),
     outcomes: trace.outcomes.map((outcome) => ({
       authority: outcome.authority ?? null,
       blockers: outcome.blockers ?? [],
@@ -1970,6 +1975,20 @@ function planningTraceProbeFromGame(game) {
       status: outcome.status,
       urgency: outcome.urgency,
     })),
+    plannerIntent: trace.plannerIntent
+      ? {
+          actionId: trace.plannerIntent.actionId ?? null,
+          label: trace.plannerIntent.label,
+          matchedOutcomeId: trace.plannerIntent.matchedOutcomeId ?? null,
+          npcId: trace.plannerIntent.npcId ?? null,
+          planKey: trace.plannerIntent.planKey ?? null,
+          pressureId: trace.plannerIntent.pressureId ?? null,
+          pressureKind: trace.plannerIntent.pressureKind ?? null,
+          pressureLabel: trace.plannerIntent.pressureLabel ?? null,
+          rationale: trace.plannerIntent.rationale,
+          targetLocationId: trace.plannerIntent.targetLocationId ?? null,
+        }
+      : null,
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
@@ -2638,6 +2657,9 @@ function assertPlanningTracePayload(label, planningTrace) {
   const selectedTraceOption = planningTrace.considered.find(
     (option) => option.status === "selected",
   );
+  const selectedActionId =
+    planningTrace.selectedActionId ?? selectedTraceOption?.actionId ?? null;
+  const selectedStep = selectedPlanningTraceStep(planningTrace);
   const selectedLegalBacking =
     planningTrace.selectedLegalBacking ??
     selectedTraceOption?.legalBacking ??
@@ -2669,9 +2691,7 @@ function assertPlanningTracePayload(label, planningTrace) {
     `${label}: planner trace must expose selected pressure, selected outcome, selected legal backing, selected recommendation provenance, and selected target metadata.`,
   );
   const selectedRecommendation = planningTrace.selectedRecommendation ?? null;
-  const selectedHasAction = Boolean(
-    planningTrace.selectedActionId ?? selectedTraceOption?.actionId,
-  );
+  const selectedHasAction = Boolean(selectedActionId);
   assert.ok(
     selectedRecommendation &&
       recommendationSourceKinds.has(selectedRecommendation.sourceKind) &&
@@ -2688,6 +2708,50 @@ function assertPlanningTracePayload(label, planningTrace) {
         legalBackingSources.has(selectedRecommendation.legalBackingSource),
       `${label}: selected action recommendation must expose legal backing and validation sources.`,
     );
+  }
+  if (selectedActionId) {
+    assert.ok(
+      planningTrace.immediateAction &&
+        planningTrace.immediateAction.actionId === selectedActionId &&
+        typeof planningTrace.immediateAction.label === "string" &&
+        planningTrace.immediateAction.label.length >= 4 &&
+        planningTrace.immediateAction.legal === true,
+      `${label}: planner trace must expose the immediate simulator-selected action for ${selectedActionId}.`,
+    );
+    assert.equal(
+      planningTrace.selectedLabel,
+      planningTrace.immediateAction.label,
+      `${label}: selectedLabel must describe the immediate simulator-selected action, not only planner follow-up intent.`,
+    );
+    assert.equal(
+      selectedStep?.label,
+      planningTrace.immediateAction.label,
+      `${label}: selected next step label must match the immediate action label.`,
+    );
+    assert.ok(
+      planningTrace.plannerIntent &&
+        typeof planningTrace.plannerIntent.label === "string" &&
+        planningTrace.plannerIntent.label.length >= 4,
+      `${label}: planner trace must preserve planner/follow-up intent separately from the immediate action.`,
+    );
+    if (
+      /^(enter|exit|move|talk):/.test(selectedActionId) &&
+      planningTrace.intendedFollowUp?.actionId &&
+      planningTrace.intendedFollowUp.actionId !== selectedActionId
+    ) {
+      assert.notEqual(
+        normalizeVisibleActionText(planningTrace.selectedLabel),
+        normalizeVisibleActionText(planningTrace.intendedFollowUp.label),
+        `${label}: selectedLabel still collapses the immediate action into projected follow-up intent.`,
+      );
+    }
+    if (planningTrace.intendedFollowUp) {
+      assert.notEqual(
+        planningTrace.intendedFollowUp.actionId,
+        selectedActionId,
+        `${label}: intendedFollowUp must be a distinct follow-up step, not the immediate action repeated.`,
+      );
+    }
   }
   assert.ok(
     !selectedHasAction ||
@@ -3397,6 +3461,48 @@ function compactPlanningTraceOption(option) {
   };
 }
 
+function compactPlanningTraceStep(step) {
+  if (!step) {
+    return null;
+  }
+
+  return {
+    actionId: step.actionId ?? null,
+    kind: step.kind ?? null,
+    label: compactObjectiveSequenceText(step.label ?? "", 120),
+    legalBacking: step.legalBacking
+      ? {
+          actionId: step.legalBacking.actionId ?? null,
+          locationId: step.legalBacking.locationId ?? null,
+          source: step.legalBacking.source ?? null,
+        }
+      : null,
+    legal: Boolean(step.legal),
+    npcId: step.npcId ?? null,
+    targetLocationId: step.targetLocationId ?? null,
+    validation: compactObjectiveSequenceText(step.validation ?? "", 180),
+  };
+}
+
+function compactPlanningTracePlannerIntent(intent) {
+  if (!intent) {
+    return null;
+  }
+
+  return {
+    actionId: intent.actionId ?? null,
+    label: compactObjectiveSequenceText(intent.label ?? "", 120),
+    matchedOutcomeId: intent.matchedOutcomeId ?? null,
+    npcId: intent.npcId ?? null,
+    planKey: intent.planKey ?? null,
+    pressureId: intent.pressureId ?? null,
+    pressureKind: intent.pressureKind ?? null,
+    pressureLabel: compactObjectiveSequenceText(intent.pressureLabel ?? "", 120),
+    rationale: compactObjectiveSequenceText(intent.rationale ?? "", 160),
+    targetLocationId: intent.targetLocationId ?? null,
+  };
+}
+
 function compactPlanningTraceRecommendation(recommendation) {
   if (!recommendation) {
     return null;
@@ -3479,6 +3585,9 @@ function buildObjectiveSequenceAuthorityEvidence({
       nonActionResolution,
       rejectedStaleOptionCount: 0,
       rejectedStaleOptions: [],
+      immediateAction: null,
+      intendedFollowUp: null,
+      plannerIntent: null,
       selectedConsideredOption: null,
       selectedLegalBacking: nonActionResolution
         ? {
@@ -3496,6 +3605,7 @@ function buildObjectiveSequenceAuthorityEvidence({
         : null,
       selectedPressureKind: commitmentAction ? "commitment" : null,
       selectedPressureLabel: null,
+      selectedLabel: compactObjectiveSequenceText(autonomy?.label ?? "", 120),
       selectedStep: commitmentAction
         ? {
             actionId: selectedActionId,
@@ -3597,7 +3707,12 @@ function buildObjectiveSequenceAuthorityEvidence({
     hasAutonomyAction: false,
     hasLegalSelectedStep: Boolean(selectedStep?.legal && selectedLegalBacking?.source),
     hasPlannerTrace: true,
+    immediateAction: compactPlanningTraceStep(
+      planningTrace.immediateAction ?? selectedStep,
+    ),
+    intendedFollowUp: compactPlanningTraceStep(planningTrace.intendedFollowUp),
     nonActionResolution: routeRole === "conversation-resolution" && !selectedActionId,
+    plannerIntent: compactPlanningTracePlannerIntent(planningTrace.plannerIntent),
     rejectedStaleOptionCount: rejectedStaleOptions.length,
     rejectedStaleOptions,
     selectedConsideredOption: compactPlanningTraceOption(selectedConsideredOption),
@@ -3613,25 +3728,10 @@ function buildObjectiveSequenceAuthorityEvidence({
     selectedPressureId,
     selectedPressureKind,
     selectedPressureLabel: compactObjectiveSequenceText(selectedPressureLabel ?? "", 120),
+    selectedLabel: compactObjectiveSequenceText(planningTrace.selectedLabel ?? "", 120),
     selectedProvenance,
     selectedRecommendation,
-    selectedStep: selectedStep
-      ? {
-          actionId: selectedStep.actionId ?? null,
-          kind: selectedStep.kind ?? null,
-          label: compactObjectiveSequenceText(selectedStep.label ?? "", 120),
-          legalBacking: selectedStep.legalBacking
-            ? {
-                actionId: selectedStep.legalBacking.actionId ?? null,
-                locationId: selectedStep.legalBacking.locationId ?? null,
-                source: selectedStep.legalBacking.source ?? null,
-              }
-            : null,
-          legal: Boolean(selectedStep.legal),
-          targetLocationId: selectedStep.targetLocationId ?? null,
-          validation: compactObjectiveSequenceText(selectedStep.validation ?? "", 180),
-        }
-      : null,
+    selectedStep: compactPlanningTraceStep(selectedStep),
   };
 }
 
@@ -3842,6 +3942,20 @@ function buildObjectiveSequenceAuditEntry({
     )
   ) {
     failureReasons.push("selected-trace-provenance-is-scaffold-only");
+  }
+
+  if (
+    objectiveSequenceEntryNeedsPlannerAuthority({
+      routeRole,
+      selectedActionId,
+    }) &&
+    /^(enter|exit|move|talk):/.test(String(selectedActionId ?? "")) &&
+    authorityEvidence.intendedFollowUp?.actionId &&
+    authorityEvidence.intendedFollowUp.actionId !== selectedActionId &&
+    normalizeVisibleActionText(authorityEvidence.selectedLabel) ===
+      normalizeVisibleActionText(authorityEvidence.intendedFollowUp.label)
+  ) {
+    failureReasons.push("selected-label-collapses-follow-up-intent");
   }
 
   if (
@@ -7268,6 +7382,8 @@ function selectedPlanningEvidence(moment) {
       selectedOption?.actionId ??
       moment?.autonomy?.actionId ??
       null,
+    immediateAction: compactPlanningTraceStep(planningTrace?.immediateAction),
+    intendedFollowUp: compactPlanningTraceStep(planningTrace?.intendedFollowUp),
     label:
       planningTrace?.selectedLabel ??
       selectedOption?.label ??
@@ -7299,6 +7415,7 @@ function selectedPlanningEvidence(moment) {
         "",
       160,
     ),
+    plannerIntent: compactPlanningTracePlannerIntent(planningTrace?.plannerIntent),
     provenance: selectedOption?.provenance ?? null,
     targetLocationId:
       planningTrace?.selectedTargetLocationId ??
@@ -8091,6 +8208,11 @@ function assertInhabitOpeningCtaProgression(moments) {
     `first-actionable-screen: expected the selected opening action to be Enter Morrow House: ${JSON.stringify(firstActionCarryForward)}.`,
   );
   assert.equal(
+    firstActionCarryForward.selectedActionLabel,
+    "Enter Morrow House",
+    `first-actionable-screen: opening carry-forward label should describe the immediate enter action: ${JSON.stringify(firstActionCarryForward)}.`,
+  );
+  assert.equal(
     firstActionCarryForward.status,
     "queued",
     `first-actionable-screen: expected the exterior opening action to be queued for watch carry-forward: ${JSON.stringify(firstActionCarryForward)}.`,
@@ -8128,6 +8250,16 @@ function assertInhabitOpeningCtaProgression(moments) {
     enteredMorrowHouse?.openingActionCarryForward?.status,
     "completed",
     `entered-morrow-house: opening carry-forward should be completed after entering: ${JSON.stringify(enteredMorrowHouse?.openingActionCarryForward)}.`,
+  );
+  assert.equal(
+    enteredMorrowHouse?.openingActionCarryForward?.selectedActionId,
+    "enter:boarding-house",
+    `entered-morrow-house: completed opening carry-forward should keep the immediate enter action id: ${JSON.stringify(enteredMorrowHouse?.openingActionCarryForward)}.`,
+  );
+  assert.equal(
+    enteredMorrowHouse?.openingActionCarryForward?.selectedActionLabel,
+    "Enter Morrow House",
+    `entered-morrow-house: completed opening carry-forward should not relabel the enter action as Mara follow-up intent: ${JSON.stringify(enteredMorrowHouse?.openingActionCarryForward)}.`,
   );
   assert.doesNotMatch(
     enteredMorrowHouseWatchText,
