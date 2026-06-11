@@ -72,7 +72,7 @@ export function buildRowanCognitionState(
   const primaryNeed = cognition.primaryNeed;
   const currentBelief = selectNotebookBelief(world, cognition);
   const notebookNeed =
-    needForBeliefTopic(cognition.needs, currentBelief?.topic) ?? primaryNeed;
+    selectNotebookNeed(world, cognition, currentBelief) ?? primaryNeed;
   const nextMove = cognition.nextMove;
   const notebook = {
     authority: {
@@ -102,10 +102,7 @@ export function buildRowanCognitionState(
       : primaryNeed
         ? `${needStatusLabel(primaryNeed.status)}: ${primaryNeed.reason}`
         : "Unsettled.",
-    plan:
-      nextMove?.text ??
-      world.rowanAutonomy?.label ??
-      "Ask the first useful question.",
+    plan: notebookPlanText(world, nextMove),
     title: notebookNeed?.label ?? "First page of the morning",
     uncertainty:
       uncertaintyForBelief(currentBelief) ??
@@ -165,26 +162,36 @@ function buildRowanNeeds(world: StreetGameState): RowanNeed[] {
   const hasCompletedWork = world.jobs.some((job) => job.completed);
   const maraTopics = npcReplyTopics(world, "npc-mara");
   const houseStanding = world.player.reputation.morrow_house ?? 0;
-  const hasRoomTerms = houseStanding >= 2 || hasAnyTopic(maraTopics, ["home", "stay"]);
+  const firstAfternoonSettled = Boolean(
+    world.firstAfternoon?.completedAt || world.firstAfternoon?.fieldNote,
+  );
+  const hasRoomTerms =
+    firstAfternoonSettled ||
+    houseStanding >= 2 ||
+    hasAnyTopic(maraTopics, ["home", "stay"]);
 
   needs.push({
     key: "shelter",
     label: "Keep a stable room",
-    status:
-      houseStanding < 1 && !hasRoomTerms
+    status: firstAfternoonSettled
+      ? "stable"
+      : houseStanding < 1 && !hasRoomTerms
         ? "urgent"
         : hasRoomTerms && houseStanding >= 2
           ? "stable"
           : "active",
-    score:
-      houseStanding < 1 && !hasRoomTerms
+    score: firstAfternoonSettled
+      ? 16
+      : houseStanding < 1 && !hasRoomTerms
         ? 92
         : hasRoomTerms && houseStanding >= 2
           ? 24
           : 68,
-    reason: hasRoomTerms
-      ? "Rowan knows more about staying on, but still needs to make himself worth keeping."
-      : "He still does not fully know what keeps tonight's bed from staying temporary.",
+    reason: firstAfternoonSettled
+      ? "Tonight's bed has evidence behind it; the next pressure is what Rowan does with that foothold."
+      : hasRoomTerms
+        ? "Rowan knows more about staying on, but still needs to make himself worth keeping."
+        : "He still does not fully know what keeps tonight's bed from staying temporary.",
   });
 
   needs.push({
@@ -197,11 +204,7 @@ function buildRowanNeeds(world: StreetGameState): RowanNeed[] {
           ? "urgent"
           : "active",
     score:
-      activeJob || hasCompletedWork || money >= 20
-        ? 28
-        : money < 12
-          ? 88
-          : 74,
+      activeJob || hasCompletedWork || money >= 20 ? 28 : money < 12 ? 88 : 74,
     reason: activeJob
       ? "There is work in hand, so now it is about following through."
       : "Coins only buy Rowan a little breathing room if the next job does not materialize.",
@@ -210,7 +213,8 @@ function buildRowanNeeds(world: StreetGameState): RowanNeed[] {
   needs.push({
     key: "belonging",
     label: "Stop feeling like a stranger",
-    status: trustedPeople >= 2 ? "stable" : familiarPeople > 0 ? "active" : "urgent",
+    status:
+      trustedPeople >= 2 ? "stable" : familiarPeople > 0 ? "active" : "urgent",
     score: trustedPeople >= 2 ? 20 : familiarPeople > 0 ? 58 : 72,
     reason:
       trustedPeople >= 2
@@ -221,7 +225,8 @@ function buildRowanNeeds(world: StreetGameState): RowanNeed[] {
   needs.push({
     key: "orientation",
     label: "Learn how South Quay fits together",
-    status: knownPlaces >= 4 ? "stable" : knownPlaces >= 3 ? "active" : "urgent",
+    status:
+      knownPlaces >= 4 ? "stable" : knownPlaces >= 3 ? "active" : "urgent",
     score: knownPlaces >= 4 ? 18 : knownPlaces >= 3 ? 46 : 62,
     reason:
       knownPlaces >= 4
@@ -255,15 +260,32 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
   const tomasTopics = npcReplyTopics(world, "npc-tomas");
   const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
   const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
-  const pumpProblem = world.problems.find((problem) => problem.id === "problem-pump");
+  const pumpProblem = world.problems.find(
+    (problem) => problem.id === "problem-pump",
+  );
   const objectiveText = world.player.objective?.text.toLowerCase() ?? "";
+  const firstAfternoonSettled = Boolean(world.firstAfternoon?.completedAt);
+
+  if (firstAfternoonSettled) {
+    beliefs.push({
+      id: "belief-first-afternoon-field-note",
+      topic: "help",
+      text: "Ada has now seen Rowan ask directly, work through lunch, and record what changed; the opening room question is evidence, not the current plan.",
+      confidence: world.firstAfternoon?.fieldNote ? "confirmed" : "promising",
+      source: "First afternoon field note",
+      locationId: "tea-house",
+      npcId: "npc-ada",
+    });
+  }
 
   if (maraKnown) {
     beliefs.push({
       id: "belief-mara-room",
       topic: "shelter",
       text: "Mara is the person most likely to tell Rowan what keeps a room at Morrow House from turning temporary again.",
-      confidence: hasAnyTopic(maraTopics, ["home", "stay"]) ? "confirmed" : "promising",
+      confidence: hasAnyTopic(maraTopics, ["home", "stay"])
+        ? "confirmed"
+        : "promising",
       source: "Morrow House",
       npcId: "npc-mara",
       locationId: "boarding-house",
@@ -275,7 +297,11 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
       id: "belief-ada-work",
       topic: "work",
       text: "Ada may have paid work at Kettle & Lamp if Rowan shows up before the lunch crowd fills the cafe.",
-      confidence: hasAnyTopic(adaTopics, ["work"]) ? "confirmed" : teaJob?.discovered ? "promising" : "possible",
+      confidence: hasAnyTopic(adaTopics, ["work"])
+        ? "confirmed"
+        : teaJob?.discovered
+          ? "promising"
+          : "possible",
       source: "Kettle & Lamp",
       npcId: "npc-ada",
       locationId: "tea-house",
@@ -287,7 +313,11 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
       id: "belief-tomas-work",
       topic: "work",
       text: "Tomas may have yard work when the freight window is open and Rowan sounds reliable enough to bother with.",
-      confidence: hasAnyTopic(tomasTopics, ["work", "yard"]) ? "confirmed" : yardJob?.discovered ? "promising" : "possible",
+      confidence: hasAnyTopic(tomasTopics, ["work", "yard"])
+        ? "confirmed"
+        : yardJob?.discovered
+          ? "promising"
+          : "possible",
       source: "North Crane Yard",
       npcId: "npc-tomas",
       locationId: "freight-yard",
@@ -310,7 +340,10 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
     beliefs.push({
       id: "belief-pump-standing",
       topic: "help",
-      text: "Fixing the pump in Morrow Yard could make Rowan look less temporary at Morrow House.",
+      text:
+        firstAfternoonSettled && pumpProblem.status === "active"
+          ? "The Morrow Yard pump is now a live house problem, not background noise Rowan can keep treating as later."
+          : "Fixing the pump in Morrow Yard could turn house trouble into proof that Rowan notices what needs doing.",
       confidence: pumpProblem.status === "solved" ? "confirmed" : "promising",
       source: "Morrow Yard",
       locationId: "courtyard",
@@ -321,8 +354,7 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
     beliefs.push({
       id: "belief-nia-current-lead",
       topic: "help",
-      text:
-        "Jo's clue points Rowan toward Nia before the block jam turns into someone else's problem.",
+      text: "Jo's clue points Rowan toward Nia before the block jam turns into someone else's problem.",
       confidence: niaKnown ? "promising" : "possible",
       source: joKnown ? "Jo at Mercer Repairs" : "Current lead",
       npcId: "npc-nia",
@@ -343,7 +375,10 @@ function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
   return beliefs;
 }
 
-function selectNotebookBelief(world: StreetGameState, cognition: RowanCognition) {
+function selectNotebookBelief(
+  world: StreetGameState,
+  cognition: RowanCognition,
+) {
   const nextMove = cognition.nextMove;
   const primaryNeedTopic = topicForNeed(cognition.primaryNeed?.key);
   const confidenceScore: Record<RowanBeliefConfidence, number> = {
@@ -383,8 +418,14 @@ function notebookBeliefScore(
       belief.locationId === context.nextMove.targetLocationId);
   const objectiveMatch = objectiveMatchesBelief(world, belief);
   const primaryNeedMatch =
-    context.primaryNeedTopic !== undefined && belief.topic === context.primaryNeedTopic;
+    context.primaryNeedTopic !== undefined &&
+    belief.topic === context.primaryNeedTopic;
   const firstAfternoonSettled = Boolean(world.firstAfternoon?.completedAt);
+  const staleOpeningShelter =
+    firstAfternoonSettled &&
+    belief.topic === "shelter" &&
+    world.player.objective?.routeKey !== "first-afternoon" &&
+    world.player.objective?.focus !== "settle";
 
   let score = context.confidenceScore[belief.confidence] * 10;
   if (direct) {
@@ -396,7 +437,15 @@ function notebookBeliefScore(
   if (primaryNeedMatch) {
     score += 40;
   }
-  if (firstAfternoonSettled && belief.topic === "shelter" && !direct && !objectiveMatch) {
+  if (staleOpeningShelter) {
+    score -= 220;
+  }
+  if (
+    firstAfternoonSettled &&
+    belief.topic === "shelter" &&
+    !direct &&
+    !objectiveMatch
+  ) {
     score -= 90;
   }
 
@@ -413,7 +462,9 @@ function objectiveMatchesBelief(world: StreetGameState, belief: RowanBelief) {
     ? world.npcs.find((npc) => npc.id === belief.npcId)?.name.toLowerCase()
     : undefined;
   const locationName = belief.locationId
-    ? world.locations.find((location) => location.id === belief.locationId)?.name.toLowerCase()
+    ? world.locations
+        .find((location) => location.id === belief.locationId)
+        ?.name.toLowerCase()
     : undefined;
 
   if (npcName && objectiveText.includes(npcName)) {
@@ -430,6 +481,11 @@ function objectiveMatchesBelief(world: StreetGameState, belief: RowanBelief) {
 
   switch (belief.topic) {
     case "help":
+      if (belief.id === "belief-first-afternoon-field-note") {
+        return /\bfirst afternoon\b|\bfield note\b|\brest\b|\brecover\b|\btake stock\b/.test(
+          objectiveText,
+        );
+      }
       if (belief.id === "belief-pump-standing") {
         return /\bpump\b|\bleak\b|\bfix\b/.test(objectiveText);
       }
@@ -437,9 +493,13 @@ function objectiveMatchesBelief(world: StreetGameState, belief: RowanBelief) {
         objectiveText,
       );
     case "work":
-      return /\bwork\b|\bjob\b|\bshift\b|\bpay\b|\bincome\b/.test(objectiveText);
+      return /\bwork\b|\bjob\b|\bshift\b|\bpay\b|\bincome\b/.test(
+        objectiveText,
+      );
     case "shelter":
-      return /\broom\b|\bbed\b|\bstay\b|\bhouse\b|\bshelter\b/.test(objectiveText);
+      return /\broom\b|\bbed\b|\bstay\b|\bhouse\b|\bshelter\b/.test(
+        objectiveText,
+      );
     case "tool":
       return /\bwrench\b|\btool\b|\brepair\b/.test(objectiveText);
     case "belonging":
@@ -451,7 +511,9 @@ function objectiveMatchesBelief(world: StreetGameState, belief: RowanBelief) {
   }
 }
 
-function topicForNeed(needKey?: RowanNeedKey): RowanBelief["topic"] | undefined {
+function topicForNeed(
+  needKey?: RowanNeedKey,
+): RowanBelief["topic"] | undefined {
   switch (needKey) {
     case "belonging":
       return "belonging";
@@ -464,15 +526,43 @@ function topicForNeed(needKey?: RowanNeedKey): RowanBelief["topic"] | undefined 
   }
 }
 
-function needForBeliefTopic(
-  needs: RowanNeed[],
-  topic?: RowanBelief["topic"],
+function selectNotebookNeed(
+  world: StreetGameState,
+  cognition: RowanCognition,
+  belief?: RowanBelief,
 ) {
+  const objectiveFocus = world.player.objective?.focus;
+  const objectiveRouteKey = world.player.objective?.routeKey;
+  const nextMove = cognition.nextMove;
+
+  if (
+    objectiveFocus === "rest" ||
+    objectiveRouteKey === "rest-home" ||
+    nextMove?.actionId === "rest:home" ||
+    isPostFirstAfternoonHomeRecoveryEntry(world, nextMove)
+  ) {
+    return cognition.needs.find((need) => need.key === "rest");
+  }
+
+  if (objectiveFocus === "work") {
+    return cognition.needs.find((need) => need.key === "income");
+  }
+
+  if (objectiveFocus === "help" || objectiveFocus === "tool") {
+    return cognition.needs.find((need) => need.key === "orientation");
+  }
+
+  return needForBeliefTopic(cognition.needs, belief?.topic);
+}
+
+function needForBeliefTopic(needs: RowanNeed[], topic?: RowanBelief["topic"]) {
   const needKey = needKeyForTopic(topic);
   return needKey ? needs.find((need) => need.key === needKey) : undefined;
 }
 
-function needKeyForTopic(topic?: RowanBelief["topic"]): RowanNeedKey | undefined {
+function needKeyForTopic(
+  topic?: RowanBelief["topic"],
+): RowanNeedKey | undefined {
   switch (topic) {
     case "belonging":
       return "belonging";
@@ -490,6 +580,8 @@ function needKeyForTopic(topic?: RowanBelief["topic"]): RowanNeedKey | undefined
 
 function uncertaintyForBelief(belief?: RowanBelief) {
   switch (belief?.id) {
+    case "belief-first-afternoon-field-note":
+      return "Which live pressure deserves Rowan's recovered hour: yard work, the pump, or another lead?";
     case "belief-nia-current-lead":
       return "What does Nia know about the block before it jams?";
     case "belief-jo-tools":
@@ -499,6 +591,69 @@ function uncertaintyForBelief(belief?: RowanBelief) {
     default:
       return undefined;
   }
+}
+
+function notebookPlanText(world: StreetGameState, nextMove?: RowanNextMove) {
+  if (objectiveIsNiaBlockLead(world) && nextMove?.actionId === "rest:home") {
+    return "Recover before following Nia's block-jam lead.";
+  }
+
+  if (
+    world.player.objective?.routeKey === "rest-home" ||
+    world.player.objective?.focus === "rest" ||
+    nextMove?.actionId === "rest:home" ||
+    isPostFirstAfternoonHomeRecoveryEntry(world, nextMove)
+  ) {
+    return "Rest at Morrow House long enough to recover, then choose the yard work, pump, or live pressure that still matters.";
+  }
+
+  if (world.player.objective?.routeKey === "work-yard") {
+    return nextMove?.text && !isStaleOpeningEntryText(nextMove.text)
+      ? nextMove.text
+      : "Follow the yard work window before it closes.";
+  }
+
+  if (world.player.objective?.routeKey === "help-pump") {
+    return nextMove?.text && !isStaleOpeningEntryText(nextMove.text)
+      ? nextMove.text
+      : "Handle the Morrow Yard pump before the house has to absorb it without Rowan.";
+  }
+
+  if (nextMove?.text && !isStaleOpeningEntryText(nextMove.text)) {
+    return nextMove.text;
+  }
+
+  return world.rowanAutonomy?.label &&
+    !isStaleOpeningEntryText(world.rowanAutonomy.label)
+    ? world.rowanAutonomy.label
+    : "Ask the first useful question.";
+}
+
+function isPostFirstAfternoonHomeRecoveryEntry(
+  world: StreetGameState,
+  nextMove?: RowanNextMove,
+) {
+  return (
+    Boolean(world.firstAfternoon?.completedAt) &&
+    world.player.objective?.routeKey === "rest-home" &&
+    nextMove?.actionId === "enter:boarding-house"
+  );
+}
+
+function isStaleOpeningEntryText(text: string) {
+  return /^Enter Morrow House$/i.test(text.trim());
+}
+
+function objectiveIsNiaBlockLead(world: StreetGameState) {
+  const objective = world.player.objective;
+  if (!objective) {
+    return false;
+  }
+
+  return (
+    /\bnia\b/.test(objective.text.toLowerCase()) &&
+    /\b(block|jam|cart|square)\b/.test(objective.text.toLowerCase())
+  );
 }
 
 function confidenceAdjective(confidence: RowanBeliefConfidence) {
@@ -604,7 +759,11 @@ function detectTopics(text: string) {
   const normalized = text.toLowerCase();
   const topics = new Set<string>();
 
-  if (/\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bpay\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(normalized)) {
+  if (
+    /\bwork\b|\bjob\b|\bshift\b|\bpaid\b|\bpay\b|\bcoin\b|\bmoney\b|\bearn\b|\bincome\b|\bhands?\b|\bhire\b|\bhiring\b/.test(
+      normalized,
+    )
+  ) {
     topics.add("work");
   }
 
@@ -620,7 +779,11 @@ function detectTopics(text: string) {
     topics.add("tool");
   }
 
-  if (/\brent\b|\broom\b|\bhome\b|\bhouse\b|\blodg|\bstay\b|\bbed\b/.test(normalized)) {
+  if (
+    /\brent\b|\broom\b|\bhome\b|\bhouse\b|\blodg|\bstay\b|\bbed\b/.test(
+      normalized,
+    )
+  ) {
     topics.add("home");
     topics.add("stay");
   }
@@ -637,7 +800,11 @@ function detectTopics(text: string) {
     topics.add("people");
   }
 
-  if (/\bmap\b|\blearn\b|\bexplore\b|\blane\b|\bdistrict\b|\bcity\b/.test(normalized)) {
+  if (
+    /\bmap\b|\blearn\b|\bexplore\b|\blane\b|\bdistrict\b|\bcity\b/.test(
+      normalized,
+    )
+  ) {
     topics.add("learn");
   }
 
