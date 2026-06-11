@@ -1329,7 +1329,7 @@ function resolvePendingMoveLoopStep(
       `${location?.name ?? "The next place"} is the useful next stop based on what Rowan knows now.`,
     key: `pending:${pendingMove.preparedAt}:${pendingMove.targetLocationId}:${pendingMove.actionId ?? pendingMove.npcId ?? ""}`,
     kind: "move",
-    label: autonomyLabelForNextBeat(world, pendingMove),
+    label: autonomyLabelForRouteProgress(world, pendingMove.targetLocationId),
     layer:
       activeJobId && pendingMove.actionId === `work:${activeJobId}`
         ? "commitment"
@@ -1339,7 +1339,16 @@ function resolvePendingMoveLoopStep(
     planningTrace: pendingMove.planningTrace,
     speech: pendingMove.speech,
     targetLocationId: pendingMove.targetLocationId,
+    travelPhase: "route-progress",
   };
+}
+
+function autonomyLabelForRouteProgress(
+  world: StreetGameState,
+  targetLocationId: string,
+) {
+  const location = findLocation(world, targetLocationId);
+  return `On the way to ${location?.name ?? "the next stop"}`;
 }
 
 function teaShiftWatchLabel(world: StreetGameState) {

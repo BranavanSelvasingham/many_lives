@@ -1809,6 +1809,7 @@ function buildProbeFromGame(game) {
       planningTrace: planningTraceProbeFromGame(game),
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
+      travelPhase: game.rowanAutonomy.travelPhase ?? null,
       visibleDecisionArtifact: visibleDecisionArtifactFromGame(game),
     },
     cityEvents: activeCityEvents(game),
@@ -2002,6 +2003,7 @@ function visibleDecisionArtifactFromGame(game) {
   const trace = game.rowanAutonomy?.planningTrace ?? null;
   const conversationDecision = game.activeConversation?.decision ?? null;
   const autonomyReason = game.rowanAutonomy?.intent?.reason ?? null;
+  const travelPhase = game.rowanAutonomy?.travelPhase ?? null;
 
   if (!trace && !conversationDecision) {
     return null;
@@ -2029,20 +2031,32 @@ function visibleDecisionArtifactFromGame(game) {
       game.rowanAutonomy?.label,
     112,
   );
-  const selectedAction = compactVisibleDecisionText(
+  const selectedActionBase = compactVisibleDecisionText(
     trace?.selectedLabel ??
       selectedOption?.label ??
       selectedStep?.label ??
       game.rowanAutonomy?.label,
     72,
   );
-  const rationale = compactVisibleDecisionText(
+  const selectedAction =
+    travelPhase === "route-progress" && selectedActionBase
+      ? compactVisibleDecisionText(`Following through: ${selectedActionBase}`, 72)
+      : selectedActionBase;
+  const rationaleBase = compactVisibleDecisionText(
     selectedOption?.rationale ??
       selectedStep?.rationale ??
       autonomyReason ??
       conversationDecision,
     132,
   );
+  const rationale =
+    travelPhase === "route-progress"
+      ? compactVisibleDecisionText(
+          autonomyReason ??
+            "Rowan is carrying out the route he already validated.",
+          132,
+        )
+      : rationaleBase;
   const nextCheck = visibleDecisionNextCheck(
     trace,
     selectedStep,
@@ -2090,7 +2104,9 @@ function visibleDecisionArtifactFromGame(game) {
     rationale,
     selectedAction,
     sourceSummary:
-      trace?.selectedRecommendation?.sourceKind === "live-llm"
+      travelPhase === "route-progress"
+        ? "Validated route progress"
+        : trace?.selectedRecommendation?.sourceKind === "live-llm"
         ? "Live planner recommendation, checked before acting"
         : trace
           ? "Planner recommendation, checked before acting"
@@ -3689,6 +3705,7 @@ function buildObjectiveSequenceAuditEntry({
     selectedTargetLocationId,
     stepKind: probe.autonomy?.stepKind ?? null,
     targetLocationId: probe.autonomy?.targetLocationId ?? null,
+    travelPhase: probe.autonomy?.travelPhase ?? null,
     visibleDecisionArtifact: compactVisibleDecisionArtifact(
       visibleDecisionArtifact,
     ),
@@ -3832,7 +3849,7 @@ function objectiveSequenceGroupIdForEntry(entry) {
   }
 
   if (
-    /^(?:Exit to South Quay|Head to Kettle & Lamp|Enter Kettle & Lamp|Talk to Ada)$/i.test(
+    /^(?:Exit to South Quay|Head to Kettle & Lamp|On the way to Kettle & Lamp|Enter Kettle & Lamp|Talk to Ada)$/i.test(
       label,
     ) &&
     (entry.selectedTargetLocationId === "tea-house" ||
@@ -3853,7 +3870,7 @@ function objectiveSequenceGroupIdForEntry(entry) {
   }
 
   if (
-    /^(?:Exit to South Quay|Head to Morrow House|Enter Morrow House|Take stock)$/i.test(
+    /^(?:Exit to South Quay|Head to Morrow House|On the way to Morrow House|Enter Morrow House|Take stock)$/i.test(
       label,
     ) &&
     !entry.firstAfternoonCompletionAcknowledgedAt &&
@@ -4075,6 +4092,7 @@ function compactEarlyAgencyDecisionEntry(entry, index) {
     selectedStep: evidence.selectedStep ?? null,
     selectedTargetLocationId: entry.selectedTargetLocationId ?? null,
     sequenceRunId: objectiveSequenceGroupIdForEntry(entry),
+    travelPhase: entry.travelPhase ?? null,
     visibleDecisionArtifact: entry.visibleDecisionArtifact ?? null,
   };
 }

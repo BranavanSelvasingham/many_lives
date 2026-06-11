@@ -563,6 +563,8 @@ export type RowanAutonomyStepKind =
   | "talk"
   | "wait";
 
+export type RowanAutonomyTravelPhase = "route-progress";
+
 export type RowanAutonomyEffect =
   | "conversation"
   | "memory"
@@ -691,6 +693,7 @@ export interface RowanAutonomyState {
   planningTrace?: RowanPlanningTrace;
   stepKind?: RowanAutonomyStepKind;
   targetLocationId?: string;
+  travelPhase?: RowanAutonomyTravelPhase;
 }
 
 export interface RowanCognitionNeedSummary {

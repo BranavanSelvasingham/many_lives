@@ -5,6 +5,7 @@ import type {
   RowanAutonomyLayer,
   RowanAutonomyState,
   RowanAutonomyStepKind,
+  RowanAutonomyTravelPhase,
   RowanPlanningTrace,
   StreetGameState,
 } from "../street-sim/types.js";
@@ -30,6 +31,7 @@ export type RowanLoopStep = {
   planningTrace?: RowanPlanningTrace;
   speech?: string;
   targetLocationId?: string;
+  travelPhase?: RowanAutonomyTravelPhase;
   waitUntilMinutes?: number;
 };
 
@@ -97,6 +99,7 @@ export function rowanAutonomyFromLoopStep(
     planningTrace: loopStep.planningTrace,
     stepKind: loopStep.kind,
     targetLocationId: loopStep.targetLocationId,
+    travelPhase: loopStep.travelPhase,
   };
 }
 
