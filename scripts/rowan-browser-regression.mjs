@@ -1437,7 +1437,13 @@ class CdpSession {
     });
 
     this.writeFrame(payload);
-    return promise;
+    return withTimeout(
+      promise.finally(() => {
+        this.pending.delete(id);
+      }),
+      CDP_WAIT_TIMEOUT_MS,
+      `Timed out waiting for Chrome DevTools response for ${method}.`,
+    );
   }
 
   writeHandshake() {
@@ -2406,12 +2412,12 @@ function simCityEventSnapshot(game) {
 
 function independentNpcActionSummary({ problemId, problemTitle, resolverName }) {
   if (problemId === "problem-pump") {
-    return `${resolverName} contained ${problemTitle.toLowerCase()} before it became evening house strain.`;
+    return `${resolverName} contained the ${problemTitle.toLowerCase()} before it became evening house strain.`;
   }
   if (problemId === "problem-cart") {
-    return `${resolverName} cleared ${problemTitle.toLowerCase()} before Quay Square spent the afternoon bent around it.`;
+    return `${resolverName} cleared the ${problemTitle.toLowerCase()} before Quay Square spent the afternoon bent around it.`;
   }
-  return `${resolverName} resolved ${problemTitle.toLowerCase()} without Rowan taking the work.`;
+  return `${resolverName} resolved the ${problemTitle.toLowerCase()} without Rowan taking the work.`;
 }
 
 function independentNpcActionsFromGame(game) {
@@ -2438,6 +2444,15 @@ function independentNpcActionsFromGame(game) {
         resolverName,
         resolverNpcId: problem.resolvedByNpcId,
       };
+    })
+    .sort((left, right) => {
+      const leftTime = left.resolvedAt ? Date.parse(left.resolvedAt) : Number.NEGATIVE_INFINITY;
+      const rightTime = right.resolvedAt ? Date.parse(right.resolvedAt) : Number.NEGATIVE_INFINITY;
+      if (leftTime !== rightTime) {
+        return rightTime - leftTime;
+      }
+
+      return left.problemId.localeCompare(right.problemId);
     });
 }
 
@@ -2895,6 +2910,30 @@ function assertProbeAuditability(label, game, probe) {
     ),
     `${label}: independent NPC action probe must expose compact resolver, before/after, time, and player-facing summary evidence.`,
   );
+
+  if (probe.independentNpcSurface) {
+    const surface = probe.independentNpcSurface;
+    assert.ok(
+      ["now", "just_happened"].includes(surface.slot),
+      `${label}: independent NPC surface must say whether it is the current or just-happened rail beat.`,
+    );
+    assert.ok(
+      surface.problemId &&
+        surface.problemTitle &&
+        surface.resolverNpcId &&
+        surface.resolverName &&
+        surface.resolvedAt &&
+        surface.title &&
+        surface.detail,
+      `${label}: independent NPC surface must stay backed by problem, resolver, time, title, and visible copy.`,
+    );
+    assert.ok(
+      !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
+        `${surface.title} ${surface.detail}`,
+      ),
+      `${label}: independent NPC surface leaked debug fields into the visible rail copy.`,
+    );
+  }
 }
 
 async function waitForGameplayDom(label, session, probe) {
@@ -2921,6 +2960,37 @@ async function waitForGameplayDom(label, session, probe) {
     `${label}: rendered UI did not catch up to the current Rowan beat "${expectedLabel}". Last DOM: ${
       lastDom?.bodyTextSample ?? "missing"
     }`,
+  );
+}
+
+async function refreshProbeForVisibleIndependentNpcSurface({
+  dom,
+  label,
+  probe,
+  session,
+}) {
+  if (
+    label !== "independent-npc-resolution" ||
+    probe.independentNpcSurface ||
+    (probe.independentNpcActions ?? []).length === 0
+  ) {
+    return probe;
+  }
+
+  if (!/city beat|steadied|contained/i.test(dom.bodyText ?? "")) {
+    return probe;
+  }
+
+  return waitFor(
+    async () => {
+      const refreshedProbe = await session.readBrowserProbe();
+      if (refreshedProbe.independentNpcSurface) {
+        return refreshedProbe;
+      }
+      return null;
+    },
+    5_000,
+    `${label}: visible independent NPC city beat did not reach the browser probe before capture.`,
   );
 }
 
@@ -4784,6 +4854,7 @@ function assertWorldPressureAudit(worldPressureAudit) {
 
 function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
   const actionsByKey = new Map();
+  const surfacedByKey = new Map();
   for (const moment of moments ?? []) {
     for (const action of moment.independentNpcActions ?? []) {
       const key = [
@@ -4801,6 +4872,26 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
         firstObservedScreenshot: moment.screenshot ?? null,
       });
     }
+
+    const surfaced = moment.independentNpcSurface;
+    if (!surfaced) {
+      continue;
+    }
+
+    const key = [
+      surfaced.problemId,
+      surfaced.resolverNpcId,
+      surfaced.resolvedAt,
+    ].join("|");
+    if (surfacedByKey.has(key)) {
+      continue;
+    }
+    surfacedByKey.set(key, {
+      ...surfaced,
+      firstSurfacedClock: moment.clock ?? null,
+      firstSurfacedLabel: moment.label ?? null,
+      firstSurfacedScreenshot: moment.screenshot ?? null,
+    });
   }
 
   const resolverTimelineChanges = (
@@ -4817,6 +4908,8 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
     actions: [...actionsByKey.values()],
     observedActionCount: actionsByKey.size,
     resolverTimelineChanges,
+    surfacedActionCount: surfacedByKey.size,
+    surfacedActions: [...surfacedByKey.values()],
   };
 }
 
@@ -4850,6 +4943,35 @@ function assertIndependentNpcActionEvidence(evidence) {
         ),
     ),
     `Independent NPC action evidence must connect problem, resolver, before/after state, time, report moment, and player-facing summary. Evidence: ${JSON.stringify(
+      evidence,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    evidence.surfacedActionCount > 0,
+    `Browser report must capture at least one rail-visible independent city beat. Evidence: ${JSON.stringify(
+      evidence,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    evidence.surfacedActions.some(
+      (action) =>
+        ["now", "just_happened"].includes(action.slot) &&
+        action.problemId &&
+        action.resolverNpcId &&
+        action.resolvedAt &&
+        action.title &&
+        action.detail &&
+        action.firstSurfacedLabel &&
+        action.firstSurfacedScreenshot &&
+        !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
+          `${action.title} ${action.detail}`,
+        ),
+    ),
+    `Independent NPC rail beats must stay player-facing and screenshot-backed in the browser report. Evidence: ${JSON.stringify(
       evidence,
       null,
       2,
@@ -6378,6 +6500,7 @@ function buildTimelineEntry({
     screenshotError: screenshotError ?? null,
     firstAfternoon: probe.firstAfternoon ?? null,
     independentNpcActions: probe.independentNpcActions ?? [],
+    independentNpcSurface: probe.independentNpcSurface ?? null,
     visualEventCues: probe.visualEventCues ?? [],
     visualPlayer: probe.visualPlayer,
     watchMode: probe.watchMode ?? null,
@@ -6400,10 +6523,17 @@ function buildTimelineEntry({
 }
 
 async function captureBrowserState({ game, index, label, session }) {
-  const probe = await session.waitForGame(game);
-  assertBrowserProbeMatchesGame(label, game, probe);
+  const initialProbe = await session.waitForGame(game);
+  assertBrowserProbeMatchesGame(label, game, initialProbe);
   assertCityEventState(label, game);
-  const dom = await waitForGameplayDom(label, session, probe);
+  const dom = await waitForGameplayDom(label, session, initialProbe);
+  const probe = await refreshProbeForVisibleIndependentNpcSurface({
+    dom,
+    label,
+    probe: initialProbe,
+    session,
+  });
+  assertBrowserProbeMatchesGame(label, game, probe);
   const mapAgency = await session.readMapAgencyProbe();
   assertGameplayDom(label, game, probe, dom);
 
@@ -7814,6 +7944,7 @@ async function captureInhabitMoment({
       : null,
     firstAfternoon: probe.firstAfternoon,
     independentNpcActions: probe.independentNpcActions ?? [],
+    independentNpcSurface: probe.independentNpcSurface ?? null,
     label,
     location: probe.location,
     movement: probe.movement ?? null,

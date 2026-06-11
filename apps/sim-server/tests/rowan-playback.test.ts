@@ -171,6 +171,60 @@ describe("Rowan playback helpers", () => {
     );
   });
 
+  it("surfaces an independent NPC resolution as a rail-visible city beat", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("rowan-playback-city-beat");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 10,
+      y: 7,
+    });
+    world = await engine.tick(world, 3);
+    const activeCart = world.problems.find(
+      (problem) => problem.id === "problem-cart",
+    );
+    if (activeCart) {
+      activeCart.discovered = true;
+    }
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "inspect:problem-cart",
+    });
+
+    const resolved = await engine.tick(world, 9);
+    const beats = deriveRowanPlaybackBeats(asWebGame(world), asWebGame(resolved));
+    const cityBeat = beats.find((beat) => beat.kind === "city_beat");
+    expect(cityBeat).toBeTruthy();
+
+    expect(cityBeat).toMatchObject({
+      detail: expect.stringContaining(
+        "Nia cleared the jammed handcart before Quay Square spent the afternoon bent around it.",
+      ),
+      kind: "city_beat",
+      title: "Nia cleared the square",
+    });
+
+    const playback = completeActiveRowanPlaybackBeat({
+      activeBeat: cityBeat!,
+      queuedBeats: [],
+    });
+    const railView = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is watching the block move around him.",
+      game: asWebGame(resolved),
+      playback,
+      quietStatusLabel: resolved.currentScene.title,
+      watchMode: true,
+    });
+
+    expect(railView.justHappened).toMatchObject({
+      detail: expect.stringContaining("Nia cleared the jammed handcart"),
+      title: "Nia cleared the square",
+      tone: "info",
+    });
+  });
+
   it("keeps autoplay blocked until the queued beats are fully consumed", () => {
     const moveBeat: RowanPlaybackBeat = {
       blocking: true,
