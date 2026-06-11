@@ -41,6 +41,7 @@ export function buildRowanVisibleDecisionArtifact(
     autonomySignals: game.rowanAutonomy?.intent?.signals,
     objectiveText: game.player.objective?.text,
     planningTrace: game.rowanAutonomy?.planningTrace,
+    recentIndependentResolution: recentIndependentResolutionConstraint(game),
     travelPhase: game.rowanAutonomy?.travelPhase,
   });
 }
@@ -53,6 +54,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomySignals,
   objectiveText,
   planningTrace,
+  recentIndependentResolution,
   travelPhase,
 }: {
   activeConversationDecision?: string;
@@ -62,6 +64,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomySignals?: string[];
   objectiveText?: string;
   planningTrace?: PlanningTrace;
+  recentIndependentResolution?: string;
   travelPhase?: StreetGameState["rowanAutonomy"]["travelPhase"];
 }): RowanVisibleDecisionArtifact | null {
   if (!planningTrace && !activeConversationDecision) {
@@ -161,6 +164,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   );
   const constraints = uniqueCompact(
     [
+      recentIndependentResolution,
       ...(autonomySignals ?? []),
       selectedOption?.pressureLabel,
       selectedStep?.validation,
@@ -190,6 +194,42 @@ export function buildRowanVisibleDecisionArtifactFromState({
       travelPhase,
     ),
   };
+}
+
+function recentIndependentResolutionConstraint(game: StreetGameState) {
+  const currentTime = Date.parse(game.currentTime);
+  if (!Number.isFinite(currentTime)) {
+    return undefined;
+  }
+
+  const npcsById = new Map(game.npcs.map((npc) => [npc.id, npc] as const));
+  const recent = (game.problems ?? [])
+    .filter(
+      (problem) =>
+        problem.discovered &&
+        problem.status === "resolved" &&
+        problem.resolvedByNpcId &&
+        problem.resolvedAt,
+    )
+    .map((problem) => ({
+      problem,
+      resolvedTime: Date.parse(problem.resolvedAt ?? ""),
+    }))
+    .filter(
+      ({ resolvedTime }) =>
+        Number.isFinite(resolvedTime) &&
+        currentTime - resolvedTime >= 0 &&
+        currentTime - resolvedTime <= 90 * 60 * 1000,
+    )
+    .sort((left, right) => right.resolvedTime - left.resolvedTime)[0];
+
+  if (!recent) {
+    return undefined;
+  }
+
+  const resolver =
+    npcsById.get(recent.problem.resolvedByNpcId ?? "")?.name ?? "someone local";
+  return `${resolver} already contained the ${recent.problem.title.toLowerCase()}, so Rowan can choose among the remaining needs.`;
 }
 
 function selectedPlanningOption(trace?: PlanningTrace) {
