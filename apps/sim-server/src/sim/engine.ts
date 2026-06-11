@@ -5945,13 +5945,12 @@ function objectivePlanRationale(
   npc: NpcState | undefined,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
 ) {
-  const scaffoldRationale = objectiveRouteActionRationale(world, objective, npc);
+  const scaffoldRationale = objectiveRouteActionRationale(world, objective, {
+    actionId: action.id,
+    npc,
+  });
   if (scaffoldRationale) {
     return scaffoldRationale;
-  }
-
-  if (action.id === "reflect:first-afternoon-plan") {
-    return "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
   }
 
   if (action.id === "buy:item-wrench") {

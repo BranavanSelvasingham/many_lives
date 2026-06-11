@@ -59,7 +59,8 @@ interface ConversationTopicSuppression {
 }
 
 interface ActionRationaleHint {
-  npcId: string;
+  actionId?: string;
+  npcId?: string;
   rationale: string;
   routeKeys?: string[];
   when?: (context: ScaffoldContext) => boolean;
@@ -172,6 +173,12 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       },
     ],
     actionRationales: [
+      {
+        actionId: "reflect:first-afternoon-plan",
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        rationale:
+          "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.",
+      },
       {
         npcId: "npc-mara",
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
@@ -347,9 +354,12 @@ export function objectiveRouteMoveIntent(
 export function objectiveRouteActionRationale(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
-  npc: NpcState | undefined,
+  input: {
+    actionId?: string;
+    npc?: NpcState;
+  },
 ) {
-  if (!npc) {
+  if (!input.npc && !input.actionId) {
     return undefined;
   }
 
@@ -357,7 +367,9 @@ export function objectiveRouteActionRationale(
   for (const scaffold of activeScaffolds(objective.routeKey)) {
     const rationale = (scaffold.actionRationales ?? []).find(
       (candidate) =>
-        candidate.npcId === npc.id &&
+        (!candidate.npcId || candidate.npcId === input.npc?.id) &&
+        (!candidate.actionId || candidate.actionId === input.actionId) &&
+        (candidate.npcId || candidate.actionId) &&
         (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );
