@@ -9761,7 +9761,6 @@ function drawMapAgencyOverlay(
       playerPixel,
       targetPoint,
       color,
-      now,
       buildMapAgencyRouteWorldPath(runtimeState, playerTile, cue, targetPoint),
     );
   }
@@ -9810,11 +9809,10 @@ function drawMapAgencyPath(
   from: Point,
   to: Point,
   color: number,
-  now: number,
   routePath?: Point[] | null,
 ) {
   if (routePath && routePath.length > 1) {
-    drawMapAgencyPolylinePath(layer, [from, ...routePath], color, now);
+    drawMapAgencyPolylinePath(layer, [from, ...routePath], color);
     return;
   }
 
@@ -9840,20 +9838,6 @@ function drawMapAgencyPath(
     const next = sampleQuadraticPoint(from, control, to, progress);
     layer.lineBetween(previous.x, previous.y, next.x, next.y);
     previous = next;
-  }
-
-  const flow = positiveModulo(now / 2600, 1);
-  for (let index = 0; index < segmentCount; index += 1) {
-    const progress = positiveModulo((index + flow) / segmentCount, 1);
-    if (progress < 0.08 || progress > 0.92) {
-      continue;
-    }
-    const point = sampleQuadraticPoint(from, control, to, progress);
-    const size = 2.6 + Math.sin(now / 240 + index) * 0.35;
-    layer.fillStyle(0x091015, 0.16);
-    layer.fillCircle(point.x + 1.2, point.y + 1.4, size + 0.8);
-    layer.fillStyle(color, 0.32);
-    layer.fillCircle(point.x, point.y, size);
   }
 
   const arrowTip = sampleQuadraticPoint(from, control, to, 0.94);
@@ -9903,7 +9887,6 @@ function drawMapAgencyPolylinePath(
   layer: PhaserType.GameObjects.Graphics,
   path: Point[],
   color: number,
-  now: number,
 ) {
   const cleanPath = dedupePointSequence(path);
   if (cleanPath.length <= 1) {
@@ -9918,22 +9901,6 @@ function drawMapAgencyPolylinePath(
       cleanPath[index].x,
       cleanPath[index].y,
     );
-  }
-
-  const totalDistance = polylineDistance(cleanPath);
-  const markerCount = clamp(Math.round(totalDistance / 42), 4, 24);
-  const flow = positiveModulo(now / 2600, 1);
-  for (let index = 0; index < markerCount; index += 1) {
-    const progress = positiveModulo((index + flow) / markerCount, 1);
-    if (progress < 0.06 || progress > 0.94) {
-      continue;
-    }
-    const point = samplePolylinePoint(cleanPath, progress);
-    const size = 2.5 + Math.sin(now / 240 + index) * 0.32;
-    layer.fillStyle(0x091015, 0.15);
-    layer.fillCircle(point.x + 1.2, point.y + 1.4, size + 0.8);
-    layer.fillStyle(color, 0.34);
-    layer.fillCircle(point.x, point.y, size);
   }
 
   const arrowTip = samplePolylinePoint(cleanPath, 0.96);
@@ -10290,7 +10257,7 @@ function drawPlayerRouteBreadcrumb(
   }
 
   if (runtimeState.indices.activeSpace) {
-    drawInteriorPlayerRouteBreadcrumb(layer, routePath, now);
+    drawInteriorPlayerRouteLane(layer, routePath, now);
     return;
   }
 
@@ -10310,7 +10277,7 @@ function drawPlayerRouteBreadcrumb(
   }
 }
 
-function drawInteriorPlayerRouteBreadcrumb(
+function drawInteriorPlayerRouteLane(
   layer: PhaserType.GameObjects.Graphics,
   routePath: Point[],
   now: number,
@@ -10322,22 +10289,61 @@ function drawInteriorPlayerRouteBreadcrumb(
 
   const pulse = 0.62 + Math.sin(now / 220) * 0.14;
   const totalDistance = polylineDistance(cleanPath);
-  const markerCount = clamp(Math.round(totalDistance / 22), 3, 18);
-  const flow = positiveModulo(now / 1800, 1);
+  const flow = positiveModulo(now / 2200, 1);
 
-  for (let index = 0; index <= markerCount; index += 1) {
-    const progress = clamp((index + flow * 0.42) / markerCount, 0.08, 0.94);
-    const point = samplePolylinePoint(cleanPath, progress);
-    const radius = 2.4 + Math.sin(now / 260 + index * 0.9) * 0.28;
-    layer.fillStyle(0x081016, 0.11);
-    layer.fillCircle(point.x + 0.9, point.y + 1.1, radius + 0.9);
-    layer.fillStyle(0xf4dcaa, 0.3 + pulse * 0.08);
-    layer.fillCircle(point.x, point.y, radius);
+  layer.lineStyle(8.5, 0x081016, 0.075);
+  for (let index = 1; index < cleanPath.length; index += 1) {
+    layer.lineBetween(
+      cleanPath[index - 1].x,
+      cleanPath[index - 1].y,
+      cleanPath[index].x,
+      cleanPath[index].y,
+    );
+  }
+
+  layer.lineStyle(4.2, 0xf4dcaa, 0.13 + pulse * 0.05);
+  for (let index = 1; index < cleanPath.length; index += 1) {
+    layer.lineBetween(
+      cleanPath[index - 1].x,
+      cleanPath[index - 1].y,
+      cleanPath[index].x,
+      cleanPath[index].y,
+    );
+  }
+
+  layer.lineStyle(1.6, 0xffefc8, 0.26 + pulse * 0.08);
+  for (let index = 1; index < cleanPath.length; index += 1) {
+    layer.lineBetween(
+      cleanPath[index - 1].x,
+      cleanPath[index - 1].y,
+      cleanPath[index].x,
+      cleanPath[index].y,
+    );
   }
 
   const target = cleanPath[cleanPath.length - 1];
-  layer.lineStyle(1.4, 0xf0cf8c, 0.22 + pulse * 0.08);
-  layer.strokeCircle(target.x, target.y, CELL * 0.24);
+  const arrowProgress = clamp(0.58 + flow * 0.28, 0.58, 0.86);
+  const arrowTip = samplePolylinePoint(cleanPath, arrowProgress);
+  const arrowBack = samplePolylinePoint(
+    cleanPath,
+    Math.max(arrowProgress - Math.min(18 / Math.max(totalDistance, 1), 0.18), 0.12),
+  );
+  const angle = Math.atan2(arrowTip.y - arrowBack.y, arrowTip.x - arrowBack.x);
+  const wing = 7.2;
+  layer.fillStyle(0xf4dcaa, 0.32 + pulse * 0.12);
+  layer.fillTriangle(
+    arrowTip.x,
+    arrowTip.y,
+    arrowTip.x - Math.cos(angle - 0.74) * wing,
+    arrowTip.y - Math.sin(angle - 0.74) * wing,
+    arrowTip.x - Math.cos(angle + 0.74) * wing,
+    arrowTip.y - Math.sin(angle + 0.74) * wing,
+  );
+
+  layer.lineStyle(1.6, 0xf0cf8c, 0.28 + pulse * 0.08);
+  layer.strokeCircle(target.x, target.y, CELL * 0.26);
+  layer.lineStyle(1.1, 0xffefc8, 0.24 + pulse * 0.08);
+  layer.strokeCircle(target.x, target.y, CELL * 0.15);
 }
 
 function drawWaypointBeacon(

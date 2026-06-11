@@ -32,6 +32,10 @@ const STREET_APP_PATH = path.join(
   ROOT,
   "apps/many-lives-web/src/components/street/PhaserStreetGameApp.tsx",
 );
+const STREET_VISUAL_SCENE_RENDERER_PATH = path.join(
+  ROOT,
+  "apps/many-lives-web/src/components/street/streetVisualSceneRenderer.ts",
+);
 const RUNTIME_CAMERA_PATH = path.join(
   ROOT,
   "apps/many-lives-web/src/lib/street/runtimeCamera.ts",
@@ -1237,9 +1241,16 @@ async function assertWatchModeFeelGuard() {
 }
 
 async function assertCameraPanContractGuard() {
-  const [streetSource, cameraSource, geometrySource, viewportSource, smokeSource] =
-    await Promise.all([
+  const [
+    streetSource,
+    visualSceneRendererSource,
+    cameraSource,
+    geometrySource,
+    viewportSource,
+    smokeSource,
+  ] = await Promise.all([
       readFile(STREET_APP_PATH, "utf8"),
+      readFile(STREET_VISUAL_SCENE_RENDERER_PATH, "utf8"),
       readFile(RUNTIME_CAMERA_PATH, "utf8"),
       readFile(RUNTIME_GEOMETRY_PATH, "utf8"),
       readFile(RUNTIME_VIEWPORT_PATH, "utf8"),
@@ -1338,6 +1349,20 @@ async function assertCameraPanContractGuard() {
       "cue.targetLocationId && !cue.targetIsNpc && distance > CELL * 1.1",
     ),
     "NPC map-agency targets must not draw full location footprint halos that read as blue rectangle artifacts.",
+  );
+  assert.ok(
+    visualSceneRendererSource.includes("drawHarborBuoy("),
+    "Harbor ambient life must render the east-water cue as an authored buoy, not a stray bright dot.",
+  );
+  assert.ok(
+    streetSource.includes("function drawInteriorPlayerRouteLane") &&
+      !streetSource.includes("function drawInteriorPlayerRouteBreadcrumb"),
+    "Interior player route progress must render as a connected lane instead of dot breadcrumbs.",
+  );
+  assert.ok(
+    !streetSource.includes("positiveModulo(now / 2600, 1)") &&
+      !streetSource.includes("fillCircle(point.x + 1.2, point.y + 1.4"),
+    "Map-agency guidance must not render moving dot breadcrumbs that read as route residue.",
   );
 }
 
