@@ -85,7 +85,13 @@ const OPENING_CTA_PATTERN =
   /Watch Rowan begin|Rowan starts by asking Mara\./i;
 const GENERIC_WATCH_CTA_COPY_PATTERN =
   /Rowan will keep going when this beat lands/i;
-const OPENING_PLAYER_LOCATION_MAX_DISTANCE = 90;
+const OPENING_PLAYER_LOCATION_MAX_DISTANCE = 72;
+const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
+  maxX: 260,
+  maxY: 630,
+  minX: 180,
+  minY: 550,
+};
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
 
 let activeWebBase = DEFAULT_WEB_BASE;
@@ -4899,6 +4905,18 @@ function assertOpeningPlayerLocationGeometrySample(movementAudit, label) {
     sample.anchorKind,
     "door",
     `${label}: opening geometry should measure Rowan against the Morrow House door anchor.`,
+  );
+  assert.ok(
+    sample.anchorWorldPoint &&
+      sample.anchorWorldPoint.x >=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.minX &&
+      sample.anchorWorldPoint.x <=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.maxX &&
+      sample.anchorWorldPoint.y >=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.minY &&
+      sample.anchorWorldPoint.y <=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.maxY,
+    `${label}: Morrow House door anchor is detached from the visible entrance: ${JSON.stringify(sample)}.`,
   );
   assert.equal(
     sample.nearActionLocation,

@@ -47,7 +47,13 @@ const RUNTIME_VIEWPORT_PATH = path.join(
 const VISUAL_SMOKE_PATH = path.join(ROOT, "scripts/visual-game-smoke.mjs");
 const HIGH_DPR_NORTH_VISIBLE_WORLD_TOP_MAX = -660;
 const GENERIC_AUTOPLAY_NOTE = "Rowan is carrying this beat forward";
-const OPENING_PLAYER_LOCATION_MAX_DISTANCE = 90;
+const OPENING_PLAYER_LOCATION_MAX_DISTANCE = 72;
+const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
+  maxX: 260,
+  maxY: 630,
+  minX: 180,
+  minY: 550,
+};
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i;
 
@@ -1460,6 +1466,18 @@ function assertOpeningPlayerLocationGeometry(browserProbe, viewportName) {
     geometry.anchorKind,
     "door",
     `${viewportName}: opening player geometry should measure against the Morrow House door.`,
+  );
+  assert.ok(
+    geometry.anchorWorldPoint &&
+      geometry.anchorWorldPoint.x >=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.minX &&
+      geometry.anchorWorldPoint.x <=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.maxX &&
+      geometry.anchorWorldPoint.y >=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.minY &&
+      geometry.anchorWorldPoint.y <=
+        OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS.maxY,
+    `${viewportName}: Morrow House door anchor is detached from the visible entrance: ${JSON.stringify(geometry)}.`,
   );
   assert.equal(
     geometry.nearActionLocation,
