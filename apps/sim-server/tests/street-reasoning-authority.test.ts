@@ -16,6 +16,8 @@ import type { PlayerObjective, StreetGameState } from "../src/street-sim/types.j
 
 const FIRST_AFTERNOON_PLAN_RATIONALE =
   "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
+const FIRST_AFTERNOON_DIALOGUE_FALLBACK =
+  "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -196,6 +198,21 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
     expect(engineSource).not.toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
+  });
+
+  it("keeps first-afternoon dialogue fallback copy in scaffold data, not dialogue control flow", () => {
+    const dialogueSource = readFileSync(
+      new URL("../src/ai/streetDialogue.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scaffoldSource).toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
+    expect(dialogueSource).not.toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
+    expect(dialogueSource).not.toContain('routeKey === "first-afternoon"');
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {

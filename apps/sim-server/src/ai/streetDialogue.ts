@@ -11,6 +11,7 @@ import { normalizeStreetVoice } from "./streetVoice.js";
 import { getNpcNarrative } from "../street-sim/npcNarratives.js";
 import { getMapLabelNarrative } from "../street-sim/placeNarratives.js";
 import { buildRowanCognition } from "../sim/rowanCognition.js";
+import { objectiveRouteConversationFallback } from "../sim/objectiveScaffolds.js";
 
 export interface StreetDialogueRequest {
   game: StreetGameState;
@@ -504,56 +505,22 @@ export function buildDeterministicStreetReply(
         return buildMaraCurrentObjectiveReply(currentNpcObjectiveOutcome, context);
       }
 
-      if (context.rowan.objectiveState?.routeKey === "first-afternoon") {
-        if (teaWindowClosed) {
-          return {
-            reply: chooseConversationLine(
-              yardWindowOpen
-                ? [
-                    "Kettle & Lamp was the right first bet this morning, but lunch is gone. Go ask Tomas before the yard closes.",
-                    "Ada's window moved on. If Rowan still wants today's work, North Crane Yard is the live lead now.",
-                    "Do not walk to a closed lunch shift. Try Tomas at the yard while there is still daylight.",
-                  ]
-                : [
-                    "Kettle & Lamp was the right first bet this morning, but that window is closed now. Come back and take stock.",
-                    "Do not walk to a closed lunch shift. The useful move now is to count what the day left you.",
-                    "Ada's window moved on. Stop chasing the morning route and bring the day back to Morrow House.",
-                  ],
-              context,
-              yardWindowOpen
-                ? "mara-first-afternoon-tea-closed-yard-open"
-                : "mara-first-afternoon-work-closed",
-            ),
-            followupThought: pickFollowupThought(
-              [
-                "The old route is not the current answer.",
-                "The hour changed the advice.",
-                "That keeps Rowan out of a stale errand.",
-              ],
-              context,
-              "mara-first-afternoon-work-closed-followup",
-            ),
-          };
-        }
-
+      const routeFallback = objectiveRouteConversationFallback(
+        input.game,
+        input.game.player.objective,
+        npc,
+      );
+      if (routeFallback) {
         return {
           reply: chooseConversationLine(
-            [
-              "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.",
-              "Start with Ada at Kettle & Lamp. If lunch still needs hands, that gives you coin and a reason to be seen.",
-              "Make Kettle & Lamp your next stop. Ask Ada directly about lunch work, then bring what you learn back here.",
-            ],
+            routeFallback.replyLines,
             context,
-            "mara-first-afternoon-next",
+            routeFallback.choiceKey,
           ),
           followupThought: pickFollowupThought(
-            [
-              "That gives Rowan a clear first errand.",
-              "A direct next step is easier to trust.",
-              "Ada is the right first bet.",
-            ],
+            routeFallback.followupThoughts,
             context,
-            "mara-first-afternoon-next-followup",
+            routeFallback.followupChoiceKey,
           ),
         };
       }
