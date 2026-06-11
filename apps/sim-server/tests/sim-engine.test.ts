@@ -251,6 +251,62 @@ function expectCognitionToMirrorAutonomy(world: StreetGameState) {
   expect(nextMove?.effects ?? []).toEqual(world.rowanAutonomy.effects ?? []);
 }
 
+function expectTraceImmediateActionSplit(
+  world: StreetGameState,
+  {
+    followUpActionId,
+    followUpLabel,
+    immediateActionId,
+    immediateLabel,
+    plannerIntentActionId,
+    plannerIntentLabel,
+  }: {
+    followUpActionId?: string;
+    followUpLabel?: string;
+    immediateActionId: string;
+    immediateLabel: string;
+    plannerIntentActionId?: string;
+    plannerIntentLabel?: string;
+  },
+) {
+  const trace = world.rowanAutonomy.planningTrace;
+  expect(trace).toBeDefined();
+  expect(trace).toMatchObject({
+    immediateAction: {
+      actionId: immediateActionId,
+      label: immediateLabel,
+      legal: true,
+    },
+    selectedActionId: immediateActionId,
+    selectedLabel: immediateLabel,
+  });
+  expect(
+    trace?.nextSteps.find((step) => step.actionId === immediateActionId),
+  ).toMatchObject({
+    actionId: immediateActionId,
+    label: immediateLabel,
+    legal: true,
+  });
+
+  if (!followUpActionId && !followUpLabel) {
+    return;
+  }
+
+  expect(trace?.plannerIntent).toMatchObject({
+    ...(plannerIntentActionId ? { actionId: plannerIntentActionId } : {}),
+    ...(plannerIntentLabel ? { label: plannerIntentLabel } : {}),
+  });
+  expect(trace?.intendedFollowUp).toMatchObject({
+    ...(followUpActionId ? { actionId: followUpActionId } : {}),
+    ...(followUpLabel ? { label: followUpLabel } : {}),
+    legal: true,
+  });
+  if (plannerIntentLabel && plannerIntentLabel !== immediateLabel) {
+    expect(trace?.selectedLabel).not.toBe(trace?.plannerIntent?.label);
+  }
+  expect(trace?.selectedLabel).not.toBe(trace?.intendedFollowUp?.label);
+}
+
 async function advanceUntil(
   engine: SimulationEngine,
   world: StreetGameState,
@@ -630,6 +686,14 @@ describe("SimulationEngine street slice", () => {
       /prompt|context is specific|clear enough/i,
     );
     expect(world.rowanAutonomy.detail).not.toMatch(/This step is ready now/i);
+    expectTraceImmediateActionSplit(world, {
+      followUpActionId: "talk:npc-mara",
+      followUpLabel: "Talk to Mara",
+      immediateActionId: "enter:boarding-house",
+      immediateLabel: "Enter Morrow House",
+      plannerIntentActionId: "talk:npc-mara",
+      plannerIntentLabel: "Talk to Mara",
+    });
   });
 
   it("opens the first afternoon with room talk before the work lead", async () => {
@@ -1816,6 +1880,14 @@ describe("SimulationEngine street slice", () => {
       actionId: "exit:boarding-house",
       locationId: "boarding-house",
       source: "current-legal-action-surface",
+    });
+    expectTraceImmediateActionSplit(world, {
+      followUpActionId: "talk:npc-ada",
+      followUpLabel: "Talk to Ada",
+      immediateActionId: "exit:boarding-house",
+      immediateLabel: "Exit to South Quay",
+      plannerIntentActionId: "talk:npc-ada",
+      plannerIntentLabel: "Head to Kettle & Lamp",
     });
   });
 

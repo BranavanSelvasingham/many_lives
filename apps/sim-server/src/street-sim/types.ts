@@ -621,6 +621,19 @@ export interface RowanPlanningTraceSelectedRecommendation {
   validationStatus: RowanPlanningTraceValidationStatus;
 }
 
+export interface RowanPlanningTracePlannerIntent {
+  actionId?: string;
+  label: string;
+  matchedOutcomeId?: string;
+  npcId?: string;
+  planKey?: string;
+  pressureId?: string;
+  pressureKind?: string;
+  pressureLabel?: string;
+  rationale: string;
+  targetLocationId?: string;
+}
+
 export interface RowanPlanningTraceOption {
   actionId?: string;
   label: string;
@@ -664,8 +677,11 @@ export interface RowanPlanningTraceOutcome {
 export interface RowanPlanningTrace {
   blockers: string[];
   considered: RowanPlanningTraceOption[];
+  immediateAction?: RowanPlanningTraceStep;
+  intendedFollowUp?: RowanPlanningTraceStep;
   nextSteps: RowanPlanningTraceStep[];
   outcomes: RowanPlanningTraceOutcome[];
+  plannerIntent?: RowanPlanningTracePlannerIntent;
   rejected: RowanPlanningTraceOption[];
   selectedActionId?: string;
   selectedLabel?: string;
