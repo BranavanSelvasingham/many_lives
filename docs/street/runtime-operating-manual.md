@@ -209,6 +209,12 @@ corepack pnpm harness -- --live-url https://manylives-sim.branavan.com
 
 Do not claim the app is deployment-ready from isolated commands if the harness is failing. If a narrower command is used because the change is deliberately small, say exactly which surface was not covered.
 
+## Release Surface
+
+The street app's bottom-screen release icon reads from [streetReleaseNotes.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/street/streetReleaseNotes.ts). User-facing PRs should update that source before merge so the visible version/build note stays current.
+
+Use [docs/street/release-surface-checklist.md](/Users/branavan/GitHub/many_lives/docs/street/release-surface-checklist.md) and the PR template checklist for the routine update. For icon or popover layout changes, run `corepack pnpm visual:game` and inspect desktop and mobile screenshots, not only the command result.
+
 ## Debug Recipes
 
 Check the stored game id in browser context:

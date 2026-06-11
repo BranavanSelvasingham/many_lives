@@ -29,6 +29,7 @@ import {
   buildLoadingHtml,
   buildMindTabHtml,
   buildNarrativePreview,
+  buildReleaseInfoHtml,
   buildRuntimeDebugHtml,
   buildRowanStoryCardHtml,
   buildTabButton,
@@ -852,6 +853,7 @@ type UiState = {
   pendingConversationNpcId: string | null;
   pendingConversationSource: PendingConversationSource | null;
   railExpanded: boolean;
+  releaseInfoOpen: boolean;
   selectedNpcId: string | null;
   supportExpanded: boolean;
 };
@@ -1795,6 +1797,7 @@ async function createRuntime(options: {
       pendingConversationNpcId: null,
       pendingConversationSource: null,
       railExpanded: false,
+      releaseInfoOpen: false,
       selectedNpcId: pickDefaultSelectedNpcId(initialSnapshot.game),
       supportExpanded: false,
     },
@@ -2955,6 +2958,24 @@ function bindOverlayEvents(
     );
     if (toggleSupportButton) {
       runtimeState.ui.supportExpanded = !runtimeState.ui.supportExpanded;
+      renderOverlay(runtimeState.objects!, runtimeState);
+      return;
+    }
+
+    const toggleReleaseInfoButton = target.closest<HTMLElement>(
+      "[data-toggle-release-info]",
+    );
+    if (toggleReleaseInfoButton) {
+      runtimeState.ui.releaseInfoOpen = !runtimeState.ui.releaseInfoOpen;
+      renderOverlay(runtimeState.objects!, runtimeState);
+      return;
+    }
+
+    const closeReleaseInfoButton = target.closest<HTMLElement>(
+      "[data-close-release-info]",
+    );
+    if (closeReleaseInfoButton) {
+      runtimeState.ui.releaseInfoOpen = false;
       renderOverlay(runtimeState.objects!, runtimeState);
       return;
     }
@@ -6981,6 +7002,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         <span class="ml-time-chip is-metric">${escapeHtml(String(game.player.energy))} energy</span>
         <span class="ml-time-chip is-metric">${escapeHtml(todoCounterLabel)}</span>
       </div>
+      ${buildReleaseInfoHtml(ui.releaseInfoOpen)}
       <div class="ml-dock">
         ${
           focusPanel && focusMeta

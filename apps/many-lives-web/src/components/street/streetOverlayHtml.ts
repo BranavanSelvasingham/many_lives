@@ -7,6 +7,7 @@ import type {
   ObjectivePlanItem,
 } from "@/lib/street/journalModel";
 import type { RowanVisibleDecisionArtifact } from "@/lib/street/rowanDecisionArtifact";
+import { STREET_RELEASE_INFO } from "@/lib/street/streetReleaseNotes";
 import type { StreetGameState } from "@/lib/street/types";
 
 type OverlayActiveTab = "actions" | "journal" | "mind" | "people";
@@ -283,6 +284,76 @@ export function buildVisibleDecisionArtifactHtml(
       <div class="ml-decision-backing">${escapeHtml(
         buildNarrativePreview(artifact.backingSummary, 96),
       )}</div>
+    </div>
+  `;
+}
+
+export function buildReleaseInfoHtml(open: boolean) {
+  return `
+    <div class="ml-release-widget ${open ? "is-open" : ""}" data-release-widget="true">
+      <button
+        class="ml-release-button"
+        data-toggle-release-info="true"
+        aria-controls="ml-release-panel"
+        aria-expanded="${open ? "true" : "false"}"
+        aria-label="Show Many Lives release notes"
+        title="Release notes"
+        type="button"
+      >
+        <span aria-hidden="true">i</span>
+      </button>
+      ${
+        open
+          ? `
+          <div
+            id="ml-release-panel"
+            class="ml-release-panel"
+            data-release-info-panel="true"
+            role="dialog"
+            aria-modal="false"
+            aria-labelledby="ml-release-title"
+          >
+            <div class="ml-release-panel-head">
+              <div>
+                <div class="ml-kicker">Release</div>
+                <div class="ml-release-title" id="ml-release-title">Many Lives ${escapeHtml(
+                  STREET_RELEASE_INFO.version,
+                )}</div>
+              </div>
+              <button
+                class="ml-release-close"
+                data-close-release-info="true"
+                aria-label="Close release notes"
+                title="Close release notes"
+                type="button"
+              >
+                &times;
+              </button>
+            </div>
+            <div class="ml-release-build">
+              <span>${escapeHtml(STREET_RELEASE_INFO.source)}</span>
+              <span>${escapeHtml(STREET_RELEASE_INFO.build)}</span>
+            </div>
+            <div class="ml-release-feature-list">
+              ${STREET_RELEASE_INFO.features
+                .map(
+                  (feature) => `
+                  <div class="ml-release-feature">
+                    <div class="ml-release-feature-title">${escapeHtml(
+                      feature.title,
+                    )}</div>
+                    <div class="ml-release-feature-copy">${escapeHtml(
+                      feature.body,
+                    )}</div>
+                  </div>
+                `,
+                )
+                .join("")}
+            </div>
+          </div>
+        `
+          : ""
+      }
     </div>
   `;
 }
