@@ -11,19 +11,19 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.1",
-  build: "cue-polish",
-  source: "PR #84",
+  version: "0.1.2",
+  build: "visual-coherence",
+  source: "PR #90",
   features: [
     {
-      title: "Cleaner NPC routine cues",
+      title: "Cleaner landmark guidance",
       body:
-        "Scheduled NPC movement now uses subtle footfall traces instead of route-dot breadcrumbs, keeping independent routines visible without visual noise.",
+        "Rowan's route guidance now uses soft lanes and arrows instead of breadcrumb dots, so interiors and street paths read as intentional movement.",
     },
     {
-      title: "Release notes kept current",
+      title: "Authored harbor details",
       body:
-        "The bottom release icon now reflects this release's visible changes, so the deployed popup is not left one PR behind.",
+        "The east-water cue now renders as a small buoy with mooring linework rather than a stray bright speck near the quay.",
     },
   ],
 };

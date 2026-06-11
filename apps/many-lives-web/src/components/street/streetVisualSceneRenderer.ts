@@ -4611,13 +4611,47 @@ function drawAmbientHarborLife(
     const pulse = (Math.sin(beat * 1.7 + eastWater.row * 0.5) + 1) / 2;
     const buoyX = eastWater.x + eastWater.width * 0.54;
     const buoyY = eastWater.y + eastWater.height * 0.5 + pulse * 4;
-    layer.fillStyle(0x061821, 0.2);
-    layer.fillEllipse(buoyX, buoyY + 5, 18, 5);
-    layer.fillStyle(0xd7a446, 0.95);
-    layer.fillCircle(buoyX, buoyY, 5.5);
-    layer.fillStyle(0xf7e3a8, 0.72);
-    layer.fillCircle(buoyX - 1.2, buoyY - 1.4, 2.2);
+    drawHarborBuoy(layer, buoyX, buoyY, 0.84 + pulse * 0.08);
   }
+}
+
+function drawHarborBuoy(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  scale: number,
+) {
+  layer.fillStyle(0x061821, 0.2);
+  layer.fillEllipse(x, y + 8 * scale, 28 * scale, 7 * scale);
+  layer.lineStyle(1.6 * scale, 0xd7c49a, 0.34);
+  layer.lineBetween(x - 3 * scale, y + 8 * scale, x - 22 * scale, y + 18 * scale);
+  layer.lineBetween(x + 3 * scale, y + 8 * scale, x + 21 * scale, y + 17 * scale);
+  layer.fillStyle(0x6f442e, 0.92);
+  layer.fillRoundedRect(
+    x - 5.5 * scale,
+    y - 5 * scale,
+    11 * scale,
+    16 * scale,
+    4 * scale,
+  );
+  layer.fillStyle(0xd7a446, 0.94);
+  layer.fillRoundedRect(
+    x - 6.8 * scale,
+    y - 8 * scale,
+    13.6 * scale,
+    7 * scale,
+    3 * scale,
+  );
+  layer.fillStyle(0xf7e3a8, 0.7);
+  layer.fillRoundedRect(
+    x - 4.4 * scale,
+    y - 0.6 * scale,
+    8.8 * scale,
+    2.8 * scale,
+    1.4 * scale,
+  );
+  layer.lineStyle(1.4 * scale, 0xf7e3a8, 0.58);
+  layer.strokeCircle(x, y - 10.2 * scale, 2.8 * scale);
 }
 
 function drawAnimatedWaterLightFields(
