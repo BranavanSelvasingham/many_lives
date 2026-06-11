@@ -553,6 +553,7 @@ export function buildStreetBrowserProbeJson({
         : null,
       stepKind: game.rowanAutonomy.stepKind,
       targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
+      travelPhase: game.rowanAutonomy.travelPhase ?? null,
       visibleDecisionArtifact,
     },
     rowanCognition: game.rowanCognition

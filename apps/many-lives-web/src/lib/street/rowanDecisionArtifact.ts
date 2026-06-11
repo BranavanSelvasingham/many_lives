@@ -40,6 +40,7 @@ export function buildRowanVisibleDecisionArtifact(
     autonomySignals: game.rowanAutonomy?.intent?.signals,
     objectiveText: game.player.objective?.text,
     planningTrace: game.rowanAutonomy?.planningTrace,
+    travelPhase: game.rowanAutonomy?.travelPhase,
   });
 }
 
@@ -50,6 +51,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomySignals,
   objectiveText,
   planningTrace,
+  travelPhase,
 }: {
   activeConversationDecision?: string;
   autonomyLabel?: string;
@@ -57,6 +59,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomySignals?: string[];
   objectiveText?: string;
   planningTrace?: PlanningTrace;
+  travelPhase?: StreetGameState["rowanAutonomy"]["travelPhase"];
 }): RowanVisibleDecisionArtifact | null {
   if (!planningTrace && !activeConversationDecision) {
     return null;
@@ -64,20 +67,32 @@ export function buildRowanVisibleDecisionArtifactFromState({
 
   const selectedOption = selectedPlanningOption(planningTrace);
   const selectedStep = selectedPlanningStep(planningTrace);
-  const selectedAction = compactDecisionText(
+  const selectedActionBase = compactDecisionText(
     planningTrace?.selectedLabel ??
       selectedOption?.label ??
       selectedStep?.label ??
       autonomyLabel,
     72,
   );
-  const rationale = compactDecisionText(
+  const selectedAction =
+    travelPhase === "route-progress" && selectedActionBase
+      ? compactDecisionText(`Following through: ${selectedActionBase}`, 72)
+      : selectedActionBase;
+  const rationaleBase = compactDecisionText(
     selectedOption?.rationale ??
       selectedStep?.rationale ??
       autonomyReason ??
       activeConversationDecision,
     132,
   );
+  const rationale =
+    travelPhase === "route-progress"
+      ? compactDecisionText(
+          autonomyReason ??
+            "Rowan is carrying out the route he already validated.",
+          132,
+        )
+      : rationaleBase;
   const objective = compactDecisionText(
     planningTrace?.selectedPressureLabel ??
       planningTrace?.outcomes.find((outcome) => outcome.status !== "met")
@@ -144,6 +159,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
     sourceSummary: sourceSummaryForDecisionArtifact(
       planningTrace,
       activeConversationDecision,
+      travelPhase,
     ),
   };
 }
@@ -312,7 +328,12 @@ function backingSummaryForTrace(
 function sourceSummaryForDecisionArtifact(
   planningTrace: PlanningTrace | undefined,
   activeConversationDecision: string | undefined,
+  travelPhase?: StreetGameState["rowanAutonomy"]["travelPhase"],
 ) {
+  if (travelPhase === "route-progress") {
+    return "Validated route progress";
+  }
+
   if (planningTrace?.selectedRecommendation?.sourceKind === "live-llm") {
     return "Live planner recommendation, checked before acting";
   }

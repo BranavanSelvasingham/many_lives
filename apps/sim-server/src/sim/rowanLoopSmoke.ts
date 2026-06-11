@@ -22,6 +22,7 @@ export interface RowanLoopSmokeTraceEntry {
   autonomySignals: string[];
   autonomyStep?: string;
   autonomyTarget?: string;
+  autonomyTravelPhase?: string;
   availableActionIds: string[];
   completedJobIds: string[];
   money: number;
@@ -61,6 +62,7 @@ export async function runRowanLoopSmoke(
     world = await engine.runCommand(world, command);
     trace.push(buildTraceEntry(step, "advance_objective", world));
     guardAgainstStall(world, seen, step, trace);
+    guardAgainstDuplicateTravelDecisionBeats(trace);
     guardCompletedJobsAreNotMissed(world, trace);
 
     if (isSuccessfulSmokeEndState(world)) {
@@ -88,6 +90,9 @@ export function formatTrace(trace: RowanLoopSmokeTraceEntry[]): string {
         entry.objective ?? "no-objective",
         entry.progress ?? "no-progress",
         `${entry.autonomyLayer ?? "no-layer"}/${entry.autonomyStep ?? "no-step"}`,
+        entry.autonomyTravelPhase
+          ? `travel=${entry.autonomyTravelPhase}`
+          : undefined,
         entry.autonomyLabel,
         entry.autonomyActionId ? `action=${entry.autonomyActionId}` : undefined,
         entry.autonomyReason ? `why=${entry.autonomyReason}` : undefined,
@@ -133,6 +138,7 @@ function buildTraceEntry(
     autonomySignals: world.rowanAutonomy.intent?.signals ?? [],
     autonomyStep: world.rowanAutonomy.stepKind,
     autonomyTarget: world.rowanAutonomy.targetLocationId,
+    autonomyTravelPhase: world.rowanAutonomy.travelPhase,
     availableActionIds: world.availableActions
       .filter((action) => !action.disabled)
       .map((action) => action.id),
@@ -154,6 +160,41 @@ function buildTraceEntry(
       )
       .map((problem) => problem.id),
   };
+}
+
+function guardAgainstDuplicateTravelDecisionBeats(
+  trace: RowanLoopSmokeTraceEntry[],
+): void {
+  const current = trace[trace.length - 1];
+  const previous = trace[trace.length - 2];
+  if (!current || !previous) {
+    return;
+  }
+
+  if (
+    isUnmarkedTravelDecision(previous) &&
+    isUnmarkedTravelDecision(current) &&
+    previous.autonomyActionId === current.autonomyActionId &&
+    previous.autonomyLabel === current.autonomyLabel &&
+    previous.autonomyTarget === current.autonomyTarget &&
+    previous.locationId === current.locationId &&
+    previous.clock === current.clock
+  ) {
+    throw new Error(
+      [
+        "Rowan loop smoke repeated the same travel decision without route-progress carry-forward.",
+        formatTrace(trace),
+      ].join("\n"),
+    );
+  }
+}
+
+function isUnmarkedTravelDecision(entry: RowanLoopSmokeTraceEntry): boolean {
+  return Boolean(
+    entry.autonomyStep === "move" &&
+      entry.autonomyActionId?.startsWith("move:") &&
+      entry.autonomyTravelPhase !== "route-progress",
+  );
 }
 
 function guardAgainstStall(

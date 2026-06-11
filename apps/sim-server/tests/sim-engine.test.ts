@@ -267,6 +267,47 @@ async function advanceUntil(
   return nextWorld;
 }
 
+function adjacentUnmarkedDuplicateTravelDecisionBeats(
+  trace: Awaited<ReturnType<typeof runRowanLoopSmoke>>["trace"],
+) {
+  return trace
+    .map((entry, index) => ({ entry, index, previous: trace[index - 1] }))
+    .filter(({ entry, previous }) => {
+      if (!previous) {
+        return false;
+      }
+
+      const currentIsUnmarkedMove =
+        entry.autonomyStep === "move" &&
+        entry.autonomyActionId?.startsWith("move:") &&
+        entry.autonomyTravelPhase !== "route-progress";
+      const previousIsUnmarkedMove =
+        previous.autonomyStep === "move" &&
+        previous.autonomyActionId?.startsWith("move:") &&
+        previous.autonomyTravelPhase !== "route-progress";
+
+      return (
+        currentIsUnmarkedMove &&
+        previousIsUnmarkedMove &&
+        entry.autonomyActionId === previous.autonomyActionId &&
+        entry.autonomyLabel === previous.autonomyLabel &&
+        entry.autonomyTarget === previous.autonomyTarget &&
+        entry.locationId === previous.locationId &&
+        entry.clock === previous.clock
+      );
+    })
+    .map(({ entry, index, previous }) => ({
+      actionId: entry.autonomyActionId,
+      currentStep: index,
+      label: entry.autonomyLabel,
+      locationId: entry.locationId,
+      previousLabel: previous?.autonomyLabel,
+      previousStep: index - 1,
+      targetLocationId: entry.autonomyTarget,
+      time: entry.clock,
+    }));
+}
+
 describe("SimulationEngine street slice", () => {
   it("lets the player discover and complete a first paid shift", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
@@ -4118,6 +4159,31 @@ describe("SimulationEngine street slice", () => {
     expect(result.trace.map((entry) => entry.activeConversation)).toContain(
       "npc-ada",
     );
+    expect(
+      adjacentUnmarkedDuplicateTravelDecisionBeats(result.trace),
+    ).toEqual([]);
+    expect(
+      result.trace.find(
+        (entry) =>
+          entry.autonomyActionId === "move:tea-house" &&
+          entry.autonomyTravelPhase === "route-progress",
+      ),
+    ).toMatchObject({
+      autonomyLabel: "On the way to Kettle & Lamp",
+      autonomyTarget: "tea-house",
+      locationId: "boarding-house",
+    });
+    expect(
+      result.trace.find(
+        (entry) =>
+          entry.autonomyActionId === "move:boarding-house" &&
+          entry.autonomyTravelPhase === "route-progress",
+      ),
+    ).toMatchObject({
+      autonomyLabel: "On the way to Morrow House",
+      autonomyTarget: "boarding-house",
+      locationId: "tea-house",
+    });
   });
 
   it("hands first-afternoon completion into a fresh state-derived next objective", async () => {
