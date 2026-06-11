@@ -2022,6 +2022,11 @@ function visibleDecisionArtifactFromGame(game) {
     ) ??
     trace?.nextSteps?.[0] ??
     null;
+  const selectedRuntimeActionLabel =
+    trace?.selectedActionId &&
+    game.rowanAutonomy?.actionId === trace.selectedActionId
+      ? game.rowanAutonomy?.label
+      : undefined;
   const backingSummary = visibleDecisionBackingSummary(
     trace?.selectedLegalBacking ??
       selectedOption?.legalBacking ??
@@ -2038,9 +2043,10 @@ function visibleDecisionArtifactFromGame(game) {
     112,
   );
   const selectedActionBase = compactVisibleDecisionText(
-    trace?.selectedLabel ??
-      selectedOption?.label ??
+    selectedRuntimeActionLabel ??
       selectedStep?.label ??
+      trace?.selectedLabel ??
+      selectedOption?.label ??
       game.rowanAutonomy?.label,
     72,
   );
@@ -2048,11 +2054,30 @@ function visibleDecisionArtifactFromGame(game) {
     travelPhase === "route-progress" && selectedActionBase
       ? compactVisibleDecisionText(`Following through: ${selectedActionBase}`, 72)
       : selectedActionBase;
+  const selectedFollowUpLabel = compactVisibleDecisionText(
+    selectedRuntimeActionLabel &&
+      selectedStep?.label &&
+      selectedStep.label !== selectedRuntimeActionLabel
+      ? selectedStep.label
+      : selectedRuntimeActionLabel &&
+          selectedOption?.label &&
+          selectedOption.label !== selectedRuntimeActionLabel
+        ? selectedOption.label
+        : undefined,
+    44,
+  );
   const rationaleBase = compactVisibleDecisionText(
-    selectedOption?.rationale ??
-      selectedStep?.rationale ??
-      autonomyReason ??
-      conversationDecision,
+    selectedFollowUpLabel
+      ? `${selectedFollowUpLabel}: ${
+          selectedOption?.rationale ??
+          selectedStep?.rationale ??
+          autonomyReason ??
+          conversationDecision
+        }`
+      : selectedOption?.rationale ??
+          selectedStep?.rationale ??
+          autonomyReason ??
+          conversationDecision,
     132,
   );
   const rationale =
@@ -2774,6 +2799,53 @@ function assertVisibleDecisionNextCheckForTrace(label, planningTrace, artifact) 
   );
 }
 
+function assertVisibleDecisionSelectedActionMatchesImmediateStep(
+  label,
+  planningTrace,
+  artifact,
+  runtimeAction = null,
+) {
+  if (!planningTrace || !artifact) {
+    return;
+  }
+
+  const selectedActionId = planningTrace.selectedActionId ?? "";
+  if (!/^(enter|exit|move|talk):/.test(selectedActionId)) {
+    return;
+  }
+
+  const selectedStep = selectedPlanningTraceStep(planningTrace);
+  if (!selectedStep?.legal || selectedStep.actionId !== selectedActionId) {
+    return;
+  }
+
+  const immediateActionLabel =
+    runtimeAction?.actionId === selectedActionId
+      ? runtimeAction.label
+      : selectedStep.label;
+  const expected = normalizeVisibleActionText(
+    compactVisibleDecisionText(immediateActionLabel, 72),
+  );
+  const actual = normalizeVisibleActionText(artifact.selectedAction);
+  if (!expected || !actual) {
+    return;
+  }
+
+  assert.ok(
+    actual.includes(expected),
+    `${label}: visible selected action should include the immediate simulator-validated step "${immediateActionLabel}" for ${selectedActionId}, got "${artifact.selectedAction}".`,
+  );
+}
+
+function normalizeVisibleActionText(value) {
+  return String(value ?? "")
+    .replace(/^following through:\s*/i, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function assertVisibleDecisionArtifactDom(label, dom, artifactPayload = null) {
   const artifact = dom?.visibleDecisionArtifact ?? null;
   assert.ok(artifact, `${label}: missing player-facing decision callback.`);
@@ -2857,6 +2929,12 @@ function assertProbeAuditability(label, game, probe) {
       probe.autonomy.planningTrace,
       probe.autonomy.visibleDecisionArtifact,
     );
+    assertVisibleDecisionSelectedActionMatchesImmediateStep(
+      label,
+      probe.autonomy.planningTrace,
+      probe.autonomy.visibleDecisionArtifact,
+      probe.autonomy,
+    );
     assertVisibleDecisionArtifactPayload(
       `${label} rail`,
       probe.rail.visibleDecisionArtifact,
@@ -2865,6 +2943,12 @@ function assertProbeAuditability(label, game, probe) {
       `${label} rail`,
       probe.autonomy.planningTrace,
       probe.rail.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionSelectedActionMatchesImmediateStep(
+      `${label} rail`,
+      probe.autonomy.planningTrace,
+      probe.rail.visibleDecisionArtifact,
+      probe.autonomy,
     );
   }
 
@@ -6693,6 +6777,12 @@ async function runAutoplayObservation(session) {
       completedProbe.autonomy.planningTrace,
       completedProbe.autonomy.visibleDecisionArtifact,
     );
+    assertVisibleDecisionSelectedActionMatchesImmediateStep(
+      "fresh-autoplay-observation",
+      completedProbe.autonomy.planningTrace,
+      completedProbe.autonomy.visibleDecisionArtifact,
+      completedProbe.autonomy,
+    );
     assertVisibleDecisionArtifactDom(
       "fresh-autoplay-observation",
       dom,
@@ -7719,6 +7809,12 @@ function assertInhabitPlayerDom(label, dom, controlCandidate = null, probe = nul
       `${label} probe`,
       probe.autonomy.planningTrace,
       probe.autonomy.visibleDecisionArtifact,
+    );
+    assertVisibleDecisionSelectedActionMatchesImmediateStep(
+      `${label} probe`,
+      probe.autonomy.planningTrace,
+      probe.autonomy.visibleDecisionArtifact,
+      probe.autonomy,
     );
     assertVisibleDecisionArtifactDom(
       label,
