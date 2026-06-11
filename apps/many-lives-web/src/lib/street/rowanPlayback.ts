@@ -3,6 +3,11 @@ import {
   buildRowanVisibleDecisionArtifact,
   type RowanVisibleDecisionArtifact,
 } from "./rowanDecisionArtifact";
+import {
+  buildIndependentNpcActionRecords,
+  independentNpcActionBeatDetail,
+  independentNpcActionBeatTitle,
+} from "./independentNpcActions";
 import type { StreetGameState } from "./types";
 
 export const ROWAN_PLAYBACK_TIMING_MS = {
@@ -34,6 +39,7 @@ export type RowanPlaybackBeatKind =
   | "action_complete"
   | "action_start"
   | "arrive"
+  | "city_beat"
   | "move"
   | "objective_shift"
   | "rest"
@@ -100,6 +106,7 @@ const AUTO_OPEN_BEAT_KINDS = new Set<RowanPlaybackBeatKind>([
   "action_complete",
   "action_start",
   "arrive",
+  "city_beat",
   "objective_shift",
   "rest",
   "thread_landed",
@@ -283,12 +290,22 @@ export function deriveRowanPlaybackBeats(
   const previousJobsById = new Map(
     previousGame.jobs.map((job) => [job.id, job] as const),
   );
+  const locationsById = new Map(
+    nextGame.locations.map((location) => [location.id, location] as const),
+  );
   const timeDeltaMinutes =
     nextGame.clock.totalMinutes - previousGame.clock.totalMinutes;
   const energyDelta = nextGame.player.energy - previousGame.player.energy;
   const moneyDelta = nextGame.player.money - previousGame.player.money;
   const activeSpaceChanged =
     previousGame.activeSpaceId !== nextGame.activeSpaceId;
+  const previousIndependentActions = new Set(
+    buildIndependentNpcActionRecords(previousGame).map(
+      (action) =>
+        `${action.problemId}|${action.resolverNpcId}|${action.resolvedAt ?? "none"}`,
+    ),
+  );
+  const nextIndependentActions = buildIndependentNpcActionRecords(nextGame);
 
   if (playerMoveDistance > 0 && !activeSpaceChanged) {
     const moveTargetName =
@@ -467,6 +484,26 @@ export function deriveRowanPlaybackBeats(
       locationId: completedJob.locationId,
       title: `${completedJob.title} complete`,
       tone: "objective",
+    });
+  }
+
+  for (const action of nextIndependentActions) {
+    const actionKey = `${action.problemId}|${action.resolverNpcId}|${
+      action.resolvedAt ?? "none"
+    }`;
+    if (previousIndependentActions.has(actionKey)) {
+      continue;
+    }
+
+    const locationName = locationsById.get(action.locationId)?.name;
+    beats.push({
+      blocking: true,
+      detail: independentNpcActionBeatDetail(action, locationName),
+      durationMs: ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
+      key: `city-beat:${action.problemId}:${action.resolverNpcId}:${action.resolvedAt ?? nextGame.currentTime}`,
+      kind: "city_beat",
+      title: independentNpcActionBeatTitle(action, locationName),
+      tone: "info",
     });
   }
 
@@ -875,6 +912,8 @@ function statusLabelForBeat(beat: RowanPlaybackBeat) {
       return "Conversation finished";
     case "action_complete":
       return "Action complete";
+    case "city_beat":
+      return "City beat";
     case "objective_shift":
       return "Objective shift";
     case "rest":

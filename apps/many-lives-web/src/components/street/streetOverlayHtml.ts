@@ -6,6 +6,7 @@ import type {
   MemoryThread,
   ObjectivePlanItem,
 } from "@/lib/street/journalModel";
+import { buildIndependentNpcActionRecords } from "@/lib/street/independentNpcActions";
 import type { RowanVisibleDecisionArtifact } from "@/lib/street/rowanDecisionArtifact";
 import { STREET_RELEASE_INFO } from "@/lib/street/streetReleaseNotes";
 import type { StreetGameState } from "@/lib/street/types";
@@ -1166,6 +1167,19 @@ function buildCityPulseItems(game: StreetGameState): CityPulseItem[] {
       };
     });
 
+  const independentActionItems = buildIndependentNpcActionRecords(game).map(
+    (action): CityPulseItem => {
+      const place = locationById.get(action.locationId)?.name ?? "the block";
+      return {
+        detail: buildNarrativePreview(action.playerFacingSummary, 140),
+        id: `independent-${action.problemId}-${action.resolverNpcId}`,
+        meta: `${place} • handled by ${action.resolverName}`,
+        priority: 58,
+        title: `${action.resolverName} stepped in`,
+      };
+    },
+  );
+
   const jobItems = (game.jobs ?? [])
     .filter(
       (job) =>
@@ -1231,7 +1245,13 @@ function buildCityPulseItems(game: StreetGameState): CityPulseItem[] {
       ];
     });
 
-  return [...problemItems, ...jobItems, ...eventItems, ...npcItems]
+  return [
+    ...problemItems,
+    ...independentActionItems,
+    ...jobItems,
+    ...eventItems,
+    ...npcItems,
+  ]
     .sort((left, right) => right.priority - left.priority)
     .slice(0, 5);
 }

@@ -11,10 +11,15 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.3",
-  build: "bf2b86b",
-  source: "PR #91",
+  version: "0.1.4",
+  build: "draft",
+  source: "PR TBD",
   features: [
+    {
+      title: "Independent city beats",
+      body:
+        "The watch rail now shows when locals like Mara or Nia solve live pressure before Rowan can get there.",
+    },
     {
       title: "Independent local action evidence",
       body:

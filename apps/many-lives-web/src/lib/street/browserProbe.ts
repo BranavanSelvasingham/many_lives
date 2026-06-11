@@ -3,6 +3,10 @@ import type {
   RowanRailViewModel,
 } from "./rowanPlayback";
 import { buildRowanVisibleDecisionArtifact } from "./rowanDecisionArtifact";
+import {
+  buildIndependentNpcActionRecords,
+  findIndependentNpcActionBySummary,
+} from "./independentNpcActions";
 import type { StreetGameState } from "./types";
 
 export type StreetBrowserMovementDiagnostics = {
@@ -396,49 +400,46 @@ function worldPressureProbePayload(game: StreetGameState) {
   };
 }
 
-function independentNpcActionSummary({
-  problemId,
-  problemTitle,
-  resolverName,
-}: {
-  problemId: string;
-  problemTitle: string;
-  resolverName: string;
-}) {
-  if (problemId === "problem-pump") {
-    return `${resolverName} contained ${problemTitle.toLowerCase()} before it became evening house strain.`;
-  }
-  if (problemId === "problem-cart") {
-    return `${resolverName} cleared ${problemTitle.toLowerCase()} before Quay Square spent the afternoon bent around it.`;
-  }
-  return `${resolverName} resolved ${problemTitle.toLowerCase()} without Rowan taking the work.`;
+function independentNpcActionsProbePayload(game: StreetGameState) {
+  return buildIndependentNpcActionRecords(game);
 }
 
-function independentNpcActionsProbePayload(game: StreetGameState) {
-  const npcsById = new Map(game.npcs.map((npc) => [npc.id, npc]));
-  return (game.problems ?? [])
-    .filter((problem) => problem.status === "resolved" && problem.resolvedByNpcId)
-    .map((problem) => {
-      const resolver = npcsById.get(problem.resolvedByNpcId ?? "");
-      const resolverName = resolver?.name ?? problem.resolvedByNpcId ?? "A local";
-      return {
-        afterStatus: problem.status,
-        beforeStatus: "active",
-        locationId: problem.locationId,
-        playerFacingSummary: independentNpcActionSummary({
-          problemId: problem.id,
-          problemTitle: problem.title,
-          resolverName,
-        }),
-        problemId: problem.id,
-        problemTitle: problem.title,
-        resolvedAt: problem.resolvedAt ?? null,
-        resolverConcern: resolver?.currentConcern ?? null,
-        resolverMood: resolver?.mood ?? null,
-        resolverName,
-        resolverNpcId: problem.resolvedByNpcId,
-      };
-    });
+function independentNpcSurfaceProbePayload({
+  game,
+  snapshot,
+}: {
+  game: StreetGameState;
+  snapshot: StreetBrowserProbeSnapshot;
+}) {
+  const activeBeat = snapshot.rowanPlayback?.activeBeat;
+  const recentBeat = snapshot.rowanPlayback?.lastCompletedBeat;
+  const activeMatch =
+    activeBeat?.kind === "city_beat"
+      ? findIndependentNpcActionBySummary(game, activeBeat.detail)
+      : null;
+  if (activeMatch) {
+    return {
+      ...activeMatch,
+      detail: activeBeat?.detail ?? activeMatch.playerFacingSummary,
+      slot: "now",
+      title: activeBeat?.title ?? null,
+    };
+  }
+
+  const recentMatch =
+    recentBeat?.kind === "city_beat"
+      ? findIndependentNpcActionBySummary(game, recentBeat.detail)
+      : null;
+  if (recentMatch) {
+    return {
+      ...recentMatch,
+      detail: recentBeat?.detail ?? recentMatch.playerFacingSummary,
+      slot: "just_happened",
+      title: recentBeat?.title ?? null,
+    };
+  }
+
+  return null;
 }
 
 function openingActionCarryForwardProbePayload({
@@ -654,6 +655,10 @@ export function buildStreetBrowserProbeJson({
         visibleLabel: event.visibleLabel,
       })),
     independentNpcActions: independentNpcActionsProbePayload(game),
+    independentNpcSurface: independentNpcSurfaceProbePayload({
+      game,
+      snapshot,
+    }),
     worldPressure: worldPressureProbePayload(game),
     visualPlayer: {
       isMovingToServerState: Boolean(snapshot.optimisticPlayerPosition),
