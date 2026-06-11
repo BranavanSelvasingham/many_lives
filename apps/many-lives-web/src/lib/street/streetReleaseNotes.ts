@@ -11,19 +11,19 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.2",
-  build: "visual-coherence",
-  source: "PR #90",
+  version: "0.1.3",
+  build: "bf2b86b",
+  source: "PR #91",
   features: [
     {
-      title: "Cleaner landmark guidance",
+      title: "Independent local action evidence",
       body:
-        "Rowan's route guidance now uses soft lanes and arrows instead of breadcrumb dots, so interiors and street paths read as intentional movement.",
+        "Release checks now prove locals like Mara and Nia can resolve live city pressure without Rowan taking the work.",
     },
     {
-      title: "Authored harbor details",
+      title: "Stale-action guardrails",
       body:
-        "The east-water cue now renders as a small buoy with mooring linework rather than a stray bright speck near the quay.",
+        "The planner report now catches and rejects stale solve routes after an NPC-owned resolution changes the city state.",
     },
   ],
 };
