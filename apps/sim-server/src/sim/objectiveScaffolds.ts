@@ -3,6 +3,7 @@ import type {
   JobState,
   NpcState,
   ObjectiveFocus,
+  ObjectiveTrailItem,
   StreetGameState,
 } from "../street-sim/types.js";
 
@@ -131,6 +132,64 @@ export interface ObjectiveRouteAvailableAction {
   targetLocationId: string;
 }
 
+export interface ObjectiveRouteOutcomeDefinition {
+  id: string;
+  label: string;
+  urgency?: number;
+  fallbackEvidence?: string;
+  targetLocationId?: string;
+  npcId?: string;
+  actionId?: string;
+}
+
+export interface FirstAfternoonRouteState {
+  atHome: boolean;
+  hasActiveTeaJob: boolean;
+  hasFinishedTeaShift: boolean;
+  hasLeadFieldNote: boolean;
+  hasRoomTerms: boolean;
+  hasSettledPlan: boolean;
+  hasStartedTeaShift: boolean;
+  hasTakenTeaShift: boolean;
+  hasTalkedToAda: boolean;
+  hasTalkedToMara: boolean;
+  homeLocationId?: string;
+  teaJobAccepted: boolean;
+  teaJobCompleted: boolean;
+  teaJobDiscovered: boolean;
+  teaJobId?: string;
+  teaJobMissed: boolean;
+  teaLeadViable: boolean;
+  teaShiftStage?: NonNullable<
+    NonNullable<StreetGameState["firstAfternoon"]>["teaShiftStage"]
+  >;
+  wrappedFirstAfternoon: boolean;
+}
+
+interface FirstAfternoonRouteStepTemplate {
+  actionId?: (state: FirstAfternoonRouteState) => string | undefined;
+  detail: string | ((state: FirstAfternoonRouteState) => string);
+  done: (state: FirstAfternoonRouteState) => boolean;
+  id: string;
+  npcId?: string | ((state: FirstAfternoonRouteState) => string | undefined);
+  progress: string | ((state: FirstAfternoonRouteState) => string);
+  targetLocationId?:
+    | string
+    | ((state: FirstAfternoonRouteState) => string | undefined);
+  title: string;
+}
+
+interface FirstAfternoonRouteOutcomeTemplate {
+  actionId?: (state: FirstAfternoonRouteState) => string | undefined;
+  id: string;
+  label: string;
+  npcId?: string | ((state: FirstAfternoonRouteState) => string | undefined);
+  targetLocationId?:
+    | string
+    | ((state: FirstAfternoonRouteState) => string | undefined);
+  urgency: number;
+}
+
 interface CompletionAcknowledgementHint {
   feedText: string;
   memoryText: string;
@@ -180,6 +239,341 @@ const ADA_LEAD_ROUTE_KEYS = [
   "work-tea",
 ] as const;
 
+const FIRST_AFTERNOON_OUTCOME_TEMPLATES: FirstAfternoonRouteOutcomeTemplate[] =
+  [
+    {
+      id: "first-afternoon-room",
+      label: "Room terms understood",
+      urgency: 8,
+      npcId: ({ hasRoomTerms }) => (hasRoomTerms ? undefined : "npc-mara"),
+      targetLocationId: ({ hasRoomTerms, homeLocationId }) =>
+        hasRoomTerms ? undefined : homeLocationId,
+    },
+    {
+      id: "first-afternoon-choose-move",
+      label: "Useful first move chosen",
+      urgency: 7,
+      actionId: ({ hasTalkedToMara, hasSettledPlan, teaLeadViable }) =>
+        hasTalkedToMara && !hasSettledPlan && teaLeadViable
+          ? "reflect:first-afternoon-plan"
+          : undefined,
+      targetLocationId: ({
+        hasTalkedToMara,
+        hasSettledPlan,
+        homeLocationId,
+        teaLeadViable,
+      }) =>
+        hasTalkedToMara && !hasSettledPlan && teaLeadViable
+          ? homeLocationId
+          : undefined,
+    },
+    {
+      id: "first-afternoon-ada-lead",
+      label: "Ada lead verified",
+      urgency: 6,
+      npcId: ({
+        hasFinishedTeaShift,
+        hasSettledPlan,
+        hasTakenTeaShift,
+        hasTalkedToAda,
+        teaLeadViable,
+      }) =>
+        hasSettledPlan &&
+        !hasTalkedToAda &&
+        !hasTakenTeaShift &&
+        !hasFinishedTeaShift &&
+        teaLeadViable
+          ? "npc-ada"
+          : undefined,
+      targetLocationId: ({
+        hasFinishedTeaShift,
+        hasSettledPlan,
+        hasTakenTeaShift,
+        hasTalkedToAda,
+        teaLeadViable,
+      }) =>
+        hasSettledPlan &&
+        !hasTalkedToAda &&
+        !hasTakenTeaShift &&
+        !hasFinishedTeaShift &&
+        teaLeadViable
+          ? "tea-house"
+          : undefined,
+    },
+    {
+      id: "first-afternoon-record-lead",
+      label: "Ada lead recorded as evidence",
+      urgency: 5,
+      targetLocationId: ({ hasLeadFieldNote, hasTalkedToAda }) =>
+        hasTalkedToAda && !hasLeadFieldNote ? "tea-house" : undefined,
+    },
+    {
+      id: "first-afternoon-take-shift",
+      label: "Cup-and-counter shift accepted",
+      urgency: 4,
+      actionId: ({
+        hasLeadFieldNote,
+        hasTakenTeaShift,
+        teaJobDiscovered,
+        teaJobId,
+        teaLeadViable,
+      }) =>
+        hasLeadFieldNote &&
+        teaJobId &&
+        !hasTakenTeaShift &&
+        teaLeadViable &&
+        teaJobDiscovered
+          ? `accept:${teaJobId}`
+          : undefined,
+      targetLocationId: ({
+        hasLeadFieldNote,
+        hasTakenTeaShift,
+        teaLeadViable,
+      }) =>
+        hasLeadFieldNote && !hasTakenTeaShift && teaLeadViable
+          ? "tea-house"
+          : undefined,
+    },
+    {
+      id: "first-afternoon-start-shift",
+      label: "Lunch rush started",
+      urgency: 3,
+      actionId: ({
+        hasStartedTeaShift,
+        teaJobAccepted,
+        teaJobId,
+        teaJobMissed,
+      }) =>
+        teaJobId && teaJobAccepted && !hasStartedTeaShift && !teaJobMissed
+          ? `work:${teaJobId}`
+          : undefined,
+      targetLocationId: ({
+        hasStartedTeaShift,
+        teaJobAccepted,
+        teaJobId,
+        teaJobMissed,
+      }) =>
+        teaJobId && teaJobAccepted && !hasStartedTeaShift && !teaJobMissed
+          ? "tea-house"
+          : undefined,
+    },
+    {
+      id: "first-afternoon-finish-shift",
+      label: "Shift finished and paid",
+      urgency: 2,
+      actionId: ({
+        hasFinishedTeaShift,
+        hasStartedTeaShift,
+        teaJobId,
+        teaJobMissed,
+      }) =>
+        teaJobId && hasStartedTeaShift && !hasFinishedTeaShift && !teaJobMissed
+          ? `work:${teaJobId}`
+          : undefined,
+      targetLocationId: ({
+        hasFinishedTeaShift,
+        hasStartedTeaShift,
+        teaJobId,
+        teaJobMissed,
+      }) =>
+        teaJobId && hasStartedTeaShift && !hasFinishedTeaShift && !teaJobMissed
+          ? "tea-house"
+          : undefined,
+    },
+    {
+      id: "first-afternoon-take-stock",
+      label: "First afternoon taken stock",
+      urgency: 1,
+      actionId: ({ atHome, hasFinishedTeaShift, wrappedFirstAfternoon }) =>
+        atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
+          ? "reflect:first-afternoon"
+          : undefined,
+      targetLocationId: ({
+        hasFinishedTeaShift,
+        homeLocationId,
+        wrappedFirstAfternoon,
+      }) =>
+        hasFinishedTeaShift && !wrappedFirstAfternoon
+          ? homeLocationId
+          : undefined,
+    },
+  ];
+
+const FIRST_AFTERNOON_STEP_TEMPLATES: FirstAfternoonRouteStepTemplate[] = [
+  {
+    id: "first-afternoon-room",
+    title: "Ask Mara how to keep tonight's room.",
+    detail: ({ hasTalkedToMara }) =>
+      hasTalkedToMara
+        ? "Mara explained how Morrow House works."
+        : "Ask what the room costs, what the house expects, and how tonight works.",
+    progress: ({ hasTalkedToMara }) =>
+      hasTalkedToMara ? "Mara has weighed in" : "Talk to Mara",
+    done: ({ hasTalkedToMara }) => hasTalkedToMara,
+    npcId: "npc-mara",
+    targetLocationId: ({ homeLocationId }) => homeLocationId,
+  },
+  {
+    id: "first-afternoon-choose-move",
+    title: "Choose the first useful move.",
+    detail: ({ hasSettledPlan }) =>
+      hasSettledPlan
+        ? "Rowan chose Ada over drifting or resting."
+        : "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.",
+    progress: ({ hasSettledPlan }) =>
+      hasSettledPlan ? "Ada chosen" : "Weigh the options",
+    done: ({ hasSettledPlan }) => hasSettledPlan,
+    actionId: ({ hasTalkedToMara, hasSettledPlan, teaLeadViable }) =>
+      hasTalkedToMara && !hasSettledPlan && teaLeadViable
+        ? "reflect:first-afternoon-plan"
+        : undefined,
+    targetLocationId: ({
+      hasTalkedToMara,
+      hasSettledPlan,
+      homeLocationId,
+      teaLeadViable,
+    }) =>
+      hasTalkedToMara && !hasSettledPlan && teaLeadViable
+        ? homeLocationId
+        : undefined,
+  },
+  {
+    id: "first-afternoon-ada-lead",
+    title: "Ask Ada if Kettle & Lamp needs help today.",
+    detail: ({ hasTalkedToAda }) =>
+      hasTalkedToAda
+        ? "Ada made the tea-house lead concrete."
+        : "Ask Ada directly if there is work Rowan can do today.",
+    progress: ({ hasTalkedToAda }) =>
+      hasTalkedToAda ? "Ada asked" : "Find Ada",
+    done: ({ hasFinishedTeaShift, hasTakenTeaShift, hasTalkedToAda }) =>
+      hasTalkedToAda || hasTakenTeaShift || hasFinishedTeaShift,
+    npcId: ({ teaLeadViable }) => (teaLeadViable ? "npc-ada" : undefined),
+    targetLocationId: ({ teaLeadViable }) =>
+      teaLeadViable ? "tea-house" : undefined,
+  },
+  {
+    id: "first-afternoon-record-lead",
+    title: "Record what Ada confirmed.",
+    detail: ({ hasLeadFieldNote }) =>
+      hasLeadFieldNote
+        ? "Rowan turned Mara's lead into a field note with evidence."
+        : "Write down what Ada said, where it happened, and what choice it opened.",
+    progress: ({ hasLeadFieldNote }) =>
+      hasLeadFieldNote ? "Lead grounded" : "Needs field note",
+    done: ({ hasLeadFieldNote }) => hasLeadFieldNote,
+    targetLocationId: ({ hasLeadFieldNote, hasTalkedToAda, teaLeadViable }) =>
+      hasTalkedToAda || hasLeadFieldNote || teaLeadViable
+        ? "tea-house"
+        : undefined,
+  },
+  {
+    id: "first-afternoon-take-shift",
+    title: "Take the cup-and-counter shift.",
+    detail: ({ hasTakenTeaShift }) =>
+      hasTakenTeaShift
+        ? "Rowan has the shift."
+        : "Say yes to the cup-and-counter shift.",
+    progress: ({ hasTakenTeaShift, teaJobDiscovered }) =>
+      hasTakenTeaShift
+        ? "Shift taken"
+        : teaJobDiscovered
+          ? "Offer ready"
+          : "Need the offer",
+    done: ({ hasFinishedTeaShift, hasTakenTeaShift }) =>
+      hasTakenTeaShift || hasFinishedTeaShift,
+    actionId: ({
+      hasActiveTeaJob,
+      teaJobAccepted,
+      teaJobCompleted,
+      teaJobDiscovered,
+      teaJobId,
+      teaLeadViable,
+    }) =>
+      teaJobId && !teaJobCompleted && teaLeadViable
+        ? teaJobAccepted || hasActiveTeaJob
+          ? `work:${teaJobId}`
+          : teaJobDiscovered
+            ? `accept:${teaJobId}`
+            : undefined
+        : undefined,
+    targetLocationId: ({ teaLeadViable }) =>
+      teaLeadViable ? "tea-house" : undefined,
+  },
+  {
+    id: "first-afternoon-start-shift",
+    title: "Get through the lunch rush.",
+    detail: ({ hasStartedTeaShift }) =>
+      hasStartedTeaShift
+        ? "Rowan has started keeping the room moving."
+        : "Start with cups, tables, and the counter when lunch fills in.",
+    progress: ({ hasStartedTeaShift }) =>
+      hasStartedTeaShift ? "Rush handled" : "Shift ahead",
+    done: ({ hasStartedTeaShift }) => hasStartedTeaShift,
+    actionId: ({ teaJobAccepted, teaJobCompleted, teaJobId, teaJobMissed }) =>
+      teaJobId && teaJobAccepted && !teaJobCompleted && !teaJobMissed
+        ? `work:${teaJobId}`
+        : undefined,
+    targetLocationId: ({
+      teaJobAccepted,
+      teaJobCompleted,
+      teaJobId,
+      teaJobMissed,
+    }) =>
+      teaJobId && teaJobAccepted && !teaJobCompleted && !teaJobMissed
+        ? "tea-house"
+        : undefined,
+  },
+  {
+    id: "first-afternoon-finish-shift",
+    title: "Finish the shift and get paid.",
+    detail: ({ hasFinishedTeaShift, teaShiftStage }) =>
+      hasFinishedTeaShift
+        ? "Rowan worked the shift and got paid."
+        : teaShiftStage === "counter"
+          ? "Finish the last counter pass and collect the pay."
+          : "Keep the shift steady until Ada can pay Rowan.",
+    progress: ({ hasFinishedTeaShift }) =>
+      hasFinishedTeaShift ? "Paid" : "Still ahead",
+    done: ({ hasFinishedTeaShift }) => hasFinishedTeaShift,
+    actionId: ({ teaJobCompleted, teaJobId, teaJobMissed }) =>
+      teaJobId && !teaJobCompleted && !teaJobMissed
+        ? `work:${teaJobId}`
+        : undefined,
+    targetLocationId: ({
+      hasStartedTeaShift,
+      teaJobCompleted,
+      teaJobId,
+      teaJobMissed,
+    }) =>
+      teaJobId && hasStartedTeaShift && !teaJobCompleted && !teaJobMissed
+        ? "tea-house"
+        : undefined,
+  },
+  {
+    id: "first-afternoon-take-stock",
+    title: "Head back to Morrow House and take stock.",
+    detail: ({ atHome, hasFinishedTeaShift, wrappedFirstAfternoon }) =>
+      wrappedFirstAfternoon
+        ? "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead."
+        : atHome && hasFinishedTeaShift
+          ? "Stop for a minute and count what changed today."
+          : "Go back to Morrow House before ending the first afternoon.",
+    progress: ({ atHome, wrappedFirstAfternoon }) =>
+      wrappedFirstAfternoon
+        ? "First afternoon complete"
+        : atHome
+          ? "Ready to take stock"
+          : "Head home",
+    done: ({ wrappedFirstAfternoon }) => wrappedFirstAfternoon,
+    actionId: ({ atHome, hasFinishedTeaShift, wrappedFirstAfternoon }) =>
+      atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
+        ? "reflect:first-afternoon"
+        : undefined,
+    targetLocationId: ({ homeLocationId }) => homeLocationId,
+  },
+];
+
 const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   {
     routeKeys: ["first-afternoon", "mara-ada-lead"],
@@ -190,7 +584,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.",
       playerThought:
         "Tonight's bed holds. I earned real money, and tomorrow has a lead.",
-      playerThoughtWhen: ({ world }) => Boolean(world.firstAfternoon?.completedAt),
+      playerThoughtWhen: ({ world }) =>
+        Boolean(world.firstAfternoon?.completedAt),
       when: ({ objective }) => objective.routeKey === "first-afternoon",
     },
     completionOutcome: {
@@ -212,12 +607,13 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           objective.routeKey === "mara-ada-lead" ||
           Boolean(
             world.firstAfternoon?.planSettledAt &&
-              firstAfternoonAdaLeadViable(world),
+            firstAfternoonAdaLeadViable(world),
           ),
       },
       {
         locationId: ({ world }) => world.player.homeLocationId,
-        when: ({ world }) => Boolean(jobById(world, "job-tea-shift")?.completed),
+        when: ({ world }) =>
+          Boolean(jobById(world, "job-tea-shift")?.completed),
       },
     ],
     moveIntents: [
@@ -276,7 +672,9 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+          return (
+            jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -297,7 +695,9 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+          return (
+            jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -387,11 +787,11 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           const teaJob = jobById(world, "job-tea-shift");
           return Boolean(
             world.player.currentLocationId === "tea-house" &&
-              world.firstAfternoon?.leadFieldNote &&
-              teaJob?.discovered &&
-              !teaJob.accepted &&
-              !teaJob.completed &&
-              !teaJob.missed,
+            world.firstAfternoon?.leadFieldNote &&
+            teaJob?.discovered &&
+            !teaJob.accepted &&
+            !teaJob.completed &&
+            !teaJob.missed,
           );
         },
       },
@@ -578,7 +978,10 @@ export function objectiveRouteCompletionAcknowledgement(
   const context = { objective, world };
   for (const scaffold of activeScaffolds(objective.routeKey)) {
     const acknowledgement = scaffold.completionAcknowledgement;
-    if (acknowledgement && (!acknowledgement.when || acknowledgement.when(context))) {
+    if (
+      acknowledgement &&
+      (!acknowledgement.when || acknowledgement.when(context))
+    ) {
       return {
         feedText: acknowledgement.feedText,
         memoryText: acknowledgement.memoryText,
@@ -621,6 +1024,57 @@ export function objectiveRouteFirstAfternoonCompletionOutcome(): CompletionOutco
   }
 
   throw new Error("First-afternoon completion outcome scaffold is missing.");
+}
+
+export function objectiveRouteFirstAfternoonRouteScaffold(
+  state: FirstAfternoonRouteState,
+): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: FIRST_AFTERNOON_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      npcId: resolveFirstAfternoonRouteValue(template.npcId, state),
+      targetLocationId: resolveFirstAfternoonRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+    steps: FIRST_AFTERNOON_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: template.title,
+      detail: resolveFirstAfternoonRouteText(template.detail, state),
+      progress: resolveFirstAfternoonRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: template.actionId?.(state),
+      npcId: resolveFirstAfternoonRouteValue(template.npcId, state),
+      targetLocationId: resolveFirstAfternoonRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+  };
+}
+
+function resolveFirstAfternoonRouteValue(
+  value:
+    | string
+    | ((state: FirstAfternoonRouteState) => string | undefined)
+    | undefined,
+  state: FirstAfternoonRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveFirstAfternoonRouteText(
+  value: string | ((state: FirstAfternoonRouteState) => string),
+  state: FirstAfternoonRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
 }
 
 export function objectiveRouteMoveIntent(
@@ -666,7 +1120,8 @@ export function objectiveRouteActionRationale(
         (!candidate.npcId || candidate.npcId === input.npc?.id) &&
         (!candidate.actionId || candidate.actionId === input.actionId) &&
         (candidate.npcId || candidate.actionId) &&
-        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );
     if (rationale) {
@@ -691,7 +1146,8 @@ export function objectiveRouteActionTargetLocation(
     const hint = (scaffold.actionTargetLocations ?? []).find(
       (candidate) =>
         candidate.actionId === actionId &&
-        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)),
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)),
     );
     if (!hint) {
       continue;
@@ -758,7 +1214,8 @@ export function objectiveRouteConversationThought(
     const thought = (scaffold.conversationThoughts ?? []).find(
       (candidate) =>
         candidate.npcId === npc.id &&
-        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );
     if (thought) {
@@ -781,7 +1238,8 @@ export function objectiveRoutePlayerThought(
   for (const scaffold of activeScaffolds(objective.routeKey)) {
     const thought = (scaffold.playerThoughts ?? []).find(
       (candidate) =>
-        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );
     if (thought) {
@@ -810,7 +1268,8 @@ export function objectiveRouteWorkStageThought(
       (candidate) =>
         candidate.jobId === input.jobId &&
         candidate.stage === input.stage &&
-        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );
     if (thought) {
@@ -836,7 +1295,8 @@ export function objectiveRouteConversationFallback(
     const fallback = (scaffold.conversationFallbacks ?? []).find(
       (candidate) =>
         candidate.npcId === npc.id &&
-        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );
     if (fallback) {
@@ -867,9 +1327,7 @@ export function objectiveRouteScriptedReply(
 
   if (npc.id === "npc-mara" && firstPlayerLineWithNpc) {
     if (
-      /\broom\b|\btonight\b|\bmorrow house\b|\bstay\b|\bbed\b/.test(
-        normalized,
-      )
+      /\broom\b|\btonight\b|\bmorrow house\b|\bstay\b|\bbed\b/.test(normalized)
     ) {
       if (teaWindowClosed) {
         return {
@@ -971,7 +1429,8 @@ export function objectiveRouteSuppressesConversationTopic(
       (candidate) =>
         candidate.npcId === npc.id &&
         candidate.topic === topic &&
-        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     ),
   );
@@ -981,11 +1440,12 @@ export function objectiveRouteDeterministicOpening(
   objective: ObjectiveScaffoldDirective,
   npcId: string,
 ) {
-  return activeScaffolds(objective.routeKey).some((scaffold) =>
-    (scaffold.deterministicOpeningNpcIds ?? []).includes(npcId) &&
-    (scaffold.deterministicOpeningRouteKeys ?? scaffold.routeKeys).includes(
-      objective.routeKey,
-    ),
+  return activeScaffolds(objective.routeKey).some(
+    (scaffold) =>
+      (scaffold.deterministicOpeningNpcIds ?? []).includes(npcId) &&
+      (scaffold.deterministicOpeningRouteKeys ?? scaffold.routeKeys).includes(
+        objective.routeKey,
+      ),
   );
 }
 
@@ -1005,8 +1465,7 @@ export function objectiveRouteSemanticMoveBonus(
     .flatMap((scaffold) => scaffold.semanticMoveBonuses ?? [])
     .filter(
       (bonus) =>
-        bonus.locationId === locationId &&
-        (!bonus.when || bonus.when(context)),
+        bonus.locationId === locationId && (!bonus.when || bonus.when(context)),
     )
     .reduce((total, bonus) => total + bonus.score, 0);
 
@@ -1170,7 +1629,8 @@ function routeDerivedMoveIntent(
   ) {
     return {
       actionId: "buy:item-wrench",
-      rationale: "Walk to Jo's repair stall and buy the wrench the problem needs.",
+      rationale:
+        "Walk to Jo's repair stall and buy the wrench the problem needs.",
     };
   }
 
@@ -1243,15 +1703,18 @@ function jobById(world: StreetGameState, jobId: string) {
 }
 
 function jobWindowMinutesRemaining(world: StreetGameState, job: JobState) {
-  return totalMinutesForDayHour(world.clock.day, job.endHour) - world.clock.totalMinutes;
+  return (
+    totalMinutesForDayHour(world.clock.day, job.endHour) -
+    world.clock.totalMinutes
+  );
 }
 
 function jobWindowOpen(world: StreetGameState, job: JobState | undefined) {
   return Boolean(
     job &&
-      !job.completed &&
-      !job.missed &&
-      jobWindowMinutesRemaining(world, job) > 0,
+    !job.completed &&
+    !job.missed &&
+    jobWindowMinutesRemaining(world, job) > 0,
   );
 }
 
@@ -1262,8 +1725,8 @@ function firstAfternoonAdaLeadViable(world: StreetGameState) {
 function jobWindowClosed(world: StreetGameState, job: JobState | undefined) {
   return Boolean(
     job &&
-      !job.completed &&
-      (job.missed || jobWindowMinutesRemaining(world, job) <= 0),
+    !job.completed &&
+    (job.missed || jobWindowMinutesRemaining(world, job) <= 0),
   );
 }
 
@@ -1285,7 +1748,7 @@ function firstAfternoonRoomTermsKnown(world: StreetGameState) {
     countPlayerConversationsWithNpc(world, "npc-mara") > 0 ||
     Boolean(
       world.firstAfternoon?.planSettledAt ||
-        world.firstAfternoon?.leadFieldNote,
+      world.firstAfternoon?.leadFieldNote,
     )
   );
 }
