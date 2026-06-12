@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   buildPlayerObjectiveState,
@@ -46,6 +47,27 @@ function setFirstAfternoonLeadFieldNote(world: StreetGameState) {
       next: "Take the cup-and-counter shift.",
     },
   };
+}
+
+function setProblemState(
+  world: StreetGameState,
+  problemId: string,
+  patch: Partial<StreetGameState["problems"][number]>,
+) {
+  const problem = world.problems.find((entry) => entry.id === problemId);
+  if (!problem) {
+    throw new Error(`Missing problem ${problemId}`);
+  }
+  Object.assign(problem, patch);
+  return problem;
+}
+
+function addWrench(world: StreetGameState) {
+  world.player.inventory.push({
+    id: "item-wrench",
+    name: "Old wrench",
+    description: "A tool for the pump.",
+  });
 }
 
 function firstAfternoonObjective(world: StreetGameState) {
@@ -805,12 +827,8 @@ describe("objectiveState classification", () => {
     const afterMara = seedStreetGame("objective-settle-route-after-mara");
     const termsKnown = seedStreetGame("objective-settle-route-terms-known");
     const teaSpotted = seedStreetGame("objective-settle-route-tea-spotted");
-    const teaCommitted = seedStreetGame(
-      "objective-settle-route-tea-committed",
-    );
-    const teaCompleted = seedStreetGame(
-      "objective-settle-route-tea-completed",
-    );
+    const teaCommitted = seedStreetGame("objective-settle-route-tea-committed");
+    const teaCompleted = seedStreetGame("objective-settle-route-tea-completed");
     const yardHint = seedStreetGame("objective-settle-route-yard-hint");
     const peopleUnmet = seedStreetGame("objective-settle-route-people-unmet");
     const peopleMet = seedStreetGame("objective-settle-route-people-met");
@@ -902,9 +920,12 @@ describe("objectiveState classification", () => {
       },
     ]);
     expect(
-      objectiveByState.fresh?.trail.map(
-        ({ detail, id, progress, title }) => [id, title, detail, progress],
-      ),
+      objectiveByState.fresh?.trail.map(({ detail, id, progress, title }) => [
+        id,
+        title,
+        detail,
+        progress,
+      ]),
     ).toEqual([
       [
         "settle-terms",
@@ -2130,5 +2151,564 @@ describe("objectiveState classification", () => {
     expect(objective?.outcomes.map((outcome) => outcome.id)).not.toContain(
       "stale-tool-step",
     );
+  });
+
+  it("keeps help and tool problem-route copy out of objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const objectiveScaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldOwnedCopy = [
+      "Cart problem understood",
+      "The wheel is already starting to catch on the square's traffic.",
+      "Fix the leaking pump in Morrow Yard before it spreads.",
+      "Pump problem understood",
+      "Rowan knows enough to tell the leak is one bad turn away from a worse day.",
+      "Buy a wrench from Jo.",
+      "A tool is only a tool until it reaches the problem that needs it.",
+      "Tool used to solve the problem",
+    ];
+
+    for (const copy of scaffoldOwnedCopy) {
+      expect(objectiveScaffoldSource).toContain(copy);
+      expect(objectiveStateSource).not.toContain(copy);
+    }
+
+    expect(objectiveStateSource).toContain("problemClosedByWorld(problem)");
+    expect(objectiveStateSource).toContain("problemCleared(problem)");
+    expect(objectiveStateSource).toContain('hasItem(world, "item-wrench")');
+  });
+
+  it("keeps cart help route metadata stable across live problem states", () => {
+    const cases = [
+      {
+        name: "undiscovered",
+        patch: { discovered: false, status: "active" as const },
+        expectedProgress: { completed: 0, total: 2 },
+        expectedOutcomes: [
+          {
+            id: "cart-discovered",
+            label: "Cart problem understood",
+            urgency: 2,
+            actionId: "inspect:problem-cart",
+            status: "blocked",
+            targetLocationId: "market-square",
+          },
+          {
+            id: "cart-solved",
+            label: "Cart cleared",
+            urgency: 1,
+            actionId: undefined,
+            status: "blocked",
+            targetLocationId: "market-square",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "help-cart-inspect",
+            title: "Inspect the jammed cart in Quay Square.",
+            progress: "Still a rumor",
+            done: false,
+            actionId: "inspect:problem-cart",
+            targetLocationId: "market-square",
+          },
+          {
+            id: "help-cart-solve",
+            title: "Clear the cart before it snarls the square.",
+            progress: "Active",
+            done: false,
+            actionId: undefined,
+            targetLocationId: "market-square",
+          },
+        ],
+      },
+      {
+        name: "discovered",
+        patch: { discovered: true, status: "active" as const },
+        expectedProgress: { completed: 1, total: 2 },
+        expectedOutcomes: [
+          {
+            id: "cart-discovered",
+            actionId: undefined,
+            status: "met",
+          },
+          {
+            id: "cart-solved",
+            actionId: "solve:problem-cart",
+            status: "blocked",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "help-cart-inspect",
+            progress: "Problem seen",
+            done: true,
+          },
+          {
+            id: "help-cart-solve",
+            progress: "Active",
+            done: false,
+            actionId: "solve:problem-cart",
+          },
+        ],
+      },
+      {
+        name: "cleared",
+        patch: { discovered: true, status: "solved" as const },
+        expectedProgress: { completed: 2, total: 2 },
+        expectedOutcomes: [
+          {
+            id: "cart-discovered",
+            status: "met",
+          },
+          {
+            id: "cart-solved",
+            actionId: undefined,
+            status: "met",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "help-cart-inspect",
+            done: true,
+          },
+          {
+            id: "help-cart-solve",
+            progress: "Cleared",
+            done: true,
+            actionId: undefined,
+          },
+        ],
+      },
+      {
+        name: "expired",
+        patch: { discovered: true, status: "expired" as const },
+        expectedProgress: { completed: 1, total: 2 },
+        expectedOutcomes: [
+          {
+            id: "cart-discovered",
+            status: "met",
+          },
+          {
+            id: "cart-solved",
+            actionId: undefined,
+            status: "failed",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "help-cart-inspect",
+            done: true,
+          },
+          {
+            id: "help-cart-solve",
+            progress: "Missed",
+            done: false,
+            actionId: undefined,
+          },
+        ],
+      },
+    ];
+
+    for (const scenario of cases) {
+      const world = seedStreetGame(`objective-cart-${scenario.name}`);
+      setProblemState(world, "problem-cart", scenario.patch);
+
+      const objective = buildPlayerObjectiveState(world, {
+        focus: "help",
+        source: "manual",
+        text: "Clear the jammed cart in Quay Square.",
+      });
+
+      expect(objective).toMatchObject({
+        routeKey: "help-cart",
+        progress: scenario.expectedProgress,
+      });
+      expect(objective?.outcomes).toMatchObject(scenario.expectedOutcomes);
+      expect(objective?.trail).toMatchObject(scenario.expectedTrail);
+    }
+  });
+
+  it("keeps pump help route metadata stable across tool and lifecycle states", () => {
+    const cases = [
+      {
+        name: "undiscovered",
+        hasWrench: false,
+        patch: { discovered: false, status: "active" as const },
+        routeKey: "tool-pump",
+        expectedProgress: { completed: 0, total: 3 },
+        expectedOutcomes: [
+          {
+            id: "pump-discovered",
+            label: "Pump problem understood",
+            urgency: 3,
+            actionId: "inspect:problem-pump",
+            status: "blocked",
+            targetLocationId: "courtyard",
+          },
+          {
+            id: "wrench-in-inventory",
+            label: "Wrench secured",
+            urgency: 2,
+            actionId: "buy:item-wrench",
+            status: "blocked",
+            targetLocationId: "repair-stall",
+          },
+          {
+            id: "pump-solved",
+            label: "Pump solved",
+            urgency: 1,
+            actionId: undefined,
+            status: "blocked",
+            targetLocationId: "courtyard",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "help-pump-inspect",
+            title: "Inspect the pump in Morrow Yard.",
+            progress: "Still a lead",
+            done: false,
+            actionId: "inspect:problem-pump",
+            targetLocationId: "courtyard",
+          },
+          {
+            id: "help-pump-tool",
+            title: "Buy a wrench from Jo.",
+            progress: "No wrench yet",
+            done: false,
+            actionId: "buy:item-wrench",
+            targetLocationId: "repair-stall",
+          },
+          {
+            id: "help-pump-fix",
+            title: "Fix the leak before it spreads.",
+            progress: "Active",
+            done: false,
+            actionId: undefined,
+            targetLocationId: "courtyard",
+          },
+        ],
+      },
+      {
+        name: "discovered-no-wrench",
+        hasWrench: false,
+        patch: { discovered: true, status: "active" as const },
+        routeKey: "tool-pump",
+        expectedProgress: { completed: 1, total: 3 },
+        expectedOutcomes: [
+          { id: "pump-discovered", actionId: undefined, status: "met" },
+          {
+            id: "wrench-in-inventory",
+            actionId: "buy:item-wrench",
+            status: "blocked",
+          },
+          { id: "pump-solved", actionId: undefined, status: "blocked" },
+        ],
+        expectedTrail: [
+          { id: "help-pump-inspect", progress: "Problem seen", done: true },
+          {
+            id: "help-pump-tool",
+            title: "Buy a wrench from Jo.",
+            progress: "No wrench yet",
+            done: false,
+            actionId: "buy:item-wrench",
+          },
+          { id: "help-pump-fix", actionId: undefined, done: false },
+        ],
+      },
+      {
+        name: "has-wrench",
+        hasWrench: true,
+        patch: { discovered: true, status: "active" as const },
+        routeKey: "help-pump",
+        expectedProgress: { completed: 2, total: 3 },
+        expectedOutcomes: [
+          { id: "pump-discovered", status: "met" },
+          { id: "wrench-in-inventory", actionId: undefined, status: "met" },
+          {
+            id: "pump-solved",
+            actionId: "solve:problem-pump",
+            status: "blocked",
+          },
+        ],
+        expectedTrail: [
+          { id: "help-pump-inspect", done: true },
+          {
+            id: "help-pump-tool",
+            title: "Bring the wrench back to the pump.",
+            progress: "Tool in hand",
+            done: true,
+            actionId: undefined,
+            targetLocationId: "courtyard",
+          },
+          {
+            id: "help-pump-fix",
+            actionId: "solve:problem-pump",
+            done: false,
+          },
+        ],
+      },
+      {
+        name: "resolved-by-world",
+        hasWrench: false,
+        patch: { discovered: true, status: "resolved" as const },
+        routeKey: "tool-pump",
+        expectedProgress: { completed: 3, total: 3 },
+        expectedOutcomes: [
+          { id: "pump-discovered", status: "met" },
+          {
+            id: "wrench-in-inventory",
+            actionId: undefined,
+            status: "met",
+          },
+          { id: "pump-solved", actionId: undefined, status: "met" },
+        ],
+        expectedTrail: [
+          { id: "help-pump-inspect", done: true },
+          {
+            id: "help-pump-tool",
+            progress: "No longer needed",
+            done: true,
+            actionId: undefined,
+          },
+          {
+            id: "help-pump-fix",
+            progress: "Cleared",
+            done: true,
+            actionId: undefined,
+          },
+        ],
+      },
+      {
+        name: "expired",
+        hasWrench: false,
+        patch: { discovered: true, status: "expired" as const },
+        routeKey: "tool-pump",
+        expectedProgress: { completed: 2, total: 3 },
+        expectedOutcomes: [
+          { id: "pump-discovered", status: "met" },
+          { id: "wrench-in-inventory", status: "met" },
+          { id: "pump-solved", status: "failed" },
+        ],
+        expectedTrail: [
+          { id: "help-pump-inspect", done: true },
+          {
+            id: "help-pump-tool",
+            progress: "No longer needed",
+            done: true,
+            actionId: undefined,
+          },
+          {
+            id: "help-pump-fix",
+            progress: "Missed",
+            done: false,
+            actionId: undefined,
+          },
+        ],
+      },
+    ];
+
+    for (const scenario of cases) {
+      const world = seedStreetGame(`objective-pump-${scenario.name}`);
+      setProblemState(world, "problem-pump", scenario.patch);
+      if (scenario.hasWrench) {
+        addWrench(world);
+      }
+
+      const objective = buildPlayerObjectiveState(world, {
+        focus: "help",
+        source: "manual",
+        text: "Fix the pump in Morrow Yard before it spreads.",
+      });
+
+      expect(objective).toMatchObject({
+        routeKey: scenario.routeKey,
+        progress: scenario.expectedProgress,
+      });
+      expect(objective?.outcomes).toMatchObject(scenario.expectedOutcomes);
+      expect(objective?.trail).toMatchObject(scenario.expectedTrail);
+    }
+  });
+
+  it("keeps tool route metadata stable for pump and cart targets", () => {
+    const cases = [
+      {
+        name: "cart-unknown",
+        text: "Buy a wrench later.",
+        routeKey: "tool-cart",
+        problemId: "problem-cart",
+        patch: { discovered: false, status: "hidden" as const },
+        locationName: "Quay Square",
+        targetId: "problem-cart",
+        targetLocationId: "market-square",
+        expectedProgress: { completed: 0, total: 3 },
+        expectedOutcomes: [
+          {
+            id: "tool-buy",
+            label: "Required tool secured",
+            urgency: 3,
+            actionId: "buy:item-wrench",
+            status: "blocked",
+            targetLocationId: "repair-stall",
+          },
+          {
+            id: "tool-return",
+            label: "Tool brought to the problem",
+            urgency: 2,
+            actionId: undefined,
+            status: "blocked",
+            targetLocationId: undefined,
+          },
+          {
+            id: "tool-use",
+            label: "Tool used to solve the problem",
+            urgency: 1,
+            actionId: undefined,
+            status: "blocked",
+            targetLocationId: undefined,
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "tool-buy",
+            title: "Buy a wrench from Jo.",
+            progress: "Needed",
+            done: false,
+            actionId: "buy:item-wrench",
+            targetLocationId: "repair-stall",
+          },
+          {
+            id: "tool-return",
+            title: "Take it back to Quay Square.",
+            progress: "Lead unclear",
+            done: false,
+            targetLocationId: "market-square",
+          },
+          {
+            id: "tool-use",
+            title: "Use it before the trouble spreads.",
+            progress: "Active",
+            done: false,
+            actionId: undefined,
+            targetLocationId: "market-square",
+          },
+        ],
+      },
+      {
+        name: "cart-known",
+        text: "Buy a wrench later.",
+        routeKey: "tool-cart",
+        problemId: "problem-cart",
+        patch: { discovered: true, status: "active" as const },
+        expectedProgress: { completed: 0, total: 3 },
+        expectedTrail: [
+          { id: "tool-buy", actionId: "buy:item-wrench" },
+          {
+            id: "tool-return",
+            progress: "Lead known",
+            targetLocationId: "market-square",
+          },
+          {
+            id: "tool-use",
+            actionId: "solve:problem-cart",
+            targetLocationId: "market-square",
+          },
+        ],
+      },
+      {
+        name: "pump-known",
+        text: "Buy a wrench for the pump and bring it back.",
+        routeKey: "tool-wrench",
+        problemId: "problem-pump",
+        patch: { discovered: true, status: "active" as const },
+        expectedProgress: { completed: 0, total: 3 },
+        expectedTrail: [
+          { id: "tool-buy", actionId: "buy:item-wrench" },
+          {
+            id: "tool-return",
+            title: "Take it back to Morrow Yard.",
+            progress: "Lead known",
+            targetLocationId: "courtyard",
+          },
+          {
+            id: "tool-use",
+            actionId: "solve:problem-pump",
+            targetLocationId: "courtyard",
+          },
+        ],
+      },
+      {
+        name: "wrench-bought-and-returned",
+        text: "Buy a wrench for the pump and bring it back.",
+        routeKey: "tool-wrench",
+        problemId: "problem-pump",
+        patch: { discovered: true, status: "active" as const },
+        hasWrench: true,
+        currentLocationId: "courtyard",
+        expectedProgress: { completed: 2, total: 3 },
+        expectedOutcomes: [
+          { id: "tool-buy", actionId: undefined, status: "met" },
+          { id: "tool-return", status: "met", targetLocationId: undefined },
+          {
+            id: "tool-use",
+            actionId: "solve:problem-pump",
+            status: "blocked",
+            targetLocationId: "courtyard",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "tool-buy",
+            progress: "Bought",
+            done: true,
+            actionId: undefined,
+          },
+          {
+            id: "tool-return",
+            progress: "Lead known",
+            done: true,
+            targetLocationId: "courtyard",
+          },
+          {
+            id: "tool-use",
+            progress: "Active",
+            done: false,
+            actionId: "solve:problem-pump",
+            targetLocationId: "courtyard",
+          },
+        ],
+      },
+    ];
+
+    for (const scenario of cases) {
+      const world = seedStreetGame(`objective-tool-${scenario.name}`);
+      setProblemState(world, scenario.problemId, scenario.patch);
+      if (scenario.hasWrench) {
+        addWrench(world);
+      }
+      if (scenario.currentLocationId) {
+        world.player.currentLocationId = scenario.currentLocationId;
+      }
+
+      const objective = buildPlayerObjectiveState(world, {
+        focus: "tool",
+        source: "manual",
+        text: scenario.text,
+      });
+
+      expect(objective).toMatchObject({
+        routeKey: scenario.routeKey,
+        progress: scenario.expectedProgress,
+      });
+      if (scenario.expectedOutcomes) {
+        expect(objective?.outcomes).toMatchObject(scenario.expectedOutcomes);
+      }
+      expect(objective?.trail).toMatchObject(scenario.expectedTrail);
+    }
   });
 });
