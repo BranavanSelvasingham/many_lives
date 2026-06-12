@@ -385,6 +385,10 @@ export interface NpcScheduleStop {
 export interface NpcNarrativeProfile {
   backstory: string;
   context: string;
+  firstContactPrimer?: {
+    feed: string;
+    memory: string;
+  };
   objective: string;
   voice: string;
 }

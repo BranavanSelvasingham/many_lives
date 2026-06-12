@@ -29,6 +29,18 @@ const MARA_ADA_GROUNDING_FALLBACK_MEMORY =
   "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.";
 const MARA_ADA_GROUNDING_FALLBACK_SUMMARY =
   "Mara has not yet made the Kettle & Lamp lead visible in the conversation.";
+const NPC_FIRST_CONTACT_PRIMER_COPY = [
+  "Mara gives you a measured look, like she's deciding whether you're here for a bed, for work, or just to stop feeling new.",
+  "Mara weighs newcomers by whether they settle in, pull their weight, or disappear.",
+  "Ada glances over like the room is already filling, but there is still a little welcome in it.",
+  "Ada offers work when she thinks someone can keep the tea room easy through lunch.",
+  "Jo looks up from the bench with the kind of patience that expects you to get to the point.",
+  "Jo prices things fairly enough that you notice.",
+  "Tomas glances at your shoulders, not your face, like talk only matters if it turns into labor.",
+  "Tomas thinks in loads, time windows, and whether you slow the rest of the yard down.",
+  "Nia watches the square while she talks to you, like she expects the next important detail to arrive mid-sentence.",
+  "Nia notices small jams before the whole block has to notice them.",
+];
 const FIRST_AFTERNOON_RETURN_HOME_THOUGHT =
   "I should head back to Morrow House and let today land.";
 const FIRST_AFTERNOON_TEA_RUSH_THOUGHT =
@@ -390,6 +402,26 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain("groundedMaraAdaLeadReply");
     expect(engineSource).not.toContain("buildMaraAdaLeadGroundingFollowup");
     expect(engineSource).not.toContain("shouldRequireMaraAdaLeadEvidence");
+  });
+
+  it("keeps NPC first-contact primer copy in NPC narrative data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const npcNarrativesSource = readFileSync(
+      new URL("../src/street-sim/npcNarratives.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const primerCopy of NPC_FIRST_CONTACT_PRIMER_COPY) {
+      expect(npcNarrativesSource).toContain(primerCopy);
+      expect(engineSource).not.toContain(primerCopy);
+    }
+
+    expect(npcNarrativesSource).toContain("firstContactPrimer");
+    expect(engineSource).toContain("getNpcFirstContactPrimer");
+    expect(engineSource).not.toContain("firstContactPrimer:");
   });
 
   it("keeps first-afternoon return-home thought copy in scaffold data, not thought control flow", () => {

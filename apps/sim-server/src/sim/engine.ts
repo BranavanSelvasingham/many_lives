@@ -7,7 +7,10 @@ import type {
 import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
 import { syncCityEvents } from "../street-sim/cityEvents.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
-import { getNpcNarrative } from "../street-sim/npcNarratives.js";
+import {
+  getNpcFirstContactPrimer,
+  getNpcNarrative,
+} from "../street-sim/npcNarratives.js";
 import {
   buildPlayerObjectiveState,
   classifyObjective,
@@ -2386,70 +2389,13 @@ function primeNpcConversation(world: StreetGameState, npc: NpcState) {
     return;
   }
 
-  switch (npc.id) {
-    case "npc-mara":
-      addFeed(
-        world,
-        "info",
-        "Mara gives you a measured look, like she's deciding whether you're here for a bed, for work, or just to stop feeling new.",
-      );
-      rememberIfNew(
-        world,
-        "person",
-        "Mara weighs newcomers by whether they settle in, pull their weight, or disappear.",
-      );
-      break;
-    case "npc-ada":
-      addFeed(
-        world,
-        "info",
-        "Ada glances over like the room is already filling, but there is still a little welcome in it.",
-      );
-      rememberIfNew(
-        world,
-        "person",
-        "Ada offers work when she thinks someone can keep the tea room easy through lunch.",
-      );
-      break;
-    case "npc-jo":
-      addFeed(
-        world,
-        "info",
-        "Jo looks up from the bench with the kind of patience that expects you to get to the point.",
-      );
-      rememberIfNew(
-        world,
-        "person",
-        "Jo prices things fairly enough that you notice.",
-      );
-      break;
-    case "npc-tomas":
-      addFeed(
-        world,
-        "info",
-        "Tomas glances at your shoulders, not your face, like talk only matters if it turns into labor.",
-      );
-      rememberIfNew(
-        world,
-        "person",
-        "Tomas thinks in loads, time windows, and whether you slow the rest of the yard down.",
-      );
-      break;
-    case "npc-nia":
-      addFeed(
-        world,
-        "info",
-        "Nia watches the square while she talks to you, like she expects the next important detail to arrive mid-sentence.",
-      );
-      rememberIfNew(
-        world,
-        "person",
-        "Nia notices small jams before the whole block has to notice them.",
-      );
-      break;
-    default:
-      break;
+  const primer = getNpcFirstContactPrimer(npc.id);
+  if (!primer) {
+    return;
   }
+
+  addFeed(world, "info", primer.feed);
+  rememberIfNew(world, "person", primer.memory);
 }
 
 function fallbackConversationObjective(world: StreetGameState) {

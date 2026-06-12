@@ -24,6 +24,8 @@ import {
   exitToStreet,
 } from "./street-test-helpers.js";
 
+const STREET_SPACE_ID = "street:south-quay";
+
 type PlanningAIProviderResult =
   | StreetPlanningResult
   | null
@@ -368,7 +370,109 @@ function actionById(world: StreetGameState, actionId: string) {
   return world.availableActions.find((action) => action.id === actionId);
 }
 
+const npcFirstContactPrimerCases = [
+  {
+    feed:
+      "Mara gives you a measured look, like she's deciding whether you're here for a bed, for work, or just to stop feeling new.",
+    memory:
+      "Mara weighs newcomers by whether they settle in, pull their weight, or disappear.",
+    npcId: "npc-mara",
+  },
+  {
+    feed:
+      "Ada glances over like the room is already filling, but there is still a little welcome in it.",
+    memory:
+      "Ada offers work when she thinks someone can keep the tea room easy through lunch.",
+    npcId: "npc-ada",
+  },
+  {
+    feed:
+      "Jo looks up from the bench with the kind of patience that expects you to get to the point.",
+    memory: "Jo prices things fairly enough that you notice.",
+    npcId: "npc-jo",
+  },
+  {
+    feed:
+      "Tomas glances at your shoulders, not your face, like talk only matters if it turns into labor.",
+    memory:
+      "Tomas thinks in loads, time windows, and whether you slow the rest of the yard down.",
+    npcId: "npc-tomas",
+  },
+  {
+    feed:
+      "Nia watches the square while she talks to you, like she expects the next important detail to arrive mid-sentence.",
+    memory: "Nia notices small jams before the whole block has to notice them.",
+    npcId: "npc-nia",
+  },
+] as const;
+
+async function enterNpcPrimerScene(
+  engine: SimulationEngine,
+  world: StreetGameState,
+  npcId: (typeof npcFirstContactPrimerCases)[number]["npcId"],
+) {
+  if (npcId === "npc-mara") {
+    return enterMorrowHouse(engine, world);
+  }
+  if (npcId === "npc-ada") {
+    return enterTeaHouse(engine, world);
+  }
+  if (npcId === "npc-jo") {
+    return enterRepairStall(engine, world);
+  }
+
+  const npc = world.npcs.find((entry) => entry.id === npcId);
+  expect(npc).toBeDefined();
+  const tile = world.map.tiles.find(
+    (entry) => entry.locationId === npc?.currentLocationId && entry.walkable,
+  );
+  expect(tile).toBeDefined();
+
+  return {
+    ...world,
+    activeSpaceId: STREET_SPACE_ID,
+    player: {
+      ...world.player,
+      currentLocationId: npc!.currentLocationId,
+      x: tile!.x,
+      y: tile!.y,
+    },
+  };
+}
+
+function countExactText(entries: Array<{ text: string }>, text: string) {
+  return entries.filter((entry) => entry.text === text).length;
+}
+
 describe("SimulationEngine street slice", () => {
+  it("primes known NPC first-contact feed and memory exactly once", async () => {
+    for (const primerCase of npcFirstContactPrimerCases) {
+      const engine = new SimulationEngine(new MockAIProvider());
+      let world = await engine.createGame(
+        `game-${primerCase.npcId}-first-contact-primer`,
+      );
+
+      world = await enterNpcPrimerScene(engine, world, primerCase.npcId);
+      world = await engine.runCommand(world, {
+        npcId: primerCase.npcId,
+        text: "Hello. I'm Rowan.",
+        type: "speak",
+      });
+
+      expect(countExactText(world.feed, primerCase.feed)).toBe(1);
+      expect(countExactText(world.player.memories, primerCase.memory)).toBe(1);
+
+      world = await engine.runCommand(world, {
+        npcId: primerCase.npcId,
+        text: "One more question.",
+        type: "speak",
+      });
+
+      expect(countExactText(world.feed, primerCase.feed)).toBe(1);
+      expect(countExactText(world.player.memories, primerCase.memory)).toBe(1);
+    }
+  });
+
   it("lets the player discover and complete a first paid shift", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-tea-shift");
