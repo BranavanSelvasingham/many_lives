@@ -1351,6 +1351,12 @@ async function assertCameraPanContractGuard() {
     "NPC map-agency targets must not draw full location footprint halos that read as blue rectangle artifacts.",
   );
   assert.ok(
+    streetSource.includes("target-outside-safe-rect") &&
+      streetSource.includes("label-would-clamp-away-from-target") &&
+      streetSource.includes("pointInsideVisualRect(cue.targetWorld, labelSafeRect)"),
+    "Map-agency target labels must hide instead of clamping distant landmark labels into the wrong camera region.",
+  );
+  assert.ok(
     visualSceneRendererSource.includes("drawHarborBuoy("),
     "Harbor ambient life must render the east-water cue as an authored buoy, not a stray bright dot.",
   );

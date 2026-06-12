@@ -90,6 +90,9 @@ const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
   minX: 180,
   minY: 550,
 };
+const MORROW_SIDE_WORLD_MAX_X = 700;
+const KETTLE_SIDE_WORLD_MIN_X = 900;
+const MAP_AGENCY_TARGET_LABEL_MAX_OFFSET = 120;
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
 const INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES = 10;
 
@@ -109,6 +112,17 @@ function pointDistance(left, right) {
   return Math.hypot(
     (right.x ?? 0) - (left.x ?? 0),
     (right.y ?? 0) - (left.y ?? 0),
+  );
+}
+
+function pointInsideRect(point, rect) {
+  return Boolean(
+    point &&
+      rect &&
+      point.x >= rect.left &&
+      point.x <= rect.right &&
+      point.y >= rect.top &&
+      point.y <= rect.bottom,
   );
 }
 
@@ -5728,6 +5742,80 @@ function assertCloseConversationLabelSuppressed(byLabel, label) {
   );
 }
 
+function assertKettleTargetCueSpatialAuthority(byLabel, label) {
+  const entry = byLabel[label];
+  assert.ok(entry, `Expected Kettle target timeline entry ${label}.`);
+  assert.equal(
+    entry.location?.id,
+    "boarding-house",
+    `${label}: expected route-start evidence while Rowan is still leaving Morrow House.`,
+  );
+  assert.equal(
+    entry.autonomy?.targetLocationId,
+    "tea-house",
+    `${label}: expected Kettle & Lamp to be the selected target.`,
+  );
+
+  const mapAgency = entry.mapAgency;
+  assert.ok(mapAgency, `${label}: missing map-agency probe.`);
+  assert.equal(
+    mapAgency.currentLocation?.id,
+    "boarding-house",
+    `${label}: map-agency probe must expose the current simulated location.`,
+  );
+  assert.equal(
+    mapAgency.target?.locationId,
+    "tea-house",
+    `${label}: map-agency probe must expose the Kettle & Lamp target location.`,
+  );
+  assert.ok(
+    mapAgency.playerWorldPoint,
+    `${label}: map-agency probe must expose Rowan's rendered world point.`,
+  );
+  assert.ok(
+    mapAgency.target,
+    `${label}: map-agency probe must expose the target world point.`,
+  );
+  assert.ok(
+    mapAgency.cameraVisibleWorldRect,
+    `${label}: map-agency probe must expose the camera visible world rect.`,
+  );
+
+  const labels = mapAgency.labels ?? {};
+  if (labels.targetVisible) {
+    assert.ok(
+      labels.targetWorldPoint,
+      `${label}: visible target label must expose its rendered world point.`,
+    );
+    assert.ok(
+      pointDistance(labels.targetWorldPoint, mapAgency.target) <=
+        MAP_AGENCY_TARGET_LABEL_MAX_OFFSET,
+      `${label}: visible Kettle target label drifted away from its target point: ${JSON.stringify({
+        label: labels.targetWorldPoint,
+        target: mapAgency.target,
+      })}.`,
+    );
+    if (mapAgency.playerWorldPoint.x <= MORROW_SIDE_WORLD_MAX_X) {
+      assert.ok(
+        labels.targetWorldPoint.x >= KETTLE_SIDE_WORLD_MIN_X,
+        `${label}: NEXT: KETTLE & LAMP rendered near the Morrow-side anchor while Rowan was still there: ${JSON.stringify({
+          label: labels.targetWorldPoint,
+          player: mapAgency.playerWorldPoint,
+          target: mapAgency.target,
+        })}.`,
+      );
+    }
+  }
+
+  if (!pointInsideRect(mapAgency.target, mapAgency.cameraVisibleWorldRect)) {
+    assert.equal(
+      labels.targetVisible,
+      false,
+      `${label}: Kettle target label must hide when the target is outside the visible camera rect.`,
+    );
+  }
+}
+
 function buildMovementAuditSummary(timeline) {
   const playerRoutes = timeline
     .filter((entry) => entry.movement?.playerRoute?.active)
@@ -6983,6 +7071,7 @@ async function closeInhabitFocusPanel(session, label) {
 }
 
 function buildTimelineEntry({
+  camera,
   dom,
   game,
   label,
@@ -6998,6 +7087,7 @@ function buildTimelineEntry({
       active: probe.cityEvents ?? [],
       sim: simCityEventSnapshot(game),
     },
+    camera: camera ?? null,
     clock: probe.clock,
     dom: dom
       ? {
@@ -7058,6 +7148,7 @@ async function captureBrowserState({ game, index, label, session }) {
   });
   assertBrowserProbeMatchesGame(label, game, probe);
   const mapAgency = await session.readMapAgencyProbe();
+  const camera = await session.readCameraProbe();
   assertGameplayDom(label, game, probe, dom);
 
   const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
@@ -7084,6 +7175,7 @@ async function captureBrowserState({ game, index, label, session }) {
   }
 
   return {
+    camera,
     dom,
     mapAgency,
     probe,
@@ -7109,6 +7201,7 @@ async function captureBrowserMovementState({
     assertRequiredNpcPatrolDiagnostics(label, probe);
   }
   const mapAgency = await session.readMapAgencyProbe();
+  const camera = await session.readCameraProbe();
 
   const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
   const screenshotPath = path.join(OUTPUT_DIR, `${key}.png`);
@@ -7134,6 +7227,7 @@ async function captureBrowserMovementState({
   }
 
   return {
+    camera,
     dom: null,
     mapAgency,
     probe,
@@ -7148,6 +7242,7 @@ async function captureProbeState({ game, label }) {
   assertCityEventState(label, game);
 
   return {
+    camera: null,
     dom: null,
     mapAgency: null,
     probe,
@@ -10027,6 +10122,7 @@ async function main() {
         });
         timeline.push(
           buildTimelineEntry({
+            camera: routeStartCapture.camera,
             dom: routeStartCapture.dom,
             game: previousGame,
             label: routeStartLabel,
@@ -10057,6 +10153,7 @@ async function main() {
         });
         timeline.push(
           buildTimelineEntry({
+            camera: routeMidCapture.camera,
             dom: routeMidCapture.dom,
             game: previousGame,
             label: routeMidLabel,
@@ -10088,6 +10185,7 @@ async function main() {
           });
           timeline.push(
             buildTimelineEntry({
+              camera: routeCloseCapture.camera,
               dom: routeCloseCapture.dom,
               game: previousGame,
               label: routeCloseLabel,
@@ -10119,6 +10217,7 @@ async function main() {
             });
       timeline.push(
         buildTimelineEntry({
+          camera: capture.camera,
           dom: capture.dom,
           game,
           label: step.label,
@@ -10173,6 +10272,7 @@ async function main() {
     "stage-cafe-move-route-start",
     "Morrow House to Kettle & Lamp",
   );
+  assertKettleTargetCueSpatialAuthority(byLabel, "stage-cafe-move-route-start");
   assertTimelineRoute(
     byLabel,
     "stage-home-move-route-start",
