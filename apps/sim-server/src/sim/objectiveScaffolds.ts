@@ -166,6 +166,17 @@ export interface FirstAfternoonRouteState {
   wrappedFirstAfternoon: boolean;
 }
 
+export interface MaraAdaLeadRouteState {
+  hasFormedVerificationIntent: boolean;
+  hasLeadFieldNote: boolean;
+  hasLeadViable: boolean;
+  hasOpenWorkChoice: boolean;
+  hasReachedTeaHouse: boolean;
+  hasTalkedToAda: boolean;
+  hasTalkedToMara: boolean;
+  homeLocationId?: string;
+}
+
 interface FirstAfternoonRouteStepTemplate {
   actionId?: (state: FirstAfternoonRouteState) => string | undefined;
   detail: string | ((state: FirstAfternoonRouteState) => string);
@@ -187,6 +198,30 @@ interface FirstAfternoonRouteOutcomeTemplate {
   targetLocationId?:
     | string
     | ((state: FirstAfternoonRouteState) => string | undefined);
+  urgency: number;
+}
+
+interface MaraAdaLeadRouteStepTemplate {
+  actionId?: (state: MaraAdaLeadRouteState) => string | undefined;
+  detail: string | ((state: MaraAdaLeadRouteState) => string);
+  done: (state: MaraAdaLeadRouteState) => boolean;
+  id: string;
+  npcId?: string | ((state: MaraAdaLeadRouteState) => string | undefined);
+  progress: string | ((state: MaraAdaLeadRouteState) => string);
+  targetLocationId?:
+    | string
+    | ((state: MaraAdaLeadRouteState) => string | undefined);
+  title: string;
+}
+
+interface MaraAdaLeadRouteOutcomeTemplate {
+  actionId?: (state: MaraAdaLeadRouteState) => string | undefined;
+  id: string;
+  label: string;
+  npcId?: string | ((state: MaraAdaLeadRouteState) => string | undefined);
+  targetLocationId?:
+    | string
+    | ((state: MaraAdaLeadRouteState) => string | undefined);
   urgency: number;
 }
 
@@ -225,6 +260,7 @@ interface ObjectiveRouteScaffold {
   deterministicOpeningRouteKeys?: string[];
   moveIntents?: MoveIntentHint[];
   playerThoughts?: PlayerThoughtHint[];
+  routeHeadline?: string;
   routeKeys: string[];
   semanticMoveBonuses?: SemanticMoveBonus[];
   semanticHints?: SemanticHint[];
@@ -574,6 +610,179 @@ const FIRST_AFTERNOON_STEP_TEMPLATES: FirstAfternoonRouteStepTemplate[] = [
   },
 ];
 
+const MARA_ADA_LEAD_OUTCOME_TEMPLATES: MaraAdaLeadRouteOutcomeTemplate[] = [
+  {
+    id: "mara-ada-hear-lead",
+    label: "Mara's lead heard",
+    urgency: 6,
+    npcId: ({ hasLeadFieldNote, hasTalkedToMara }) =>
+      hasTalkedToMara || hasLeadFieldNote ? undefined : "npc-mara",
+    targetLocationId: ({
+      hasLeadFieldNote,
+      hasTalkedToMara,
+      homeLocationId,
+    }) => (hasTalkedToMara || hasLeadFieldNote ? undefined : homeLocationId),
+  },
+  {
+    id: "mara-ada-form-intent",
+    label: "Ada verification intent formed",
+    urgency: 5,
+    actionId: ({
+      hasFormedVerificationIntent,
+      hasLeadViable,
+      hasTalkedToMara,
+    }) =>
+      hasTalkedToMara && !hasFormedVerificationIntent && hasLeadViable
+        ? "reflect:first-afternoon-plan"
+        : undefined,
+    targetLocationId: ({
+      hasFormedVerificationIntent,
+      hasLeadViable,
+      homeLocationId,
+    }) =>
+      hasFormedVerificationIntent || !hasLeadViable
+        ? undefined
+        : homeLocationId,
+  },
+  {
+    id: "mara-ada-walk-route",
+    label: "Kettle & Lamp reached",
+    urgency: 4,
+    targetLocationId: ({ hasLeadViable, hasReachedTeaHouse }) =>
+      hasReachedTeaHouse || !hasLeadViable ? undefined : "tea-house",
+  },
+  {
+    id: "mara-ada-ask-directly",
+    label: "Ada lead verified directly",
+    urgency: 3,
+    npcId: ({ hasLeadFieldNote, hasLeadViable, hasTalkedToAda }) =>
+      hasTalkedToAda || hasLeadFieldNote || !hasLeadViable
+        ? undefined
+        : "npc-ada",
+    targetLocationId: ({ hasLeadFieldNote, hasLeadViable, hasTalkedToAda }) =>
+      hasTalkedToAda || hasLeadFieldNote || !hasLeadViable
+        ? undefined
+        : "tea-house",
+  },
+  {
+    id: "mara-ada-record-evidence",
+    label: "Ada lead recorded as evidence",
+    urgency: 2,
+    targetLocationId: ({ hasLeadFieldNote, hasTalkedToAda }) =>
+      hasTalkedToAda && !hasLeadFieldNote ? "tea-house" : undefined,
+  },
+  {
+    id: "mara-ada-open-choice",
+    label: "Lead opened a real choice",
+    urgency: 1,
+    targetLocationId: ({
+      hasLeadFieldNote,
+      hasLeadViable,
+      hasOpenWorkChoice,
+    }) =>
+      hasLeadFieldNote && !hasOpenWorkChoice && hasLeadViable
+        ? "tea-house"
+        : undefined,
+  },
+];
+
+const MARA_ADA_LEAD_STEP_TEMPLATES: MaraAdaLeadRouteStepTemplate[] = [
+  {
+    id: "mara-ada-hear-lead",
+    title: "Hear Mara's Kettle & Lamp lead.",
+    detail: ({ hasTalkedToMara }) =>
+      hasTalkedToMara
+        ? "Mara pointed Rowan toward Ada instead of letting the afternoon drift."
+        : "Ask Mara who can turn tonight's room into real footing.",
+    progress: ({ hasTalkedToMara }) =>
+      hasTalkedToMara ? "Lead heard" : "Talk to Mara",
+    done: ({ hasTalkedToMara }) => hasTalkedToMara,
+    npcId: "npc-mara",
+    targetLocationId: ({ homeLocationId }) => homeLocationId,
+  },
+  {
+    id: "mara-ada-form-intent",
+    title: "Form the plan to verify it directly.",
+    detail: ({ hasFormedVerificationIntent }) =>
+      hasFormedVerificationIntent
+        ? "Rowan chose to ask Ada rather than wander, rest, or wait for work to find him."
+        : "Make the plan explicit: walk to Kettle & Lamp and ask Ada about lunch work.",
+    progress: ({ hasFormedVerificationIntent }) =>
+      hasFormedVerificationIntent ? "Intent clear" : "Choose the useful move",
+    done: ({ hasFormedVerificationIntent }) => hasFormedVerificationIntent,
+    actionId: ({
+      hasFormedVerificationIntent,
+      hasLeadViable,
+      hasTalkedToMara,
+    }) =>
+      hasTalkedToMara && !hasFormedVerificationIntent && hasLeadViable
+        ? "reflect:first-afternoon-plan"
+        : undefined,
+    targetLocationId: ({
+      hasFormedVerificationIntent,
+      hasLeadViable,
+      hasTalkedToMara,
+      homeLocationId,
+    }) =>
+      hasTalkedToMara && !hasFormedVerificationIntent && hasLeadViable
+        ? homeLocationId
+        : undefined,
+  },
+  {
+    id: "mara-ada-walk-route",
+    title: "Walk to Kettle & Lamp.",
+    detail:
+      "The knowledge only counts if Rowan gets there in person and asks the right person.",
+    progress: ({ hasReachedTeaHouse }) =>
+      hasReachedTeaHouse ? "At Kettle & Lamp" : "On the way",
+    done: ({ hasReachedTeaHouse }) => hasReachedTeaHouse,
+    targetLocationId: ({ hasLeadViable }) =>
+      hasLeadViable ? "tea-house" : undefined,
+  },
+  {
+    id: "mara-ada-ask-directly",
+    title: "Ask Ada about lunch work.",
+    detail: ({ hasTalkedToAda }) =>
+      hasTalkedToAda
+        ? "Ada answered the lead directly."
+        : "Ask Ada whether lunch actually needs help today.",
+    progress: ({ hasTalkedToAda }) =>
+      hasTalkedToAda ? "Ada asked" : "Ask Ada",
+    done: ({ hasTalkedToAda }) => hasTalkedToAda,
+    npcId: ({ hasLeadViable }) => (hasLeadViable ? "npc-ada" : undefined),
+    targetLocationId: ({ hasLeadViable }) =>
+      hasLeadViable ? "tea-house" : undefined,
+  },
+  {
+    id: "mara-ada-record-evidence",
+    title: "Record what Rowan learned.",
+    detail: ({ hasLeadFieldNote }) =>
+      hasLeadFieldNote
+        ? "Rowan has a field note tying the claim to Ada, Kettle & Lamp, and the time."
+        : "Capture the learned fact, the source, the place, and what remains uncertain.",
+    progress: ({ hasLeadFieldNote }) =>
+      hasLeadFieldNote ? "Field note made" : "Needs evidence",
+    done: ({ hasLeadFieldNote }) => hasLeadFieldNote,
+    targetLocationId: ({ hasLeadFieldNote, hasLeadViable, hasTalkedToAda }) =>
+      hasTalkedToAda || hasLeadFieldNote || hasLeadViable
+        ? "tea-house"
+        : undefined,
+  },
+  {
+    id: "mara-ada-open-choice",
+    title: "Open the next choice from that knowledge.",
+    detail: ({ hasOpenWorkChoice }) =>
+      hasOpenWorkChoice
+        ? "The offer is now actionable: take the shift, check another lead, return later, or keep exploring."
+        : "The loop should end with an actual choice, not a vague lead.",
+    progress: ({ hasOpenWorkChoice }) =>
+      hasOpenWorkChoice ? "Choice unlocked" : "No offer yet",
+    done: ({ hasOpenWorkChoice }) => hasOpenWorkChoice,
+    targetLocationId: ({ hasLeadViable }) =>
+      hasLeadViable ? "tea-house" : undefined,
+  },
+];
+
 const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   {
     routeKeys: ["first-afternoon", "mara-ada-lead"],
@@ -903,6 +1112,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   },
   {
     routeKeys: ["mara-ada-lead"],
+    routeHeadline: "Verify Mara's Kettle & Lamp lead and turn it into a real choice.",
     semanticMoveBonuses: [
       {
         locationId: "tea-house",
@@ -1026,6 +1236,16 @@ export function objectiveRouteFirstAfternoonCompletionOutcome(): CompletionOutco
   throw new Error("First-afternoon completion outcome scaffold is missing.");
 }
 
+export function objectiveRouteHeadline(routeKey: string) {
+  for (const scaffold of activeScaffolds(routeKey)) {
+    if (scaffold.routeHeadline) {
+      return scaffold.routeHeadline;
+    }
+  }
+
+  return undefined;
+}
+
 export function objectiveRouteFirstAfternoonRouteScaffold(
   state: FirstAfternoonRouteState,
 ): {
@@ -1060,6 +1280,40 @@ export function objectiveRouteFirstAfternoonRouteScaffold(
   };
 }
 
+export function objectiveRouteMaraAdaLeadRouteScaffold(
+  state: MaraAdaLeadRouteState,
+): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: MARA_ADA_LEAD_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      npcId: resolveMaraAdaLeadRouteValue(template.npcId, state),
+      targetLocationId: resolveMaraAdaLeadRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+    steps: MARA_ADA_LEAD_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: template.title,
+      detail: resolveMaraAdaLeadRouteText(template.detail, state),
+      progress: resolveMaraAdaLeadRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: template.actionId?.(state),
+      npcId: resolveMaraAdaLeadRouteValue(template.npcId, state),
+      targetLocationId: resolveMaraAdaLeadRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+  };
+}
+
 function resolveFirstAfternoonRouteValue(
   value:
     | string
@@ -1070,9 +1324,26 @@ function resolveFirstAfternoonRouteValue(
   return typeof value === "function" ? value(state) : value;
 }
 
+function resolveMaraAdaLeadRouteValue(
+  value:
+    | string
+    | ((state: MaraAdaLeadRouteState) => string | undefined)
+    | undefined,
+  state: MaraAdaLeadRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
 function resolveFirstAfternoonRouteText(
   value: string | ((state: FirstAfternoonRouteState) => string),
   state: FirstAfternoonRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveMaraAdaLeadRouteText(
+  value: string | ((state: MaraAdaLeadRouteState) => string),
+  state: MaraAdaLeadRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
 }
