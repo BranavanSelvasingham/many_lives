@@ -16,6 +16,7 @@ import {
   objectiveRouteActionRationale,
   objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
+  objectiveRouteCompletionAcknowledgement,
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
   objectiveRouteMoveIntent,
@@ -1201,17 +1202,17 @@ function acknowledgeFirstAfternoonCompletion(world: StreetGameState): boolean {
     return false;
   }
 
+  const acknowledgement = objectiveRouteCompletionAcknowledgement(
+    world,
+    world.player.objective,
+  );
+  if (!acknowledgement) {
+    return false;
+  }
+
   world.firstAfternoon.completionAcknowledgedAt = world.currentTime;
-  addFeed(
-    world,
-    "memory",
-    "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.",
-  );
-  rememberIfNew(
-    world,
-    "self",
-    "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.",
-  );
+  addFeed(world, "memory", acknowledgement.feedText);
+  rememberIfNew(world, "self", acknowledgement.memoryText);
   return true;
 }
 

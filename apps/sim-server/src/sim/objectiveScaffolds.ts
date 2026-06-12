@@ -110,6 +110,12 @@ interface ActionTargetLocationHint {
   routeKeys?: string[];
 }
 
+interface CompletionAcknowledgementHint {
+  feedText: string;
+  memoryText: string;
+  when?: (context: ScaffoldContext) => boolean;
+}
+
 interface RouteActionPressureInput {
   actionId: string;
   actionKind: string;
@@ -121,6 +127,7 @@ interface RouteActionPressureInput {
 interface ObjectiveRouteScaffold {
   actionRationales?: ActionRationaleHint[];
   actionTargetLocations?: ActionTargetLocationHint[];
+  completionAcknowledgement?: CompletionAcknowledgementHint;
   conversationFallbacks?: ConversationFallbackHint[];
   conversationTopicSuppressions?: ConversationTopicSuppression[];
   conversationThoughts?: ConversationThoughtHint[];
@@ -145,6 +152,13 @@ const ADA_LEAD_ROUTE_KEYS = [
 const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   {
     routeKeys: ["first-afternoon", "mara-ada-lead"],
+    completionAcknowledgement: {
+      feedText:
+        "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.",
+      memoryText:
+        "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.",
+      when: ({ objective }) => objective.routeKey === "first-afternoon",
+    },
     deterministicOpeningNpcIds: ["npc-mara", "npc-ada"],
     deterministicOpeningRouteKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
     semanticHints: [
@@ -442,6 +456,28 @@ export function objectiveRouteSemanticHints(
     locationIds: [...locationIds],
     npcIds: [...npcIds],
   };
+}
+
+export function objectiveRouteCompletionAcknowledgement(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const acknowledgement = scaffold.completionAcknowledgement;
+    if (acknowledgement && (!acknowledgement.when || acknowledgement.when(context))) {
+      return {
+        feedText: acknowledgement.feedText,
+        memoryText: acknowledgement.memoryText,
+      };
+    }
+  }
+
+  return undefined;
 }
 
 export function objectiveRouteMoveIntent(

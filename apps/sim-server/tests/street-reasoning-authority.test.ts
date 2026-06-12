@@ -24,6 +24,10 @@ const FIRST_AFTERNOON_TEA_RUSH_THOUGHT =
   "The room is filling. Cups first, tables second, keep moving.";
 const FIRST_AFTERNOON_TEA_COUNTER_THOUGHT =
   "Ada is not watching every step now. That probably means I am keeping up.";
+const FIRST_AFTERNOON_COMPLETION_FEED =
+  "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.";
+const FIRST_AFTERNOON_COMPLETION_MEMORY =
+  "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -269,6 +273,25 @@ describe("street reasoning authority", () => {
       expect(scaffoldSource).toContain(stageThought);
       expect(engineSource).not.toContain(stageThought);
       expect(thoughtsSource).not.toContain(stageThought);
+    }
+  });
+
+  it("keeps first-afternoon completion acknowledgement copy in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const acknowledgementCopy of [
+      FIRST_AFTERNOON_COMPLETION_FEED,
+      FIRST_AFTERNOON_COMPLETION_MEMORY,
+    ]) {
+      expect(scaffoldSource).toContain(acknowledgementCopy);
+      expect(engineSource).not.toContain(acknowledgementCopy);
     }
   });
 
