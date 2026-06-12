@@ -729,8 +729,13 @@ type MapAgencyCue = {
 
 type MapAgencyLabelDiagnostics = {
   closeInteractionSuppressed: boolean;
+  intentWorldPoint: Point | null;
   intentText: string | null;
   intentVisible: boolean;
+  targetHiddenReason: string | null;
+  targetInSafeRect: boolean | null;
+  targetLabelClampDistance: number | null;
+  targetWorldPoint: Point | null;
   targetText: string | null;
   targetVisible: boolean;
 };
@@ -4587,33 +4592,78 @@ function syncMapAgencyObjects(
   }
 
   let targetCopy: string | null = cue.targetLabel;
-  const showTargetLabel =
+  let targetLabelWorldPoint: Point | null = null;
+  let targetHiddenReason: string | null = null;
+  let targetInSafeRect: boolean | null = null;
+  let targetLabelClampDistance: number | null = null;
+  const targetBasePoint =
+    cue.targetWorld && cue.targetLabel
+      ? {
+          x: cue.targetWorld.x,
+          y: cue.targetWorld.y - (cue.targetIsNpc ? CELL * 0.86 : CELL * 0.62),
+        }
+      : null;
+  const targetFarEnough =
     cue.targetWorld &&
-    cue.targetLabel &&
-    pointNearVisualRect(cue.targetWorld, labelSafeRect, CELL * 0.7) &&
     distanceBetween(playerPixel, cue.targetWorld) >
       (cue.targetIsNpc ? CELL * 1.45 : CELL * 1.8);
+  const targetPointInSafeRect = cue.targetWorld
+    ? pointInsideVisualRect(cue.targetWorld, labelSafeRect)
+    : false;
+  const targetHalfWidth = cue.targetLabel
+    ? estimateMapAgencyLabelHalfWidth(cue.targetLabel.toUpperCase(), "target")
+    : 0;
+  const candidateTargetPosition =
+    targetBasePoint && cue.targetLabel
+      ? clampMapAgencyLabelPosition(
+          targetBasePoint,
+          world,
+          targetHalfWidth,
+          34,
+          labelSafeRect,
+        )
+      : null;
+  const clampDistance =
+    candidateTargetPosition && targetBasePoint
+      ? distanceBetween(candidateTargetPosition, targetBasePoint)
+      : null;
+  const targetLabelSpatiallyTied =
+    clampDistance !== null && clampDistance <= CELL * 0.35;
+  const showTargetLabel = Boolean(
+    cue.targetWorld &&
+      cue.targetLabel &&
+      targetFarEnough &&
+      targetPointInSafeRect &&
+      targetLabelSpatiallyTied,
+  );
 
-  if (showTargetLabel && cue.targetWorld && cue.targetLabel) {
+  targetInSafeRect = cue.targetWorld ? targetPointInSafeRect : null;
+  targetLabelClampDistance =
+    clampDistance === null ? null : roundBrowserNumber(clampDistance);
+
+  if (!cue.targetWorld || !cue.targetLabel) {
+    targetHiddenReason = "missing-target";
+  } else if (!targetFarEnough) {
+    targetHiddenReason = "player-near-target";
+  } else if (!targetPointInSafeRect) {
+    targetHiddenReason = "target-outside-safe-rect";
+  } else if (!targetLabelSpatiallyTied) {
+    targetHiddenReason = "label-would-clamp-away-from-target";
+  }
+
+  if (
+    showTargetLabel &&
+    cue.targetWorld &&
+    cue.targetLabel &&
+    candidateTargetPosition
+  ) {
     targetCopy = cue.targetLabel.toUpperCase();
-    const targetHalfWidth = estimateMapAgencyLabelHalfWidth(
-      targetCopy,
-      "target",
-    );
-    const targetPosition = clampMapAgencyLabelPosition(
-      {
-        x: cue.targetWorld.x,
-        y: cue.targetWorld.y - (cue.targetIsNpc ? CELL * 0.86 : CELL * 0.62),
-      },
-      world,
-      targetHalfWidth,
-      34,
-      labelSafeRect,
-    );
+    targetLabelWorldPoint = candidateTargetPosition;
+    targetHiddenReason = null;
     setMapAgencyLabel(
       objects.agencyTargetText,
       targetCopy,
-      targetPosition,
+      candidateTargetPosition,
       {
         alpha: 0.8 + Math.sin(now / 640) * 0.035,
         background: "rgba(28, 22, 14, 0.72)",
@@ -4624,13 +4674,25 @@ function syncMapAgencyObjects(
     objects.agencyTargetText.setVisible(false).setAlpha(0);
   }
 
-  syncBrowserMapAgencyProbe(objects.overlayDom, cue, {
-    closeInteractionSuppressed,
-    intentText: intentCopy,
-    intentVisible: showIntentLabel,
-    targetText: targetCopy,
-    targetVisible: Boolean(showTargetLabel),
-  });
+  syncBrowserMapAgencyProbe(
+    objects.overlayDom,
+    cue,
+    {
+      closeInteractionSuppressed,
+      intentWorldPoint: showIntentLabel ? roundBrowserPoint(intentPosition) : null,
+      intentText: intentCopy,
+      intentVisible: showIntentLabel,
+      targetHiddenReason,
+      targetInSafeRect,
+      targetLabelClampDistance,
+      targetWorldPoint: targetLabelWorldPoint
+        ? roundBrowserPoint(targetLabelWorldPoint)
+        : null,
+      targetText: targetCopy,
+      targetVisible: Boolean(showTargetLabel),
+    },
+    runtimeState,
+  );
 }
 
 function setMapAgencyLabel(
@@ -4658,6 +4720,15 @@ function pointNearVisualRect(point: Point, rect: VisualRect, margin: number) {
     point.y < rect.y - margin ||
     point.x > rect.x + rect.width + margin ||
     point.y > rect.y + rect.height + margin
+  );
+}
+
+function pointInsideVisualRect(point: Point, rect: VisualRect) {
+  return (
+    point.x >= rect.x &&
+    point.y >= rect.y &&
+    point.x <= rect.x + rect.width &&
+    point.y <= rect.y + rect.height
   );
 }
 
@@ -7807,6 +7878,7 @@ function syncBrowserMapAgencyProbe(
   root: HTMLElement,
   cue: MapAgencyCue | null,
   labels?: MapAgencyLabelDiagnostics,
+  runtimeState?: RuntimeState,
 ) {
   const probe = root.querySelector<HTMLScriptElement>(
     "#ml-browser-map-agency-probe",
@@ -7815,12 +7887,32 @@ function syncBrowserMapAgencyProbe(
     return;
   }
 
+  const game = runtimeState?.snapshot.game ?? null;
+  const currentLocationId = game?.player.currentLocationId ?? null;
+  const currentLocation = currentLocationId
+    ? runtimeState?.indices.locationsById.get(currentLocationId) ??
+      game?.locations.find((location) => location.id === currentLocationId) ??
+      null
+    : null;
+
   probe.textContent = JSON.stringify(
     cue
       ? {
+          cameraVisibleWorldRect:
+            runtimeState?.cameraProjection?.visibleWorldRect ?? null,
+          currentLocation: currentLocation
+            ? {
+                id: currentLocation.id,
+                name: currentLocation.name,
+                spaceId:
+                  game?.activeSpaceId ?? game?.player.spaceId ?? null,
+              }
+            : null,
           detail: cue.detail,
           intent: cue.intent,
           labels: labels ?? null,
+          playerWorldPoint:
+            runtimeState?.cameraProjection?.playerWorldPoint ?? null,
           target: cue.targetWorld
             ? {
                 isNpc: cue.targetIsNpc,
