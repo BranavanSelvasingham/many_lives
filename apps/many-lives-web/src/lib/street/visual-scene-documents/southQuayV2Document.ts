@@ -820,8 +820,120 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       1218
     ]
   },
-  "propClusters": [],
-  "props": [],
+  "propClusters": [
+    {
+      "id": "tea-house-first-morning-terrace",
+      "kind": "cafe_terrace",
+      "locationId": "tea-house",
+      "points": [
+        {
+          "x": 1216,
+          "y": 582
+        },
+        {
+          "x": 1272,
+          "y": 586
+        }
+      ],
+      "rect": {
+        "x": 1178,
+        "y": 552,
+        "width": 142,
+        "height": 54,
+        "radius": 10
+      }
+    },
+    {
+      "id": "market-square-first-morning-benches",
+      "kind": "square_bench_pair",
+      "locationId": "market-square",
+      "points": [
+        {
+          "x": 704,
+          "y": 596
+        },
+        {
+          "x": 1002,
+          "y": 598
+        }
+      ],
+      "rect": {
+        "x": 684,
+        "y": 578,
+        "width": 338,
+        "height": 40,
+        "radius": 10
+      }
+    },
+    {
+      "id": "market-square-first-morning-planters",
+      "kind": "square_planter_pair",
+      "locationId": "market-square",
+      "points": [
+        {
+          "x": 712,
+          "y": 872
+        },
+        {
+          "x": 998,
+          "y": 868
+        }
+      ],
+      "rect": {
+        "x": 692,
+        "y": 846,
+        "width": 326,
+        "height": 50,
+        "radius": 12
+      }
+    },
+    {
+      "id": "moss-pier-first-morning-mooring",
+      "kind": "harbor_mooring",
+      "locationId": "moss-pier",
+      "points": [
+        {
+          "x": 1094,
+          "y": 1086
+        },
+        {
+          "x": 1228,
+          "y": 1098
+        },
+        {
+          "x": 1566,
+          "y": 1108
+        }
+      ],
+      "rect": {
+        "x": 1046,
+        "y": 1068,
+        "width": 568,
+        "height": 78,
+        "radius": 14
+      }
+    }
+  ],
+  "props": [
+    {
+      "kind": "lamp",
+      "scale": 0.92,
+      "x": 1118,
+      "y": 628
+    },
+    {
+      "kind": "lamp",
+      "scale": 0.86,
+      "x": 1538,
+      "y": 642
+    },
+    {
+      "kind": "terrace-table",
+      "scale": 0.92,
+      "x": 1462,
+      "y": 592
+    }
+  ],
   "referencePlate": {
     "alpha": 0,
     "height": 1024,
@@ -849,7 +961,50 @@ const SOUTH_QUAY_V2_DOCUMENT = {
     }
   ],
   "surfaceZones": [],
-  "waterRegions": [],
+  "waterRegions": [
+    {
+      "baseColor": 2911110,
+      "crestColor": 14219263,
+      "id": "harbor-main-v2",
+      "intensity": 0.88,
+      "rect": {
+        "x": 690,
+        "y": 1094,
+        "width": 1114,
+        "height": 206,
+        "radius": 0
+      },
+      "tag": "water_surface"
+    },
+    {
+      "baseColor": 2144060,
+      "crestColor": 14219263,
+      "id": "east-channel-v2",
+      "intensity": 0.58,
+      "rect": {
+        "x": 1772,
+        "y": 86,
+        "width": 100,
+        "height": 1134,
+        "radius": 0
+      },
+      "tag": "water_surface"
+    },
+    {
+      "baseColor": 15398651,
+      "crestColor": 16777215,
+      "id": "pilgrim-slip-foam-v2",
+      "intensity": 0.82,
+      "rect": {
+        "x": 1008,
+        "y": 1072,
+        "width": 684,
+        "height": 28,
+        "radius": 0
+      },
+      "tag": "shore_foam"
+    }
+  ],
   "width": 1872,
   "height": 1320,
   "terrainDraft": {
