@@ -91,6 +91,12 @@ const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
   minX: 180,
   minY: 550,
 };
+const KETTLE_LAMP_LANDMARK_BOUNDS = {
+  maxX: 1550,
+  maxY: 700,
+  minX: 1138,
+  minY: 324,
+};
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const KETTLE_SIDE_WORLD_MIN_X = 900;
 const MAP_AGENCY_TARGET_LABEL_MAX_OFFSET = 120;
@@ -124,6 +130,16 @@ function pointInsideRect(point, rect) {
       point.x <= rect.right &&
       point.y >= rect.top &&
       point.y <= rect.bottom,
+  );
+}
+
+function pointInsideBounds(point, bounds) {
+  return Boolean(
+    point &&
+      point.x >= bounds.minX &&
+      point.x <= bounds.maxX &&
+      point.y >= bounds.minY &&
+      point.y <= bounds.maxY,
   );
 }
 
@@ -5825,6 +5841,21 @@ function assertKettleTargetCueMapAgency(mapAgency, label) {
   );
 
   const labels = mapAgency.labels ?? {};
+  if (
+    mapAgency.playerWorldPoint.x <= MORROW_SIDE_WORLD_MAX_X &&
+    labels.intentVisible
+  ) {
+    assert.ok(
+      !/\bKettle\s*&?\s*Lamp\b/i.test(labels.intentText ?? ""),
+      `${label}: Kettle intent text rendered over Rowan while Rowan was still on the Morrow side: ${JSON.stringify({
+        intent: labels.intentText,
+        intentPoint: labels.intentWorldPoint,
+        player: mapAgency.playerWorldPoint,
+        target: mapAgency.target,
+      })}.`,
+    );
+  }
+
   if (labels.targetVisible) {
     assert.ok(
       labels.targetWorldPoint,
@@ -5906,6 +5937,55 @@ function assertKettleTargetCueSpatialAuthority(byLabel, label) {
   }
 
   assertKettleTargetCueMapAgency(mapAgency, evidenceLabel);
+}
+
+function assertSettledOutdoorPlayerLocationCorrelation({
+  bounds,
+  entry,
+  label,
+  locationId,
+  locationName,
+}) {
+  assert.ok(entry, `Expected settled outdoor entry ${label}.`);
+  assert.equal(
+    entry.location?.id,
+    locationId,
+    `${label}: expected the simulated location to be ${locationName}.`,
+  );
+  assert.equal(
+    entry.location?.spaceId,
+    "street:south-quay",
+    `${label}: expected an outdoor South Quay frame before entering ${locationName}.`,
+  );
+  assert.equal(
+    entry.visualPlayer?.isMovingToServerState,
+    false,
+    `${label}: expected the visual player to be settled at ${locationName}.`,
+  );
+  assert.equal(
+    entry.mapAgency?.currentLocation?.id,
+    locationId,
+    `${label}: map-agency current location must agree with ${locationName}.`,
+  );
+  assert.ok(
+    pointInsideBounds(entry.mapAgency?.playerWorldPoint, bounds),
+    `${label}: settled player map-agency point is outside the authored ${locationName} region: ${JSON.stringify({
+      point: entry.mapAgency?.playerWorldPoint,
+      bounds,
+      movement: entry.movement?.playerLocationGeometry,
+    })}.`,
+  );
+  assert.ok(
+    pointInsideBounds(
+      entry.movement?.playerLocationGeometry?.playerWorldPoint,
+      bounds,
+    ),
+    `${label}: settled movement geometry point is outside the authored ${locationName} region: ${JSON.stringify({
+      point: entry.movement?.playerLocationGeometry?.playerWorldPoint,
+      bounds,
+      movement: entry.movement?.playerLocationGeometry,
+    })}.`,
+  );
 }
 
 function buildMovementAuditSummary(timeline) {
@@ -10493,6 +10573,13 @@ async function main() {
     "tea-house",
     "Expected the staged move to keep Kettle & Lamp as the target.",
   );
+  assertSettledOutdoorPlayerLocationCorrelation({
+    bounds: KETTLE_LAMP_LANDMARK_BOUNDS,
+    entry: byLabel["stage-cafe-move"],
+    label: "stage-cafe-move",
+    locationId: "tea-house",
+    locationName: "Kettle & Lamp",
+  });
   assert.equal(
     byLabel["enter-cafe-interior"]?.activeConversation?.npcId,
     "npc-ada",
@@ -10581,6 +10668,13 @@ async function main() {
     "boarding-house",
     "Expected Rowan to visibly arrive back at Morrow House.",
   );
+  assertSettledOutdoorPlayerLocationCorrelation({
+    bounds: OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS,
+    entry: byLabel["stage-home-move"],
+    label: "stage-home-move",
+    locationId: "boarding-house",
+    locationName: "Morrow House",
+  });
   assert.match(
     byLabel["stage-home-move"]?.autonomy?.label ?? "",
     /enter/i,
