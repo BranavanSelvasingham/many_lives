@@ -11,6 +11,7 @@ import type {
 } from "../street-sim/types.js";
 import {
   objectiveRouteCartProblemRouteScaffold,
+  objectiveRouteCommittedJobRouteScaffold,
   objectiveRouteDefaultTextForFocus as objectiveRouteScaffoldDefaultTextForFocus,
   objectiveRouteExploreRouteScaffold,
   objectiveRouteFirstAfternoonRouteScaffold,
@@ -18,6 +19,7 @@ import {
   objectiveRouteMaraAdaLeadRouteScaffold,
   objectiveRoutePeopleRouteScaffold,
   objectiveRoutePumpProblemRouteScaffold,
+  objectiveRouteRestRouteScaffold,
   objectiveRouteSettleRouteScaffold,
   objectiveRouteToolProblemRouteScaffold,
   objectiveRouteWorkRouteScaffold,
@@ -1365,82 +1367,29 @@ function buildCommittedJobRoute(
   const atLocation = world.player.currentLocationId === job.locationId;
   const inWindow =
     currentHour(world) >= job.startHour && currentHour(world) < job.endHour;
+  const jobOpen = !job.completed && !job.missed;
+  const canWork = jobOpen && atLocation && inWindow;
+  const routeScaffold = objectiveRouteCommittedJobRouteScaffold({
+    atLocation,
+    beforeWindow: currentHour(world) < job.startHour,
+    canWork,
+    inWindow,
+    jobCompleted: job.completed,
+    jobId: job.id,
+    jobLocationId: location?.id,
+    jobLocationName: location?.name,
+    jobOpen,
+    jobTitle: job.title,
+    jobTitleLower: job.title.toLowerCase(),
+  });
 
   return {
     key: `commitment-${job.id}`,
     focus: "work",
     source,
-    outcomes: buildCommittedJobOutcomeDefinitions(job, location?.id, {
-      atLocation,
-      inWindow,
-    }),
-    steps: [
-      makeStep({
-        id: `commitment-go-${job.id}`,
-        title: `Get to ${location?.name ?? "the job site"} for ${job.title.toLowerCase()}.`,
-        detail:
-          "A live commitment should be the first thing Rowan can actually cash in.",
-        progress: atLocation ? "On site" : "Still moving",
-        done: atLocation || job.completed,
-        targetLocationId: location?.id,
-      }),
-      makeStep({
-        id: `commitment-window-${job.id}`,
-        title: "Be there while the shift window is still open.",
-        detail: "The block only keeps a shift open for so long.",
-        progress: inWindow
-          ? "Window open"
-          : currentHour(world) < job.startHour
-            ? "Waiting on the hour"
-            : "Window slipping",
-        done: inWindow || job.completed,
-        targetLocationId: location?.id,
-      }),
-      makeStep({
-        id: `commitment-finish-${job.id}`,
-        title: `Finish ${job.title.toLowerCase()}.`,
-        detail: "Following through is what turns a lead into standing.",
-        progress: job.completed ? "Finished" : "Still committed",
-        done: job.completed,
-        actionId: job.completed ? undefined : `work:${job.id}`,
-        targetLocationId: location?.id,
-      }),
-    ],
+    outcomes: routeScaffold.outcomes,
+    steps: routeScaffold.steps.map(makeStep),
   };
-}
-
-function buildCommittedJobOutcomeDefinitions(
-  job: JobState,
-  locationId: string | undefined,
-  state: {
-    atLocation: boolean;
-    inWindow: boolean;
-  },
-): ObjectiveOutcomeDefinition[] {
-  const jobOpen = !job.completed && !job.missed;
-  const canWork = jobOpen && state.atLocation && state.inWindow;
-
-  return [
-    {
-      id: `commitment-go-${job.id}`,
-      label: `${job.title} site reached`,
-      urgency: 3,
-      targetLocationId: jobOpen && !state.atLocation ? locationId : undefined,
-    },
-    {
-      id: `commitment-window-${job.id}`,
-      label: `${job.title} window open`,
-      urgency: 2,
-      targetLocationId: jobOpen && !state.atLocation ? locationId : undefined,
-    },
-    {
-      id: `commitment-finish-${job.id}`,
-      label: `${job.title} finished`,
-      urgency: 1,
-      actionId: canWork ? `work:${job.id}` : undefined,
-      targetLocationId: jobOpen && !canWork ? locationId : undefined,
-    },
-  ];
 }
 
 function buildHelpRoute(
@@ -1569,62 +1518,21 @@ function buildRestRoute(
   const home = findLocation(world, world.player.homeLocationId);
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
   const restLanded = hasRecoveredEnoughToMove(world);
+  const routeScaffold = objectiveRouteRestRouteScaffold({
+    atHome,
+    homeLocationId: home?.id,
+    homeLocationName: home?.name,
+    playerEnergy: world.player.energy,
+    restLanded,
+    restRequested: normalizedIncludes(textHint, "rest"),
+  });
   return {
     key: "rest-home",
     focus: "rest",
     source,
-    outcomes: buildRestOutcomeDefinitions(home?.id, {
-      atHome,
-      restLanded,
-    }),
-    steps: [
-      makeStep({
-        id: "rest-return",
-        title: `Get back to ${home?.name ?? "Morrow House"}.`,
-        detail: normalizedIncludes(textHint, "rest")
-          ? "The day is asking for a pause."
-          : "Rowan needs somewhere familiar before the hour does any good.",
-        progress: atHome ? "Home" : "Away",
-        done: atHome,
-        targetLocationId: home?.id,
-      }),
-      makeStep({
-        id: "rest-hour",
-        title: "Rest for an hour.",
-        detail:
-          "The point is to stop fighting the block long enough to get your legs back.",
-        progress: restLanded ? "Recovered" : `Energy ${world.player.energy}`,
-        done: restLanded,
-        actionId: restLanded ? undefined : "rest:home",
-        targetLocationId: restLanded ? undefined : home?.id,
-      }),
-    ],
+    outcomes: routeScaffold.outcomes,
+    steps: routeScaffold.steps.map(makeStep),
   };
-}
-
-function buildRestOutcomeDefinitions(
-  homeLocationId: string | undefined,
-  state: {
-    atHome: boolean;
-    restLanded: boolean;
-  },
-): ObjectiveOutcomeDefinition[] {
-  return [
-    {
-      id: "rest-return",
-      label: "Returned somewhere safe to rest",
-      urgency: 2,
-      targetLocationId:
-        !state.atHome && !state.restLanded ? homeLocationId : undefined,
-    },
-    {
-      id: "rest-hour",
-      label: "Recovered with an hour of rest",
-      urgency: 1,
-      actionId: state.atHome && !state.restLanded ? "rest:home" : undefined,
-      targetLocationId: state.restLanded ? undefined : homeLocationId,
-    },
-  ];
 }
 
 function buildPeopleRoute(
@@ -2456,14 +2364,6 @@ function routeHeadline(route: ObjectiveRoute) {
     return scaffoldHeadline;
   }
 
-  if (route.key === "rest-home") {
-    return "Recover enough at Morrow House to move cleanly again.";
-  }
-
-  if (route.key.startsWith("commitment-")) {
-    return "Follow through on accepted work before the window closes.";
-  }
-
   return defaultObjectiveTextForFocus(route.focus);
 }
 
@@ -2480,8 +2380,6 @@ function defaultObjectiveTextForFocus(focus: ObjectiveFocus) {
       return "Find the trouble worth stepping into and handle it.";
     case "tool":
       return "Get the right tool and use it where it matters.";
-    case "rest":
-      return "Recover enough to move cleanly again.";
     case "settle":
       return "Get settled in Brackenport: find a place to stay, steady income, and a few friends.";
     case "custom":

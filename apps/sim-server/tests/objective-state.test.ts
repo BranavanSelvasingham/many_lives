@@ -70,6 +70,13 @@ function addWrench(world: StreetGameState) {
   });
 }
 
+function setClock(world: StreetGameState, hour: number, minute = 0) {
+  world.clock.hour = hour;
+  world.clock.minute = minute;
+  world.clock.totalMinutes = hour * 60 + minute;
+  world.clock.label = hour >= 12 ? "Afternoon" : "Late morning";
+}
+
 function firstAfternoonObjective(world: StreetGameState) {
   return buildPlayerObjectiveState(world, {
     focus: "settle",
@@ -1936,6 +1943,160 @@ describe("objectiveState classification", () => {
     });
   });
 
+  it("keeps committed-job route metadata stable across active tea-shift states", () => {
+    const cases = [
+      {
+        name: "away-before-window",
+        locationId: "boarding-house",
+        hour: 11,
+        completed: false,
+        expectedRouteKey: "commitment-job-tea-shift",
+        expectedText:
+          "Follow through on accepted work before the window closes.",
+        expectedProgress: { completed: 0, total: 3 },
+        expectedOutcomes: [
+          {
+            id: "commitment-go-job-tea-shift",
+            label: "Cup-and-counter shift site reached",
+            urgency: 3,
+            status: "blocked",
+            actionId: undefined,
+            targetLocationId: "tea-house",
+          },
+          {
+            id: "commitment-window-job-tea-shift",
+            label: "Cup-and-counter shift window open",
+            urgency: 2,
+            status: "blocked",
+            actionId: undefined,
+            targetLocationId: "tea-house",
+          },
+          {
+            id: "commitment-finish-job-tea-shift",
+            label: "Cup-and-counter shift finished",
+            urgency: 1,
+            status: "blocked",
+            actionId: undefined,
+            targetLocationId: "tea-house",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "commitment-go-job-tea-shift",
+            title:
+              "Get to Kettle & Lamp for cup-and-counter shift.",
+            detail:
+              "A live commitment should be the first thing Rowan can actually cash in.",
+            progress: "Still moving",
+            actionId: undefined,
+            done: false,
+            targetLocationId: "tea-house",
+          },
+          {
+            id: "commitment-window-job-tea-shift",
+            title: "Be there while the shift window is still open.",
+            detail: "The block only keeps a shift open for so long.",
+            progress: "Waiting on the hour",
+            actionId: undefined,
+            done: false,
+            targetLocationId: "tea-house",
+          },
+          {
+            id: "commitment-finish-job-tea-shift",
+            title: "Finish cup-and-counter shift.",
+            detail: "Following through is what turns a lead into standing.",
+            progress: "Still committed",
+            actionId: "work:job-tea-shift",
+            done: false,
+            targetLocationId: "tea-house",
+          },
+        ],
+      },
+      {
+        name: "at-job-in-window",
+        locationId: "tea-house",
+        hour: 12,
+        completed: false,
+        expectedRouteKey: "commitment-job-tea-shift",
+        expectedText:
+          "Follow through on accepted work before the window closes.",
+        expectedProgress: { completed: 2, total: 3 },
+        expectedOutcomes: [
+          {
+            id: "commitment-go-job-tea-shift",
+            status: "met",
+            targetLocationId: undefined,
+          },
+          {
+            id: "commitment-window-job-tea-shift",
+            status: "met",
+            targetLocationId: undefined,
+          },
+          {
+            id: "commitment-finish-job-tea-shift",
+            status: "blocked",
+            actionId: "work:job-tea-shift",
+            targetLocationId: undefined,
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "commitment-go-job-tea-shift",
+            progress: "On site",
+            done: true,
+          },
+          {
+            id: "commitment-window-job-tea-shift",
+            progress: "Window open",
+            done: true,
+          },
+          {
+            id: "commitment-finish-job-tea-shift",
+            progress: "Still committed",
+            actionId: "work:job-tea-shift",
+            done: false,
+          },
+        ],
+      },
+      {
+        name: "completed-job-hands-off",
+        locationId: "tea-house",
+        hour: 13,
+        completed: true,
+        expectedRouteKey: expect.not.stringMatching(/^commitment-/),
+      },
+    ];
+
+    for (const scenario of cases) {
+      const world = seedStreetGame(`objective-commitment-${scenario.name}`);
+      const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+      if (!teaJob) {
+        throw new Error("Missing tea shift");
+      }
+      teaJob.discovered = true;
+      teaJob.accepted = true;
+      teaJob.completed = scenario.completed;
+      world.player.activeJobId = "job-tea-shift";
+      world.player.currentLocationId = scenario.locationId;
+      world.player.objective = undefined;
+      setClock(world, scenario.hour);
+
+      const objective = buildPlayerObjectiveState(world);
+
+      expect(objective?.routeKey).toEqual(scenario.expectedRouteKey);
+      if (!scenario.expectedText) {
+        continue;
+      }
+      expect(objective).toMatchObject({
+        routeKey: scenario.expectedRouteKey,
+        text: scenario.expectedText,
+        progress: scenario.expectedProgress,
+      });
+      expect(objective?.outcomes).toMatchObject(scenario.expectedOutcomes);
+      expect(objective?.trail).toMatchObject(scenario.expectedTrail);
+    }
+  });
+
   it("exposes tool routes as desired predicates with live tool targets", () => {
     const world = seedStreetGame("objective-tool-predicates");
     const pump = world.problems.find(
@@ -2014,6 +2175,146 @@ describe("objectiveState classification", () => {
       id: "rest-hour",
       targetLocationId: "boarding-house",
     });
+  });
+
+  it("keeps rest route metadata stable across away, at-home, and recovered states", () => {
+    const cases = [
+      {
+        name: "away-low-energy",
+        locationId: "tea-house",
+        energy: 24,
+        lastRestAt: undefined,
+        expectedProgress: { completed: 0, total: 2 },
+        expectedOutcomes: [
+          {
+            id: "rest-return",
+            label: "Returned somewhere safe to rest",
+            urgency: 2,
+            status: "blocked",
+            actionId: undefined,
+            targetLocationId: "boarding-house",
+          },
+          {
+            id: "rest-hour",
+            label: "Recovered with an hour of rest",
+            urgency: 1,
+            status: "blocked",
+            actionId: undefined,
+            targetLocationId: "boarding-house",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "rest-return",
+            title: "Get back to Morrow House.",
+            detail: "The day is asking for a pause.",
+            progress: "Away",
+            actionId: undefined,
+            done: false,
+            targetLocationId: "boarding-house",
+          },
+          {
+            id: "rest-hour",
+            title: "Rest for an hour.",
+            detail:
+              "The point is to stop fighting the block long enough to get your legs back.",
+            progress: "Energy 24",
+            actionId: "rest:home",
+            done: false,
+            targetLocationId: "boarding-house",
+          },
+        ],
+      },
+      {
+        name: "home-low-energy",
+        locationId: "boarding-house",
+        energy: 24,
+        lastRestAt: undefined,
+        expectedProgress: { completed: 1, total: 2 },
+        expectedOutcomes: [
+          {
+            id: "rest-return",
+            status: "met",
+            targetLocationId: undefined,
+          },
+          {
+            id: "rest-hour",
+            status: "blocked",
+            actionId: "rest:home",
+            targetLocationId: "boarding-house",
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "rest-return",
+            progress: "Home",
+            done: true,
+          },
+          {
+            id: "rest-hour",
+            progress: "Energy 24",
+            actionId: "rest:home",
+            done: false,
+          },
+        ],
+      },
+      {
+        name: "recovered",
+        locationId: "boarding-house",
+        energy: 35,
+        lastRestAt: "current",
+        expectedProgress: { completed: 2, total: 2 },
+        expectedOutcomes: [
+          {
+            id: "rest-return",
+            status: "met",
+            targetLocationId: undefined,
+          },
+          {
+            id: "rest-hour",
+            status: "met",
+            actionId: undefined,
+            targetLocationId: undefined,
+          },
+        ],
+        expectedTrail: [
+          {
+            id: "rest-return",
+            progress: "Home",
+            done: true,
+          },
+          {
+            id: "rest-hour",
+            progress: "Recovered",
+            actionId: undefined,
+            done: true,
+            targetLocationId: undefined,
+          },
+        ],
+      },
+    ];
+
+    for (const scenario of cases) {
+      const world = seedStreetGame(`objective-rest-${scenario.name}`);
+      world.player.currentLocationId = scenario.locationId;
+      world.player.energy = scenario.energy;
+      world.player.lastRestAt =
+        scenario.lastRestAt === "current" ? world.currentTime : undefined;
+
+      const objective = buildPlayerObjectiveState(world, {
+        focus: "rest",
+        source: "manual",
+        text: "Rest at Morrow House before taking another commitment.",
+      });
+
+      expect(objective).toMatchObject({
+        routeKey: "rest-home",
+        text: "Rest at Morrow House before taking another commitment.",
+        progress: scenario.expectedProgress,
+      });
+      expect(objective?.outcomes).toMatchObject(scenario.expectedOutcomes);
+      expect(objective?.trail).toMatchObject(scenario.expectedTrail);
+    }
   });
 
   it("exposes people routes as desired social predicates", () => {

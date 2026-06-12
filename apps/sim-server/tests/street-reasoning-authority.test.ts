@@ -95,6 +95,20 @@ const EXPLORE_ROUTE_STEP_TITLE = "Learn what the place is really for.";
 const EXPLORE_ROUTE_STEP_DETAIL =
   "A new corner is usually easier to understand once you stand in it.";
 const EXPLORE_ROUTE_HEADLINE = "Learn the lanes and people of South Quay.";
+const COMMITTED_JOB_ROUTE_OUTCOME_LABEL_SUFFIX = "site reached";
+const COMMITTED_JOB_ROUTE_STEP_DETAIL =
+  "A live commitment should be the first thing Rowan can actually cash in.";
+const COMMITTED_JOB_ROUTE_WINDOW_DETAIL =
+  "The block only keeps a shift open for so long.";
+const COMMITTED_JOB_ROUTE_HEADLINE =
+  "Follow through on accepted work before the window closes.";
+const REST_ROUTE_OUTCOME_LABEL = "Recovered with an hour of rest";
+const REST_ROUTE_RETURN_DETAIL = "The day is asking for a pause.";
+const REST_ROUTE_HOUR_DETAIL =
+  "The point is to stop fighting the block long enough to get your legs back.";
+const REST_ROUTE_HEADLINE =
+  "Recover enough at Morrow House to move cleanly again.";
+const REST_ROUTE_DEFAULT_TEXT = "Recover enough to move cleanly again.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -597,6 +611,47 @@ describe("street reasoning authority", () => {
     );
     expect(objectiveStateSource).toContain('case "people-talk"');
     expect(objectiveStateSource).toContain('case "explore-go"');
+  });
+
+  it("keeps committed-job and rest route metadata in scaffold data, not objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const routeCopy of [
+      COMMITTED_JOB_ROUTE_OUTCOME_LABEL_SUFFIX,
+      COMMITTED_JOB_ROUTE_STEP_DETAIL,
+      COMMITTED_JOB_ROUTE_WINDOW_DETAIL,
+      COMMITTED_JOB_ROUTE_HEADLINE,
+      REST_ROUTE_OUTCOME_LABEL,
+      REST_ROUTE_RETURN_DETAIL,
+      REST_ROUTE_HOUR_DETAIL,
+      REST_ROUTE_HEADLINE,
+      REST_ROUTE_DEFAULT_TEXT,
+    ]) {
+      expect(scaffoldSource).toContain(routeCopy);
+      expect(objectiveStateSource).not.toContain(routeCopy);
+    }
+
+    expect(scaffoldSource).toContain("COMMITTED_JOB_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("COMMITTED_JOB_STEP_TEMPLATES");
+    expect(scaffoldSource).toContain("REST_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("REST_STEP_TEMPLATES");
+    expect(scaffoldSource).toContain('routeKeyPrefixes: ["commitment-"]');
+    expect(scaffoldSource).toContain('routeKeys: ["rest-home"]');
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteCommittedJobRouteScaffold",
+    );
+    expect(objectiveStateSource).toContain("objectiveRouteRestRouteScaffold");
+    expect(objectiveStateSource).toContain(
+      'definition.id.startsWith("commitment-finish-")',
+    );
+    expect(objectiveStateSource).toContain('case "rest-hour"');
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
