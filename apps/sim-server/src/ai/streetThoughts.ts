@@ -3,6 +3,7 @@ import type {
   StreetGameState,
 } from "../street-sim/types.js";
 import {
+  objectiveRouteCompletionPlayerThought,
   objectiveRoutePlayerThought,
   objectiveRouteWorkStageThought,
 } from "../sim/objectiveScaffolds.js";
@@ -136,11 +137,12 @@ function buildPlayerThought(game: StreetGameState) {
     return sanitizeThought(immediateObjectiveThought);
   }
 
-  if (
-    game.player.objective?.routeKey === "first-afternoon" &&
-    game.firstAfternoon?.completedAt
-  ) {
-    return "Tonight's bed holds. I earned real money, and tomorrow has a lead.";
+  const completionPlayerThought = objectiveRouteCompletionPlayerThought(
+    game,
+    game.player.objective,
+  );
+  if (completionPlayerThought) {
+    return sanitizeThought(completionPlayerThought);
   }
 
   if (pumpProblem?.discovered && pumpProblem.status === "active" && !hasWrench) {
