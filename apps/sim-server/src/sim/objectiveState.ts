@@ -13,6 +13,7 @@ import {
   objectiveRouteFirstAfternoonRouteScaffold,
   objectiveRouteHeadline as objectiveRouteScaffoldHeadline,
   objectiveRouteMaraAdaLeadRouteScaffold,
+  objectiveRouteWorkRouteScaffold,
 } from "./objectiveScaffolds.js";
 
 interface ObjectiveRoute {
@@ -1486,154 +1487,31 @@ function buildWorkRoute(
       ? findLocation(world, "freight-yard")
       : findLocation(world, "tea-house");
   const leadJob = lead === "yard" ? yardJob : teaJob;
-  const anyCompletedWork = world.jobs.some((job) => job.completed);
-  const outcomes = buildWorkOutcomeDefinitions(
-    world,
+  const routeScaffold = objectiveRouteWorkRouteScaffold({
+    anyCompletedWork: world.jobs.some((job) => job.completed),
     lead,
-    leadNpc?.id,
-    leadLocation?.id,
-    leadJob,
-  );
+    leadConfirmed: confirmedWorkLeadFor(world, lead),
+    leadJobAccepted: Boolean(leadJob?.accepted),
+    leadJobActive: world.player.activeJobId === leadJob?.id,
+    leadJobAtRisk: jobWindowAtRisk(world, leadJob),
+    leadJobCompleted: Boolean(leadJob?.completed),
+    leadJobDiscovered: Boolean(leadJob?.discovered),
+    leadJobId: leadJob?.id,
+    leadJobMissed: Boolean(leadJob?.missed),
+    leadLocationId: leadLocation?.id,
+    leadLocationName: leadLocation?.name,
+    leadNpcId: leadNpc?.id,
+    leadNpcName: leadNpc?.name,
+    playerMoney: world.player.money,
+  });
 
   return {
     key: lead === "yard" ? "work-yard" : "work-tea",
     focus: "work",
     source,
-    outcomes,
-    steps: [
-      makeStep({
-        id: lead === "yard" ? "work-lead-yard" : "work-lead-tea",
-        title:
-          lead === "yard"
-            ? `Get a real work lead from ${leadNpc?.name ?? "Tomas"} at ${leadLocation?.name ?? "North Crane Yard"}.`
-            : `Get a real work lead from ${leadNpc?.name ?? "Ada"} at ${leadLocation?.name ?? "Kettle & Lamp"}.`,
-        detail:
-          lead === "yard"
-            ? "The yard only counts as a lead once Tomas puts actual work on the table."
-            : "The tea room only counts as a lead once Ada makes the offer real.",
-        progress: confirmedWorkLeadFor(world, lead)
-          ? "Lead confirmed"
-          : leadJob?.discovered
-            ? "Heard about it"
-            : "Still asking",
-        done: confirmedWorkLeadFor(world, lead),
-        npcId: leadNpc?.id,
-        targetLocationId: leadLocation?.id,
-      }),
-      makeStep({
-        id: "work-commit",
-        title:
-          lead === "yard"
-            ? "Take the freight-yard lift before the window closes."
-            : "Take the cup-and-counter shift at Kettle & Lamp.",
-        detail:
-          lead === "yard"
-            ? "The yard only stays open for work if Rowan moves in time."
-            : "Ada likes speed more than speeches.",
-        progress:
-          leadJob?.accepted || world.player.activeJobId === leadJob?.id
-            ? "Committed"
-            : leadJob?.completed
-              ? "Already worked"
-              : leadJob?.discovered
-                ? "Lead waiting"
-                : "Still asking",
-        done: Boolean(leadJob?.accepted || leadJob?.completed),
-        actionId:
-          leadJob && !leadJob.completed && !leadJob.missed
-            ? leadJob.accepted || world.player.activeJobId === leadJob.id
-              ? `work:${leadJob.id}`
-              : leadJob.discovered
-                ? `accept:${leadJob.id}`
-                : undefined
-            : undefined,
-        targetLocationId: leadLocation?.id,
-      }),
-      makeStep({
-        id: "work-finish",
-        title:
-          lead === "yard"
-            ? "Finish the yard lift cleanly."
-            : "Finish the tea-house shift cleanly.",
-        detail:
-          lead === "yard"
-            ? "Following through matters as much as taking the lift."
-            : "Finishing the rush matters more than saying yes to it.",
-        progress: leadJob?.completed ? "Finished" : "Still ahead",
-        done: Boolean(leadJob?.completed),
-        actionId:
-          leadJob && !leadJob.completed ? `work:${leadJob.id}` : undefined,
-        targetLocationId: leadLocation?.id,
-      }),
-      makeStep({
-        id: "work-pay",
-        title: "Turn the pay into breathing room.",
-        detail:
-          world.player.money >= 20 || anyCompletedWork
-            ? "The day is starting to look more like footing than scrambling."
-            : "Work only matters if it buys more than the next hour.",
-        progress: `$${world.player.money} on hand`,
-        done: world.player.money >= 20 || anyCompletedWork,
-      }),
-    ],
+    outcomes: routeScaffold.outcomes,
+    steps: routeScaffold.steps.map(makeStep),
   };
-}
-
-function buildWorkOutcomeDefinitions(
-  world: StreetGameState,
-  lead: "tea" | "yard",
-  leadNpcId: string | undefined,
-  leadLocationId: string | undefined,
-  leadJob: JobState | undefined,
-): ObjectiveOutcomeDefinition[] {
-  const leadAccepted = Boolean(leadJob?.accepted);
-  const leadCompleted = Boolean(leadJob?.completed);
-  const leadMissed = Boolean(leadJob?.missed);
-  const leadAtRisk = jobWindowAtRisk(world, leadJob);
-  const jobActionId =
-    leadJob && !leadCompleted && !leadMissed
-      ? leadAccepted
-        ? `work:${leadJob.id}`
-        : leadJob.discovered
-          ? `accept:${leadJob.id}`
-          : undefined
-      : undefined;
-  const finishActionId =
-    leadJob && leadAccepted && !leadCompleted && !leadMissed
-      ? `work:${leadJob.id}`
-      : undefined;
-
-  return [
-    {
-      id: lead === "yard" ? "work-lead-yard" : "work-lead-tea",
-      label:
-        lead === "yard"
-          ? "Yard work lead confirmed"
-          : "Tea-house work lead confirmed",
-      urgency: 4,
-      npcId: leadNpcId,
-      targetLocationId: leadLocationId,
-    },
-    {
-      id: "work-commit",
-      label: "Paid work committed",
-      urgency: leadAtRisk ? 7 : 3,
-      actionId: jobActionId,
-      targetLocationId: leadLocationId,
-    },
-    {
-      id: "work-finish",
-      label: "Paid work finished",
-      urgency: leadAtRisk ? 6 : 2,
-      actionId: finishActionId,
-      targetLocationId: leadLocationId,
-    },
-    {
-      id: "work-pay",
-      label: "Pay turned into breathing room",
-      urgency: 1,
-    },
-  ];
 }
 
 function buildCommittedJobRoute(
@@ -3060,21 +2938,9 @@ function routeHeadline(route: ObjectiveRoute) {
     return "Make Rowan's first afternoon count: understand the room, earn a little money, and end with a real foothold.";
   }
 
-  if (route.key === "mara-ada-lead") {
-    return (
-      objectiveRouteScaffoldHeadline(route.key) ??
-      route.steps.find((step) => !step.done)?.title ??
-      route.steps[0]?.title ??
-      "Keep moving."
-    );
-  }
-
-  if (route.key === "work-tea") {
-    return "Secure paid work at Kettle & Lamp and follow through.";
-  }
-
-  if (route.key === "work-yard") {
-    return "Secure paid yard work and follow through.";
+  const scaffoldHeadline = objectiveRouteScaffoldHeadline(route.key);
+  if (scaffoldHeadline) {
+    return scaffoldHeadline;
   }
 
   if (route.key === "help-pump") {

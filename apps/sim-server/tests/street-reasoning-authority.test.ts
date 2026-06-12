@@ -61,6 +61,15 @@ const MARA_ADA_ROUTE_COMPLETION_DETAIL =
   "The offer is now actionable: take the shift, check another lead, return later, or keep exploring.";
 const MARA_ADA_ROUTE_HEADLINE =
   "Verify Mara's Kettle & Lamp lead and turn it into a real choice.";
+const WORK_ROUTE_COMMIT_OUTCOME_LABEL = "Paid work committed";
+const WORK_ROUTE_YARD_STEP_TITLE =
+  "Take the freight-yard lift before the window closes.";
+const WORK_ROUTE_TEA_STEP_DETAIL = "Ada likes speed more than speeches.";
+const WORK_ROUTE_PAY_STEP_DETAIL =
+  "Work only matters if it buys more than the next hour.";
+const WORK_ROUTE_TEA_HEADLINE =
+  "Secure paid work at Kettle & Lamp and follow through.";
+const WORK_ROUTE_YARD_HEADLINE = "Secure paid yard work and follow through.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -464,6 +473,34 @@ describe("street reasoning authority", () => {
       "objectiveRouteMaraAdaLeadRouteScaffold",
     );
     expect(objectiveStateSource).toContain('case "mara-ada-form-intent"');
+  });
+
+  it("keeps work route outcome, step, and headline metadata in scaffold data, not objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const routeCopy of [
+      WORK_ROUTE_COMMIT_OUTCOME_LABEL,
+      WORK_ROUTE_YARD_STEP_TITLE,
+      WORK_ROUTE_TEA_STEP_DETAIL,
+      WORK_ROUTE_PAY_STEP_DETAIL,
+      WORK_ROUTE_TEA_HEADLINE,
+      WORK_ROUTE_YARD_HEADLINE,
+    ]) {
+      expect(scaffoldSource).toContain(routeCopy);
+      expect(objectiveStateSource).not.toContain(routeCopy);
+    }
+
+    expect(scaffoldSource).toContain("WORK_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("WORK_STEP_TEMPLATES");
+    expect(objectiveStateSource).toContain("objectiveRouteWorkRouteScaffold");
+    expect(objectiveStateSource).toContain('case "work-commit"');
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
