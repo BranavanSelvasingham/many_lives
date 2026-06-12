@@ -17,6 +17,7 @@ import {
 } from "./objectiveState.js";
 import {
   objectiveRouteActionRationale,
+  objectiveRouteActionLocationReason,
   objectiveRouteAvailableActions,
   objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
@@ -28,6 +29,7 @@ import {
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
   objectiveRouteMoveIntent,
+  objectiveRoutePlayerFacingAutonomyRationale,
   objectiveRouteMoveRationaleForOutcome,
   objectiveRouteSemanticHints,
   objectiveRouteSemanticMoveBonus,
@@ -3213,44 +3215,12 @@ export function playerFacingAutonomyRationale(
     return "";
   }
 
-  const normalized = rationale.toLowerCase();
-  if (normalized.includes("ada lead verified")) {
-    return "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
-  }
-
-  if (
-    /ask ada.*morrow house|ada work at morrow house|lunch work at morrow house/.test(
-      normalized,
-    )
-  ) {
-    return "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs to leave Morrow House and reach the cafe first";
-  }
-
-  if (normalized.includes("first afternoon taken stock")) {
-    return world.player.energy < 28
-      ? "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
-      : "the shift paid, and Morrow House is the right place to let the day land";
-  }
-
-  if (
-    objectiveIsNiaBlockLead(world) &&
-    /\b(rest|recover|reset)\b.*\bmorrow house\b/.test(normalized)
-  ) {
-    return "Rowan is too worn down to make Nia's lead stick, so he needs a short recovery before the block jam gets worse";
-  }
-
-  if (normalized.includes("morrow house standing built")) {
-    if (objectiveIsNiaBlockLead(world)) {
-      return "Jo's clue points toward Nia now, so Rowan needs South Quay before the block jam gets worse";
-    }
-
-    return world.player.energy < 28
-      ? "Morrow House is where Rowan can let today's standing settle before he runs himself flat"
-      : "Morrow House is where today's standing can turn into a steadier foothold";
-  }
-
-  if (normalized.includes("cup-and-counter") || normalized.includes("lunch rush")) {
-    return "Ada gave Rowan real work, and the room needs steady hands now";
+  const scaffoldRationale = objectiveRoutePlayerFacingAutonomyRationale(
+    world,
+    rationale,
+  );
+  if (scaffoldRationale) {
+    return scaffoldRationale;
   }
 
   return rationale
@@ -3397,8 +3367,12 @@ function buildRowanAutonomyReason({
   }
 
   if (loopStep.kind === "act" && actionLabel) {
-    if (/ada|kettle|lunch/i.test(actionLabel) && currentLocationName === "Morrow House") {
-      return "Mara's lead points to Ada at Kettle & Lamp, so Rowan has to reach the cafe before asking.";
+    const scaffoldReason = objectiveRouteActionLocationReason({
+      actionLabel,
+      currentLocationName,
+    });
+    if (scaffoldReason) {
+      return scaffoldReason;
     }
 
     if (currentLocationName) {

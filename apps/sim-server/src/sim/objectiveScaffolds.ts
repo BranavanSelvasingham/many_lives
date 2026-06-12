@@ -39,6 +39,19 @@ interface OutcomeMoveRationaleHint {
   rationale: string | ((context: ScaffoldContext) => string);
 }
 
+interface PlayerFacingRationaleNormalizationHint {
+  matches: (normalizedRationale: string, context: ScaffoldContext) => boolean;
+  rationale: string | ((context: ScaffoldContext) => string);
+}
+
+interface ActionLocationReasonHint {
+  matches: (input: {
+    actionLabel: string;
+    currentLocationName: string;
+  }) => boolean;
+  reason: string;
+}
+
 interface SemanticMoveBonus {
   locationId: string;
   score: number;
@@ -566,6 +579,7 @@ interface RouteActionPressureInput {
 
 interface ObjectiveRouteScaffold {
   actionRationales?: ActionRationaleHint[];
+  actionLocationReasons?: ActionLocationReasonHint[];
   actionTargetLocations?: ActionTargetLocationHint[];
   availableActions?: AvailableActionHint[];
   completionAcknowledgement?: CompletionAcknowledgementHint;
@@ -578,6 +592,7 @@ interface ObjectiveRouteScaffold {
   deterministicOpeningRouteKeys?: string[];
   moveIntents?: MoveIntentHint[];
   outcomeMoveRationales?: OutcomeMoveRationaleHint[];
+  playerFacingRationaleNormalizations?: PlayerFacingRationaleNormalizationHint[];
   playerThoughts?: PlayerThoughtHint[];
   routeHeadline?: string;
   routeKeys: string[];
@@ -2049,6 +2064,68 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           "Ada gave Rowan real work, and the room needs steady hands now",
       },
     ],
+    playerFacingRationaleNormalizations: [
+      {
+        matches: (normalizedRationale) =>
+          normalizedRationale.includes("ada lead verified"),
+        rationale:
+          "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room",
+      },
+      {
+        matches: (normalizedRationale) =>
+          /ask ada.*morrow house|ada work at morrow house|lunch work at morrow house/.test(
+            normalizedRationale,
+          ),
+        rationale:
+          "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs to leave Morrow House and reach the cafe first",
+      },
+      {
+        matches: (normalizedRationale) =>
+          normalizedRationale.includes("first afternoon taken stock"),
+        rationale: ({ world }) =>
+          world.player.energy < 28
+            ? "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
+            : "the shift paid, and Morrow House is the right place to let the day land",
+      },
+      {
+        matches: (normalizedRationale, { world }) =>
+          objectiveHasNiaBlockLead(world) &&
+          /\b(rest|recover|reset)\b.*\bmorrow house\b/.test(
+            normalizedRationale,
+          ),
+        rationale:
+          "Rowan is too worn down to make Nia's lead stick, so he needs a short recovery before the block jam gets worse",
+      },
+      {
+        matches: (normalizedRationale) =>
+          normalizedRationale.includes("morrow house standing built"),
+        rationale: ({ world }) => {
+          if (objectiveHasNiaBlockLead(world)) {
+            return "Jo's clue points toward Nia now, so Rowan needs South Quay before the block jam gets worse";
+          }
+
+          return world.player.energy < 28
+            ? "Morrow House is where Rowan can let today's standing settle before he runs himself flat"
+            : "Morrow House is where today's standing can turn into a steadier foothold";
+        },
+      },
+      {
+        matches: (normalizedRationale) =>
+          normalizedRationale.includes("cup-and-counter") ||
+          normalizedRationale.includes("lunch rush"),
+        rationale:
+          "Ada gave Rowan real work, and the room needs steady hands now",
+      },
+    ],
+    actionLocationReasons: [
+      {
+        matches: ({ actionLabel, currentLocationName }) =>
+          /ada|kettle|lunch/i.test(actionLabel) &&
+          currentLocationName === "Morrow House",
+        reason:
+          "Mara's lead points to Ada at Kettle & Lamp, so Rowan has to reach the cafe before asking.",
+      },
+    ],
     conversationThoughts: [
       {
         npcId: "npc-mara",
@@ -3034,6 +3111,57 @@ export function objectiveRouteMoveRationaleForOutcome(
   return outcomeLabel;
 }
 
+export function objectiveRoutePlayerFacingAutonomyRationale(
+  world: StreetGameState,
+  rationaleText: string | undefined,
+) {
+  const normalizedRationale = normalizePlayerFacingRationale(rationaleText ?? "");
+  if (!normalizedRationale) {
+    return undefined;
+  }
+
+  const context = {
+    objective: objectiveScaffoldDirectiveForWorld(world),
+    world,
+  };
+  for (const scaffold of OBJECTIVE_ROUTE_SCAFFOLDS) {
+    const rationale = (scaffold.playerFacingRationaleNormalizations ?? []).find(
+      (candidate) => candidate.matches(normalizedRationale, context),
+    );
+    if (rationale) {
+      return typeof rationale.rationale === "function"
+        ? rationale.rationale(context)
+        : rationale.rationale;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteActionLocationReason(input: {
+  actionLabel: string | undefined;
+  currentLocationName: string | undefined;
+}) {
+  const { actionLabel, currentLocationName } = input;
+  if (!actionLabel || !currentLocationName) {
+    return undefined;
+  }
+
+  for (const scaffold of OBJECTIVE_ROUTE_SCAFFOLDS) {
+    const reason = (scaffold.actionLocationReasons ?? []).find((candidate) =>
+      candidate.matches({
+        actionLabel,
+        currentLocationName,
+      }),
+    );
+    if (reason) {
+      return reason.reason;
+    }
+  }
+
+  return undefined;
+}
+
 export function objectiveRouteActionRationale(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
@@ -3596,6 +3724,47 @@ function activeScaffolds(routeKey: string) {
       (scaffold.routeKeyPrefixes ?? []).some((prefix) =>
         routeKey.startsWith(prefix),
       ),
+  );
+}
+
+function normalizePlayerFacingRationale(text: string) {
+  return text.trim().replace(/[.?!]+$/g, "").toLowerCase();
+}
+
+function objectiveScaffoldDirectiveForWorld(
+  world: StreetGameState,
+): ObjectiveScaffoldDirective {
+  return {
+    focus: world.player.objective?.focus ?? "custom",
+    routeKey: world.player.objective?.routeKey ?? "",
+    text: world.player.objective?.text ?? "",
+  };
+}
+
+function objectiveHasNiaBlockLead(world: StreetGameState) {
+  const objective = world.player.objective;
+  if (!objective) {
+    return false;
+  }
+
+  const objectiveText = [
+    objective.text,
+    objective.routeKey,
+    ...(objective.outcomes ?? []).flatMap((outcome) => [
+      outcome.id,
+      outcome.label,
+      outcome.npcId,
+      outcome.evidence,
+      ...(outcome.blockers ?? []),
+    ]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    /\bnia\b/.test(objectiveText) &&
+    /\b(block|jam|cart|square)\b/.test(objectiveText)
   );
 }
 

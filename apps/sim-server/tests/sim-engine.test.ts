@@ -28,12 +28,26 @@ import {
 const STREET_SPACE_ID = "street:south-quay";
 const ADA_LEAD_OUTCOME_MOVE_RATIONALE =
   "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
+const BAD_ADA_AT_MORROW_PLAYER_RATIONALE =
+  "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs to leave Morrow House and reach the cafe first";
 const FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE =
   "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
 const FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE =
   "The shift paid, and Morrow House is the right place to let the day land";
+const FIRST_AFTERNOON_LOW_ENERGY_PLAYER_RATIONALE =
+  "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+const FIRST_AFTERNOON_NORMAL_ENERGY_PLAYER_RATIONALE =
+  "the shift paid, and Morrow House is the right place to let the day land";
 const TEA_SHIFT_OUTCOME_MOVE_RATIONALE =
   "Ada gave Rowan real work, and the room needs steady hands now";
+const NIA_RECOVERY_PLAYER_RATIONALE =
+  "Rowan is too worn down to make Nia's lead stick, so he needs a short recovery before the block jam gets worse";
+const NIA_STANDING_PLAYER_RATIONALE =
+  "Jo's clue points toward Nia now, so Rowan needs South Quay before the block jam gets worse";
+const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
+  "Morrow House is where Rowan can let today's standing settle before he runs himself flat";
+const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
+  "Morrow House is where today's standing can turn into a steadier foothold";
 
 type PlanningAIProviderResult =
   | StreetPlanningResult
@@ -628,6 +642,78 @@ describe("SimulationEngine street slice", () => {
         "First afternoon taken stock",
       ),
     ).toBe(FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE);
+  });
+
+  it("keeps player-facing autonomy rationale normalization behavior unchanged", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame(
+      "game-player-facing-autonomy-rationale-copy",
+    );
+
+    expect(playerFacingAutonomyRationale(world, "Ada lead verified")).toBe(
+      ADA_LEAD_OUTCOME_MOVE_RATIONALE,
+    );
+    expect(
+      playerFacingAutonomyRationale(
+        world,
+        "Ask Ada about lunch work at Morrow House.",
+      ),
+    ).toBe(BAD_ADA_AT_MORROW_PLAYER_RATIONALE);
+
+    world.player.energy = 12;
+    expect(
+      playerFacingAutonomyRationale(world, "First afternoon taken stock"),
+    ).toBe(FIRST_AFTERNOON_LOW_ENERGY_PLAYER_RATIONALE);
+    expect(playerFacingAutonomyRationale(world, "Morrow House standing built")).toBe(
+      MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE,
+    );
+
+    world.player.energy = 35;
+    expect(
+      playerFacingAutonomyRationale(world, "First afternoon taken stock"),
+    ).toBe(FIRST_AFTERNOON_NORMAL_ENERGY_PLAYER_RATIONALE);
+    expect(playerFacingAutonomyRationale(world, "Morrow House standing built")).toBe(
+      MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE,
+    );
+
+    expect(playerFacingAutonomyRationale(world, "Start the lunch rush")).toBe(
+      TEA_SHIFT_OUTCOME_MOVE_RATIONALE,
+    );
+    expect(playerFacingAutonomyRationale(world, "Finish the cup-and-counter")).toBe(
+      TEA_SHIFT_OUTCOME_MOVE_RATIONALE,
+    );
+
+    const currentObjective = world.player.objective as PlayerObjective;
+    world.player.objective = {
+      ...currentObjective,
+      focus: "help",
+      routeKey: "people-nia",
+      source: "conversation",
+      text: "Ask Nia where the block is about to jam before the square feels it.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "nia-block-lead",
+          label: "Ask Nia where the block is about to jam",
+          npcId: "npc-nia",
+          status: "open",
+          urgency: 86,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [],
+    };
+
+    expect(
+      playerFacingAutonomyRationale(world, "Rest for an hour at Morrow House."),
+    ).toBe(NIA_RECOVERY_PLAYER_RATIONALE);
+    expect(playerFacingAutonomyRationale(world, "Morrow House standing built")).toBe(
+      NIA_STANDING_PLAYER_RATIONALE,
+    );
   });
 
   it("keeps first-afternoon reflection action availability and metadata unchanged", async () => {

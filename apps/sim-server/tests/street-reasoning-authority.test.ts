@@ -131,12 +131,28 @@ const REST_ROUTE_HEADLINE =
 const REST_ROUTE_DEFAULT_TEXT = "Recover enough to move cleanly again.";
 const ADA_LEAD_OUTCOME_MOVE_RATIONALE =
   "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
+const BAD_ADA_AT_MORROW_PLAYER_RATIONALE =
+  "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs to leave Morrow House and reach the cafe first";
+const ADA_AT_MORROW_ACTION_REASON =
+  "Mara's lead points to Ada at Kettle & Lamp, so Rowan has to reach the cafe before asking.";
 const FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE =
   "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
 const FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE =
   "The shift paid, and Morrow House is the right place to let the day land";
+const FIRST_AFTERNOON_LOW_ENERGY_PLAYER_RATIONALE =
+  "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+const FIRST_AFTERNOON_NORMAL_ENERGY_PLAYER_RATIONALE =
+  "the shift paid, and Morrow House is the right place to let the day land";
 const TEA_SHIFT_OUTCOME_MOVE_RATIONALE =
   "Ada gave Rowan real work, and the room needs steady hands now";
+const NIA_RECOVERY_PLAYER_RATIONALE =
+  "Rowan is too worn down to make Nia's lead stick, so he needs a short recovery before the block jam gets worse";
+const NIA_STANDING_PLAYER_RATIONALE =
+  "Jo's clue points toward Nia now, so Rowan needs South Quay before the block jam gets worse";
+const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
+  "Morrow House is where Rowan can let today's standing settle before he runs himself flat";
+const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
+  "Morrow House is where today's standing can turn into a steadier foothold";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -563,6 +579,38 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain(
       FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE,
     );
+  });
+
+  it("keeps player-facing autonomy rationale normalization copy in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const playerFacingCopy of [
+      ADA_LEAD_OUTCOME_MOVE_RATIONALE,
+      BAD_ADA_AT_MORROW_PLAYER_RATIONALE,
+      ADA_AT_MORROW_ACTION_REASON,
+      FIRST_AFTERNOON_LOW_ENERGY_PLAYER_RATIONALE,
+      FIRST_AFTERNOON_NORMAL_ENERGY_PLAYER_RATIONALE,
+      TEA_SHIFT_OUTCOME_MOVE_RATIONALE,
+      NIA_RECOVERY_PLAYER_RATIONALE,
+      NIA_STANDING_PLAYER_RATIONALE,
+      MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE,
+      MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE,
+    ]) {
+      expect(scaffoldSource).toContain(playerFacingCopy);
+      expect(engineSource).not.toContain(playerFacingCopy);
+    }
+
+    expect(scaffoldSource).toContain("playerFacingRationaleNormalizations");
+    expect(scaffoldSource).toContain("actionLocationReasons");
+    expect(engineSource).toContain("objectiveRoutePlayerFacingAutonomyRationale");
+    expect(engineSource).toContain("objectiveRouteActionLocationReason");
   });
 
   it("keeps first-afternoon route outcome and step metadata in scaffold data, not objective-state control flow", () => {
