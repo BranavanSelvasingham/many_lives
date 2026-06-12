@@ -1,4 +1,5 @@
 import type {
+  ActionKind,
   JobState,
   NpcState,
   ObjectiveFocus,
@@ -110,6 +111,26 @@ interface ActionTargetLocationHint {
   routeKeys?: string[];
 }
 
+interface AvailableActionHint {
+  description: string;
+  emphasis: "low" | "medium" | "high";
+  id: string;
+  kind: ActionKind;
+  label: string;
+  routeKeys?: string[];
+  targetLocationId: string | ((context: ScaffoldContext) => string | undefined);
+  when?: (context: ScaffoldContext) => boolean;
+}
+
+export interface ObjectiveRouteAvailableAction {
+  description: string;
+  emphasis: "low" | "medium" | "high";
+  id: string;
+  kind: ActionKind;
+  label: string;
+  targetLocationId: string;
+}
+
 interface CompletionAcknowledgementHint {
   feedText: string;
   memoryText: string;
@@ -135,6 +156,7 @@ interface RouteActionPressureInput {
 interface ObjectiveRouteScaffold {
   actionRationales?: ActionRationaleHint[];
   actionTargetLocations?: ActionTargetLocationHint[];
+  availableActions?: AvailableActionHint[];
   completionAcknowledgement?: CompletionAcknowledgementHint;
   completionOutcome?: CompletionOutcomeCopy;
   conversationFallbacks?: ConversationFallbackHint[];
@@ -318,6 +340,73 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         routeKeys: [...ADA_LEAD_ROUTE_KEYS],
         rationale:
           "Ask Ada whether the lunch work is real, open, and worth taking now.",
+      },
+    ],
+    availableActions: [
+      {
+        id: "reflect:first-afternoon-plan",
+        label: "Choose Ada's Kettle & Lamp lead",
+        description:
+          "Commit to leaving Morrow House and following Mara's lead to Ada at Kettle & Lamp.",
+        kind: "reflect",
+        emphasis: "high",
+        targetLocationId: ({ world }) => world.player.homeLocationId,
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) =>
+          world.player.currentLocationId === world.player.homeLocationId &&
+          !world.firstAfternoon?.planSettledAt &&
+          countPlayerConversationsWithNpc(world, "npc-mara") > 0 &&
+          firstAfternoonAdaLeadViable(world),
+      },
+      {
+        id: "reflect:first-afternoon-pump",
+        label: "Check the Morrow Yard pump",
+        description:
+          "Treat the leaking pump as the first proof that Rowan notices what the house needs.",
+        kind: "reflect",
+        emphasis: "medium",
+        targetLocationId: ({ world }) => world.player.homeLocationId,
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) =>
+          world.player.currentLocationId === world.player.homeLocationId &&
+          !world.firstAfternoon?.planSettledAt &&
+          countPlayerConversationsWithNpc(world, "npc-mara") > 0 &&
+          firstAfternoonAdaLeadViable(world) &&
+          problemById(world, "problem-pump")?.status === "active",
+      },
+      {
+        id: "reflect:first-afternoon-compare",
+        label: "Compare other live leads",
+        description:
+          "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.",
+        kind: "reflect",
+        emphasis: "low",
+        targetLocationId: "tea-house",
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          return Boolean(
+            world.player.currentLocationId === "tea-house" &&
+              world.firstAfternoon?.leadFieldNote &&
+              teaJob?.discovered &&
+              !teaJob.accepted &&
+              !teaJob.completed &&
+              !teaJob.missed,
+          );
+        },
+      },
+      {
+        id: "reflect:first-afternoon",
+        label: "Take stock",
+        description: "Count what changed today before chasing another errand.",
+        kind: "reflect",
+        emphasis: "high",
+        targetLocationId: ({ world }) => world.player.homeLocationId,
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) =>
+          world.player.currentLocationId === world.player.homeLocationId &&
+          !world.firstAfternoon?.completedAt &&
+          Boolean(jobById(world, "job-tea-shift")?.completed),
       },
     ],
     actionTargetLocations: [
@@ -614,6 +703,49 @@ export function objectiveRouteActionTargetLocation(
   }
 
   return undefined;
+}
+
+export function objectiveRouteAvailableActions(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+): ObjectiveRouteAvailableAction[] {
+  if (!objective) {
+    return [];
+  }
+
+  const context = { objective, world };
+  const actions: ObjectiveRouteAvailableAction[] = [];
+
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    for (const action of scaffold.availableActions ?? []) {
+      if (action.routeKeys && !action.routeKeys.includes(objective.routeKey)) {
+        continue;
+      }
+
+      if (action.when && !action.when(context)) {
+        continue;
+      }
+
+      const targetLocationId =
+        typeof action.targetLocationId === "function"
+          ? action.targetLocationId(context)
+          : action.targetLocationId;
+      if (!targetLocationId) {
+        continue;
+      }
+
+      actions.push({
+        description: action.description,
+        emphasis: action.emphasis,
+        id: action.id,
+        kind: action.kind,
+        label: action.label,
+        targetLocationId,
+      });
+    }
+  }
+
+  return actions;
 }
 
 export function objectiveRouteConversationThought(

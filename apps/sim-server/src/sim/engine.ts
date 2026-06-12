@@ -14,6 +14,7 @@ import {
 } from "./objectiveState.js";
 import {
   objectiveRouteActionRationale,
+  objectiveRouteAvailableActions,
   objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
   objectiveRouteCompletionAcknowledgement,
@@ -9117,83 +9118,20 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
     });
   }
 
-  const teaJob = jobById(world, "job-tea-shift");
-  const firstAfternoonAdaLeadViable = Boolean(
-    teaJob &&
-      !teaJob.completed &&
-      !teaJob.missed &&
-      currentHour(world) < teaJob.endHour,
-  );
-
-  if (
-    actionSpaceReady &&
-    location?.id === world.player.homeLocationId &&
-    !world.firstAfternoon?.planSettledAt &&
-    countPlayerConversationsWithNpc(world, "npc-mara") > 0 &&
-    firstAfternoonAdaLeadViable
-  ) {
-    const actionId = "reflect:first-afternoon-plan";
-    actions.push({
-      id: actionId,
-      label: "Choose Ada's Kettle & Lamp lead",
-      description:
-        "Commit to leaving Morrow House and following Mara's lead to Ada at Kettle & Lamp.",
-      kind: "reflect",
-      emphasis: "high",
-      ...spatial(actionId, location.id),
-    });
-
-    const pumpProblem = problemById(world, "problem-pump");
-    if (pumpProblem?.status === "active") {
-      const pumpActionId = "reflect:first-afternoon-pump";
+  if (actionSpaceReady) {
+    for (const action of objectiveRouteAvailableActions(
+      world,
+      world.player.objective,
+    )) {
       actions.push({
-        id: pumpActionId,
-        label: "Check the Morrow Yard pump",
-        description:
-          "Treat the leaking pump as the first proof that Rowan notices what the house needs.",
-        kind: "reflect",
-        emphasis: "medium",
-        ...spatial(pumpActionId, location.id),
+        id: action.id,
+        label: action.label,
+        description: action.description,
+        kind: action.kind,
+        emphasis: action.emphasis,
+        ...spatial(action.id, action.targetLocationId),
       });
     }
-  }
-
-  if (
-    actionSpaceReady &&
-    location?.id === "tea-house" &&
-    world.firstAfternoon?.leadFieldNote &&
-    teaJob?.discovered &&
-    !teaJob.accepted &&
-    !teaJob.completed &&
-    !teaJob.missed
-  ) {
-    const actionId = "reflect:first-afternoon-compare";
-    actions.push({
-      id: actionId,
-      label: "Compare other live leads",
-      description:
-        "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.",
-      kind: "reflect",
-      emphasis: "low",
-      ...spatial(actionId, "tea-house"),
-    });
-  }
-
-  if (
-    actionSpaceReady &&
-    location?.id === world.player.homeLocationId &&
-    !world.firstAfternoon?.completedAt &&
-    jobById(world, "job-tea-shift")?.completed
-  ) {
-    const actionId = "reflect:first-afternoon";
-    actions.push({
-      id: actionId,
-      label: "Take stock",
-      description: "Count what changed today before chasing another errand.",
-      kind: "reflect",
-      emphasis: "high",
-      ...spatial(actionId, location.id),
-    });
   }
 
   if (actionSpaceReady && location?.id === world.player.homeLocationId) {
