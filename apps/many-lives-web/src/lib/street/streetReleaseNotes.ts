@@ -11,24 +11,19 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.4",
-  build: "cb9d1d6",
-  source: "PR #93",
+  version: "0.1.5",
+  build: "8516035",
+  source: "PR #122",
   features: [
     {
-      title: "Independent city beats",
+      title: "Landmark clarity",
       body:
-        "The watch rail now shows when locals like Mara or Nia solve live pressure before Rowan can get there.",
+        "Rowan's nearby lead lines up with the map, so Morrow House no longer reads like Kettle & Lamp.",
     },
     {
-      title: "Independent local action evidence",
+      title: "South Quay detail",
       body:
-        "Release checks now prove locals like Mara and Nia can resolve live city pressure without Rowan taking the work.",
-    },
-    {
-      title: "Stale-action guardrails",
-      body:
-        "The planner report now catches and rejects stale solve routes after an NPC-owned resolution changes the city state.",
+        "The cafe terrace, square planters, benches, dock edge, and water carry more ambient life.",
     },
   ],
 };
