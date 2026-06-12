@@ -11,6 +11,7 @@ import {
   SimulationEngine,
   playerFacingAutonomyRationale,
 } from "../src/sim/engine.js";
+import { objectiveRouteMoveRationaleForOutcome } from "../src/sim/objectiveScaffolds.js";
 import { buildRowanCognition } from "../src/sim/rowanCognition.js";
 import { runRowanLoopSmoke } from "../src/sim/rowanLoopSmoke.js";
 import type {
@@ -25,6 +26,14 @@ import {
 } from "./street-test-helpers.js";
 
 const STREET_SPACE_ID = "street:south-quay";
+const ADA_LEAD_OUTCOME_MOVE_RATIONALE =
+  "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
+const FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE =
+  "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+const FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE =
+  "The shift paid, and Morrow House is the right place to let the day land";
+const TEA_SHIFT_OUTCOME_MOVE_RATIONALE =
+  "Ada gave Rowan real work, and the room needs steady hands now";
 
 type PlanningAIProviderResult =
   | StreetPlanningResult
@@ -556,6 +565,18 @@ describe("SimulationEngine street slice", () => {
       });
     }
 
+    const takeStockCopy = [
+      world.rowanAutonomy.label,
+      world.rowanAutonomy.detail,
+      world.rowanAutonomy.intent?.reason,
+      ...(world.rowanAutonomy.intent?.signals ?? []),
+    ].join(" ");
+    expect(takeStockCopy).toContain(
+      world.player.energy < 28
+        ? FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE
+        : FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE,
+    );
+
     world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
       type: "act",
@@ -580,6 +601,33 @@ describe("SimulationEngine street slice", () => {
     expect(world.player.memories.map((memory) => memory.text)).toContain(
       "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
     );
+  });
+
+  it("keeps first-afternoon take-stock move rationale energy wording unchanged", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("game-first-afternoon-take-stock-copy");
+    const objective = {
+      ...(world.player.objective as PlayerObjective),
+      routeKey: "first-afternoon",
+    };
+
+    world.player.energy = 12;
+    expect(
+      objectiveRouteMoveRationaleForOutcome(
+        world,
+        objective,
+        "First afternoon taken stock",
+      ),
+    ).toBe(FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE);
+
+    world.player.energy = 35;
+    expect(
+      objectiveRouteMoveRationaleForOutcome(
+        world,
+        objective,
+        "First afternoon taken stock",
+      ),
+    ).toBe(FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE);
   });
 
   it("keeps first-afternoon reflection action availability and metadata unchanged", async () => {
@@ -645,6 +693,14 @@ describe("SimulationEngine street slice", () => {
       type: "advance_objective",
       allowTimeSkip: false,
     });
+
+    const teaShiftCopy = [
+      world.rowanAutonomy.label,
+      world.rowanAutonomy.detail,
+      world.rowanAutonomy.intent?.reason,
+      ...(world.rowanAutonomy.intent?.signals ?? []),
+    ].join(" ");
+    expect(teaShiftCopy).toContain(TEA_SHIFT_OUTCOME_MOVE_RATIONALE);
 
     expect(actionById(world, "reflect:first-afternoon-compare")).toMatchObject({
       description:
@@ -1042,6 +1098,7 @@ describe("SimulationEngine street slice", () => {
     ].join(" ");
 
     expect(routeCopy).toMatch(/Kettle & Lamp|Ada|Mara|lunch/i);
+    expect(routeCopy).toContain(ADA_LEAD_OUTCOME_MOVE_RATIONALE);
     expect(routeCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada work at Morrow House/i);

@@ -129,6 +129,14 @@ const REST_ROUTE_HOUR_DETAIL =
 const REST_ROUTE_HEADLINE =
   "Recover enough at Morrow House to move cleanly again.";
 const REST_ROUTE_DEFAULT_TEXT = "Recover enough to move cleanly again.";
+const ADA_LEAD_OUTCOME_MOVE_RATIONALE =
+  "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
+const FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE =
+  "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+const FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE =
+  "The shift paid, and Morrow House is the right place to let the day land";
+const TEA_SHIFT_OUTCOME_MOVE_RATIONALE =
+  "Ada gave Rowan real work, and the room needs steady hands now";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -523,6 +531,37 @@ describe("street reasoning authority", () => {
     );
     expect(engineSource).toContain(
       'remember(world, "self", completionOutcome.memoryText)',
+    );
+  });
+
+  it("keeps outcome-label move rationale copy in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const outcomeMoveRationale of [
+      ADA_LEAD_OUTCOME_MOVE_RATIONALE,
+      FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE,
+      FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE,
+      TEA_SHIFT_OUTCOME_MOVE_RATIONALE,
+    ]) {
+      expect(scaffoldSource).toContain(outcomeMoveRationale);
+    }
+    expect(scaffoldSource).toContain("outcomeMoveRationales");
+    expect(scaffoldSource).toContain("objectiveRouteMoveRationaleForOutcome");
+    expect(engineSource).toContain("objectiveRouteMoveRationaleForOutcome");
+    expect(engineSource).not.toContain("function moveRationaleForOutcome");
+    expect(engineSource).not.toContain("moveRationaleForOutcome(world");
+    expect(engineSource).not.toContain(
+      FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE,
+    );
+    expect(engineSource).not.toContain(
+      FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE,
     );
   });
 
