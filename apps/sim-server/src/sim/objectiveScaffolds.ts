@@ -1,6 +1,7 @@
 import type {
   ActionKind,
   JobState,
+  MemoryEntry,
   NpcState,
   ObjectiveFocus,
   ObjectiveTrailItem,
@@ -85,6 +86,45 @@ interface ConversationFallbackHint {
   replyLines: string[];
   routeKeys?: string[];
   when?: (context: ScaffoldContext) => boolean;
+}
+
+export interface ObjectiveRouteConversationResolutionFallback {
+  decision: string;
+  memoryKind: MemoryEntry["kind"];
+  memoryText: string;
+  summary: string;
+}
+
+export interface ObjectiveRouteConversationGroundingPolicy {
+  fallbackReason: string;
+  fallbackReply: {
+    followupThought: string;
+    reply: string;
+  };
+  followupPlayerText: string;
+  id: string;
+  resolutionFallback: ObjectiveRouteConversationResolutionFallback;
+}
+
+interface ConversationGroundingPolicyHint
+  extends ObjectiveRouteConversationGroundingPolicy {
+  npcId: string;
+  routeKeys?: string[];
+  responseAffirmsEvidence: (text: string | undefined) => boolean;
+  responseGroundsEvidence: (text: string | undefined) => boolean;
+  resolutionPointsToEvidence: (
+    resolution: {
+      decision?: string;
+      memoryText?: string;
+      objectiveText?: string;
+      summary?: string;
+    },
+  ) => boolean;
+  when?: (
+    context: ScaffoldContext & {
+      playerText: string;
+    },
+  ) => boolean;
 }
 
 interface ActionRationaleHint {
@@ -526,6 +566,7 @@ interface ObjectiveRouteScaffold {
   completionAcknowledgement?: CompletionAcknowledgementHint;
   completionOutcome?: CompletionOutcomeCopy;
   conversationFallbacks?: ConversationFallbackHint[];
+  conversationGroundingPolicies?: ConversationGroundingPolicyHint[];
   conversationTopicSuppressions?: ConversationTopicSuppression[];
   conversationThoughts?: ConversationThoughtHint[];
   deterministicOpeningNpcIds?: string[];
@@ -547,6 +588,69 @@ const ADA_LEAD_ROUTE_KEYS = [
   "mara-ada-lead",
   "work-tea",
 ] as const;
+
+function textGroundsMaraAdaLead(text: string | undefined): boolean {
+  const normalized = (text ?? "").toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    /\bada\b/.test(normalized) &&
+    /\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(normalized) &&
+    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bhelp\b|\bcounter\b|\bpay\b/.test(
+      normalized,
+    )
+  );
+}
+
+function textAffirmsMaraAdaLead(text: string | undefined): boolean {
+  const normalized = (text ?? "").toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    /\b(no|not|don't|do not|isn't|closed|can't|cannot|avoid|skip|wrong)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    /\byes\b|\bright\b|\bexactly\b|\bcorrect\b|\bthat(?:'|’)s right\b|\bthat(?:'|’)s the one\b|\bthat is the one\b|\byou(?:'|’)ve got it\b|\byou have got it\b|\bdo that\b|\bask her\b|\bask ada\b/.test(
+      normalized,
+    ) ||
+    /\b(she|ada)\s*(?:'|’)?ll\b/.test(normalized) ||
+    /\b(she|ada)\s+(may|might|could|can|will|does|needs?|has)\b/.test(
+      normalized,
+    ) ||
+    /\bworth\s+(asking|trying)\b/.test(normalized)
+  );
+}
+
+function resolutionPointsToMaraAdaLead(resolution: {
+  decision?: string;
+  memoryText?: string;
+  objectiveText?: string;
+  summary?: string;
+}): boolean {
+  const text = [
+    resolution.decision,
+    resolution.memoryText,
+    resolution.objectiveText,
+    resolution.summary,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    /\bada\b|\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(text) &&
+    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bcounter\b/.test(text)
+  );
+}
 
 const SETTLE_ROUTE_OUTCOME_TEMPLATES: SettleRouteOutcomeTemplate[] = [
   {
@@ -2009,6 +2113,40 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         },
       },
     ],
+    conversationGroundingPolicies: [
+      {
+        fallbackReason:
+          "Live Mara reply did not ground the Ada lead after Rowan's follow-up.",
+        fallbackReply: {
+          followupThought: "Ada is the first useful bet.",
+          reply:
+            "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.",
+        },
+        followupPlayerText:
+          "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?",
+        id: "mara-ada-lead-grounding",
+        npcId: "npc-mara",
+        resolutionFallback: {
+          decision:
+            "ask Mara one clearer question before treating Ada's lead as real.",
+          memoryKind: "self",
+          memoryText:
+            "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.",
+          summary:
+            "Mara has not yet made the Kettle & Lamp lead visible in the conversation.",
+        },
+        responseAffirmsEvidence: textAffirmsMaraAdaLead,
+        responseGroundsEvidence: textGroundsMaraAdaLead,
+        resolutionPointsToEvidence: resolutionPointsToMaraAdaLead,
+        routeKeys: ["first-afternoon"],
+        when: ({ playerText, world }) =>
+          !world.firstAfternoon?.leadFieldNote &&
+          !world.firstAfternoon?.planSettledAt &&
+          !/\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(
+            playerText.toLowerCase(),
+          ),
+      },
+    ],
     actionRationales: [
       {
         actionId: "reflect:first-afternoon-plan",
@@ -3048,6 +3186,125 @@ export function objectiveRouteConversationFallback(
     );
     if (fallback) {
       return fallback;
+    }
+  }
+
+  return undefined;
+}
+
+function matchingConversationGroundingPolicy(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  npc: NpcState,
+  playerText: string,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, playerText, world };
+
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const policy = (scaffold.conversationGroundingPolicies ?? []).find(
+      (candidate) =>
+        candidate.npcId === npc.id &&
+        (!candidate.routeKeys ||
+          candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.when || candidate.when(context)),
+    );
+    if (policy) {
+      return policy;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteConversationGroundingPolicy(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  npc: NpcState,
+  playerText: string,
+): ObjectiveRouteConversationGroundingPolicy | undefined {
+  return matchingConversationGroundingPolicy(
+    world,
+    objective,
+    npc,
+    playerText,
+  );
+}
+
+export function objectiveRouteTextGroundsConversationPolicy(
+  policy: ObjectiveRouteConversationGroundingPolicy | undefined,
+  text: string | undefined,
+) {
+  return Boolean(
+    policy &&
+      matchingConversationGroundingPolicyById(policy.id)
+        ?.responseGroundsEvidence(text),
+  );
+}
+
+export function objectiveRouteTextAffirmsConversationPolicy(
+  policy: ObjectiveRouteConversationGroundingPolicy | undefined,
+  text: string | undefined,
+) {
+  return Boolean(
+    policy &&
+      matchingConversationGroundingPolicyById(policy.id)
+        ?.responseAffirmsEvidence(text),
+  );
+}
+
+export function objectiveRouteConversationResolutionPointsToPolicy(
+  policy: ObjectiveRouteConversationGroundingPolicy | undefined,
+  resolution: {
+    decision?: string;
+    memoryText?: string;
+    objectiveText?: string;
+    summary?: string;
+  },
+) {
+  return Boolean(
+    policy &&
+      matchingConversationGroundingPolicyById(policy.id)
+        ?.resolutionPointsToEvidence(resolution),
+  );
+}
+
+export function objectiveRouteConversationHasVisibleEvidence(
+  world: StreetGameState,
+  policy: ObjectiveRouteConversationGroundingPolicy | undefined,
+  closingReply?: string,
+) {
+  if (!policy) {
+    return false;
+  }
+
+  const matchedPolicy = matchingConversationGroundingPolicyById(policy.id);
+  if (!matchedPolicy) {
+    return false;
+  }
+
+  if (matchedPolicy.responseGroundsEvidence(closingReply)) {
+    return true;
+  }
+
+  return world.conversations.some(
+    (entry) =>
+      entry.npcId === matchedPolicy.npcId &&
+      (entry.speaker === "npc" || entry.speaker === "player") &&
+      matchedPolicy.responseGroundsEvidence(entry.text),
+  );
+}
+
+function matchingConversationGroundingPolicyById(id: string) {
+  for (const scaffold of OBJECTIVE_ROUTE_SCAFFOLDS) {
+    const policy = scaffold.conversationGroundingPolicies?.find(
+      (candidate) => candidate.id === id,
+    );
+    if (policy) {
+      return policy;
     }
   }
 

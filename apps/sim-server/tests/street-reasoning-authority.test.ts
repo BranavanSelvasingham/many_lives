@@ -21,6 +21,14 @@ const FIRST_AFTERNOON_PLAN_RATIONALE =
   "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
 const FIRST_AFTERNOON_DIALOGUE_FALLBACK =
   "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.";
+const MARA_ADA_GROUNDING_FOLLOWUP =
+  "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
+const MARA_ADA_GROUNDED_FALLBACK_REPLY =
+  "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.";
+const MARA_ADA_GROUNDING_FALLBACK_MEMORY =
+  "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.";
+const MARA_ADA_GROUNDING_FALLBACK_SUMMARY =
+  "Mara has not yet made the Kettle & Lamp lead visible in the conversation.";
 const FIRST_AFTERNOON_RETURN_HOME_THOUGHT =
   "I should head back to Morrow House and let today land.";
 const FIRST_AFTERNOON_TEA_RUSH_THOUGHT =
@@ -354,6 +362,34 @@ describe("street reasoning authority", () => {
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain('routeKey === "first-afternoon"');
+  });
+
+  it("keeps Mara/Ada lead-grounding copy in scaffold policy, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const groundingCopy of [
+      MARA_ADA_GROUNDING_FOLLOWUP,
+      MARA_ADA_GROUNDED_FALLBACK_REPLY,
+      MARA_ADA_GROUNDING_FALLBACK_MEMORY,
+      MARA_ADA_GROUNDING_FALLBACK_SUMMARY,
+    ]) {
+      expect(scaffoldSource).toContain(groundingCopy);
+      expect(engineSource).not.toContain(groundingCopy);
+    }
+
+    expect(scaffoldSource).toContain("conversationGroundingPolicies");
+    expect(scaffoldSource).toContain("mara-ada-lead-grounding");
+    expect(engineSource).toContain("objectiveRouteConversationGroundingPolicy");
+    expect(engineSource).not.toContain("groundedMaraAdaLeadReply");
+    expect(engineSource).not.toContain("buildMaraAdaLeadGroundingFollowup");
+    expect(engineSource).not.toContain("shouldRequireMaraAdaLeadEvidence");
   });
 
   it("keeps first-afternoon return-home thought copy in scaffold data, not thought control flow", () => {
