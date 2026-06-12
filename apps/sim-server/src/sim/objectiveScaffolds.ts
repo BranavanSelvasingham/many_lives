@@ -246,6 +246,30 @@ export interface ToolProblemRouteState {
   toolAtProblem: boolean;
 }
 
+export interface PeopleRouteState {
+  familiarPeople: number;
+  friendObjective: boolean;
+  secondConnectionTargetId?: string;
+  secondConnectionTargetLocationId?: string;
+  targetConversationCount: number;
+  targetId?: string;
+  targetLocationId?: string;
+  targetName?: string;
+  trustedPeople: number;
+}
+
+export interface ExploreRouteState {
+  hasVisitedTarget: boolean;
+  knownLocationCount: number;
+  mapKnowledgeObjective: boolean;
+  talkedAtTarget: boolean;
+  targetGuideId?: string;
+  targetGuideName?: string;
+  targetId?: string;
+  targetName?: string;
+  targetPeopleCount: number;
+}
+
 interface FirstAfternoonRouteStepTemplate {
   actionId?: (state: FirstAfternoonRouteState) => string | undefined;
   detail: string | ((state: FirstAfternoonRouteState) => string);
@@ -378,6 +402,42 @@ interface ToolProblemRouteOutcomeTemplate {
   urgency: number;
 }
 
+interface PeopleRouteStepTemplate {
+  detail: string | ((state: PeopleRouteState) => string);
+  done: (state: PeopleRouteState) => boolean;
+  id: string;
+  npcId?: (state: PeopleRouteState) => string | undefined;
+  progress: string | ((state: PeopleRouteState) => string);
+  targetLocationId?: (state: PeopleRouteState) => string | undefined;
+  title: string | ((state: PeopleRouteState) => string);
+}
+
+interface PeopleRouteOutcomeTemplate {
+  id: string;
+  label: string;
+  npcId?: (state: PeopleRouteState) => string | undefined;
+  targetLocationId?: (state: PeopleRouteState) => string | undefined;
+  urgency: number;
+}
+
+interface ExploreRouteStepTemplate {
+  detail: string | ((state: ExploreRouteState) => string);
+  done: (state: ExploreRouteState) => boolean;
+  id: string;
+  npcId?: (state: ExploreRouteState) => string | undefined;
+  progress: string | ((state: ExploreRouteState) => string);
+  targetLocationId?: (state: ExploreRouteState) => string | undefined;
+  title: string | ((state: ExploreRouteState) => string);
+}
+
+interface ExploreRouteOutcomeTemplate {
+  id: string;
+  label: string;
+  npcId?: (state: ExploreRouteState) => string | undefined;
+  targetLocationId?: (state: ExploreRouteState) => string | undefined;
+  urgency: number;
+}
+
 interface CompletionAcknowledgementHint {
   feedText: string;
   memoryText: string;
@@ -415,6 +475,7 @@ interface ObjectiveRouteScaffold {
   playerThoughts?: PlayerThoughtHint[];
   routeHeadline?: string;
   routeKeys: string[];
+  routeKeyPrefixes?: string[];
   semanticMoveBonuses?: SemanticMoveBonus[];
   semanticHints?: SemanticHint[];
   speechHints?: SpeechHint[];
@@ -978,6 +1039,155 @@ const TOOL_PROBLEM_STEP_TEMPLATES: ToolProblemRouteStepTemplate[] = [
         ? `solve:${targetId}`
         : undefined,
     targetLocationId: ({ targetLocationId }) => targetLocationId,
+  },
+];
+
+const PEOPLE_ROUTE_OUTCOME_TEMPLATES: PeopleRouteOutcomeTemplate[] = [
+  {
+    id: "people-talk",
+    label: "Local introduction made",
+    urgency: 3,
+    npcId: ({ targetConversationCount, targetId }) =>
+      targetConversationCount > 0 ? undefined : targetId,
+    targetLocationId: ({ targetConversationCount, targetLocationId }) =>
+      targetConversationCount > 0 ? undefined : targetLocationId,
+  },
+  {
+    id: "people-open",
+    label: "A local connection opened up",
+    urgency: 2,
+    npcId: ({ familiarPeople, targetId }) =>
+      familiarPeople >= 1 ? undefined : targetId,
+    targetLocationId: ({ familiarPeople, targetLocationId }) =>
+      familiarPeople >= 1 ? undefined : targetLocationId,
+  },
+  {
+    id: "people-friend",
+    label: "Two trusted local ties built",
+    urgency: 1,
+    npcId: ({ secondConnectionTargetId, trustedPeople }) =>
+      trustedPeople >= 2 ? undefined : secondConnectionTargetId,
+    targetLocationId: ({ secondConnectionTargetLocationId, trustedPeople }) =>
+      trustedPeople >= 2 ? undefined : secondConnectionTargetLocationId,
+  },
+];
+
+const PEOPLE_ROUTE_STEP_TEMPLATES: PeopleRouteStepTemplate[] = [
+  {
+    id: "people-talk",
+    title: ({ targetName }) =>
+      targetName
+        ? `Talk to ${targetName} and make a proper introduction.`
+        : "Talk to someone new nearby.",
+    detail: ({ friendObjective }) =>
+      friendObjective
+        ? "Rowan is looking for more than a name now."
+        : "A real introduction makes the block feel less faceless.",
+    progress: ({ targetConversationCount, targetId }) =>
+      targetId ? `${targetConversationCount} chats` : "No target",
+    done: ({ familiarPeople, targetConversationCount, targetId }) =>
+      targetId ? targetConversationCount > 0 : familiarPeople > 0,
+    npcId: ({ targetId }) => targetId,
+    targetLocationId: ({ targetLocationId }) => targetLocationId,
+  },
+  {
+    id: "people-open",
+    title: "Give somebody a reason to remember me well.",
+    detail: ({ familiarPeople }) =>
+      familiarPeople > 0
+        ? "At least one conversation has started to feel warmer than surface-level."
+        : "A good conversation should leave somebody a little more open than before.",
+    progress: ({ familiarPeople }) =>
+      `${Math.min(familiarPeople, 1)}/1 person opened up`,
+    done: ({ familiarPeople }) => familiarPeople >= 1,
+    npcId: ({ familiarPeople, targetId }) =>
+      familiarPeople < 1 ? targetId : undefined,
+    targetLocationId: ({ familiarPeople, targetLocationId }) =>
+      familiarPeople < 1 ? targetLocationId : undefined,
+  },
+  {
+    id: "people-friend",
+    title: "Come away with two people I can return to.",
+    detail: ({ trustedPeople }) =>
+      trustedPeople >= 2
+        ? "A couple of people are starting to feel like real footholds."
+        : "Rowan still needs more than one good conversation if he's going to stop feeling dropped in.",
+    progress: ({ trustedPeople }) => `${Math.min(trustedPeople, 2)}/2 trusted`,
+    done: ({ trustedPeople }) => trustedPeople >= 2,
+    npcId: ({ secondConnectionTargetId, trustedPeople }) =>
+      trustedPeople < 2 ? secondConnectionTargetId : undefined,
+    targetLocationId: ({ secondConnectionTargetLocationId, trustedPeople }) =>
+      trustedPeople < 2 ? secondConnectionTargetLocationId : undefined,
+  },
+];
+
+const EXPLORE_ROUTE_OUTCOME_TEMPLATES: ExploreRouteOutcomeTemplate[] = [
+  {
+    id: "explore-go",
+    label: "Unknown place visited",
+    urgency: 3,
+    targetLocationId: ({ hasVisitedTarget, targetId }) =>
+      targetId && !hasVisitedTarget ? targetId : undefined,
+  },
+  {
+    id: "explore-talk",
+    label: "Local guide heard from",
+    urgency: 2,
+    npcId: ({ hasVisitedTarget, talkedAtTarget, targetGuideId }) =>
+      hasVisitedTarget && !talkedAtTarget ? targetGuideId : undefined,
+    targetLocationId: ({ hasVisitedTarget, talkedAtTarget, targetId }) =>
+      targetId && hasVisitedTarget && !talkedAtTarget ? targetId : undefined,
+  },
+  {
+    id: "explore-learn",
+    label: "South Quay map knowledge improved",
+    urgency: 1,
+  },
+];
+
+const EXPLORE_ROUTE_STEP_TEMPLATES: ExploreRouteStepTemplate[] = [
+  {
+    id: "explore-go",
+    title: ({ targetName }) =>
+      targetName
+        ? `Walk to ${targetName} and see what it is for.`
+        : "Walk to a corner you do not know yet.",
+    detail: ({ mapKnowledgeObjective }) =>
+      mapKnowledgeObjective
+        ? "Rowan is trying to make the district legible."
+        : "A new corner is usually easier to understand once you stand in it.",
+    progress: ({ hasVisitedTarget, targetId }) =>
+      targetId
+        ? `${hasVisitedTarget ? "Known" : "Unknown"} place`
+        : "No target",
+    done: ({ hasVisitedTarget }) => hasVisitedTarget,
+    targetLocationId: ({ targetId }) => targetId,
+  },
+  {
+    id: "explore-talk",
+    title: ({ targetGuideName }) =>
+      targetGuideName
+        ? `Talk to ${targetGuideName} there.`
+        : "Talk to whoever runs that corner.",
+    detail: ({ targetGuideName }) =>
+      targetGuideName
+        ? `${targetGuideName} is the most likely person to explain the place.`
+        : "Someone there should know what the corner is really for.",
+    progress: ({ targetPeopleCount }) => `${targetPeopleCount} people nearby`,
+    done: ({ talkedAtTarget, targetPeopleCount }) =>
+      targetPeopleCount > 0 && talkedAtTarget,
+    npcId: ({ targetGuideId }) => targetGuideId,
+    targetLocationId: ({ targetId }) => targetId,
+  },
+  {
+    id: "explore-learn",
+    title: "Learn what the place is really for.",
+    detail: ({ knownLocationCount }) =>
+      knownLocationCount >= 4
+        ? "The district is starting to feel like a place rather than a blur."
+        : "Rowan still needs one more place before the map starts making sense.",
+    progress: ({ knownLocationCount }) => `${knownLocationCount}/4 places`,
+    done: ({ knownLocationCount }) => knownLocationCount >= 4,
   },
 ];
 
@@ -1796,6 +2006,16 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       "Get settled in Brackenport: find a place to stay, steady income, and a few friends.",
   },
   {
+    routeKeys: [],
+    routeKeyPrefixes: ["people-"],
+    routeHeadline: "Meet people who could become real friends in South Quay.",
+  },
+  {
+    routeKeys: [],
+    routeKeyPrefixes: ["explore-"],
+    routeHeadline: "Learn the lanes and people of South Quay.",
+  },
+  {
     routeKeys: ["help-pump"],
     routeHeadline: "Fix the leaking pump in Morrow Yard before it spreads.",
   },
@@ -1966,6 +2186,65 @@ export function objectiveRouteHeadline(routeKey: string) {
   }
 
   return undefined;
+}
+
+export function objectiveRouteDefaultTextForFocus(focus: ObjectiveFocus) {
+  switch (focus) {
+    case "people":
+      return "Meet people who could become real friends in South Quay.";
+    case "explore":
+      return "Learn the lanes and people of South Quay.";
+    default:
+      return undefined;
+  }
+}
+
+export function objectiveRoutePeopleRouteScaffold(state: PeopleRouteState): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: PEOPLE_ROUTE_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      npcId: template.npcId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+    steps: PEOPLE_ROUTE_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: resolvePeopleRouteText(template.title, state),
+      detail: resolvePeopleRouteText(template.detail, state),
+      progress: resolvePeopleRouteText(template.progress, state),
+      done: template.done(state),
+      npcId: template.npcId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+  };
+}
+
+export function objectiveRouteExploreRouteScaffold(state: ExploreRouteState): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: EXPLORE_ROUTE_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      npcId: template.npcId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+    steps: EXPLORE_ROUTE_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: resolveExploreRouteText(template.title, state),
+      detail: resolveExploreRouteText(template.detail, state),
+      progress: resolveExploreRouteText(template.progress, state),
+      done: template.done(state),
+      npcId: template.npcId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+  };
 }
 
 export function objectiveRouteFirstAfternoonRouteScaffold(
@@ -2289,6 +2568,20 @@ function resolveToolProblemRouteValue(
 function resolveToolProblemRouteText(
   value: string | ((state: ToolProblemRouteState) => string),
   state: ToolProblemRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolvePeopleRouteText(
+  value: string | ((state: PeopleRouteState) => string),
+  state: PeopleRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveExploreRouteText(
+  value: string | ((state: ExploreRouteState) => string),
+  state: ExploreRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
 }
@@ -2754,8 +3047,12 @@ export function objectiveRouteSpeech(
 }
 
 function activeScaffolds(routeKey: string) {
-  return OBJECTIVE_ROUTE_SCAFFOLDS.filter((scaffold) =>
-    scaffold.routeKeys.includes(routeKey),
+  return OBJECTIVE_ROUTE_SCAFFOLDS.filter(
+    (scaffold) =>
+      scaffold.routeKeys.includes(routeKey) ||
+      (scaffold.routeKeyPrefixes ?? []).some((prefix) =>
+        routeKey.startsWith(prefix),
+      ),
   );
 }
 

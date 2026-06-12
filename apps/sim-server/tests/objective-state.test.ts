@@ -2052,6 +2052,108 @@ describe("objectiveState classification", () => {
     });
   });
 
+  it("keeps people route metadata stable across representative live states", () => {
+    const fresh = seedStreetGame("objective-people-route-fresh");
+    const talkedToTarget = seedStreetGame("objective-people-route-talked");
+    addConversationWith(talkedToTarget, "npc-mara");
+
+    const oneFamiliar = seedStreetGame("objective-people-route-familiar");
+    for (const npc of oneFamiliar.npcs) {
+      npc.trust = 0;
+    }
+    oneFamiliar.npcs.find((npc) => npc.id === "npc-mara")!.trust = 1;
+
+    const twoTrusted = seedStreetGame("objective-people-route-trusted");
+    for (const npc of twoTrusted.npcs) {
+      npc.trust = 0;
+    }
+    twoTrusted.npcs.find((npc) => npc.id === "npc-mara")!.trust = 2;
+    twoTrusted.npcs.find((npc) => npc.id === "npc-ada")!.trust = 2;
+
+    const objectiveByState = {
+      fresh: buildPlayerObjectiveState(fresh, {
+        focus: "people",
+        source: "manual",
+        text: "Meet people and make the rounds.",
+      }),
+      oneFamiliar: buildPlayerObjectiveState(oneFamiliar, {
+        focus: "people",
+        source: "manual",
+        text: "Meet people and make the rounds.",
+      }),
+      talkedToTarget: buildPlayerObjectiveState(talkedToTarget, {
+        focus: "people",
+        source: "manual",
+        text: "Meet Mara and make a proper introduction.",
+      }),
+      twoTrusted: buildPlayerObjectiveState(twoTrusted, {
+        focus: "people",
+        source: "manual",
+        text: "Meet people and make the rounds.",
+      }),
+    };
+
+    expect(objectiveByState.fresh?.routeKey).toBe("people-npc-mara");
+    expect(objectiveByState.fresh?.text).toBe(
+      "Meet people and make the rounds.",
+    );
+    expect(
+      objectiveByState.fresh?.outcomes.map((outcome) => outcome.id),
+    ).toEqual(["people-talk", "people-open", "people-friend"]);
+    expect(objectiveByState.fresh?.outcomes[0]).toMatchObject({
+      id: "people-talk",
+      label: "Local introduction made",
+      npcId: "npc-mara",
+      targetLocationId: "boarding-house",
+      urgency: 3,
+    });
+    expect(objectiveByState.fresh?.trail[0]).toMatchObject({
+      detail: "A real introduction makes the block feel less faceless.",
+      done: false,
+      id: "people-talk",
+      npcId: "npc-mara",
+      progress: "0 chats",
+      targetLocationId: "boarding-house",
+      title: "Talk to Mara and make a proper introduction.",
+    });
+
+    expect(objectiveByState.talkedToTarget?.outcomes[0]).toMatchObject({
+      id: "people-talk",
+      npcId: undefined,
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.talkedToTarget?.trail[0]).toMatchObject({
+      done: true,
+      progress: "1 chats",
+    });
+
+    expect(objectiveByState.oneFamiliar?.outcomes[1]).toMatchObject({
+      id: "people-open",
+      npcId: undefined,
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.oneFamiliar?.trail[1]).toMatchObject({
+      detail:
+        "At least one conversation has started to feel warmer than surface-level.",
+      done: true,
+      progress: "1/1 person opened up",
+    });
+
+    expect(objectiveByState.twoTrusted?.outcomes[2]).toMatchObject({
+      id: "people-friend",
+      npcId: undefined,
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.twoTrusted?.trail[2]).toMatchObject({
+      detail: "A couple of people are starting to feel like real footholds.",
+      done: true,
+      progress: "2/2 trusted",
+    });
+  });
+
   it("exposes explore routes as desired map-knowledge predicates", () => {
     const world = seedStreetGame("objective-explore-predicates");
 
@@ -2085,6 +2187,110 @@ describe("objectiveState classification", () => {
       id: "explore-talk",
       npcId: undefined,
       targetLocationId: undefined,
+    });
+  });
+
+  it("keeps explore route metadata stable across representative live states", () => {
+    const fresh = seedStreetGame("objective-explore-route-fresh");
+    const visitedTarget = seedStreetGame("objective-explore-route-visited");
+    visitedTarget.player.knownLocationIds.push("tea-house");
+
+    const talkedAtTarget = seedStreetGame("objective-explore-route-talked");
+    talkedAtTarget.player.knownLocationIds.push("tea-house");
+    talkedAtTarget.player.currentLocationId = "tea-house";
+    addConversationWith(talkedAtTarget, "npc-ada");
+
+    const knownThreshold = seedStreetGame("objective-explore-route-known");
+    knownThreshold.player.knownLocationIds = [
+      "boarding-house",
+      "courtyard",
+      "tea-house",
+      "square",
+    ];
+
+    const objectiveByState = {
+      fresh: buildPlayerObjectiveState(fresh, {
+        focus: "explore",
+        source: "manual",
+        text: "Explore the district and get your bearings.",
+      }),
+      knownThreshold: buildPlayerObjectiveState(knownThreshold, {
+        focus: "explore",
+        source: "manual",
+        text: "Explore Kettle & Lamp and get your bearings.",
+      }),
+      talkedAtTarget: buildPlayerObjectiveState(talkedAtTarget, {
+        focus: "explore",
+        source: "manual",
+        text: "Explore Kettle & Lamp and get your bearings.",
+      }),
+      visitedTarget: buildPlayerObjectiveState(visitedTarget, {
+        focus: "explore",
+        source: "manual",
+        text: "Explore Kettle & Lamp and get your bearings.",
+      }),
+    };
+
+    expect(objectiveByState.fresh?.routeKey).toBe("explore-tea-house");
+    expect(objectiveByState.fresh?.text).toBe(
+      "Explore the district and get your bearings.",
+    );
+    expect(
+      objectiveByState.fresh?.outcomes.map((outcome) => outcome.id),
+    ).toEqual(["explore-go", "explore-talk", "explore-learn"]);
+    expect(objectiveByState.fresh?.outcomes[0]).toMatchObject({
+      id: "explore-go",
+      label: "Unknown place visited",
+      status: "blocked",
+      targetLocationId: "tea-house",
+      urgency: 3,
+    });
+    expect(objectiveByState.fresh?.trail[0]).toMatchObject({
+      detail:
+        "A new corner is usually easier to understand once you stand in it.",
+      done: false,
+      id: "explore-go",
+      progress: "Unknown place",
+      targetLocationId: "tea-house",
+      title: "Walk to Kettle & Lamp and see what it is for.",
+    });
+
+    expect(objectiveByState.visitedTarget?.outcomes[1]).toMatchObject({
+      id: "explore-talk",
+      npcId: "npc-ada",
+      status: "blocked",
+      targetLocationId: "tea-house",
+    });
+    expect(objectiveByState.visitedTarget?.trail[1]).toMatchObject({
+      detail: "Ada is the most likely person to explain the place.",
+      done: false,
+      npcId: "npc-ada",
+      progress: "1 people nearby",
+      targetLocationId: "tea-house",
+      title: "Talk to Ada there.",
+    });
+
+    expect(objectiveByState.talkedAtTarget?.outcomes[1]).toMatchObject({
+      id: "explore-talk",
+      npcId: undefined,
+      status: "blocked",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.talkedAtTarget?.trail[1]).toMatchObject({
+      done: true,
+      progress: "1 people nearby",
+    });
+
+    expect(objectiveByState.knownThreshold?.outcomes[2]).toMatchObject({
+      id: "explore-learn",
+      label: "South Quay map knowledge improved",
+      status: "met",
+    });
+    expect(objectiveByState.knownThreshold?.trail[2]).toMatchObject({
+      detail:
+        "The district is starting to feel like a place rather than a blur.",
+      done: true,
+      progress: "4/4 places",
     });
   });
 

@@ -11,9 +11,12 @@ import type {
 } from "../street-sim/types.js";
 import {
   objectiveRouteCartProblemRouteScaffold,
+  objectiveRouteDefaultTextForFocus as objectiveRouteScaffoldDefaultTextForFocus,
+  objectiveRouteExploreRouteScaffold,
   objectiveRouteFirstAfternoonRouteScaffold,
   objectiveRouteHeadline as objectiveRouteScaffoldHeadline,
   objectiveRouteMaraAdaLeadRouteScaffold,
+  objectiveRoutePeopleRouteScaffold,
   objectiveRoutePumpProblemRouteScaffold,
   objectiveRouteSettleRouteScaffold,
   objectiveRouteToolProblemRouteScaffold,
@@ -1634,107 +1637,30 @@ function buildPeopleRoute(
   const trustedPeople = trustedNpcCount(world);
   const secondConnectionTarget =
     trustedPeople < 2 ? nextUntalkedNpc(world, target?.id) : undefined;
+  const targetConversationCount = target
+    ? countPlayerConversationsWithNpc(world, target.id)
+    : familiarPeople > 0
+      ? 1
+      : 0;
+  const scaffold = objectiveRoutePeopleRouteScaffold({
+    familiarPeople,
+    friendObjective: normalizedIncludes(textHint, "friend"),
+    secondConnectionTargetId: secondConnectionTarget?.id,
+    secondConnectionTargetLocationId: secondConnectionTarget?.currentLocationId,
+    targetConversationCount,
+    targetId: target?.id,
+    targetLocationId: target?.currentLocationId,
+    targetName: target?.name,
+    trustedPeople,
+  });
 
   return {
     key: `people-${target?.id ?? "locals"}`,
     focus: "people",
     source,
-    outcomes: buildPeopleOutcomeDefinitions(world, target, {
-      familiarPeople,
-      secondConnectionTarget,
-      trustedPeople,
-    }),
-    steps: [
-      makeStep({
-        id: "people-talk",
-        title: target
-          ? `Talk to ${target.name} and make a proper introduction.`
-          : "Talk to someone new nearby.",
-        detail: normalizedIncludes(textHint, "friend")
-          ? "Rowan is looking for more than a name now."
-          : "A real introduction makes the block feel less faceless.",
-        progress: target
-          ? `${countPlayerConversationsWithNpc(world, target.id)} chats`
-          : "No target",
-        done: target
-          ? countPlayerConversationsWithNpc(world, target.id) > 0
-          : familiarPeople > 0,
-        npcId: target?.id,
-        targetLocationId: target?.currentLocationId,
-      }),
-      makeStep({
-        id: "people-open",
-        title: "Give somebody a reason to remember me well.",
-        detail:
-          familiarPeople > 0
-            ? "At least one conversation has started to feel warmer than surface-level."
-            : "A good conversation should leave somebody a little more open than before.",
-        progress: `${Math.min(familiarPeople, 1)}/1 person opened up`,
-        done: familiarPeople >= 1,
-        npcId: familiarPeople < 1 ? target?.id : undefined,
-        targetLocationId:
-          familiarPeople < 1 ? target?.currentLocationId : undefined,
-      }),
-      makeStep({
-        id: "people-friend",
-        title: "Come away with two people I can return to.",
-        detail:
-          trustedPeople >= 2
-            ? "A couple of people are starting to feel like real footholds."
-            : "Rowan still needs more than one good conversation if he's going to stop feeling dropped in.",
-        progress: `${Math.min(trustedPeople, 2)}/2 trusted`,
-        done: trustedPeople >= 2,
-        npcId: trustedPeople < 2 ? secondConnectionTarget?.id : undefined,
-        targetLocationId:
-          trustedPeople < 2
-            ? secondConnectionTarget?.currentLocationId
-            : undefined,
-      }),
-    ],
+    outcomes: scaffold.outcomes,
+    steps: scaffold.steps.map(makeStep),
   };
-}
-
-function buildPeopleOutcomeDefinitions(
-  world: StreetGameState,
-  target: ReturnType<typeof choosePeopleTarget>,
-  state: {
-    familiarPeople: number;
-    secondConnectionTarget: ReturnType<typeof nextUntalkedNpc> | undefined;
-    trustedPeople: number;
-  },
-): ObjectiveOutcomeDefinition[] {
-  const talkedToTarget = target
-    ? countPlayerConversationsWithNpc(world, target.id) > 0
-    : state.familiarPeople > 0;
-
-  return [
-    {
-      id: "people-talk",
-      label: "Local introduction made",
-      urgency: 3,
-      npcId: talkedToTarget ? undefined : target?.id,
-      targetLocationId: talkedToTarget ? undefined : target?.currentLocationId,
-    },
-    {
-      id: "people-open",
-      label: "A local connection opened up",
-      urgency: 2,
-      npcId: state.familiarPeople >= 1 ? undefined : target?.id,
-      targetLocationId:
-        state.familiarPeople >= 1 ? undefined : target?.currentLocationId,
-    },
-    {
-      id: "people-friend",
-      label: "Two trusted local ties built",
-      urgency: 1,
-      npcId:
-        state.trustedPeople >= 2 ? undefined : state.secondConnectionTarget?.id,
-      targetLocationId:
-        state.trustedPeople >= 2
-          ? undefined
-          : state.secondConnectionTarget?.currentLocationId,
-    },
-  ];
 }
 
 function buildExploreRoute(
@@ -1753,106 +1679,32 @@ function buildExploreRoute(
     ? world.npcs.filter((npc) => npc.currentLocationId === target.id)
     : [];
   const targetGuide = target ? chooseExploreGuide(world, target.id) : undefined;
+  const talkedAtTarget = target
+    ? targetPeople.some(
+        (npc) => countPlayerConversationsWithNpc(world, npc.id) > 0,
+      )
+    : false;
+  const scaffold = objectiveRouteExploreRouteScaffold({
+    hasVisitedTarget,
+    knownLocationCount: world.player.knownLocationIds.length,
+    mapKnowledgeObjective:
+      normalizedIncludes(textHint, "map") ||
+      normalizedIncludes(textHint, "learn"),
+    talkedAtTarget,
+    targetGuideId: targetGuide?.id,
+    targetGuideName: targetGuide?.name,
+    targetId: target?.id,
+    targetName: target?.name,
+    targetPeopleCount: targetPeople.length,
+  });
 
   return {
     key: `explore-${target?.id ?? "district"}`,
     focus: "explore",
     source,
-    outcomes: buildExploreOutcomeDefinitions(world, target, {
-      hasVisitedTarget,
-      targetGuide,
-      targetPeople,
-    }),
-    steps: [
-      makeStep({
-        id: "explore-go",
-        title: target
-          ? `Walk to ${target.name} and see what it is for.`
-          : "Walk to a corner you do not know yet.",
-        detail:
-          normalizedIncludes(textHint, "map") ||
-          normalizedIncludes(textHint, "learn")
-            ? "Rowan is trying to make the district legible."
-            : "A new corner is usually easier to understand once you stand in it.",
-        progress: target
-          ? `${hasVisitedTarget ? "Known" : "Unknown"} place`
-          : "No target",
-        done: hasVisitedTarget,
-        targetLocationId: target?.id,
-      }),
-      makeStep({
-        id: "explore-talk",
-        title: targetGuide
-          ? `Talk to ${targetGuide.name} there.`
-          : "Talk to whoever runs that corner.",
-        detail: targetGuide
-          ? `${targetGuide.name} is the most likely person to explain the place.`
-          : "Someone there should know what the corner is really for.",
-        progress: `${targetPeople.length} people nearby`,
-        done:
-          targetPeople.length > 0 &&
-          targetPeople.some(
-            (npc) => countPlayerConversationsWithNpc(world, npc.id) > 0,
-          ),
-        npcId: targetGuide?.id,
-        targetLocationId: target?.id,
-      }),
-      makeStep({
-        id: "explore-learn",
-        title: "Learn what the place is really for.",
-        detail:
-          world.player.knownLocationIds.length >= 4
-            ? "The district is starting to feel like a place rather than a blur."
-            : "Rowan still needs one more place before the map starts making sense.",
-        progress: `${world.player.knownLocationIds.length}/4 places`,
-        done: world.player.knownLocationIds.length >= 4,
-      }),
-    ],
+    outcomes: scaffold.outcomes,
+    steps: scaffold.steps.map(makeStep),
   };
-}
-
-function buildExploreOutcomeDefinitions(
-  world: StreetGameState,
-  target: ReturnType<typeof chooseExploreTargetLocation>,
-  state: {
-    hasVisitedTarget: boolean;
-    targetGuide: ReturnType<typeof chooseExploreGuide> | undefined;
-    targetPeople: StreetGameState["npcs"];
-  },
-): ObjectiveOutcomeDefinition[] {
-  const talkedAtTarget = target
-    ? state.targetPeople.some(
-        (npc) => countPlayerConversationsWithNpc(world, npc.id) > 0,
-      )
-    : false;
-
-  return [
-    {
-      id: "explore-go",
-      label: "Unknown place visited",
-      urgency: 3,
-      targetLocationId:
-        target && !state.hasVisitedTarget ? target.id : undefined,
-    },
-    {
-      id: "explore-talk",
-      label: "Local guide heard from",
-      urgency: 2,
-      npcId:
-        state.hasVisitedTarget && !talkedAtTarget
-          ? state.targetGuide?.id
-          : undefined,
-      targetLocationId:
-        target && state.hasVisitedTarget && !talkedAtTarget
-          ? target.id
-          : undefined,
-    },
-    {
-      id: "explore-learn",
-      label: "South Quay map knowledge improved",
-      urgency: 1,
-    },
-  ];
 }
 
 function chooseConversationRoute(
@@ -2616,6 +2468,11 @@ function routeHeadline(route: ObjectiveRoute) {
 }
 
 function defaultObjectiveTextForFocus(focus: ObjectiveFocus) {
+  const scaffoldDefault = objectiveRouteScaffoldDefaultTextForFocus(focus);
+  if (scaffoldDefault) {
+    return scaffoldDefault;
+  }
+
   switch (focus) {
     case "work":
       return "Find steady income before tonight.";
@@ -2625,10 +2482,6 @@ function defaultObjectiveTextForFocus(focus: ObjectiveFocus) {
       return "Get the right tool and use it where it matters.";
     case "rest":
       return "Recover enough to move cleanly again.";
-    case "people":
-      return "Meet people who could become real friends in South Quay.";
-    case "explore":
-      return "Learn the lanes and people of South Quay.";
     case "settle":
       return "Get settled in Brackenport: find a place to stay, steady income, and a few friends.";
     case "custom":

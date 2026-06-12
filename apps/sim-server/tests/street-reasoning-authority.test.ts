@@ -84,6 +84,17 @@ const SETTLE_ROUTE_INCOME_STEP_TITLE = "Turn that lead into steady pay.";
 const SETTLE_ROUTE_PEOPLE_STEP_TITLE = "Build two real connections.";
 const SETTLE_ROUTE_HEADLINE =
   "Get settled in Brackenport: find a place to stay, steady income, and a few friends.";
+const PEOPLE_ROUTE_OUTCOME_LABEL = "Local introduction made";
+const PEOPLE_ROUTE_STEP_TITLE = "Give somebody a reason to remember me well.";
+const PEOPLE_ROUTE_STEP_DETAIL =
+  "A real introduction makes the block feel less faceless.";
+const PEOPLE_ROUTE_HEADLINE =
+  "Meet people who could become real friends in South Quay.";
+const EXPLORE_ROUTE_OUTCOME_LABEL = "Unknown place visited";
+const EXPLORE_ROUTE_STEP_TITLE = "Learn what the place is really for.";
+const EXPLORE_ROUTE_STEP_DETAIL =
+  "A new corner is usually easier to understand once you stand in it.";
+const EXPLORE_ROUTE_HEADLINE = "Learn the lanes and people of South Quay.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -548,6 +559,44 @@ describe("street reasoning authority", () => {
     expect(scaffoldSource).toContain(SETTLE_ROUTE_HEADLINE);
     expect(objectiveStateSource).toContain("objectiveRouteSettleRouteScaffold");
     expect(objectiveStateSource).toContain('case "settle-standing"');
+  });
+
+  it("keeps people and explore route metadata in scaffold data, not objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const routeCopy of [
+      PEOPLE_ROUTE_OUTCOME_LABEL,
+      PEOPLE_ROUTE_STEP_TITLE,
+      PEOPLE_ROUTE_STEP_DETAIL,
+      PEOPLE_ROUTE_HEADLINE,
+      EXPLORE_ROUTE_OUTCOME_LABEL,
+      EXPLORE_ROUTE_STEP_TITLE,
+      EXPLORE_ROUTE_STEP_DETAIL,
+      EXPLORE_ROUTE_HEADLINE,
+    ]) {
+      expect(scaffoldSource).toContain(routeCopy);
+      expect(objectiveStateSource).not.toContain(routeCopy);
+    }
+
+    expect(scaffoldSource).toContain("PEOPLE_ROUTE_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("PEOPLE_ROUTE_STEP_TEMPLATES");
+    expect(scaffoldSource).toContain("EXPLORE_ROUTE_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("EXPLORE_ROUTE_STEP_TEMPLATES");
+    expect(scaffoldSource).toContain('routeKeyPrefixes: ["people-"]');
+    expect(scaffoldSource).toContain('routeKeyPrefixes: ["explore-"]');
+    expect(objectiveStateSource).toContain("objectiveRoutePeopleRouteScaffold");
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteExploreRouteScaffold",
+    );
+    expect(objectiveStateSource).toContain('case "people-talk"');
+    expect(objectiveStateSource).toContain('case "explore-go"');
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
