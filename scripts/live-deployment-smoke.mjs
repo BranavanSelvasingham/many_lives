@@ -79,7 +79,7 @@ async function main() {
       `[many-lives:live-smoke] /sim/health ok: provider=${summary.health.aiProvider ?? "unknown"} source=${summary.health.source ?? "unknown"}`,
     );
 
-    const firstUrl = `${liveBase}/?new=1&autoplay=1&releaseLiveSmoke=${Date.now()}`;
+    const firstUrl = `${liveBase}/?new=1&releaseLiveSmoke=${Date.now()}`;
     await session.setViewport(parseWindowSize(WINDOW_SIZE));
     await session.navigate(firstUrl);
     await session.waitForAppReady();
@@ -90,11 +90,14 @@ async function main() {
     const firstProbe = await waitForFreshAutoplayAdvance(
       session,
       openingProbe,
-      "Live fresh autoplay",
+      "Live fresh default autoplay",
     );
     probeSnapshots.firstProbe = compactProbeSnapshot("firstProbe", firstProbe);
     const firstPage = await session.inspectPage();
-    assertFreshAutoplayPage(firstPage, firstProbe, liveBase);
+    assertFreshAutoplayPage(firstPage, firstProbe, liveBase, {
+      label: "Live fresh default autoplay",
+      requireNoAutoplayQuery: true,
+    });
 
     const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay.png");
     await session.captureScreenshot(screenshotPath);
@@ -110,9 +113,10 @@ async function main() {
     );
     assert.ok(seededGameId, "Fresh live run did not persist a street game id.");
 
-    const promptUrl = `${liveBase}/?autoplay=1&releaseLiveSmokePrompt=${Date.now()}`;
+    const promptUrl = `${liveBase}/?releaseLiveSmokePrompt=${Date.now()}`;
     await session.navigate(promptUrl);
     const prompt = await session.waitForStoredGameChoice();
+    assertNoAutoplayQueryParam(prompt.url, "Stored-run prompt");
     assert.equal(prompt.hasResumeButton, true, "Stored-run prompt is missing Resume.");
     assert.equal(prompt.hasStartNewButton, true, "Stored-run prompt is missing Start New.");
     assert.equal(
@@ -149,19 +153,59 @@ async function main() {
       "Resume stored run did not reopen the stored game id.",
     );
 
-    await session.navigate(`${liveBase}/?autoplay=1&releaseLiveSmokeStartNew=${Date.now()}`);
+    await session.navigate(`${liveBase}/?releaseLiveSmokeStartNew=${Date.now()}`);
     await session.waitForStoredGameChoice();
     await session.clickSelector("[data-start-new-game]");
     await session.waitForAppReady();
-    await sleep(500);
-    const freshProbe = await session.readBrowserProbe();
-    probeSnapshots.freshProbe = compactProbeSnapshot("freshProbe", freshProbe);
-    assert.ok(freshProbe?.gameId, "Start new run did not create a live game id.");
+    await session.waitForWatchModeUi();
+    const freshOpeningProbe = await session.readBrowserProbe();
+    probeSnapshots.freshOpeningProbe = compactProbeSnapshot(
+      "freshOpeningProbe",
+      freshOpeningProbe,
+    );
+    assert.ok(
+      freshOpeningProbe?.gameId,
+      "Start new run did not create a live game id.",
+    );
     assert.notEqual(
-      freshProbe.gameId,
+      freshOpeningProbe.gameId,
       seededGameId,
       "Start new run reused the stored game id.",
     );
+    const freshProbe = await waitForFreshAutoplayAdvance(
+      session,
+      freshOpeningProbe,
+      "Start-new default autoplay",
+    );
+    probeSnapshots.freshProbe = compactProbeSnapshot("freshProbe", freshProbe);
+    const freshPage = await session.inspectPage();
+    assertFreshAutoplayPage(freshPage, freshProbe, liveBase, {
+      label: "Start-new default autoplay",
+      requireNoAutoplayQuery: true,
+    });
+
+    const explicitAutoplayUrl = `${liveBase}/?new=1&autoplay=1&releaseLiveSmokeExplicitAutoplay=${Date.now()}`;
+    await session.navigate(explicitAutoplayUrl);
+    await session.waitForAppReady();
+    await session.waitForWatchModeUi();
+    const explicitAutoplayOpeningProbe = await session.readBrowserProbe();
+    probeSnapshots.explicitAutoplayOpeningProbe = compactProbeSnapshot(
+      "explicitAutoplayOpeningProbe",
+      explicitAutoplayOpeningProbe,
+    );
+    const explicitAutoplayProbe = await waitForFreshAutoplayAdvance(
+      session,
+      explicitAutoplayOpeningProbe,
+      "Explicit autoplay compatibility",
+    );
+    probeSnapshots.explicitAutoplayProbe = compactProbeSnapshot(
+      "explicitAutoplayProbe",
+      explicitAutoplayProbe,
+    );
+    const explicitAutoplayPage = await session.inspectPage();
+    assertFreshAutoplayPage(explicitAutoplayPage, explicitAutoplayProbe, liveBase, {
+      label: "Explicit autoplay compatibility",
+    });
 
     assert.deepEqual(
       session.pageIssues,
@@ -174,6 +218,7 @@ async function main() {
     Object.assign(summary, {
       finishedAt: new Date().toISOString(),
       driftGameId,
+      explicitAutoplayGameId: explicitAutoplayProbe.gameId,
       firstGameId: firstProbe.gameId,
       freshGameId: freshProbe.gameId,
       livePlannerEvidence: deriveLivePlannerEvidence({
@@ -188,7 +233,7 @@ async function main() {
     await writeFile(SUMMARY_PATH, `${JSON.stringify(summary, null, 2)}\n`);
 
     console.log(
-      `[many-lives:live-smoke] passed: first=${firstProbe.gameId} resumed=${resumedProbe.gameId} fresh=${freshProbe.gameId}`,
+      `[many-lives:live-smoke] passed: first=${firstProbe.gameId} resumed=${resumedProbe.gameId} fresh=${freshProbe.gameId} explicit=${explicitAutoplayProbe.gameId}`,
     );
     console.log(
       `[many-lives:live-smoke] live planner evidence: ${formatLivePlannerEvidence(summary.livePlannerEvidence)}`,
@@ -260,13 +305,17 @@ async function readLiveHealth(base) {
   return null;
 }
 
-function assertFreshAutoplayPage(page, probe, base) {
+function assertFreshAutoplayPage(page, probe, base, options = {}) {
+  const label = options.label ?? "Live fresh autoplay";
   assert.equal(page.title, "Many Lives", "Live app title is wrong.");
   assert.equal(
     new URL(page.url).origin,
     new URL(base).origin,
     "Live app navigated away from the deployment origin.",
   );
+  if (options.requireNoAutoplayQuery) {
+    assertNoAutoplayQueryParam(page.url, label);
+  }
   assert.ok(page.canvas, "Live app is missing the game canvas.");
   assert.ok(page.rail, "Live app is missing the Rowan rail.");
   assert.ok(page.canvas.width >= 520, `Live canvas is too narrow: ${page.canvas.width}px.`);
@@ -298,14 +347,33 @@ function assertFreshAutoplayPage(page, probe, base) {
   assert.deepEqual(
     page.visibleProgressionControls ?? [],
     [],
-    `Live autoplay exposed visible progression/action controls: ${JSON.stringify(
+    `${label} exposed visible progression/action controls: ${JSON.stringify(
       page.visibleProgressionControls ?? [],
     )}`,
   );
+  assertNoWatchModeReplyAffordances(page, label);
   assert.ok(probe?.gameId, "Live browser probe is missing a game id.");
   assert.equal(probe.watchMode?.enabled, true, "Live browser probe did not report watch mode.");
   assert.ok(probe.objective?.text, "Live browser probe is missing Rowan's objective.");
   assert.ok(probe.rail?.now, "Live browser probe is missing Rowan's current rail beat.");
+}
+
+function assertNoAutoplayQueryParam(url, label) {
+  assert.equal(
+    new URL(url).searchParams.has("autoplay"),
+    false,
+    `${label} should prove default autoplay without an autoplay query param.`,
+  );
+}
+
+function assertNoWatchModeReplyAffordances(page, label) {
+  assert.deepEqual(
+    page.watchModeReplyAffordances ?? [],
+    [],
+    `${label} exposed reply/action-looking conversation affordances: ${JSON.stringify(
+      page.watchModeReplyAffordances ?? [],
+    )}`,
+  );
 }
 
 function compactProbeSnapshot(label, probe) {
@@ -816,6 +884,35 @@ class CdpSession {
             waitMinutes: element.getAttribute("data-wait-minutes")
           }))
       );
+      const watchModeReplyAffordances = (() => {
+        if (!root?.classList.contains("is-watch-mode")) {
+          return [];
+        }
+
+        const looksLikeBlueReplyAction = (element) => {
+          const style = window.getComputedStyle(element);
+          const paint = [style.backgroundImage, style.backgroundColor].join(" ");
+          return /(?:#2f95ff|#0a84ff|rgb\\(47,\\s*149,\\s*255\\)|rgb\\(10,\\s*132,\\s*255\\))/i.test(paint);
+        };
+
+        return Array.from(
+          document.querySelectorAll("[data-conversation-panel] .ml-chat-bubble.is-player")
+        )
+          .filter(isVisibleEnabled)
+          .filter((element) => {
+            const passiveTranscript =
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan";
+            const clickableAncestor = element.closest(
+              "button,[role='button'],a[href],[data-action-id],[data-advance-objective],[data-wait-minutes]"
+            );
+            return !passiveTranscript || Boolean(clickableAncestor) || looksLikeBlueReplyAction(element);
+          })
+          .map((element) => ({
+            passiveTranscript:
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan",
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? ""
+          }));
+      })();
 
       return {
         bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 1600),
@@ -860,7 +957,8 @@ class CdpSession {
           width: window.innerWidth,
         },
         visibleCanvasCount: canvases.filter(isVisibleEnabled).length,
-        visibleProgressionControls
+        visibleProgressionControls,
+        watchModeReplyAffordances
       };
     })()`);
   }
@@ -1014,6 +1112,35 @@ class CdpSession {
             waitMinutes: element.getAttribute("data-wait-minutes")
           }))
       );
+      const watchModeReplyAffordances = (() => {
+        if (!root?.classList.contains("is-watch-mode")) {
+          return [];
+        }
+
+        const looksLikeBlueReplyAction = (element) => {
+          const style = window.getComputedStyle(element);
+          const paint = [style.backgroundImage, style.backgroundColor].join(" ");
+          return /(?:#2f95ff|#0a84ff|rgb\\(47,\\s*149,\\s*255\\)|rgb\\(10,\\s*132,\\s*255\\))/i.test(paint);
+        };
+
+        return Array.from(
+          document.querySelectorAll("[data-conversation-panel] .ml-chat-bubble.is-player")
+        )
+          .filter(isVisibleEnabled)
+          .filter((element) => {
+            const passiveTranscript =
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan";
+            const clickableAncestor = element.closest(
+              "button,[role='button'],a[href],[data-action-id],[data-advance-objective],[data-wait-minutes]"
+            );
+            return !passiveTranscript || Boolean(clickableAncestor) || looksLikeBlueReplyAction(element);
+          })
+          .map((element) => ({
+            passiveTranscript:
+              element.getAttribute("data-watch-mode-transcript-line") === "rowan",
+            text: element.textContent?.replace(/\\s+/g, " ").trim() ?? ""
+          }));
+      })();
       const rawBackendError =
         /\\{"message":|"message"\\s*:\\s*"Game\\s+game-|Game\\s+game-[A-Za-z0-9-]+\\s+was not found/i.test(bodyText);
       return {
@@ -1039,7 +1166,8 @@ class CdpSession {
         rootClass: root?.className ?? "",
         title: document.title,
         url: location.href,
-        visibleProgressionControls
+        visibleProgressionControls,
+        watchModeReplyAffordances
       };
     })()`);
   }
