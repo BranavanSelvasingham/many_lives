@@ -5962,28 +5962,47 @@ function assertSettledOutdoorPlayerLocationCorrelation({
     false,
     `${label}: expected the visual player to be settled at ${locationName}.`,
   );
+  const movementGeometry = entry.movement?.playerLocationGeometry ?? null;
   assert.equal(
-    entry.mapAgency?.currentLocation?.id,
+    movementGeometry?.currentLocationId,
+    locationId,
+    `${label}: movement geometry current location must agree with ${locationName}.`,
+  );
+  assert.ok(
+    pointInsideBounds(movementGeometry?.playerWorldPoint, bounds),
+    `${label}: settled movement geometry point is outside the authored ${locationName} region: ${JSON.stringify({
+      point: movementGeometry?.playerWorldPoint,
+      bounds,
+      movement: movementGeometry,
+    })}.`,
+  );
+
+  if (entry.camera?.playerWorldPoint) {
+    assert.ok(
+      pointInsideBounds(entry.camera.playerWorldPoint, bounds),
+      `${label}: settled camera/player point is outside the authored ${locationName} region: ${JSON.stringify({
+        point: entry.camera.playerWorldPoint,
+        bounds,
+        movement: movementGeometry,
+      })}.`,
+    );
+  }
+
+  if (!entry.mapAgency) {
+    return;
+  }
+
+  assert.equal(
+    entry.mapAgency.currentLocation?.id,
     locationId,
     `${label}: map-agency current location must agree with ${locationName}.`,
   );
   assert.ok(
-    pointInsideBounds(entry.mapAgency?.playerWorldPoint, bounds),
+    pointInsideBounds(entry.mapAgency.playerWorldPoint, bounds),
     `${label}: settled player map-agency point is outside the authored ${locationName} region: ${JSON.stringify({
-      point: entry.mapAgency?.playerWorldPoint,
+      point: entry.mapAgency.playerWorldPoint,
       bounds,
-      movement: entry.movement?.playerLocationGeometry,
-    })}.`,
-  );
-  assert.ok(
-    pointInsideBounds(
-      entry.movement?.playerLocationGeometry?.playerWorldPoint,
-      bounds,
-    ),
-    `${label}: settled movement geometry point is outside the authored ${locationName} region: ${JSON.stringify({
-      point: entry.movement?.playerLocationGeometry?.playerWorldPoint,
-      bounds,
-      movement: entry.movement?.playerLocationGeometry,
+      movement: movementGeometry,
     })}.`,
   );
 }
