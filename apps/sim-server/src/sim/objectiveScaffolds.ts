@@ -53,6 +53,16 @@ interface PlayerThoughtHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+interface WorkStageThoughtHint {
+  jobId: string;
+  routeKeys?: string[];
+  stage: NonNullable<
+    NonNullable<StreetGameState["firstAfternoon"]>["teaShiftStage"]
+  >;
+  thought: string;
+  when?: (context: ScaffoldContext) => boolean;
+}
+
 interface ConversationTopicSuppression {
   npcId: string;
   routeKeys?: string[];
@@ -122,6 +132,7 @@ interface ObjectiveRouteScaffold {
   semanticMoveBonuses?: SemanticMoveBonus[];
   semanticHints?: SemanticHint[];
   speechHints?: SpeechHint[];
+  workStageThoughts?: WorkStageThoughtHint[];
 }
 
 const FIRST_AFTERNOON_ROUTE_KEYS = ["first-afternoon"] as const;
@@ -304,6 +315,21 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) =>
           world.firstAfternoon?.teaShiftStage === "paid" &&
           world.player.currentLocationId !== world.player.homeLocationId,
+      },
+    ],
+    workStageThoughts: [
+      {
+        jobId: "job-tea-shift",
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        stage: "rush",
+        thought: "The room is filling. Cups first, tables second, keep moving.",
+      },
+      {
+        jobId: "job-tea-shift",
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        stage: "counter",
+        thought:
+          "Ada is not watching every step now. That probably means I am keeping up.",
       },
     ],
     speechHints: [
@@ -533,6 +559,35 @@ export function objectiveRoutePlayerThought(
   for (const scaffold of activeScaffolds(objective.routeKey)) {
     const thought = (scaffold.playerThoughts ?? []).find(
       (candidate) =>
+        (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
+        (!candidate.when || candidate.when(context)),
+    );
+    if (thought) {
+      return thought.thought;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteWorkStageThought(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  input: {
+    jobId: string;
+    stage: WorkStageThoughtHint["stage"] | undefined;
+  },
+) {
+  if (!objective || !input.stage) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const thought = (scaffold.workStageThoughts ?? []).find(
+      (candidate) =>
+        candidate.jobId === input.jobId &&
+        candidate.stage === input.stage &&
         (!candidate.routeKeys || candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
     );

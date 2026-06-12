@@ -20,6 +20,10 @@ const FIRST_AFTERNOON_DIALOGUE_FALLBACK =
   "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.";
 const FIRST_AFTERNOON_RETURN_HOME_THOUGHT =
   "I should head back to Morrow House and let today land.";
+const FIRST_AFTERNOON_TEA_RUSH_THOUGHT =
+  "The room is filling. Cups first, tables second, keep moving.";
+const FIRST_AFTERNOON_TEA_COUNTER_THOUGHT =
+  "Ada is not watching every step now. That probably means I am keeping up.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -161,7 +165,9 @@ function worldWithStaleFirstAfternoonThoughtAndLivePump(): StreetGameState {
   return world;
 }
 
-function worldWithActiveTeaCommitment(): StreetGameState {
+function worldWithActiveTeaCommitment(
+  teaShiftStage: "rush" | "counter" = "rush",
+): StreetGameState {
   const world = seedStreetGame("game-reasoning-active-tea-thought");
   const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
 
@@ -176,7 +182,7 @@ function worldWithActiveTeaCommitment(): StreetGameState {
   };
   world.currentTime = "2026-03-21T12:30:00.000Z";
   world.firstAfternoon = {
-    teaShiftStage: "rush",
+    teaShiftStage,
   };
   if (teaJob) {
     teaJob.accepted = true;
@@ -240,6 +246,30 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_RETURN_HOME_THOUGHT);
     expect(thoughtsSource).not.toContain(FIRST_AFTERNOON_RETURN_HOME_THOUGHT);
+  });
+
+  it("keeps first-afternoon tea-shift stage thoughts in scaffold data, not thought or engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const thoughtsSource = readFileSync(
+      new URL("../src/ai/streetThoughts.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const stageThought of [
+      FIRST_AFTERNOON_TEA_RUSH_THOUGHT,
+      FIRST_AFTERNOON_TEA_COUNTER_THOUGHT,
+    ]) {
+      expect(scaffoldSource).toContain(stageThought);
+      expect(engineSource).not.toContain(stageThought);
+      expect(thoughtsSource).not.toContain(stageThought);
+    }
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
@@ -391,7 +421,16 @@ describe("street reasoning authority", () => {
 
     const thoughts = buildDeterministicStreetThoughts(world);
 
-    expect(thoughts.playerThought).toMatch(/cups|tables|room/i);
+    expect(thoughts.playerThought).toBe(FIRST_AFTERNOON_TEA_RUSH_THOUGHT);
+    expect(thoughts.playerThought).not.toMatch(/pump|wrench|Morrow House/i);
+  });
+
+  it("keeps first-afternoon counter-stage thoughts when the tea shift reaches the counter", () => {
+    const world = worldWithActiveTeaCommitment("counter");
+
+    const thoughts = buildDeterministicStreetThoughts(world);
+
+    expect(thoughts.playerThought).toBe(FIRST_AFTERNOON_TEA_COUNTER_THOUGHT);
     expect(thoughts.playerThought).not.toMatch(/pump|wrench|Morrow House/i);
   });
 
