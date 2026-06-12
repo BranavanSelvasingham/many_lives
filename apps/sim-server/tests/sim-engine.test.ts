@@ -4401,6 +4401,10 @@ describe("SimulationEngine street slice", () => {
   });
 
   it("hands first-afternoon completion into a fresh state-derived next objective", async () => {
+    const acknowledgementFeed =
+      "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.";
+    const acknowledgementMemory =
+      "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.";
     const result = await runRowanLoopSmoke({
       gameId: "game-rowan-post-first-afternoon-handoff",
     });
@@ -4426,6 +4430,10 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.firstAfternoon?.completionAcknowledgedAt).toBeDefined();
+    expect(world.feed.map((entry) => entry.text)).toContain(acknowledgementFeed);
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      acknowledgementMemory,
+    );
     expect(world.player.objective?.routeKey).not.toBe("first-afternoon");
     expect(world.player.objective?.source).toBe("dynamic");
     expect(world.player.objective?.progress.completed).toBeLessThan(
@@ -4449,6 +4457,14 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.player.objective?.routeKey).not.toBe("first-afternoon");
     expect(world.player.objective?.routeKey).not.toBe("rest-home");
+    expect(
+      world.feed.filter((entry) => entry.text === acknowledgementFeed),
+    ).toHaveLength(1);
+    expect(
+      world.player.memories.filter(
+        (memory) => memory.text === acknowledgementMemory,
+      ),
+    ).toHaveLength(1);
     expect(world.rowanAutonomy.actionId).not.toBe("rest:home");
     expect(world.player.energy).toBeGreaterThanOrEqual(35);
     expect(
