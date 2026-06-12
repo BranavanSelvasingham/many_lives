@@ -11,6 +11,12 @@ import {
   buildDeterministicStreetReply,
 } from "../src/ai/streetDialogue.js";
 import { buildDeterministicStreetThoughts } from "../src/ai/streetThoughts.js";
+import {
+  buildGenericClosedWorkWindowConversationResolution,
+  buildNpcConversationImpression,
+  buildNpcConversationResolution,
+  buildSocialNextNpcConversationResolution,
+} from "../src/street-sim/npcNarratives.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
@@ -40,6 +46,25 @@ const NPC_FIRST_CONTACT_PRIMER_COPY = [
   "Tomas thinks in loads, time windows, and whether you slow the rest of the yard down.",
   "Nia watches the square while she talks to you, like she expects the next important detail to arrive mid-sentence.",
   "Nia notices small jams before the whole block has to notice them.",
+];
+const NPC_CONVERSATION_RESOLUTION_COPY = [
+  "get to Mercer Repairs for a wrench, then come back to the pump.",
+  "Mara made it plain that fixing the pump would make the house easier for everyone.",
+  "get to Kettle & Lamp before lunch gets busy and ask Ada for work.",
+  "Mara trusts follow-through more than worry, and Ada is the nearest honest place to start.",
+  "skip the closed lunch lead and ask Tomas while the yard window is still live.",
+  "Ada closed the lunch option instead of holding a stale shift open, then pointed Rowan toward the yard.",
+  "stay with Ada and take the tea-house shift if the room still needs the hands.",
+  "Ada made the noon shift sound simple, but only if you can keep up once the room gets hot.",
+  "decide whether Jo's wrench is worth the eight coins, then take it where it matters.",
+  "Jo made the wrench feel less like a purchase and more like a decision about whether you'll actually use it.",
+  "Tomas did not reopen the loading block after the yard had already moved without Rowan.",
+  "stay near the yard and take the loading shift if the pay and timing still work.",
+  "swing through Quay Square and clear the cart before the foot traffic swells.",
+  "Nia keeps seeing the small jams that become the whole block's problem if nobody moves first.",
+  "Ask Nia where the block is about to jam before the square feels it.",
+  "Rowan might keep pace when the cafe fills up.",
+  "Rowan paid attention to where the block might jam up.",
 ];
 const FIRST_AFTERNOON_RETURN_HOME_THOUGHT =
   "I should head back to Morrow House and let today land.";
@@ -448,6 +473,213 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain("firstContactPrimer:");
   });
 
+  it("keeps NPC conversation resolution and impression copy in NPC narrative data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const npcNarrativesSource = readFileSync(
+      new URL("../src/street-sim/npcNarratives.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const resolutionCopy of NPC_CONVERSATION_RESOLUTION_COPY) {
+      expect(npcNarrativesSource).toContain(resolutionCopy);
+      expect(engineSource).not.toContain(resolutionCopy);
+    }
+
+    expect(npcNarrativesSource).toContain("NPC_CONVERSATION_RESOLUTIONS");
+    expect(npcNarrativesSource).toContain("NEXT_NPC_OBJECTIVE_TEXT");
+    expect(npcNarrativesSource).toContain("NPC_CONVERSATION_IMPRESSIONS");
+    expect(engineSource).toContain("buildNpcConversationResolution");
+    expect(engineSource).toContain("buildSocialNextNpcConversationResolution");
+    expect(engineSource).toContain("buildNpcConversationImpression");
+    expect(engineSource).not.toContain("buildNextNpcObjectiveText");
+    expect(engineSource).not.toContain(
+      "yardWorkRedirectConversationResolution",
+    );
+    expect(engineSource).not.toContain(
+      "closedWorkWindowConversationResolution",
+    );
+  });
+
+  it("preserves selected NPC-owned conversation resolution payloads exactly", () => {
+    expect(
+      buildNpcConversationResolution("mara-pump-needs-wrench", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "get to Mercer Repairs for a wrench, then come back to the pump.",
+      memoryKind: "problem",
+      memoryText:
+        "Mara made it plain that fixing the pump would make the house easier for everyone.",
+      objectiveText: "Buy a wrench and fix the pump.",
+    });
+    expect(
+      buildNpcConversationResolution("mara-live-tea-lead", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "get to Kettle & Lamp before lunch gets busy and ask Ada for work.",
+      memoryKind: "job",
+      memoryText:
+        "Mara trusts follow-through more than worry, and Ada is the nearest honest place to start.",
+      objectiveText: "Get to Kettle & Lamp and ask Ada for work.",
+    });
+    expect(
+      buildNpcConversationResolution("ada-closed-lunch-yard-redirect", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "skip the closed lunch lead and ask Tomas while the yard window is still live.",
+      memoryKind: "job",
+      memoryText:
+        "Ada closed the lunch option instead of holding a stale shift open, then pointed Rowan toward the yard.",
+      objectiveText:
+        "See if Tomas still needs another set of hands in the yard.",
+      summary:
+        "Ada closed the stale lunch lead and redirected Rowan toward the live yard window.",
+    });
+    expect(
+      buildNpcConversationResolution("ada-live-tea-shift", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "stay with Ada and take the tea-house shift if the room still needs the hands.",
+      memoryKind: "job",
+      memoryText:
+        "Ada made the noon shift sound simple, but only if you can keep up once the room gets hot.",
+      objectiveText: "Take the cup-and-counter shift at Kettle & Lamp.",
+    });
+    expect(
+      buildNpcConversationResolution("jo-wrench-needed-for-pump", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "decide whether Jo's wrench is worth the eight coins, then take it where it matters.",
+      memoryKind: "self",
+      memoryText:
+        "Jo made the wrench feel less like a purchase and more like a decision about whether you'll actually use it.",
+      objectiveText: "Buy a wrench and fix the pump.",
+    });
+    expect(
+      buildNpcConversationResolution("jo-has-wrench-for-pump", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "leave the stall and go use the wrench before the pump gets worse.",
+      memoryKind: "problem",
+      memoryText:
+        "Jo made the repair feel plain: take the tool back and use it before the leak gets worse.",
+      objectiveText: "Fix the pump in Morrow Yard.",
+    });
+    expect(
+      buildNpcConversationResolution("tomas-live-yard-shift", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "stay near the yard and take the loading shift if the pay and timing still work.",
+      memoryKind: "job",
+      memoryText:
+        "Tomas was clear about the work: keep the lane open, move the crates, and finish on time.",
+      objectiveText: "Take the freight yard lift before the window closes.",
+    });
+    expect(
+      buildNpcConversationResolution("tomas-closed-yard-window", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "stop chasing closed work windows and return to Morrow House to take stock.",
+      memoryKind: "job",
+      memoryText:
+        "Tomas did not reopen the loading block after the yard had already moved without Rowan.",
+      objectiveText: "Return to Morrow House and take stock.",
+    });
+    expect(
+      buildNpcConversationResolution("nia-live-cart-jam", {
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "swing through Quay Square and clear the cart before the foot traffic swells.",
+      memoryKind: "problem",
+      memoryText:
+        "Nia keeps seeing the small jams that become the whole block's problem if nobody moves first.",
+      objectiveText: "Clear the jammed cart in Quay Square.",
+    });
+  });
+
+  it("preserves social next-NPC and impression copy from NPC narrative helpers", () => {
+    expect(
+      buildSocialNextNpcConversationResolution({
+        currentNpcName: "Mara",
+        nextNpcId: "npc-ada",
+        nextNpcName: "Ada",
+        shouldSharpenObjective: true,
+        socialLoopObjective: false,
+      }),
+    ).toMatchObject({
+      decision: "talk to Ada next while there is still time.",
+      memoryKind: "person",
+      memoryText: "Mara pointed Rowan toward the next person to talk to.",
+      objectiveText: "Ask Ada if Kettle & Lamp needs steady hands today.",
+    });
+    expect(
+      buildSocialNextNpcConversationResolution({
+        currentNpcName: "Mara",
+        nextNpcId: "npc-ada",
+        nextNpcName: "Ada",
+        shouldSharpenObjective: false,
+        socialLoopObjective: true,
+      }),
+    ).toMatchObject({
+      decision: "talk to Ada next.",
+      memoryKind: "person",
+      memoryText:
+        "Mara gave the block a clearer shape and pointed you toward the next person.",
+      objectiveText: "Talk to Ada next.",
+    });
+    expect(
+      buildGenericClosedWorkWindowConversationResolution({
+        npcName: "Rin",
+        shouldSharpenObjective: true,
+      }),
+    ).toMatchObject({
+      decision:
+        "stop chasing closed work windows and return to Morrow House to take stock.",
+      memoryKind: "job",
+      memoryText:
+        "The block did not keep paid work windows open just because Rowan asked late.",
+      objectiveText: "Return to Morrow House and take stock.",
+      summary:
+        "Rin made the closed work window explicit instead of reopening a stale route.",
+    });
+    expect(
+      buildNpcConversationImpression({
+        npcId: "npc-mara",
+        nextMove: "Get to Kettle & Lamp and ask Ada for work.",
+        objectiveText: "Find work today.",
+      }),
+    ).toBe(
+      "Rowan sounded willing to get to Kettle & Lamp and ask Ada for work.",
+    );
+    expect(
+      buildNpcConversationImpression({
+        npcId: "npc-nia",
+        nextMove: "Clear the jammed cart in Quay Square.",
+        objectiveText: "Help the block.",
+      }),
+    ).toBe("Rowan paid attention to where the block might jam up.");
+  });
+
   it("keeps first-afternoon return-home thought copy in scaffold data, not thought control flow", () => {
     const thoughtsSource = readFileSync(
       new URL("../src/ai/streetThoughts.ts", import.meta.url),
@@ -609,7 +841,9 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain("playerFacingRationaleNormalizations");
     expect(scaffoldSource).toContain("actionLocationReasons");
-    expect(engineSource).toContain("objectiveRoutePlayerFacingAutonomyRationale");
+    expect(engineSource).toContain(
+      "objectiveRoutePlayerFacingAutonomyRationale",
+    );
     expect(engineSource).toContain("objectiveRouteActionLocationReason");
   });
 
