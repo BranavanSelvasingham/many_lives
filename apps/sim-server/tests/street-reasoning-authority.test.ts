@@ -12,7 +12,10 @@ import {
 } from "../src/ai/streetDialogue.js";
 import { buildDeterministicStreetThoughts } from "../src/ai/streetThoughts.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
-import type { PlayerObjective, StreetGameState } from "../src/street-sim/types.js";
+import type {
+  PlayerObjective,
+  StreetGameState,
+} from "../src/street-sim/types.js";
 
 const FIRST_AFTERNOON_PLAN_RATIONALE =
   "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
@@ -44,6 +47,12 @@ const FIRST_AFTERNOON_COMPARE_ACTION_DESCRIPTION =
   "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.";
 const FIRST_AFTERNOON_COMPLETION_ACTION_DESCRIPTION =
   "Count what changed today before chasing another errand.";
+const FIRST_AFTERNOON_ROUTE_OUTCOME_LABEL = "Useful first move chosen";
+const FIRST_AFTERNOON_ROUTE_STEP_TITLE = "Choose the first useful move.";
+const FIRST_AFTERNOON_ROUTE_STEP_DETAIL =
+  "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.";
+const FIRST_AFTERNOON_ROUTE_COMPLETION_DETAIL =
+  "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -157,7 +166,8 @@ function worldWithStaleFirstAfternoonThoughtAndLivePump(): StreetGameState {
   world.rowanAutonomy = {
     actionId: "solve:problem-pump",
     autoContinue: true,
-    detail: "The pump is active and Rowan has the wrench, so fixing it is the live useful move.",
+    detail:
+      "The pump is active and Rowan has the wrench, so fixing it is the live useful move.",
     intent: {
       reason:
         "The pump is active and Rowan has the wrench, so fixing it is the live useful move.",
@@ -225,7 +235,9 @@ function worldWithPaidFirstAfternoonReturnThought(): StreetGameState {
 }
 
 function worldWithCompletedFirstAfternoonPlayerThought(): StreetGameState {
-  const world = seedStreetGame("game-reasoning-completed-first-afternoon-thought");
+  const world = seedStreetGame(
+    "game-reasoning-completed-first-afternoon-thought",
+  );
 
   world.firstAfternoon = {
     completedAt: world.currentTime,
@@ -356,7 +368,9 @@ describe("street reasoning authority", () => {
     );
 
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
-    expect(thoughtsSource).not.toContain(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
+    expect(thoughtsSource).not.toContain(
+      FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT,
+    );
   });
 
   it("keeps first-afternoon completion outcome copy in scaffold data, not engine control flow", () => {
@@ -383,7 +397,36 @@ describe("street reasoning authority", () => {
     expect(engineSource).toContain(
       'addFeed(world, "memory", completionOutcome.feedText)',
     );
-    expect(engineSource).toContain('remember(world, "self", completionOutcome.memoryText)');
+    expect(engineSource).toContain(
+      'remember(world, "self", completionOutcome.memoryText)',
+    );
+  });
+
+  it("keeps first-afternoon route outcome and step metadata in scaffold data, not objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const routeCopy of [
+      FIRST_AFTERNOON_ROUTE_OUTCOME_LABEL,
+      FIRST_AFTERNOON_ROUTE_STEP_TITLE,
+      FIRST_AFTERNOON_ROUTE_STEP_DETAIL,
+      FIRST_AFTERNOON_ROUTE_COMPLETION_DETAIL,
+    ]) {
+      expect(scaffoldSource).toContain(routeCopy);
+      expect(objectiveStateSource).not.toContain(routeCopy);
+    }
+
+    expect(scaffoldSource).toContain("FIRST_AFTERNOON_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("FIRST_AFTERNOON_STEP_TEMPLATES");
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteFirstAfternoonRouteScaffold",
+    );
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
@@ -392,7 +435,9 @@ describe("street reasoning authority", () => {
     const thoughts = buildDeterministicStreetThoughts(world);
 
     expect(thoughts.playerThought).toMatch(/Mara/i);
-    expect(thoughts.playerThought).not.toMatch(/stale|old pier|poisoned|route/i);
+    expect(thoughts.playerThought).not.toMatch(
+      /stale|old pier|poisoned|route/i,
+    );
   });
 
   it("labels unfinished trail items as supporting hints in the thought prompt", () => {
@@ -428,9 +473,13 @@ describe("street reasoning authority", () => {
     expect(rowanText).toContain("objectiveAuthority");
     expect(rowanText).toContain("desiredOutcomes");
     expect(rowanText).toContain("openDesiredOutcomes");
-    expect(rowanText).toContain("Ask Mara what keeps the Morrow House room stable");
+    expect(rowanText).toContain(
+      "Ask Mara what keeps the Morrow House room stable",
+    );
     expect(rowanText).toContain("currentAutonomy");
-    expect(rowanText).toContain("Mara is here, so Rowan can ask the question in person.");
+    expect(rowanText).toContain(
+      "Mara is here, so Rowan can ask the question in person.",
+    );
     expect(rowanText).toContain("availableLegalActions");
     expect(rowanText).toContain("talk:npc-mara");
     expect(rowanText).toContain("supportingRouteHints");
@@ -465,7 +514,8 @@ describe("street reasoning authority", () => {
     const objective = {
       focus: world.player.objective?.focus ?? "settle",
       routeKey: world.player.objective?.routeKey ?? "first-afternoon",
-      text: world.player.objective?.text ?? "Ask Mara what keeps the room stable",
+      text:
+        world.player.objective?.text ?? "Ask Mara what keeps the room stable",
     };
 
     const autonomousPrompt = buildGenerateStreetAutonomousLinePrompt({
@@ -475,7 +525,8 @@ describe("street reasoning authority", () => {
       purpose: "opener",
     });
     const interpretPrompt = buildInterpretStreetConversationPrompt({
-      closingReply: "Ask Ada at Kettle & Lamp before lunch if you need work today.",
+      closingReply:
+        "Ask Ada at Kettle & Lamp before lunch if you need work today.",
       discussedTopics: ["room", "work", "Ada"],
       game: world,
       npcId: "npc-mara",
@@ -504,7 +555,9 @@ describe("street reasoning authority", () => {
         "What should I do first if I want to keep the room and find honest work?",
     });
 
-    expect(reply.reply).toMatch(/Ada|Kettle|Lamp|lunch|work|shift|counter|pay/i);
+    expect(reply.reply).toMatch(
+      /Ada|Kettle|Lamp|lunch|work|shift|counter|pay/i,
+    );
     expect(reply.reply).not.toMatch(/old pier|poisoned|stale route/i);
   });
 
@@ -518,7 +571,9 @@ describe("street reasoning authority", () => {
     });
 
     expect(reply.reply).toMatch(/room|Morrow House|shared spaces|pay|house/i);
-    expect(reply.reply).not.toMatch(/Ada|Kettle|Lamp|lunch|old pier|poisoned|route/i);
+    expect(reply.reply).not.toMatch(
+      /Ada|Kettle|Lamp|lunch|old pier|poisoned|route/i,
+    );
   });
 
   it("lets live autonomy and discovered problems outrank stale first-afternoon thought copy", () => {
@@ -527,7 +582,9 @@ describe("street reasoning authority", () => {
     const thoughts = buildDeterministicStreetThoughts(world);
 
     expect(thoughts.playerThought).toMatch(/pump/i);
-    expect(thoughts.playerThought).not.toMatch(/bed|tomorrow|lead|Morrow House|let today land/i);
+    expect(thoughts.playerThought).not.toMatch(
+      /bed|tomorrow|lead|Morrow House|let today land/i,
+    );
   });
 
   it("keeps first-afternoon cafe-stage thoughts when the tea shift is the active commitment", () => {
@@ -561,6 +618,8 @@ describe("street reasoning authority", () => {
 
     const thoughts = buildDeterministicStreetThoughts(world);
 
-    expect(thoughts.playerThought).toBe(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
+    expect(thoughts.playerThought).toBe(
+      FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT,
+    );
   });
 });

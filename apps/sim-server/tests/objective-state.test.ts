@@ -4,7 +4,44 @@ import {
   classifyObjective,
 } from "../src/sim/objectiveState.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
-import type { PlayerObjective } from "../src/street-sim/types.js";
+import type {
+  PlayerObjective,
+  StreetGameState,
+} from "../src/street-sim/types.js";
+
+function addConversationWith(world: StreetGameState, npcId: string) {
+  world.conversations.push({
+    id: `conversation-${world.id}-${npcId}-${world.conversations.length}`,
+    locationId: world.player.currentLocationId,
+    npcId,
+    speaker: "player",
+    speakerName: "Rowan",
+    text: `Checking in with ${npcId}.`,
+    threadId: `thread-${world.id}-${npcId}`,
+    time: world.currentTime,
+  });
+}
+
+function setFirstAfternoonLeadFieldNote(world: StreetGameState) {
+  world.firstAfternoon = {
+    ...world.firstAfternoon,
+    leadFieldNote: {
+      createdAt: world.currentTime,
+      evidence: "Ada confirmed the Kettle & Lamp lunch lead.",
+      learned: "Ada can use steady hands before lunch.",
+      memory: "Ada saw Rowan ask directly.",
+      next: "Take the cup-and-counter shift.",
+    },
+  };
+}
+
+function firstAfternoonObjective(world: StreetGameState) {
+  return buildPlayerObjectiveState(world, {
+    focus: "settle",
+    source: "dynamic",
+    text: "Make the first afternoon count.",
+  });
+}
 
 describe("objectiveState classification", () => {
   it("treats Ada's steady-hands lead as work instead of housing", () => {
@@ -23,7 +60,9 @@ describe("objectiveState classification", () => {
 
   it("treats Tomas's yard lead as work", () => {
     expect(
-      classifyObjective("See if Tomas still needs another back at North Crane Yard."),
+      classifyObjective(
+        "See if Tomas still needs another back at North Crane Yard.",
+      ),
     ).toBe("work");
   });
 
@@ -36,7 +75,8 @@ describe("objectiveState classification", () => {
   });
 
   it("treats the late Nia block-jam lead as people instead of stale housing", () => {
-    const text = "Ask Nia where the block is about to jam before the square feels it.";
+    const text =
+      "Ask Nia where the block is about to jam before the square feels it.";
 
     expect(classifyObjective(text)).toBe("people");
 
@@ -65,7 +105,9 @@ describe("objectiveState classification", () => {
 
   it("exposes desired-state outcomes and blockers for a pump objective", () => {
     const world = seedStreetGame("objective-pump-blockers");
-    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const pump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
     if (pump) {
       pump.discovered = true;
       pump.status = "active";
@@ -156,9 +198,9 @@ describe("objectiveState classification", () => {
       "first-afternoon-finish-shift",
       "first-afternoon-take-stock",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "first-afternoon-room",
       npcId: "npc-mara",
@@ -166,11 +208,271 @@ describe("objectiveState classification", () => {
       targetLocationId: "boarding-house",
     });
     expect(
-      objective?.outcomes.slice(1).some(
-        (outcome) =>
-          outcome.actionId || outcome.npcId || outcome.targetLocationId,
-      ),
+      objective?.outcomes
+        .slice(1)
+        .some(
+          (outcome) =>
+            outcome.actionId || outcome.npcId || outcome.targetLocationId,
+        ),
     ).toBe(false);
+  });
+
+  it("keeps first-afternoon route metadata stable across representative live states", () => {
+    const fresh = seedStreetGame("objective-first-afternoon-route-fresh");
+    const afterMara = seedStreetGame("objective-first-afternoon-route-mara");
+    const afterPlan = seedStreetGame("objective-first-afternoon-route-plan");
+    const afterAda = seedStreetGame("objective-first-afternoon-route-ada");
+    const afterAccepted = seedStreetGame(
+      "objective-first-afternoon-route-accepted",
+    );
+    const afterStarted = seedStreetGame(
+      "objective-first-afternoon-route-started",
+    );
+    const afterPaid = seedStreetGame("objective-first-afternoon-route-paid");
+    const afterStock = seedStreetGame("objective-first-afternoon-route-stock");
+
+    addConversationWith(afterMara, "npc-mara");
+
+    for (const world of [
+      afterPlan,
+      afterAda,
+      afterAccepted,
+      afterStarted,
+      afterPaid,
+      afterStock,
+    ]) {
+      addConversationWith(world, "npc-mara");
+      world.firstAfternoon = {
+        ...world.firstAfternoon,
+        planSettledAt: world.currentTime,
+      };
+    }
+
+    for (const world of [
+      afterAda,
+      afterAccepted,
+      afterStarted,
+      afterPaid,
+      afterStock,
+    ]) {
+      addConversationWith(world, "npc-ada");
+      setFirstAfternoonLeadFieldNote(world);
+      const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+      if (teaJob) {
+        teaJob.discovered = true;
+      }
+    }
+
+    for (const world of [afterAccepted, afterStarted, afterPaid, afterStock]) {
+      const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+      if (teaJob) {
+        teaJob.accepted = true;
+      }
+    }
+
+    afterStarted.player.activeJobId = "job-tea-shift";
+    afterStarted.firstAfternoon = {
+      ...afterStarted.firstAfternoon,
+      teaShiftStage: "rush",
+    };
+
+    for (const world of [afterPaid, afterStock]) {
+      const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+      if (teaJob) {
+        teaJob.completed = true;
+      }
+      world.firstAfternoon = {
+        ...world.firstAfternoon,
+        teaShiftStage: "paid",
+      };
+    }
+    afterPaid.player.currentLocationId = "tea-house";
+    afterStock.player.currentLocationId = afterStock.player.homeLocationId;
+    afterStock.firstAfternoon = {
+      ...afterStock.firstAfternoon,
+      completedAt: afterStock.currentTime,
+      fieldNote: {
+        createdAt: afterStock.currentTime,
+        evidence: "Ada paid Rowan after the Kettle & Lamp shift.",
+        learned: "Tonight's room holds.",
+        memory: "The first afternoon ended with paid work.",
+        next: "Let tomorrow's lead compete with live pressure.",
+      },
+    };
+
+    const objectiveByState = {
+      fresh: firstAfternoonObjective(fresh),
+      afterMara: firstAfternoonObjective(afterMara),
+      afterPlan: firstAfternoonObjective(afterPlan),
+      afterAda: firstAfternoonObjective(afterAda),
+      afterAccepted: firstAfternoonObjective(afterAccepted),
+      afterStarted: firstAfternoonObjective(afterStarted),
+      afterPaid: firstAfternoonObjective(afterPaid),
+      afterStock: firstAfternoonObjective(afterStock),
+    };
+
+    expect(
+      objectiveByState.fresh?.outcomes.map(({ id, label, urgency }) => ({
+        id,
+        label,
+        urgency,
+      })),
+    ).toEqual([
+      {
+        id: "first-afternoon-room",
+        label: "Room terms understood",
+        urgency: 8,
+      },
+      {
+        id: "first-afternoon-choose-move",
+        label: "Useful first move chosen",
+        urgency: 7,
+      },
+      {
+        id: "first-afternoon-ada-lead",
+        label: "Ada lead verified",
+        urgency: 6,
+      },
+      {
+        id: "first-afternoon-record-lead",
+        label: "Ada lead recorded as evidence",
+        urgency: 5,
+      },
+      {
+        id: "first-afternoon-take-shift",
+        label: "Cup-and-counter shift accepted",
+        urgency: 4,
+      },
+      {
+        id: "first-afternoon-start-shift",
+        label: "Lunch rush started",
+        urgency: 3,
+      },
+      {
+        id: "first-afternoon-finish-shift",
+        label: "Shift finished and paid",
+        urgency: 2,
+      },
+      {
+        id: "first-afternoon-take-stock",
+        label: "First afternoon taken stock",
+        urgency: 1,
+      },
+    ]);
+    expect(
+      objectiveByState.fresh?.trail.map(({ id, title }) => ({ id, title })),
+    ).toEqual([
+      {
+        id: "first-afternoon-room",
+        title: "Ask Mara how to keep tonight's room.",
+      },
+      {
+        id: "first-afternoon-choose-move",
+        title: "Choose the first useful move.",
+      },
+      {
+        id: "first-afternoon-ada-lead",
+        title: "Ask Ada if Kettle & Lamp needs help today.",
+      },
+      {
+        id: "first-afternoon-record-lead",
+        title: "Record what Ada confirmed.",
+      },
+      {
+        id: "first-afternoon-take-shift",
+        title: "Take the cup-and-counter shift.",
+      },
+      {
+        id: "first-afternoon-start-shift",
+        title: "Get through the lunch rush.",
+      },
+      {
+        id: "first-afternoon-finish-shift",
+        title: "Finish the shift and get paid.",
+      },
+      {
+        id: "first-afternoon-take-stock",
+        title: "Head back to Morrow House and take stock.",
+      },
+    ]);
+
+    expect(objectiveByState.afterMara?.outcomes[1]).toMatchObject({
+      actionId: "reflect:first-afternoon-plan",
+      status: "blocked",
+      targetLocationId: "boarding-house",
+    });
+    expect(objectiveByState.afterMara?.trail[1]).toMatchObject({
+      actionId: "reflect:first-afternoon-plan",
+      detail:
+        "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.",
+      progress: "Weigh the options",
+      targetLocationId: "boarding-house",
+    });
+
+    expect(objectiveByState.afterPlan?.outcomes[2]).toMatchObject({
+      npcId: "npc-ada",
+      status: "blocked",
+      targetLocationId: "tea-house",
+    });
+    expect(objectiveByState.afterPlan?.trail[1]).toMatchObject({
+      detail: "Rowan chose Ada over drifting or resting.",
+      done: true,
+      progress: "Ada chosen",
+    });
+
+    expect(objectiveByState.afterAda?.outcomes[4]).toMatchObject({
+      actionId: "accept:job-tea-shift",
+      status: "blocked",
+      targetLocationId: "tea-house",
+    });
+    expect(objectiveByState.afterAda?.trail[3]).toMatchObject({
+      detail: "Rowan turned Mara's lead into a field note with evidence.",
+      done: true,
+      progress: "Lead grounded",
+    });
+
+    expect(objectiveByState.afterAccepted?.outcomes[5]).toMatchObject({
+      actionId: "work:job-tea-shift",
+      status: "blocked",
+      targetLocationId: "tea-house",
+    });
+    expect(objectiveByState.afterStarted?.outcomes[6]).toMatchObject({
+      actionId: "work:job-tea-shift",
+      status: "blocked",
+      targetLocationId: "tea-house",
+    });
+    expect(objectiveByState.afterStarted?.trail[5]).toMatchObject({
+      detail: "Rowan has started keeping the room moving.",
+      done: true,
+      progress: "Rush handled",
+    });
+
+    expect(objectiveByState.afterPaid?.outcomes[7]).toMatchObject({
+      status: "blocked",
+      targetLocationId: "boarding-house",
+    });
+    expect(objectiveByState.afterPaid?.trail[7]).toMatchObject({
+      detail: "Go back to Morrow House before ending the first afternoon.",
+      progress: "Head home",
+      targetLocationId: "boarding-house",
+    });
+
+    expect(objectiveByState.afterStock?.progress).toMatchObject({
+      completed: 8,
+      total: 8,
+    });
+    expect(
+      objectiveByState.afterStock?.outcomes.every(
+        (outcome) => outcome.status === "met",
+      ),
+    ).toBe(true);
+    expect(objectiveByState.afterStock?.trail[7]).toMatchObject({
+      detail:
+        "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead.",
+      done: true,
+      progress: "First afternoon complete",
+      targetLocationId: "boarding-house",
+    });
   });
 
   it("exposes Mara's Ada lead as predicate authority, not trail authority", () => {
@@ -197,9 +499,9 @@ describe("objectiveState classification", () => {
       "mara-ada-record-evidence",
       "mara-ada-open-choice",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "mara-ada-hear-lead",
       npcId: "npc-mara",
@@ -247,9 +549,9 @@ describe("objectiveState classification", () => {
       "settle-income",
       "settle-people",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "settle-terms",
       npcId: "npc-mara",
@@ -272,7 +574,9 @@ describe("objectiveState classification", () => {
 
   it("marks objectives complete from world predicates despite stale trail state", () => {
     const world = seedStreetGame("objective-pump-predicates");
-    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const pump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
     if (pump) {
       pump.discovered = true;
       pump.status = "solved";
@@ -321,9 +625,9 @@ describe("objectiveState classification", () => {
         total: 3,
       },
     });
-    expect(objective?.outcomes.every((outcome) => outcome.status === "met")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.status === "met"),
+    ).toBe(true);
     expect(objective?.trail.map((step) => step.id)).toEqual([
       "help-pump-inspect",
       "help-pump-tool",
@@ -341,7 +645,9 @@ describe("objectiveState classification", () => {
 
   it("closes pump objectives when the world resolves the pump without Rowan", () => {
     const world = seedStreetGame("objective-pump-world-resolved");
-    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const pump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
     if (pump) {
       pump.discovered = true;
       pump.resolvedAt = world.currentTime;
@@ -382,12 +688,12 @@ describe("objectiveState classification", () => {
         }),
       ]),
     );
-    expect(objective?.trail.flatMap((step) => step.actionId ?? [])).not.toContain(
-      "buy:item-wrench",
-    );
-    expect(objective?.trail.flatMap((step) => step.actionId ?? [])).not.toContain(
-      "solve:problem-pump",
-    );
+    expect(
+      objective?.trail.flatMap((step) => step.actionId ?? []),
+    ).not.toContain("buy:item-wrench");
+    expect(
+      objective?.trail.flatMap((step) => step.actionId ?? []),
+    ).not.toContain("solve:problem-pump");
   });
 
   it("recognizes paid work outcomes without relying on trail completion", () => {
@@ -419,12 +725,12 @@ describe("objectiveState classification", () => {
       "work-finish",
       "work-pay",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
-    expect(objective?.outcomes.every((outcome) => outcome.status === "met")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
+    expect(
+      objective?.outcomes.every((outcome) => outcome.status === "met"),
+    ).toBe(true);
   });
 
   it("exposes work routes as desired predicates with live intent targets", () => {
@@ -448,9 +754,9 @@ describe("objectiveState classification", () => {
       "work-finish",
       "work-pay",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "work-lead-yard",
       npcId: "npc-tomas",
@@ -489,9 +795,7 @@ describe("objectiveState classification", () => {
       expect.arrayContaining([
         expect.objectContaining({
           actionId: "accept:job-yard-shift",
-          blockers: expect.arrayContaining([
-            "Freight yard lift closes soon.",
-          ]),
+          blockers: expect.arrayContaining(["Freight yard lift closes soon."]),
           evidence: "Freight yard lift window closes around 5pm.",
           id: "work-commit",
           status: "at_risk",
@@ -526,9 +830,9 @@ describe("objectiveState classification", () => {
       "commitment-window-job-tea-shift",
       "commitment-finish-job-tea-shift",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "commitment-go-job-tea-shift",
       status: "blocked",
@@ -543,7 +847,9 @@ describe("objectiveState classification", () => {
 
   it("exposes tool routes as desired predicates with live tool targets", () => {
     const world = seedStreetGame("objective-tool-predicates");
-    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const pump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
     if (pump) {
       pump.discovered = true;
       pump.status = "active";
@@ -567,9 +873,9 @@ describe("objectiveState classification", () => {
       "tool-return",
       "tool-use",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       actionId: "buy:item-wrench",
       id: "tool-buy",
@@ -604,9 +910,9 @@ describe("objectiveState classification", () => {
       "rest-return",
       "rest-hour",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "rest-return",
       status: "blocked",
@@ -640,9 +946,9 @@ describe("objectiveState classification", () => {
       "people-open",
       "people-friend",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "people-talk",
       npcId: "npc-mara",
@@ -676,9 +982,9 @@ describe("objectiveState classification", () => {
       "explore-talk",
       "explore-learn",
     ]);
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
     expect(objective?.outcomes[0]).toMatchObject({
       id: "explore-go",
       status: "blocked",
@@ -693,7 +999,9 @@ describe("objectiveState classification", () => {
 
   it("recognizes tool outcomes from live state despite stale trail state", () => {
     const world = seedStreetGame("objective-tool-stale-trail");
-    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const pump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
     if (pump) {
       pump.discovered = true;
       pump.status = "solved";
@@ -743,12 +1051,12 @@ describe("objectiveState classification", () => {
         total: 3,
       },
     });
-    expect(objective?.outcomes.every((outcome) => outcome.authority === "predicate")).toBe(
-      true,
-    );
-    expect(objective?.outcomes.every((outcome) => outcome.status === "met")).toBe(
-      true,
-    );
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
+    ).toBe(true);
+    expect(
+      objective?.outcomes.every((outcome) => outcome.status === "met"),
+    ).toBe(true);
     expect(objective?.outcomes.map((outcome) => outcome.id)).not.toContain(
       "stale-tool-step",
     );

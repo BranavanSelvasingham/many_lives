@@ -9,6 +9,7 @@ import type {
   PlayerObjective,
   StreetGameState,
 } from "../street-sim/types.js";
+import { objectiveRouteFirstAfternoonRouteScaffold } from "./objectiveScaffolds.js";
 
 interface ObjectiveRoute {
   key: string;
@@ -58,15 +59,13 @@ function problemClosedByWorld(
 ): boolean {
   return Boolean(
     problem &&
-      (problem.status === "solved" ||
-        problem.status === "resolved" ||
-        problem.status === "expired"),
+    (problem.status === "solved" ||
+      problem.status === "resolved" ||
+      problem.status === "expired"),
   );
 }
 
-function problemCleared(
-  problem: ReturnType<typeof problemById>,
-): boolean {
+function problemCleared(problem: ReturnType<typeof problemById>): boolean {
   return Boolean(
     problem && (problem.status === "solved" || problem.status === "resolved"),
   );
@@ -361,12 +360,11 @@ function buildObjectiveOutcomes(
 ): ObjectiveOutcomeState[] {
   const stepById = new Map(route.steps.map((step) => [step.id, step]));
   const hasExplicitOutcomes = Boolean(route.outcomes);
-  const definitions = route.outcomes ?? route.steps.map((step, index) =>
-    objectiveOutcomeDefinitionFromTrailStep(
-      step,
-      route.steps.length - index,
-    ),
-  );
+  const definitions =
+    route.outcomes ??
+    route.steps.map((step, index) =>
+      objectiveOutcomeDefinitionFromTrailStep(step, route.steps.length - index),
+    );
 
   return definitions.map((definition, index) => {
     const matchingStep = stepById.get(definition.id);
@@ -415,8 +413,9 @@ function buildProgress(
   fallbackSteps: ObjectiveTrailItem[],
 ): ObjectiveProgressState {
   if (outcomes.length > 0) {
-    const completed = outcomes.filter((outcome) => outcome.status === "met")
-      .length;
+    const completed = outcomes.filter(
+      (outcome) => outcome.status === "met",
+    ).length;
     return {
       completed,
       total: outcomes.length,
@@ -465,10 +464,11 @@ function evaluateObjectiveOutcome(
         countPlayerConversationsWithNpc(world, "npc-mara") > 0 ||
           Boolean(
             world.firstAfternoon?.planSettledAt ||
-              world.firstAfternoon?.leadFieldNote,
+            world.firstAfternoon?.leadFieldNote,
           ),
         {
-          evidence: "Mara has explained what tonight's room and first lead require.",
+          evidence:
+            "Mara has explained what tonight's room and first lead require.",
         },
       );
     case "mara-ada-form-intent":
@@ -506,7 +506,9 @@ function evaluateObjectiveOutcome(
               ? "Ada has not confirmed the Kettle & Lamp lead yet."
               : "Ada's lunch work is no longer a live lead.",
           ],
-          evidence: teaJob?.discovered ? "Kettle & Lamp work is discovered." : undefined,
+          evidence: teaJob?.discovered
+            ? "Kettle & Lamp work is discovered."
+            : undefined,
         },
       );
     case "mara-ada-record-evidence":
@@ -519,20 +521,22 @@ function evaluateObjectiveOutcome(
       return outcomeEvaluation(
         Boolean(
           world.firstAfternoon?.leadFieldNote &&
-            teaJob?.discovered &&
-            teaLeadViable,
+          teaJob?.discovered &&
+          teaLeadViable,
         ),
         {
           blockers: ["The lead has not opened a legal work choice yet."],
-          evidence: teaJob?.discovered ? "Cup-and-counter shift is available." : undefined,
+          evidence: teaJob?.discovered
+            ? "Cup-and-counter shift is available."
+            : undefined,
         },
       );
     case "first-afternoon-take-shift":
       return outcomeEvaluation(
         Boolean(
           teaJob?.accepted ||
-            teaJob?.completed ||
-            world.player.activeJobId === "job-tea-shift",
+          teaJob?.completed ||
+          world.player.activeJobId === "job-tea-shift",
         ),
         {
           blockers: teaJob?.missed
@@ -546,9 +550,9 @@ function evaluateObjectiveOutcome(
       return outcomeEvaluation(
         Boolean(
           world.firstAfternoon?.teaShiftStage === "rush" ||
-            world.firstAfternoon?.teaShiftStage === "counter" ||
-            world.firstAfternoon?.teaShiftStage === "paid" ||
-            teaJob?.completed,
+          world.firstAfternoon?.teaShiftStage === "counter" ||
+          world.firstAfternoon?.teaShiftStage === "paid" ||
+          teaJob?.completed,
         ),
         {
           blockers: ["The lunch rush has not started for Rowan yet."],
@@ -560,7 +564,9 @@ function evaluateObjectiveOutcome(
         blockers: teaJob?.missed
           ? ["The cup-and-counter shift was missed."]
           : ["The cup-and-counter shift is not finished yet."],
-        evidence: teaJob?.completed ? "Ada paid Rowan for the shift." : undefined,
+        evidence: teaJob?.completed
+          ? "Ada paid Rowan for the shift."
+          : undefined,
         failed: Boolean(teaJob?.missed && !teaJob.completed),
       });
     case "first-afternoon-take-stock":
@@ -582,10 +588,13 @@ function evaluateObjectiveOutcome(
       );
     }
     case "settle-standing":
-      return outcomeEvaluation((world.player.reputation.morrow_house ?? 0) >= 2, {
-        blockers: ["Morrow House does not see Rowan as dependable yet."],
-        evidence: `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
-      });
+      return outcomeEvaluation(
+        (world.player.reputation.morrow_house ?? 0) >= 2,
+        {
+          blockers: ["Morrow House does not see Rowan as dependable yet."],
+          evidence: `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
+        },
+      );
     case "settle-lead":
       return outcomeEvaluation(hasConfirmedWorkLead(world), {
         blockers: ["No work lead has been confirmed yet."],
@@ -609,20 +618,23 @@ function evaluateObjectiveOutcome(
     case "work-commit": {
       const leadJob = workLeadJob(world, route, objectiveText);
       const leadJobAtRisk = Boolean(leadJob && jobWindowAtRisk(world, leadJob));
-      return outcomeEvaluation(Boolean(leadJob?.accepted || leadJob?.completed), {
-        atRisk: leadJobAtRisk,
-        blockers: leadJob?.missed
-          ? [`${leadJob.title} was missed.`]
-          : leadJobAtRisk
-            ? [`${leadJob?.title ?? "The job"} closes soon.`]
-            : [`${leadJob?.title ?? "The job"} has not been accepted yet.`],
-        evidence: leadJob?.accepted
-          ? `${leadJob.title} accepted.`
-          : leadJobAtRisk && leadJob
-            ? `${leadJob.title} window closes around ${formatHour(leadJob.endHour)}.`
-            : undefined,
-        failed: Boolean(leadJob?.missed && !leadJob.completed),
-      });
+      return outcomeEvaluation(
+        Boolean(leadJob?.accepted || leadJob?.completed),
+        {
+          atRisk: leadJobAtRisk,
+          blockers: leadJob?.missed
+            ? [`${leadJob.title} was missed.`]
+            : leadJobAtRisk
+              ? [`${leadJob?.title ?? "The job"} closes soon.`]
+              : [`${leadJob?.title ?? "The job"} has not been accepted yet.`],
+          evidence: leadJob?.accepted
+            ? `${leadJob.title} accepted.`
+            : leadJobAtRisk && leadJob
+              ? `${leadJob.title} window closes around ${formatHour(leadJob.endHour)}.`
+              : undefined,
+          failed: Boolean(leadJob?.missed && !leadJob.completed),
+        },
+      );
     }
     case "work-finish": {
       const leadJob = workLeadJob(world, route, objectiveText);
@@ -703,8 +715,8 @@ function evaluateObjectiveOutcome(
         hasWrench &&
           Boolean(
             target &&
-              (world.player.currentLocationId === target.locationId ||
-                problemClosedByWorld(target)),
+            (world.player.currentLocationId === target.locationId ||
+              problemClosedByWorld(target)),
           ),
         {
           blockers: hasWrench
@@ -765,7 +777,7 @@ function evaluateObjectiveOutcome(
       return outcomeEvaluation(
         Boolean(
           definition.targetLocationId &&
-            world.player.knownLocationIds.includes(definition.targetLocationId),
+          world.player.knownLocationIds.includes(definition.targetLocationId),
         ),
         {
           blockers: ["The target place is not known yet."],
@@ -774,7 +786,9 @@ function evaluateObjectiveOutcome(
       );
     case "explore-talk": {
       const targetPeople = definition.targetLocationId
-        ? world.npcs.filter((npc) => npc.currentLocationId === definition.targetLocationId)
+        ? world.npcs.filter(
+            (npc) => npc.currentLocationId === definition.targetLocationId,
+          )
         : [];
       return outcomeEvaluation(
         targetPeople.some(
@@ -798,7 +812,9 @@ function evaluateObjectiveOutcome(
   if (definition.id.startsWith("commitment-go-")) {
     const job = jobById(world, definition.id.replace("commitment-go-", ""));
     return outcomeEvaluation(
-      Boolean(job?.completed || world.player.currentLocationId === job?.locationId),
+      Boolean(
+        job?.completed || world.player.currentLocationId === job?.locationId,
+      ),
       {
         blockers: [`Rowan is not at ${job?.title ?? "the job"} yet.`],
         evidence: world.player.currentLocationId,
@@ -809,7 +825,9 @@ function evaluateObjectiveOutcome(
   if (definition.id.startsWith("commitment-window-")) {
     const job = jobById(world, definition.id.replace("commitment-window-", ""));
     const inWindow = Boolean(
-      job && currentHour(world) >= job.startHour && currentHour(world) < job.endHour,
+      job &&
+      currentHour(world) >= job.startHour &&
+      currentHour(world) < job.endHour,
     );
     return outcomeEvaluation(Boolean(job?.completed || inWindow), {
       atRisk: Boolean(job && currentHour(world) >= job.endHour - 0.75),
@@ -1257,7 +1275,9 @@ function buildMaraAdaLeadOutcomeDefinitions(input: {
       label: "Mara's lead heard",
       urgency: 6,
       npcId:
-        input.hasTalkedToMara || input.hasLeadFieldNote ? undefined : "npc-mara",
+        input.hasTalkedToMara || input.hasLeadFieldNote
+          ? undefined
+          : "npc-mara",
       targetLocationId:
         input.hasTalkedToMara || input.hasLeadFieldNote
           ? undefined
@@ -1305,14 +1325,18 @@ function buildMaraAdaLeadOutcomeDefinitions(input: {
       label: "Ada lead recorded as evidence",
       urgency: 2,
       targetLocationId:
-        input.hasTalkedToAda && !input.hasLeadFieldNote ? "tea-house" : undefined,
+        input.hasTalkedToAda && !input.hasLeadFieldNote
+          ? "tea-house"
+          : undefined,
     },
     {
       id: "mara-ada-open-choice",
       label: "Lead opened a real choice",
       urgency: 1,
       targetLocationId:
-        input.hasLeadFieldNote && !input.hasOpenWorkChoice && input.hasLeadViable
+        input.hasLeadFieldNote &&
+        !input.hasOpenWorkChoice &&
+        input.hasLeadViable
           ? "tea-house"
           : undefined,
     },
@@ -1331,8 +1355,7 @@ function buildFirstAfternoonRoute(
   const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
   const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
   const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
-  const hasRoomTerms =
-    hasTalkedToMara || hasSettledPlan || hasLeadFieldNote;
+  const hasRoomTerms = hasTalkedToMara || hasSettledPlan || hasLeadFieldNote;
   const hasTakenTeaShift = Boolean(
     teaJob?.accepted ||
     teaJob?.completed ||
@@ -1342,251 +1365,41 @@ function buildFirstAfternoonRoute(
   const teaShiftStage = world.firstAfternoon?.teaShiftStage;
   const hasStartedTeaShift = Boolean(
     teaShiftStage === "rush" ||
-      teaShiftStage === "counter" ||
-      teaShiftStage === "paid" ||
-      hasFinishedTeaShift,
+    teaShiftStage === "counter" ||
+    teaShiftStage === "paid" ||
+    hasFinishedTeaShift,
   );
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
   const wrappedFirstAfternoon = Boolean(world.firstAfternoon?.completedAt);
+  const routeScaffold = objectiveRouteFirstAfternoonRouteScaffold({
+    atHome,
+    hasActiveTeaJob: world.player.activeJobId === "job-tea-shift",
+    hasFinishedTeaShift,
+    hasLeadFieldNote,
+    hasRoomTerms,
+    hasSettledPlan,
+    hasStartedTeaShift,
+    hasTakenTeaShift,
+    hasTalkedToAda,
+    hasTalkedToMara,
+    homeLocationId: home?.id,
+    teaJobAccepted: Boolean(teaJob?.accepted),
+    teaJobCompleted: Boolean(teaJob?.completed),
+    teaJobDiscovered: Boolean(teaJob?.discovered),
+    teaJobId: teaJob?.id,
+    teaJobMissed: Boolean(teaJob?.missed),
+    teaLeadViable,
+    teaShiftStage,
+    wrappedFirstAfternoon,
+  });
 
   return {
     key: "first-afternoon",
     focus: "settle",
     source,
     terminal: true,
-    outcomes: [
-      {
-        id: "first-afternoon-room",
-        label: "Room terms understood",
-        urgency: 8,
-        npcId: hasRoomTerms ? undefined : "npc-mara",
-        targetLocationId: hasRoomTerms ? undefined : home?.id,
-      },
-      {
-        id: "first-afternoon-choose-move",
-        label: "Useful first move chosen",
-        urgency: 7,
-        actionId:
-          hasTalkedToMara && !hasSettledPlan && teaLeadViable
-            ? "reflect:first-afternoon-plan"
-            : undefined,
-        targetLocationId:
-          hasTalkedToMara && !hasSettledPlan && teaLeadViable
-            ? home?.id
-            : undefined,
-      },
-      {
-        id: "first-afternoon-ada-lead",
-        label: "Ada lead verified",
-        urgency: 6,
-        npcId:
-          hasSettledPlan &&
-          !hasTalkedToAda &&
-          !hasTakenTeaShift &&
-          !hasFinishedTeaShift &&
-          teaLeadViable
-            ? "npc-ada"
-            : undefined,
-        targetLocationId:
-          hasSettledPlan &&
-          !hasTalkedToAda &&
-          !hasTakenTeaShift &&
-          !hasFinishedTeaShift &&
-          teaLeadViable
-            ? "tea-house"
-            : undefined,
-      },
-      {
-        id: "first-afternoon-record-lead",
-        label: "Ada lead recorded as evidence",
-        urgency: 5,
-        targetLocationId: hasTalkedToAda && !hasLeadFieldNote ? "tea-house" : undefined,
-      },
-      {
-        id: "first-afternoon-take-shift",
-        label: "Cup-and-counter shift accepted",
-        urgency: 4,
-        actionId:
-          hasLeadFieldNote && teaJob && !hasTakenTeaShift && teaLeadViable
-            ? teaJob.discovered
-              ? `accept:${teaJob.id}`
-              : undefined
-            : undefined,
-        targetLocationId:
-          hasLeadFieldNote && !hasTakenTeaShift && teaLeadViable
-            ? "tea-house"
-            : undefined,
-      },
-      {
-        id: "first-afternoon-start-shift",
-        label: "Lunch rush started",
-        urgency: 3,
-        actionId:
-          teaJob && teaJob.accepted && !hasStartedTeaShift && !teaJob.missed
-            ? `work:${teaJob.id}`
-            : undefined,
-        targetLocationId:
-          teaJob && teaJob.accepted && !hasStartedTeaShift && !teaJob.missed
-            ? "tea-house"
-            : undefined,
-      },
-      {
-        id: "first-afternoon-finish-shift",
-        label: "Shift finished and paid",
-        urgency: 2,
-        actionId:
-          teaJob && hasStartedTeaShift && !hasFinishedTeaShift && !teaJob.missed
-            ? `work:${teaJob.id}`
-            : undefined,
-        targetLocationId:
-          teaJob && hasStartedTeaShift && !hasFinishedTeaShift && !teaJob.missed
-            ? "tea-house"
-            : undefined,
-      },
-      {
-        id: "first-afternoon-take-stock",
-        label: "First afternoon taken stock",
-        urgency: 1,
-        actionId:
-          atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
-            ? "reflect:first-afternoon"
-            : undefined,
-        targetLocationId:
-          hasFinishedTeaShift && !wrappedFirstAfternoon ? home?.id : undefined,
-      },
-    ],
-    steps: [
-      makeStep({
-        id: "first-afternoon-room",
-        title: "Ask Mara how to keep tonight's room.",
-        detail: hasTalkedToMara
-          ? "Mara explained how Morrow House works."
-          : "Ask what the room costs, what the house expects, and how tonight works.",
-        progress: hasTalkedToMara ? "Mara has weighed in" : "Talk to Mara",
-        done: hasTalkedToMara,
-        npcId: "npc-mara",
-        targetLocationId: home?.id,
-      }),
-      makeStep({
-        id: "first-afternoon-choose-move",
-        title: "Choose the first useful move.",
-        detail: hasSettledPlan
-          ? "Rowan chose Ada over drifting or resting."
-          : "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.",
-        progress: hasSettledPlan ? "Ada chosen" : "Weigh the options",
-        done: hasSettledPlan,
-        actionId:
-          hasTalkedToMara && !hasSettledPlan && teaLeadViable
-            ? "reflect:first-afternoon-plan"
-            : undefined,
-        targetLocationId:
-          hasTalkedToMara && !hasSettledPlan && teaLeadViable
-            ? home?.id
-            : undefined,
-      }),
-      makeStep({
-        id: "first-afternoon-ada-lead",
-        title: "Ask Ada if Kettle & Lamp needs help today.",
-        detail: hasTalkedToAda
-          ? "Ada made the tea-house lead concrete."
-          : "Ask Ada directly if there is work Rowan can do today.",
-        progress: hasTalkedToAda ? "Ada asked" : "Find Ada",
-        done: hasTalkedToAda || hasTakenTeaShift || hasFinishedTeaShift,
-        npcId: teaLeadViable ? "npc-ada" : undefined,
-        targetLocationId: teaLeadViable ? "tea-house" : undefined,
-      }),
-      makeStep({
-        id: "first-afternoon-record-lead",
-        title: "Record what Ada confirmed.",
-        detail: hasLeadFieldNote
-          ? "Rowan turned Mara's lead into a field note with evidence."
-          : "Write down what Ada said, where it happened, and what choice it opened.",
-        progress: hasLeadFieldNote ? "Lead grounded" : "Needs field note",
-        done: hasLeadFieldNote,
-        targetLocationId:
-          hasTalkedToAda || hasLeadFieldNote || teaLeadViable
-            ? "tea-house"
-            : undefined,
-      }),
-      makeStep({
-        id: "first-afternoon-take-shift",
-        title: "Take the cup-and-counter shift.",
-        detail: hasTakenTeaShift
-          ? "Rowan has the shift."
-          : "Say yes to the cup-and-counter shift.",
-        progress: hasTakenTeaShift
-          ? "Shift taken"
-          : teaJob?.discovered
-            ? "Offer ready"
-            : "Need the offer",
-        done: hasTakenTeaShift || hasFinishedTeaShift,
-        actionId:
-          teaJob && !teaJob.completed && teaLeadViable
-            ? teaJob.accepted || world.player.activeJobId === teaJob.id
-              ? `work:${teaJob.id}`
-              : teaJob.discovered
-                ? `accept:${teaJob.id}`
-                : undefined
-            : undefined,
-        targetLocationId: teaLeadViable ? "tea-house" : undefined,
-      }),
-      makeStep({
-        id: "first-afternoon-start-shift",
-        title: "Get through the lunch rush.",
-        detail: hasStartedTeaShift
-          ? "Rowan has started keeping the room moving."
-          : "Start with cups, tables, and the counter when lunch fills in.",
-        progress: hasStartedTeaShift ? "Rush handled" : "Shift ahead",
-        done: hasStartedTeaShift,
-        actionId:
-          teaJob && teaJob.accepted && !teaJob.completed && !teaJob.missed
-            ? `work:${teaJob.id}`
-            : undefined,
-        targetLocationId:
-          teaJob && teaJob.accepted && !teaJob.completed && !teaJob.missed
-            ? "tea-house"
-            : undefined,
-      }),
-      makeStep({
-        id: "first-afternoon-finish-shift",
-        title: "Finish the shift and get paid.",
-        detail: hasFinishedTeaShift
-          ? "Rowan worked the shift and got paid."
-          : teaShiftStage === "counter"
-            ? "Finish the last counter pass and collect the pay."
-            : "Keep the shift steady until Ada can pay Rowan.",
-        progress: hasFinishedTeaShift ? "Paid" : "Still ahead",
-        done: hasFinishedTeaShift,
-        actionId:
-          teaJob && !teaJob.completed && !teaJob.missed
-            ? `work:${teaJob.id}`
-            : undefined,
-        targetLocationId:
-          teaJob && hasStartedTeaShift && !teaJob.completed && !teaJob.missed
-            ? "tea-house"
-            : undefined,
-      }),
-      makeStep({
-        id: "first-afternoon-take-stock",
-        title: "Head back to Morrow House and take stock.",
-        detail: wrappedFirstAfternoon
-          ? "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead."
-          : atHome && hasFinishedTeaShift
-            ? "Stop for a minute and count what changed today."
-            : "Go back to Morrow House before ending the first afternoon.",
-        progress: wrappedFirstAfternoon
-          ? "First afternoon complete"
-          : atHome
-            ? "Ready to take stock"
-            : "Head home",
-        done: wrappedFirstAfternoon,
-        actionId:
-          atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
-            ? "reflect:first-afternoon"
-            : undefined,
-        targetLocationId: home?.id,
-      }),
-    ],
+    outcomes: routeScaffold.outcomes,
+    steps: routeScaffold.steps.map(makeStep),
   };
 }
 
@@ -1794,8 +1607,9 @@ function buildSettleOutcomeDefinitions(input: {
       label: "Income committed or completed",
       urgency: 2,
       actionId: input.hasCommittedIncome ? undefined : incomeActionId,
-      targetLocationId:
-        input.hasCommittedIncome ? undefined : input.settleLeadJob?.locationId,
+      targetLocationId: input.hasCommittedIncome
+        ? undefined
+        : input.settleLeadJob?.locationId,
     },
     {
       id: "settle-people",
@@ -1946,7 +1760,10 @@ function buildWorkOutcomeDefinitions(
   return [
     {
       id: lead === "yard" ? "work-lead-yard" : "work-lead-tea",
-      label: lead === "yard" ? "Yard work lead confirmed" : "Tea-house work lead confirmed",
+      label:
+        lead === "yard"
+          ? "Yard work lead confirmed"
+          : "Tea-house work lead confirmed",
       urgency: 4,
       npcId: leadNpcId,
       targetLocationId: leadLocationId,
@@ -2069,14 +1886,16 @@ function buildCartOutcomeDefinitions(
       id: "cart-discovered",
       label: "Cart problem understood",
       urgency: 2,
-      actionId: cartActive && !problem?.discovered ? "inspect:problem-cart" : undefined,
+      actionId:
+        cartActive && !problem?.discovered ? "inspect:problem-cart" : undefined,
       targetLocationId: problem?.locationId,
     },
     {
       id: "cart-solved",
       label: "Cart cleared",
       urgency: 1,
-      actionId: cartActive && problem?.discovered ? "solve:problem-cart" : undefined,
+      actionId:
+        cartActive && problem?.discovered ? "solve:problem-cart" : undefined,
       targetLocationId: problem?.locationId,
     },
   ];
@@ -2093,8 +1912,10 @@ function buildPumpOutcomeDefinitions(
       id: "pump-discovered",
       label: "Pump problem understood",
       urgency: 3,
-      actionId: pumpActive && !problem?.discovered ? "inspect:problem-pump" : undefined,
-      targetLocationId: pumpActive && !problem?.discovered ? problem?.locationId : undefined,
+      actionId:
+        pumpActive && !problem?.discovered ? "inspect:problem-pump" : undefined,
+      targetLocationId:
+        pumpActive && !problem?.discovered ? problem?.locationId : undefined,
     },
     {
       id: "wrench-in-inventory",
@@ -2188,7 +2009,10 @@ function buildHelpRoute(
           : "A closer look will tell Rowan whether this is his problem or just nearby trouble.",
         progress: problem?.discovered ? "Problem seen" : "Still a lead",
         done: Boolean(problem?.discovered),
-        actionId: problemActive && !problem?.discovered ? "inspect:problem-pump" : undefined,
+        actionId:
+          problemActive && !problem?.discovered
+            ? "inspect:problem-pump"
+            : undefined,
         targetLocationId: problem?.locationId,
       }),
       makeStep({
@@ -2315,8 +2139,8 @@ function buildToolOutcomeDefinitions(
     hasWrench &&
     Boolean(
       target &&
-        (world.player.currentLocationId === target.locationId ||
-          problemClosedByWorld(target)),
+      (world.player.currentLocationId === target.locationId ||
+        problemClosedByWorld(target)),
     );
   const problemOpen = Boolean(target && !problemClosedByWorld(target));
 
@@ -2409,8 +2233,7 @@ function buildRestOutcomeDefinitions(
       id: "rest-hour",
       label: "Recovered with an hour of rest",
       urgency: 1,
-      actionId:
-        state.atHome && !state.restLanded ? "rest:home" : undefined,
+      actionId: state.atHome && !state.restLanded ? "rest:home" : undefined,
       targetLocationId: state.restLanded ? undefined : homeLocationId,
     },
   ];
@@ -2942,9 +2765,9 @@ function firstAfternoonAdaLeadViable(
 ) {
   return Boolean(
     teaJob &&
-      !teaJob.completed &&
-      !teaJob.missed &&
-      currentHour(world) < teaJob.endHour,
+    !teaJob.completed &&
+    !teaJob.missed &&
+    currentHour(world) < teaJob.endHour,
   );
 }
 
@@ -2964,8 +2787,11 @@ function jobWindowAtRisk(world: StreetGameState, job: JobState | undefined) {
     return false;
   }
 
-  const minutesRemaining = job.endHour * 60 - (world.clock.hour * 60 + world.clock.minute);
-  return minutesRemaining >= 0 && minutesRemaining <= JOB_WINDOW_PRESSURE_MINUTES;
+  const minutesRemaining =
+    job.endHour * 60 - (world.clock.hour * 60 + world.clock.minute);
+  return (
+    minutesRemaining >= 0 && minutesRemaining <= JOB_WINDOW_PRESSURE_MINUTES
+  );
 }
 
 function problemById(world: StreetGameState, problemId: string) {
@@ -3060,9 +2886,7 @@ function isMaraAdaLeadObjectiveText(text: string) {
   const normalized = text.toLowerCase();
   const pointsToMaraLead =
     /\bmara\b/.test(normalized) &&
-    /\blead\b|\bverify\b|\bgrounded knowledge\b|\bgrounded\b/.test(
-      normalized,
-    );
+    /\blead\b|\bverify\b|\bgrounded knowledge\b|\bgrounded\b/.test(normalized);
   const pointsToAdaWork =
     /\bada\b|\bkettle & lamp\b|\btea[- ]house\b/.test(normalized) &&
     /\bwork\b|\blunch\b|\bshift\b|\bhands?\b|\bask\b/.test(normalized);
@@ -3174,8 +2998,7 @@ function scoreObjectiveFocus(world: StreetGameState): ObjectiveScores {
       !hasWrench,
   );
   const urgentJobPressure = [teaJob, yardJob].reduce(
-    (pressure, job) =>
-      Math.max(pressure, jobWindowAtRisk(world, job) ? 24 : 0),
+    (pressure, job) => Math.max(pressure, jobWindowAtRisk(world, job) ? 24 : 0),
     0,
   );
 
