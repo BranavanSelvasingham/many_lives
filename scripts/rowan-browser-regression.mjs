@@ -67,6 +67,7 @@ const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_APP_READY_TIMEOUT_MS ?? "120000",
 );
 const SIM_WAIT_TIMEOUT_MS = 15_000;
+const MAP_AGENCY_PROBE_SETTLE_TIMEOUT_MS = 2_000;
 const WEB_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_WEB_START_TIMEOUT_MS ?? "45000",
 );
@@ -578,6 +579,62 @@ class CdpSession {
     }
 
     return probe;
+  }
+
+  async waitForAnimationFrames(frameCount = 2) {
+    const safeFrameCount = Math.max(1, Math.min(6, Math.ceil(frameCount)));
+    await this.evaluate(`new Promise((resolve) => {
+      let remaining = ${safeFrameCount};
+      const tick = () => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          resolve(true);
+          return;
+        }
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    })`);
+  }
+
+  async waitForMapAgencyProbe({
+    currentLocationId = null,
+    targetLocationId = null,
+    timeoutMs = MAP_AGENCY_PROBE_SETTLE_TIMEOUT_MS,
+  } = {}) {
+    return waitFor(
+      async () => {
+        try {
+          await this.waitForAnimationFrames(1);
+          const probe = await this.readMapAgencyProbe();
+          if (!probe) {
+            return null;
+          }
+
+          if (
+            currentLocationId &&
+            probe.currentLocation?.id !== currentLocationId
+          ) {
+            return null;
+          }
+
+          if (
+            targetLocationId &&
+            probe.target?.locationId !== targetLocationId
+          ) {
+            return null;
+          }
+
+          return probe;
+        } catch {
+          return null;
+        }
+      },
+      timeoutMs,
+      `Timed out waiting for map-agency probe current=${
+        currentLocationId ?? "*"
+      } target=${targetLocationId ?? "*"}.`,
+    );
   }
 
   async readCameraProbe() {
@@ -5742,21 +5799,7 @@ function assertCloseConversationLabelSuppressed(byLabel, label) {
   );
 }
 
-function assertKettleTargetCueSpatialAuthority(byLabel, label) {
-  const entry = byLabel[label];
-  assert.ok(entry, `Expected Kettle target timeline entry ${label}.`);
-  assert.equal(
-    entry.location?.id,
-    "boarding-house",
-    `${label}: expected route-start evidence while Rowan is still leaving Morrow House.`,
-  );
-  assert.equal(
-    entry.autonomy?.targetLocationId,
-    "tea-house",
-    `${label}: expected Kettle & Lamp to be the selected target.`,
-  );
-
-  const mapAgency = entry.mapAgency;
+function assertKettleTargetCueMapAgency(mapAgency, label) {
   assert.ok(mapAgency, `${label}: missing map-agency probe.`);
   assert.equal(
     mapAgency.currentLocation?.id,
@@ -5814,6 +5857,55 @@ function assertKettleTargetCueSpatialAuthority(byLabel, label) {
       `${label}: Kettle target label must hide when the target is outside the visible camera rect.`,
     );
   }
+}
+
+function assertKettleTargetCueSpatialAuthority(byLabel, label) {
+  const entry = byLabel[label];
+  assert.ok(entry, `Expected Kettle target timeline entry ${label}.`);
+  assert.equal(
+    entry.location?.id,
+    "boarding-house",
+    `${label}: expected route-start evidence while Rowan is still leaving Morrow House.`,
+  );
+  assert.equal(
+    entry.autonomy?.targetLocationId,
+    "tea-house",
+    `${label}: expected Kettle & Lamp to be the selected target.`,
+  );
+
+  let mapAgency = entry.mapAgency;
+  let evidenceLabel = label;
+  if (!mapAgency) {
+    const nearbyLabel = label.replace(/-route-start$/, "-route-mid");
+    const nearbyEntry = byLabel[nearbyLabel];
+    assert.ok(
+      nearbyEntry?.mapAgency,
+      `${label}: missing map-agency probe and no nearby route-mid probe was captured.`,
+    );
+    assert.equal(
+      nearbyEntry.location?.id,
+      "boarding-house",
+      `${label}: nearby map-agency evidence must still be captured while Rowan is leaving Morrow House.`,
+    );
+    assert.equal(
+      nearbyEntry.autonomy?.targetLocationId,
+      "tea-house",
+      `${label}: nearby map-agency evidence must stay on the Kettle & Lamp target.`,
+    );
+    assert.equal(
+      nearbyEntry.movement?.playerRoute?.active,
+      true,
+      `${label}: nearby map-agency evidence must come from the active route.`,
+    );
+    assert.ok(
+      (nearbyEntry.movement?.playerRoute?.progress ?? 1) <= 0.5,
+      `${label}: nearby map-agency evidence must be early enough to prove Rowan is still Morrow-side.`,
+    );
+    mapAgency = nearbyEntry.mapAgency;
+    evidenceLabel = `${label} via ${nearbyLabel}`;
+  }
+
+  assertKettleTargetCueMapAgency(mapAgency, evidenceLabel);
 }
 
 function buildMovementAuditSummary(timeline) {
@@ -7200,7 +7292,20 @@ async function captureBrowserMovementState({
   if ((game.activeSpaceId ?? game.player.spaceId) === "street:south-quay") {
     assertRequiredNpcPatrolDiagnostics(label, probe);
   }
-  const mapAgency = await session.readMapAgencyProbe();
+  const expectedTargetLocationId = game.rowanAutonomy?.targetLocationId ?? null;
+  let mapAgency = null;
+  if (expectedTargetLocationId) {
+    try {
+      mapAgency = await session.waitForMapAgencyProbe({
+        currentLocationId: game.player.currentLocationId ?? null,
+        targetLocationId: expectedTargetLocationId,
+      });
+    } catch {
+      mapAgency = await session.readMapAgencyProbe();
+    }
+  } else {
+    mapAgency = await session.readMapAgencyProbe();
+  }
   const camera = await session.readCameraProbe();
 
   const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
