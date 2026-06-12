@@ -8,6 +8,10 @@ import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
 import { syncCityEvents } from "../street-sim/cityEvents.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
 import {
+  buildGenericClosedWorkWindowConversationResolution,
+  buildNpcConversationImpression,
+  buildNpcConversationResolution,
+  buildSocialNextNpcConversationResolution,
   getNpcFirstContactPrimer,
   getNpcNarrative,
 } from "../street-sim/npcNarratives.js";
@@ -2937,7 +2941,12 @@ function applyConversationResolution(
   rememberNpcIfNew(
     npc,
     resolution.npcImpression ??
-      buildNpcConversationImpression(world, npc, objective, resolution),
+      buildNpcConversationImpression({
+        npcId: npc.id,
+        nextMove:
+          resolution.objectiveText ?? resolution.decision ?? objective.text,
+        objectiveText: objective.text,
+      }),
   );
   setActiveConversation(world, npc, {
     decision: resolution.decision,
@@ -9715,12 +9724,13 @@ function deriveConversationResolution(
   const yardWindowClosed = jobWindowClosed(world, yardJob);
 
   if (socialLoopObjective && nextNpc) {
-    return {
-      decision: `talk to ${nextNpc.name} next.`,
-      memoryKind: "person",
-      memoryText: `${npc.name} gave the block a clearer shape and pointed you toward the next person.`,
-      objectiveText: `Talk to ${nextNpc.name} next.`,
-    };
+    return buildSocialNextNpcConversationResolution({
+      currentNpcName: npc.name,
+      nextNpcId: nextNpc.id,
+      nextNpcName: nextNpc.name,
+      shouldSharpenObjective,
+      socialLoopObjective,
+    });
   }
 
   switch (npc.id) {
@@ -9731,16 +9741,9 @@ function deriveConversationResolution(
         pumpProblem.status === "active" &&
         !hasWrench
       ) {
-        return {
-          decision:
-            "get to Mercer Repairs for a wrench, then come back to the pump.",
-          memoryKind: "problem",
-          memoryText:
-            "Mara made it plain that fixing the pump would make the house easier for everyone.",
-          objectiveText: shouldSharpenObjective
-            ? "Buy a wrench and fix the pump."
-            : undefined,
-        };
+        return buildNpcConversationResolution("mara-pump-needs-wrench", {
+          shouldSharpenObjective,
+        });
       }
 
       if (
@@ -9749,16 +9752,9 @@ function deriveConversationResolution(
         pumpProblem.status === "active" &&
         hasWrench
       ) {
-        return {
-          decision:
-            "go straight back to Morrow Yard and put the wrench to the pump.",
-          memoryKind: "problem",
-          memoryText:
-            "Mara keeps turning talk back toward the shared trouble that's already making the house tense.",
-          objectiveText: shouldSharpenObjective
-            ? "Fix the pump in Morrow Yard."
-            : undefined,
-        };
+        return buildNpcConversationResolution("mara-pump-has-wrench", {
+          shouldSharpenObjective,
+        });
       }
 
       if (
@@ -9768,48 +9764,39 @@ function deriveConversationResolution(
         !teaJob.completed &&
         !teaJob.missed
       ) {
-        return {
-          decision:
-            "get to Kettle & Lamp before lunch gets busy and ask Ada for work.",
-          memoryKind: "job",
-          memoryText:
-            "Mara trusts follow-through more than worry, and Ada is the nearest honest place to start.",
-          objectiveText: shouldSharpenObjective
-            ? "Get to Kettle & Lamp and ask Ada for work."
-            : undefined,
-        };
-      }
-
-      if (discussedWork && teaWindowClosed && yardWindowOpen) {
-        return yardWorkRedirectConversationResolution(shouldSharpenObjective, {
-          memoryText:
-            "Mara did not pretend Ada's lunch window was still alive; she pointed Rowan toward Tomas instead.",
-          sourceName: "Mara",
+        return buildNpcConversationResolution("mara-live-tea-lead", {
+          shouldSharpenObjective,
         });
       }
 
+      if (discussedWork && teaWindowClosed && yardWindowOpen) {
+        return buildNpcConversationResolution(
+          "mara-closed-lunch-yard-redirect",
+          {
+            shouldSharpenObjective,
+          },
+        );
+      }
+
       if (discussedWork && teaWindowClosed && yardWindowClosed) {
-        return closedWorkWindowConversationResolution(shouldSharpenObjective, {
-          memoryText:
-            "Mara made it clear that today's easy work windows had moved on.",
-          sourceName: "Mara",
+        return buildNpcConversationResolution("mara-closed-work-windows", {
+          shouldSharpenObjective,
         });
       }
       break;
     case "npc-ada":
       if (discussedWork && teaWindowClosed && yardWindowOpen) {
-        return yardWorkRedirectConversationResolution(shouldSharpenObjective, {
-          memoryText:
-            "Ada closed the lunch option instead of holding a stale shift open, then pointed Rowan toward the yard.",
-          sourceName: "Ada",
-        });
+        return buildNpcConversationResolution(
+          "ada-closed-lunch-yard-redirect",
+          {
+            shouldSharpenObjective,
+          },
+        );
       }
 
       if (discussedWork && teaWindowClosed && yardWindowClosed) {
-        return closedWorkWindowConversationResolution(shouldSharpenObjective, {
-          memoryText:
-            "Ada made it plain that the cup-and-counter shift was already gone for today.",
-          sourceName: "Ada",
+        return buildNpcConversationResolution("ada-closed-work-windows", {
+          shouldSharpenObjective,
         });
       }
 
@@ -9820,16 +9807,9 @@ function deriveConversationResolution(
         !teaJob.completed &&
         !teaJob.missed
       ) {
-        return {
-          decision:
-            "stay with Ada and take the tea-house shift if the room still needs the hands.",
-          memoryKind: "job",
-          memoryText:
-            "Ada made the noon shift sound simple, but only if you can keep up once the room gets hot.",
-          objectiveText: shouldSharpenObjective
-            ? "Take the cup-and-counter shift at Kettle & Lamp."
-            : undefined,
-        };
+        return buildNpcConversationResolution("ada-live-tea-shift", {
+          shouldSharpenObjective,
+        });
       }
 
       if (
@@ -9839,16 +9819,9 @@ function deriveConversationResolution(
         !yardJob.completed &&
         !yardJob.missed
       ) {
-        return {
-          decision:
-            "head to North Crane Yard and see if Tomas still needs another set of hands.",
-          memoryKind: "job",
-          memoryText:
-            "Ada sent you onward because she thinks you might hold up outside her room too.",
-          objectiveText: shouldSharpenObjective
-            ? "See if Tomas still needs another set of hands in the yard."
-            : undefined,
-        };
+        return buildNpcConversationResolution("ada-live-yard-shift", {
+          shouldSharpenObjective,
+        });
       }
       break;
     case "npc-jo":
@@ -9858,16 +9831,9 @@ function deriveConversationResolution(
         pumpProblem?.discovered &&
         pumpProblem.status === "active"
       ) {
-        return {
-          decision:
-            "decide whether Jo's wrench is worth the eight coins, then take it where it matters.",
-          memoryKind: "self",
-          memoryText:
-            "Jo made the wrench feel less like a purchase and more like a decision about whether you'll actually use it.",
-          objectiveText: shouldSharpenObjective
-            ? "Buy a wrench and fix the pump."
-            : undefined,
-        };
+        return buildNpcConversationResolution("jo-wrench-needed-for-pump", {
+          shouldSharpenObjective,
+        });
       }
 
       if (
@@ -9876,24 +9842,15 @@ function deriveConversationResolution(
         pumpProblem?.discovered &&
         pumpProblem.status === "active"
       ) {
-        return {
-          decision:
-            "leave the stall and go use the wrench before the pump gets worse.",
-          memoryKind: "problem",
-          memoryText:
-            "Jo made the repair feel plain: take the tool back and use it before the leak gets worse.",
-          objectiveText: shouldSharpenObjective
-            ? "Fix the pump in Morrow Yard."
-            : undefined,
-        };
+        return buildNpcConversationResolution("jo-has-wrench-for-pump", {
+          shouldSharpenObjective,
+        });
       }
       break;
     case "npc-tomas":
       if (discussedWork && yardWindowClosed) {
-        return closedWorkWindowConversationResolution(shouldSharpenObjective, {
-          memoryText:
-            "Tomas did not reopen the loading block after the yard had already moved without Rowan.",
-          sourceName: "Tomas",
+        return buildNpcConversationResolution("tomas-closed-yard-window", {
+          shouldSharpenObjective,
         });
       }
 
@@ -9904,30 +9861,16 @@ function deriveConversationResolution(
         !yardJob.completed &&
         !yardJob.missed
       ) {
-        return {
-          decision:
-            "stay near the yard and take the loading shift if the pay and timing still work.",
-          memoryKind: "job",
-          memoryText:
-            "Tomas was clear about the work: keep the lane open, move the crates, and finish on time.",
-          objectiveText: shouldSharpenObjective
-            ? "Take the freight yard lift before the window closes."
-            : undefined,
-        };
+        return buildNpcConversationResolution("tomas-live-yard-shift", {
+          shouldSharpenObjective,
+        });
       }
       break;
     case "npc-nia":
       if (cartProblem?.discovered && cartProblem.status === "active") {
-        return {
-          decision:
-            "swing through Quay Square and clear the cart before the foot traffic swells.",
-          memoryKind: "problem",
-          memoryText:
-            "Nia keeps seeing the small jams that become the whole block's problem if nobody moves first.",
-          objectiveText: shouldSharpenObjective
-            ? "Clear the jammed cart in Quay Square."
-            : undefined,
-        };
+        return buildNpcConversationResolution("nia-live-cart-jam", {
+          shouldSharpenObjective,
+        });
       }
       break;
     default:
@@ -9935,22 +9878,20 @@ function deriveConversationResolution(
   }
 
   if (discussedWork && teaWindowClosed && yardWindowClosed) {
-    return closedWorkWindowConversationResolution(shouldSharpenObjective, {
-      memoryText:
-        "The block did not keep paid work windows open just because Rowan asked late.",
-      sourceName: npc.name,
+    return buildGenericClosedWorkWindowConversationResolution({
+      npcName: npc.name,
+      shouldSharpenObjective,
     });
   }
 
   if (nextNpc) {
-    return {
-      decision: `talk to ${nextNpc.name} next while there is still time.`,
-      memoryKind: "person",
-      memoryText: `${npc.name} pointed Rowan toward the next person to talk to.`,
-      objectiveText: shouldSharpenObjective
-        ? buildNextNpcObjectiveText(nextNpc.id)
-        : undefined,
-    };
+    return buildSocialNextNpcConversationResolution({
+      currentNpcName: npc.name,
+      nextNpcId: nextNpc.id,
+      nextNpcName: nextNpc.name,
+      shouldSharpenObjective,
+      socialLoopObjective,
+    });
   }
 
   return {
@@ -9958,44 +9899,6 @@ function deriveConversationResolution(
     memoryKind: "self",
     memoryText:
       "The conversation gave you a clearer feel for where to lean next, even if it didn't hand you the whole answer.",
-  };
-}
-
-function yardWorkRedirectConversationResolution(
-  shouldSharpenObjective: boolean,
-  options: {
-    memoryText: string;
-    sourceName: string;
-  },
-): ConversationResolution {
-  return {
-    decision:
-      "skip the closed lunch lead and ask Tomas while the yard window is still live.",
-    memoryKind: "job",
-    memoryText: options.memoryText,
-    objectiveText: shouldSharpenObjective
-      ? "See if Tomas still needs another set of hands in the yard."
-      : undefined,
-    summary: `${options.sourceName} closed the stale lunch lead and redirected Rowan toward the live yard window.`,
-  };
-}
-
-function closedWorkWindowConversationResolution(
-  shouldSharpenObjective: boolean,
-  options: {
-    memoryText: string;
-    sourceName: string;
-  },
-): ConversationResolution {
-  return {
-    decision:
-      "stop chasing closed work windows and return to Morrow House to take stock.",
-    memoryKind: "job",
-    memoryText: options.memoryText,
-    objectiveText: shouldSharpenObjective
-      ? "Return to Morrow House and take stock."
-      : undefined,
-    summary: `${options.sourceName} made the closed work window explicit instead of reopening a stale route.`,
   };
 }
 
@@ -10009,46 +9912,6 @@ function rememberNpcIfNew(npc: NpcState, text: string) {
   npc.memory = npc.memory.slice(0, 6);
 }
 
-function buildNextNpcObjectiveText(npcId: string) {
-  switch (npcId) {
-    case "npc-mara":
-      return "Ask Mara how to keep my room at Morrow House feeling settled.";
-    case "npc-ada":
-      return "Ask Ada if Kettle & Lamp needs steady hands today.";
-    case "npc-jo":
-      return "Find out what tool or repair Jo says matters before I spend coin.";
-    case "npc-tomas":
-      return "See if Tomas still needs another set of hands at North Crane Yard.";
-    case "npc-nia":
-      return "Ask Nia where the block is about to jam before the square feels it.";
-    default:
-      return undefined;
-  }
-}
-
-function buildNpcConversationImpression(
-  world: StreetGameState,
-  npc: NpcState,
-  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
-  resolution: ConversationResolution,
-) {
-  const nextMove =
-    resolution.objectiveText ?? resolution.decision ?? objective.text;
-  switch (npc.id) {
-    case "npc-mara":
-      return `Rowan sounded willing to ${objectiveClause(nextMove)}.`;
-    case "npc-ada":
-      return `Rowan might keep pace when the cafe fills up.`;
-    case "npc-jo":
-      return `Rowan listened for the practical part instead of the shine.`;
-    case "npc-tomas":
-      return `Rowan asked about the work clearly and stayed practical.`;
-    case "npc-nia":
-      return `Rowan paid attention to where the block might jam up.`;
-    default:
-      return `Rowan stayed direct about wanting to ${objectiveClause(nextMove)}.`;
-  }
-}
 
 function nextUntalkedNpc(world: StreetGameState, currentNpcId?: string) {
   return world.npcs
