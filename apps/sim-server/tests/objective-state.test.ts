@@ -43,6 +43,17 @@ function firstAfternoonObjective(world: StreetGameState) {
   });
 }
 
+function maraAdaLeadObjective(
+  world: StreetGameState,
+  source: "manual" | "seed" = "manual",
+) {
+  return buildPlayerObjectiveState(world, {
+    focus: "work",
+    source,
+    text: "Verify Mara's lead by walking to Kettle & Lamp, asking Ada about lunch work, and recording what Rowan learns.",
+  });
+}
+
 describe("objectiveState classification", () => {
   it("treats Ada's steady-hands lead as work instead of housing", () => {
     expect(
@@ -478,11 +489,7 @@ describe("objectiveState classification", () => {
   it("exposes Mara's Ada lead as predicate authority, not trail authority", () => {
     const world = seedStreetGame("objective-mara-ada-predicates");
 
-    const objective = buildPlayerObjectiveState(world, {
-      focus: "work",
-      source: "manual",
-      text: "Verify Mara's lead by walking to Kettle & Lamp, asking Ada about lunch work, and recording what Rowan learns.",
-    });
+    const objective = maraAdaLeadObjective(world);
 
     expect(objective).toMatchObject({
       routeKey: "mara-ada-lead",
@@ -522,6 +529,210 @@ describe("objectiveState classification", () => {
       id: "mara-ada-ask-directly",
       npcId: "npc-ada",
       status: "blocked",
+      targetLocationId: "tea-house",
+    });
+  });
+
+  it("keeps Mara's Ada lead route metadata stable across representative live states", () => {
+    const freshManual = seedStreetGame("objective-mara-ada-route-fresh");
+    const afterMara = seedStreetGame("objective-mara-ada-route-mara");
+    const afterPlan = seedStreetGame("objective-mara-ada-route-plan");
+    const afterReached = seedStreetGame("objective-mara-ada-route-reached");
+    const afterRecorded = seedStreetGame("objective-mara-ada-route-recorded");
+    const afterChoice = seedStreetGame("objective-mara-ada-route-choice");
+
+    for (const world of [
+      afterMara,
+      afterPlan,
+      afterReached,
+      afterRecorded,
+      afterChoice,
+    ]) {
+      addConversationWith(world, "npc-mara");
+    }
+
+    for (const world of [
+      afterPlan,
+      afterReached,
+      afterRecorded,
+      afterChoice,
+    ]) {
+      world.firstAfternoon = {
+        ...world.firstAfternoon,
+        planSettledAt: world.currentTime,
+      };
+    }
+
+    for (const world of [afterReached, afterRecorded, afterChoice]) {
+      world.player.currentLocationId = "tea-house";
+    }
+
+    for (const world of [afterRecorded, afterChoice]) {
+      addConversationWith(world, "npc-ada");
+      setFirstAfternoonLeadFieldNote(world);
+    }
+
+    const choiceJob = afterChoice.jobs.find((job) => job.id === "job-tea-shift");
+    if (choiceJob) {
+      choiceJob.discovered = true;
+    }
+
+    const objectiveByState = {
+      freshManual: maraAdaLeadObjective(freshManual),
+      afterMara: maraAdaLeadObjective(afterMara, "seed"),
+      afterPlan: maraAdaLeadObjective(afterPlan, "seed"),
+      afterReached: maraAdaLeadObjective(afterReached, "seed"),
+      afterRecorded: maraAdaLeadObjective(afterRecorded, "seed"),
+      afterChoice: maraAdaLeadObjective(afterChoice, "seed"),
+    };
+
+    expect(
+      objectiveByState.freshManual?.outcomes.map(({ id, label, urgency }) => ({
+        id,
+        label,
+        urgency,
+      })),
+    ).toEqual([
+      {
+        id: "mara-ada-hear-lead",
+        label: "Mara's lead heard",
+        urgency: 6,
+      },
+      {
+        id: "mara-ada-form-intent",
+        label: "Ada verification intent formed",
+        urgency: 5,
+      },
+      {
+        id: "mara-ada-walk-route",
+        label: "Kettle & Lamp reached",
+        urgency: 4,
+      },
+      {
+        id: "mara-ada-ask-directly",
+        label: "Ada lead verified directly",
+        urgency: 3,
+      },
+      {
+        id: "mara-ada-record-evidence",
+        label: "Ada lead recorded as evidence",
+        urgency: 2,
+      },
+      {
+        id: "mara-ada-open-choice",
+        label: "Lead opened a real choice",
+        urgency: 1,
+      },
+    ]);
+    expect(
+      objectiveByState.freshManual?.trail.map(({ id, title }) => ({
+        id,
+        title,
+      })),
+    ).toEqual([
+      {
+        id: "mara-ada-hear-lead",
+        title: "Hear Mara's Kettle & Lamp lead.",
+      },
+      {
+        id: "mara-ada-form-intent",
+        title: "Form the plan to verify it directly.",
+      },
+      {
+        id: "mara-ada-walk-route",
+        title: "Walk to Kettle & Lamp.",
+      },
+      {
+        id: "mara-ada-ask-directly",
+        title: "Ask Ada about lunch work.",
+      },
+      {
+        id: "mara-ada-record-evidence",
+        title: "Record what Rowan learned.",
+      },
+      {
+        id: "mara-ada-open-choice",
+        title: "Open the next choice from that knowledge.",
+      },
+    ]);
+
+    expect(objectiveByState.freshManual?.progress).toMatchObject({
+      completed: 1,
+      total: 6,
+    });
+    expect(objectiveByState.freshManual?.outcomes[0]).toMatchObject({
+      npcId: "npc-mara",
+      status: "open",
+      targetLocationId: "boarding-house",
+    });
+    expect(objectiveByState.freshManual?.trail[1]).toMatchObject({
+      detail:
+        "Rowan chose to ask Ada rather than wander, rest, or wait for work to find him.",
+      done: true,
+      progress: "Intent clear",
+    });
+
+    expect(objectiveByState.afterMara?.outcomes[0]).toMatchObject({
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.afterMara?.trail[1]).toMatchObject({
+      actionId: "reflect:first-afternoon-plan",
+      detail:
+        "Make the plan explicit: walk to Kettle & Lamp and ask Ada about lunch work.",
+      done: false,
+      progress: "Choose the useful move",
+      targetLocationId: "boarding-house",
+    });
+
+    expect(objectiveByState.afterPlan?.trail[1]).toMatchObject({
+      detail:
+        "Rowan chose to ask Ada rather than wander, rest, or wait for work to find him.",
+      done: true,
+      progress: "Intent clear",
+    });
+    expect(objectiveByState.afterPlan?.outcomes[2]).toMatchObject({
+      status: "open",
+      targetLocationId: "tea-house",
+    });
+
+    expect(objectiveByState.afterReached?.outcomes[2]).toMatchObject({
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.afterReached?.trail[2]).toMatchObject({
+      done: true,
+      progress: "At Kettle & Lamp",
+    });
+
+    expect(objectiveByState.afterRecorded?.outcomes[4]).toMatchObject({
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.afterRecorded?.trail[4]).toMatchObject({
+      detail:
+        "Rowan has a field note tying the claim to Ada, Kettle & Lamp, and the time.",
+      done: true,
+      progress: "Field note made",
+    });
+    expect(objectiveByState.afterRecorded?.outcomes[5]).toMatchObject({
+      status: "blocked",
+      targetLocationId: "tea-house",
+    });
+
+    expect(objectiveByState.afterChoice?.progress).toMatchObject({
+      completed: 6,
+      total: 6,
+    });
+    expect(objectiveByState.afterChoice?.outcomes[5]).toMatchObject({
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.afterChoice?.trail[5]).toMatchObject({
+      detail:
+        "The offer is now actionable: take the shift, check another lead, return later, or keep exploring.",
+      done: true,
+      progress: "Choice unlocked",
       targetLocationId: "tea-house",
     });
   });

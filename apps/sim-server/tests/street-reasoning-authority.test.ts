@@ -53,6 +53,14 @@ const FIRST_AFTERNOON_ROUTE_STEP_DETAIL =
   "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.";
 const FIRST_AFTERNOON_ROUTE_COMPLETION_DETAIL =
   "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead.";
+const MARA_ADA_ROUTE_OUTCOME_LABEL = "Ada verification intent formed";
+const MARA_ADA_ROUTE_STEP_TITLE = "Form the plan to verify it directly.";
+const MARA_ADA_ROUTE_STEP_DETAIL =
+  "Make the plan explicit: walk to Kettle & Lamp and ask Ada about lunch work.";
+const MARA_ADA_ROUTE_COMPLETION_DETAIL =
+  "The offer is now actionable: take the shift, check another lead, return later, or keep exploring.";
+const MARA_ADA_ROUTE_HEADLINE =
+  "Verify Mara's Kettle & Lamp lead and turn it into a real choice.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -427,6 +435,35 @@ describe("street reasoning authority", () => {
     expect(objectiveStateSource).toContain(
       "objectiveRouteFirstAfternoonRouteScaffold",
     );
+  });
+
+  it("keeps Mara/Ada lead route outcome and step metadata in scaffold data, not objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const routeCopy of [
+      MARA_ADA_ROUTE_OUTCOME_LABEL,
+      MARA_ADA_ROUTE_STEP_TITLE,
+      MARA_ADA_ROUTE_STEP_DETAIL,
+      MARA_ADA_ROUTE_COMPLETION_DETAIL,
+      MARA_ADA_ROUTE_HEADLINE,
+    ]) {
+      expect(scaffoldSource).toContain(routeCopy);
+      expect(objectiveStateSource).not.toContain(routeCopy);
+    }
+
+    expect(scaffoldSource).toContain("MARA_ADA_LEAD_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("MARA_ADA_LEAD_STEP_TEMPLATES");
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteMaraAdaLeadRouteScaffold",
+    );
+    expect(objectiveStateSource).toContain('case "mara-ada-form-intent"');
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {

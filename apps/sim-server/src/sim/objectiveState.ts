@@ -9,7 +9,11 @@ import type {
   PlayerObjective,
   StreetGameState,
 } from "../street-sim/types.js";
-import { objectiveRouteFirstAfternoonRouteScaffold } from "./objectiveScaffolds.js";
+import {
+  objectiveRouteFirstAfternoonRouteScaffold,
+  objectiveRouteHeadline as objectiveRouteScaffoldHeadline,
+  objectiveRouteMaraAdaLeadRouteScaffold,
+} from "./objectiveScaffolds.js";
 
 interface ObjectiveRoute {
   key: string;
@@ -1164,7 +1168,7 @@ function buildMaraAdaLeadRoute(
     world.player.currentLocationId === "tea-house" ||
     hasTalkedToAda ||
     hasLeadFieldNote;
-  const outcomes = buildMaraAdaLeadOutcomeDefinitions({
+  const scaffold = objectiveRouteMaraAdaLeadRouteScaffold({
     hasFormedVerificationIntent,
     hasLeadFieldNote,
     hasLeadViable: teaLeadViable,
@@ -1180,167 +1184,9 @@ function buildMaraAdaLeadRoute(
     focus: "work",
     source,
     terminal: true,
-    outcomes,
-    steps: [
-      makeStep({
-        id: "mara-ada-hear-lead",
-        title: "Hear Mara's Kettle & Lamp lead.",
-        detail: hasTalkedToMara
-          ? "Mara pointed Rowan toward Ada instead of letting the afternoon drift."
-          : "Ask Mara who can turn tonight's room into real footing.",
-        progress: hasTalkedToMara ? "Lead heard" : "Talk to Mara",
-        done: hasTalkedToMara,
-        npcId: "npc-mara",
-        targetLocationId: home?.id,
-      }),
-      makeStep({
-        id: "mara-ada-form-intent",
-        title: "Form the plan to verify it directly.",
-        detail: hasFormedVerificationIntent
-          ? "Rowan chose to ask Ada rather than wander, rest, or wait for work to find him."
-          : "Make the plan explicit: walk to Kettle & Lamp and ask Ada about lunch work.",
-        progress: hasFormedVerificationIntent
-          ? "Intent clear"
-          : "Choose the useful move",
-        done: hasFormedVerificationIntent,
-        actionId:
-          hasTalkedToMara && !hasFormedVerificationIntent && teaLeadViable
-            ? "reflect:first-afternoon-plan"
-            : undefined,
-        targetLocationId:
-          hasTalkedToMara && !hasFormedVerificationIntent && teaLeadViable
-            ? home?.id
-            : undefined,
-      }),
-      makeStep({
-        id: "mara-ada-walk-route",
-        title: "Walk to Kettle & Lamp.",
-        detail:
-          "The knowledge only counts if Rowan gets there in person and asks the right person.",
-        progress: hasReachedTeaHouse ? "At Kettle & Lamp" : "On the way",
-        done: hasReachedTeaHouse,
-        targetLocationId: teaLeadViable ? "tea-house" : undefined,
-      }),
-      makeStep({
-        id: "mara-ada-ask-directly",
-        title: "Ask Ada about lunch work.",
-        detail: hasTalkedToAda
-          ? "Ada answered the lead directly."
-          : "Ask Ada whether lunch actually needs help today.",
-        progress: hasTalkedToAda ? "Ada asked" : "Ask Ada",
-        done: hasTalkedToAda,
-        npcId: teaLeadViable ? "npc-ada" : undefined,
-        targetLocationId: teaLeadViable ? "tea-house" : undefined,
-      }),
-      makeStep({
-        id: "mara-ada-record-evidence",
-        title: "Record what Rowan learned.",
-        detail: hasLeadFieldNote
-          ? "Rowan has a field note tying the claim to Ada, Kettle & Lamp, and the time."
-          : "Capture the learned fact, the source, the place, and what remains uncertain.",
-        progress: hasLeadFieldNote ? "Field note made" : "Needs evidence",
-        done: hasLeadFieldNote,
-        targetLocationId:
-          hasTalkedToAda || hasLeadFieldNote || teaLeadViable
-            ? "tea-house"
-            : undefined,
-      }),
-      makeStep({
-        id: "mara-ada-open-choice",
-        title: "Open the next choice from that knowledge.",
-        detail: hasOpenWorkChoice
-          ? "The offer is now actionable: take the shift, check another lead, return later, or keep exploring."
-          : "The loop should end with an actual choice, not a vague lead.",
-        progress: hasOpenWorkChoice ? "Choice unlocked" : "No offer yet",
-        done: hasOpenWorkChoice,
-        targetLocationId: teaLeadViable ? "tea-house" : undefined,
-      }),
-    ],
+    outcomes: scaffold.outcomes,
+    steps: scaffold.steps,
   };
-}
-
-function buildMaraAdaLeadOutcomeDefinitions(input: {
-  hasFormedVerificationIntent: boolean;
-  hasLeadFieldNote: boolean;
-  hasLeadViable: boolean;
-  hasOpenWorkChoice: boolean;
-  hasReachedTeaHouse: boolean;
-  hasTalkedToAda: boolean;
-  hasTalkedToMara: boolean;
-  homeLocationId: string | undefined;
-}): ObjectiveOutcomeDefinition[] {
-  return [
-    {
-      id: "mara-ada-hear-lead",
-      label: "Mara's lead heard",
-      urgency: 6,
-      npcId:
-        input.hasTalkedToMara || input.hasLeadFieldNote
-          ? undefined
-          : "npc-mara",
-      targetLocationId:
-        input.hasTalkedToMara || input.hasLeadFieldNote
-          ? undefined
-          : input.homeLocationId,
-    },
-    {
-      id: "mara-ada-form-intent",
-      label: "Ada verification intent formed",
-      urgency: 5,
-      actionId:
-        input.hasTalkedToMara &&
-        !input.hasFormedVerificationIntent &&
-        input.hasLeadViable
-          ? "reflect:first-afternoon-plan"
-          : undefined,
-      targetLocationId:
-        input.hasFormedVerificationIntent || !input.hasLeadViable
-          ? undefined
-          : input.homeLocationId,
-    },
-    {
-      id: "mara-ada-walk-route",
-      label: "Kettle & Lamp reached",
-      urgency: 4,
-      targetLocationId:
-        input.hasReachedTeaHouse || !input.hasLeadViable
-          ? undefined
-          : "tea-house",
-    },
-    {
-      id: "mara-ada-ask-directly",
-      label: "Ada lead verified directly",
-      urgency: 3,
-      npcId:
-        input.hasTalkedToAda || input.hasLeadFieldNote || !input.hasLeadViable
-          ? undefined
-          : "npc-ada",
-      targetLocationId:
-        input.hasTalkedToAda || input.hasLeadFieldNote || !input.hasLeadViable
-          ? undefined
-          : "tea-house",
-    },
-    {
-      id: "mara-ada-record-evidence",
-      label: "Ada lead recorded as evidence",
-      urgency: 2,
-      targetLocationId:
-        input.hasTalkedToAda && !input.hasLeadFieldNote
-          ? "tea-house"
-          : undefined,
-    },
-    {
-      id: "mara-ada-open-choice",
-      label: "Lead opened a real choice",
-      urgency: 1,
-      targetLocationId:
-        input.hasLeadFieldNote &&
-        !input.hasOpenWorkChoice &&
-        input.hasLeadViable
-          ? "tea-house"
-          : undefined,
-    },
-  ];
 }
 
 function buildFirstAfternoonRoute(
@@ -3215,7 +3061,12 @@ function routeHeadline(route: ObjectiveRoute) {
   }
 
   if (route.key === "mara-ada-lead") {
-    return "Verify Mara's Kettle & Lamp lead and turn it into a real choice.";
+    return (
+      objectiveRouteScaffoldHeadline(route.key) ??
+      route.steps.find((step) => !step.done)?.title ??
+      route.steps[0]?.title ??
+      "Keep moving."
+    );
   }
 
   if (route.key === "work-tea") {
