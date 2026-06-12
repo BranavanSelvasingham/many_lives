@@ -118,6 +118,12 @@ interface CompletionAcknowledgementHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+interface CompletionOutcomeCopy {
+  feedText: string;
+  memoryText: string;
+  playerThought: string;
+}
+
 interface RouteActionPressureInput {
   actionId: string;
   actionKind: string;
@@ -130,6 +136,7 @@ interface ObjectiveRouteScaffold {
   actionRationales?: ActionRationaleHint[];
   actionTargetLocations?: ActionTargetLocationHint[];
   completionAcknowledgement?: CompletionAcknowledgementHint;
+  completionOutcome?: CompletionOutcomeCopy;
   conversationFallbacks?: ConversationFallbackHint[];
   conversationTopicSuppressions?: ConversationTopicSuppression[];
   conversationThoughts?: ConversationThoughtHint[];
@@ -163,6 +170,14 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         "Tonight's bed holds. I earned real money, and tomorrow has a lead.",
       playerThoughtWhen: ({ world }) => Boolean(world.firstAfternoon?.completedAt),
       when: ({ objective }) => objective.routeKey === "first-afternoon",
+    },
+    completionOutcome: {
+      feedText:
+        "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
+      memoryText:
+        "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
+      playerThought:
+        "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.",
     },
     deterministicOpeningNpcIds: ["npc-mara", "npc-ada"],
     deterministicOpeningRouteKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
@@ -507,6 +522,16 @@ export function objectiveRouteCompletionPlayerThought(
   }
 
   return undefined;
+}
+
+export function objectiveRouteFirstAfternoonCompletionOutcome(): CompletionOutcomeCopy {
+  for (const scaffold of activeScaffolds("first-afternoon")) {
+    if (scaffold.completionOutcome) {
+      return scaffold.completionOutcome;
+    }
+  }
+
+  throw new Error("First-afternoon completion outcome scaffold is missing.");
 }
 
 export function objectiveRouteMoveIntent(

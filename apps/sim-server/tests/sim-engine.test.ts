@@ -417,6 +417,63 @@ describe("SimulationEngine street slice", () => {
     ).toBe(true);
   });
 
+  it("keeps first-afternoon completion outcome behavior after moving copy to scaffold data", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-completion-outcome");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await enterTeaHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+    while (world.clock.hour + world.clock.minute / 60 < 12) {
+      world = await engine.tick(world, 1);
+    }
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (world.jobs.find((job) => job.id === "job-tea-shift")?.completed) {
+        break;
+      }
+      world = await engine.runCommand(world, {
+        type: "act",
+        actionId: "work:job-tea-shift",
+      });
+    }
+
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "reflect:first-afternoon",
+    });
+
+    expect(world.firstAfternoon?.completedAt).toBeDefined();
+    expect(world.firstAfternoon?.fieldNote).toMatchObject({
+      evidence: expect.stringContaining("Kettle & Lamp"),
+      learned: expect.stringContaining("Ada"),
+      next: expect.stringContaining("Morrow Yard pump"),
+    });
+    expect(
+      world.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({
+      discovered: true,
+      status: "active",
+    });
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
+    );
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
+    );
+  });
+
   it("plays the first tea shift as a few visible work beats", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-tea-shift-stages");
@@ -4351,6 +4408,12 @@ describe("SimulationEngine street slice", () => {
     });
     expect(result.finalWorld.player.currentThought).toContain(
       "Tonight's bed holds",
+    );
+    expect(result.finalWorld.feed.map((entry) => entry.text)).toContain(
+      "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
+    );
+    expect(result.finalWorld.player.memories.map((memory) => memory.text)).toContain(
+      "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
     );
     expect(
       result.finalWorld.problems.find((problem) => problem.id === "problem-pump"),

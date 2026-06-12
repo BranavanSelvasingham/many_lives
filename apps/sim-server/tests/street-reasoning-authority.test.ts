@@ -30,6 +30,12 @@ const FIRST_AFTERNOON_COMPLETION_MEMORY =
   "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.";
 const FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT =
   "Tonight's bed holds. I earned real money, and tomorrow has a lead.";
+const FIRST_AFTERNOON_COMPLETION_OUTCOME_PLAYER_THOUGHT =
+  "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.";
+const FIRST_AFTERNOON_COMPLETION_OUTCOME_FEED =
+  "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.";
+const FIRST_AFTERNOON_COMPLETION_OUTCOME_MEMORY =
+  "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -319,6 +325,33 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
     expect(thoughtsSource).not.toContain(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
+  });
+
+  it("keeps first-afternoon completion outcome copy in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const outcomeCopy of [
+      FIRST_AFTERNOON_COMPLETION_OUTCOME_PLAYER_THOUGHT,
+      FIRST_AFTERNOON_COMPLETION_OUTCOME_FEED,
+      FIRST_AFTERNOON_COMPLETION_OUTCOME_MEMORY,
+    ]) {
+      expect(scaffoldSource).toContain(outcomeCopy);
+      expect(engineSource).not.toContain(outcomeCopy);
+    }
+    expect(engineSource).toContain(
+      "world.player.currentThought = completionOutcome.playerThought",
+    );
+    expect(engineSource).toContain(
+      'addFeed(world, "memory", completionOutcome.feedText)',
+    );
+    expect(engineSource).toContain('remember(world, "self", completionOutcome.memoryText)');
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
