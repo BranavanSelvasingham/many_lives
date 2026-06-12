@@ -4,6 +4,7 @@ import type {
   NpcState,
   ObjectiveFocus,
   ObjectiveTrailItem,
+  ProblemState,
   StreetGameState,
 } from "../street-sim/types.js";
 
@@ -221,6 +222,30 @@ export interface WorkRouteState {
   playerMoney: number;
 }
 
+export interface HelpProblemRouteState {
+  hasWrench: boolean;
+  problemActive: boolean;
+  problemClosed: boolean;
+  problemCleared: boolean;
+  problemDiscovered: boolean;
+  problemLocationId?: string;
+  problemLocationName?: string;
+  problemStatus?: ProblemState["status"];
+}
+
+export interface ToolProblemRouteState {
+  hasWrench: boolean;
+  targetCleared: boolean;
+  targetDiscovered: boolean;
+  targetId?: string;
+  targetLocationId?: string;
+  targetLocationName?: string;
+  targetOpen: boolean;
+  targetStatus?: ProblemState["status"];
+  targetTitle?: string;
+  toolAtProblem: boolean;
+}
+
 interface FirstAfternoonRouteStepTemplate {
   actionId?: (state: FirstAfternoonRouteState) => string | undefined;
   detail: string | ((state: FirstAfternoonRouteState) => string);
@@ -307,6 +332,50 @@ interface WorkRouteOutcomeTemplate {
   npcId?: string | ((state: WorkRouteState) => string | undefined);
   targetLocationId?: string | ((state: WorkRouteState) => string | undefined);
   urgency: number | ((state: WorkRouteState) => number);
+}
+
+interface HelpProblemRouteStepTemplate {
+  actionId?: string | ((state: HelpProblemRouteState) => string | undefined);
+  detail: string | ((state: HelpProblemRouteState) => string);
+  done: (state: HelpProblemRouteState) => boolean;
+  id: string;
+  progress: string | ((state: HelpProblemRouteState) => string);
+  targetLocationId?:
+    | string
+    | ((state: HelpProblemRouteState) => string | undefined);
+  title: string | ((state: HelpProblemRouteState) => string);
+}
+
+interface HelpProblemRouteOutcomeTemplate {
+  actionId?: (state: HelpProblemRouteState) => string | undefined;
+  id: string;
+  label: string;
+  targetLocationId?:
+    | string
+    | ((state: HelpProblemRouteState) => string | undefined);
+  urgency: number;
+}
+
+interface ToolProblemRouteStepTemplate {
+  actionId?: string | ((state: ToolProblemRouteState) => string | undefined);
+  detail: string | ((state: ToolProblemRouteState) => string);
+  done: (state: ToolProblemRouteState) => boolean;
+  id: string;
+  progress: string | ((state: ToolProblemRouteState) => string);
+  targetLocationId?:
+    | string
+    | ((state: ToolProblemRouteState) => string | undefined);
+  title: string | ((state: ToolProblemRouteState) => string);
+}
+
+interface ToolProblemRouteOutcomeTemplate {
+  actionId?: (state: ToolProblemRouteState) => string | undefined;
+  id: string;
+  label: string;
+  targetLocationId?:
+    | string
+    | ((state: ToolProblemRouteState) => string | undefined);
+  urgency: number;
 }
 
 interface CompletionAcknowledgementHint {
@@ -476,11 +545,7 @@ const SETTLE_ROUTE_STEP_TEMPLATES: SettleRouteStepTemplate[] = [
       lead === "yard"
         ? "The yard is a reliable place to turn effort into decent pay."
         : "The tea room is a strong place to turn conversation into work.",
-    progress: ({
-      anyLeadJobDiscovered,
-      hasCommittedIncome,
-      hasWorkLead,
-    }) =>
+    progress: ({ anyLeadJobDiscovered, hasCommittedIncome, hasWorkLead }) =>
       hasWorkLead
         ? "Lead locked"
         : anyLeadJobDiscovered
@@ -499,11 +564,7 @@ const SETTLE_ROUTE_STEP_TEMPLATES: SettleRouteStepTemplate[] = [
       hasCommittedIncome
         ? "Real work is finally taking shape."
         : "A lead matters once Rowan commits and follows through.",
-    progress: ({
-      hasWorkLead,
-      anyLeadJobCompleted,
-      anyPlayerActiveJob,
-    }) =>
+    progress: ({ hasWorkLead, anyLeadJobCompleted, anyPlayerActiveJob }) =>
       anyPlayerActiveJob
         ? "Working"
         : anyLeadJobCompleted
@@ -689,6 +750,234 @@ const WORK_STEP_TEMPLATES: WorkRouteStepTemplate[] = [
     progress: ({ playerMoney }) => `$${playerMoney} on hand`,
     done: ({ anyCompletedWork, playerMoney }) =>
       playerMoney >= 20 || anyCompletedWork,
+  },
+];
+
+const CART_PROBLEM_OUTCOME_TEMPLATES: HelpProblemRouteOutcomeTemplate[] = [
+  {
+    id: "cart-discovered",
+    label: "Cart problem understood",
+    urgency: 2,
+    actionId: ({ problemActive, problemDiscovered }) =>
+      problemActive && !problemDiscovered ? "inspect:problem-cart" : undefined,
+    targetLocationId: ({ problemLocationId }) => problemLocationId,
+  },
+  {
+    id: "cart-solved",
+    label: "Cart cleared",
+    urgency: 1,
+    actionId: ({ problemActive, problemDiscovered }) =>
+      problemActive && problemDiscovered ? "solve:problem-cart" : undefined,
+    targetLocationId: ({ problemLocationId }) => problemLocationId,
+  },
+];
+
+const CART_PROBLEM_STEP_TEMPLATES: HelpProblemRouteStepTemplate[] = [
+  {
+    id: "help-cart-inspect",
+    title: ({ problemLocationName }) =>
+      `Inspect the jammed cart in ${problemLocationName ?? "Quay Square"}.`,
+    detail: "The wheel is already starting to catch on the square's traffic.",
+    progress: ({ problemDiscovered }) =>
+      problemDiscovered ? "Problem seen" : "Still a rumor",
+    done: ({ problemDiscovered }) => problemDiscovered,
+    actionId: "inspect:problem-cart",
+    targetLocationId: ({ problemLocationId }) => problemLocationId,
+  },
+  {
+    id: "help-cart-solve",
+    title: "Clear the cart before it snarls the square.",
+    detail:
+      "The square works better when somebody moves trouble before it spreads.",
+    progress: ({ problemCleared, problemStatus }) =>
+      problemCleared
+        ? "Cleared"
+        : problemStatus === "expired"
+          ? "Missed"
+          : "Active",
+    done: ({ problemCleared }) => problemCleared,
+    actionId: ({ problemActive, problemDiscovered }) =>
+      problemActive && problemDiscovered ? "solve:problem-cart" : undefined,
+    targetLocationId: ({ problemLocationId }) => problemLocationId,
+  },
+];
+
+const PUMP_PROBLEM_OUTCOME_TEMPLATES: HelpProblemRouteOutcomeTemplate[] = [
+  {
+    id: "pump-discovered",
+    label: "Pump problem understood",
+    urgency: 3,
+    actionId: ({ problemActive, problemDiscovered }) =>
+      problemActive && !problemDiscovered ? "inspect:problem-pump" : undefined,
+    targetLocationId: ({
+      problemActive,
+      problemDiscovered,
+      problemLocationId,
+    }) => (problemActive && !problemDiscovered ? problemLocationId : undefined),
+  },
+  {
+    id: "wrench-in-inventory",
+    label: "Wrench secured",
+    urgency: 2,
+    actionId: ({ hasWrench, problemClosed }) =>
+      !problemClosed && !hasWrench ? "buy:item-wrench" : undefined,
+    targetLocationId: ({ hasWrench, problemClosed }) =>
+      !problemClosed && !hasWrench ? "repair-stall" : undefined,
+  },
+  {
+    id: "pump-solved",
+    label: "Pump solved",
+    urgency: 1,
+    actionId: ({ hasWrench, problemActive, problemDiscovered }) =>
+      problemActive && problemDiscovered && hasWrench
+        ? "solve:problem-pump"
+        : undefined,
+    targetLocationId: ({ problemActive, problemLocationId }) =>
+      problemActive ? problemLocationId : undefined,
+  },
+];
+
+const PUMP_PROBLEM_STEP_TEMPLATES: HelpProblemRouteStepTemplate[] = [
+  {
+    id: "help-pump-inspect",
+    title: ({ problemLocationName }) =>
+      `Inspect the pump in ${problemLocationName ?? "Morrow Yard"}.`,
+    detail: ({ problemDiscovered }) =>
+      problemDiscovered
+        ? "Rowan knows enough to tell the leak is one bad turn away from a worse day."
+        : "A closer look will tell Rowan whether this is his problem or just nearby trouble.",
+    progress: ({ problemDiscovered }) =>
+      problemDiscovered ? "Problem seen" : "Still a lead",
+    done: ({ problemDiscovered }) => problemDiscovered,
+    actionId: ({ problemActive, problemDiscovered }) =>
+      problemActive && !problemDiscovered ? "inspect:problem-pump" : undefined,
+    targetLocationId: ({ problemLocationId }) => problemLocationId,
+  },
+  {
+    id: "help-pump-tool",
+    title: ({ hasWrench }) =>
+      hasWrench
+        ? "Bring the wrench back to the pump."
+        : "Buy a wrench from Jo.",
+    detail: ({ hasWrench }) =>
+      hasWrench
+        ? "The tool is in hand. The yard just needs Rowan to use it."
+        : "Jo is the easiest place to turn loose coins into something that helps.",
+    progress: ({ hasWrench, problemClosed }) =>
+      hasWrench
+        ? "Tool in hand"
+        : problemClosed
+          ? "No longer needed"
+          : "No wrench yet",
+    done: ({ hasWrench, problemClosed }) => hasWrench || problemClosed,
+    actionId: ({ hasWrench, problemActive, problemClosed }) =>
+      problemActive && !hasWrench && !problemClosed
+        ? "buy:item-wrench"
+        : undefined,
+    targetLocationId: ({
+      hasWrench,
+      problemActive,
+      problemClosed,
+      problemLocationId,
+    }) =>
+      problemActive && !hasWrench && !problemClosed
+        ? "repair-stall"
+        : hasWrench && problemActive
+          ? problemLocationId
+          : undefined,
+  },
+  {
+    id: "help-pump-fix",
+    title: "Fix the leak before it spreads.",
+    detail:
+      "South Quay remembers the people who solve trouble before it gets loud.",
+    progress: ({ problemCleared, problemStatus }) =>
+      problemCleared
+        ? "Cleared"
+        : problemStatus === "expired"
+          ? "Missed"
+          : "Active",
+    done: ({ problemCleared }) => problemCleared,
+    actionId: ({ hasWrench, problemActive, problemDiscovered }) =>
+      problemActive && problemDiscovered && hasWrench
+        ? "solve:problem-pump"
+        : undefined,
+    targetLocationId: ({ problemLocationId }) => problemLocationId,
+  },
+];
+
+const TOOL_PROBLEM_OUTCOME_TEMPLATES: ToolProblemRouteOutcomeTemplate[] = [
+  {
+    id: "tool-buy",
+    label: "Required tool secured",
+    urgency: 3,
+    actionId: ({ hasWrench }) => (hasWrench ? undefined : "buy:item-wrench"),
+    targetLocationId: ({ hasWrench }) =>
+      hasWrench ? undefined : "repair-stall",
+  },
+  {
+    id: "tool-return",
+    label: "Tool brought to the problem",
+    urgency: 2,
+    targetLocationId: ({
+      hasWrench,
+      targetLocationId,
+      targetOpen,
+      toolAtProblem,
+    }) =>
+      hasWrench && targetOpen && !toolAtProblem ? targetLocationId : undefined,
+  },
+  {
+    id: "tool-use",
+    label: "Tool used to solve the problem",
+    urgency: 1,
+    actionId: ({ hasWrench, targetId, targetOpen }) =>
+      hasWrench && targetOpen ? `solve:${targetId}` : undefined,
+    targetLocationId: ({ hasWrench, targetLocationId, targetOpen }) =>
+      hasWrench && targetOpen ? targetLocationId : undefined,
+  },
+];
+
+const TOOL_PROBLEM_STEP_TEMPLATES: ToolProblemRouteStepTemplate[] = [
+  {
+    id: "tool-buy",
+    title: "Buy a wrench from Jo.",
+    detail: "A tool is only a tool until it reaches the problem that needs it.",
+    progress: ({ hasWrench }) => (hasWrench ? "Bought" : "Needed"),
+    done: ({ hasWrench }) => hasWrench,
+    actionId: ({ hasWrench }) => (hasWrench ? undefined : "buy:item-wrench"),
+    targetLocationId: "repair-stall",
+  },
+  {
+    id: "tool-return",
+    title: ({ targetLocationName }) =>
+      `Take it back to ${targetLocationName ?? "the trouble"}.`,
+    detail: ({ targetTitle }) =>
+      targetTitle
+        ? `That is where ${targetTitle.toLowerCase()} is waiting.`
+        : "Rowan still needs the right place before the tool matters.",
+    progress: ({ targetDiscovered }) =>
+      targetDiscovered ? "Lead known" : "Lead unclear",
+    done: ({ toolAtProblem }) => toolAtProblem,
+    targetLocationId: ({ targetLocationId }) => targetLocationId,
+  },
+  {
+    id: "tool-use",
+    title: "Use it before the trouble spreads.",
+    detail:
+      "The right tool should end the problem, not just change the label on it.",
+    progress: ({ targetCleared, targetStatus }) =>
+      targetCleared
+        ? "Cleared"
+        : targetStatus === "expired"
+          ? "Missed"
+          : "Active",
+    done: ({ targetCleared }) => targetCleared,
+    actionId: ({ targetDiscovered, targetId, targetStatus }) =>
+      targetStatus === "active" && targetDiscovered
+        ? `solve:${targetId}`
+        : undefined,
+    targetLocationId: ({ targetLocationId }) => targetLocationId,
   },
 ];
 
@@ -1507,6 +1796,14 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       "Get settled in Brackenport: find a place to stay, steady income, and a few friends.",
   },
   {
+    routeKeys: ["help-pump"],
+    routeHeadline: "Fix the leaking pump in Morrow Yard before it spreads.",
+  },
+  {
+    routeKeys: ["help-cart"],
+    routeHeadline: "Clear the jammed cart before it snarls the square.",
+  },
+  {
     routeKeys: ["work-tea"],
     routeHeadline: "Secure paid work at Kettle & Lamp and follow through.",
     semanticHints: [{ locationId: "tea-house", npcId: "npc-ada" }],
@@ -1797,6 +2094,102 @@ export function objectiveRouteWorkRouteScaffold(state: WorkRouteState): {
   };
 }
 
+export function objectiveRouteCartProblemRouteScaffold(
+  state: HelpProblemRouteState,
+): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: CART_PROBLEM_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      targetLocationId: resolveHelpProblemRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+    steps: CART_PROBLEM_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: resolveHelpProblemRouteText(template.title, state),
+      detail: resolveHelpProblemRouteText(template.detail, state),
+      progress: resolveHelpProblemRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: resolveHelpProblemRouteValue(template.actionId, state),
+      targetLocationId: resolveHelpProblemRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+  };
+}
+
+export function objectiveRoutePumpProblemRouteScaffold(
+  state: HelpProblemRouteState,
+): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: PUMP_PROBLEM_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      targetLocationId: resolveHelpProblemRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+    steps: PUMP_PROBLEM_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: resolveHelpProblemRouteText(template.title, state),
+      detail: resolveHelpProblemRouteText(template.detail, state),
+      progress: resolveHelpProblemRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: resolveHelpProblemRouteValue(template.actionId, state),
+      targetLocationId: resolveHelpProblemRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+  };
+}
+
+export function objectiveRouteToolProblemRouteScaffold(
+  state: ToolProblemRouteState,
+): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: TOOL_PROBLEM_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      targetLocationId: resolveToolProblemRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+    steps: TOOL_PROBLEM_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: resolveToolProblemRouteText(template.title, state),
+      detail: resolveToolProblemRouteText(template.detail, state),
+      progress: resolveToolProblemRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: resolveToolProblemRouteValue(template.actionId, state),
+      targetLocationId: resolveToolProblemRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+  };
+}
+
 function resolveFirstAfternoonRouteValue(
   value:
     | string
@@ -1832,10 +2225,7 @@ function resolveMaraAdaLeadRouteText(
 }
 
 function resolveSettleRouteValue(
-  value:
-    | string
-    | ((state: SettleRouteState) => string | undefined)
-    | undefined,
+  value: string | ((state: SettleRouteState) => string | undefined) | undefined,
   state: SettleRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
@@ -1865,6 +2255,40 @@ function resolveWorkRouteText(
 function resolveWorkRouteNumber(
   value: number | ((state: WorkRouteState) => number),
   state: WorkRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveHelpProblemRouteValue(
+  value:
+    | string
+    | ((state: HelpProblemRouteState) => string | undefined)
+    | undefined,
+  state: HelpProblemRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveHelpProblemRouteText(
+  value: string | ((state: HelpProblemRouteState) => string),
+  state: HelpProblemRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveToolProblemRouteValue(
+  value:
+    | string
+    | ((state: ToolProblemRouteState) => string | undefined)
+    | undefined,
+  state: ToolProblemRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveToolProblemRouteText(
+  value: string | ((state: ToolProblemRouteState) => string),
+  state: ToolProblemRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
 }

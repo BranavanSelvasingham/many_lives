@@ -10,10 +10,13 @@ import type {
   StreetGameState,
 } from "../street-sim/types.js";
 import {
+  objectiveRouteCartProblemRouteScaffold,
   objectiveRouteFirstAfternoonRouteScaffold,
   objectiveRouteHeadline as objectiveRouteScaffoldHeadline,
   objectiveRouteMaraAdaLeadRouteScaffold,
+  objectiveRoutePumpProblemRouteScaffold,
   objectiveRouteSettleRouteScaffold,
+  objectiveRouteToolProblemRouteScaffold,
   objectiveRouteWorkRouteScaffold,
 } from "./objectiveScaffolds.js";
 
@@ -1437,66 +1440,6 @@ function buildCommittedJobOutcomeDefinitions(
   ];
 }
 
-function buildCartOutcomeDefinitions(
-  problem: ReturnType<typeof problemById>,
-): ObjectiveOutcomeDefinition[] {
-  const cartActive = problem?.status === "active";
-  return [
-    {
-      id: "cart-discovered",
-      label: "Cart problem understood",
-      urgency: 2,
-      actionId:
-        cartActive && !problem?.discovered ? "inspect:problem-cart" : undefined,
-      targetLocationId: problem?.locationId,
-    },
-    {
-      id: "cart-solved",
-      label: "Cart cleared",
-      urgency: 1,
-      actionId:
-        cartActive && problem?.discovered ? "solve:problem-cart" : undefined,
-      targetLocationId: problem?.locationId,
-    },
-  ];
-}
-
-function buildPumpOutcomeDefinitions(
-  problem: ReturnType<typeof problemById>,
-  hasWrench: boolean,
-): ObjectiveOutcomeDefinition[] {
-  const pumpActive = problem?.status === "active";
-  const pumpClosed = problemClosedByWorld(problem);
-  return [
-    {
-      id: "pump-discovered",
-      label: "Pump problem understood",
-      urgency: 3,
-      actionId:
-        pumpActive && !problem?.discovered ? "inspect:problem-pump" : undefined,
-      targetLocationId:
-        pumpActive && !problem?.discovered ? problem?.locationId : undefined,
-    },
-    {
-      id: "wrench-in-inventory",
-      label: "Wrench secured",
-      urgency: 2,
-      actionId: !pumpClosed && !hasWrench ? "buy:item-wrench" : undefined,
-      targetLocationId: !pumpClosed && !hasWrench ? "repair-stall" : undefined,
-    },
-    {
-      id: "pump-solved",
-      label: "Pump solved",
-      urgency: 1,
-      actionId:
-        pumpActive && problem?.discovered && hasWrench
-          ? "solve:problem-pump"
-          : undefined,
-      targetLocationId: pumpActive ? problem?.locationId : undefined,
-    },
-  ];
-}
-
 function buildHelpRoute(
   world: StreetGameState,
   source: ObjectiveSource,
@@ -1514,110 +1457,46 @@ function buildHelpRoute(
   const problemLocation = problem
     ? findLocation(world, problem.locationId)
     : undefined;
-  const problemActive = problem?.status === "active";
-  const problemClosed = problemClosedByWorld(problem);
 
   if (problem?.id === "problem-cart") {
+    const scaffold = objectiveRouteCartProblemRouteScaffold(
+      buildHelpProblemRouteState(problem, problemLocation, hasWrench),
+    );
     return {
       key: "help-cart",
       focus: hasWrench ? "help" : "tool",
       source,
-      outcomes: buildCartOutcomeDefinitions(problem),
-      steps: [
-        makeStep({
-          id: "help-cart-inspect",
-          title: `Inspect the jammed cart in ${problemLocation?.name ?? "Quay Square"}.`,
-          detail:
-            "The wheel is already starting to catch on the square's traffic.",
-          progress: problem.discovered ? "Problem seen" : "Still a rumor",
-          done: problem.discovered,
-          actionId: "inspect:problem-cart",
-          targetLocationId: problem.locationId,
-        }),
-        makeStep({
-          id: "help-cart-solve",
-          title: "Clear the cart before it snarls the square.",
-          detail:
-            "The square works better when somebody moves trouble before it spreads.",
-          progress: problemCleared(problem)
-            ? "Cleared"
-            : problem.status === "expired"
-              ? "Missed"
-              : "Active",
-          done: problemCleared(problem),
-          actionId:
-            problem.status === "active" && problem.discovered
-              ? "solve:problem-cart"
-              : undefined,
-          targetLocationId: problem.locationId,
-        }),
-      ],
+      outcomes: scaffold.outcomes,
+      steps: scaffold.steps.map(makeStep),
     };
   }
 
+  const scaffold = objectiveRoutePumpProblemRouteScaffold(
+    buildHelpProblemRouteState(problem, problemLocation, hasWrench),
+  );
   return {
     key: hasWrench ? "help-pump" : "tool-pump",
     focus: hasWrench ? "help" : "tool",
     source,
-    outcomes: buildPumpOutcomeDefinitions(problem, hasWrench),
-    steps: [
-      makeStep({
-        id: "help-pump-inspect",
-        title: `Inspect the pump in ${problemLocation?.name ?? "Morrow Yard"}.`,
-        detail: problem?.discovered
-          ? "Rowan knows enough to tell the leak is one bad turn away from a worse day."
-          : "A closer look will tell Rowan whether this is his problem or just nearby trouble.",
-        progress: problem?.discovered ? "Problem seen" : "Still a lead",
-        done: Boolean(problem?.discovered),
-        actionId:
-          problemActive && !problem?.discovered
-            ? "inspect:problem-pump"
-            : undefined,
-        targetLocationId: problem?.locationId,
-      }),
-      makeStep({
-        id: "help-pump-tool",
-        title: hasWrench
-          ? "Bring the wrench back to the pump."
-          : "Buy a wrench from Jo.",
-        detail: hasWrench
-          ? "The tool is in hand. The yard just needs Rowan to use it."
-          : "Jo is the easiest place to turn loose coins into something that helps.",
-        progress: hasWrench
-          ? "Tool in hand"
-          : problemClosed
-            ? "No longer needed"
-            : "No wrench yet",
-        done: hasWrench || problemClosed,
-        actionId:
-          problemActive && !hasWrench && !problemClosed
-            ? "buy:item-wrench"
-            : undefined,
-        targetLocationId:
-          problemActive && !hasWrench && !problemClosed
-            ? "repair-stall"
-            : hasWrench && problemActive
-              ? problem?.locationId
-              : undefined,
-      }),
-      makeStep({
-        id: "help-pump-fix",
-        title: "Fix the leak before it spreads.",
-        detail:
-          "South Quay remembers the people who solve trouble before it gets loud.",
-        progress: problemCleared(problem)
-          ? "Cleared"
-          : problem?.status === "expired"
-            ? "Missed"
-            : "Active",
-        done: problemCleared(problem),
-        actionId:
-          problemActive && problem?.discovered && hasWrench
-            ? "solve:problem-pump"
-            : undefined,
-        targetLocationId: problem?.locationId,
-      }),
-    ],
+    outcomes: scaffold.outcomes,
+    steps: scaffold.steps.map(makeStep),
+  };
+}
+
+function buildHelpProblemRouteState(
+  problem: ReturnType<typeof problemById>,
+  problemLocation: ReturnType<typeof findLocation>,
+  hasWrench: boolean,
+) {
+  return {
+    hasWrench,
+    problemActive: problem?.status === "active",
+    problemClosed: problemClosedByWorld(problem),
+    problemCleared: problemCleared(problem),
+    problemDiscovered: Boolean(problem?.discovered),
+    problemLocationId: problem?.locationId,
+    problemLocationName: problemLocation?.name,
+    problemStatus: problem?.status,
   };
 }
 
@@ -1636,65 +1515,25 @@ function buildToolRoute(
     ? findLocation(world, target.locationId)
     : undefined;
   const hasWrench = hasItem(world, "item-wrench");
+  const scaffold = objectiveRouteToolProblemRouteScaffold(
+    buildToolProblemRouteState(world, target, targetLocation, hasWrench),
+  );
 
   return {
     key: target?.id === "problem-cart" ? "tool-cart" : "tool-wrench",
     focus: "tool",
     source,
-    outcomes: buildToolOutcomeDefinitions(target, hasWrench, world),
-    steps: [
-      makeStep({
-        id: "tool-buy",
-        title: "Buy a wrench from Jo.",
-        detail:
-          "A tool is only a tool until it reaches the problem that needs it.",
-        progress: hasWrench ? "Bought" : "Needed",
-        done: hasWrench,
-        actionId: hasWrench ? undefined : "buy:item-wrench",
-        targetLocationId: "repair-stall",
-      }),
-      makeStep({
-        id: "tool-return",
-        title: `Take it back to ${targetLocation?.name ?? "the trouble"}.`,
-        detail: target
-          ? `That is where ${target.title.toLowerCase()} is waiting.`
-          : "Rowan still needs the right place before the tool matters.",
-        progress: target?.discovered ? "Lead known" : "Lead unclear",
-        done:
-          hasWrench &&
-          Boolean(
-            target &&
-            (world.player.currentLocationId === target.locationId ||
-              problemClosedByWorld(target)),
-          ),
-        targetLocationId: target?.locationId,
-      }),
-      makeStep({
-        id: "tool-use",
-        title: "Use it before the trouble spreads.",
-        detail:
-          "The right tool should end the problem, not just change the label on it.",
-        progress: problemCleared(target)
-          ? "Cleared"
-          : target?.status === "expired"
-            ? "Missed"
-            : "Active",
-        done: problemCleared(target),
-        actionId:
-          target?.status === "active" && target.discovered
-            ? `solve:${target.id}`
-            : undefined,
-        targetLocationId: target?.locationId,
-      }),
-    ],
+    outcomes: scaffold.outcomes,
+    steps: scaffold.steps.map(makeStep),
   };
 }
 
-function buildToolOutcomeDefinitions(
-  target: ReturnType<typeof problemById>,
-  hasWrench: boolean,
+function buildToolProblemRouteState(
   world: StreetGameState,
-): ObjectiveOutcomeDefinition[] {
+  target: ReturnType<typeof problemById>,
+  targetLocation: ReturnType<typeof findLocation>,
+  hasWrench: boolean,
+) {
   const toolAtProblem =
     hasWrench &&
     Boolean(
@@ -1704,32 +1543,18 @@ function buildToolOutcomeDefinitions(
     );
   const problemOpen = Boolean(target && !problemClosedByWorld(target));
 
-  return [
-    {
-      id: "tool-buy",
-      label: "Required tool secured",
-      urgency: 3,
-      actionId: hasWrench ? undefined : "buy:item-wrench",
-      targetLocationId: hasWrench ? undefined : "repair-stall",
-    },
-    {
-      id: "tool-return",
-      label: "Tool brought to the problem",
-      urgency: 2,
-      targetLocationId:
-        hasWrench && problemOpen && !toolAtProblem
-          ? target?.locationId
-          : undefined,
-    },
-    {
-      id: "tool-use",
-      label: "Tool used to solve the problem",
-      urgency: 1,
-      actionId: hasWrench && problemOpen ? `solve:${target?.id}` : undefined,
-      targetLocationId:
-        hasWrench && problemOpen ? target?.locationId : undefined,
-    },
-  ];
+  return {
+    hasWrench,
+    targetCleared: problemCleared(target),
+    targetDiscovered: Boolean(target?.discovered),
+    targetId: target?.id,
+    targetLocationId: target?.locationId,
+    targetLocationName: targetLocation?.name,
+    targetOpen: problemOpen,
+    targetStatus: target?.status,
+    targetTitle: target?.title,
+    toolAtProblem,
+  };
 }
 
 function buildRestRoute(
@@ -2777,14 +2602,6 @@ function routeHeadline(route: ObjectiveRoute) {
   const scaffoldHeadline = objectiveRouteScaffoldHeadline(route.key);
   if (scaffoldHeadline) {
     return scaffoldHeadline;
-  }
-
-  if (route.key === "help-pump") {
-    return "Fix the leaking pump in Morrow Yard before it spreads.";
-  }
-
-  if (route.key === "help-cart") {
-    return "Clear the jammed cart before it snarls the square.";
   }
 
   if (route.key === "rest-home") {
