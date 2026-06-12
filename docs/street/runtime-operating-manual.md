@@ -22,7 +22,7 @@ State can come from the URL, browser storage, the server store, or local fallbac
 Priority order on app load:
 
 1. Fresh-run params win: `?new=1`, `?newGame=1`, or `?reset=1` force a new game when their value is `1`, `true`, `yes`, or `on`.
-2. Explicit `?gameId=<id>` loads that exact game. With `autoplay=1` or `observe=1`, the URL remains bound to that game for watch and review links. In normal interactive mode, the app may hide the `gameId` after it opens the run.
+2. Explicit `?gameId=<id>` loads that exact game. With default autoplay/watch, `autoplay=1`, or `observe=1`, the URL remains bound to that game for watch and review links. With `autoplay=0` in normal interactive mode, the app may hide the `gameId` after it opens the run.
 3. If there is no explicit `gameId` and no fresh-run param, the app reads `localStorage["many-lives:street-game-id"]`.
 4. If that stored id exists, the app must show the saved-run choice prompt. It must not silently resume a completed run and make the root URL look finished.
 5. If the user chooses Continue Saved Run, open the stored id.
@@ -55,7 +55,8 @@ Reload expectations:
 
 Autoplay is a watch mode for Rowan's current autonomy policy. It should feel like observing a small living city, not replaying a canned path.
 
-- `?autoplay=1` lets Rowan continue through available goals and actions without manual clicks.
+- Fresh normal entries default to autoplay/watch mode, so `/` with no stored run and `/?new=1` let Rowan continue through available goals and actions without manual clicks.
+- `?autoplay=1` remains a supported explicit watch link, while `?autoplay=0` opts out and leaves the opening action for explicit input.
 - Autoplay does not choose which game to load; URL and storage rules still decide that.
 - Rowan's behavior should come from current sim state, available actions, objectives, conversations, and local policy helpers. It should not depend on a fixed prerecorded movement list.
 - Objectives describe desired outcomes. They may provide progress scaffolding and route hints, but they must not be the primary source of Rowan's next move. Rowan's next move should come from the current world state and legal action surface, with deterministic validation and fallback.
@@ -152,7 +153,7 @@ The default regression harness does not spend OpenAI tokens. It uses mock or det
 
 Use this checklist when the user asks whether the app is playable, ready, or deployable.
 
-- Load fresh run: `/?new=1&autoplay=1`.
+- Load fresh run: `/?new=1`.
 - Load saved prompt: open `/` after `many-lives:street-game-id` exists and confirm the choice screen appears.
 - Resume saved run and confirm the game id matches storage.
 - Start new from the saved-run prompt and confirm the new id differs.
@@ -232,7 +233,7 @@ window.localStorage.removeItem("many-lives:street-game-id")
 Force a fresh autoplay run:
 
 ```text
-http://127.0.0.1:3001/?new=1&autoplay=1
+http://127.0.0.1:3001/?new=1
 ```
 
 Open a specific run:

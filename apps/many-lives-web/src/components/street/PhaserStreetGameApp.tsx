@@ -423,6 +423,16 @@ function isTruthyQueryValue(value: string | null | undefined) {
   );
 }
 
+function isFalseyQueryValue(value: string | null | undefined) {
+  const normalizedValue = value?.trim().toLowerCase();
+  return (
+    normalizedValue === "0" ||
+    normalizedValue === "false" ||
+    normalizedValue === "no" ||
+    normalizedValue === "off"
+  );
+}
+
 function bindGameToCurrentUrl(
   gameId: string,
   options: { clearFreshGameParams?: boolean } = {},
@@ -991,6 +1001,7 @@ export function PhaserStreetGameApp() {
   const boundGameRefreshTimerRef = useRef<number | null>(null);
   const playbackTimerRef = useRef<number | null>(null);
   const rowanPlaybackRef = useRef<RowanPlaybackState>(rowanPlayback);
+  const urlCleanupGameIdRef = useRef<string | null>(null);
   const requestedGameId = useMemo(() => {
     const rawGameId = searchParams.get("gameId");
     const normalizedGameId = rawGameId?.trim();
@@ -1004,7 +1015,7 @@ export function PhaserStreetGameApp() {
     [searchParams],
   );
   const rowanAutoplayEnabled = useMemo(() => {
-    return isTruthyQueryValue(searchParams.get("autoplay"));
+    return !isFalseyQueryValue(searchParams.get("autoplay"));
   }, [searchParams]);
   const rowanAutoplayFrozen = useMemo(() => {
     return isTruthyQueryValue(searchParams.get("freezeAutoplay"));
@@ -1207,6 +1218,17 @@ export function PhaserStreetGameApp() {
     const requestId = nextRequestId();
     const shouldCreateFreshGame = forceFreshGame || options.forceNew === true;
     const promptedStoredGameId = options.resumeStoredGameId?.trim() || null;
+    if (
+      !requestedGameId &&
+      !shouldCreateFreshGame &&
+      !promptedStoredGameId &&
+      urlCleanupGameIdRef.current &&
+      gameRef.current?.id === urlCleanupGameIdRef.current
+    ) {
+      urlCleanupGameIdRef.current = null;
+      return;
+    }
+
     const storageBackedStoredGameId =
       requestedGameId || shouldCreateFreshGame || promptedStoredGameId
         ? null
@@ -1242,6 +1264,9 @@ export function PhaserStreetGameApp() {
         forceFreshGame ||
         (requestedGameId && nextGame.id !== requestedGameId)
       ) {
+        if (forceFreshGame) {
+          urlCleanupGameIdRef.current = nextGame.id;
+        }
         bindGameToCurrentUrl(nextGame.id, {
           clearFreshGameParams: forceFreshGame,
         });
@@ -1250,6 +1275,7 @@ export function PhaserStreetGameApp() {
         !boundGameObserverEnabled &&
         !rowanAutoplayEnabled
       ) {
+        urlCleanupGameIdRef.current = nextGame.id;
         hideGameIdFromCurrentUrl();
       }
       setOptimisticPlayerPosition(null);
