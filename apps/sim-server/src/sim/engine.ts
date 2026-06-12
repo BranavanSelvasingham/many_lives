@@ -18,6 +18,9 @@ import {
   objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
   objectiveRouteCompletionAcknowledgement,
+  objectiveRouteConversationGroundingPolicy,
+  objectiveRouteConversationHasVisibleEvidence,
+  objectiveRouteConversationResolutionPointsToPolicy,
   objectiveRouteFirstAfternoonCompletionOutcome,
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
@@ -27,6 +30,8 @@ import {
   objectiveRouteSpeech,
   objectiveRouteScriptedReply,
   objectiveRouteSuppressesConversationTopic,
+  objectiveRouteTextAffirmsConversationPolicy,
+  objectiveRouteTextGroundsConversationPolicy,
   objectiveRouteWorkStageThought,
 } from "./objectiveScaffolds.js";
 import {
@@ -2485,113 +2490,6 @@ function latestNpcReplyFromConversation(
   return [...lines].reverse().find((line) => line.speaker === "npc")?.text;
 }
 
-function textGroundsMaraAdaLead(text: string | undefined): boolean {
-  const normalized = (text ?? "").toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  return (
-    /\bada\b/.test(normalized) &&
-    /\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(normalized) &&
-    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bhelp\b|\bcounter\b|\bpay\b/.test(
-      normalized,
-    )
-  );
-}
-
-function textAffirmsMaraAdaLead(text: string | undefined): boolean {
-  const normalized = (text ?? "").toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  if (
-    /\b(no|not|don't|do not|isn't|closed|can't|cannot|avoid|skip|wrong)\b/.test(
-      normalized,
-    )
-  ) {
-    return false;
-  }
-
-  return (
-    /\byes\b|\bright\b|\bexactly\b|\bcorrect\b|\bthat(?:'|’)s right\b|\bthat(?:'|’)s the one\b|\bthat is the one\b|\byou(?:'|’)ve got it\b|\byou have got it\b|\bdo that\b|\bask her\b|\bask ada\b/.test(
-      normalized,
-    ) ||
-    /\b(she|ada)\s*(?:'|’)?ll\b/.test(normalized) ||
-    /\b(she|ada)\s+(may|might|could|can|will|does|needs?|has)\b/.test(
-      normalized,
-    ) ||
-    /\bworth\s+(asking|trying)\b/.test(normalized)
-  );
-}
-
-function conversationGroundsMaraAdaLead(
-  world: StreetGameState,
-  closingReply?: string,
-): boolean {
-  if (textGroundsMaraAdaLead(closingReply)) {
-    return true;
-  }
-
-  return world.conversations.some(
-    (entry) =>
-      entry.npcId === "npc-mara" &&
-      (entry.speaker === "npc" || entry.speaker === "player") &&
-      textGroundsMaraAdaLead(entry.text),
-  );
-}
-
-function shouldRequireMaraAdaLeadEvidence(
-  world: StreetGameState,
-  npc: NpcState,
-  playerText: string,
-): boolean {
-  if (
-    npc.id !== "npc-mara" ||
-    world.player.objective?.routeKey !== "first-afternoon" ||
-    world.firstAfternoon?.leadFieldNote ||
-    world.firstAfternoon?.planSettledAt
-  ) {
-    return false;
-  }
-
-  return !/\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(
-    playerText.toLowerCase(),
-  );
-}
-
-function groundedMaraAdaLeadReply() {
-  return {
-    followupThought: "Ada is the first useful bet.",
-    reply:
-      "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.",
-  };
-}
-
-function buildMaraAdaLeadGroundingFollowup() {
-  return "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
-}
-
-function resolutionPointsToMaraAdaLead(
-  resolution: ConversationResolution,
-): boolean {
-  const text = [
-    resolution.decision,
-    resolution.memoryText,
-    resolution.objectiveText,
-    resolution.summary,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  return (
-    /\bada\b|\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(text) &&
-    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bcounter\b/.test(text)
-  );
-}
-
 function sanitizeConversationResolutionForVisibleEvidence(
   world: StreetGameState,
   npc: NpcState,
@@ -2599,11 +2497,24 @@ function sanitizeConversationResolutionForVisibleEvidence(
   resolution: ConversationResolution,
   closingReply: string,
 ): ConversationResolution {
+  const groundingPolicy = objectiveRouteConversationGroundingPolicy(
+    world,
+    objective,
+    npc,
+    "",
+  );
+
   if (
-    npc.id !== "npc-mara" ||
-    objective.routeKey !== "first-afternoon" ||
-    !resolutionPointsToMaraAdaLead(resolution) ||
-    conversationGroundsMaraAdaLead(world, closingReply)
+    !groundingPolicy ||
+    !objectiveRouteConversationResolutionPointsToPolicy(
+      groundingPolicy,
+      resolution,
+    ) ||
+    objectiveRouteConversationHasVisibleEvidence(
+      world,
+      groundingPolicy,
+      closingReply,
+    )
   ) {
     return resolution;
   }
@@ -2611,18 +2522,10 @@ function sanitizeConversationResolutionForVisibleEvidence(
   recordAIRuntimePolicyFallback(
     world,
     "interpretStreetConversation",
-    "Conversation interpretation did not have visible Ada lead evidence.",
+    "Conversation interpretation did not have scaffold-required visible evidence.",
   );
 
-  return {
-    decision:
-      "ask Mara one clearer question before treating Ada's lead as real.",
-    memoryKind: "self",
-    memoryText:
-      "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.",
-    summary:
-      "Mara has not yet made the Kettle & Lamp lead visible in the conversation.",
-  };
+  return groundingPolicy.resolutionFallback;
 }
 
 function shouldContinueConversation(
@@ -2963,10 +2866,16 @@ async function performConversationTurn(
       ? generatedReply
       : buildObjectiveScriptedReply(world, npc, text) ?? generatedReply;
   let groundingFollowupTopics = new Set<string>();
+  const groundingPolicy = objectiveRouteConversationGroundingPolicy(
+    world,
+    world.player.objective,
+    npc,
+    text,
+  );
   if (
     aiProvider.name === "openai" &&
-    shouldRequireMaraAdaLeadEvidence(world, npc, text) &&
-    !textGroundsMaraAdaLead(reply.reply)
+    groundingPolicy &&
+    !objectiveRouteTextGroundsConversationPolicy(groundingPolicy, reply.reply)
   ) {
     recordConversation(world, {
       npcId: npc.id,
@@ -2976,7 +2885,7 @@ async function performConversationTurn(
       locationId,
     });
 
-    const groundingFollowup = buildMaraAdaLeadGroundingFollowup();
+    const groundingFollowup = groundingPolicy.followupPlayerText;
     groundingFollowupTopics = detectConversationTopics(groundingFollowup);
     recordConversation(world, {
       npcId: npc.id,
@@ -2994,17 +2903,26 @@ async function performConversationTurn(
     reply = groundingReply;
 
     if (
-      !textGroundsMaraAdaLead(reply.reply) &&
+      !objectiveRouteTextGroundsConversationPolicy(
+        groundingPolicy,
+        reply.reply,
+      ) &&
       !(
-        textGroundsMaraAdaLead(groundingFollowup) &&
-        textAffirmsMaraAdaLead(reply.reply)
+        objectiveRouteTextGroundsConversationPolicy(
+          groundingPolicy,
+          groundingFollowup,
+        ) &&
+        objectiveRouteTextAffirmsConversationPolicy(
+          groundingPolicy,
+          reply.reply,
+        )
       )
     ) {
-      reply = groundedMaraAdaLeadReply();
+      reply = groundingPolicy.fallbackReply;
       recordAIRuntimePolicyFallback(
         world,
         "generateStreetReply",
-        "Live Mara reply did not ground the Ada lead after Rowan's follow-up.",
+        groundingPolicy.fallbackReason,
       );
     }
   }
@@ -3088,11 +3006,20 @@ function applyConversationResolution(
     ensureFirstAfternoonLeadFieldNote(world);
   }
 
+  const groundingPolicy = objectiveRouteConversationGroundingPolicy(
+    world,
+    objective,
+    npc,
+    "",
+  );
   if (
-    npc.id === "npc-mara" &&
-    objective.routeKey === "first-afternoon" &&
+    groundingPolicy &&
     !world.firstAfternoon?.planSettledAt &&
-    conversationGroundsMaraAdaLead(world, options.closingReply)
+    objectiveRouteConversationHasVisibleEvidence(
+      world,
+      groundingPolicy,
+      options.closingReply,
+    )
   ) {
     settleFirstAfternoonPlan(world);
   }
