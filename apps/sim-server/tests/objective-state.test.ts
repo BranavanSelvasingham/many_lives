@@ -551,12 +551,7 @@ describe("objectiveState classification", () => {
       addConversationWith(world, "npc-mara");
     }
 
-    for (const world of [
-      afterPlan,
-      afterReached,
-      afterRecorded,
-      afterChoice,
-    ]) {
+    for (const world of [afterPlan, afterReached, afterRecorded, afterChoice]) {
       world.firstAfternoon = {
         ...world.firstAfternoon,
         planSettledAt: world.currentTime,
@@ -572,7 +567,9 @@ describe("objectiveState classification", () => {
       setFirstAfternoonLeadFieldNote(world);
     }
 
-    const choiceJob = afterChoice.jobs.find((job) => job.id === "job-tea-shift");
+    const choiceJob = afterChoice.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
     if (choiceJob) {
       choiceJob.discovered = true;
     }
@@ -1015,6 +1012,616 @@ describe("objectiveState classification", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps work route metadata stable across representative live states", () => {
+    const routeCases = [
+      {
+        id: "objective-work-route-tea-undiscovered",
+        text: "Earn money at Kettle & Lamp.",
+        setup: (world: StreetGameState) => {
+          const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+          if (teaJob) {
+            teaJob.discovered = false;
+            teaJob.accepted = false;
+            teaJob.completed = false;
+          }
+        },
+        expected: {
+          routeKey: "work-tea",
+          progress: { completed: 0, total: 4 },
+          outcomes: [
+            [
+              "work-lead-tea",
+              "Tea-house work lead confirmed",
+              4,
+              "blocked",
+              undefined,
+            ],
+            ["work-commit", "Paid work committed", 3, "blocked", undefined],
+            ["work-finish", "Paid work finished", 2, "blocked", undefined],
+            [
+              "work-pay",
+              "Pay turned into breathing room",
+              1,
+              "blocked",
+              undefined,
+            ],
+          ],
+          trail: [
+            [
+              "work-lead-tea",
+              "Get a real work lead from Ada at Kettle & Lamp.",
+              "The tea room only counts as a lead once Ada makes the offer real.",
+              "Still asking",
+              undefined,
+              false,
+            ],
+            [
+              "work-commit",
+              "Take the cup-and-counter shift at Kettle & Lamp.",
+              "Ada likes speed more than speeches.",
+              "Still asking",
+              undefined,
+              false,
+            ],
+            [
+              "work-finish",
+              "Finish the tea-house shift cleanly.",
+              "Finishing the rush matters more than saying yes to it.",
+              "Still ahead",
+              "work:job-tea-shift",
+              false,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "Work only matters if it buys more than the next hour.",
+              "$12 on hand",
+              undefined,
+              false,
+            ],
+          ],
+        },
+      },
+      {
+        id: "objective-work-route-tea-discovered",
+        text: "Earn money at Kettle & Lamp.",
+        setup: (world: StreetGameState) => {
+          const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+          if (teaJob) {
+            teaJob.discovered = true;
+            teaJob.accepted = false;
+            teaJob.completed = false;
+          }
+        },
+        expected: {
+          routeKey: "work-tea",
+          progress: { completed: 0, total: 4 },
+          outcomes: [
+            [
+              "work-lead-tea",
+              "Tea-house work lead confirmed",
+              4,
+              "blocked",
+              undefined,
+            ],
+            [
+              "work-commit",
+              "Paid work committed",
+              3,
+              "blocked",
+              "accept:job-tea-shift",
+            ],
+            ["work-finish", "Paid work finished", 2, "blocked", undefined],
+            [
+              "work-pay",
+              "Pay turned into breathing room",
+              1,
+              "blocked",
+              undefined,
+            ],
+          ],
+          trail: [
+            [
+              "work-lead-tea",
+              "Get a real work lead from Ada at Kettle & Lamp.",
+              "The tea room only counts as a lead once Ada makes the offer real.",
+              "Heard about it",
+              undefined,
+              false,
+            ],
+            [
+              "work-commit",
+              "Take the cup-and-counter shift at Kettle & Lamp.",
+              "Ada likes speed more than speeches.",
+              "Lead waiting",
+              "accept:job-tea-shift",
+              false,
+            ],
+            [
+              "work-finish",
+              "Finish the tea-house shift cleanly.",
+              "Finishing the rush matters more than saying yes to it.",
+              "Still ahead",
+              "work:job-tea-shift",
+              false,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "Work only matters if it buys more than the next hour.",
+              "$12 on hand",
+              undefined,
+              false,
+            ],
+          ],
+        },
+      },
+      {
+        id: "objective-work-route-tea-accepted",
+        text: "Earn money at Kettle & Lamp.",
+        setup: (world: StreetGameState) => {
+          const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+          if (teaJob) {
+            teaJob.discovered = true;
+            teaJob.accepted = true;
+            teaJob.completed = false;
+          }
+        },
+        expected: {
+          routeKey: "work-tea",
+          progress: { completed: 2, total: 4 },
+          outcomes: [
+            [
+              "work-lead-tea",
+              "Tea-house work lead confirmed",
+              4,
+              "met",
+              undefined,
+            ],
+            [
+              "work-commit",
+              "Paid work committed",
+              3,
+              "met",
+              "work:job-tea-shift",
+            ],
+            [
+              "work-finish",
+              "Paid work finished",
+              2,
+              "blocked",
+              "work:job-tea-shift",
+            ],
+            [
+              "work-pay",
+              "Pay turned into breathing room",
+              1,
+              "blocked",
+              undefined,
+            ],
+          ],
+          trail: [
+            [
+              "work-lead-tea",
+              "Get a real work lead from Ada at Kettle & Lamp.",
+              "The tea room only counts as a lead once Ada makes the offer real.",
+              "Lead confirmed",
+              undefined,
+              true,
+            ],
+            [
+              "work-commit",
+              "Take the cup-and-counter shift at Kettle & Lamp.",
+              "Ada likes speed more than speeches.",
+              "Committed",
+              "work:job-tea-shift",
+              true,
+            ],
+            [
+              "work-finish",
+              "Finish the tea-house shift cleanly.",
+              "Finishing the rush matters more than saying yes to it.",
+              "Still ahead",
+              "work:job-tea-shift",
+              false,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "Work only matters if it buys more than the next hour.",
+              "$12 on hand",
+              undefined,
+              false,
+            ],
+          ],
+        },
+      },
+      {
+        id: "objective-work-route-tea-completed",
+        text: "Earn money at Kettle & Lamp.",
+        setup: (world: StreetGameState) => {
+          const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+          if (teaJob) {
+            teaJob.discovered = true;
+            teaJob.accepted = true;
+            teaJob.completed = true;
+          }
+          world.player.money = 26;
+        },
+        expected: {
+          routeKey: "work-tea",
+          progress: { completed: 4, total: 4 },
+          outcomes: [
+            [
+              "work-lead-tea",
+              "Tea-house work lead confirmed",
+              4,
+              "met",
+              undefined,
+            ],
+            ["work-commit", "Paid work committed", 3, "met", undefined],
+            ["work-finish", "Paid work finished", 2, "met", undefined],
+            ["work-pay", "Pay turned into breathing room", 1, "met", undefined],
+          ],
+          trail: [
+            [
+              "work-lead-tea",
+              "Get a real work lead from Ada at Kettle & Lamp.",
+              "The tea room only counts as a lead once Ada makes the offer real.",
+              "Lead confirmed",
+              undefined,
+              true,
+            ],
+            [
+              "work-commit",
+              "Take the cup-and-counter shift at Kettle & Lamp.",
+              "Ada likes speed more than speeches.",
+              "Committed",
+              undefined,
+              true,
+            ],
+            [
+              "work-finish",
+              "Finish the tea-house shift cleanly.",
+              "Finishing the rush matters more than saying yes to it.",
+              "Finished",
+              undefined,
+              true,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "The day is starting to look more like footing than scrambling.",
+              "$26 on hand",
+              undefined,
+              true,
+            ],
+          ],
+        },
+      },
+      {
+        id: "objective-work-route-yard-undiscovered",
+        text: "Verify Tomas's yard opening from current world state.",
+        setup: (world: StreetGameState) => {
+          const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+          if (yardJob) {
+            yardJob.discovered = false;
+            yardJob.accepted = false;
+            yardJob.completed = false;
+          }
+        },
+        expected: {
+          routeKey: "work-yard",
+          progress: { completed: 0, total: 4 },
+          outcomes: [
+            [
+              "work-lead-yard",
+              "Yard work lead confirmed",
+              4,
+              "blocked",
+              undefined,
+            ],
+            ["work-commit", "Paid work committed", 3, "blocked", undefined],
+            ["work-finish", "Paid work finished", 2, "blocked", undefined],
+            [
+              "work-pay",
+              "Pay turned into breathing room",
+              1,
+              "blocked",
+              undefined,
+            ],
+          ],
+          trail: [
+            [
+              "work-lead-yard",
+              "Get a real work lead from Tomas at North Crane Yard.",
+              "The yard only counts as a lead once Tomas puts actual work on the table.",
+              "Still asking",
+              undefined,
+              false,
+            ],
+            [
+              "work-commit",
+              "Take the freight-yard lift before the window closes.",
+              "The yard only stays open for work if Rowan moves in time.",
+              "Still asking",
+              undefined,
+              false,
+            ],
+            [
+              "work-finish",
+              "Finish the yard lift cleanly.",
+              "Following through matters as much as taking the lift.",
+              "Still ahead",
+              "work:job-yard-shift",
+              false,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "Work only matters if it buys more than the next hour.",
+              "$12 on hand",
+              undefined,
+              false,
+            ],
+          ],
+        },
+      },
+      {
+        id: "objective-work-route-yard-at-risk",
+        text: "Verify Tomas's yard opening from current world state.",
+        setup: (world: StreetGameState) => {
+          const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+          if (yardJob) {
+            yardJob.discovered = true;
+            yardJob.accepted = false;
+            yardJob.completed = false;
+          }
+          world.clock.totalMinutes = 16 * 60 + 30;
+          world.clock.hour = 16;
+          world.clock.minute = 30;
+          world.clock.label = "Afternoon";
+        },
+        expected: {
+          routeKey: "work-yard",
+          progress: { completed: 0, total: 4 },
+          outcomes: [
+            [
+              "work-lead-yard",
+              "Yard work lead confirmed",
+              4,
+              "blocked",
+              undefined,
+            ],
+            [
+              "work-commit",
+              "Paid work committed",
+              7,
+              "at_risk",
+              "accept:job-yard-shift",
+            ],
+            ["work-finish", "Paid work finished", 6, "at_risk", undefined],
+            [
+              "work-pay",
+              "Pay turned into breathing room",
+              1,
+              "blocked",
+              undefined,
+            ],
+          ],
+          trail: [
+            [
+              "work-lead-yard",
+              "Get a real work lead from Tomas at North Crane Yard.",
+              "The yard only counts as a lead once Tomas puts actual work on the table.",
+              "Heard about it",
+              undefined,
+              false,
+            ],
+            [
+              "work-commit",
+              "Take the freight-yard lift before the window closes.",
+              "The yard only stays open for work if Rowan moves in time.",
+              "Lead waiting",
+              "accept:job-yard-shift",
+              false,
+            ],
+            [
+              "work-finish",
+              "Finish the yard lift cleanly.",
+              "Following through matters as much as taking the lift.",
+              "Still ahead",
+              "work:job-yard-shift",
+              false,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "Work only matters if it buys more than the next hour.",
+              "$12 on hand",
+              undefined,
+              false,
+            ],
+          ],
+        },
+      },
+      {
+        id: "objective-work-route-yard-accepted",
+        text: "Verify Tomas's yard opening from current world state.",
+        setup: (world: StreetGameState) => {
+          const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+          if (yardJob) {
+            yardJob.discovered = true;
+            yardJob.accepted = true;
+            yardJob.completed = false;
+          }
+          world.clock.totalMinutes = 15 * 60;
+          world.clock.hour = 15;
+          world.clock.minute = 0;
+          world.clock.label = "Afternoon";
+        },
+        expected: {
+          routeKey: "work-yard",
+          progress: { completed: 2, total: 4 },
+          outcomes: [
+            ["work-lead-yard", "Yard work lead confirmed", 4, "met", undefined],
+            [
+              "work-commit",
+              "Paid work committed",
+              3,
+              "met",
+              "work:job-yard-shift",
+            ],
+            [
+              "work-finish",
+              "Paid work finished",
+              2,
+              "blocked",
+              "work:job-yard-shift",
+            ],
+            [
+              "work-pay",
+              "Pay turned into breathing room",
+              1,
+              "blocked",
+              undefined,
+            ],
+          ],
+          trail: [
+            [
+              "work-lead-yard",
+              "Get a real work lead from Tomas at North Crane Yard.",
+              "The yard only counts as a lead once Tomas puts actual work on the table.",
+              "Lead confirmed",
+              undefined,
+              true,
+            ],
+            [
+              "work-commit",
+              "Take the freight-yard lift before the window closes.",
+              "The yard only stays open for work if Rowan moves in time.",
+              "Committed",
+              "work:job-yard-shift",
+              true,
+            ],
+            [
+              "work-finish",
+              "Finish the yard lift cleanly.",
+              "Following through matters as much as taking the lift.",
+              "Still ahead",
+              "work:job-yard-shift",
+              false,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "Work only matters if it buys more than the next hour.",
+              "$12 on hand",
+              undefined,
+              false,
+            ],
+          ],
+        },
+      },
+      {
+        id: "objective-work-route-yard-paid",
+        text: "Verify Tomas's yard opening from current world state.",
+        setup: (world: StreetGameState) => {
+          const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+          if (yardJob) {
+            yardJob.discovered = true;
+            yardJob.accepted = true;
+            yardJob.completed = true;
+          }
+          world.player.money = 30;
+        },
+        expected: {
+          routeKey: "work-yard",
+          progress: { completed: 4, total: 4 },
+          outcomes: [
+            ["work-lead-yard", "Yard work lead confirmed", 4, "met", undefined],
+            ["work-commit", "Paid work committed", 3, "met", undefined],
+            ["work-finish", "Paid work finished", 2, "met", undefined],
+            ["work-pay", "Pay turned into breathing room", 1, "met", undefined],
+          ],
+          trail: [
+            [
+              "work-lead-yard",
+              "Get a real work lead from Tomas at North Crane Yard.",
+              "The yard only counts as a lead once Tomas puts actual work on the table.",
+              "Lead confirmed",
+              undefined,
+              true,
+            ],
+            [
+              "work-commit",
+              "Take the freight-yard lift before the window closes.",
+              "The yard only stays open for work if Rowan moves in time.",
+              "Committed",
+              undefined,
+              true,
+            ],
+            [
+              "work-finish",
+              "Finish the yard lift cleanly.",
+              "Following through matters as much as taking the lift.",
+              "Finished",
+              undefined,
+              true,
+            ],
+            [
+              "work-pay",
+              "Turn the pay into breathing room.",
+              "The day is starting to look more like footing than scrambling.",
+              "$30 on hand",
+              undefined,
+              true,
+            ],
+          ],
+        },
+      },
+    ] as const;
+
+    for (const routeCase of routeCases) {
+      const world = seedStreetGame(routeCase.id);
+      routeCase.setup(world);
+
+      const objective = buildPlayerObjectiveState(world, {
+        focus: "work",
+        source: "manual",
+        text: routeCase.text,
+      });
+
+      expect(objective, routeCase.id).toMatchObject({
+        routeKey: routeCase.expected.routeKey,
+        progress: routeCase.expected.progress,
+      });
+      expect(
+        objective?.outcomes.map(({ actionId, id, label, status, urgency }) => [
+          id,
+          label,
+          urgency,
+          status,
+          actionId,
+        ]),
+        routeCase.id,
+      ).toEqual(routeCase.expected.outcomes);
+      expect(
+        objective?.trail.map(
+          ({ actionId, detail, done, id, progress, title }) => [
+            id,
+            title,
+            detail,
+            progress,
+            actionId,
+            done,
+          ],
+        ),
+        routeCase.id,
+      ).toEqual(routeCase.expected.trail);
+    }
   });
 
   it("exposes active job commitments as desired predicates", () => {

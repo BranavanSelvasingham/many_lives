@@ -177,6 +177,24 @@ export interface MaraAdaLeadRouteState {
   homeLocationId?: string;
 }
 
+export interface WorkRouteState {
+  anyCompletedWork: boolean;
+  lead: "tea" | "yard";
+  leadConfirmed: boolean;
+  leadJobAccepted: boolean;
+  leadJobCompleted: boolean;
+  leadJobDiscovered: boolean;
+  leadJobId?: string;
+  leadJobMissed: boolean;
+  leadJobAtRisk: boolean;
+  leadJobActive: boolean;
+  leadLocationId?: string;
+  leadLocationName?: string;
+  leadNpcId?: string;
+  leadNpcName?: string;
+  playerMoney: number;
+}
+
 interface FirstAfternoonRouteStepTemplate {
   actionId?: (state: FirstAfternoonRouteState) => string | undefined;
   detail: string | ((state: FirstAfternoonRouteState) => string);
@@ -223,6 +241,26 @@ interface MaraAdaLeadRouteOutcomeTemplate {
     | string
     | ((state: MaraAdaLeadRouteState) => string | undefined);
   urgency: number;
+}
+
+interface WorkRouteStepTemplate {
+  actionId?: (state: WorkRouteState) => string | undefined;
+  detail: string | ((state: WorkRouteState) => string);
+  done: (state: WorkRouteState) => boolean;
+  id: string | ((state: WorkRouteState) => string);
+  npcId?: string | ((state: WorkRouteState) => string | undefined);
+  progress: string | ((state: WorkRouteState) => string);
+  targetLocationId?: string | ((state: WorkRouteState) => string | undefined);
+  title: string | ((state: WorkRouteState) => string);
+}
+
+interface WorkRouteOutcomeTemplate {
+  actionId?: (state: WorkRouteState) => string | undefined;
+  id: string | ((state: WorkRouteState) => string);
+  label: string | ((state: WorkRouteState) => string);
+  npcId?: string | ((state: WorkRouteState) => string | undefined);
+  targetLocationId?: string | ((state: WorkRouteState) => string | undefined);
+  urgency: number | ((state: WorkRouteState) => number);
 }
 
 interface CompletionAcknowledgementHint {
@@ -274,6 +312,152 @@ const ADA_LEAD_ROUTE_KEYS = [
   "mara-ada-lead",
   "work-tea",
 ] as const;
+
+const WORK_OUTCOME_TEMPLATES: WorkRouteOutcomeTemplate[] = [
+  {
+    id: ({ lead }) => (lead === "yard" ? "work-lead-yard" : "work-lead-tea"),
+    label: ({ lead }) =>
+      lead === "yard"
+        ? "Yard work lead confirmed"
+        : "Tea-house work lead confirmed",
+    urgency: 4,
+    npcId: ({ leadNpcId }) => leadNpcId,
+    targetLocationId: ({ leadLocationId }) => leadLocationId,
+  },
+  {
+    id: "work-commit",
+    label: "Paid work committed",
+    urgency: ({ leadJobAtRisk }) => (leadJobAtRisk ? 7 : 3),
+    actionId: ({
+      leadJobAccepted,
+      leadJobCompleted,
+      leadJobDiscovered,
+      leadJobId,
+      leadJobMissed,
+    }) =>
+      leadJobId && !leadJobCompleted && !leadJobMissed
+        ? leadJobAccepted
+          ? `work:${leadJobId}`
+          : leadJobDiscovered
+            ? `accept:${leadJobId}`
+            : undefined
+        : undefined,
+    targetLocationId: ({ leadLocationId }) => leadLocationId,
+  },
+  {
+    id: "work-finish",
+    label: "Paid work finished",
+    urgency: ({ leadJobAtRisk }) => (leadJobAtRisk ? 6 : 2),
+    actionId: ({
+      leadJobAccepted,
+      leadJobCompleted,
+      leadJobId,
+      leadJobMissed,
+    }) =>
+      leadJobId && leadJobAccepted && !leadJobCompleted && !leadJobMissed
+        ? `work:${leadJobId}`
+        : undefined,
+    targetLocationId: ({ leadLocationId }) => leadLocationId,
+  },
+  {
+    id: "work-pay",
+    label: "Pay turned into breathing room",
+    urgency: 1,
+  },
+];
+
+const WORK_STEP_TEMPLATES: WorkRouteStepTemplate[] = [
+  {
+    id: ({ lead }) => (lead === "yard" ? "work-lead-yard" : "work-lead-tea"),
+    title: ({ lead, leadLocationName, leadNpcName }) =>
+      lead === "yard"
+        ? `Get a real work lead from ${leadNpcName ?? "Tomas"} at ${leadLocationName ?? "North Crane Yard"}.`
+        : `Get a real work lead from ${leadNpcName ?? "Ada"} at ${leadLocationName ?? "Kettle & Lamp"}.`,
+    detail: ({ lead }) =>
+      lead === "yard"
+        ? "The yard only counts as a lead once Tomas puts actual work on the table."
+        : "The tea room only counts as a lead once Ada makes the offer real.",
+    progress: ({ leadConfirmed, leadJobDiscovered }) =>
+      leadConfirmed
+        ? "Lead confirmed"
+        : leadJobDiscovered
+          ? "Heard about it"
+          : "Still asking",
+    done: ({ leadConfirmed }) => leadConfirmed,
+    npcId: ({ leadNpcId }) => leadNpcId,
+    targetLocationId: ({ leadLocationId }) => leadLocationId,
+  },
+  {
+    id: "work-commit",
+    title: ({ lead }) =>
+      lead === "yard"
+        ? "Take the freight-yard lift before the window closes."
+        : "Take the cup-and-counter shift at Kettle & Lamp.",
+    detail: ({ lead }) =>
+      lead === "yard"
+        ? "The yard only stays open for work if Rowan moves in time."
+        : "Ada likes speed more than speeches.",
+    progress: ({
+      leadJobAccepted,
+      leadJobActive,
+      leadJobCompleted,
+      leadJobDiscovered,
+    }) =>
+      leadJobAccepted || leadJobActive
+        ? "Committed"
+        : leadJobCompleted
+          ? "Already worked"
+          : leadJobDiscovered
+            ? "Lead waiting"
+            : "Still asking",
+    done: ({ leadJobAccepted, leadJobCompleted }) =>
+      leadJobAccepted || leadJobCompleted,
+    actionId: ({
+      leadJobAccepted,
+      leadJobActive,
+      leadJobCompleted,
+      leadJobDiscovered,
+      leadJobId,
+      leadJobMissed,
+    }) =>
+      leadJobId && !leadJobCompleted && !leadJobMissed
+        ? leadJobAccepted || leadJobActive
+          ? `work:${leadJobId}`
+          : leadJobDiscovered
+            ? `accept:${leadJobId}`
+            : undefined
+        : undefined,
+    targetLocationId: ({ leadLocationId }) => leadLocationId,
+  },
+  {
+    id: "work-finish",
+    title: ({ lead }) =>
+      lead === "yard"
+        ? "Finish the yard lift cleanly."
+        : "Finish the tea-house shift cleanly.",
+    detail: ({ lead }) =>
+      lead === "yard"
+        ? "Following through matters as much as taking the lift."
+        : "Finishing the rush matters more than saying yes to it.",
+    progress: ({ leadJobCompleted }) =>
+      leadJobCompleted ? "Finished" : "Still ahead",
+    done: ({ leadJobCompleted }) => leadJobCompleted,
+    actionId: ({ leadJobCompleted, leadJobId }) =>
+      leadJobId && !leadJobCompleted ? `work:${leadJobId}` : undefined,
+    targetLocationId: ({ leadLocationId }) => leadLocationId,
+  },
+  {
+    id: "work-pay",
+    title: "Turn the pay into breathing room.",
+    detail: ({ anyCompletedWork, playerMoney }) =>
+      playerMoney >= 20 || anyCompletedWork
+        ? "The day is starting to look more like footing than scrambling."
+        : "Work only matters if it buys more than the next hour.",
+    progress: ({ playerMoney }) => `$${playerMoney} on hand`,
+    done: ({ anyCompletedWork, playerMoney }) =>
+      playerMoney >= 20 || anyCompletedWork,
+  },
+];
 
 const FIRST_AFTERNOON_OUTCOME_TEMPLATES: FirstAfternoonRouteOutcomeTemplate[] =
   [
@@ -1086,6 +1270,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   },
   {
     routeKeys: ["work-tea"],
+    routeHeadline: "Secure paid work at Kettle & Lamp and follow through.",
     semanticHints: [{ locationId: "tea-house", npcId: "npc-ada" }],
     semanticMoveBonuses: [
       {
@@ -1112,7 +1297,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   },
   {
     routeKeys: ["mara-ada-lead"],
-    routeHeadline: "Verify Mara's Kettle & Lamp lead and turn it into a real choice.",
+    routeHeadline:
+      "Verify Mara's Kettle & Lamp lead and turn it into a real choice.",
     semanticMoveBonuses: [
       {
         locationId: "tea-house",
@@ -1123,6 +1309,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   },
   {
     routeKeys: ["work-yard"],
+    routeHeadline: "Secure paid yard work and follow through.",
     semanticHints: [{ locationId: "freight-yard", npcId: "npc-tomas" }],
     semanticMoveBonuses: [
       {
@@ -1314,6 +1501,32 @@ export function objectiveRouteMaraAdaLeadRouteScaffold(
   };
 }
 
+export function objectiveRouteWorkRouteScaffold(state: WorkRouteState): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: WORK_OUTCOME_TEMPLATES.map((template) => ({
+      id: resolveWorkRouteText(template.id, state),
+      label: resolveWorkRouteText(template.label, state),
+      urgency: resolveWorkRouteNumber(template.urgency, state),
+      actionId: template.actionId?.(state),
+      npcId: resolveWorkRouteValue(template.npcId, state),
+      targetLocationId: resolveWorkRouteValue(template.targetLocationId, state),
+    })),
+    steps: WORK_STEP_TEMPLATES.map((template) => ({
+      id: resolveWorkRouteText(template.id, state),
+      title: resolveWorkRouteText(template.title, state),
+      detail: resolveWorkRouteText(template.detail, state),
+      progress: resolveWorkRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: template.actionId?.(state),
+      npcId: resolveWorkRouteValue(template.npcId, state),
+      targetLocationId: resolveWorkRouteValue(template.targetLocationId, state),
+    })),
+  };
+}
+
 function resolveFirstAfternoonRouteValue(
   value:
     | string
@@ -1344,6 +1557,27 @@ function resolveFirstAfternoonRouteText(
 function resolveMaraAdaLeadRouteText(
   value: string | ((state: MaraAdaLeadRouteState) => string),
   state: MaraAdaLeadRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveWorkRouteValue(
+  value: string | ((state: WorkRouteState) => string | undefined) | undefined,
+  state: WorkRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveWorkRouteText(
+  value: string | ((state: WorkRouteState) => string),
+  state: WorkRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveWorkRouteNumber(
+  value: number | ((state: WorkRouteState) => number),
+  state: WorkRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
 }
