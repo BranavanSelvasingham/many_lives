@@ -222,6 +222,29 @@ export interface WorkRouteState {
   playerMoney: number;
 }
 
+export interface CommittedJobRouteState {
+  atLocation: boolean;
+  beforeWindow: boolean;
+  canWork: boolean;
+  inWindow: boolean;
+  jobCompleted: boolean;
+  jobId: string;
+  jobLocationId?: string;
+  jobLocationName?: string;
+  jobOpen: boolean;
+  jobTitle: string;
+  jobTitleLower: string;
+}
+
+export interface RestRouteState {
+  atHome: boolean;
+  homeLocationId?: string;
+  homeLocationName?: string;
+  playerEnergy: number;
+  restLanded: boolean;
+  restRequested: boolean;
+}
+
 export interface HelpProblemRouteState {
   hasWrench: boolean;
   problemActive: boolean;
@@ -356,6 +379,42 @@ interface WorkRouteOutcomeTemplate {
   npcId?: string | ((state: WorkRouteState) => string | undefined);
   targetLocationId?: string | ((state: WorkRouteState) => string | undefined);
   urgency: number | ((state: WorkRouteState) => number);
+}
+
+interface CommittedJobRouteStepTemplate {
+  actionId?: (state: CommittedJobRouteState) => string | undefined;
+  detail: string;
+  done: (state: CommittedJobRouteState) => boolean;
+  id: string | ((state: CommittedJobRouteState) => string);
+  progress: string | ((state: CommittedJobRouteState) => string);
+  targetLocationId?: (state: CommittedJobRouteState) => string | undefined;
+  title: string | ((state: CommittedJobRouteState) => string);
+}
+
+interface CommittedJobRouteOutcomeTemplate {
+  actionId?: (state: CommittedJobRouteState) => string | undefined;
+  id: string | ((state: CommittedJobRouteState) => string);
+  label: string | ((state: CommittedJobRouteState) => string);
+  targetLocationId?: (state: CommittedJobRouteState) => string | undefined;
+  urgency: number;
+}
+
+interface RestRouteStepTemplate {
+  actionId?: (state: RestRouteState) => string | undefined;
+  detail: string | ((state: RestRouteState) => string);
+  done: (state: RestRouteState) => boolean;
+  id: string;
+  progress: string | ((state: RestRouteState) => string);
+  targetLocationId?: (state: RestRouteState) => string | undefined;
+  title: string | ((state: RestRouteState) => string);
+}
+
+interface RestRouteOutcomeTemplate {
+  actionId?: (state: RestRouteState) => string | undefined;
+  id: string;
+  label: string;
+  targetLocationId?: (state: RestRouteState) => string | undefined;
+  urgency: number;
 }
 
 interface HelpProblemRouteStepTemplate {
@@ -811,6 +870,110 @@ const WORK_STEP_TEMPLATES: WorkRouteStepTemplate[] = [
     progress: ({ playerMoney }) => `$${playerMoney} on hand`,
     done: ({ anyCompletedWork, playerMoney }) =>
       playerMoney >= 20 || anyCompletedWork,
+  },
+];
+
+const COMMITTED_JOB_OUTCOME_TEMPLATES: CommittedJobRouteOutcomeTemplate[] = [
+  {
+    id: ({ jobId }) => `commitment-go-${jobId}`,
+    label: ({ jobTitle }) => `${jobTitle} site reached`,
+    urgency: 3,
+    targetLocationId: ({ atLocation, jobLocationId, jobOpen }) =>
+      jobOpen && !atLocation ? jobLocationId : undefined,
+  },
+  {
+    id: ({ jobId }) => `commitment-window-${jobId}`,
+    label: ({ jobTitle }) => `${jobTitle} window open`,
+    urgency: 2,
+    targetLocationId: ({ atLocation, jobLocationId, jobOpen }) =>
+      jobOpen && !atLocation ? jobLocationId : undefined,
+  },
+  {
+    id: ({ jobId }) => `commitment-finish-${jobId}`,
+    label: ({ jobTitle }) => `${jobTitle} finished`,
+    urgency: 1,
+    actionId: ({ canWork, jobId }) => (canWork ? `work:${jobId}` : undefined),
+    targetLocationId: ({ canWork, jobLocationId, jobOpen }) =>
+      jobOpen && !canWork ? jobLocationId : undefined,
+  },
+];
+
+const COMMITTED_JOB_STEP_TEMPLATES: CommittedJobRouteStepTemplate[] = [
+  {
+    id: ({ jobId }) => `commitment-go-${jobId}`,
+    title: ({ jobLocationName, jobTitleLower }) =>
+      `Get to ${jobLocationName ?? "the job site"} for ${jobTitleLower}.`,
+    detail:
+      "A live commitment should be the first thing Rowan can actually cash in.",
+    progress: ({ atLocation }) => (atLocation ? "On site" : "Still moving"),
+    done: ({ atLocation, jobCompleted }) => atLocation || jobCompleted,
+    targetLocationId: ({ jobLocationId }) => jobLocationId,
+  },
+  {
+    id: ({ jobId }) => `commitment-window-${jobId}`,
+    title: "Be there while the shift window is still open.",
+    detail: "The block only keeps a shift open for so long.",
+    progress: ({ beforeWindow, inWindow }) =>
+      inWindow ? "Window open" : beforeWindow ? "Waiting on the hour" : "Window slipping",
+    done: ({ inWindow, jobCompleted }) => inWindow || jobCompleted,
+    targetLocationId: ({ jobLocationId }) => jobLocationId,
+  },
+  {
+    id: ({ jobId }) => `commitment-finish-${jobId}`,
+    title: ({ jobTitleLower }) => `Finish ${jobTitleLower}.`,
+    detail: "Following through is what turns a lead into standing.",
+    progress: ({ jobCompleted }) =>
+      jobCompleted ? "Finished" : "Still committed",
+    done: ({ jobCompleted }) => jobCompleted,
+    actionId: ({ jobCompleted, jobId }) =>
+      jobCompleted ? undefined : `work:${jobId}`,
+    targetLocationId: ({ jobLocationId }) => jobLocationId,
+  },
+];
+
+const REST_OUTCOME_TEMPLATES: RestRouteOutcomeTemplate[] = [
+  {
+    id: "rest-return",
+    label: "Returned somewhere safe to rest",
+    urgency: 2,
+    targetLocationId: ({ atHome, homeLocationId, restLanded }) =>
+      !atHome && !restLanded ? homeLocationId : undefined,
+  },
+  {
+    id: "rest-hour",
+    label: "Recovered with an hour of rest",
+    urgency: 1,
+    actionId: ({ atHome, restLanded }) =>
+      atHome && !restLanded ? "rest:home" : undefined,
+    targetLocationId: ({ homeLocationId, restLanded }) =>
+      restLanded ? undefined : homeLocationId,
+  },
+];
+
+const REST_STEP_TEMPLATES: RestRouteStepTemplate[] = [
+  {
+    id: "rest-return",
+    title: ({ homeLocationName }) =>
+      `Get back to ${homeLocationName ?? "Morrow House"}.`,
+    detail: ({ restRequested }) =>
+      restRequested
+        ? "The day is asking for a pause."
+        : "Rowan needs somewhere familiar before the hour does any good.",
+    progress: ({ atHome }) => (atHome ? "Home" : "Away"),
+    done: ({ atHome }) => atHome,
+    targetLocationId: ({ homeLocationId }) => homeLocationId,
+  },
+  {
+    id: "rest-hour",
+    title: "Rest for an hour.",
+    detail:
+      "The point is to stop fighting the block long enough to get your legs back.",
+    progress: ({ playerEnergy, restLanded }) =>
+      restLanded ? "Recovered" : `Energy ${playerEnergy}`,
+    done: ({ restLanded }) => restLanded,
+    actionId: ({ restLanded }) => (restLanded ? undefined : "rest:home"),
+    targetLocationId: ({ homeLocationId, restLanded }) =>
+      restLanded ? undefined : homeLocationId,
   },
 ];
 
@@ -2082,6 +2245,15 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       },
     ],
   },
+  {
+    routeKeys: ["rest-home"],
+    routeHeadline: "Recover enough at Morrow House to move cleanly again.",
+  },
+  {
+    routeKeys: [],
+    routeKeyPrefixes: ["commitment-"],
+    routeHeadline: "Follow through on accepted work before the window closes.",
+  },
 ];
 
 export function objectiveRouteSemanticHints(
@@ -2190,6 +2362,8 @@ export function objectiveRouteHeadline(routeKey: string) {
 
 export function objectiveRouteDefaultTextForFocus(focus: ObjectiveFocus) {
   switch (focus) {
+    case "rest":
+      return "Recover enough to move cleanly again.";
     case "people":
       return "Meet people who could become real friends in South Quay.";
     case "explore":
@@ -2373,6 +2547,56 @@ export function objectiveRouteWorkRouteScaffold(state: WorkRouteState): {
   };
 }
 
+export function objectiveRouteCommittedJobRouteScaffold(
+  state: CommittedJobRouteState,
+): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: COMMITTED_JOB_OUTCOME_TEMPLATES.map((template) => ({
+      id: resolveCommittedJobRouteText(template.id, state),
+      label: resolveCommittedJobRouteText(template.label, state),
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+    steps: COMMITTED_JOB_STEP_TEMPLATES.map((template) => ({
+      id: resolveCommittedJobRouteText(template.id, state),
+      title: resolveCommittedJobRouteText(template.title, state),
+      detail: template.detail,
+      progress: resolveCommittedJobRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: template.actionId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+  };
+}
+
+export function objectiveRouteRestRouteScaffold(state: RestRouteState): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: REST_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: template.label,
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+    steps: REST_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: resolveRestRouteText(template.title, state),
+      detail: resolveRestRouteText(template.detail, state),
+      progress: resolveRestRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: template.actionId?.(state),
+      targetLocationId: template.targetLocationId?.(state),
+    })),
+  };
+}
+
 export function objectiveRouteCartProblemRouteScaffold(
   state: HelpProblemRouteState,
 ): {
@@ -2534,6 +2758,20 @@ function resolveWorkRouteText(
 function resolveWorkRouteNumber(
   value: number | ((state: WorkRouteState) => number),
   state: WorkRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveCommittedJobRouteText(
+  value: string | ((state: CommittedJobRouteState) => string),
+  state: CommittedJobRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveRestRouteText(
+  value: string | ((state: RestRouteState) => string),
+  state: RestRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
 }
