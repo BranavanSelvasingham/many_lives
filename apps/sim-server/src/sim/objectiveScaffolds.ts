@@ -113,6 +113,8 @@ interface ActionTargetLocationHint {
 interface CompletionAcknowledgementHint {
   feedText: string;
   memoryText: string;
+  playerThought?: string;
+  playerThoughtWhen?: (context: ScaffoldContext) => boolean;
   when?: (context: ScaffoldContext) => boolean;
 }
 
@@ -157,6 +159,9 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.",
       memoryText:
         "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.",
+      playerThought:
+        "Tonight's bed holds. I earned real money, and tomorrow has a lead.",
+      playerThoughtWhen: ({ world }) => Boolean(world.firstAfternoon?.completedAt),
       when: ({ objective }) => objective.routeKey === "first-afternoon",
     },
     deterministicOpeningNpcIds: ["npc-mara", "npc-ada"],
@@ -474,6 +479,30 @@ export function objectiveRouteCompletionAcknowledgement(
         feedText: acknowledgement.feedText,
         memoryText: acknowledgement.memoryText,
       };
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteCompletionPlayerThought(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const acknowledgement = scaffold.completionAcknowledgement;
+    if (
+      acknowledgement?.playerThought &&
+      (!acknowledgement.when || acknowledgement.when(context)) &&
+      (!acknowledgement.playerThoughtWhen ||
+        acknowledgement.playerThoughtWhen(context))
+    ) {
+      return acknowledgement.playerThought;
     }
   }
 

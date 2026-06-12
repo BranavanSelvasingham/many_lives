@@ -28,6 +28,8 @@ const FIRST_AFTERNOON_COMPLETION_FEED =
   "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.";
 const FIRST_AFTERNOON_COMPLETION_MEMORY =
   "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.";
+const FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT =
+  "Tonight's bed holds. I earned real money, and tomorrow has a lead.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -208,6 +210,16 @@ function worldWithPaidFirstAfternoonReturnThought(): StreetGameState {
   return world;
 }
 
+function worldWithCompletedFirstAfternoonPlayerThought(): StreetGameState {
+  const world = seedStreetGame("game-reasoning-completed-first-afternoon-thought");
+
+  world.firstAfternoon = {
+    completedAt: world.currentTime,
+  };
+
+  return world;
+}
+
 describe("street reasoning authority", () => {
   it("keeps first-afternoon action rationale in scaffold data, not engine control flow", () => {
     const engineSource = readFileSync(
@@ -293,6 +305,20 @@ describe("street reasoning authority", () => {
       expect(scaffoldSource).toContain(acknowledgementCopy);
       expect(engineSource).not.toContain(acknowledgementCopy);
     }
+  });
+
+  it("keeps first-afternoon completion player-thought copy in scaffold data, not thought control flow", () => {
+    const thoughtsSource = readFileSync(
+      new URL("../src/ai/streetThoughts.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scaffoldSource).toContain(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
+    expect(thoughtsSource).not.toContain(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
@@ -463,5 +489,13 @@ describe("street reasoning authority", () => {
     const thoughts = buildDeterministicStreetThoughts(world);
 
     expect(thoughts.playerThought).toBe(FIRST_AFTERNOON_RETURN_HOME_THOUGHT);
+  });
+
+  it("keeps completed first-afternoon player thought visible through scaffold data", () => {
+    const world = worldWithCompletedFirstAfternoonPlayerThought();
+
+    const thoughts = buildDeterministicStreetThoughts(world);
+
+    expect(thoughts.playerThought).toBe(FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT);
   });
 });
