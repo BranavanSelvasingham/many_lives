@@ -24,6 +24,7 @@ import {
   objectiveRouteSpeech,
   objectiveRouteScriptedReply,
   objectiveRouteSuppressesConversationTopic,
+  objectiveRouteWorkStageThought,
 } from "./objectiveScaffolds.js";
 import {
   buildRowanCognition,
@@ -7759,8 +7760,17 @@ function workJob(world: StreetGameState, jobId: string): void {
       advanceWorld(world, 20, { workingJobId: job.id });
       world.player.energy = clamp(world.player.energy - 4, 12, 100);
       world.firstAfternoon.teaShiftStage = "rush";
-      world.player.currentThought =
-        "The room is filling. Cups first, tables second, keep moving.";
+      const workStageThought = objectiveRouteWorkStageThought(
+        world,
+        world.player.objective,
+        {
+          jobId: job.id,
+          stage: world.firstAfternoon.teaShiftStage,
+        },
+      );
+      if (workStageThought) {
+        world.player.currentThought = workStageThought;
+      }
       addFeed(
         world,
         "job",
@@ -7779,8 +7789,17 @@ function workJob(world: StreetGameState, jobId: string): void {
       world.player.energy = clamp(world.player.energy - 5, 12, 100);
       world.firstAfternoon.teaShiftStage = "counter";
       movePlayerWithinActiveSpaceForWork(world, { x: 7, y: 5 });
-      world.player.currentThought =
-        "Ada is not watching every step now. That probably means I am keeping up.";
+      const workStageThought = objectiveRouteWorkStageThought(
+        world,
+        world.player.objective,
+        {
+          jobId: job.id,
+          stage: world.firstAfternoon.teaShiftStage,
+        },
+      );
+      if (workStageThought) {
+        world.player.currentThought = workStageThought;
+      }
       addFeed(
         world,
         "job",

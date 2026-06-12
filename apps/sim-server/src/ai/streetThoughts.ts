@@ -2,7 +2,10 @@ import type {
   NpcState,
   StreetGameState,
 } from "../street-sim/types.js";
-import { objectiveRoutePlayerThought } from "../sim/objectiveScaffolds.js";
+import {
+  objectiveRoutePlayerThought,
+  objectiveRouteWorkStageThought,
+} from "../sim/objectiveScaffolds.js";
 import { normalizeStreetVoice } from "./streetVoice.js";
 import { getNpcNarrative } from "../street-sim/npcNarratives.js";
 
@@ -161,17 +164,20 @@ function buildPlayerThought(game: StreetGameState) {
   }
 
   if (
-    game.player.objective?.routeKey === "first-afternoon" &&
+    game.firstAfternoon?.teaShiftStage === "rush" ||
     game.firstAfternoon?.teaShiftStage === "counter"
   ) {
-    return "Ada is not watching every step now. That probably means I am keeping up.";
-  }
-
-  if (
-    game.player.objective?.routeKey === "first-afternoon" &&
-    game.firstAfternoon?.teaShiftStage === "rush"
-  ) {
-    return "The room is filling. Cups first, tables second, keep moving.";
+    const workStageThought = objectiveRouteWorkStageThought(
+      game,
+      game.player.objective,
+      {
+        jobId: "job-tea-shift",
+        stage: game.firstAfternoon.teaShiftStage,
+      },
+    );
+    if (workStageThought) {
+      return workStageThought;
+    }
   }
 
   if (game.player.energy < 38) {
@@ -241,14 +247,19 @@ function buildActiveCommitmentThought(
 
   if (currentTotalMinutes < endTotalMinutes) {
     if (job.id === "job-tea-shift" && onSite && game.player.energy >= 28) {
-      switch (game.firstAfternoon?.teaShiftStage) {
-        case "rush":
-          return "The room is filling. Cups first, tables second, keep moving.";
-        case "counter":
-          return "Ada is not watching every step now. That probably means I am keeping up.";
-        default:
-          return "Lunch is filling up. Start with cups and tables.";
+      const workStageThought = objectiveRouteWorkStageThought(
+        game,
+        game.player.objective,
+        {
+          jobId: job.id,
+          stage: game.firstAfternoon?.teaShiftStage,
+        },
+      );
+      if (workStageThought) {
+        return workStageThought;
       }
+
+      return "Lunch is filling up. Start with cups and tables.";
     }
 
     if (onSite && game.player.energy >= 28) {
