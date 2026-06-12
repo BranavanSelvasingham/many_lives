@@ -22,6 +22,19 @@ function addConversationWith(world: StreetGameState, npcId: string) {
   });
 }
 
+function addNpcReplyWith(world: StreetGameState, npcId: string, text: string) {
+  world.conversations.push({
+    id: `conversation-${world.id}-${npcId}-${world.conversations.length}`,
+    locationId: world.player.currentLocationId,
+    npcId,
+    speaker: "npc",
+    speakerName: npcId,
+    text,
+    threadId: `thread-${world.id}-${npcId}`,
+    time: world.currentTime,
+  });
+}
+
 function setFirstAfternoonLeadFieldNote(world: StreetGameState) {
   world.firstAfternoon = {
     ...world.firstAfternoon,
@@ -51,6 +64,17 @@ function maraAdaLeadObjective(
     focus: "work",
     source,
     text: "Verify Mara's lead by walking to Kettle & Lamp, asking Ada about lunch work, and recording what Rowan learns.",
+  });
+}
+
+function settleObjective(
+  world: StreetGameState,
+  text = "Find out what it takes to keep my room at Morrow House tonight.",
+) {
+  return buildPlayerObjectiveState(world, {
+    focus: "settle",
+    source: "manual",
+    text,
   });
 }
 
@@ -737,11 +761,7 @@ describe("objectiveState classification", () => {
   it("exposes settle routes as room, standing, work, income, and people predicates", () => {
     const world = seedStreetGame("objective-settle-predicates");
 
-    const objective = buildPlayerObjectiveState(world, {
-      focus: "settle",
-      source: "manual",
-      text: "Find out what it takes to keep my room at Morrow House tonight.",
-    });
+    const objective = settleObjective(world);
 
     expect(objective).toMatchObject({
       routeKey: "settle-core",
@@ -777,6 +797,238 @@ describe("objectiveState classification", () => {
       npcId: "npc-ada",
       status: "blocked",
       targetLocationId: "tea-house",
+    });
+  });
+
+  it("keeps settle route metadata stable across representative live states", () => {
+    const fresh = seedStreetGame("objective-settle-route-fresh");
+    const afterMara = seedStreetGame("objective-settle-route-after-mara");
+    const termsKnown = seedStreetGame("objective-settle-route-terms-known");
+    const teaSpotted = seedStreetGame("objective-settle-route-tea-spotted");
+    const teaCommitted = seedStreetGame(
+      "objective-settle-route-tea-committed",
+    );
+    const teaCompleted = seedStreetGame(
+      "objective-settle-route-tea-completed",
+    );
+    const yardHint = seedStreetGame("objective-settle-route-yard-hint");
+    const peopleUnmet = seedStreetGame("objective-settle-route-people-unmet");
+    const peopleMet = seedStreetGame("objective-settle-route-people-met");
+
+    addConversationWith(afterMara, "npc-mara");
+    addNpcReplyWith(
+      termsKnown,
+      "npc-mara",
+      "The stay is simple: help the house, keep the room clean, and come home before it gets too late.",
+    );
+
+    const teaSpottedJob = teaSpotted.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    if (teaSpottedJob) {
+      teaSpottedJob.discovered = true;
+    }
+
+    const teaCommittedJob = teaCommitted.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    if (teaCommittedJob) {
+      teaCommittedJob.discovered = true;
+      teaCommittedJob.accepted = true;
+    }
+
+    const teaCompletedJob = teaCompleted.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    if (teaCompletedJob) {
+      teaCompletedJob.discovered = true;
+      teaCompletedJob.accepted = true;
+      teaCompletedJob.completed = true;
+    }
+
+    for (const npc of peopleUnmet.npcs) {
+      npc.trust = 0;
+    }
+    for (const npc of peopleMet.npcs.slice(0, 2)) {
+      npc.trust = 1;
+    }
+
+    const objectiveByState = {
+      fresh: settleObjective(fresh),
+      afterMara: settleObjective(afterMara),
+      termsKnown: settleObjective(termsKnown),
+      teaSpotted: settleObjective(teaSpotted),
+      teaCommitted: settleObjective(teaCommitted),
+      teaCompleted: settleObjective(teaCompleted),
+      yardHint: settleObjective(
+        yardHint,
+        "Line up yard work at North Crane Yard while getting settled.",
+      ),
+      peopleUnmet: settleObjective(peopleUnmet),
+      peopleMet: settleObjective(peopleMet),
+    };
+
+    expect(
+      objectiveByState.fresh?.outcomes.map(({ id, label, urgency }) => ({
+        id,
+        label,
+        urgency,
+      })),
+    ).toEqual([
+      {
+        id: "settle-terms",
+        label: "Room terms understood",
+        urgency: 5,
+      },
+      {
+        id: "settle-standing",
+        label: "Morrow House standing built",
+        urgency: 4,
+      },
+      {
+        id: "settle-lead",
+        label: "Tea-house work lead confirmed",
+        urgency: 3,
+      },
+      {
+        id: "settle-income",
+        label: "Income committed or completed",
+        urgency: 2,
+      },
+      {
+        id: "settle-people",
+        label: "Two local connections built",
+        urgency: 1,
+      },
+    ]);
+    expect(
+      objectiveByState.fresh?.trail.map(
+        ({ detail, id, progress, title }) => [id, title, detail, progress],
+      ),
+    ).toEqual([
+      [
+        "settle-terms",
+        "Lock in my stay at Morrow House.",
+        "Mara can walk Rowan through exactly what it takes to keep a room here.",
+        "Talk to Mara",
+      ],
+      [
+        "settle-standing",
+        "Build standing at Morrow House so the room stays mine.",
+        "Now that Rowan knows the terms, he needs to show up, help out, and make the house easier to run.",
+        "Standing 1/2",
+      ],
+      [
+        "settle-lead",
+        "Line up one solid work lead at Kettle & Lamp.",
+        "The tea room is a strong place to turn conversation into work.",
+        "Looking",
+      ],
+      [
+        "settle-income",
+        "Turn that lead into steady pay.",
+        "A lead matters once Rowan commits and follows through.",
+        "Looking",
+      ],
+      [
+        "settle-people",
+        "Build two real connections.",
+        "Rowan needs a few real connections to make this place feel like home.",
+        "1/2 real connections",
+      ],
+    ]);
+
+    expect(objectiveByState.afterMara?.trail[0]).toMatchObject({
+      detail: "Mara can help, but Rowan still needs the exact room terms.",
+      done: false,
+      progress: "Need exact terms",
+    });
+    expect(objectiveByState.afterMara?.outcomes[1]).toMatchObject({
+      actionId: "contribute:boarding-house",
+      status: "blocked",
+      targetLocationId: "boarding-house",
+    });
+    expect(objectiveByState.afterMara?.trail[1]).toMatchObject({
+      actionId: undefined,
+    });
+
+    expect(objectiveByState.termsKnown?.outcomes[0]).toMatchObject({
+      npcId: undefined,
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.termsKnown?.outcomes[1]).toMatchObject({
+      actionId: "contribute:boarding-house",
+      status: "blocked",
+      targetLocationId: "boarding-house",
+    });
+    expect(objectiveByState.termsKnown?.trail[1]).toMatchObject({
+      actionId: "contribute:boarding-house",
+      progress: "Standing 1/2",
+      targetLocationId: "boarding-house",
+    });
+
+    expect(objectiveByState.teaSpotted?.trail[2]).toMatchObject({
+      progress: "Lead spotted",
+      targetLocationId: "tea-house",
+    });
+    expect(objectiveByState.teaSpotted?.outcomes[3]).toMatchObject({
+      actionId: "accept:job-tea-shift",
+      status: "blocked",
+      targetLocationId: "tea-house",
+    });
+
+    expect(objectiveByState.teaCommitted?.outcomes[2]).toMatchObject({
+      status: "met",
+    });
+    expect(objectiveByState.teaCommitted?.outcomes[3]).toMatchObject({
+      actionId: undefined,
+      status: "met",
+    });
+    expect(objectiveByState.teaCommitted?.trail[3]).toMatchObject({
+      actionId: "work:job-tea-shift",
+      done: true,
+      progress: "Ready to commit",
+    });
+
+    expect(objectiveByState.teaCompleted?.trail[3]).toMatchObject({
+      actionId: undefined,
+      done: true,
+      progress: "Paid once",
+    });
+
+    expect(objectiveByState.yardHint?.outcomes[2]).toMatchObject({
+      label: "Yard work lead confirmed",
+      npcId: "npc-tomas",
+      targetLocationId: "freight-yard",
+    });
+    expect(objectiveByState.yardHint?.trail[2]).toMatchObject({
+      detail: "The yard is a reliable place to turn effort into decent pay.",
+      npcId: "npc-tomas",
+      targetLocationId: "freight-yard",
+      title: "Line up one solid work lead at North Crane Yard.",
+    });
+
+    expect(objectiveByState.peopleUnmet?.outcomes[4]).toMatchObject({
+      status: "blocked",
+    });
+    expect(objectiveByState.peopleUnmet?.outcomes[4].npcId).toBeDefined();
+    expect(
+      objectiveByState.peopleUnmet?.outcomes[4].targetLocationId,
+    ).toBeDefined();
+    expect(objectiveByState.peopleUnmet?.trail[4]).toMatchObject({
+      done: false,
+      progress: "0/2 real connections",
+    });
+
+    expect(objectiveByState.peopleMet?.outcomes[4]).toMatchObject({
+      npcId: undefined,
+      status: "met",
+      targetLocationId: undefined,
+    });
+    expect(objectiveByState.peopleMet?.trail[4]).toMatchObject({
+      done: true,
+      progress: "2/2 real connections",
     });
   });
 

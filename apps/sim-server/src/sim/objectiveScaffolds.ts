@@ -177,6 +177,32 @@ export interface MaraAdaLeadRouteState {
   homeLocationId?: string;
 }
 
+export interface SettleRouteState {
+  anyLeadJobCompleted: boolean;
+  anyLeadJobDiscovered: boolean;
+  anyPlayerActiveJob: boolean;
+  familiarPeople: number;
+  hasCommittedIncome: boolean;
+  hasStayTerms: boolean;
+  hasTalkedToMara: boolean;
+  hasWorkLead: boolean;
+  homeLocationId?: string;
+  homeLocationName?: string;
+  houseStanding: number;
+  lead: "tea" | "yard";
+  leadJobAccepted: boolean;
+  leadJobActive: boolean;
+  leadJobCompleted: boolean;
+  leadJobDiscovered: boolean;
+  leadJobId?: string;
+  leadJobLocationId?: string;
+  leadJobMissed: boolean;
+  settleLeadLocationId: string;
+  settleLeadNpcId: string;
+  settlePeopleTargetId?: string;
+  settlePeopleTargetLocationId?: string;
+}
+
 export interface WorkRouteState {
   anyCompletedWork: boolean;
   lead: "tea" | "yard";
@@ -240,6 +266,26 @@ interface MaraAdaLeadRouteOutcomeTemplate {
   targetLocationId?:
     | string
     | ((state: MaraAdaLeadRouteState) => string | undefined);
+  urgency: number;
+}
+
+interface SettleRouteStepTemplate {
+  actionId?: (state: SettleRouteState) => string | undefined;
+  detail: string | ((state: SettleRouteState) => string);
+  done: (state: SettleRouteState) => boolean;
+  id: string;
+  npcId?: string | ((state: SettleRouteState) => string | undefined);
+  progress: string | ((state: SettleRouteState) => string);
+  targetLocationId?: string | ((state: SettleRouteState) => string | undefined);
+  title: string | ((state: SettleRouteState) => string);
+}
+
+interface SettleRouteOutcomeTemplate {
+  actionId?: (state: SettleRouteState) => string | undefined;
+  id: string;
+  label: string | ((state: SettleRouteState) => string);
+  npcId?: string | ((state: SettleRouteState) => string | undefined);
+  targetLocationId?: string | ((state: SettleRouteState) => string | undefined);
   urgency: number;
 }
 
@@ -312,6 +358,193 @@ const ADA_LEAD_ROUTE_KEYS = [
   "mara-ada-lead",
   "work-tea",
 ] as const;
+
+const SETTLE_ROUTE_OUTCOME_TEMPLATES: SettleRouteOutcomeTemplate[] = [
+  {
+    id: "settle-terms",
+    label: "Room terms understood",
+    urgency: 5,
+    npcId: ({ hasStayTerms }) => (hasStayTerms ? undefined : "npc-mara"),
+    targetLocationId: ({ hasStayTerms, homeLocationId }) =>
+      hasStayTerms ? undefined : homeLocationId,
+  },
+  {
+    id: "settle-standing",
+    label: "Morrow House standing built",
+    urgency: 4,
+    actionId: ({
+      hasStayTerms,
+      hasTalkedToMara,
+      homeLocationId,
+      houseStanding,
+    }) =>
+      (hasStayTerms || hasTalkedToMara) && houseStanding < 2 && homeLocationId
+        ? `contribute:${homeLocationId}`
+        : undefined,
+    targetLocationId: ({ homeLocationId, houseStanding }) =>
+      houseStanding >= 2 ? undefined : homeLocationId,
+  },
+  {
+    id: "settle-lead",
+    label: ({ lead }) =>
+      lead === "yard"
+        ? "Yard work lead confirmed"
+        : "Tea-house work lead confirmed",
+    urgency: 3,
+    npcId: ({ hasWorkLead, settleLeadNpcId }) =>
+      hasWorkLead ? undefined : settleLeadNpcId,
+    targetLocationId: ({ hasWorkLead, settleLeadLocationId }) =>
+      hasWorkLead ? undefined : settleLeadLocationId,
+  },
+  {
+    id: "settle-income",
+    label: "Income committed or completed",
+    urgency: 2,
+    actionId: ({
+      hasCommittedIncome,
+      leadJobAccepted,
+      leadJobCompleted,
+      leadJobDiscovered,
+      leadJobId,
+      leadJobMissed,
+    }) =>
+      !hasCommittedIncome && leadJobId && !leadJobCompleted && !leadJobMissed
+        ? leadJobAccepted
+          ? `work:${leadJobId}`
+          : leadJobDiscovered
+            ? `accept:${leadJobId}`
+            : undefined
+        : undefined,
+    targetLocationId: ({ hasCommittedIncome, leadJobLocationId }) =>
+      hasCommittedIncome ? undefined : leadJobLocationId,
+  },
+  {
+    id: "settle-people",
+    label: "Two local connections built",
+    urgency: 1,
+    npcId: ({ familiarPeople, settlePeopleTargetId }) =>
+      familiarPeople >= 2 ? undefined : settlePeopleTargetId,
+    targetLocationId: ({ familiarPeople, settlePeopleTargetLocationId }) =>
+      familiarPeople >= 2 ? undefined : settlePeopleTargetLocationId,
+  },
+];
+
+const SETTLE_ROUTE_STEP_TEMPLATES: SettleRouteStepTemplate[] = [
+  {
+    id: "settle-terms",
+    title: ({ homeLocationName }) =>
+      `Lock in my stay at ${homeLocationName ?? "Morrow House"}.`,
+    detail: ({ hasStayTerms, hasTalkedToMara }) =>
+      hasStayTerms
+        ? "Mara has already laid out what keeps this room mine."
+        : hasTalkedToMara
+          ? "Mara can help, but Rowan still needs the exact room terms."
+          : "Mara can walk Rowan through exactly what it takes to keep a room here.",
+    progress: ({ hasStayTerms, hasTalkedToMara }) =>
+      hasStayTerms
+        ? "Terms clear"
+        : hasTalkedToMara
+          ? "Need exact terms"
+          : "Talk to Mara",
+    done: ({ hasStayTerms }) => hasStayTerms,
+    npcId: "npc-mara",
+    targetLocationId: ({ homeLocationId }) => homeLocationId,
+  },
+  {
+    id: "settle-standing",
+    title: ({ homeLocationName }) =>
+      `Build standing at ${homeLocationName ?? "Morrow House"} so the room stays mine.`,
+    detail: ({ houseStanding }) =>
+      houseStanding >= 2
+        ? "Morrow House is starting to see Rowan as dependable."
+        : "Now that Rowan knows the terms, he needs to show up, help out, and make the house easier to run.",
+    progress: ({ houseStanding }) => `Standing ${houseStanding}/2`,
+    done: ({ houseStanding }) => houseStanding >= 2,
+    actionId: ({ hasStayTerms, homeLocationId, houseStanding }) =>
+      hasStayTerms && houseStanding < 2 && homeLocationId
+        ? `contribute:${homeLocationId}`
+        : undefined,
+    targetLocationId: ({ homeLocationId }) => homeLocationId,
+  },
+  {
+    id: "settle-lead",
+    title: ({ lead }) =>
+      lead === "yard"
+        ? "Line up one solid work lead at North Crane Yard."
+        : "Line up one solid work lead at Kettle & Lamp.",
+    detail: ({ lead }) =>
+      lead === "yard"
+        ? "The yard is a reliable place to turn effort into decent pay."
+        : "The tea room is a strong place to turn conversation into work.",
+    progress: ({
+      anyLeadJobDiscovered,
+      hasCommittedIncome,
+      hasWorkLead,
+    }) =>
+      hasWorkLead
+        ? "Lead locked"
+        : anyLeadJobDiscovered
+          ? "Lead spotted"
+          : hasCommittedIncome
+            ? "Work in hand"
+            : "Looking",
+    done: ({ hasWorkLead }) => hasWorkLead,
+    npcId: ({ settleLeadNpcId }) => settleLeadNpcId,
+    targetLocationId: ({ settleLeadLocationId }) => settleLeadLocationId,
+  },
+  {
+    id: "settle-income",
+    title: "Turn that lead into steady pay.",
+    detail: ({ hasCommittedIncome }) =>
+      hasCommittedIncome
+        ? "Real work is finally taking shape."
+        : "A lead matters once Rowan commits and follows through.",
+    progress: ({
+      hasWorkLead,
+      anyLeadJobCompleted,
+      anyPlayerActiveJob,
+    }) =>
+      anyPlayerActiveJob
+        ? "Working"
+        : anyLeadJobCompleted
+          ? "Paid once"
+          : hasWorkLead
+            ? "Ready to commit"
+            : "Looking",
+    done: ({ hasCommittedIncome }) => hasCommittedIncome,
+    actionId: ({
+      leadJobAccepted,
+      leadJobActive,
+      leadJobCompleted,
+      leadJobDiscovered,
+      leadJobId,
+      leadJobMissed,
+    }) =>
+      leadJobId && !leadJobCompleted && !leadJobMissed
+        ? leadJobAccepted || leadJobActive
+          ? `work:${leadJobId}`
+          : leadJobDiscovered
+            ? `accept:${leadJobId}`
+            : undefined
+        : undefined,
+    targetLocationId: ({ leadJobLocationId }) => leadJobLocationId,
+  },
+  {
+    id: "settle-people",
+    title: "Build two real connections.",
+    detail: ({ familiarPeople }) =>
+      familiarPeople >= 2
+        ? "A couple of faces now feel like real allies."
+        : "Rowan needs a few real connections to make this place feel like home.",
+    progress: ({ familiarPeople }) =>
+      `${Math.min(familiarPeople, 2)}/2 real connections`,
+    done: ({ familiarPeople }) => familiarPeople >= 2,
+    npcId: ({ familiarPeople, settlePeopleTargetId }) =>
+      familiarPeople < 2 ? settlePeopleTargetId : undefined,
+    targetLocationId: ({ familiarPeople, settlePeopleTargetLocationId }) =>
+      familiarPeople < 2 ? settlePeopleTargetLocationId : undefined,
+  },
+];
 
 const WORK_OUTCOME_TEMPLATES: WorkRouteOutcomeTemplate[] = [
   {
@@ -1269,6 +1502,11 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     ],
   },
   {
+    routeKeys: ["settle-core"],
+    routeHeadline:
+      "Get settled in Brackenport: find a place to stay, steady income, and a few friends.",
+  },
+  {
     routeKeys: ["work-tea"],
     routeHeadline: "Secure paid work at Kettle & Lamp and follow through.",
     semanticHints: [{ locationId: "tea-house", npcId: "npc-ada" }],
@@ -1501,6 +1739,38 @@ export function objectiveRouteMaraAdaLeadRouteScaffold(
   };
 }
 
+export function objectiveRouteSettleRouteScaffold(state: SettleRouteState): {
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  steps: ObjectiveTrailItem[];
+} {
+  return {
+    outcomes: SETTLE_ROUTE_OUTCOME_TEMPLATES.map((template) => ({
+      id: template.id,
+      label: resolveSettleRouteText(template.label, state),
+      urgency: template.urgency,
+      actionId: template.actionId?.(state),
+      npcId: resolveSettleRouteValue(template.npcId, state),
+      targetLocationId: resolveSettleRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+    steps: SETTLE_ROUTE_STEP_TEMPLATES.map((template) => ({
+      id: template.id,
+      title: resolveSettleRouteText(template.title, state),
+      detail: resolveSettleRouteText(template.detail, state),
+      progress: resolveSettleRouteText(template.progress, state),
+      done: template.done(state),
+      actionId: template.actionId?.(state),
+      npcId: resolveSettleRouteValue(template.npcId, state),
+      targetLocationId: resolveSettleRouteValue(
+        template.targetLocationId,
+        state,
+      ),
+    })),
+  };
+}
+
 export function objectiveRouteWorkRouteScaffold(state: WorkRouteState): {
   outcomes: ObjectiveRouteOutcomeDefinition[];
   steps: ObjectiveTrailItem[];
@@ -1557,6 +1827,23 @@ function resolveFirstAfternoonRouteText(
 function resolveMaraAdaLeadRouteText(
   value: string | ((state: MaraAdaLeadRouteState) => string),
   state: MaraAdaLeadRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveSettleRouteValue(
+  value:
+    | string
+    | ((state: SettleRouteState) => string | undefined)
+    | undefined,
+  state: SettleRouteState,
+) {
+  return typeof value === "function" ? value(state) : value;
+}
+
+function resolveSettleRouteText(
+  value: string | ((state: SettleRouteState) => string),
+  state: SettleRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
 }
