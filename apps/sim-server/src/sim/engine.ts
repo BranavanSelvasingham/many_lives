@@ -17,6 +17,7 @@ import {
   objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
   objectiveRouteCompletionAcknowledgement,
+  objectiveRouteFirstAfternoonCompletionOutcome,
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
   objectiveRouteMoveIntent,
@@ -8317,18 +8318,10 @@ function completeFirstAfternoon(world: StreetGameState): void {
     teaShift,
   );
   discoverProblem(world, "problem-pump");
-  world.player.currentThought =
-    "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.";
-  addFeed(
-    world,
-    "memory",
-    "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
-  );
-  remember(
-    world,
-    "self",
-    "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
-  );
+  const completionOutcome = objectiveRouteFirstAfternoonCompletionOutcome();
+  world.player.currentThought = completionOutcome.playerThought;
+  addFeed(world, "memory", completionOutcome.feedText);
+  remember(world, "self", completionOutcome.memoryText);
 }
 
 function buildFirstAfternoonFieldNote(
