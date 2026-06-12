@@ -13,6 +13,7 @@ import {
   objectiveRouteFirstAfternoonRouteScaffold,
   objectiveRouteHeadline as objectiveRouteScaffoldHeadline,
   objectiveRouteMaraAdaLeadRouteScaffold,
+  objectiveRouteSettleRouteScaffold,
   objectiveRouteWorkRouteScaffold,
 } from "./objectiveScaffolds.js";
 
@@ -1272,204 +1273,39 @@ function buildSettleRoute(
   const settleLeadLocationId = lead === "yard" ? "freight-yard" : "tea-house";
   const settleLeadJob = lead === "yard" ? yardJob : teaJob;
   const settlePeopleTarget = nextUntalkedNpc(world);
-  const outcomes = buildSettleOutcomeDefinitions({
+  const routeScaffold = objectiveRouteSettleRouteScaffold({
+    anyLeadJobCompleted: Boolean(teaJob?.completed || yardJob?.completed),
+    anyLeadJobDiscovered: Boolean(teaJob?.discovered || yardJob?.discovered),
+    anyPlayerActiveJob: world.player.activeJobId !== undefined,
     familiarPeople,
     hasCommittedIncome,
     hasStayTerms,
     hasTalkedToMara,
     hasWorkLead,
     homeLocationId: home?.id,
+    homeLocationName: home?.name,
     houseStanding,
     lead,
-    settleLeadJob,
+    leadJobAccepted: Boolean(settleLeadJob?.accepted),
+    leadJobActive: world.player.activeJobId === settleLeadJob?.id,
+    leadJobCompleted: Boolean(settleLeadJob?.completed),
+    leadJobDiscovered: Boolean(settleLeadJob?.discovered),
+    leadJobId: settleLeadJob?.id,
+    leadJobLocationId: settleLeadJob?.locationId,
+    leadJobMissed: Boolean(settleLeadJob?.missed),
     settleLeadLocationId,
     settleLeadNpcId,
-    settlePeopleTarget,
+    settlePeopleTargetId: settlePeopleTarget?.id,
+    settlePeopleTargetLocationId: settlePeopleTarget?.currentLocationId,
   });
 
   return {
     key: "settle-core",
     focus: "settle",
     source,
-    outcomes,
-    steps: [
-      makeStep({
-        id: "settle-terms",
-        title: `Lock in my stay at ${home?.name ?? "Morrow House"}.`,
-        detail: hasStayTerms
-          ? "Mara has already laid out what keeps this room mine."
-          : hasTalkedToMara
-            ? "Mara can help, but Rowan still needs the exact room terms."
-            : "Mara can walk Rowan through exactly what it takes to keep a room here.",
-        progress: hasStayTerms
-          ? "Terms clear"
-          : hasTalkedToMara
-            ? "Need exact terms"
-            : "Talk to Mara",
-        done: hasStayTerms,
-        npcId: "npc-mara",
-        targetLocationId: home?.id,
-      }),
-      makeStep({
-        id: "settle-standing",
-        title: `Build standing at ${home?.name ?? "Morrow House"} so the room stays mine.`,
-        detail:
-          houseStanding >= 2
-            ? "Morrow House is starting to see Rowan as dependable."
-            : "Now that Rowan knows the terms, he needs to show up, help out, and make the house easier to run.",
-        progress: `Standing ${houseStanding}/2`,
-        done: houseStanding >= 2,
-        actionId:
-          hasStayTerms && houseStanding < 2 && home
-            ? `contribute:${home.id}`
-            : undefined,
-        targetLocationId: home?.id,
-      }),
-      makeStep({
-        id: "settle-lead",
-        title:
-          lead === "yard"
-            ? "Line up one solid work lead at North Crane Yard."
-            : "Line up one solid work lead at Kettle & Lamp.",
-        detail:
-          lead === "yard"
-            ? "The yard is a reliable place to turn effort into decent pay."
-            : "The tea room is a strong place to turn conversation into work.",
-        progress: hasWorkLead
-          ? "Lead locked"
-          : teaJob?.discovered || yardJob?.discovered
-            ? "Lead spotted"
-            : hasCommittedIncome
-              ? "Work in hand"
-              : "Looking",
-        done: hasWorkLead,
-        npcId: settleLeadNpcId,
-        targetLocationId: settleLeadLocationId,
-      }),
-      makeStep({
-        id: "settle-income",
-        title: "Turn that lead into steady pay.",
-        detail: hasCommittedIncome
-          ? "Real work is finally taking shape."
-          : "A lead matters once Rowan commits and follows through.",
-        progress:
-          world.player.activeJobId !== undefined
-            ? "Working"
-            : teaJob?.completed || yardJob?.completed
-              ? "Paid once"
-              : hasWorkLead
-                ? "Ready to commit"
-                : "Looking",
-        done: hasCommittedIncome,
-        actionId:
-          settleLeadJob && !settleLeadJob.completed && !settleLeadJob.missed
-            ? settleLeadJob.accepted ||
-              world.player.activeJobId === settleLeadJob.id
-              ? `work:${settleLeadJob.id}`
-              : settleLeadJob.discovered
-                ? `accept:${settleLeadJob.id}`
-                : undefined
-            : undefined,
-        targetLocationId: settleLeadJob?.locationId,
-      }),
-      makeStep({
-        id: "settle-people",
-        title: "Build two real connections.",
-        detail:
-          familiarPeople >= 2
-            ? "A couple of faces now feel like real allies."
-            : "Rowan needs a few real connections to make this place feel like home.",
-        progress: `${Math.min(familiarPeople, 2)}/2 real connections`,
-        done: familiarPeople >= 2,
-        npcId: familiarPeople < 2 ? settlePeopleTarget?.id : undefined,
-        targetLocationId:
-          familiarPeople < 2
-            ? settlePeopleTarget?.currentLocationId
-            : undefined,
-      }),
-    ],
+    outcomes: routeScaffold.outcomes,
+    steps: routeScaffold.steps.map(makeStep),
   };
-}
-
-function buildSettleOutcomeDefinitions(input: {
-  familiarPeople: number;
-  hasCommittedIncome: boolean;
-  hasStayTerms: boolean;
-  hasTalkedToMara: boolean;
-  hasWorkLead: boolean;
-  homeLocationId: string | undefined;
-  houseStanding: number;
-  lead: "tea" | "yard";
-  settleLeadJob: JobState | undefined;
-  settleLeadLocationId: string;
-  settleLeadNpcId: string;
-  settlePeopleTarget: StreetGameState["npcs"][number] | undefined;
-}): ObjectiveOutcomeDefinition[] {
-  const incomeActionId =
-    input.settleLeadJob &&
-    !input.settleLeadJob.completed &&
-    !input.settleLeadJob.missed
-      ? input.settleLeadJob.accepted
-        ? `work:${input.settleLeadJob.id}`
-        : input.settleLeadJob.discovered
-          ? `accept:${input.settleLeadJob.id}`
-          : undefined
-      : undefined;
-
-  return [
-    {
-      id: "settle-terms",
-      label: "Room terms understood",
-      urgency: 5,
-      npcId: input.hasStayTerms ? undefined : "npc-mara",
-      targetLocationId: input.hasStayTerms ? undefined : input.homeLocationId,
-    },
-    {
-      id: "settle-standing",
-      label: "Morrow House standing built",
-      urgency: 4,
-      actionId:
-        (input.hasStayTerms || input.hasTalkedToMara) &&
-        input.houseStanding < 2 &&
-        input.homeLocationId
-          ? `contribute:${input.homeLocationId}`
-          : undefined,
-      targetLocationId:
-        input.houseStanding >= 2 ? undefined : input.homeLocationId,
-    },
-    {
-      id: "settle-lead",
-      label:
-        input.lead === "yard"
-          ? "Yard work lead confirmed"
-          : "Tea-house work lead confirmed",
-      urgency: 3,
-      npcId: input.hasWorkLead ? undefined : input.settleLeadNpcId,
-      targetLocationId: input.hasWorkLead
-        ? undefined
-        : input.settleLeadLocationId,
-    },
-    {
-      id: "settle-income",
-      label: "Income committed or completed",
-      urgency: 2,
-      actionId: input.hasCommittedIncome ? undefined : incomeActionId,
-      targetLocationId: input.hasCommittedIncome
-        ? undefined
-        : input.settleLeadJob?.locationId,
-    },
-    {
-      id: "settle-people",
-      label: "Two local connections built",
-      urgency: 1,
-      npcId:
-        input.familiarPeople >= 2 ? undefined : input.settlePeopleTarget?.id,
-      targetLocationId:
-        input.familiarPeople >= 2
-          ? undefined
-          : input.settlePeopleTarget?.currentLocationId,
-    },
-  ];
 }
 
 function buildWorkRoute(

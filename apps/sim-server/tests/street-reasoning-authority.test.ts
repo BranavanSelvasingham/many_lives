@@ -70,6 +70,20 @@ const WORK_ROUTE_PAY_STEP_DETAIL =
 const WORK_ROUTE_TEA_HEADLINE =
   "Secure paid work at Kettle & Lamp and follow through.";
 const WORK_ROUTE_YARD_HEADLINE = "Secure paid yard work and follow through.";
+const SETTLE_ROUTE_TERMS_OUTCOME_LABEL = "Room terms understood";
+const SETTLE_ROUTE_STANDING_OUTCOME_LABEL = "Morrow House standing built";
+const SETTLE_ROUTE_LEAD_OUTCOME_LABEL = "Tea-house work lead confirmed";
+const SETTLE_ROUTE_TERMS_STEP_TITLE_ANCHOR = "Lock in my stay at";
+const SETTLE_ROUTE_TERMS_STEP_DETAIL =
+  "Mara can walk Rowan through exactly what it takes to keep a room here.";
+const SETTLE_ROUTE_STANDING_STEP_DETAIL =
+  "Now that Rowan knows the terms, he needs to show up, help out, and make the house easier to run.";
+const SETTLE_ROUTE_YARD_STEP_TITLE =
+  "Line up one solid work lead at North Crane Yard.";
+const SETTLE_ROUTE_INCOME_STEP_TITLE = "Turn that lead into steady pay.";
+const SETTLE_ROUTE_PEOPLE_STEP_TITLE = "Build two real connections.";
+const SETTLE_ROUTE_HEADLINE =
+  "Get settled in Brackenport: find a place to stay, steady income, and a few friends.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -501,6 +515,39 @@ describe("street reasoning authority", () => {
     expect(scaffoldSource).toContain("WORK_STEP_TEMPLATES");
     expect(objectiveStateSource).toContain("objectiveRouteWorkRouteScaffold");
     expect(objectiveStateSource).toContain('case "work-commit"');
+  });
+
+  it("keeps settle route outcome and step metadata in scaffold data, not objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const routeCopy of [
+      SETTLE_ROUTE_TERMS_OUTCOME_LABEL,
+      SETTLE_ROUTE_STANDING_OUTCOME_LABEL,
+      SETTLE_ROUTE_LEAD_OUTCOME_LABEL,
+      SETTLE_ROUTE_TERMS_STEP_TITLE_ANCHOR,
+      SETTLE_ROUTE_TERMS_STEP_DETAIL,
+      SETTLE_ROUTE_STANDING_STEP_DETAIL,
+      SETTLE_ROUTE_YARD_STEP_TITLE,
+      SETTLE_ROUTE_INCOME_STEP_TITLE,
+      SETTLE_ROUTE_PEOPLE_STEP_TITLE,
+    ]) {
+      expect(scaffoldSource).toContain(routeCopy);
+      expect(objectiveStateSource).not.toContain(routeCopy);
+    }
+
+    expect(scaffoldSource).toContain("SETTLE_ROUTE_OUTCOME_TEMPLATES");
+    expect(scaffoldSource).toContain("SETTLE_ROUTE_STEP_TEMPLATES");
+    expect(scaffoldSource).toContain('routeKeys: ["settle-core"]');
+    expect(scaffoldSource).toContain(SETTLE_ROUTE_HEADLINE);
+    expect(objectiveStateSource).toContain("objectiveRouteSettleRouteScaffold");
+    expect(objectiveStateSource).toContain('case "settle-standing"');
   });
 
   it("does not turn stale trail titles into Rowan's deterministic thought", () => {
