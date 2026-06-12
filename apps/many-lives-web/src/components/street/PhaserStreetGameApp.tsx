@@ -719,9 +719,16 @@ type MapAgencyTone =
 type MapAgencyCue = {
   detail: string;
   intent: string;
+  targetActionId: string | null;
   targetIsNpc: boolean;
   targetLabel: string | null;
   targetLocationId: string | null;
+  targetSource:
+    | "active-conversation"
+    | "autonomy"
+    | "npc"
+    | "pending-move"
+    | "waypoint";
   targetTile: Point | null;
   targetWorld: Point | null;
   tone: MapAgencyTone;
@@ -4550,11 +4557,7 @@ function syncMapAgencyObjects(
     labelSafeRect,
     CELL * 1.2,
   );
-  const intentCopy = cue.targetWorld || cue.targetLabel
-    ? cue.intent
-    : cue.detail
-      ? `${cue.intent}\n${cue.detail}`
-      : cue.intent;
+  const intentCopy = buildMapAgencyIntentLabelCopy(cue, playerPixel);
   const closeInteractionSuppressed = Boolean(
     runtimeState.indices.activeSpace &&
       cue.tone === "conversation" &&
@@ -4693,6 +4696,23 @@ function syncMapAgencyObjects(
     },
     runtimeState,
   );
+}
+
+function buildMapAgencyIntentLabelCopy(cue: MapAgencyCue, playerPixel: Point) {
+  if (
+    cue.targetWorld &&
+    cue.targetLocationId &&
+    !cue.targetIsNpc &&
+    distanceBetween(playerPixel, cue.targetWorld) > CELL * 1.8
+  ) {
+    return "Heading to the next stop";
+  }
+
+  return cue.targetWorld || cue.targetLabel
+    ? cue.intent
+    : cue.detail
+      ? `${cue.intent}\n${cue.detail}`
+      : cue.intent;
 }
 
 function setMapAgencyLabel(
@@ -4851,18 +4871,19 @@ function buildMapAgencyCue(
 
   const targetNpc =
     resolveNpcById(game, activeConversation?.npcId) ??
-    resolveNpcById(game, autonomy.npcId) ??
-    resolveNpcById(game, pendingMove?.npcId);
+    resolveNpcById(game, pendingMove?.npcId) ??
+    resolveNpcById(game, autonomy.npcId);
   const conversationLike =
     Boolean(activeConversation) ||
     autonomy.mode === "conversation" ||
     autonomy.stepKind === "talk";
-  const targetLocationId =
-    activeConversation?.locationId ??
-    autonomy.targetLocationId ??
-    pendingMove?.targetLocationId ??
-    targetNpc?.currentLocationId ??
-    null;
+  const targetAuthority = resolveOutdoorMapAgencyTargetAuthority({
+    activeConversation,
+    autonomy,
+    pendingMove,
+    targetNpc,
+  });
+  const targetLocationId = targetAuthority.locationId;
   const targetLocation = targetLocationId
     ? runtimeState.indices.locationsById.get(targetLocationId) ?? null
     : null;
@@ -4874,7 +4895,7 @@ function buildMapAgencyCue(
     ? getMapAgencyLocationWorldPoint(
         runtimeState,
         targetLocationId,
-        autonomy.actionId ?? null,
+        targetAuthority.actionId,
       )
     : null;
   const locationTile = targetLocation
@@ -4930,12 +4951,68 @@ function buildMapAgencyCue(
   return {
     detail,
     intent,
+    targetActionId: targetAuthority.actionId,
     targetIsNpc,
     targetLabel,
     targetLocationId,
+    targetSource: targetAuthority.source,
     targetTile,
     targetWorld,
     tone,
+  };
+}
+
+function resolveOutdoorMapAgencyTargetAuthority({
+  activeConversation,
+  autonomy,
+  pendingMove,
+  targetNpc,
+}: {
+  activeConversation: StreetGameState["activeConversation"];
+  autonomy: StreetGameState["rowanAutonomy"];
+  pendingMove?: StreetGameState["player"]["pendingObjectiveMove"];
+  targetNpc: NpcState | null;
+}): {
+  actionId: string | null;
+  locationId: string | null;
+  source: MapAgencyCue["targetSource"];
+} {
+  if (activeConversation?.locationId) {
+    return {
+      actionId: null,
+      locationId: activeConversation.locationId,
+      source: "active-conversation",
+    };
+  }
+
+  if (pendingMove?.targetLocationId) {
+    return {
+      actionId: pendingMove.actionId ?? null,
+      locationId: pendingMove.targetLocationId,
+      source: "pending-move",
+    };
+  }
+
+  if (autonomy.targetLocationId) {
+    return {
+      actionId: autonomy.actionId ?? null,
+      locationId: autonomy.targetLocationId,
+      source: "autonomy",
+    };
+  }
+
+  if (targetNpc?.currentLocationId) {
+    return {
+      actionId: null,
+      locationId: targetNpc.currentLocationId,
+      source: "npc",
+    };
+  }
+
+  return {
+    actionId: null,
+    locationId: null,
+    source: "waypoint",
   };
 }
 
@@ -5022,7 +5099,13 @@ function buildInteriorMapAgencyCue(
         : anchor?.label
           ? `Next: ${anchor.label}`
           : null,
+    targetActionId: anchor?.actionId ?? autonomy.actionId ?? null,
     targetLocationId: game.player.currentLocationId ?? null,
+    targetSource: activeConversation
+      ? "active-conversation"
+      : anchor
+        ? "autonomy"
+        : "waypoint",
     targetTile,
     targetWorld,
     tone: normalizeMapAgencyTone(autonomy.mode),
@@ -7915,9 +7998,11 @@ function syncBrowserMapAgencyProbe(
             runtimeState?.cameraProjection?.playerWorldPoint ?? null,
           target: cue.targetWorld
             ? {
+                actionId: cue.targetActionId,
                 isNpc: cue.targetIsNpc,
                 label: cue.targetLabel,
                 locationId: cue.targetLocationId,
+                source: cue.targetSource,
                 x: Math.round(cue.targetWorld.x),
                 y: Math.round(cue.targetWorld.y),
               }
@@ -10798,7 +10883,11 @@ function samplePlayerWorld(
   now: number,
 ) {
   const motion = runtimeState.playerMotion;
-  if (motion.worldPath && motion.worldPath.length > 0) {
+  if (
+    motion.worldPath &&
+    motion.worldPath.length > 0 &&
+    !isPlayerMotionSettled(motion, now)
+  ) {
     const progress = clamp((now - motion.startedAt) / motion.durationMs, 0, 1);
     return samplePathPoint(motion.worldPath, easeInOutCubic(progress));
   }

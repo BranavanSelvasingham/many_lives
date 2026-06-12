@@ -58,6 +58,13 @@ const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
   minX: 180,
   minY: 550,
 };
+const KETTLE_LAMP_LANDMARK_BOUNDS = {
+  maxX: 1550,
+  maxY: 700,
+  minX: 1138,
+  minY: 324,
+};
+const MORROW_SIDE_WORLD_MAX_X = 700;
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i;
 
@@ -1624,6 +1631,85 @@ function assertOpeningActionCarryForward(
   }
 }
 
+function pointInsideBounds(point, bounds) {
+  return (
+    point &&
+    point.x >= bounds.minX &&
+    point.x <= bounds.maxX &&
+    point.y >= bounds.minY &&
+    point.y <= bounds.maxY
+  );
+}
+
+function assertMorrowMapAgencyTargetCorrelation(mapAgency, label) {
+  const target = mapAgency?.target;
+  assert.ok(target, `${label}: missing map-agency target.`);
+  assert.equal(
+    target.locationId,
+    "boarding-house",
+    `${label}: Rowan is at the Morrow opening but map-agency targets a different location: ${JSON.stringify(mapAgency)}.`,
+  );
+  assert.equal(
+    target.actionId,
+    "enter:boarding-house",
+    `${label}: Morrow opening map-agency target must carry the Enter Morrow House action: ${JSON.stringify(mapAgency)}.`,
+  );
+  assert.ok(
+    target.source === "autonomy" || target.source === "pending-move",
+    `${label}: Morrow opening map-agency target should come from the current action authority, not a future location fallback: ${JSON.stringify(mapAgency)}.`,
+  );
+  assert.match(
+    target.label ?? "",
+    /Morrow House/i,
+    `${label}: Morrow opening map-agency target label is not player-facing Morrow copy: ${JSON.stringify(mapAgency)}.`,
+  );
+  assert.ok(
+    pointInsideBounds(target, OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS),
+    `${label}: Morrow opening map-agency target world point is detached from the Morrow House door: ${JSON.stringify(mapAgency)}.`,
+  );
+  if (target.label && /Kettle|Lamp/i.test(target.label)) {
+    assert.fail(
+      `${label}: Morrow-side map-agency target must not label Kettle & Lamp: ${JSON.stringify(mapAgency)}.`,
+    );
+  }
+}
+
+function assertKettleMapAgencyTargetCorrelation(mapAgency, label) {
+  const target = mapAgency?.target;
+  if (target?.locationId !== "tea-house") {
+    return false;
+  }
+
+  if (!target.isNpc) {
+    assert.match(
+      target.label ?? "",
+      /Kettle & Lamp/i,
+      `${label}: Kettle map-agency target label is not player-facing Kettle copy: ${JSON.stringify(mapAgency)}.`,
+    );
+  }
+  assert.ok(
+    pointInsideBounds(target, KETTLE_LAMP_LANDMARK_BOUNDS),
+    `${label}: Kettle map-agency target world point is detached from the authored Kettle & Lamp landmark: ${JSON.stringify(mapAgency)}.`,
+  );
+  assert.ok(
+    target.actionId === "move:tea-house" ||
+      target.actionId === "enter:tea-house" ||
+      target.actionId === null ||
+      target.actionId?.startsWith("talk:"),
+    `${label}: Kettle target should carry a Kettle move/enter action or a conversation-safe action: ${JSON.stringify(mapAgency)}.`,
+  );
+  if (
+    mapAgency.playerWorldPoint?.x <= MORROW_SIDE_WORLD_MAX_X &&
+    mapAgency.labels?.intentVisible
+  ) {
+    assert.ok(
+      !/\bKettle\s*&?\s*Lamp\b/i.test(mapAgency.labels.intentText ?? ""),
+      `${label}: Kettle intent text rendered over Rowan while Rowan was still on the Morrow side: ${JSON.stringify(mapAgency)}.`,
+    );
+  }
+  return true;
+}
+
 function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = null) {
   assert.ok(artifact, `${label}: missing visible decision artifact payload.`);
   assert.ok(
@@ -2023,6 +2109,15 @@ async function runFreshAutoplayStartCheck(session) {
   await session.waitForWatchModeUi(viewport);
 
   const openingProbe = await session.readBrowserProbe();
+  const openingMapAgency = await session.waitForMapAgencyProbe(viewport);
+  assertMorrowMapAgencyTargetCorrelation(
+    openingMapAgency,
+    "fresh autoplay opening",
+  );
+  assertKettleMapAgencyTargetCorrelation(
+    openingMapAgency,
+    "fresh autoplay opening",
+  );
   assertOpeningActionCarryForward(openingProbe, "fresh autoplay opening", [
     "queued",
     "in_progress",
@@ -2052,6 +2147,11 @@ async function runFreshAutoplayStartCheck(session) {
   );
   const page = continued.page;
   const continuedProbe = continued.probe;
+  const continuedMapAgency = await session.readMapAgencyProbe();
+  assertKettleMapAgencyTargetCorrelation(
+    continuedMapAgency,
+    "fresh autoplay continued",
+  );
   assert.ok(
     !page.bodyText.includes("Watch Rowan begin"),
     "fresh autoplay remained stuck on Watch Rowan begin after the start delay.",
@@ -2108,6 +2208,7 @@ async function runFreshAutoplayStartCheck(session) {
       autonomy: continuedProbe.autonomy,
       clock: continuedProbe.clock,
       location: continuedProbe.location,
+      mapAgency: continuedMapAgency,
       openingActionCarryForward: continuedProbe.openingActionCarryForward,
       rail: continuedProbe.rail,
       visibleDecisionArtifact: continuedProbe.autonomy?.visibleDecisionArtifact,
@@ -2127,6 +2228,7 @@ async function runFreshAutoplayStartCheck(session) {
       autonomy: openingProbe.autonomy,
       clock: openingProbe.clock,
       location: openingProbe.location,
+      mapAgency: openingMapAgency,
       openingActionCarryForward: openingProbe.openingActionCarryForward,
       rail: openingProbe.rail,
       watchMode: openingProbe.watchMode,
@@ -2342,6 +2444,8 @@ async function runViewportCheck(session, viewport) {
     mapAgency.target?.label || mapAgency.detail,
     `${viewport.name}: in-map agency cue has no target or reason.`,
   );
+  assertMorrowMapAgencyTargetCorrelation(mapAgency, viewport.name);
+  assertKettleMapAgencyTargetCorrelation(mapAgency, viewport.name);
   const browserProbe = await session.readBrowserProbe();
   assert.ok(browserProbe, `${viewport.name}: missing browser probe.`);
   assertFirstRouteEventCues(browserProbe, viewport.name);
