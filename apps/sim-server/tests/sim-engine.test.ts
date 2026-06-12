@@ -364,6 +364,10 @@ function adjacentUnmarkedDuplicateTravelDecisionBeats(
     }));
 }
 
+function actionById(world: StreetGameState, actionId: string) {
+  return world.availableActions.find((action) => action.id === actionId);
+}
+
 describe("SimulationEngine street slice", () => {
   it("lets the player discover and complete a first paid shift", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
@@ -472,6 +476,106 @@ describe("SimulationEngine street slice", () => {
     expect(world.player.memories.map((memory) => memory.text)).toContain(
       "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
     );
+  });
+
+  it("keeps first-afternoon reflection action availability and metadata unchanged", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-reflect-actions");
+
+    world = await enterMorrowHouse(engine, world);
+    const pumpProblem = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    if (pumpProblem) {
+      pumpProblem.discovered = true;
+      pumpProblem.status = "active";
+    }
+    world.conversations.push({
+      id: "conversation-test-mara-first-afternoon-lead",
+      locationId: world.player.currentLocationId,
+      npcId: "npc-mara",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "Mara, I need a real lead before lunch.",
+      threadId: "thread-test-mara-first-afternoon-lead",
+      time: world.currentTime,
+    });
+    world = await engine.tick(world, 0);
+
+    expect(actionById(world, "reflect:first-afternoon-plan")).toMatchObject({
+      description:
+        "Commit to leaving Morrow House and following Mara's lead to Ada at Kettle & Lamp.",
+      emphasis: "high",
+      kind: "reflect",
+      label: "Choose Ada's Kettle & Lamp lead",
+      targetLocationId: "boarding-house",
+    });
+    expect(actionById(world, "reflect:first-afternoon-pump")).toMatchObject({
+      description:
+        "Treat the leaking pump as the first proof that Rowan notices what the house needs.",
+      emphasis: "medium",
+      kind: "reflect",
+      label: "Check the Morrow Yard pump",
+      targetLocationId: "boarding-house",
+    });
+    expect(
+      world.availableActions.findIndex(
+        (action) => action.id === "reflect:first-afternoon-plan",
+      ),
+    ).toBeLessThan(
+      world.availableActions.findIndex(
+        (action) => action.id === "reflect:first-afternoon-pump",
+      ),
+    );
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "reflect:first-afternoon-plan",
+    });
+    world = await enterTeaHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(actionById(world, "reflect:first-afternoon-compare")).toMatchObject({
+      description:
+        "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.",
+      emphasis: "low",
+      kind: "reflect",
+      label: "Compare other live leads",
+      targetLocationId: "tea-house",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+    while (world.clock.hour + world.clock.minute / 60 < 12) {
+      world = await engine.tick(world, 1);
+    }
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (world.jobs.find((job) => job.id === "job-tea-shift")?.completed) {
+        break;
+      }
+      world = await engine.runCommand(world, {
+        type: "act",
+        actionId: "work:job-tea-shift",
+      });
+    }
+    world = await enterMorrowHouse(engine, world);
+
+    expect(actionById(world, "reflect:first-afternoon")).toMatchObject({
+      description: "Count what changed today before chasing another errand.",
+      emphasis: "high",
+      kind: "reflect",
+      label: "Take stock",
+      targetLocationId: "boarding-house",
+    });
   });
 
   it("plays the first tea shift as a few visible work beats", async () => {

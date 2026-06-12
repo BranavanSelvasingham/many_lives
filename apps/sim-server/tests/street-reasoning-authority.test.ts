@@ -36,6 +36,14 @@ const FIRST_AFTERNOON_COMPLETION_OUTCOME_FEED =
   "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.";
 const FIRST_AFTERNOON_COMPLETION_OUTCOME_MEMORY =
   "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.";
+const FIRST_AFTERNOON_PLAN_ACTION_DESCRIPTION =
+  "Commit to leaving Morrow House and following Mara's lead to Ada at Kettle & Lamp.";
+const FIRST_AFTERNOON_PUMP_ACTION_DESCRIPTION =
+  "Treat the leaking pump as the first proof that Rowan notices what the house needs.";
+const FIRST_AFTERNOON_COMPARE_ACTION_DESCRIPTION =
+  "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.";
+const FIRST_AFTERNOON_COMPLETION_ACTION_DESCRIPTION =
+  "Count what changed today before chasing another errand.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -239,6 +247,30 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
     expect(engineSource).not.toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
+  });
+
+  it("keeps first-afternoon reflection action metadata in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const actionCopy of [
+      FIRST_AFTERNOON_PLAN_ACTION_DESCRIPTION,
+      FIRST_AFTERNOON_PUMP_ACTION_DESCRIPTION,
+      FIRST_AFTERNOON_COMPARE_ACTION_DESCRIPTION,
+      FIRST_AFTERNOON_COMPLETION_ACTION_DESCRIPTION,
+    ]) {
+      expect(scaffoldSource).toContain(actionCopy);
+      expect(engineSource).not.toContain(actionCopy);
+    }
+
+    expect(scaffoldSource).toContain("availableActions");
+    expect(engineSource).toContain("objectiveRouteAvailableActions");
   });
 
   it("keeps first-afternoon dialogue fallback copy in scaffold data, not dialogue control flow", () => {
