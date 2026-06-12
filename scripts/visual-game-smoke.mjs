@@ -2010,7 +2010,7 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
 
 async function runFreshAutoplayStartCheck(session) {
   const viewport = VIEWPORTS[0];
-  const url = `${activeWebBase}/?new=1&autoplay=1&autoplayStart=${Date.now()}`;
+  const url = `${activeWebBase}/?new=1&autoplayStart=${Date.now()}`;
   await session.setViewport(viewport);
   await session.navigate(url);
   await session.waitForAppReady();
@@ -2129,12 +2129,55 @@ async function runFreshAutoplayStartCheck(session) {
   };
 }
 
+async function runFreshAutoplayOptOutCheck(session) {
+  const viewport = VIEWPORTS[0];
+  const url = `${activeWebBase}/?new=1&autoplay=0&autoplayOptOut=${Date.now()}`;
+  await session.setViewport(viewport);
+  await session.navigate(url);
+  await session.waitForAppReady();
+
+  const openingProbe = await session.readBrowserProbe();
+  assert.equal(
+    openingProbe.watchMode?.enabled,
+    false,
+    "autoplay=0 should leave a fresh run outside watch mode.",
+  );
+  assert.equal(
+    openingProbe.openingActionCarryForward?.watchMode?.autoplayEnabled,
+    false,
+    "autoplay=0 should report autoplay disabled.",
+  );
+  assert.equal(
+    openingProbe.openingActionCarryForward?.requiredVisibleInput,
+    true,
+    "autoplay=0 should require an explicit visible input on the opening action.",
+  );
+
+  const page = await session.inspectPage();
+  assert.ok(
+    page.visibleProgressionControls.length > 0,
+    "autoplay=0 should keep visible progression/action controls available.",
+  );
+  assert.ok(
+    !page.rootClass.includes("is-watch-mode"),
+    "autoplay=0 should not mark the UI as watch mode.",
+  );
+
+  return {
+    gameId: openingProbe.gameId,
+    openingActionCarryForward:
+      openingProbe.openingActionCarryForward ?? null,
+    visibleProgressionControls: page.visibleProgressionControls,
+    watchMode: openingProbe.watchMode,
+  };
+}
+
 async function runResponsiveDecisionArtifactCheck(session) {
   const viewport =
     VIEWPORTS.find((candidate) => candidate.name === "codex-compact") ??
     VIEWPORTS.find((candidate) => candidate.width <= 960) ??
     VIEWPORTS[0];
-  const url = `${activeWebBase}/?new=1&autoplay=1&responsiveDecision=${viewport.name}-${Date.now()}`;
+  const url = `${activeWebBase}/?new=1&responsiveDecision=${viewport.name}-${Date.now()}`;
   await session.setViewport(viewport);
   await session.navigate(url);
   await session.waitForAppReady();
@@ -2203,7 +2246,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
 }
 
 async function runViewportCheck(session, viewport) {
-  const url = `${activeWebBase}/?new=1&readyCheck=${viewport.name}-${Date.now()}&autoplay=1&freezeAutoplay=1`;
+  const url = `${activeWebBase}/?new=1&readyCheck=${viewport.name}-${Date.now()}&freezeAutoplay=1`;
   await session.setViewport(viewport);
   await session.navigate(url);
   await session.waitForAppReady();
@@ -2816,7 +2859,7 @@ async function runMissingStoredGameCheck(session) {
   })()`);
 
   await session.navigate(
-    `${activeWebBase}/?autoplay=1&missingStoredPrompt=${Date.now()}`,
+    `${activeWebBase}/?missingStoredPrompt=${Date.now()}`,
   );
   await waitForStoredGameChoice(session);
   const prompt = await inspectStoredGameChoice(session);
@@ -2887,7 +2930,7 @@ async function runStoredGameChoiceCheck(session) {
   );
   assert.ok(seededGameId, "Visual check did not seed a stored street game id.");
 
-  await session.navigate(`${activeWebBase}/?autoplay=1&storagePrompt=${Date.now()}`);
+  await session.navigate(`${activeWebBase}/?storagePrompt=${Date.now()}`);
   await waitForStoredGameChoice(session);
   const prompt = await inspectStoredGameChoice(session);
   assert.equal(
@@ -2920,7 +2963,7 @@ async function runStoredGameChoiceCheck(session) {
     "Resume stored run did not reopen the stored game id.",
   );
 
-  await session.navigate(`${activeWebBase}/?autoplay=1&storagePrompt=${Date.now()}`);
+  await session.navigate(`${activeWebBase}/?storagePrompt=${Date.now()}`);
   await waitForStoredGameChoice(session);
   await session.clickSelector("[data-start-new-game]");
   await session.waitForAppReady();
@@ -2984,7 +3027,7 @@ async function runInteriorCameraCheck(session) {
   const gameId = await createInteriorCameraGame();
   await session.setViewport(INTERIOR_CAMERA_VIEWPORT);
   await session.navigate(
-    `${activeWebBase}/?autoplay=1&freezeAutoplay=1&readyCheck=interior-camera-${Date.now()}&gameId=${gameId}`,
+    `${activeWebBase}/?freezeAutoplay=1&readyCheck=interior-camera-${Date.now()}&gameId=${gameId}`,
   );
   await session.waitForAppReady();
   const initial = await waitForInteriorCameraProbe(session);
@@ -3116,6 +3159,7 @@ async function main() {
   const session = await launchBrowser(devtoolsPort);
   const results = [];
   let freshAutoplayStart = null;
+  let freshAutoplayOptOut = null;
   let interiorCamera = null;
   let responsiveDecisionArtifact = null;
   let storedGameChoice = null;
@@ -3126,6 +3170,9 @@ async function main() {
     process.stdout.write("[many-lives] Checking fresh autoplay start behavior...\n");
     freshAutoplayStart = await runFreshAutoplayStartCheck(session);
     process.stdout.write("[many-lives] Finished fresh autoplay start behavior.\n");
+    process.stdout.write("[many-lives] Checking fresh autoplay opt-out behavior...\n");
+    freshAutoplayOptOut = await runFreshAutoplayOptOutCheck(session);
+    process.stdout.write("[many-lives] Finished fresh autoplay opt-out behavior.\n");
     process.stdout.write("[many-lives] Checking responsive decision callback...\n");
     responsiveDecisionArtifact =
       await runResponsiveDecisionArtifactCheck(session);
@@ -3160,6 +3207,7 @@ async function main() {
       `${JSON.stringify(
         {
           freshAutoplayStart,
+          freshAutoplayOptOut,
           outputDir: OUTPUT_DIR,
           interiorCamera,
           responsiveDecisionArtifact,

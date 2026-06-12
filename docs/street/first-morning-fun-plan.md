@@ -138,7 +138,7 @@ Work:
 
 Validation:
 
-- run a fresh `/?new=1&autoplay=1`;
+- run a fresh `/?new=1`;
 - watch the first minute;
 - inspect desktop screenshot;
 - confirm a new viewer understands where Rowan is going and why.

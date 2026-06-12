@@ -127,7 +127,7 @@ This path is reached only when the following are directly evidenced:
 - Time advancement mutates NPC locations, job availability, city events, and at least one problem outcome independently of Rowan's chosen route.
 - Browser diagnostics expose objective predicates, planner trace, world pressure, Rowan route legality, and NPC route legality.
 - Rowan and sampled NPCs render on legal routed paths through the projected walkable map.
-- A fresh `/?new=1&autoplay=1` run for the first 3 to 5 minutes reads as Rowan finding his way in a living city, not a replay of a fixed route.
+- A fresh `/?new=1` run for the first 3 to 5 minutes reads as Rowan finding his way in a living city, not a replay of a fixed route.
 - Observe/autoplay mode carries the run without visible progression/action-button clicks.
 
 ## `/plan` Command Statement

@@ -132,7 +132,7 @@ export default function PlanPage() {
       <div className={styles.shell}>
         <header className={styles.hero}>
           <nav aria-label="Plan navigation" className={styles.nav}>
-            <Link href="/?new=1&autoplay=1">Fresh autoplay run</Link>
+            <Link href="/?new=1">Fresh autoplay run</Link>
             <Link href="/">Street app</Link>
             <a href="/sim/health">Sim health</a>
           </nav>

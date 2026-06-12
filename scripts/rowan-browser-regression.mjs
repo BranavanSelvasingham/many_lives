@@ -7157,7 +7157,7 @@ async function captureProbeState({ game, label }) {
 }
 
 async function runAutoplayObservation(session) {
-  const url = `${getWebBase()}?new=1&autoplay=1&autoplayRegression=${Date.now()}`;
+  const url = `${getWebBase()}?new=1&autoplayRegression=${Date.now()}`;
   await session.navigate(url);
   const startProbe = await session.readBrowserProbe();
   assert.equal(
@@ -9373,7 +9373,7 @@ async function watchUntilIndependentNpcResolution({
 }
 
 async function runInhabitGameplayPass(session) {
-  const url = `${getWebBase()}?new=1&autoplay=1&freezeAutoplay=1&inhabitGameplay=${Date.now()}`;
+  const url = `${getWebBase()}?new=1&freezeAutoplay=1&inhabitGameplay=${Date.now()}`;
   await session.navigate(url);
   const moments = [];
   const clickLog = [];
@@ -9396,7 +9396,7 @@ async function runInhabitGameplayPass(session) {
   const frozenProbe = await session.readBrowserProbe();
   const watchUrl = `${getWebBase()}?gameId=${encodeURIComponent(
     frozenProbe.gameId,
-  )}&autoplay=1&inhabitGameplay=${Date.now()}`;
+  )}&inhabitGameplay=${Date.now()}`;
   await session.navigate(watchUrl);
   await waitForInhabitSettled(session, "inhabit-watch-mode-resumed");
 
