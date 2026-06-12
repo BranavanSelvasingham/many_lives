@@ -28,6 +28,7 @@ import {
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
   objectiveRouteMoveIntent,
+  objectiveRouteMoveRationaleForOutcome,
   objectiveRouteSemanticHints,
   objectiveRouteSemanticMoveBonus,
   objectiveRouteSpeech,
@@ -5733,7 +5734,11 @@ function objectivePredicateMoveIntentForLocation(
     if (outcome.npcId && npc?.currentLocationId === location.id) {
       return {
         npcId: outcome.npcId,
-        rationale: moveRationaleForOutcome(world, outcome.label),
+        rationale: objectiveRouteMoveRationaleForOutcome(
+          world,
+          objective,
+          outcome.label,
+        ),
         speech: buildAutonomousSpeech(world, npc, objective),
       };
     }
@@ -5741,36 +5746,24 @@ function objectivePredicateMoveIntentForLocation(
     if (outcome.actionId && actionLegal) {
       return {
         actionId: outcome.actionId,
-        rationale: moveRationaleForOutcome(world, outcome.label),
+        rationale: objectiveRouteMoveRationaleForOutcome(
+          world,
+          objective,
+          outcome.label,
+        ),
       };
     }
 
     return {
-      rationale: moveRationaleForOutcome(world, outcome.label),
+      rationale: objectiveRouteMoveRationaleForOutcome(
+        world,
+        objective,
+        outcome.label,
+      ),
     };
   }
 
   return undefined;
-}
-
-function moveRationaleForOutcome(world: StreetGameState, outcomeLabel: string) {
-  const normalized = outcomeLabel.toLowerCase();
-
-  if (normalized.includes("ada lead verified")) {
-    return "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
-  }
-
-  if (normalized.includes("first afternoon taken stock")) {
-    return world.player.energy < 28
-      ? "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
-      : "The shift paid, and Morrow House is the right place to let the day land";
-  }
-
-  if (normalized.includes("lunch") || normalized.includes("shift")) {
-    return "Ada gave Rowan real work, and the room needs steady hands now";
-  }
-
-  return outcomeLabel;
 }
 
 function livePressureMoveIntentForLocation(

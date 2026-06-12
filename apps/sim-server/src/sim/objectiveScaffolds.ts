@@ -34,6 +34,11 @@ interface MoveIntentHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+interface OutcomeMoveRationaleHint {
+  matches: (outcomeLabel: string) => boolean;
+  rationale: string | ((context: ScaffoldContext) => string);
+}
+
 interface SemanticMoveBonus {
   locationId: string;
   score: number;
@@ -572,6 +577,7 @@ interface ObjectiveRouteScaffold {
   deterministicOpeningNpcIds?: string[];
   deterministicOpeningRouteKeys?: string[];
   moveIntents?: MoveIntentHint[];
+  outcomeMoveRationales?: OutcomeMoveRationaleHint[];
   playerThoughts?: PlayerThoughtHint[];
   routeHeadline?: string;
   routeKeys: string[];
@@ -2022,6 +2028,27 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
             countPlayerConversationsWithNpc(world, "npc-ada") === 0),
       },
     ],
+    outcomeMoveRationales: [
+      {
+        matches: (outcomeLabel) => outcomeLabel.includes("ada lead verified"),
+        rationale:
+          "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room",
+      },
+      {
+        matches: (outcomeLabel) =>
+          outcomeLabel.includes("first afternoon taken stock"),
+        rationale: ({ world }) =>
+          world.player.energy < 28
+            ? "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
+            : "The shift paid, and Morrow House is the right place to let the day land",
+      },
+      {
+        matches: (outcomeLabel) =>
+          outcomeLabel.includes("lunch") || outcomeLabel.includes("shift"),
+        rationale:
+          "Ada gave Rowan real work, and the room needs steady hands now",
+      },
+    ],
     conversationThoughts: [
       {
         npcId: "npc-mara",
@@ -2984,6 +3011,27 @@ export function objectiveRouteMoveIntent(
   }
 
   return routeDerivedMoveIntent(world, objective, locationId);
+}
+
+export function objectiveRouteMoveRationaleForOutcome(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective,
+  outcomeLabel: string,
+) {
+  const normalizedOutcomeLabel = outcomeLabel.toLowerCase();
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const rationale = (scaffold.outcomeMoveRationales ?? []).find((candidate) =>
+      candidate.matches(normalizedOutcomeLabel),
+    );
+    if (rationale) {
+      return typeof rationale.rationale === "function"
+        ? rationale.rationale(context)
+        : rationale.rationale;
+    }
+  }
+
+  return outcomeLabel;
 }
 
 export function objectiveRouteActionRationale(
