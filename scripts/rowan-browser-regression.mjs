@@ -69,6 +69,15 @@ const CHILD_PROCESS_TIMEOUT_MS = Number(
 const CLEANUP_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_CLEANUP_TIMEOUT_MS ?? "10000",
 );
+const AUTOPLAY_OBSERVATION_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS ?? "180000",
+);
+const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_OBSERVE_CARRY_FORWARD_TIMEOUT_MS ?? "90000",
+);
+const INHABIT_GAMEPLAY_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_INHABIT_GAMEPLAY_TIMEOUT_MS ?? "540000",
+);
 const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_APP_READY_TIMEOUT_MS ?? "120000",
 );
@@ -10247,6 +10256,7 @@ function buildRegressionSummary({
   observeOnlyCarryForward,
   outputStatus,
   overlayChecks,
+  phaseDiagnostics = null,
   screenshotCount,
   timeline,
   timelinePath,
@@ -10272,6 +10282,7 @@ function buildRegressionSummary({
     npcDiagnostics: movementAudit.npcPatrols,
     outputDir: OUTPUT_DIR,
     overlayChecks,
+    phaseDiagnostics,
     playerLocationGeometryEvidence: movementAudit.playerLocationGeometrySamples,
     routeDiagnostics: movementAudit.playerRoutes,
     scheduledNpcContinuityGaps: movementAudit.scheduledNpcContinuityGaps,
@@ -10413,9 +10424,100 @@ async function main() {
   let inhabitGameplay = null;
   let browserChecksCompleted = false;
   let cleanupError = null;
+  const phaseDiagnostics = {
+    checkpoints: [],
+    completedPhases: [],
+    currentPhase: "startup",
+    failedPhase: null,
+    timeouts: {
+      autoplayObservationMs: AUTOPLAY_OBSERVATION_TIMEOUT_MS,
+      cleanupMs: CLEANUP_TIMEOUT_MS,
+      inhabitGameplayMs: INHABIT_GAMEPLAY_TIMEOUT_MS,
+      observeCarryForwardMs: OBSERVE_CARRY_FORWARD_TIMEOUT_MS,
+    },
+  };
   const session = USE_CHROME_DRIVER
     ? await launchBrowserSession(browserUrl(game.id))
     : null;
+
+  const writeCheckpointSummary = async (outputStatus, extraDiagnostics = {}) => {
+    const checkpoint = {
+      at: new Date().toISOString(),
+      outputStatus,
+      screenshotCount: timeline.filter((entry) => entry.screenshot).length,
+      timelineEntries: timeline.length,
+    };
+    phaseDiagnostics.checkpoints.push(checkpoint);
+    Object.assign(phaseDiagnostics, extraDiagnostics);
+
+    const checkpointTimeline = timeline.filter(
+      (entry) => entry.label !== "independent-npc-resolution",
+    );
+    const checkpointMovementAudit =
+      buildMovementAuditSummary(checkpointTimeline);
+    const checkpointSummary = buildRegressionSummary({
+      autoplayObservation,
+      evidence: buildInterimVisualEvidence({ overlayChecks, timeline }),
+      game,
+      inhabitGameplay,
+      independentNpcActionEvidence: buildIndependentNpcActionEvidence(timeline),
+      movementAudit: checkpointMovementAudit,
+      observeOnlyCarryForward,
+      outputStatus,
+      overlayChecks,
+      phaseDiagnostics,
+      screenshotCount: checkpoint.screenshotCount,
+      timeline,
+      timelinePath,
+    });
+    await writeRegressionSummary(summaryPath, checkpointSummary);
+    traceRegression(`summary-written:${outputStatus}`);
+  };
+
+  const runBrowserPhase = async (label, timeoutMs, action) => {
+    const startedAt = new Date();
+    phaseDiagnostics.currentPhase = label;
+    phaseDiagnostics.currentPhaseStartedAt = startedAt.toISOString();
+    traceRegression(`${label}-start`);
+    await writeCheckpointSummary(`${slug(label)}-started`, {
+      currentPhase: label,
+    });
+
+    try {
+      const result = await withTimeout(
+        Promise.resolve().then(action),
+        timeoutMs,
+        `${label} timed out after ${timeoutMs}ms.`,
+      );
+      phaseDiagnostics.completedPhases.push({
+        durationMs: Date.now() - startedAt.getTime(),
+        finishedAt: new Date().toISOString(),
+        label,
+      });
+      phaseDiagnostics.currentPhase = null;
+      traceRegression(`${label}-done`);
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      phaseDiagnostics.failedPhase = {
+        durationMs: Date.now() - startedAt.getTime(),
+        failedAt: new Date().toISOString(),
+        label,
+        message,
+        timeoutMs,
+      };
+      phaseDiagnostics.currentPhase = label;
+      await writeFile(
+        path.join(OUTPUT_DIR, `${slug(label)}-error.txt`),
+        `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+        "utf8",
+      );
+      await writeCheckpointSummary(`failed:${slug(label)}`, {
+        currentPhase: label,
+      });
+      throw error;
+    }
+  };
 
   try {
     const steps = buildRegressionSteps(gameRef);
@@ -10561,21 +10663,34 @@ async function main() {
       );
       traceRegression(`step-written:${index}:${step.label}`);
     }
+    browserChecksCompleted = timeline.some((entry) => entry.screenshot);
+    await writeCheckpointSummary("timeline-complete");
 
     if (session !== null) {
-      traceRegression("overlay-start");
-      overlayChecks = await runOverlayPanelChecks(session);
-      traceRegression("overlay-done");
-      traceRegression("autoplay-observation-start");
-      autoplayObservation = await runAutoplayObservation(session);
-      traceRegression("autoplay-observation-done");
-      traceRegression("observe-only-carry-forward-start");
-      observeOnlyCarryForward =
-        await runObserveOnlyCarryForwardObservation(session);
-      traceRegression("observe-only-carry-forward-done");
-      traceRegression("inhabit-gameplay-start");
-      inhabitGameplay = await runInhabitGameplayPass(session);
-      traceRegression("inhabit-gameplay-done");
+      overlayChecks = await runBrowserPhase(
+        "overlay-panel-checks",
+        90_000,
+        () => runOverlayPanelChecks(session),
+      );
+      await writeCheckpointSummary("overlay-checks-complete");
+      autoplayObservation = await runBrowserPhase(
+        "autoplay-observation",
+        AUTOPLAY_OBSERVATION_TIMEOUT_MS,
+        () => runAutoplayObservation(session),
+      );
+      await writeCheckpointSummary("autoplay-observation-complete");
+      observeOnlyCarryForward = await runBrowserPhase(
+        "observe-only-carry-forward",
+        OBSERVE_CARRY_FORWARD_TIMEOUT_MS,
+        () => runObserveOnlyCarryForwardObservation(session),
+      );
+      await writeCheckpointSummary("observe-only-carry-forward-complete");
+      inhabitGameplay = await runBrowserPhase(
+        "inhabit-gameplay",
+        INHABIT_GAMEPLAY_TIMEOUT_MS,
+        () => runInhabitGameplayPass(session),
+      );
+      await writeCheckpointSummary("inhabit-gameplay-complete");
       assert.deepEqual(
         session.pageErrors,
         [],
@@ -10600,14 +10715,21 @@ async function main() {
           independentNpcActionEvidence: buildIndependentNpcActionEvidence(timeline),
           movementAudit: interimMovementAudit,
           observeOnlyCarryForward,
-          outputStatus: "browser-checks-complete-cleanup-pending",
+          outputStatus: phaseDiagnostics.failedPhase
+            ? "browser-checks-failed-cleanup-pending"
+            : "browser-checks-complete-cleanup-pending",
           overlayChecks,
+          phaseDiagnostics,
           screenshotCount: timeline.filter((entry) => entry.screenshot).length,
           timeline,
           timelinePath,
         });
         await writeRegressionSummary(summaryPath, interimSummary);
-        traceRegression("summary-written:browser-checks-complete-cleanup-pending");
+        traceRegression(
+          phaseDiagnostics.failedPhase
+            ? "summary-written:browser-checks-failed-cleanup-pending"
+            : "summary-written:browser-checks-complete-cleanup-pending",
+        );
       } catch (error) {
         await writeFile(
           path.join(OUTPUT_DIR, "summary-finalization-error.txt"),
@@ -11004,6 +11126,7 @@ async function main() {
     observeOnlyCarryForward,
     outputStatus: "passed",
     overlayChecks,
+    phaseDiagnostics,
     screenshotCount,
     timeline,
     timelinePath,
