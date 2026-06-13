@@ -193,7 +193,7 @@ const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
 const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where today's standing can turn into a steadier foothold";
 const ROWAN_NOTEBOOK_FIELD_NOTE_UNCERTAINTY =
-  "Which live pressure deserves Rowan's recovered hour: yard work, the pump, or another lead?";
+  "Which current opening deserves Rowan's recovered hour: North Crane Yard work, the Morrow Yard pump, or another lead?";
 const ROWAN_NOTEBOOK_JO_TOOLS_UNCERTAINTY =
   "Which local problem is worth spending scarce money on?";
 const ROWAN_NOTEBOOK_NIA_UNCERTAINTY =
@@ -203,7 +203,7 @@ const ROWAN_NOTEBOOK_PUMP_UNCERTAINTY =
 const ROWAN_NOTEBOOK_NIA_RECOVERY_PLAN =
   "Recover before following Nia's block-jam lead.";
 const ROWAN_NOTEBOOK_RECOVERY_PLAN =
-  "Rest at Morrow House long enough to recover, then choose the yard work, pump, or live pressure that still matters.";
+  "Rest at Morrow House long enough to recover, then choose the yard work, pump, or current opening that still matters.";
 const ROWAN_NOTEBOOK_PUMP_PLAN =
   "Handle the Morrow Yard pump before the house has to absorb it without Rowan.";
 const ROWAN_NOTEBOOK_YARD_PLAN =

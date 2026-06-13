@@ -7837,7 +7837,7 @@ function compareFirstAfternoonOptions(world: StreetGameState): void {
   addFeed(
     world,
     "info",
-    "Rowan keeps Ada's offer in view while checking whether another live pressure should come first.",
+    "Rowan keeps Ada's offer in view while checking whether another current opening should come first.",
   );
   rememberIfNew(
     world,
@@ -7954,7 +7954,7 @@ function ensureFirstAfternoonLeadFieldNote(world: StreetGameState): void {
     memory:
       "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
     next:
-      "Ada's offer is now a live choice: take the cup-and-counter shift, compare another live pressure, or deliberately walk away before the window closes.",
+      "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
   };
   addFeed(
     world,
