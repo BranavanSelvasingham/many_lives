@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { createWriteStream, existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -23,6 +24,9 @@ const VISUAL_DIR = path.join(OUTPUT_DIR, "visual-game");
 const BROWSER_PLAYTEST_DIR = path.join(OUTPUT_DIR, "rowan-browser");
 const LIVE_SMOKE_DIR = path.join(OUTPUT_DIR, "live-smoke");
 const SUMMARY_PATH = path.join(OUTPUT_DIR, "summary.json");
+const COMMAND_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_APP_HARNESS_COMMAND_TIMEOUT_MS ?? "1800000",
+);
 
 const profiles = new Set(["quick", "full", "ci"]);
 
@@ -221,12 +225,14 @@ async function runCommandStep(step) {
 
   const child = spawn(step.command, step.args, {
     cwd: ROOT,
+    detached: process.platform !== "win32",
     env: {
       ...process.env,
       ...step.env,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  child.manyLivesKillGroup = process.platform !== "win32";
 
   child.stdout.on("data", (chunk) => {
     process.stdout.write(chunk);
@@ -237,29 +243,109 @@ async function runCommandStep(step) {
     log.write(chunk);
   });
 
-  const exitCode = await new Promise((resolve, reject) => {
+  const exitPromise = new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", resolve);
-  }).finally(() => {
-    log.end();
   });
+  let exitCode = null;
+  let timeoutHit = false;
+  let error = null;
+
+  try {
+    const outcome = await withTimeout(
+      exitPromise,
+      COMMAND_TIMEOUT_MS,
+      "timeout",
+    ).catch((caught) => {
+      if (caught instanceof Error && caught.message === "timeout") {
+        return "timeout";
+      }
+      throw caught;
+    });
+
+    if (outcome === "timeout") {
+      timeoutHit = true;
+      const message = `[many-lives:harness] ${step.name} timed out after ${COMMAND_TIMEOUT_MS}ms; terminating process group.\n`;
+      process.stderr.write(message);
+      log.write(message);
+      await closeChildProcess(child);
+      exitCode = child.exitCode;
+    } else {
+      exitCode = outcome;
+    }
+  } catch (caught) {
+    error = caught instanceof Error ? caught : new Error(String(caught));
+    await closeChildProcess(child);
+  } finally {
+    log.end();
+  }
 
   const durationMs = Math.round(performance.now() - started);
   const result = {
     name: step.name,
     kind: step.kind,
     command: [step.command, ...step.args],
-    status: exitCode === 0 ? "passed" : "failed",
+    status: exitCode === 0 && !timeoutHit && !error ? "passed" : "failed",
     exitCode,
     durationMs,
     logPath,
   };
+  if (timeoutHit) {
+    result.timedOut = true;
+    result.timeoutMs = COMMAND_TIMEOUT_MS;
+  }
+  if (error) {
+    result.error = error.stack ?? error.message;
+  }
 
   console.log(
     `[many-lives:harness] <- ${step.name}: ${result.status} (${durationMs}ms)`,
   );
 
   return result;
+}
+
+async function closeChildProcess(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  signalChildProcess(child, "SIGTERM");
+  await Promise.race([once(child, "close").catch(() => undefined), sleep(1_500)]);
+
+  if (child.exitCode === null) {
+    const closed = once(child, "close").catch(() => undefined);
+    signalChildProcess(child, "SIGKILL");
+    await Promise.race([closed, sleep(1_500)]);
+  }
+
+  if (child.exitCode === null && child.signalCode === null) {
+    destroyChildProcessStreams(child);
+    child.unref?.();
+  }
+}
+
+function signalChildProcess(child, signal) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {
+    return;
+  }
+
+  if (child.manyLivesKillGroup && child.pid && process.platform !== "win32") {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {}
+  }
+
+  child.kill(signal);
+}
+
+function destroyChildProcessStreams(child) {
+  for (const stream of [child.stdin, child.stdout, child.stderr, ...(child.stdio ?? [])]) {
+    try {
+      stream?.destroy?.();
+    } catch {}
+  }
 }
 
 async function runInlineStep(step) {
@@ -665,6 +751,21 @@ function readFlag(name) {
 
 function slug(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    clearTimeout(timeout);
+  });
 }
 
 async function writeSummary() {
