@@ -445,6 +445,46 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain('outcome.id.startsWith("job-window-")');
   });
 
+  it("keeps route scaffold pressure advisory behind predicate and live pressure", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+    const livePressureSource = engineSource.slice(
+      engineSource.indexOf("function scoreLiveStatePressureForAction"),
+      engineSource.indexOf("function scoreObjectiveAgentMovePlan"),
+    );
+
+    const predicatePressureIndex = livePressureSource.indexOf(
+      "scoreObjectivePlanningPressureForPlan",
+    );
+    const liveProblemPressureIndex = livePressureSource.indexOf(
+      "scoreLiveProblemPressureForAction",
+    );
+    const liveJobPressureIndex = livePressureSource.indexOf(
+      "scoreLiveJobPressureForAction",
+    );
+    const routeScaffoldPressureIndex = livePressureSource.indexOf(
+      "objectiveRouteActionPressureScore",
+    );
+
+    expect(scaffoldSource).toContain(
+      "export function objectiveRouteActionPressureScore",
+    );
+    expect(engineSource).not.toContain(
+      "function objectiveRouteActionPressureScore",
+    );
+    expect(livePressureSource).toContain("predicateAuthority");
+    expect(predicatePressureIndex).toBeGreaterThanOrEqual(0);
+    expect(liveProblemPressureIndex).toBeGreaterThan(predicatePressureIndex);
+    expect(liveJobPressureIndex).toBeGreaterThan(liveProblemPressureIndex);
+    expect(routeScaffoldPressureIndex).toBeGreaterThan(liveJobPressureIndex);
+  });
+
   it("keeps NPC objective affinity scoring rules outside engine control flow", () => {
     const engineSource = readFileSync(
       new URL("../src/sim/engine.ts", import.meta.url),
