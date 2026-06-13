@@ -1147,6 +1147,28 @@ async function assertAmbientScaleGuard() {
     !source.includes("function drawAmbientWorkPulse"),
     "Tiny ambient work pulse markers should not return; use character-scale silhouettes.",
   );
+  const teaHouseRouteMatch = routesMatch[0].match(
+    /id:\s*"tea-house-front"[\s\S]*?path:\s*\[([\s\S]*?)\]\s*,\s*phase:/,
+  );
+  assert.ok(teaHouseRouteMatch, "Could not find the tea-house-front ambient route.");
+  const teaHousePoints = [
+    ...teaHouseRouteMatch[1].matchAll(/\{\s*x:\s*([0-9.]+),\s*y:\s*([0-9.]+)\s*\}/g),
+  ].map((match) => ({
+    x: Number(match[1]),
+    y: Number(match[2]),
+  }));
+  assert.ok(
+    teaHousePoints.length >= 4,
+    `Expected the tea-house-front route to have a real frontage loop: ${JSON.stringify(teaHousePoints)}.`,
+  );
+  assert.ok(
+    teaHousePoints.every((point) => point.x >= 1100 && point.x <= 1560),
+    `tea-house-front ambient route drifted away from Kettle & Lamp: ${JSON.stringify(teaHousePoints)}.`,
+  );
+  assert.ok(
+    teaHousePoints.every((point) => point.y >= 560 && point.y <= 720),
+    `tea-house-front ambient route is no longer on the cafe frontage band: ${JSON.stringify(teaHousePoints)}.`,
+  );
 }
 
 async function assertWatchModeFeelGuard() {
