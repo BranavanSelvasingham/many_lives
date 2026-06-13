@@ -12,8 +12,8 @@ export type StreetReleaseInfo = {
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
   version: "0.1.6",
-  build: "2fd7ef9",
-  source: "Pending PR",
+  build: "314ef46",
+  source: "PR #140",
   features: [
     {
       title: "Morrow House interior",
