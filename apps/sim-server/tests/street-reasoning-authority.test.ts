@@ -417,6 +417,34 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
   });
 
+  it("keeps desired-outcome planner scoring rules outside engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scoringSource = readFileSync(
+      new URL("../src/sim/objectivePlanningScoring.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scoringSource).toContain("DESIRED_OUTCOME_SCORE_RULES");
+    expect(scoringSource).toContain("scoreJobWindowOutcome");
+    expect(scoringSource).toContain(
+      "outcome.id.startsWith(JOB_WINDOW_OUTCOME_PREFIX)",
+    );
+    expect(engineSource).toContain("scorePlanForDesiredOutcomes");
+    expect(engineSource).not.toContain("function scorePlanForDesiredOutcomes");
+    expect(engineSource).not.toContain('case "active-commitment"');
+    expect(engineSource).not.toContain('case "income"');
+    expect(engineSource).not.toContain('case "shelter-stability"');
+    expect(engineSource).not.toContain('case "social-anchors"');
+    expect(engineSource).not.toContain('case "useful-help"');
+    expect(engineSource).not.toContain('case "tool-ready"');
+    expect(engineSource).not.toContain('case "recover"');
+    expect(engineSource).not.toContain('case "map-knowledge"');
+    expect(engineSource).not.toContain('outcome.id.startsWith("job-window-")');
+  });
+
   it("keeps first-afternoon reflection action metadata in scaffold data, not engine control flow", () => {
     const engineSource = readFileSync(
       new URL("../src/sim/engine.ts", import.meta.url),
