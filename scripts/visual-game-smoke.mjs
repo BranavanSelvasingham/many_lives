@@ -2059,6 +2059,155 @@ function assertVisibleDecisionArtifactDom(
   );
 }
 
+function selectedVisibleDecisionArtifactPayload(probe) {
+  return (
+    probe?.rail?.visibleDecisionArtifact ??
+    probe?.autonomy?.visibleDecisionArtifact ??
+    null
+  );
+}
+
+function compactDecisionArtifactDiagnostic(artifact) {
+  if (!artifact) {
+    return null;
+  }
+
+  return {
+    backingSummary: artifact.backingSummary ?? null,
+    considered: artifact.considered ?? [],
+    constraints: artifact.constraints ?? [],
+    hasNextCheck: Boolean(artifact.nextCheck),
+    nextCheck: artifact.nextCheck ?? null,
+    objective: artifact.objective ?? null,
+    rationale: artifact.rationale ?? null,
+    selectedAction: artifact.selectedAction ?? null,
+    sourceSummary: artifact.sourceSummary ?? null,
+  };
+}
+
+function compactDecisionArtifactProbeDiagnostic(probe) {
+  if (!probe) {
+    return null;
+  }
+
+  return {
+    activeConversation: probe.activeConversation ?? null,
+    autonomy: probe.autonomy
+      ? {
+          key: probe.autonomy.key,
+          label: probe.autonomy.label,
+          mode: probe.autonomy.mode,
+          planningTraceSelectedActionId:
+            probe.autonomy.planningTrace?.selectedActionId ?? null,
+          visibleDecisionArtifact: compactDecisionArtifactDiagnostic(
+            probe.autonomy.visibleDecisionArtifact,
+          ),
+        }
+      : null,
+    clock: probe.clock ?? null,
+    gameId: probe.gameId ?? null,
+    rail: probe.rail
+      ? {
+          next: probe.rail.next,
+          now: probe.rail.now,
+          status: probe.rail.status,
+          visibleDecisionArtifact: compactDecisionArtifactDiagnostic(
+            probe.rail.visibleDecisionArtifact,
+          ),
+        }
+      : null,
+    watchMode: probe.watchMode ?? null,
+  };
+}
+
+function safeArtifactName(label) {
+  return String(label)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+}
+
+async function captureDecisionArtifactMismatch(session, label, mismatch) {
+  const basename = safeArtifactName(`${label}-decision-artifact-mismatch`);
+  const diagnosticsPath = path.join(OUTPUT_DIR, `${basename}.json`);
+  const screenshotPath = path.join(OUTPUT_DIR, `${basename}.png`);
+
+  await writeFile(
+    diagnosticsPath,
+    `${JSON.stringify(
+      {
+        capturedAt: new Date().toISOString(),
+        label,
+        ...mismatch,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await session.captureScreenshot(screenshotPath);
+
+  return { diagnosticsPath, screenshotPath };
+}
+
+async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
+  const timeoutMs = options.timeoutMs ?? AUTOPLAY_START_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let lastMismatch = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const probe = await session.readBrowserProbe();
+    const page = await session.inspectPage();
+    const payload = selectedVisibleDecisionArtifactPayload(probe);
+    const accepted =
+      typeof options.accept === "function" ? options.accept({ page, probe }) : true;
+
+    if (!accepted) {
+      lastMismatch = {
+        bodyText: page.bodyText,
+        decisionArtifactDom: page.decisionArtifact,
+        error: "Page/probe state did not satisfy the caller's readiness predicate.",
+        probe: compactDecisionArtifactProbeDiagnostic(probe),
+        selectedPayload: compactDecisionArtifactDiagnostic(payload),
+        url: page.url,
+      };
+      await sleep(POLL_INTERVAL_MS);
+      continue;
+    }
+
+    try {
+      assert.ok(payload, `${label}: missing visible decision artifact payload.`);
+      assertVisibleDecisionArtifactDom(page.decisionArtifact, label, payload);
+      return { page, payload, probe };
+    } catch (error) {
+      lastMismatch = {
+        bodyText: page.bodyText,
+        decisionArtifactDom: page.decisionArtifact,
+        error: error instanceof Error ? error.message : String(error),
+        probe: compactDecisionArtifactProbeDiagnostic(probe),
+        selectedPayload: compactDecisionArtifactDiagnostic(payload),
+        url: page.url,
+      };
+      await sleep(POLL_INTERVAL_MS);
+    }
+  }
+
+  const artifacts = await captureDecisionArtifactMismatch(
+    session,
+    label,
+    lastMismatch,
+  );
+  throw new Error(
+    [
+      `${label}: rendered decision artifact did not match the browser probe payload within ${timeoutMs}ms.`,
+      `Diagnostics: ${artifacts.diagnosticsPath}`,
+      `Screenshot: ${artifacts.screenshotPath}`,
+      `Last mismatch: ${JSON.stringify(lastMismatch, null, 2)}`,
+    ].join("\n"),
+  );
+}
+
 function assertNoWatchModeReplyAffordances(page, label) {
   assert.deepEqual(
     page.watchModeReplyAffordances ?? [],
@@ -2182,19 +2331,20 @@ async function runFreshAutoplayStartCheck(session) {
   assertOpeningActionCarryForward(advancedProbe, "fresh autoplay advanced", [
     "completed",
   ]);
-  const continued = await waitFor(
-    async () => {
-      const probe = await session.readBrowserProbe();
-      const page = await session.inspectPage();
-      const continuedText =
-        hasWatchModeProgressText(page.bodyText) ||
-        Boolean(probe.activeConversation?.npcId);
-      const stillOpeningCta = page.bodyText.includes("Watch Rowan begin");
+  const continued = await waitForVisibleDecisionArtifactDom(
+    session,
+    "fresh autoplay",
+    {
+      accept: ({ page, probe }) => {
+        const continuedText =
+          hasWatchModeProgressText(page.bodyText) ||
+          Boolean(probe?.activeConversation?.npcId);
+        const stillOpeningCta = page.bodyText.includes("Watch Rowan begin");
 
-      return continuedText && !stillOpeningCta ? { page, probe } : false;
+        return continuedText && !stillOpeningCta;
+      },
+      timeoutMs: AUTOPLAY_START_TIMEOUT_MS,
     },
-    AUTOPLAY_START_TIMEOUT_MS,
-    "fresh autoplay did not present a continued watch-mode state after starting.",
   );
   const page = continued.page;
   const continuedProbe = continued.probe;
@@ -2244,8 +2394,7 @@ async function runFreshAutoplayStartCheck(session) {
   assertVisibleDecisionArtifactDom(
     page.decisionArtifact,
     "fresh autoplay",
-    continuedProbe.rail?.visibleDecisionArtifact ??
-      continuedProbe.autonomy?.visibleDecisionArtifact,
+    continued.payload,
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");
