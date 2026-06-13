@@ -198,7 +198,9 @@ describe("Rowan cognition Notebook authority", () => {
 
     expect(notebook.title).not.toBe("Keep a stable room");
     expect(notebook.belief).toMatch(/Nia|Jo|block|jam|square/i);
-    expect(notebook.uncertainty).toMatch(/Nia|block|jam/i);
+    expect(notebook.uncertainty).toBe(
+      "What does Nia know about the block before it jams?",
+    );
     expect(
       `${notebook.title} ${notebook.belief} ${notebook.uncertainty}`,
     ).not.toMatch(/Mara is the person most likely|tonight's bed|temporary/i);
@@ -269,8 +271,12 @@ describe("Rowan cognition Notebook authority", () => {
 
     expect(notebook.title).toBe("Keep enough energy to follow through");
     expect(notebook.belief).toMatch(/Ada|field note|opening room question/i);
-    expect(notebook.plan).toMatch(/Rest at Morrow House|recover/i);
-    expect(notebook.uncertainty).toMatch(/yard work|pump|live pressure/i);
+    expect(notebook.plan).toBe(
+      "Rest at Morrow House long enough to recover, then choose the yard work, pump, or live pressure that still matters.",
+    );
+    expect(notebook.uncertainty).toBe(
+      "Which live pressure deserves Rowan's recovered hour: yard work, the pump, or another lead?",
+    );
     expectNoStaleOpeningNotebookAuthority(notebook);
     expect(notebook.authority.beliefId).toBe(
       "belief-first-afternoon-field-note",
@@ -339,7 +345,10 @@ describe("Rowan cognition Notebook authority", () => {
 
     expect(notebook.title).toBe("Learn how South Quay fits together");
     expect(notebook.belief).toMatch(/Morrow Yard pump|live house problem/i);
-    expect(notebook.plan).toMatch(/Fix the pump|Morrow Yard pump/i);
+    expect(notebook.plan).toBe("Fix the pump");
+    expect(notebook.uncertainty).toBe(
+      "Can Rowan turn a small fix into a real local foothold?",
+    );
     expect(notebook.authority.beliefId).toBe("belief-pump-standing");
     expectNoStaleOpeningNotebookAuthority(notebook);
   });
@@ -424,8 +433,127 @@ describe("Rowan cognition Notebook authority", () => {
 
     expect(notebook.title).toBe("Find steady income");
     expect(notebook.belief).toMatch(/Tomas|yard work|freight/i);
-    expect(notebook.plan).toMatch(/North Crane Yard|yard work|freight/i);
+    expect(notebook.plan).toBe("Head to North Crane Yard");
     expect(notebook.authority.beliefId).toBe("belief-tomas-work");
     expectNoStaleOpeningNotebookAuthority(notebook);
+  });
+
+  it("keeps Jo's tool lead notebook uncertainty on the live repair choice", () => {
+    const world = seedStreetGame("game-jo-tool-notebook-cognition");
+    const currentObjective = world.player.objective as PlayerObjective;
+
+    world.currentTime = "Day 1, 13:10";
+    world.clock.hour = 13;
+    world.clock.minute = 10;
+    world.clock.totalMinutes = 13 * 60 + 10;
+    world.player.currentLocationId = "repair-stall";
+    world.player.knownNpcIds = Array.from(
+      new Set([...world.player.knownNpcIds, "npc-jo"]),
+    );
+    addNpcReply(
+      world,
+      "npc-jo",
+      "Jo",
+      "If you buy the wrench, use it on a repair that actually matters.",
+    );
+    world.player.objective = {
+      ...currentObjective,
+      focus: "tool",
+      routeKey: "people-jo",
+      source: "conversation",
+      text: "Decide whether Jo's wrench is worth buying for a real repair.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "tool-choice",
+          label: "Decide whether Jo's wrench is worth buying",
+          npcId: "npc-jo",
+          status: "open",
+          targetLocationId: "repair-stall",
+          urgency: 3,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [],
+    };
+    world.rowanAutonomy = {
+      actionId: "talk:npc-jo",
+      autoContinue: true,
+      detail:
+        "Jo can tell Rowan whether the wrench is worth the coins before he spends them.",
+      intent: {
+        reason:
+          "Jo can tell Rowan whether the wrench is worth the coins before he spends them.",
+        signals: ["Question: is the wrench worth buying?"],
+      },
+      key: "objective:talk:jo",
+      label: "Talk to Jo",
+      layer: "objective",
+      mode: "conversation",
+      npcId: "npc-jo",
+      stepKind: "talk",
+      targetLocationId: "repair-stall",
+    };
+
+    const notebook = buildRowanCognitionState(world).notebook;
+
+    expect(notebook.plan).toBe("Talk to Jo");
+    expect(notebook.uncertainty).toBe(
+      "Which local problem is worth spending scarce money on?",
+    );
+    expect(notebook.authority.beliefId).toBe("belief-jo-tools");
+  });
+
+  it("falls back from stale opening entry text to a generic notebook plan", () => {
+    const world = seedStreetGame("game-stale-opening-entry-notebook-cognition");
+    const currentObjective = world.player.objective as PlayerObjective;
+
+    world.player.objective = {
+      ...currentObjective,
+      focus: "settle",
+      routeKey: "settle-core",
+      text: "Find the first useful question to ask in South Quay.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "opening-question",
+          label: "Find the first useful question",
+          status: "open",
+          targetLocationId: "boarding-house",
+          urgency: 1,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [],
+    };
+    world.rowanAutonomy = {
+      actionId: "enter:boarding-house",
+      autoContinue: true,
+      detail:
+        "Rowan should step inside before deciding what question is worth asking first.",
+      intent: {
+        reason:
+          "Rowan should step inside before deciding what question is worth asking first.",
+        signals: ["Entry: boarding-house"],
+      },
+      key: "opening:enter-home",
+      label: "Enter Morrow House",
+      layer: "objective",
+      mode: "acting",
+      stepKind: "act",
+      targetLocationId: "boarding-house",
+    };
+
+    const notebook = buildRowanCognitionState(world).notebook;
+
+    expect(notebook.plan).toBe("Ask the first useful question.");
   });
 });
