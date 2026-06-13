@@ -387,6 +387,83 @@ describe("World time pressure", () => {
     });
   });
 
+  it("lets Tomas close discovered yard loading independently without crediting Rowan", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-tomas-resolves-yard-loading");
+    const startingMoney = world.player.money;
+    const startingCraneStanding = world.player.reputation.crane_yard;
+    const tomas = world.npcs.find((npc) => npc.id === "npc-tomas");
+
+    setClock(world, { hour: 16, minute: 30 });
+    world.activeSpaceId = "interior:boarding-house";
+    world.player.spaceId = "interior:boarding-house";
+    world.player.currentLocationId = "boarding-house";
+    if (tomas) {
+      tomas.trust = 2;
+    }
+    const cart = world.problems.find((problem) => problem.id === "problem-cart");
+    if (cart) {
+      cart.status = "solved";
+    }
+
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    if (yardJob) {
+      yardJob.discovered = true;
+      yardJob.accepted = false;
+      yardJob.completed = false;
+      yardJob.missed = false;
+    }
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 60,
+      silent: true,
+    });
+
+    const closedYardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    const updatedTomas = world.npcs.find((npc) => npc.id === "npc-tomas");
+
+    expect(world.clock.totalMinutes).toBe(17 * 60);
+    expect(closedYardJob).toMatchObject({
+      accepted: false,
+      completed: false,
+      consequenceAppliedAt: "2026-03-21T17:00:00.000Z",
+      missed: true,
+      missedAt: "2026-03-21T17:00:00.000Z",
+    });
+    expect(world.player.money).toBe(startingMoney);
+    expect(world.player.reputation.crane_yard).toBe(startingCraneStanding);
+    expect(updatedTomas).toMatchObject({
+      currentConcern:
+        "The load moved without Rowan, which says plenty in a working yard.",
+      mood: "guarded",
+      trust: 1,
+    });
+    expect(updatedTomas?.memory).toContain(
+      "Tomas closed the loading block with his own crew after Rowan left the yard waiting.",
+    );
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "Tomas got the North Crane Yard load out with his own crew; Rowan gets no pay or credit from that work.",
+    );
+    expect(world.player.memories.map((entry) => entry.text)).toContain(
+      "Tomas did not hold the freight yard load for Rowan; the work moved without him and closed that window.",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "accept:job-yard-shift",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "work:job-yard-shift",
+    );
+    expect(
+      world.cityEvents.find((event) => event.id === "event-yard-loading"),
+    ).toMatchObject({
+      outcome: "handled",
+      progress: "loaded-by-yard",
+      status: "resolved",
+      tone: "warning",
+    });
+  });
+
   it("escalates discovered problems while Rowan spends time elsewhere", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-escalating-problems");
@@ -475,10 +552,19 @@ describe("World time pressure", () => {
     expect(
       world.cityEvents.find((event) => event.id === "event-yard-loading"),
     ).toMatchObject({
-      outcome: "missed",
+      outcome: "handled",
+      progress: "loaded-by-yard",
       resolvedAt: "2026-03-21T17:00:00.000Z",
       status: "resolved",
       tone: "warning",
     });
+    expect(world.jobs.find((job) => job.id === "job-yard-shift")).toMatchObject({
+      completed: false,
+      consequenceAppliedAt: "2026-03-21T17:00:00.000Z",
+      missed: true,
+    });
+    expect(world.npcs.find((npc) => npc.id === "npc-tomas")?.memory).toContain(
+      "Tomas closed the loading block with his own crew before Rowan ever came asking.",
+    );
   });
 });
