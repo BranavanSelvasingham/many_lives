@@ -93,6 +93,19 @@ const FIRST_AFTERNOON_COMPARE_ACTION_DESCRIPTION =
   "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.";
 const FIRST_AFTERNOON_COMPLETION_ACTION_DESCRIPTION =
   "Count what changed today before chasing another errand.";
+const WEB_FIRST_AFTERNOON_FALLBACK_COPY = [
+  "Rowan is stepping inside Morrow House to ask Mara.",
+  "Rowan is turning Mara's lead toward Kettle & Lamp.",
+  "Enter Morrow House and ask Mara.",
+  "Let Mara's lead about Ada and Kettle & Lamp land.",
+  "Let Mara's lead land.",
+  "Let Ada answer whether the lunch shift is real.",
+  "Let Ada's answer land.",
+  "Mara's lead verified",
+  "Ada's offer is live: take the cup-and-counter shift, compare another real pressure, or deliberately walk away.",
+  "Mara's lead is verified: Ada at Kettle & Lamp has real lunch work on the table.",
+  "Mara's lead points to Ada at Kettle & Lamp; lunch work is the best first bet.",
+];
 const FIRST_AFTERNOON_ROUTE_OUTCOME_LABEL = "Useful first move chosen";
 const FIRST_AFTERNOON_ROUTE_STEP_TITLE = "Choose the first useful move.";
 const FIRST_AFTERNOON_ROUTE_STEP_DETAIL =
@@ -441,6 +454,47 @@ describe("street reasoning authority", () => {
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain('routeKey === "first-afternoon"');
+  });
+
+  it("keeps web first-afternoon fallback narrative copy in the web narrative helper", () => {
+    const componentSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/components/street/PhaserStreetGameApp.tsx",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const overlaySource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/components/street/streetOverlayHtml.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const helperSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/rowanFallbackNarrative.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    for (const playerFacingCopy of WEB_FIRST_AFTERNOON_FALLBACK_COPY) {
+      expect(helperSource).toContain(playerFacingCopy);
+      expect(componentSource).not.toContain(playerFacingCopy);
+      expect(overlaySource).not.toContain(playerFacingCopy);
+    }
+
+    expect(componentSource).toContain(
+      "buildFirstAfternoonActiveConversationContinueCopy",
+    );
+    expect(componentSource).toContain(
+      "buildFirstAfternoonOpeningWatchContinueCopy",
+    );
+    expect(overlaySource).toContain("buildRowanFallbackNotebookModel");
+    expect(overlaySource).toContain(
+      "firstAfternoonMaraAdaLeadFieldNoteNextCopy",
+    );
   });
 
   it("keeps Mara/Ada lead-grounding copy in scaffold policy, not engine control flow", () => {
