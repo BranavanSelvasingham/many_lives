@@ -445,6 +445,45 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain('outcome.id.startsWith("job-window-")');
   });
 
+  it("keeps NPC objective affinity scoring rules outside engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const affinitySource = readFileSync(
+      new URL("../src/sim/npcObjectiveAffinity.ts", import.meta.url),
+      "utf8",
+    );
+    const autoActionScoringSource = engineSource.slice(
+      engineSource.indexOf("function scoreAutoActionForObjective"),
+      engineSource.indexOf("function shouldAllowImmediateNpcFollowup"),
+    );
+
+    expect(affinitySource).toContain("NPC_FOCUS_AFFINITY_SCORES");
+    expect(affinitySource).toContain("OBJECTIVE_TEXT_AFFINITY_RULES");
+    expect(affinitySource).toContain('"npc-mara": 16');
+    expect(affinitySource).toContain('"npc-ada": 10');
+    expect(affinitySource).toContain('"npc-tomas": 12');
+    expect(affinitySource).toContain('"npc-jo": 16');
+    expect(affinitySource).toContain('"npc-nia": 14');
+    expect(engineSource).toContain("scoreNpcForObjectiveAffinity");
+    expect(engineSource).not.toContain("function scoreNpcForObjective");
+    expect(engineSource).not.toContain("pointsToAda");
+    expect(engineSource).not.toContain("POINTS_TO_ADA_PATTERN");
+    expect(engineSource).not.toContain("OBJECTIVE_TEXT_AFFINITY_RULES");
+    expect(engineSource).not.toContain("NPC_FOCUS_AFFINITY_SCORES");
+
+    for (const npcId of [
+      "npc-mara",
+      "npc-ada",
+      "npc-tomas",
+      "npc-jo",
+      "npc-nia",
+    ]) {
+      expect(autoActionScoringSource).not.toContain(`"${npcId}"`);
+    }
+  });
+
   it("keeps first-afternoon reflection action metadata in scaffold data, not engine control flow", () => {
     const engineSource = readFileSync(
       new URL("../src/sim/engine.ts", import.meta.url),

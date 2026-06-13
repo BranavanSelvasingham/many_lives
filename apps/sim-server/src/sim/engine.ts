@@ -19,6 +19,7 @@ import {
   buildPlayerObjectiveState,
   classifyObjective,
 } from "./objectiveState.js";
+import { scoreNpcForObjectiveAffinity } from "./npcObjectiveAffinity.js";
 import { scorePlanForDesiredOutcomes } from "./objectivePlanningScoring.js";
 import {
   objectiveRouteActionRationale,
@@ -6650,146 +6651,34 @@ function scoreAutoActionForObjective(
   }
 
   if (action.kind === "talk" && targetId) {
-    score += scoreNpcForObjective(
+    const npc = npcById(world, targetId);
+    const playerConversationCount = countPlayerConversationsWithNpc(
       world,
       targetId,
-      objectiveText,
-      objectiveFocus,
     );
+    score += scoreNpcForObjectiveAffinity({
+      allowImmediateFollowup: npc
+        ? shouldAllowImmediateNpcFollowup(
+            world,
+            npc,
+            objectiveText,
+            playerConversationCount,
+          )
+        : false,
+      minutesSinceConversation: npc
+        ? minutesSinceLastNpcConversation(world, npc)
+        : Number.POSITIVE_INFINITY,
+      npc,
+      objectiveFocus,
+      objectiveText,
+      playerConversationCount,
+      totalNpcCount: world.npcs.length,
+      uniqueNpcConversations: countUniqueNpcConversations(world),
+    });
   }
 
   if (world.player.activeJobId && targetId === world.player.activeJobId) {
     score += 30;
-  }
-
-  return score;
-}
-
-function scoreNpcForObjective(
-  world: StreetGameState,
-  npcId: string,
-  objectiveText: string,
-  objectiveFocus: ObjectiveFocus,
-) {
-  const normalized = objectiveText.toLowerCase();
-  const pointsToAda =
-    /(ada|kettle|tea[- ]house|counter|apron|tray|booths?|tables?|rush)/.test(
-      normalized,
-    );
-  const pointsToTomas = /(tomas|north crane|crane yard|gloves|bays?)/.test(
-    normalized,
-  );
-  const npc = npcById(world, npcId);
-  if (!npc) {
-    return 0;
-  }
-
-  let score = 0;
-  const playerConversationCount = countPlayerConversationsWithNpc(world, npcId);
-  const uniqueNpcConversations = countUniqueNpcConversations(world);
-  const minutesSinceConversation = minutesSinceLastNpcConversation(world, npc);
-  const allowImmediateFollowup = shouldAllowImmediateNpcFollowup(
-    world,
-    npc,
-    objectiveText,
-    playerConversationCount,
-  );
-
-  if (
-    playerConversationCount > 0 &&
-    minutesSinceConversation < 10 &&
-    !allowImmediateFollowup
-  ) {
-    return -40;
-  }
-
-  if (objectiveFocus === "work") {
-    if (npcId === "npc-mara" || npcId === "npc-ada" || npcId === "npc-tomas") {
-      score += 12;
-    }
-  }
-
-  if (objectiveFocus === "settle") {
-    if (npcId === "npc-mara") {
-      score += 16;
-    }
-
-    if (npcId === "npc-ada" || npcId === "npc-nia") {
-      score += 12;
-    }
-
-    if (npcId === "npc-tomas" || npcId === "npc-jo") {
-      score += 8;
-    }
-  }
-
-  if (objectiveFocus === "help") {
-    if (npcId === "npc-mara" || npcId === "npc-nia" || npcId === "npc-jo") {
-      score += 12;
-    }
-  }
-
-  if (objectiveFocus === "tool" && npcId === "npc-jo") {
-    score += 15;
-  }
-
-  if (objectiveFocus === "people" || objectiveFocus === "explore") {
-    score += npc.known ? 6 : 10;
-  }
-
-  if (playerConversationCount === 0) {
-    score += 18;
-
-    if (
-      uniqueNpcConversations < world.npcs.length &&
-      (objectiveFocus === "work" ||
-        objectiveFocus === "settle" ||
-        objectiveFocus === "help" ||
-        objectiveFocus === "explore" ||
-        objectiveFocus === "people")
-    ) {
-      score += 10;
-    }
-  } else if (playerConversationCount === 1) {
-    score += 4;
-  }
-
-  if (!npc.known) {
-    score += 8;
-  }
-
-  if (minutesSinceConversation < 20) {
-    score -= allowImmediateFollowup ? 4 : 18;
-  } else if (minutesSinceConversation < 60) {
-    score -= 8;
-  } else if (
-    minutesSinceConversation >= 180 &&
-    Number.isFinite(minutesSinceConversation)
-  ) {
-    score += 5;
-  }
-
-  if (
-    normalized.includes("pump") &&
-    (npcId === "npc-mara" || npcId === "npc-jo")
-  ) {
-    score += 14;
-  }
-
-  if (normalized.includes("cart") && npcId === "npc-nia") {
-    score += 14;
-  }
-
-  if (normalized.includes("wrench") && npcId === "npc-jo") {
-    score += 16;
-  }
-
-  if ((normalized.includes("work") || pointsToAda) && npcId === "npc-ada") {
-    score += 10;
-  }
-
-  if ((normalized.includes("yard") || pointsToTomas) && npcId === "npc-tomas") {
-    score += 12;
   }
 
   return score;
