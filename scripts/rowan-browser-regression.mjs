@@ -69,6 +69,9 @@ const CHILD_PROCESS_TIMEOUT_MS = Number(
 const CLEANUP_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_CLEANUP_TIMEOUT_MS ?? "10000",
 );
+const PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS ?? "5000",
+);
 const AUTOPLAY_OBSERVATION_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS ?? "180000",
 );
@@ -505,6 +508,77 @@ function withTimeout(promise, timeoutMs, message) {
   return Promise.race([promise, timeoutPromise]).finally(() => {
     clearTimeout(timeout);
   });
+}
+
+async function writeStream(stream, message, label) {
+  await withTimeout(
+    new Promise((resolve, reject) => {
+      stream.write(message, (error) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      });
+    }),
+    PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS,
+    `Timed out flushing ${label} after ${PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS}ms.`,
+  );
+}
+
+function describeActiveHandles() {
+  if (typeof process._getActiveHandles !== "function") {
+    return [];
+  }
+
+  return process._getActiveHandles().map((handle) => {
+    const details = {};
+    if (typeof handle.fd === "number") {
+      details.fd = handle.fd;
+    }
+    if (typeof handle.pid === "number") {
+      details.pid = handle.pid;
+    }
+    if (typeof handle.spawnfile === "string") {
+      details.spawnfile = handle.spawnfile;
+    }
+    if (typeof handle.localAddress === "string") {
+      details.localAddress = handle.localAddress;
+    }
+    if (typeof handle.localPort === "number") {
+      details.localPort = handle.localPort;
+    }
+    if (typeof handle.remoteAddress === "string") {
+      details.remoteAddress = handle.remoteAddress;
+    }
+    if (typeof handle.remotePort === "number") {
+      details.remotePort = handle.remotePort;
+    }
+    if (typeof handle.destroyed === "boolean") {
+      details.destroyed = handle.destroyed;
+    }
+
+    return {
+      details,
+      type: handle?.constructor?.name ?? typeof handle,
+    };
+  });
+}
+
+async function writeProcessExitDiagnostics(status) {
+  await writeFile(
+    path.join(OUTPUT_DIR, "process-exit-diagnostics.json"),
+    `${JSON.stringify(
+      {
+        activeHandles: describeActiveHandles(),
+        at: new Date().toISOString(),
+        status,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
 }
 
 async function waitFor(condition, timeoutMs, errorMessage) {
@@ -10429,6 +10503,11 @@ async function main() {
     completedPhases: [],
     currentPhase: "startup",
     failedPhase: null,
+    cleanup: {
+      browserSession: null,
+      errors: [],
+      webServer: null,
+    },
     timeouts: {
       autoplayObservationMs: AUTOPLAY_OBSERVATION_TIMEOUT_MS,
       cleanupMs: CLEANUP_TIMEOUT_MS,
@@ -10741,23 +10820,31 @@ async function main() {
 
     traceRegression("closing-session");
     try {
-      await withTimeout(
+      phaseDiagnostics.cleanup.browserSession = await withTimeout(
         Promise.resolve(session?.close()),
         CLEANUP_TIMEOUT_MS,
         `Timed out closing Chrome after ${CLEANUP_TIMEOUT_MS}ms.`,
       );
     } catch (error) {
       cleanupError = error;
+      phaseDiagnostics.cleanup.errors.push({
+        message: error instanceof Error ? error.message : String(error),
+        phase: "browser-session",
+      });
     }
     traceRegression("closing-web-server");
     try {
-      await withTimeout(
+      phaseDiagnostics.cleanup.webServer = await withTimeout(
         closeChildProcess(webServer),
         CLEANUP_TIMEOUT_MS,
         `Timed out closing local web server after ${CLEANUP_TIMEOUT_MS}ms.`,
       );
     } catch (error) {
       cleanupError ??= error;
+      phaseDiagnostics.cleanup.errors.push({
+        message: error instanceof Error ? error.message : String(error),
+        phase: "web-server",
+      });
     }
     traceRegression("closed");
   }
@@ -11133,14 +11220,22 @@ async function main() {
   });
   await writeRegressionSummary(summaryPath, summary);
 
-  process.stdout.write(
+  await writeProcessExitDiagnostics("success");
+  await writeStream(
+    process.stdout,
     `[many-lives] Rowan ${USE_CHROME_DRIVER ? "Chrome" : "in-app probe"} regression passed.\n[many-lives] Web base: ${getWebBase()}\n[many-lives] Game URL: ${browserUrl(game.id)}\n[many-lives] Output: ${OUTPUT_DIR}\n[many-lives] Timeline: ${timelinePath}\n[many-lives] Summary: ${summaryPath}\n${evidence.recordingPath ? `[many-lives] Recording: ${evidence.recordingPath}\n` : ""}`,
+    "stdout",
   );
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `[many-lives] Rowan browser regression failed: ${error.stack ?? error.message}\n`,
-  );
-  process.exit(1);
-});
+main()
+  .then(() => {
+    traceRegression("process-exit:success");
+    process.exit(0);
+  })
+  .catch((error) => {
+    process.stderr.write(
+      `[many-lives] Rowan browser regression failed: ${error.stack ?? error.message}\n`,
+    );
+    process.exit(1);
+  });

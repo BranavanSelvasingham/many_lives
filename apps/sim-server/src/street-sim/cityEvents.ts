@@ -343,6 +343,18 @@ function resolveYardLoading(
   }
 
   if (yardJob?.missed) {
+    if (yardJob.consequenceAppliedAt) {
+      return {
+        outcome: "handled",
+        progress: "loaded-by-yard",
+        status: "resolved",
+        summary:
+          "Tomas got the loading block out with the yard's own crew; Rowan gets no pay or credit from that work.",
+        tone: "warning",
+        visibleLabel: "Load closed",
+      };
+    }
+
     return {
       outcome: "missed",
       progress: "missed",

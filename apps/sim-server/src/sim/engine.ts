@@ -466,14 +466,24 @@ function advanceWorld(
 }
 
 function independentNpcActionKeys(world: StreetGameState): Set<string> {
-  return new Set(
-    (world.problems ?? [])
-      .filter((problem) => problem.status === "resolved" && problem.resolvedByNpcId)
-      .map(
-        (problem) =>
-          `${problem.id}|${problem.resolvedByNpcId}|${problem.resolvedAt ?? "none"}`,
-      ),
-  );
+  const problemKeys = (world.problems ?? [])
+    .filter(
+      (problem) => problem.status === "resolved" && problem.resolvedByNpcId,
+    )
+    .map(
+      (problem) =>
+        `${problem.id}|${problem.resolvedByNpcId}|${problem.resolvedAt ?? "none"}`,
+    );
+  const jobKeys = (world.jobs ?? [])
+    .filter(
+      (job) =>
+        job.id === "job-yard-shift" &&
+        job.missed &&
+        Boolean(job.consequenceAppliedAt),
+    )
+    .map((job) => `${job.id}|npc-tomas|${job.consequenceAppliedAt}`);
+
+  return new Set([...problemKeys, ...jobKeys]);
 }
 
 function advanceWorldUntilIndependentNpcAction(
@@ -7973,17 +7983,6 @@ function resolvePassiveState(
     missJobFromPassiveWorld(world, teaJob);
   }
 
-  const yardJob = jobById(world, "job-yard-shift");
-  if (
-    yardJob &&
-    !yardJob.completed &&
-    currentHour(world) >= yardJob.endHour &&
-    options.workingJobId !== yardJob.id &&
-    !jobIsStartedCommitment(world, yardJob)
-  ) {
-    missJobFromPassiveWorld(world, yardJob);
-  }
-
   const cartProblem = problemById(world, "problem-cart");
   if (
     cartProblem &&
@@ -8016,7 +8015,7 @@ function resolvePassiveState(
 
   resolveProblemEscalation(world, pumpProblem);
   resolveProblemEscalation(world, cartProblem);
-  resolveIndependentNpcActions(world);
+  resolveIndependentNpcActions(world, options);
 }
 
 function jobIsStartedCommitment(world: StreetGameState, job: JobState): boolean {
@@ -8158,7 +8157,12 @@ function applyProblemExpiryConsequences(
   }
 }
 
-function resolveIndependentNpcActions(world: StreetGameState): void {
+function resolveIndependentNpcActions(
+  world: StreetGameState,
+  options: { workingJobId?: string } = {},
+): void {
+  resolveTomasYardLoading(world, options);
+
   const pumpProblem = problemById(world, "problem-pump");
   const mara = npcById(world, "npc-mara");
   const pumpResolutionMinute = totalMinutesForDayHour(world.clock.day, 17.5);
@@ -8228,6 +8232,67 @@ function resolveIndependentNpcActions(world: StreetGameState): void {
       );
     }
   }
+}
+
+function resolveTomasYardLoading(
+  world: StreetGameState,
+  options: { workingJobId?: string } = {},
+): void {
+  const yardJob = jobById(world, "job-yard-shift");
+  if (!yardJob || yardJob.completed || yardJob.consequenceAppliedAt) {
+    return;
+  }
+
+  const yardDeadlineMinute = totalMinutesForDayHour(
+    world.clock.day,
+    yardJob.endHour,
+  );
+  if (
+    world.clock.totalMinutes < yardDeadlineMinute ||
+    options.workingJobId === yardJob.id ||
+    jobIsStartedCommitment(world, yardJob)
+  ) {
+    return;
+  }
+
+  const wasLiveToRowan = yardJob.discovered || yardJob.accepted;
+  yardJob.accepted = false;
+  yardJob.missed = true;
+  yardJob.missedAt ??= world.currentTime;
+  yardJob.consequenceAppliedAt = world.currentTime;
+  yardJob.deferredUntilMinutes = undefined;
+  yardJob.progressMinutes = undefined;
+  if (world.player.activeJobId === yardJob.id) {
+    world.player.activeJobId = undefined;
+  }
+
+  const tomas = npcById(world, "npc-tomas");
+  if (tomas) {
+    if (wasLiveToRowan) {
+      tomas.trust = clamp(tomas.trust - 1, 0, 10);
+    }
+    rememberNpcIfNew(
+      tomas,
+      wasLiveToRowan
+        ? "Tomas closed the loading block with his own crew after Rowan left the yard waiting."
+        : "Tomas closed the loading block with his own crew before Rowan ever came asking.",
+    );
+  }
+
+  if (!wasLiveToRowan) {
+    return;
+  }
+
+  addFeed(
+    world,
+    "job",
+    "Tomas got the North Crane Yard load out with his own crew; Rowan gets no pay or credit from that work.",
+  );
+  rememberIfNew(
+    world,
+    "job",
+    "Tomas did not hold the freight yard load for Rowan; the work moved without him and closed that window.",
+  );
 }
 
 function resolveProblemEscalation(
