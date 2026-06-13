@@ -11,19 +11,19 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.5",
-  build: "8516035",
-  source: "PR #122",
+  version: "0.1.6",
+  build: "2fd7ef9",
+  source: "Pending PR",
   features: [
     {
-      title: "Landmark clarity",
+      title: "Morrow House interior",
       body:
-        "Rowan's nearby lead lines up with the map, so Morrow House no longer reads like Kettle & Lamp.",
+        "The opening boarding-house room now reads warmer and keeps its room label legible in the interior camera smoke.",
     },
     {
-      title: "South Quay detail",
+      title: "First-screen readability",
       body:
-        "The cafe terrace, square planters, benches, dock edge, and water carry more ambient life.",
+        "Mara, Rowan, and the decision callback remain visible while the first room gets clearer parlor cues.",
     },
   ],
 };

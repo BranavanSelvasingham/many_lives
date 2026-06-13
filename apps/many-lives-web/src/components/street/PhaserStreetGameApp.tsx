@@ -3302,20 +3302,26 @@ function renderInteriorSpace(
   space: SpaceDefinition,
 ) {
   const { structureDetailLayer, structureLayer, terrainLayer } = objects;
+  const palette = interiorSpacePalette(space);
 
   for (const tile of space.tiles) {
     const origin = mapTileToWorldOrigin(tile.x, tile.y);
     if (tile.walkable) {
       const alternate = (tile.x + tile.y) % 2 === 0;
-      terrainLayer.fillStyle(alternate ? 0xb9b19b : 0xc2baa3, 1);
+      terrainLayer.fillStyle(
+        alternate ? palette.floorAlternate : palette.floor,
+        1,
+      );
       terrainLayer.fillRect(origin.x, origin.y, CELL, CELL);
-      terrainLayer.fillStyle(0xffffff, 0.05);
+      terrainLayer.fillStyle(palette.floorHighlight, palette.floorHighlightAlpha);
       terrainLayer.fillRect(origin.x + 2, origin.y + 2, CELL - 4, 1.5);
     } else {
-      terrainLayer.fillStyle(0x354648, 1);
+      terrainLayer.fillStyle(palette.wall, 1);
       terrainLayer.fillRect(origin.x, origin.y, CELL, CELL);
     }
   }
+
+  drawInteriorSpaceAtmosphere(structureDetailLayer, space);
 
   for (const object of space.objects) {
     drawInteriorObject(
@@ -3336,6 +3342,126 @@ function renderInteriorSpace(
     );
   }
 
+}
+
+function interiorSpacePalette(space: SpaceDefinition) {
+  if (space.id === "interior:boarding-house") {
+    return {
+      floor: 0xc6b08a,
+      floorAlternate: 0xbf9f73,
+      floorHighlight: 0xffefd0,
+      floorHighlightAlpha: 0.09,
+      wall: 0x5a4737,
+    };
+  }
+
+  return {
+    floor: 0xc2baa3,
+    floorAlternate: 0xb9b19b,
+    floorHighlight: 0xffffff,
+    floorHighlightAlpha: 0.05,
+    wall: 0x354648,
+  };
+}
+
+function drawInteriorSpaceAtmosphere(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  if (space.id !== "interior:boarding-house") {
+    return;
+  }
+
+  drawBoardingHouseInteriorAtmosphere(layer, space);
+}
+
+function drawBoardingHouseInteriorAtmosphere(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  const roomOrigin = mapTileToWorldOrigin(0, 0);
+  const roomWidth = space.width * CELL;
+  const roomHeight = space.height * CELL;
+  const parlorCenter = mapTileToWorldCenter(6, 5);
+
+  layer.fillStyle(0x1a1009, 0.16);
+  layer.fillRoundedRect(
+    roomOrigin.x + CELL * 1.15,
+    roomOrigin.y + CELL * 1.22,
+    roomWidth - CELL * 2.3,
+    roomHeight - CELL * 2.3,
+    18,
+  );
+
+  layer.fillStyle(0xf2cf91, 0.12);
+  layer.fillCircle(parlorCenter.x, parlorCenter.y, CELL * 2.15);
+  layer.fillStyle(0xffe2a4, 0.08);
+  layer.fillCircle(parlorCenter.x - CELL * 1.25, parlorCenter.y, CELL * 1.2);
+
+  drawBoardingHouseWindow(layer, 2.1, 0.26, 1.2);
+  drawBoardingHouseWindow(layer, 8.5, 0.26, 1.2);
+  drawBoardingHouseWallPanels(layer, space);
+  drawBoardingHouseNoticeboard(layer);
+  drawBoardingHouseHearth(layer);
+}
+
+function drawBoardingHouseWindow(
+  layer: PhaserType.GameObjects.Graphics,
+  tileX: number,
+  tileY: number,
+  widthTiles: number,
+) {
+  const origin = mapTileToWorldOrigin(tileX, tileY);
+  const width = widthTiles * CELL;
+
+  layer.fillStyle(0x1b1714, 0.46);
+  layer.fillRoundedRect(origin.x - 3, origin.y - 2, width + 6, 18, 5);
+  layer.fillStyle(0xf4c979, 0.42);
+  layer.fillRoundedRect(origin.x, origin.y, width, 13, 4);
+  layer.lineStyle(1, 0x6e5134, 0.5);
+  layer.lineBetween(origin.x + width / 2, origin.y + 1, origin.x + width / 2, origin.y + 12);
+  layer.lineBetween(origin.x + 4, origin.y + 7, origin.x + width - 4, origin.y + 7);
+}
+
+function drawBoardingHouseWallPanels(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  const northY = mapTileToWorldOrigin(0, 0).y + CELL * 0.72;
+  const southY = mapTileToWorldOrigin(0, space.height - 1).y + CELL * 0.2;
+
+  layer.lineStyle(2, 0x8d6e48, 0.34);
+  for (let x = 1.25; x < space.width - 1.2; x += 1.35) {
+    const origin = mapTileToWorldOrigin(x, 0);
+    layer.strokeRoundedRect(origin.x, northY, CELL * 0.86, CELL * 0.18, 3);
+    layer.strokeRoundedRect(origin.x, southY, CELL * 0.86, CELL * 0.18, 3);
+  }
+}
+
+function drawBoardingHouseNoticeboard(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(10, 1.12);
+  layer.fillStyle(0x20150d, 0.3);
+  layer.fillRoundedRect(origin.x + 2, origin.y + 2, CELL * 1.2, CELL * 0.72, 6);
+  layer.fillStyle(0x805d38, 0.9);
+  layer.fillRoundedRect(origin.x, origin.y, CELL * 1.2, CELL * 0.72, 6);
+  layer.fillStyle(0xe8d2a1, 0.78);
+  layer.fillRoundedRect(origin.x + 7, origin.y + 7, 13, 17, 2);
+  layer.fillRoundedRect(origin.x + 25, origin.y + 5, 14, 21, 2);
+  layer.fillStyle(0xf0c66f, 0.86);
+  layer.fillCircle(origin.x + 20, origin.y + 6, 2.1);
+  layer.fillCircle(origin.x + 35, origin.y + 4, 2.1);
+}
+
+function drawBoardingHouseHearth(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(1.24, 4.1);
+  layer.fillStyle(0x22150e, 0.55);
+  layer.fillRoundedRect(origin.x, origin.y, CELL * 0.68, CELL * 1.3, 7);
+  layer.fillStyle(0x6f5140, 0.8);
+  layer.fillRoundedRect(origin.x + 6, origin.y + 7, CELL * 0.44, CELL * 0.94, 6);
+  layer.fillStyle(0xe58945, 0.42);
+  layer.fillEllipse(origin.x + 15, origin.y + 27, 13, 19);
+  layer.fillStyle(0xf2c06b, 0.56);
+  layer.fillEllipse(origin.x + 16, origin.y + 31, 8, 12);
 }
 
 function drawTeaHouseShiftState(
@@ -3527,6 +3653,8 @@ function drawInteriorObject(
       style.radius,
     );
   }
+
+  drawBoardingHouseInteriorObjectDetail(layer, object, rect);
 }
 
 function drawInteriorRug(
@@ -3575,6 +3703,59 @@ function drawInteriorRug(
     const stripeY = y + (height / (stripeCount + 1)) * index;
     layer.lineStyle(1, thread, 0.16);
     layer.lineBetween(x + 7, stripeY, x + width - 7, stripeY);
+  }
+}
+
+function drawBoardingHouseInteriorObjectDetail(
+  layer: PhaserType.GameObjects.Graphics,
+  object: SpaceObject,
+  rect: { height: number; width: number; x: number; y: number },
+) {
+  if (!object.id.startsWith("boarding-house-")) {
+    return;
+  }
+
+  if (object.kind === "bed") {
+    layer.fillStyle(0xe6d7bf, 0.88);
+    layer.fillRoundedRect(rect.x + 8, rect.y + 8, 20, rect.height - 16, 5);
+    layer.fillStyle(0x9fb3ba, 0.72);
+    layer.fillRoundedRect(rect.x + 32, rect.y + 8, rect.width - 40, rect.height - 16, 6);
+    layer.lineStyle(1.2, 0xd9c792, 0.36);
+    layer.lineBetween(rect.x + 34, rect.y + rect.height / 2, rect.x + rect.width - 10, rect.y + rect.height / 2);
+    return;
+  }
+
+  if (object.kind === "desk") {
+    layer.fillStyle(0x2a1c12, 0.2);
+    layer.fillRoundedRect(rect.x + 12, rect.y + 11, 26, 9, 4);
+    layer.fillStyle(0xe8d5aa, 0.74);
+    layer.fillRoundedRect(rect.x + 14, rect.y + 8, 22, 13, 3);
+    layer.lineStyle(1, 0x65452b, 0.42);
+    layer.lineBetween(rect.x + 17, rect.y + 13, rect.x + 32, rect.y + 13);
+    layer.fillStyle(0xf2c76b, 0.82);
+    layer.fillCircle(rect.x + rect.width - 20, rect.y + 15, 4);
+    return;
+  }
+
+  if (object.kind === "table") {
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    drawCafeCup(layer, centerX - 12, centerY - 4, false);
+    drawCafeCup(layer, centerX + 12, centerY - 4, false);
+    layer.fillStyle(0xd8b66e, 0.5);
+    layer.fillEllipse(centerX, centerY + 3, 18, 7);
+    return;
+  }
+
+  if (object.kind === "shelf") {
+    layer.lineStyle(2, 0x2f2116, 0.5);
+    for (let y = rect.y + 16; y < rect.y + rect.height - 8; y += 23) {
+      layer.lineBetween(rect.x + 8, y, rect.x + rect.width - 8, y);
+    }
+    layer.fillStyle(0xd6b076, 0.62);
+    layer.fillRoundedRect(rect.x + 10, rect.y + 12, 7, 18, 2);
+    layer.fillStyle(0x8aa08b, 0.62);
+    layer.fillRoundedRect(rect.x + 20, rect.y + 38, 8, 20, 2);
   }
 }
 
@@ -3656,16 +3837,25 @@ function drawInteriorSpaceLabels(
   space: SpaceDefinition,
 ) {
   const labels: PhaserType.GameObjects.GameObject[] = [];
-  const titleOrigin = mapTileToWorldOrigin(1, 1);
+  const titleOrigin =
+    space.id === "interior:boarding-house"
+      ? mapTileToWorldCenter(space.width / 2 + 1.15, 0.86)
+      : mapTileToWorldOrigin(1, 1);
   labels.push(
     scene.add
-      .text(titleOrigin.x, titleOrigin.y + CELL * 0.12, space.name, {
+      .text(
+        titleOrigin.x,
+        space.id === "interior:boarding-house"
+          ? titleOrigin.y
+          : titleOrigin.y + CELL * 0.12,
+        space.name,
+        {
         align: "left",
         color: "#f3ead2",
         fontFamily: "Georgia, serif",
-        fontSize: "20px",
+        fontSize: space.id === "interior:boarding-house" ? "14px" : "20px",
         fontStyle: "700",
-        letterSpacing: 1.4,
+        letterSpacing: space.id === "interior:boarding-house" ? 0.8 : 1.4,
         shadow: {
           blur: 4,
           color: "#000000",
@@ -3673,7 +3863,23 @@ function drawInteriorSpaceLabels(
           offsetX: 0,
           offsetY: 1,
         },
-      })
+        },
+      )
+      .setOrigin(
+        space.id === "interior:boarding-house" ? 0.5 : 0,
+        space.id === "interior:boarding-house" ? 0.5 : 0,
+      )
+      .setPadding(
+        space.id === "interior:boarding-house" ? 9 : 0,
+        space.id === "interior:boarding-house" ? 3 : 0,
+        space.id === "interior:boarding-house" ? 9 : 0,
+        space.id === "interior:boarding-house" ? 4 : 0,
+      )
+      .setBackgroundColor(
+        space.id === "interior:boarding-house"
+          ? "rgba(43, 33, 21, 0.52)"
+          : "rgba(0, 0, 0, 0)",
+      )
       .setDepth(40),
   );
 

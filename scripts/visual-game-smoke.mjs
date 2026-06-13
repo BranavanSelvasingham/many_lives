@@ -1401,6 +1401,35 @@ async function assertCameraPanContractGuard() {
   );
 }
 
+async function assertBoardingHouseInteriorVisualGuard() {
+  const [streetSource, smokeSource] = await Promise.all([
+    readFile(STREET_APP_PATH, "utf8"),
+    readFile(VISUAL_SMOKE_PATH, "utf8"),
+  ]);
+
+  assert.ok(
+    streetSource.includes("function drawBoardingHouseInteriorAtmosphere") &&
+      streetSource.includes('space.id !== "interior:boarding-house"'),
+    "Morrow House must keep a boarding-house-specific interior atmosphere pass.",
+  );
+  assert.ok(
+    streetSource.includes("function drawBoardingHouseInteriorObjectDetail") &&
+      streetSource.includes('object.id.startsWith("boarding-house-")'),
+    "Morrow House furniture must keep boarding-house-specific readable object details.",
+  );
+  assert.match(
+    streetSource,
+    /space\.id === "interior:boarding-house"[\s\S]*?fontSize:[\s\S]*?"14px"[\s\S]*?setOrigin\([\s\S]*?0\.5/,
+    "The Morrow House title must stay smaller and centered so it does not crop at first interior framing.",
+  );
+  assert.ok(
+    smokeSource.includes("runInteriorCameraCheck") &&
+      smokeSource.includes("interior-camera.png") &&
+      smokeSource.includes("assertBoardingHouseInteriorVisualGuard"),
+    "Visual smoke must keep a screenshot-backed interior camera check plus the Morrow House visual guard.",
+  );
+}
+
 function readNumericConst(source, name) {
   const match = source.match(
     new RegExp(`const ${name} = ([0-9_.]+);`),
@@ -3286,6 +3315,7 @@ async function main() {
   await assertAmbientScaleGuard();
   await assertWatchModeFeelGuard();
   await assertCameraPanContractGuard();
+  await assertBoardingHouseInteriorVisualGuard();
   const webServer = await ensureStack();
   const devtoolsPort = await findFreePort();
   const session = await launchBrowser(devtoolsPort);
