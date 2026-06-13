@@ -1047,6 +1047,10 @@ describe("street reasoning authority", () => {
       new URL("../src/sim/rowanCognitionNarratives.ts", import.meta.url),
       "utf8",
     );
+    const modelSource = readFileSync(
+      new URL("../src/sim/rowanCognitionModel.ts", import.meta.url),
+      "utf8",
+    );
 
     for (const notebookCopy of [
       ROWAN_NOTEBOOK_FIELD_NOTE_UNCERTAINTY,
@@ -1065,13 +1069,57 @@ describe("street reasoning authority", () => {
 
     expect(cognitionSource).toContain("rowanNotebookPlanText");
     expect(cognitionSource).toContain("rowanNotebookUncertaintyForBelief");
-    expect(cognitionSource).toContain("rowanNotebookUsesRecoveryRestNeed");
+    expect(narrativesSource).toContain("rowanNotebookUsesRecoveryRestNeed");
+    expect(modelSource).toContain("rowanNotebookUsesRecoveryRestNeed");
     expect(cognitionSource).not.toContain("function notebookPlanText");
     expect(cognitionSource).not.toContain("function uncertaintyForBelief");
     expect(cognitionSource).not.toContain(
       "function isPostFirstAfternoonHomeRecoveryEntry",
     );
     expect(cognitionSource).not.toContain("function objectiveIsNiaBlockLead");
+  });
+
+  it("keeps Rowan cognition need and belief model data outside cognition control flow", () => {
+    const cognitionSource = readFileSync(
+      new URL("../src/sim/rowanCognition.ts", import.meta.url),
+      "utf8",
+    );
+    const modelSource = readFileSync(
+      new URL("../src/sim/rowanCognitionModel.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const modelCopyOrMarker of [
+      "Keep a stable room",
+      "Find steady income",
+      "Stop feeling like a stranger",
+      "Learn how South Quay fits together",
+      "Keep enough energy to follow through",
+      "belief-first-afternoon-field-note",
+      "belief-mara-room",
+      "belief-ada-work",
+      "belief-tomas-work",
+      "belief-jo-tools",
+      "belief-pump-standing",
+      "belief-nia-current-lead",
+      "belief-nia-people",
+      "Mara is the person most likely to tell Rowan what keeps a room at Morrow House from turning temporary again.",
+      "Ada may have paid work at Kettle & Lamp if Rowan shows up before the lunch crowd fills the cafe.",
+      "Tomas may have yard work when the freight window is open and Rowan sounds reliable enough to bother with.",
+      "Jo is the clearest place to turn coins into the right tool when Rowan finally knows what he needs.",
+      "Jo's clue points Rowan toward Nia before the block jam turns into someone else's problem.",
+      "Nia seems like the kind of person who can explain who matters before Rowan wastes a whole afternoon guessing.",
+    ]) {
+      expect(modelSource).toContain(modelCopyOrMarker);
+      expect(cognitionSource).not.toContain(modelCopyOrMarker);
+    }
+
+    expect(cognitionSource).toContain("buildRowanNeeds");
+    expect(cognitionSource).toContain("selectNotebookBelief");
+    expect(cognitionSource).not.toContain("function buildRowanNeeds");
+    expect(cognitionSource).not.toContain("function buildRowanBeliefs");
+    expect(cognitionSource).not.toContain("function notebookBeliefScore");
+    expect(cognitionSource).not.toContain("function objectiveMatchesBelief");
   });
 
   it("keeps first-afternoon route outcome and step metadata in scaffold data, not objective-state control flow", () => {
