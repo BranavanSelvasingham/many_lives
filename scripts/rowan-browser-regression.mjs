@@ -63,6 +63,12 @@ const FIXED_DEVTOOLS_PORT = process.env.MANY_LIVES_BROWSER_DEVTOOLS_PORT
 const CDP_WAIT_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_CDP_WAIT_TIMEOUT_MS ?? "30000",
 );
+const CHILD_PROCESS_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_CHILD_PROCESS_TIMEOUT_MS ?? "120000",
+);
+const CLEANUP_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_CLEANUP_TIMEOUT_MS ?? "10000",
+);
 const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_APP_READY_TIMEOUT_MS ?? "120000",
 );
@@ -227,9 +233,14 @@ async function buildAvailableFallbackWebBase(baseUrl) {
 
 async function closeChildProcess(child) {
   if (!child || child.exitCode !== null || child.signalCode !== null) {
-    return;
+    return {
+      exitCode: child?.exitCode ?? null,
+      signalCode: child?.signalCode ?? null,
+      status: "already-closed",
+    };
   }
 
+  const pid = child.pid ?? null;
   signalChildProcess(child, "SIGTERM");
   await Promise.race([
     once(child, "close").catch(() => undefined),
@@ -242,9 +253,20 @@ async function closeChildProcess(child) {
     await Promise.race([closed, sleep(1_500)]);
   }
 
+  const status =
+    child.exitCode !== null || child.signalCode !== null ? "closed" : "detached";
+
   if (child.exitCode === null && child.signalCode === null) {
+    destroyChildProcessStreams(child);
     child.unref?.();
   }
+
+  return {
+    exitCode: child.exitCode,
+    pid,
+    signalCode: child.signalCode,
+    status,
+  };
 }
 
 function signalChildProcess(child, signal) {
@@ -262,6 +284,14 @@ function signalChildProcess(child, signal) {
   child.kill(signal);
 }
 
+function destroyChildProcessStreams(child) {
+  for (const stream of [child.stdin, child.stdout, child.stderr, ...(child.stdio ?? [])]) {
+    try {
+      stream?.destroy?.();
+    } catch {}
+  }
+}
+
 async function runProcess(command, args, errorPrefix) {
   const child = spawn(command, args, {
     cwd: process.cwd(),
@@ -276,10 +306,23 @@ async function runProcess(command, args, errorPrefix) {
     }
   });
 
-  const exitCode = await new Promise((resolve, reject) => {
+  const exitPromise = new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", resolve);
   });
+  let exitCode;
+  try {
+    exitCode = await withTimeout(
+      exitPromise,
+      CHILD_PROCESS_TIMEOUT_MS,
+      `${errorPrefix} timed out after ${CHILD_PROCESS_TIMEOUT_MS}ms.`,
+    );
+  } catch (error) {
+    await closeChildProcess(child);
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}\n${stderr}`,
+    );
+  }
 
   if (exitCode !== 0) {
     throw new Error(`${errorPrefix} exited with ${exitCode}.\n${stderr}`);
@@ -531,7 +574,7 @@ class CdpSession {
       this.socket?.destroy();
     } catch {}
 
-    await closeChildProcess(this.browser);
+    return closeChildProcess(this.browser);
   }
 
   async evaluate(expression) {
@@ -10175,6 +10218,84 @@ function escapeFfmpegConcatPath(filePath) {
   return filePath.replace(/'/g, "'\\''");
 }
 
+function buildInterimVisualEvidence({ overlayChecks, timeline }) {
+  return {
+    manifestPath: null,
+    recordingPath: null,
+    screenshots: timeline
+      .filter((entry) => entry.screenshot)
+      .map((entry) => ({
+        label: entry.label,
+        path: entry.screenshot,
+        type: "gameplay",
+      })),
+    overlays: overlayChecks.map((entry) => ({
+      label: entry.label,
+      path: entry.screenshot,
+      type: "overlay",
+    })),
+  };
+}
+
+function buildRegressionSummary({
+  autoplayObservation,
+  evidence,
+  game,
+  inhabitGameplay,
+  independentNpcActionEvidence,
+  movementAudit,
+  observeOnlyCarryForward,
+  outputStatus,
+  overlayChecks,
+  screenshotCount,
+  timeline,
+  timelinePath,
+}) {
+  return {
+    browserDriver: BROWSER_DRIVER,
+    autoplayObservation,
+    evidence,
+    finalGameId: game.id,
+    finalizationStatus: outputStatus,
+    finalState: {
+      clock: game.currentTime,
+      energy: game.player.energy,
+      fieldNote: game.firstAfternoon?.fieldNote ?? null,
+      leadFieldNote: game.firstAfternoon?.leadFieldNote ?? null,
+      locationId: game.player.currentLocationId,
+      money: game.player.money,
+      objective: game.player.objective?.text ?? null,
+    },
+    inhabitGameplay,
+    independentNpcActionEvidence,
+    observeOnlyCarryForward,
+    npcDiagnostics: movementAudit.npcPatrols,
+    outputDir: OUTPUT_DIR,
+    overlayChecks,
+    playerLocationGeometryEvidence: movementAudit.playerLocationGeometrySamples,
+    routeDiagnostics: movementAudit.playerRoutes,
+    scheduledNpcContinuityGaps: movementAudit.scheduledNpcContinuityGaps,
+    scheduledNpcDiagnostics: movementAudit.scheduledNpcRoutes,
+    scheduledNpcLocationChanges: movementAudit.scheduledNpcLocationChanges,
+    scheduledNpcMarkerSamples: movementAudit.scheduledNpcMarkerSamples,
+    scheduledNpcVisualCues: movementAudit.scheduledNpcVisualCueSamples,
+    screenshotCount,
+    steps: timeline.map((entry) => ({
+      activeConversation: entry.activeConversation?.npcId ?? null,
+      activeEvents: entry.cityEvents.active.map((event) => event.id),
+      clock: entry.clock.label,
+      label: entry.label,
+      locationId: entry.location.id,
+      screenshot: entry.screenshot,
+    })),
+    timelinePath,
+  };
+}
+
+async function writeRegressionSummary(summaryPath, summary) {
+  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+}
+
 function buildRegressionSteps(gameRef) {
   return [
     {
@@ -10290,6 +10411,8 @@ async function main() {
   let autoplayObservation = null;
   let observeOnlyCarryForward = null;
   let inhabitGameplay = null;
+  let browserChecksCompleted = false;
+  let cleanupError = null;
   const session = USE_CHROME_DRIVER
     ? await launchBrowserSession(browserUrl(game.id))
     : null;
@@ -10458,13 +10581,72 @@ async function main() {
         [],
         `Browser emitted runtime/log errors: ${JSON.stringify(session.pageErrors, null, 2)}`,
       );
+      browserChecksCompleted = true;
     }
   } finally {
+    if (browserChecksCompleted) {
+      try {
+        const interimMovementAuditTimeline = timeline.filter(
+          (entry) => entry.label !== "independent-npc-resolution",
+        );
+        const interimMovementAudit = buildMovementAuditSummary(
+          interimMovementAuditTimeline,
+        );
+        const interimSummary = buildRegressionSummary({
+          autoplayObservation,
+          evidence: buildInterimVisualEvidence({ overlayChecks, timeline }),
+          game,
+          inhabitGameplay,
+          independentNpcActionEvidence: buildIndependentNpcActionEvidence(timeline),
+          movementAudit: interimMovementAudit,
+          observeOnlyCarryForward,
+          outputStatus: "browser-checks-complete-cleanup-pending",
+          overlayChecks,
+          screenshotCount: timeline.filter((entry) => entry.screenshot).length,
+          timeline,
+          timelinePath,
+        });
+        await writeRegressionSummary(summaryPath, interimSummary);
+        traceRegression("summary-written:browser-checks-complete-cleanup-pending");
+      } catch (error) {
+        await writeFile(
+          path.join(OUTPUT_DIR, "summary-finalization-error.txt"),
+          `${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+          "utf8",
+        );
+      }
+    }
+
     traceRegression("closing-session");
-    await session?.close();
+    try {
+      await withTimeout(
+        Promise.resolve(session?.close()),
+        CLEANUP_TIMEOUT_MS,
+        `Timed out closing Chrome after ${CLEANUP_TIMEOUT_MS}ms.`,
+      );
+    } catch (error) {
+      cleanupError = error;
+    }
     traceRegression("closing-web-server");
-    await closeChildProcess(webServer);
+    try {
+      await withTimeout(
+        closeChildProcess(webServer),
+        CLEANUP_TIMEOUT_MS,
+        `Timed out closing local web server after ${CLEANUP_TIMEOUT_MS}ms.`,
+      );
+    } catch (error) {
+      cleanupError ??= error;
+    }
     traceRegression("closed");
+  }
+
+  if (cleanupError) {
+    await writeFile(
+      path.join(OUTPUT_DIR, "cleanup-error.txt"),
+      `${cleanupError instanceof Error ? (cleanupError.stack ?? cleanupError.message) : String(cleanupError)}\n`,
+      "utf8",
+    );
+    throw cleanupError;
   }
 
   const byLabel = Object.fromEntries(
@@ -10812,45 +10994,21 @@ async function main() {
     overlayChecks,
     timeline,
   });
-  const summary = {
-    browserDriver: BROWSER_DRIVER,
+  const summary = buildRegressionSummary({
     autoplayObservation,
     evidence,
-    finalGameId: game.id,
-    finalState: {
-      clock: game.currentTime,
-      energy: game.player.energy,
-      fieldNote: game.firstAfternoon?.fieldNote ?? null,
-      leadFieldNote: game.firstAfternoon?.leadFieldNote ?? null,
-      locationId: game.player.currentLocationId,
-      money: game.player.money,
-      objective: game.player.objective?.text ?? null,
-    },
+    game,
     inhabitGameplay,
     independentNpcActionEvidence,
+    movementAudit,
     observeOnlyCarryForward,
-    npcDiagnostics: movementAudit.npcPatrols,
-    outputDir: OUTPUT_DIR,
+    outputStatus: "passed",
     overlayChecks,
-    playerLocationGeometryEvidence: movementAudit.playerLocationGeometrySamples,
-    routeDiagnostics: movementAudit.playerRoutes,
-    scheduledNpcContinuityGaps: movementAudit.scheduledNpcContinuityGaps,
-    scheduledNpcDiagnostics: movementAudit.scheduledNpcRoutes,
-    scheduledNpcLocationChanges: movementAudit.scheduledNpcLocationChanges,
-    scheduledNpcMarkerSamples: movementAudit.scheduledNpcMarkerSamples,
-    scheduledNpcVisualCues: movementAudit.scheduledNpcVisualCueSamples,
     screenshotCount,
-    steps: timeline.map((entry) => ({
-      activeConversation: entry.activeConversation?.npcId ?? null,
-      activeEvents: entry.cityEvents.active.map((event) => event.id),
-      clock: entry.clock.label,
-      label: entry.label,
-      locationId: entry.location.id,
-      screenshot: entry.screenshot,
-    })),
+    timeline,
     timelinePath,
-  };
-  await writeFile(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  });
+  await writeRegressionSummary(summaryPath, summary);
 
   process.stdout.write(
     `[many-lives] Rowan ${USE_CHROME_DRIVER ? "Chrome" : "in-app probe"} regression passed.\n[many-lives] Web base: ${getWebBase()}\n[many-lives] Game URL: ${browserUrl(game.id)}\n[many-lives] Output: ${OUTPUT_DIR}\n[many-lives] Timeline: ${timelinePath}\n[many-lives] Summary: ${summaryPath}\n${evidence.recordingPath ? `[many-lives] Recording: ${evidence.recordingPath}\n` : ""}`,
