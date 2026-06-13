@@ -178,6 +178,23 @@ const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where Rowan can let today's standing settle before he runs himself flat";
 const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where today's standing can turn into a steadier foothold";
+const ROWAN_NOTEBOOK_FIELD_NOTE_UNCERTAINTY =
+  "Which live pressure deserves Rowan's recovered hour: yard work, the pump, or another lead?";
+const ROWAN_NOTEBOOK_JO_TOOLS_UNCERTAINTY =
+  "Which local problem is worth spending scarce money on?";
+const ROWAN_NOTEBOOK_NIA_UNCERTAINTY =
+  "What does Nia know about the block before it jams?";
+const ROWAN_NOTEBOOK_PUMP_UNCERTAINTY =
+  "Can Rowan turn a small fix into a real local foothold?";
+const ROWAN_NOTEBOOK_NIA_RECOVERY_PLAN =
+  "Recover before following Nia's block-jam lead.";
+const ROWAN_NOTEBOOK_RECOVERY_PLAN =
+  "Rest at Morrow House long enough to recover, then choose the yard work, pump, or live pressure that still matters.";
+const ROWAN_NOTEBOOK_PUMP_PLAN =
+  "Handle the Morrow Yard pump before the house has to absorb it without Rowan.";
+const ROWAN_NOTEBOOK_YARD_PLAN =
+  "Follow the yard work window before it closes.";
+const ROWAN_NOTEBOOK_STALE_ENTRY_FALLBACK = "Ask the first useful question.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -845,6 +862,42 @@ describe("street reasoning authority", () => {
       "objectiveRoutePlayerFacingAutonomyRationale",
     );
     expect(engineSource).toContain("objectiveRouteActionLocationReason");
+  });
+
+  it("keeps Rowan notebook route copy in a narrative helper, not cognition control flow", () => {
+    const cognitionSource = readFileSync(
+      new URL("../src/sim/rowanCognition.ts", import.meta.url),
+      "utf8",
+    );
+    const narrativesSource = readFileSync(
+      new URL("../src/sim/rowanCognitionNarratives.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const notebookCopy of [
+      ROWAN_NOTEBOOK_FIELD_NOTE_UNCERTAINTY,
+      ROWAN_NOTEBOOK_JO_TOOLS_UNCERTAINTY,
+      ROWAN_NOTEBOOK_NIA_UNCERTAINTY,
+      ROWAN_NOTEBOOK_PUMP_UNCERTAINTY,
+      ROWAN_NOTEBOOK_NIA_RECOVERY_PLAN,
+      ROWAN_NOTEBOOK_RECOVERY_PLAN,
+      ROWAN_NOTEBOOK_PUMP_PLAN,
+      ROWAN_NOTEBOOK_YARD_PLAN,
+      ROWAN_NOTEBOOK_STALE_ENTRY_FALLBACK,
+    ]) {
+      expect(narrativesSource).toContain(notebookCopy);
+      expect(cognitionSource).not.toContain(notebookCopy);
+    }
+
+    expect(cognitionSource).toContain("rowanNotebookPlanText");
+    expect(cognitionSource).toContain("rowanNotebookUncertaintyForBelief");
+    expect(cognitionSource).toContain("rowanNotebookUsesRecoveryRestNeed");
+    expect(cognitionSource).not.toContain("function notebookPlanText");
+    expect(cognitionSource).not.toContain("function uncertaintyForBelief");
+    expect(cognitionSource).not.toContain(
+      "function isPostFirstAfternoonHomeRecoveryEntry",
+    );
+    expect(cognitionSource).not.toContain("function objectiveIsNiaBlockLead");
   });
 
   it("keeps first-afternoon route outcome and step metadata in scaffold data, not objective-state control flow", () => {

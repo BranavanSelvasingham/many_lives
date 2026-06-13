@@ -5,6 +5,11 @@ import type {
   RowanAutonomyStepKind,
   StreetGameState,
 } from "../street-sim/types.js";
+import {
+  rowanNotebookPlanText,
+  rowanNotebookUncertaintyForBelief,
+  rowanNotebookUsesRecoveryRestNeed,
+} from "./rowanCognitionNarratives.js";
 
 export type RowanNeedKey =
   | "shelter"
@@ -102,10 +107,10 @@ export function buildRowanCognitionState(
       : primaryNeed
         ? `${needStatusLabel(primaryNeed.status)}: ${primaryNeed.reason}`
         : "Unsettled.",
-    plan: notebookPlanText(world, nextMove),
+    plan: rowanNotebookPlanText(world, nextMove),
     title: notebookNeed?.label ?? "First page of the morning",
     uncertainty:
-      uncertaintyForBelief(currentBelief) ??
+      rowanNotebookUncertaintyForBelief(currentBelief?.id) ??
       uncertaintyForNeed(notebookNeed?.key) ??
       notebookNeed?.reason ??
       "Who can turn tonight's room into tomorrow's foothold?",
@@ -539,7 +544,7 @@ function selectNotebookNeed(
     objectiveFocus === "rest" ||
     objectiveRouteKey === "rest-home" ||
     nextMove?.actionId === "rest:home" ||
-    isPostFirstAfternoonHomeRecoveryEntry(world, nextMove)
+    rowanNotebookUsesRecoveryRestNeed(world, nextMove)
   ) {
     return cognition.needs.find((need) => need.key === "rest");
   }
@@ -576,84 +581,6 @@ function needKeyForTopic(
     default:
       return undefined;
   }
-}
-
-function uncertaintyForBelief(belief?: RowanBelief) {
-  switch (belief?.id) {
-    case "belief-first-afternoon-field-note":
-      return "Which live pressure deserves Rowan's recovered hour: yard work, the pump, or another lead?";
-    case "belief-nia-current-lead":
-      return "What does Nia know about the block before it jams?";
-    case "belief-jo-tools":
-      return "Which local problem is worth spending scarce money on?";
-    case "belief-pump-standing":
-      return "Can Rowan turn a small fix into a real local foothold?";
-    default:
-      return undefined;
-  }
-}
-
-function notebookPlanText(world: StreetGameState, nextMove?: RowanNextMove) {
-  if (objectiveIsNiaBlockLead(world) && nextMove?.actionId === "rest:home") {
-    return "Recover before following Nia's block-jam lead.";
-  }
-
-  if (
-    world.player.objective?.routeKey === "rest-home" ||
-    world.player.objective?.focus === "rest" ||
-    nextMove?.actionId === "rest:home" ||
-    isPostFirstAfternoonHomeRecoveryEntry(world, nextMove)
-  ) {
-    return "Rest at Morrow House long enough to recover, then choose the yard work, pump, or live pressure that still matters.";
-  }
-
-  if (world.player.objective?.routeKey === "work-yard") {
-    return nextMove?.text && !isStaleOpeningEntryText(nextMove.text)
-      ? nextMove.text
-      : "Follow the yard work window before it closes.";
-  }
-
-  if (world.player.objective?.routeKey === "help-pump") {
-    return nextMove?.text && !isStaleOpeningEntryText(nextMove.text)
-      ? nextMove.text
-      : "Handle the Morrow Yard pump before the house has to absorb it without Rowan.";
-  }
-
-  if (nextMove?.text && !isStaleOpeningEntryText(nextMove.text)) {
-    return nextMove.text;
-  }
-
-  return world.rowanAutonomy?.label &&
-    !isStaleOpeningEntryText(world.rowanAutonomy.label)
-    ? world.rowanAutonomy.label
-    : "Ask the first useful question.";
-}
-
-function isPostFirstAfternoonHomeRecoveryEntry(
-  world: StreetGameState,
-  nextMove?: RowanNextMove,
-) {
-  return (
-    Boolean(world.firstAfternoon?.completedAt) &&
-    world.player.objective?.routeKey === "rest-home" &&
-    nextMove?.actionId === "enter:boarding-house"
-  );
-}
-
-function isStaleOpeningEntryText(text: string) {
-  return /^Enter Morrow House$/i.test(text.trim());
-}
-
-function objectiveIsNiaBlockLead(world: StreetGameState) {
-  const objective = world.player.objective;
-  if (!objective) {
-    return false;
-  }
-
-  return (
-    /\bnia\b/.test(objective.text.toLowerCase()) &&
-    /\b(block|jam|cart|square)\b/.test(objective.text.toLowerCase())
-  );
 }
 
 function confidenceAdjective(confidence: RowanBeliefConfidence) {
