@@ -109,6 +109,13 @@ import {
   buildStreetBrowserProbeJson,
   type StreetBrowserMovementDiagnostics,
 } from "@/lib/street/browserProbe";
+import {
+  buildFirstAfternoonActiveConversationContinueCopy,
+  buildFirstAfternoonOpeningManualContinueCopy,
+  buildFirstAfternoonOpeningMapAgencyDetail,
+  buildFirstAfternoonOpeningWatchContinueCopy,
+  buildMaraLeadWatchContinueCopy,
+} from "@/lib/street/rowanFallbackNarrative";
 import { buildStreetOverlayStyle } from "@/lib/street/streetOverlayStyles";
 import {
   buildNpcPatrolRoute,
@@ -5339,11 +5346,12 @@ function buildMapAgencyDetail({
     return compactMapAgencyCopy(`Goal: ${pendingMove.objectiveText}`, 58);
   }
 
-  if (
+  const firstAfternoonOpeningDetail = buildFirstAfternoonOpeningMapAgencyDetail(
     isFirstAfternoonOpening(game) &&
-    autonomy.actionId === "enter:boarding-house"
-  ) {
-    return "Rowan is stepping inside Morrow House to ask Mara.";
+      autonomy.actionId === "enter:boarding-house",
+  );
+  if (firstAfternoonOpeningDetail) {
+    return firstAfternoonOpeningDetail;
   }
 
   if (autonomy.intent?.reason) {
@@ -5376,8 +5384,10 @@ function buildWatchModePrimaryContinueCopy({
   targetLocation: LocationState | null;
   targetNpc: NpcState | null;
 }) {
-  if (firstAfternoonOpening) {
-    return "Rowan is stepping inside Morrow House to ask Mara.";
+  const firstAfternoonOpeningCopy =
+    buildFirstAfternoonOpeningWatchContinueCopy(firstAfternoonOpening);
+  if (firstAfternoonOpeningCopy) {
+    return firstAfternoonOpeningCopy;
   }
 
   const label = autonomy.label.trim();
@@ -5420,8 +5430,9 @@ function buildWatchModePrimaryContinueCopy({
     return `Rowan is stepping into ${targetLocationName}.`;
   }
 
-  if (/kettle|cafe|ada/i.test(label)) {
-    return "Rowan is turning Mara's lead toward Kettle & Lamp.";
+  const maraLeadCopy = buildMaraLeadWatchContinueCopy({ label });
+  if (maraLeadCopy) {
+    return maraLeadCopy;
   }
 
   if (autonomy.mode === "moving" && targetLocationName) {
@@ -5452,8 +5463,10 @@ function buildWatchModePassiveStatusCopy({
   firstAfternoonCompletionCanAdvance: boolean;
   primaryContinueCopy: string;
 }) {
-  if (firstAfternoonOpening) {
-    return "Rowan is stepping inside Morrow House to ask Mara.";
+  const firstAfternoonOpeningCopy =
+    buildFirstAfternoonOpeningWatchContinueCopy(firstAfternoonOpening);
+  if (firstAfternoonOpeningCopy) {
+    return firstAfternoonOpeningCopy;
   }
 
   if (activeConversationNpc) {
@@ -5490,8 +5503,10 @@ function buildManualPrimaryContinueCopy({
   targetLocation: LocationState | null;
   targetNpc: NpcState | null;
 }) {
-  if (firstAfternoonOpening) {
-    return "Enter Morrow House and ask Mara.";
+  const firstAfternoonOpeningCopy =
+    buildFirstAfternoonOpeningManualContinueCopy(firstAfternoonOpening);
+  if (firstAfternoonOpeningCopy) {
+    return firstAfternoonOpeningCopy;
   }
 
   const label = autonomy.label.trim();
@@ -5545,16 +5560,12 @@ function buildActiveConversationContinueCopy({
   npc: NpcState | null;
   rowanAutoplayEnabled: boolean;
 }) {
-  if (npc?.id === "npc-mara") {
-    return rowanAutoplayEnabled
-      ? "Let Mara's lead about Ada and Kettle & Lamp land."
-      : "Let Mara's lead land.";
-  }
-
-  if (npc?.id === "npc-ada") {
-    return rowanAutoplayEnabled
-      ? "Let Ada answer whether the lunch shift is real."
-      : "Let Ada's answer land.";
+  const firstAfternoonCopy = buildFirstAfternoonActiveConversationContinueCopy({
+    npcId: npc?.id,
+    rowanAutoplayEnabled,
+  });
+  if (firstAfternoonCopy) {
+    return firstAfternoonCopy;
   }
 
   if (npc) {
