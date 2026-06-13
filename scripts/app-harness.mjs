@@ -27,6 +27,12 @@ const SUMMARY_PATH = path.join(OUTPUT_DIR, "summary.json");
 const COMMAND_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_APP_HARNESS_COMMAND_TIMEOUT_MS ?? "1800000",
 );
+const COMMAND_COMPLETION_GRACE_MS = Number(
+  process.env.MANY_LIVES_APP_HARNESS_COMPLETION_GRACE_MS ?? "15000",
+);
+const COMMAND_COMPLETION_POLL_MS = Number(
+  process.env.MANY_LIVES_APP_HARNESS_COMPLETION_POLL_MS ?? "1000",
+);
 
 const profiles = new Set(["quick", "full", "ci"]);
 
@@ -184,6 +190,8 @@ function buildSteps() {
           "playtest:inhabit:browser",
         ], {
           MANY_LIVES_BROWSER_PLAYTEST_DIR: BROWSER_PLAYTEST_DIR,
+        }, {
+          completionProbe: readRowanBrowserCompletion,
         }),
         inlineStep("inhabit gameplay artifact check", assertRowanBrowserArtifacts),
       );
@@ -205,8 +213,8 @@ function buildSteps() {
   return allSteps;
 }
 
-function commandStep(name, command, args, env = {}) {
-  return { kind: "command", name, command, args, env };
+function commandStep(name, command, args, env = {}, options = {}) {
+  return { kind: "command", name, command, args, env, ...options };
 }
 
 function inlineStep(name, action) {
@@ -250,10 +258,24 @@ async function runCommandStep(step) {
   let exitCode = null;
   let timeoutHit = false;
   let error = null;
+  let artifactCompletion = null;
+  let forcedCloseAfterCompletion = false;
 
   try {
+    const racedPromises = [
+      exitPromise.then((code) => ({ code, type: "exit" })),
+    ];
+    if (step.completionProbe) {
+      racedPromises.push(
+        waitForCommandCompletion(step, child).then((completion) => ({
+          completion,
+          type: "completion",
+        })),
+      );
+    }
+
     const outcome = await withTimeout(
-      exitPromise,
+      Promise.race(racedPromises),
       COMMAND_TIMEOUT_MS,
       "timeout",
     ).catch((caught) => {
@@ -270,8 +292,28 @@ async function runCommandStep(step) {
       log.write(message);
       await closeChildProcess(child);
       exitCode = child.exitCode;
+    } else if (outcome.type === "completion" && outcome.completion) {
+      artifactCompletion = outcome.completion;
+      const closedAfterCompletion = await Promise.race([
+        exitPromise.then((code) => ({ code, type: "exit" })),
+        sleep(COMMAND_COMPLETION_GRACE_MS).then(() => ({ type: "timeout" })),
+      ]);
+
+      if (closedAfterCompletion.type === "exit") {
+        exitCode = closedAfterCompletion.code;
+      } else {
+        forcedCloseAfterCompletion = true;
+        const message =
+          `[many-lives:harness] ${step.name} wrote completed artifacts ` +
+          `(${artifactCompletion.reason}) but the child process did not close ` +
+          `within ${COMMAND_COMPLETION_GRACE_MS}ms; terminating process group.\n`;
+        process.stderr.write(message);
+        log.write(message);
+        await closeChildProcess(child);
+        exitCode = artifactCompletion.status === "passed" ? 0 : child.exitCode;
+      }
     } else {
-      exitCode = outcome;
+      exitCode = outcome.type === "exit" ? outcome.code : await exitPromise;
     }
   } catch (caught) {
     error = caught instanceof Error ? caught : new Error(String(caught));
@@ -285,11 +327,23 @@ async function runCommandStep(step) {
     name: step.name,
     kind: step.kind,
     command: [step.command, ...step.args],
-    status: exitCode === 0 && !timeoutHit && !error ? "passed" : "failed",
+    status:
+      artifactCompletion && forcedCloseAfterCompletion
+        ? artifactCompletion.status
+        : exitCode === 0 && !timeoutHit && !error
+          ? "passed"
+          : "failed",
     exitCode,
     durationMs,
     logPath,
   };
+  if (artifactCompletion) {
+    result.artifactCompletion = artifactCompletion;
+  }
+  if (forcedCloseAfterCompletion) {
+    result.forcedCloseAfterCompletion = true;
+    result.completionGraceMs = COMMAND_COMPLETION_GRACE_MS;
+  }
   if (timeoutHit) {
     result.timedOut = true;
     result.timeoutMs = COMMAND_TIMEOUT_MS;
@@ -303,6 +357,58 @@ async function runCommandStep(step) {
   );
 
   return result;
+}
+
+async function waitForCommandCompletion(step, child) {
+  while (child.exitCode === null && child.signalCode === null) {
+    const completion = await step.completionProbe();
+    if (completion) {
+      return completion;
+    }
+    await sleep(COMMAND_COMPLETION_POLL_MS);
+  }
+
+  return null;
+}
+
+async function readRowanBrowserCompletion() {
+  const summaryPath = path.join(BROWSER_PLAYTEST_DIR, "summary.json");
+  const summary = await readJsonIfPresent(summaryPath);
+  const finalizationStatus = summary?.finalizationStatus;
+  if (typeof finalizationStatus !== "string") {
+    return null;
+  }
+
+  const failed =
+    finalizationStatus.startsWith("failed:") ||
+    finalizationStatus.includes("failed-cleanup");
+  if (finalizationStatus !== "passed" && !failed) {
+    return null;
+  }
+
+  const diagnosticsPath = path.join(
+    BROWSER_PLAYTEST_DIR,
+    "process-exit-diagnostics.json",
+  );
+  const processExitDiagnostics = await readJsonIfPresent(diagnosticsPath);
+
+  return {
+    diagnosticsPath: processExitDiagnostics ? diagnosticsPath : null,
+    finalizationStatus,
+    processExitStatus: processExitDiagnostics?.status ?? null,
+    reason: `rowan-browser summary finalizationStatus=${finalizationStatus}`,
+    screenshotCount: summary.screenshotCount ?? null,
+    status: failed ? "failed" : "passed",
+    summaryPath,
+  };
+}
+
+async function readJsonIfPresent(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, "utf8"));
+  } catch {
+    return null;
+  }
 }
 
 async function closeChildProcess(child) {
