@@ -11,6 +11,7 @@ import {
   SimulationEngine,
   playerFacingAutonomyRationale,
 } from "../src/sim/engine.js";
+import { buildRowanVisibleDecisionArtifact } from "../../many-lives-web/src/lib/street/rowanDecisionArtifact.js";
 import { objectiveRouteMoveRationaleForOutcome } from "../src/sim/objectiveScaffolds.js";
 import { buildRowanCognition } from "../src/sim/rowanCognition.js";
 import { runRowanLoopSmoke } from "../src/sim/rowanLoopSmoke.js";
@@ -3356,7 +3357,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.firstAfternoon?.leadFieldNote).toMatchObject({
       evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
       learned: expect.stringContaining("Mara's Kettle & Lamp lead is real"),
-      next: expect.stringContaining("Ada's offer is now a live choice"),
+      next: expect.stringContaining("Ada's offer is now a current choice"),
     });
     expect(world.firstAfternoon?.fieldNote).toBeUndefined();
     expect(
@@ -4902,6 +4903,21 @@ describe("SimulationEngine street slice", () => {
     expect(
       world.rowanAutonomy.planningTrace?.selectedLegalBacking?.source,
     ).toMatch(/legal-action/);
+    const consideredText = JSON.stringify(
+      world.rowanAutonomy.planningTrace?.considered ?? [],
+    );
+    const rejectedText = JSON.stringify(
+      world.rowanAutonomy.planningTrace?.rejected ?? [],
+    );
+    expect(consideredText).toMatch(/yard|Freight|North Crane|Tomas/i);
+    expect(`${consideredText} ${rejectedText}`).toMatch(
+      /pump|wrench|Morrow Yard|Leaking hand pump/i,
+    );
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.find(
+        (option) => option.status === "selected",
+      )?.provenance,
+    ).not.toMatch(/route-scaffold|stale-predicate/);
     expect(
       [
         world.player.objective?.routeKey,
@@ -4913,5 +4929,20 @@ describe("SimulationEngine street slice", () => {
         .filter(Boolean)
         .join(" "),
     ).toMatch(/work|tool|help|predicate|job|problem|commitment/i);
+
+    const artifact = buildRowanVisibleDecisionArtifact(world);
+    const artifactText = JSON.stringify(artifact);
+    expect(artifact).toMatchObject({
+      backingSummary: expect.stringMatching(/checked|available|validated/i),
+      constraints: expect.arrayContaining([
+        expect.stringMatching(/North Crane Yard work|Morrow Yard pump/i),
+      ]),
+      selectedAction: expect.any(String),
+      sourceSummary: expect.stringMatching(/checked before acting/i),
+    });
+    expect(artifactText).toMatch(/North Crane Yard work|Morrow Yard pump/i);
+    expect(artifactText).not.toMatch(
+      /routeKey|worldPressure|planningTrace|actionId|targetLocationId|live pressure|predicate/i,
+    );
   });
 });

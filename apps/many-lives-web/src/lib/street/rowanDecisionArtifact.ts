@@ -40,6 +40,7 @@ export function buildRowanVisibleDecisionArtifact(
     autonomyReason: game.rowanAutonomy?.intent?.reason,
     autonomySignals: game.rowanAutonomy?.intent?.signals,
     objectiveText: game.player.objective?.text,
+    postFirstAfternoonChoiceSignal: postFirstAfternoonChoiceSignal(game),
     planningTrace: game.rowanAutonomy?.planningTrace,
     recentIndependentResolution: recentIndependentResolutionConstraint(game),
     travelPhase: game.rowanAutonomy?.travelPhase,
@@ -53,6 +54,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomyReason,
   autonomySignals,
   objectiveText,
+  postFirstAfternoonChoiceSignal,
   planningTrace,
   recentIndependentResolution,
   travelPhase,
@@ -63,6 +65,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomyReason?: string;
   autonomySignals?: string[];
   objectiveText?: string;
+  postFirstAfternoonChoiceSignal?: string;
   planningTrace?: PlanningTrace;
   recentIndependentResolution?: string;
   travelPhase?: StreetGameState["rowanAutonomy"]["travelPhase"];
@@ -165,6 +168,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   const constraints = uniqueCompact(
     [
       recentIndependentResolution,
+      postFirstAfternoonChoiceSignal,
       ...(autonomySignals ?? []),
       selectedOption?.pressureLabel,
       selectedStep?.validation,
@@ -194,6 +198,58 @@ export function buildRowanVisibleDecisionArtifactFromState({
       travelPhase,
     ),
   };
+}
+
+function postFirstAfternoonChoiceSignal(game: StreetGameState) {
+  const objectiveRouteKey = game.player.objective?.routeKey;
+  if (
+    !game.firstAfternoon?.completedAt ||
+    !game.firstAfternoon?.completionAcknowledgedAt ||
+    !objectiveRouteKey ||
+    objectiveRouteKey === "first-afternoon"
+  ) {
+    return undefined;
+  }
+
+  const currentHour = game.clock.hour + game.clock.minute / 60;
+  const yardJob = game.jobs.find((job) => job.id === "job-yard-shift");
+  const pumpProblem = game.problems.find(
+    (problem) => problem.id === "problem-pump",
+  );
+  const openings: string[] = [];
+
+  if (
+    yardJob?.discovered &&
+    !yardJob.completed &&
+    !yardJob.missed &&
+    currentHour < yardJob.endHour
+  ) {
+    openings.push("North Crane Yard work");
+  }
+
+  if (pumpProblem?.discovered && pumpProblem.status === "active") {
+    openings.push("the Morrow Yard pump");
+  }
+
+  if (openings.length === 0) {
+    return undefined;
+  }
+
+  if (objectiveRouteKey === "rest-home") {
+    return `Recovering before weighing ${formatChoiceContrast(openings)}.`;
+  }
+
+  return `Weighing ${formatChoiceContrast(openings)}.`;
+}
+
+function formatChoiceContrast(values: string[]) {
+  if (values.length <= 1) {
+    return values[0] ?? "the next useful opening";
+  }
+
+  return `${values.slice(0, -1).join(", ")} against ${
+    values[values.length - 1]
+  }`;
 }
 
 function recentIndependentResolutionConstraint(game: StreetGameState) {

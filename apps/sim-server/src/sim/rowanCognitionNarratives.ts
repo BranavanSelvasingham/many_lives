@@ -7,7 +7,7 @@ interface NotebookNextMoveLike {
 
 const NOTEBOOK_UNCERTAINTY_BY_BELIEF_ID: Record<string, string> = {
   "belief-first-afternoon-field-note":
-    "Which live pressure deserves Rowan's recovered hour: yard work, the pump, or another lead?",
+    "Which current opening deserves Rowan's recovered hour: North Crane Yard work, the Morrow Yard pump, or another lead?",
   "belief-jo-tools":
     "Which local problem is worth spending scarce money on?",
   "belief-nia-current-lead":
@@ -25,7 +25,7 @@ const NOTEBOOK_ROUTE_PLAN_FALLBACKS: Record<string, string> = {
 const NOTEBOOK_NIA_RECOVERY_PLAN =
   "Recover before following Nia's block-jam lead.";
 const NOTEBOOK_RECOVERY_PLAN =
-  "Rest at Morrow House long enough to recover, then choose the yard work, pump, or live pressure that still matters.";
+  "Rest at Morrow House long enough to recover, then choose the yard work, pump, or current opening that still matters.";
 const NOTEBOOK_STALE_ENTRY_FALLBACK = "Ask the first useful question.";
 
 export function rowanNotebookUncertaintyForBelief(beliefId?: string) {

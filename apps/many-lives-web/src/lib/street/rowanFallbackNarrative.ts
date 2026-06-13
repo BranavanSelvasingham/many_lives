@@ -172,7 +172,7 @@ export function buildRowanFallbackNotebookModel({
         "Rest at Morrow House, then weigh the yard work window against the Morrow Yard pump.",
       title: "A foothold, finally",
       uncertainty:
-        "Whether the next useful move is paid yard work, the pump, or another live pressure that changed while Rowan worked.",
+        "Whether the next useful move is paid yard work, the pump, or another current opening that changed while Rowan worked.",
     };
   }
 
