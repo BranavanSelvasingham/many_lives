@@ -17,6 +17,7 @@ import {
   buildNpcConversationResolution,
   buildSocialNextNpcConversationResolution,
 } from "../src/street-sim/npcNarratives.js";
+import { objectiveRouteHasNiaBlockLead } from "../src/sim/objectiveScaffolds.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
@@ -858,10 +859,62 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain("playerFacingRationaleNormalizations");
     expect(scaffoldSource).toContain("actionLocationReasons");
+    expect(scaffoldSource).toContain("objectiveRouteHasNiaBlockLead");
     expect(engineSource).toContain(
       "objectiveRoutePlayerFacingAutonomyRationale",
     );
     expect(engineSource).toContain("objectiveRouteActionLocationReason");
+    expect(engineSource).toContain("objectiveRouteHasNiaBlockLead");
+    expect(engineSource).not.toContain("objectiveIsNiaBlockLead");
+  });
+
+  it("keeps Nia block-lead detection behind scaffold authority", () => {
+    const world = seedStreetGame("game-nia-block-lead-scaffold-authority");
+    const currentObjective = world.player.objective as PlayerObjective;
+
+    const niaBlockLeadObjective: PlayerObjective = {
+      ...currentObjective,
+      focus: "help",
+      routeKey: "people-nia",
+      source: "conversation",
+      text: "Ask Nia where the block is about to jam before the square feels it.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "nia-block-lead",
+          label: "Ask Nia where the block is about to jam",
+          npcId: "npc-nia",
+          status: "open",
+          urgency: 86,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [],
+    };
+    world.player.objective = niaBlockLeadObjective;
+
+    expect(objectiveRouteHasNiaBlockLead(world)).toBe(true);
+
+    world.player.objective = {
+      ...niaBlockLeadObjective,
+      text: "Ask Nia whether she has heard any cafe news.",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "nia-cafe-lead",
+          label: "Ask Nia for cafe news",
+          npcId: "npc-nia",
+          status: "open",
+          urgency: 40,
+        },
+      ],
+    };
+
+    expect(objectiveRouteHasNiaBlockLead(world)).toBe(false);
   });
 
   it("keeps Rowan notebook route copy in a narrative helper, not cognition control flow", () => {

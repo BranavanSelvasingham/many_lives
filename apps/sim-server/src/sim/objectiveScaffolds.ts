@@ -2089,7 +2089,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       },
       {
         matches: (normalizedRationale, { world }) =>
-          objectiveHasNiaBlockLead(world) &&
+          objectiveRouteHasNiaBlockLead(world) &&
           /\b(rest|recover|reset)\b.*\bmorrow house\b/.test(
             normalizedRationale,
           ),
@@ -2100,7 +2100,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         matches: (normalizedRationale) =>
           normalizedRationale.includes("morrow house standing built"),
         rationale: ({ world }) => {
-          if (objectiveHasNiaBlockLead(world)) {
+          if (objectiveRouteHasNiaBlockLead(world)) {
             return "Jo's clue points toward Nia now, so Rowan needs South Quay before the block jam gets worse";
           }
 
@@ -3741,7 +3741,7 @@ function objectiveScaffoldDirectiveForWorld(
   };
 }
 
-function objectiveHasNiaBlockLead(world: StreetGameState) {
+export function objectiveRouteHasNiaBlockLead(world: StreetGameState) {
   const objective = world.player.objective;
   if (!objective) {
     return false;

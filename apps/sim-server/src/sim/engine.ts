@@ -32,6 +32,7 @@ import {
   objectiveRouteFirstAfternoonCompletionOutcome,
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
+  objectiveRouteHasNiaBlockLead,
   objectiveRouteMoveIntent,
   objectiveRoutePlayerFacingAutonomyRationale,
   objectiveRouteMoveRationaleForOutcome,
@@ -3125,7 +3126,7 @@ function autonomyLabelForAction(world: StreetGameState, actionId: string) {
     case "contribute":
       return "Handle house chores";
     case "rest":
-      if (objectiveIsNiaBlockLead(world)) {
+      if (objectiveRouteHasNiaBlockLead(world)) {
         return "Recover before following Nia";
       }
       return "Rest at Morrow House";
@@ -3141,7 +3142,7 @@ function planIsNiaRecoveryBeat(
   plan: Pick<ObjectivePlan, "actionId" | "targetLocationId">,
 ) {
   return (
-    objectiveIsNiaBlockLead(world) &&
+    objectiveRouteHasNiaBlockLead(world) &&
     plan.actionId === "rest:home" &&
     plan.targetLocationId === world.player.homeLocationId
   );
@@ -3236,33 +3237,6 @@ export function playerFacingAutonomyRationale(
     .replace(/move toward the open objective outcome:\s*/i, "")
     .replace(/\bcurrent objective\b/gi, "next promise")
     .replace(/\bfits the next promise\b/gi, "belongs to the next promise");
-}
-
-function objectiveIsNiaBlockLead(world: StreetGameState) {
-  const objective = world.player.objective;
-  if (!objective) {
-    return false;
-  }
-
-  const objectiveText = [
-    objective.text,
-    objective.routeKey,
-    ...(objective.outcomes ?? []).flatMap((outcome) => [
-      outcome.id,
-      outcome.label,
-      outcome.npcId,
-      outcome.evidence,
-      ...(outcome.blockers ?? []),
-    ]),
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  return (
-    /\bnia\b/.test(objectiveText) &&
-    /\b(block|jam|cart|square)\b/.test(objectiveText)
-  );
 }
 
 function buildRowanAutonomyIntent(
