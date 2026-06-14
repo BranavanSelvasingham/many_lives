@@ -610,6 +610,7 @@ type PlayerMotionState = {
   routeDiagnostics?: VisualRouteDiagnostics;
   spaceId?: string | null;
   startedAt: number;
+  targetTile?: Point;
   to: Point;
   worldPath?: Point[];
 };
@@ -5879,7 +5880,7 @@ function buildBrowserMovementDiagnostics(
             reachesDestination: diagnostics.reachesDestination,
             sampledPointsLegal: diagnostics.sampledPointsLegal,
             spaceId: runtimeState.indices.activeSpaceId,
-            target: roundBrowserPoint(motion.to),
+            target: roundBrowserPoint(motion.targetTile ?? motion.to),
             tilePath: motion.path.map(roundBrowserPoint),
             visualObstaclesClear: diagnostics.visualObstaclesClear,
             worldPath: routeWorldPath.map(roundBrowserPoint),
@@ -8719,6 +8720,7 @@ function createStaticPlayerMotion(
     path: [point],
     spaceId,
     startedAt,
+    targetTile: point,
     to: point,
   };
 }
@@ -8764,6 +8766,11 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
     y: runtimeState.snapshot.optimisticPlayerPosition?.y ?? game.player.y,
   };
   const nextSpaceId = getActiveSpaceId(game);
+  const routeTarget = resolvePlayerMotionRouteTarget(
+    runtimeState,
+    game,
+    nextPoint,
+  );
 
   if (runtimeState.playerEntranceGameId !== game.id) {
     runtimeState.playerMotion =
@@ -8821,7 +8828,8 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   }
   const visualRoute = resolveVisualRoute({
     blockedByVisualScene: runtimeState.indices.blockedNavigationTileCount,
-    end: nextPoint,
+    end: routeTarget.tile,
+    endWorldPoint: routeTarget.worldPoint,
     routeFinder: runtimeState.indices.routeFinder,
     start: fromPoint,
     startWorldPoint: fromWorldPoint,
@@ -8847,11 +8855,62 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
     routeDiagnostics: visualRoute.diagnostics,
     spaceId: nextSpaceId,
     startedAt: now,
+    targetTile: routeTarget.tile,
     to: nextPoint,
     worldPath:
       runtimeState.indices.visualScene && visualRoute.worldPath.length > 1
         ? visualRoute.worldPath
         : undefined,
+  };
+}
+
+function resolvePlayerMotionRouteTarget(
+  runtimeState: RuntimeState,
+  game: StreetGameState,
+  nextPoint: Point,
+) {
+  if (runtimeState.indices.activeSpace || !runtimeState.indices.visualScene) {
+    return {
+      tile: nextPoint,
+      worldPoint: undefined,
+    };
+  }
+
+  const targetLocationId =
+    runtimeState.snapshot.optimisticPlayerLocationId ??
+    game.player.currentLocationId ??
+    null;
+  const conversationLocationId =
+    runtimeState.snapshot.optimisticPlayerConversationLocationId ??
+    game.activeConversation?.locationId;
+  const authoredTargetWorldPoint =
+    resolveAuthoredLocationWorldPoint({
+      conversationLocationId,
+      indices: runtimeState.indices,
+      locationId: targetLocationId,
+      point: nextPoint,
+    }) ?? playerTileToWorld(nextPoint, runtimeState.indices, game);
+  const walkableTarget = findNearestWalkablePointByWorldHint(
+    runtimeState.indices.walkableRuntimePoints,
+    authoredTargetWorldPoint,
+    {
+      preferredKinds: PUBLIC_TRAVEL_TILE_KINDS,
+      preferredLocationId: targetLocationId ?? undefined,
+      worldDistanceScale: 46,
+    },
+  );
+  const tile = walkableTarget?.tile ?? nextPoint;
+  const worldPoint =
+    resolveAuthoredLocationWorldPoint({
+      conversationLocationId,
+      indices: runtimeState.indices,
+      locationId: targetLocationId,
+      point: tile,
+    }) ?? projectRuntimeTileCenter(runtimeState.indices, tile.x, tile.y);
+
+  return {
+    tile,
+    worldPoint,
   };
 }
 
@@ -8882,6 +8941,7 @@ function createPlayerEntranceMotion(
     path: entrancePath,
     spaceId: getActiveSpaceId(game),
     startedAt,
+    targetTile: target,
     to: target,
   };
 }
@@ -11121,9 +11181,10 @@ function getPlayerAnimationState(motion: PlayerMotionState, now: number) {
   const progress = easeInOutCubic(rawProgress);
   const current = samplePathPoint(motion.path, progress);
   const lookAhead = samplePathPoint(motion.path, clamp(progress + 0.06, 0, 1));
+  const target = motion.path[motion.path.length - 1] ?? motion.targetTile ?? motion.to;
   const moving =
     motion.path.length > 1 &&
-    (rawProgress < 0.995 || distanceBetween(current, motion.to) > 0.02);
+    (rawProgress < 0.995 || distanceBetween(current, target) > 0.02);
   const dx = lookAhead.x - current.x;
   const facing = dx >= -0.001 ? 1 : -1;
 
