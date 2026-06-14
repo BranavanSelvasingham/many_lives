@@ -42,7 +42,7 @@ Do not lead with the benchmark. Lead with the living city.
 
 Build a delightful **South Quay first morning** vertical slice.
 
-The slice starts with Rowan at Morrow House and ends when he has learned whether Kettle & Lamp has lunch work.
+The slice starts with Rowan at Morrow House and ends when he has learned whether Kettle & Lamp has lunch work. It should move with purpose: the viewer should see Rowan's aim, decision, movement, direct question, and consequence before the run has time to feel idle.
 
 ### Goal Loop Objective
 
@@ -59,6 +59,11 @@ viewer should see the current objective, the important constraints, the options
 Rowan is considering, the selected next action, and why the validated action is
 worth doing now.
 
+The objective should create forward pressure. If Rowan is waiting, the reason
+and next check should be visible; otherwise the loop should prefer walking,
+asking, working, recording, or choosing the next legal action over repeating an
+ambient carry-forward beat.
+
 ### Core Beat
 
 1. Rowan starts at Morrow House.
@@ -68,6 +73,10 @@ worth doing now.
 5. Rowan reaches Kettle & Lamp and asks about lunch work.
 6. Ada gives him a concrete answer.
 7. Rowan records a small field note: what he learned, who helped, and what he should do next.
+
+These beats should arrive at a watchable cadence. The route can breathe, but it
+should not spend the first minutes on setup, generic waiting, or decorative
+conversation that delays Ada's actionable answer.
 
 ## Make It Fun
 
@@ -142,6 +151,7 @@ Validation:
 - watch the first minute;
 - inspect desktop screenshot;
 - confirm a new viewer understands where Rowan is going and why.
+- confirm Rowan has visibly moved, spoken, learned, or advanced time for a clear reason instead of remaining on the opening/carry-forward state.
 
 ### Step 2: Add Three Ambient City Events
 
@@ -159,6 +169,7 @@ Validation:
 
 - visual smoke screenshot should show at least one recognizable event state;
 - autoplay should still feel grounded, not scripted.
+- ambient events should support momentum, not become noise that hides Rowan's next action.
 
 ### Step 3: Add Rowan's Notebook
 
@@ -192,6 +203,7 @@ Validation:
 - user can answer: "Why did Rowan choose that next action?"
 - observe/autoplay has zero visible progression/action clicks;
 - the rationale is grounded in current legal actions and simulator validation.
+- the next action follows promptly after the rationale unless the visible reason to wait is part of the decision.
 
 ### Step 5: Add The Field Note
 
@@ -224,6 +236,7 @@ Do not do these in the first pass:
 The first morning slice is working when:
 
 - the first 3 minutes are understandable without explanation;
+- the first 3 minutes feel active rather than stalled;
 - Rowan has a visible reason to move;
 - Rowan's reasoning for the next action is visible and grounded;
 - observe/autoplay carries Rowan forward without requiring action-button clicks;
