@@ -78,6 +78,23 @@ const AUTOPLAY_OBSERVATION_TIMEOUT_MS = Number(
 const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_OBSERVE_CARRY_FORWARD_TIMEOUT_MS ?? "90000",
 );
+const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_SAMPLE_INTERVAL_MS ?? "1250",
+);
+const AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS ??
+    "12000",
+);
+const AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS ??
+    "12000",
+);
+const AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS ?? "15000",
+);
+const AUTOPLAY_PACING_MIN_MEANINGFUL_BEATS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_MIN_MEANINGFUL_BEATS ?? "6",
+);
 const INHABIT_GAMEPLAY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_INHABIT_GAMEPLAY_TIMEOUT_MS ?? "540000",
 );
@@ -7809,8 +7826,20 @@ async function captureProbeState({ game, label }) {
 
 async function runAutoplayObservation(session) {
   const url = `${getWebBase()}?new=1&autoplayRegression=${Date.now()}`;
+  const pacingLedgerPath = path.join(
+    OUTPUT_DIR,
+    "autoplay-observation-pacing-ledger.json",
+  );
+  const pacingSamples = [];
+  let pacingCompleted = false;
+  let pacingFailure = null;
+  let lastSampleAt = 0;
+  const pacingStartedAt = Date.now();
   await session.navigate(url);
   const startProbe = await session.readBrowserProbe();
+  const startDom = await session
+    .readDomSnapshot("fresh-autoplay-observation:start-dom")
+    .catch(() => null);
   assert.equal(
     startProbe.watchMode?.enabled,
     true,
@@ -7821,94 +7850,198 @@ async function runAutoplayObservation(session) {
     "frozen",
     "Fresh autoplay observation unexpectedly started frozen.",
   );
-
-  const completedProbe = await waitFor(
-    async () => {
-      const probe = await session.readBrowserProbe();
-      if (
-        probe?.firstAfternoon?.completedAt ||
-        /first afternoon complete/i.test(probe?.autonomy?.label ?? "")
-      ) {
-        return probe;
-      }
-      return null;
-    },
-    140_000,
-    "Autoplay did not reach first-afternoon completion without manual advance clicks.",
+  pacingSamples.push(
+    sampleAutoplayObservationSample({
+      dom: startDom,
+      elapsedMs: Date.now() - pacingStartedAt,
+      probe: startProbe,
+    }),
   );
-  const dom = await session.readDomSnapshot();
-  assertNoVisibleWatchModeProgressionControls(
-    "fresh-autoplay-observation",
-    completedProbe,
-    dom,
-  );
-  assert.doesNotMatch(
-    dom.bodyText,
-    /Nudge Rowan/i,
-    "Fresh autoplay observation still exposes Nudge Rowan copy.",
-  );
-  assert.doesNotMatch(
-    dom.bodyText,
-    /\{"message":|"message"\s*:\s*"Game\s+game-|Game\s+game-[A-Za-z0-9-]+\s+was not found/i,
-    "Fresh autoplay observation exposed a raw missing-game backend error.",
-  );
-  assert.equal(
-    completedProbe.watchMode?.enabled,
-    true,
-    "Completed autoplay observation lost watch-mode diagnostics.",
-  );
-  if (completedProbe.autonomy?.planningTrace) {
-    assertVisibleDecisionArtifactPayload(
-      "fresh-autoplay-observation",
-      completedProbe.autonomy.visibleDecisionArtifact,
-    );
-    assertVisibleDecisionNextCheckForTrace(
-      "fresh-autoplay-observation",
-      completedProbe.autonomy.planningTrace,
-      completedProbe.autonomy.visibleDecisionArtifact,
-    );
-    assertVisibleDecisionSelectedActionMatchesImmediateStep(
-      "fresh-autoplay-observation",
-      completedProbe.autonomy.planningTrace,
-      completedProbe.autonomy.visibleDecisionArtifact,
-      completedProbe.autonomy,
-    );
-    assertVisibleDecisionArtifactDom(
-      "fresh-autoplay-observation",
-      dom,
-      completedProbe.autonomy.visibleDecisionArtifact,
-    );
-  }
-  assert.ok(
-    completedProbe.clock.totalMinutes > startProbe.clock.totalMinutes,
-    "Autoplay observation did not advance game time.",
-  );
+  lastSampleAt = Date.now();
 
   const screenshotPath = path.join(
     OUTPUT_DIR,
     "autoplay-observation-complete.png",
   );
-  await session.captureScreenshot(screenshotPath);
+  let completedProbe = null;
+  let dom = null;
 
-  return {
-    completed: {
-      autonomyLabel: completedProbe.autonomy?.label ?? null,
-      clock: completedProbe.clock,
-      firstAfternoon: completedProbe.firstAfternoon,
-      gameId: completedProbe.gameId,
-      location: completedProbe.location,
-      visibleDecisionArtifact:
-        completedProbe.autonomy?.visibleDecisionArtifact ?? null,
-      watchMode: completedProbe.watchMode,
-    },
-    screenshot: screenshotPath,
-    start: {
-      autonomyLabel: startProbe.autonomy?.label ?? null,
-      clock: startProbe.clock,
-      gameId: startProbe.gameId,
-      watchMode: startProbe.watchMode,
-    },
-  };
+  try {
+    const completion = await waitFor(
+      async () => {
+        const probe = await session.readBrowserProbe();
+        let sampleDom = null;
+        const now = Date.now();
+        const shouldSample =
+          pacingSamples.length === 0 ||
+          now - lastSampleAt >= AUTOPLAY_PACING_SAMPLE_INTERVAL_MS;
+
+        if (shouldSample) {
+          sampleDom = await session
+            .readDomSnapshot("fresh-autoplay-observation:dom-snapshot")
+            .catch(() => null);
+          pacingSamples.push(
+            sampleAutoplayObservationSample({
+              dom: sampleDom,
+              elapsedMs: now - pacingStartedAt,
+              probe,
+            }),
+          );
+          lastSampleAt = now;
+        }
+
+        if (
+          probe?.firstAfternoon?.completedAt ||
+          /first afternoon complete/i.test(probe?.autonomy?.label ?? "")
+        ) {
+          return {
+            dom:
+              sampleDom ??
+              (await session
+                .readDomSnapshot("fresh-autoplay-observation:completed-dom")
+                .catch(() => null)),
+            probe,
+          };
+        }
+        return null;
+      },
+      140_000,
+      "Autoplay did not reach first-afternoon completion without manual advance clicks.",
+    );
+    completedProbe = completion.probe;
+    dom =
+      completion.dom ??
+      (await session
+        .readDomSnapshot("fresh-autoplay-observation:final-dom")
+        .catch(() => null));
+    const completedSample = sampleAutoplayObservationSample({
+      dom,
+      elapsedMs: Date.now() - pacingStartedAt,
+      probe: completedProbe,
+    });
+    if (
+      pacingSamples.length === 0 ||
+      pacingSamples.at(-1)?.clock?.iso !== completedSample.clock?.iso ||
+      pacingSamples.at(-1)?.autonomy?.label !== completedSample.autonomy?.label
+    ) {
+      pacingSamples.push(completedSample);
+    }
+
+    assertNoVisibleWatchModeProgressionControls(
+      "fresh-autoplay-observation",
+      completedProbe,
+      dom,
+    );
+    assert.doesNotMatch(
+      dom.bodyText,
+      /Nudge Rowan/i,
+      "Fresh autoplay observation still exposes Nudge Rowan copy.",
+    );
+    assert.doesNotMatch(
+      dom.bodyText,
+      /\{"message":|"message"\s*:\s*"Game\s+game-|Game\s+game-[A-Za-z0-9-]+\s+was not found/i,
+      "Fresh autoplay observation exposed a raw missing-game backend error.",
+    );
+    assert.equal(
+      completedProbe.watchMode?.enabled,
+      true,
+      "Completed autoplay observation lost watch-mode diagnostics.",
+    );
+    if (completedProbe.autonomy?.planningTrace) {
+      assertVisibleDecisionArtifactPayload(
+        "fresh-autoplay-observation",
+        completedProbe.autonomy.visibleDecisionArtifact,
+      );
+      assertVisibleDecisionNextCheckForTrace(
+        "fresh-autoplay-observation",
+        completedProbe.autonomy.planningTrace,
+        completedProbe.autonomy.visibleDecisionArtifact,
+      );
+      assertVisibleDecisionSelectedActionMatchesImmediateStep(
+        "fresh-autoplay-observation",
+        completedProbe.autonomy.planningTrace,
+        completedProbe.autonomy.visibleDecisionArtifact,
+        completedProbe.autonomy,
+      );
+      assertVisibleDecisionArtifactDom(
+        "fresh-autoplay-observation",
+        dom,
+        completedProbe.autonomy.visibleDecisionArtifact,
+      );
+    }
+    assert.ok(
+      completedProbe.clock.totalMinutes > startProbe.clock.totalMinutes,
+      "Autoplay observation did not advance game time.",
+    );
+
+    const pacingLedger = buildAutoplayObservationPacingLedger(pacingSamples);
+    await session.captureScreenshot(screenshotPath);
+    await writeFile(
+      pacingLedgerPath,
+      `${JSON.stringify(
+        {
+          ...pacingLedger,
+          screenshot: screenshotPath,
+          status: "passed",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    assertAutoplayObservationPacingLedger(pacingLedger, pacingLedgerPath);
+    pacingCompleted = true;
+
+    return {
+      completed: {
+        autonomyLabel: completedProbe.autonomy?.label ?? null,
+        clock: completedProbe.clock,
+        firstAfternoon: completedProbe.firstAfternoon,
+        gameId: completedProbe.gameId,
+        location: completedProbe.location,
+        visibleDecisionArtifact:
+          completedProbe.autonomy?.visibleDecisionArtifact ?? null,
+        watchMode: completedProbe.watchMode,
+      },
+      pacingLedger: {
+        diagnosticsPath: pacingLedgerPath,
+        idleGapLimitMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+        meaningfulBeatCount: pacingLedger.meaningfulBeatCount,
+        progressKinds: pacingLedger.progressKinds,
+      },
+      screenshot: screenshotPath,
+      start: {
+        autonomyLabel: startProbe.autonomy?.label ?? null,
+        clock: startProbe.clock,
+        gameId: startProbe.gameId,
+        watchMode: startProbe.watchMode,
+      },
+    };
+  } catch (error) {
+    pacingFailure = error instanceof Error ? error.stack ?? error.message : String(error);
+    throw error;
+  } finally {
+    if (!pacingCompleted) {
+      const partialLedger = buildAutoplayObservationPacingLedger(pacingSamples);
+      await writeFile(
+        pacingLedgerPath,
+        `${JSON.stringify(
+          {
+            ...partialLedger,
+            failure: pacingFailure,
+            screenshot: completedProbe ? screenshotPath : null,
+            status: "failed",
+          },
+          null,
+          2,
+        )}\n`,
+        "utf8",
+      );
+      if (completedProbe) {
+        await session.captureScreenshot(screenshotPath).catch(() => undefined);
+      }
+    }
+  }
 }
 
 async function runObserveOnlyCarryForwardObservation(session) {
@@ -8281,6 +8414,339 @@ function buildWatchPacingAudit(clickLog) {
     shortOrdinaryBeats,
     watchedBeats,
   };
+}
+
+function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
+  const visibleDecisionArtifact =
+    probe?.autonomy?.visibleDecisionArtifact ??
+    probe?.rail?.visibleDecisionArtifact ??
+    null;
+  return {
+    activeConversation: probe?.activeConversation
+      ? {
+          lines: probe.activeConversation.lines ?? null,
+          npcId: probe.activeConversation.npcId ?? null,
+          npcName: probe.activeConversation.npcName ?? null,
+        }
+      : null,
+    autonomy: probe?.autonomy
+      ? {
+          actionId: probe.autonomy.actionId ?? null,
+          autoContinue: Boolean(probe.autonomy.autoContinue),
+          label: probe.autonomy.label ?? null,
+          mode: probe.autonomy.mode ?? null,
+          stepKind: probe.autonomy.stepKind ?? null,
+          targetLocationId: probe.autonomy.targetLocationId ?? null,
+        }
+      : null,
+    bodyTextSample: compactObjectiveSequenceText(
+      dom?.bodyTextSample ?? dom?.bodyText ?? "",
+      260,
+    ),
+    clock: probe?.clock ?? null,
+    elapsedMs,
+    firstAfternoon: {
+      completedAt: probe?.firstAfternoon?.completedAt ?? null,
+      completionAcknowledgedAt:
+        probe?.firstAfternoon?.completionAcknowledgedAt ?? null,
+      hasFieldNote: Boolean(probe?.firstAfternoon?.hasFieldNote),
+      hasLeadFieldNote: Boolean(probe?.firstAfternoon?.hasLeadFieldNote),
+      teaShiftStage: probe?.firstAfternoon?.teaShiftStage ?? null,
+    },
+    genericCarryForwardCopyVisible: GENERIC_WATCH_CTA_COPY_PATTERN.test(
+      dom?.bodyText ?? "",
+    ),
+    location: probe?.location ?? null,
+    movement: {
+      routeActive: Boolean(probe?.movement?.playerRoute?.active),
+      routeProgress:
+        typeof probe?.movement?.playerRoute?.progress === "number"
+          ? roundAuditNumber(probe.movement.playerRoute.progress)
+          : null,
+    },
+    objective: {
+      progressLabel: probe?.objective?.progress?.label ?? null,
+      routeKey: probe?.objective?.routeKey ?? null,
+      text: compactObjectiveSequenceText(probe?.objective?.text ?? "", 140),
+    },
+    progressControls: dom?.visibleProgressionControls ?? [],
+    replyAffordances: dom?.watchModeReplyAffordances ?? [],
+    visibleDecisionArtifact: compactVisibleDecisionArtifact(
+      visibleDecisionArtifact,
+    ),
+    watchMode: probe?.watchMode ?? null,
+    worldPressure: compactWorldPressureSnapshot(probe?.worldPressure ?? null),
+  };
+}
+
+function autoplayObservationSignature(sample) {
+  return JSON.stringify({
+    activeConversation: sample.activeConversation,
+    autonomy: sample.autonomy,
+    firstAfternoon: sample.firstAfternoon,
+    location: sample.location,
+    movement: sample.movement,
+    objective: sample.objective,
+    visibleDecisionArtifact: sample.visibleDecisionArtifact,
+    worldPressure: sample.worldPressure,
+  });
+}
+
+function buildAutoplayObservationPacingLedger(samples) {
+  const normalizedSamples = [];
+  let previousSignature = null;
+
+  for (const sample of samples ?? []) {
+    const signature = autoplayObservationSignature(sample);
+    if (signature === previousSignature) {
+      continue;
+    }
+    normalizedSamples.push(sample);
+    previousSignature = signature;
+  }
+
+  const transitions = [];
+  for (let index = 1; index < normalizedSamples.length; index += 1) {
+    const previous = normalizedSamples[index - 1];
+    const next = normalizedSamples[index];
+    const progressKinds = classifyAutoplayObservationProgress(previous, next);
+    transitions.push({
+      durationMs: Math.max(0, next.elapsedMs - previous.elapsedMs),
+      fromAutonomyLabel: previous.autonomy?.label ?? null,
+      fromClock: previous.clock ?? null,
+      fromElapsedMs: previous.elapsedMs,
+      fromLocationId: previous.location?.id ?? null,
+      progressKinds,
+      toAutonomyLabel: next.autonomy?.label ?? null,
+      toClock: next.clock ?? null,
+      toElapsedMs: next.elapsedMs,
+      toLocationId: next.location?.id ?? null,
+    });
+  }
+
+  const decisionSample = normalizedSamples.find(
+    (sample) => sample.visibleDecisionArtifact,
+  );
+  const nonDecisionTransitions = transitions.filter((transition) =>
+    transition.progressKinds.some((kind) => kind !== "decision-artifact"),
+  );
+  const firstPostDecisionTransition =
+    decisionSample === undefined
+      ? null
+      : nonDecisionTransitions.find(
+          (transition) => transition.toElapsedMs > decisionSample.elapsedMs,
+        ) ?? null;
+  const progressKinds = [
+    ...new Set(
+      nonDecisionTransitions.flatMap((transition) => transition.progressKinds),
+    ),
+  ];
+  const idleGapMs = nonDecisionTransitions.map(
+    (transition) => transition.durationMs,
+  );
+
+  return {
+    firstDecisionElapsedMs: decisionSample?.elapsedMs ?? null,
+    firstMeaningfulProgressAfterDecisionMs:
+      decisionSample && firstPostDecisionTransition
+        ? Math.max(0, firstPostDecisionTransition.toElapsedMs - decisionSample.elapsedMs)
+        : null,
+    genericCarryForwardSamples: (samples ?? []).filter(
+      (sample) => sample.genericCarryForwardCopyVisible,
+    ),
+    maxIdleGapMs: idleGapMs.length > 0 ? Math.max(...idleGapMs) : null,
+    meaningfulBeatCount: nonDecisionTransitions.length,
+    progressKinds,
+    samples: normalizedSamples,
+    transitions,
+    visibleProgressionControlSamples: (samples ?? []).filter(
+      (sample) => (sample.progressControls?.length ?? 0) > 0,
+    ),
+    watchModeReplyAffordanceSamples: (samples ?? []).filter(
+      (sample) => (sample.replyAffordances?.length ?? 0) > 0,
+    ),
+  };
+}
+
+function classifyAutoplayObservationProgress(previous, next) {
+  const progressKinds = [];
+  const previousRouteProgress = previous.movement?.routeProgress ?? null;
+  const nextRouteProgress = next.movement?.routeProgress ?? null;
+  if (
+    (!previous.visibleDecisionArtifact && next.visibleDecisionArtifact) ||
+    previous.visibleDecisionArtifact?.selectedAction !==
+      next.visibleDecisionArtifact?.selectedAction ||
+    previous.visibleDecisionArtifact?.objective !==
+      next.visibleDecisionArtifact?.objective
+  ) {
+    progressKinds.push("decision-artifact");
+  }
+  if (
+    previous.location?.id !== next.location?.id ||
+    previous.location?.spaceId !== next.location?.spaceId ||
+    (typeof previousRouteProgress === "number" &&
+      typeof nextRouteProgress === "number" &&
+      nextRouteProgress - previousRouteProgress >= 0.12)
+  ) {
+    progressKinds.push("route-progress");
+  }
+  if (
+    (previous.activeConversation?.npcId ?? null) !==
+      (next.activeConversation?.npcId ?? null) ||
+    (previous.activeConversation?.lines ?? null) !==
+      (next.activeConversation?.lines ?? null)
+  ) {
+    progressKinds.push("conversation-progress");
+  }
+  if (
+    previous.objective?.routeKey !== next.objective?.routeKey ||
+    previous.objective?.progressLabel !== next.objective?.progressLabel ||
+    previous.objective?.text !== next.objective?.text ||
+    previous.firstAfternoon?.teaShiftStage !== next.firstAfternoon?.teaShiftStage
+  ) {
+    progressKinds.push("objective-progress");
+  }
+  if (
+    previous.firstAfternoon?.hasLeadFieldNote !==
+      next.firstAfternoon?.hasLeadFieldNote ||
+    previous.firstAfternoon?.hasFieldNote !==
+      next.firstAfternoon?.hasFieldNote ||
+    previous.firstAfternoon?.completedAt !== next.firstAfternoon?.completedAt ||
+    previous.firstAfternoon?.completionAcknowledgedAt !==
+      next.firstAfternoon?.completionAcknowledgedAt
+  ) {
+    progressKinds.push("memory-progress");
+  }
+  if (
+    JSON.stringify(previous.worldPressure) !== JSON.stringify(next.worldPressure)
+  ) {
+    progressKinds.push("world-pressure-progress");
+  }
+  if (
+    previous.clock?.totalMinutes !== next.clock?.totalMinutes &&
+    !progressKinds.some((kind) =>
+      [
+        "route-progress",
+        "conversation-progress",
+        "objective-progress",
+        "memory-progress",
+        "world-pressure-progress",
+      ].includes(kind),
+    )
+  ) {
+    progressKinds.push("reasoned-time-jump");
+  }
+  return [...new Set(progressKinds)];
+}
+
+function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
+  assert.ok(
+    ledger.firstDecisionElapsedMs !== null &&
+      ledger.firstDecisionElapsedMs <= AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS,
+    `Fresh autoplay did not show a visible decision artifact quickly enough. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      {
+        firstDecisionElapsedMs: ledger.firstDecisionElapsedMs,
+        sampleCount: ledger.samples.length,
+      },
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    ledger.firstMeaningfulProgressAfterDecisionMs !== null &&
+      ledger.firstMeaningfulProgressAfterDecisionMs <=
+        AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS,
+    `Fresh autoplay did not turn the opening decision into visible follow-through quickly enough. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      {
+        firstMeaningfulProgressAfterDecisionMs:
+          ledger.firstMeaningfulProgressAfterDecisionMs,
+        transitions: ledger.transitions.slice(0, 6),
+      },
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    ledger.genericCarryForwardSamples.length,
+    0,
+    `Fresh autoplay surfaced generic carry-forward copy during momentum sampling. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      ledger.genericCarryForwardSamples,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    ledger.visibleProgressionControlSamples.length,
+    0,
+    `Fresh autoplay exposed visible progression/action controls during momentum sampling. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      ledger.visibleProgressionControlSamples,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
+    ledger.watchModeReplyAffordanceSamples.length,
+    0,
+    `Fresh autoplay exposed reply/action-looking conversation affordances during momentum sampling. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      ledger.watchModeReplyAffordanceSamples,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    ledger.meaningfulBeatCount >= AUTOPLAY_PACING_MIN_MEANINGFUL_BEATS,
+    `Fresh autoplay did not record enough meaningful zero-click progress beats. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      {
+        meaningfulBeatCount: ledger.meaningfulBeatCount,
+        progressKinds: ledger.progressKinds,
+        transitions: ledger.transitions,
+      },
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    (ledger.maxIdleGapMs ?? 0) <= AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    `Fresh autoplay sat too long without a meaningful progress beat. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      {
+        maxIdleGapMs: ledger.maxIdleGapMs,
+        transitions: ledger.transitions,
+      },
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    ledger.progressKinds.includes("route-progress"),
+    `Fresh autoplay did not record any route progress beat. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      ledger.progressKinds,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    ledger.progressKinds.includes("conversation-progress"),
+    `Fresh autoplay did not record any conversation progress beat. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      ledger.progressKinds,
+      null,
+      2,
+    )}`,
+  );
+  assert.ok(
+    ledger.progressKinds.some((kind) =>
+      [
+        "objective-progress",
+        "memory-progress",
+        "world-pressure-progress",
+        "reasoned-time-jump",
+      ].includes(kind),
+    ),
+    `Fresh autoplay did not record any later-state progress beyond route and conversation beats. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      ledger.progressKinds,
+      null,
+      2,
+    )}`,
+  );
 }
 
 function assertWatchPacingAudit(watchPacingAudit) {
