@@ -84,6 +84,15 @@ const INHABIT_GAMEPLAY_TIMEOUT_MS = Number(
 const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_APP_READY_TIMEOUT_MS ?? "120000",
 );
+const BROWSER_PHASE_HEARTBEAT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_PHASE_HEARTBEAT_MS ?? "30000",
+);
+const CDP_READ_RETRY_COUNT = Number(
+  process.env.MANY_LIVES_BROWSER_CDP_READ_RETRY_COUNT ?? "1",
+);
+const CDP_READ_RETRY_DELAY_MS = Number(
+  process.env.MANY_LIVES_BROWSER_CDP_READ_RETRY_DELAY_MS ?? "250",
+);
 const SIM_WAIT_TIMEOUT_MS = 15_000;
 const MAP_AGENCY_PROBE_SETTLE_TIMEOUT_MS = 2_000;
 const WEB_START_TIMEOUT_MS = Number(
@@ -595,6 +604,15 @@ async function waitFor(condition, timeoutMs, errorMessage) {
   throw new Error(errorMessage);
 }
 
+function isCdpRuntimeEvaluateTimeout(error) {
+  return Boolean(
+    error instanceof Error &&
+      /Timed out waiting for Chrome DevTools response for Runtime\.evaluate\./.test(
+        error.message,
+      ),
+  );
+}
+
 class CdpSession {
   constructor({ browser, outputDir, pageWsUrl, url }) {
     this.browser = browser;
@@ -678,8 +696,96 @@ class CdpSession {
     return response?.result?.result?.value;
   }
 
-  async readBrowserProbe() {
-    const probe = await this.evaluate(`(() => {
+  async evaluateForRead(expression, label = "runtime-evaluate-read") {
+    return this.runReadWithRetry(label, () => this.evaluate(expression));
+  }
+
+  async runReadWithRetry(label, operation) {
+    let lastError = null;
+    let lastDiagnosticsPath = null;
+
+    for (
+      let attempt = 1;
+      attempt <= CDP_READ_RETRY_COUNT + 1;
+      attempt += 1
+    ) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        if (!isCdpRuntimeEvaluateTimeout(lastError)) {
+          throw lastError;
+        }
+
+        lastDiagnosticsPath = await this.writeReadTimeoutDiagnostics({
+          attempt,
+          error: lastError,
+          label,
+        });
+
+        if (attempt > CDP_READ_RETRY_COUNT) {
+          throw new Error(
+            `${label} failed after ${attempt} timed out Chrome probe read attempt(s). Diagnostics: ${lastDiagnosticsPath}. ${lastError.message}`,
+          );
+        }
+
+        traceRegression(
+          `cdp-read-retry:${label}:attempt-${attempt}:diagnostics=${lastDiagnosticsPath}`,
+        );
+        await sleep(CDP_READ_RETRY_DELAY_MS);
+      }
+    }
+
+    throw lastError ?? new Error(`${label} failed without an error.`);
+  }
+
+  async writeReadTimeoutDiagnostics({ attempt, error, label }) {
+    const diagnosticsPath = path.join(
+      OUTPUT_DIR,
+      `cdp-read-timeout-${slug(label)}-attempt-${attempt}.json`,
+    );
+    const socket = this.socket;
+    const browser = this.browser;
+
+    await writeFile(
+      diagnosticsPath,
+      `${JSON.stringify(
+        {
+          at: new Date().toISOString(),
+          browser: {
+            exitCode: browser?.exitCode ?? null,
+            pid: browser?.pid ?? null,
+            signalCode: browser?.signalCode ?? null,
+          },
+          error: error.stack ?? error.message,
+          label,
+          pendingRequestCount: this.pending.size,
+          pendingRequestIds: [...this.pending.keys()],
+          retryDelayMs: CDP_READ_RETRY_DELAY_MS,
+          socket: {
+            bytesRead: socket?.bytesRead ?? null,
+            bytesWritten: socket?.bytesWritten ?? null,
+            destroyed: socket?.destroyed ?? null,
+            localAddress: socket?.localAddress ?? null,
+            localPort: socket?.localPort ?? null,
+            readyState: socket?.readyState ?? null,
+            remoteAddress: socket?.remoteAddress ?? null,
+            remotePort: socket?.remotePort ?? null,
+          },
+          url: this.url,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    return diagnosticsPath;
+  }
+
+  async readBrowserProbe(label = "browser-probe") {
+    const probe = await this.evaluateForRead(`(() => {
       if (typeof window.__manyLivesStreetProbe === "function") {
         return window.__manyLivesStreetProbe();
       }
@@ -692,7 +798,7 @@ class CdpSession {
       } catch (error) {
         return { parseError: String(error) };
       }
-    })()`);
+    })()`, label);
 
     if (probe?.parseError) {
       throw new Error(`Could not parse #ml-browser-probe: ${probe.parseError}`);
@@ -701,8 +807,8 @@ class CdpSession {
     return probe;
   }
 
-  async readMapAgencyProbe() {
-    const probe = await this.evaluate(`(() => {
+  async readMapAgencyProbe(label = "map-agency-probe") {
+    const probe = await this.evaluateForRead(`(() => {
       const script = document.querySelector("#ml-browser-map-agency-probe");
       if (!script) {
         return null;
@@ -712,7 +818,7 @@ class CdpSession {
       } catch (error) {
         return { parseError: String(error) };
       }
-    })()`);
+    })()`, label);
 
     if (probe?.parseError) {
       throw new Error(
@@ -748,7 +854,7 @@ class CdpSession {
       async () => {
         try {
           await this.waitForAnimationFrames(1);
-          const probe = await this.readMapAgencyProbe();
+          const probe = await this.readMapAgencyProbe("map-agency-probe");
           if (!probe) {
             return null;
           }
@@ -779,8 +885,8 @@ class CdpSession {
     );
   }
 
-  async readCameraProbe() {
-    const probe = await this.evaluate(`(() => {
+  async readCameraProbe(label = "camera-probe") {
+    const probe = await this.evaluateForRead(`(() => {
       const script = document.querySelector("#ml-browser-camera-probe");
       if (!script) {
         return null;
@@ -790,7 +896,7 @@ class CdpSession {
       } catch (error) {
         return { parseError: String(error) };
       }
-    })()`);
+    })()`, label);
 
     if (probe?.parseError) {
       throw new Error(
@@ -801,8 +907,8 @@ class CdpSession {
     return probe;
   }
 
-  async readVisibleElementRect(selector) {
-    return this.evaluate(`(() => {
+  async readVisibleElementRect(selector, label = `visible-rect:${selector}`) {
+    return this.evaluateForRead(`(() => {
       const elements = Array.from(document.querySelectorAll(${JSON.stringify(selector)}));
       for (const element of elements) {
         const rect = element.getBoundingClientRect();
@@ -833,11 +939,11 @@ class CdpSession {
       }
 
       return null;
-    })()`);
+    })()`, label);
   }
 
-  async readPlayerControlCandidate() {
-    return this.evaluate(`(() => {
+  async readPlayerControlCandidate(label = "player-control-candidate") {
+    return this.evaluateForRead(`(() => {
       const selectors = [
         "[data-advance-objective]:not([disabled])",
         "[data-action-id]:not([disabled])",
@@ -882,7 +988,7 @@ class CdpSession {
       }
 
       return null;
-    })()`);
+    })()`, label);
   }
 
   async clickVisibleSelector(selector) {
@@ -968,8 +1074,8 @@ class CdpSession {
     });
   }
 
-  async readDomSnapshot() {
-    return this.evaluate(`(() => {
+  async readDomSnapshot(label = "dom-snapshot") {
+    return this.evaluateForRead(`(() => {
       const rectFromElement = (element) => {
         if (!element) {
           return null;
@@ -1306,7 +1412,7 @@ class CdpSession {
           .map((element) => element.textContent?.replace(/\\s+/g, " ").trim() ?? "")
           .filter(Boolean),
       };
-    })()`);
+    })()`, label);
   }
 
   async clickSelector(selector) {
@@ -1325,7 +1431,7 @@ class CdpSession {
   }
 
   async inspectAppReadiness() {
-    return this.evaluate(`(() => {
+    return this.evaluateForRead(`(() => {
       const bodyText = document.body?.innerText ?? "";
       const bodyContent = document.body?.textContent ?? "";
       const textFor = (element, limit = 1000) =>
@@ -1423,7 +1529,7 @@ class CdpSession {
           width: window.innerWidth,
         }
       };
-    })()`);
+    })()`, "app-readiness");
   }
 
   async writeProbeTimeoutDiagnostics({ lastError, lastState, timeoutMs }) {
@@ -8947,7 +9053,7 @@ function assertInhabitPlayerDom(
 async function waitForInhabitSettled(session, label) {
   return waitFor(
     async () => {
-      const probe = await session.readBrowserProbe();
+      const probe = await session.readBrowserProbe(`${label}:browser-probe`);
       if (!probe) {
         return null;
       }
@@ -8970,7 +9076,7 @@ async function waitForInhabitSettled(session, label) {
 async function waitForInhabitTransition(session, beforeSignature, label) {
   return waitFor(
     async () => {
-      const probe = await session.readBrowserProbe();
+      const probe = await session.readBrowserProbe(`${label}:browser-probe`);
       if (!probe || playerProbeSignature(probe) === beforeSignature) {
         return null;
       }
@@ -9001,7 +9107,7 @@ function isFirstAfternoonCompletionPendingProbe(probe) {
 async function waitForInhabitCameraProbe(session, label) {
   return waitFor(
     async () => {
-      const probe = await session.readCameraProbe();
+      const probe = await session.readCameraProbe(`${label}:camera-probe`);
       if (probe?.scroll && probe?.sceneViewportCss) {
         return probe;
       }
@@ -9095,6 +9201,7 @@ function chooseInhabitCameraDragCenter(camera) {
 async function closeInhabitSupportPanel(session) {
   const openToggle = await session.readVisibleElementRect(
     '[data-toggle-support][aria-expanded="true"]',
+    "inhabit-support-open-toggle",
   );
   if (!openToggle) {
     const clicked = await session.evaluate(`(() => {
@@ -9135,16 +9242,22 @@ async function captureInhabitMoment({
   const probe = probeOverride ?? (await waitForInhabitSettled(session, label));
   const dom = probe.independentNpcSurface
     ? await waitForInhabitIndependentNpcSurfaceDom(session, label, probe)
-    : await session.readDomSnapshot();
+    : await session.readDomSnapshot(`${label}:dom-snapshot`);
   const latestProbeForArtifact =
     probe.autonomy?.visibleDecisionArtifact || probe.rail?.visibleDecisionArtifact
       ? null
       : probe.independentNpcSurface
-        ? await session.readBrowserProbe().catch(() => null)
+        ? await session
+            .readBrowserProbe(`${label}:artifact-browser-probe`)
+            .catch(() => null)
         : null;
-  const controlCandidate = await session.readPlayerControlCandidate();
+  const controlCandidate = await session.readPlayerControlCandidate(
+    `${label}:player-control-candidate`,
+  );
   assertInhabitPlayerDom(label, dom, controlCandidate, probe);
-  const camera = await session.readCameraProbe().catch(() => null);
+  const camera = await session
+    .readCameraProbe(`${label}:camera-probe`)
+    .catch(() => null);
   const screenshot = path.join(
     OUTPUT_DIR,
     `inhabit-${String(index).padStart(2, "0")}-${slug(label)}.png`,
@@ -9200,7 +9313,9 @@ async function waitForInhabitIndependentNpcSurfaceDom(session, label, probe) {
   const surface = probe.independentNpcSurface;
   return waitFor(
     async () => {
-      const dom = await session.readDomSnapshot();
+      const dom = await session.readDomSnapshot(
+        `${label}:independent-npc-surface-dom`,
+      );
       if (domContainsIndependentNpcSurface(dom, surface)) {
         return dom;
       }
@@ -9460,7 +9575,7 @@ async function runInhabitPanelChecks(session) {
   for (const panel of panels) {
     await session.clickVisibleSelector(panel.selector);
     await sleep(250);
-    const dom = await session.readDomSnapshot();
+    const dom = await session.readDomSnapshot(`${panel.label}:dom-snapshot`);
     assert.equal(
       dom.activeTab,
       panel.expectedTab,
@@ -9578,7 +9693,7 @@ async function runInhabitRowanNotebookClickCheck(session) {
   await session.dispatchMouseClick(clickPoint.x, clickPoint.y);
   await sleep(300);
 
-  const dom = await session.readDomSnapshot();
+  const dom = await session.readDomSnapshot(`${label}:dom-snapshot`);
   const clickDebug = await session.evaluate(`(() => {
     const target = document.elementFromPoint(${JSON.stringify(
       Math.round(clickPoint.x),
@@ -9630,7 +9745,7 @@ async function runInhabitRowanNotebookClickCheck(session) {
       `${label}: Rowan click did not reveal the expected Notebook content.`,
     );
   }
-  const probe = await session.readBrowserProbe();
+  const probe = await session.readBrowserProbe(`${label}:browser-probe`);
   assertNotebookUsesCognitionAuthority(label, dom, probe);
 
   assertCriticalVisualCoherence(label, dom, {
@@ -9775,7 +9890,9 @@ async function clickUntilInhabitMilestone({
       !probe.watchMode?.frozen &&
       (probe.autonomy?.autoContinue || completionAutoContinue)
     ) {
-      const dom = await session.readDomSnapshot().catch(() => null);
+      const dom = await session
+        .readDomSnapshot(`${milestone.label}:watch-dom-snapshot`)
+        .catch(() => null);
       const auditEntry = buildObjectiveSequenceAuditEntry({
         control: null,
         dom,
@@ -9818,11 +9935,14 @@ async function clickUntilInhabitMilestone({
       continue;
     }
 
-    let control = await session.readPlayerControlCandidate();
+    let control = await session.readPlayerControlCandidate(
+      `${milestone.label}:player-control-candidate`,
+    );
     let openedSupportForControl = false;
     if (!control) {
       const supportToggle = await session.readVisibleElementRect(
         "[data-toggle-support]",
+        `${milestone.label}:support-toggle`,
       );
       if (supportToggle) {
         await session.dispatchMouseClick(
@@ -9838,11 +9958,15 @@ async function clickUntilInhabitMilestone({
       if (openedSupportForControl) {
         openedSupportForControl = true;
         await sleep(250);
-        control = await session.readPlayerControlCandidate();
+        control = await session.readPlayerControlCandidate(
+          `${milestone.label}:player-control-candidate-opened-support`,
+        );
       }
     }
     if (!control) {
-      const dom = await session.readDomSnapshot().catch(() => null);
+      const dom = await session
+        .readDomSnapshot(`${milestone.label}:missing-control-dom-snapshot`)
+        .catch(() => null);
       assert.fail(
         `${milestone.label}: expected a visible player control before clicking. State: ${JSON.stringify(
           {
@@ -9858,7 +9982,9 @@ async function clickUntilInhabitMilestone({
         )}`,
       );
     }
-    const dom = await session.readDomSnapshot().catch(() => null);
+    const dom = await session
+      .readDomSnapshot(`${milestone.label}:pre-click-dom-snapshot`)
+      .catch(() => null);
     const auditEntry = buildObjectiveSequenceAuditEntry({
       control,
       dom,
@@ -9902,7 +10028,9 @@ async function clickUntilInhabitMilestone({
     await closeInhabitSupportPanel(session);
   }
 
-  const finalProbe = await session.readBrowserProbe();
+  const finalProbe = await session.readBrowserProbe(
+    `${milestone.label}:final-browser-probe`,
+  );
   assert.fail(
     `${milestone.label}: player-POV run did not reach milestone after ${maxClicks} visible clicks. Last state: ${JSON.stringify(
       {
@@ -9927,7 +10055,9 @@ async function watchUntilIndependentNpcResolution({
 
   return waitFor(
     async () => {
-      const probe = await session.readBrowserProbe();
+      const probe = await session.readBrowserProbe(
+        `${milestoneLabel}:browser-probe`,
+      );
       if (!probe) {
         return null;
       }
@@ -9949,7 +10079,9 @@ async function watchUntilIndependentNpcResolution({
           (probe.autonomy?.autoContinue || playbackPending)
         )
       ) {
-        const control = await session.readPlayerControlCandidate();
+        const control = await session.readPlayerControlCandidate(
+          `${milestoneLabel}:player-control-candidate`,
+        );
         assert.fail(
           `${milestoneLabel}: observe/autoplay stopped before an independent NPC resolution surfaced. State: ${JSON.stringify(
             {
@@ -10012,7 +10144,9 @@ async function runInhabitGameplayPass(session) {
   const rowanNotebookClick = await runInhabitRowanNotebookClickCheck(session);
   const panelChecks = await runInhabitPanelChecks(session);
   const cameraCheck = await runInhabitCameraCheck(session);
-  const frozenProbe = await session.readBrowserProbe();
+  const frozenProbe = await session.readBrowserProbe(
+    "inhabit-frozen-browser-probe",
+  );
   const watchUrl = `${getWebBase()}?gameId=${encodeURIComponent(
     frozenProbe.gameId,
   )}&inhabitGameplay=${Date.now()}`;
@@ -10789,6 +10923,15 @@ async function main() {
     await writeCheckpointSummary(`${slug(label)}-started`, {
       currentPhase: label,
     });
+    const heartbeat = setInterval(() => {
+      const elapsedSeconds = Math.round(
+        (Date.now() - startedAt.getTime()) / 1000,
+      );
+      process.stderr.write(
+        `[many-lives] ${label} still running after ${elapsedSeconds}s.\n`,
+      );
+    }, BROWSER_PHASE_HEARTBEAT_MS);
+    heartbeat.unref?.();
 
     try {
       const result = await withTimeout(
@@ -10823,6 +10966,8 @@ async function main() {
         currentPhase: label,
       });
       throw error;
+    } finally {
+      clearInterval(heartbeat);
     }
   };
 
