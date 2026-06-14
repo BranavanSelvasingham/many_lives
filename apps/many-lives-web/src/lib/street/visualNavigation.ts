@@ -48,6 +48,7 @@ const VISUAL_MARGIN_TILES = {
   top: 1,
 } as const;
 const WORLD_PATH_LEGAL_TOLERANCE = 3;
+const WORLD_PATH_ENDPOINT_APPROACH_TOLERANCE = 126;
 
 const BLOCKING_LANDMARK_INSET_BY_STYLE: Record<string, number> = {
   "boarding-house": 12,
@@ -174,6 +175,7 @@ export function buildVisualWalkableRuntimePoints(
 export function resolveVisualRoute({
   blockedByVisualScene = 0,
   end,
+  endWorldPoint,
   routeFinder,
   start,
   startWorldPoint,
@@ -182,6 +184,7 @@ export function resolveVisualRoute({
 }: {
   blockedByVisualScene?: number;
   end: Point;
+  endWorldPoint?: Point;
   routeFinder: RouteFinder;
   start: Point;
   startWorldPoint?: Point;
@@ -221,11 +224,18 @@ export function resolveVisualRoute({
           Math.round(point.y),
         ),
   );
-  const worldPath = dedupePointSequence(projectedWorldPath);
-  const sampledPointsLegal = isVisualWorldPathLegal(
-    worldPath,
-    walkableRuntimePoints,
-  );
+  const baseWorldPath = dedupePointSequence(projectedWorldPath);
+  const worldPath = dedupePointSequence([
+    ...baseWorldPath,
+    ...(endWorldPoint ? [endWorldPoint] : []),
+  ]);
+  const sampledPointsLegal =
+    isVisualWorldPathLegal(baseWorldPath, walkableRuntimePoints) &&
+    (!endWorldPoint ||
+      isVisualRouteEndpointApproachLegal(
+        endWorldPoint,
+        walkableRuntimePoints,
+      ));
   const visualObstaclesClear = isVisualWorldPathClearOfObstacles(
     worldPath,
     visualScene,
@@ -479,6 +489,17 @@ function isVisualWorldPathClearOfObstacles(
 
   return !worldPath.some((point) =>
     blockingRects.some((rect) => pointInsideVisualRect(point, rect)),
+  );
+}
+
+function isVisualRouteEndpointApproachLegal(
+  endpoint: Point,
+  walkableRuntimePoints: WalkableRuntimePoint[],
+) {
+  return walkableRuntimePoints.some(
+    (walkablePoint) =>
+      distanceBetween(walkablePoint.world, endpoint) <=
+      WORLD_PATH_ENDPOINT_APPROACH_TOLERANCE,
   );
 }
 

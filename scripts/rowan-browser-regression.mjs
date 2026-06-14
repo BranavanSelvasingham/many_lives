@@ -127,6 +127,7 @@ const KETTLE_LAMP_LANDMARK_BOUNDS = {
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const KETTLE_SIDE_WORLD_MIN_X = 900;
 const MAP_AGENCY_TARGET_LABEL_MAX_OFFSET = 120;
+const OUTDOOR_ROUTE_ARRIVAL_CONTINUITY_MAX_DISTANCE = 8;
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
 const INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES = 10;
 
@@ -1658,35 +1659,42 @@ class CdpSession {
   }
 
   async waitForVisualMove(previousGame, nextGame) {
-    return waitFor(
-      async () => {
-        try {
-          const probe = await this.readBrowserProbe();
-          if (!probe) {
-            return null;
-          }
+    const startedAt = Date.now();
+    let lastProbe = null;
 
-          if (
-            probe.gameId === previousGame.id &&
-            probe.location?.id ===
-              (previousGame.player.currentLocationId ?? null) &&
-            probe.location?.x === previousGame.player.x &&
-            probe.location?.y === previousGame.player.y &&
-            probe.visualPlayer?.isMovingToServerState === true &&
-            probe.visualPlayer?.targetX === nextGame.player.x &&
-            probe.visualPlayer?.targetY === nextGame.player.y &&
-            probe.movement?.playerRoute?.active === true &&
-            probe.movement?.playerRoute?.target?.x === nextGame.player.x &&
-            probe.movement?.playerRoute?.target?.y === nextGame.player.y
-          ) {
-            return probe;
-          }
-        } catch {}
+    while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
+      try {
+        const probe = await this.readBrowserProbe();
+        if (probe) {
+          lastProbe = probe;
+        }
 
-        return null;
-      },
-      SIM_WAIT_TIMEOUT_MS,
-      `Timed out waiting for browser session to stage visual movement from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}.`,
+        if (
+          probe?.gameId === previousGame.id &&
+          probe.movement?.playerRoute?.active === true &&
+          probe.movement?.playerRoute?.worldPath?.length >= 2
+        ) {
+          return probe;
+        }
+      } catch {}
+
+      await sleep(PROBE_POLL_INTERVAL_MS);
+    }
+
+    throw new Error(
+      `Timed out waiting for browser session to stage visual movement from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}. Last probe: ${JSON.stringify(
+        lastProbe
+          ? {
+              autonomy: lastProbe.autonomy,
+              location: lastProbe.location,
+              movement: lastProbe.movement,
+              visualPlayer: lastProbe.visualPlayer,
+              watchMode: lastProbe.watchMode,
+            }
+          : null,
+        null,
+        2,
+      )}`,
     );
   }
 
@@ -1702,13 +1710,6 @@ class CdpSession {
 
           if (
             probe.gameId === previousGame.id &&
-            probe.location?.id ===
-              (previousGame.player.currentLocationId ?? null) &&
-            probe.location?.x === previousGame.player.x &&
-            probe.location?.y === previousGame.player.y &&
-            probe.visualPlayer?.isMovingToServerState === true &&
-            probe.visualPlayer?.targetX === nextGame.player.x &&
-            probe.visualPlayer?.targetY === nextGame.player.y &&
             route.active === true &&
             route.progress >= minimumProgress
           ) {
@@ -6293,6 +6294,44 @@ function assertSettledOutdoorPlayerLocationCorrelation({
       bounds,
       movement: movementGeometry,
     })}.`,
+  );
+}
+
+function assertOutdoorRouteArrivalContinuity(
+  byLabel,
+  routeLabel,
+  arrivalLabel,
+  routeName,
+) {
+  const routeEntry = byLabel[routeLabel];
+  const arrivalEntry = byLabel[arrivalLabel];
+  assert.ok(routeEntry, `Expected route evidence for ${routeName}.`);
+  assert.ok(arrivalEntry, `Expected arrival evidence for ${routeName}.`);
+
+  const routeWorldPath = routeEntry.movement?.playerRoute?.worldPath ?? [];
+  const routeEndpoint = routeWorldPath.at(-1) ?? null;
+  const settledPlayerPoint =
+    arrivalEntry.movement?.playerLocationGeometry?.playerWorldPoint ?? null;
+  assert.ok(
+    routeEndpoint && settledPlayerPoint,
+    `${routeName}: missing route endpoint or settled arrival point. ${JSON.stringify({
+      arrivalLabel,
+      routeLabel,
+      routeWorldPath,
+      settledPlayerPoint,
+    })}`,
+  );
+
+  const arrivalDistance = pointDistance(routeEndpoint, settledPlayerPoint);
+  assert.ok(
+    arrivalDistance <= OUTDOOR_ROUTE_ARRIVAL_CONTINUITY_MAX_DISTANCE,
+    `${routeName}: route endpoint and settled arrival diverged, which would read as a sudden hop. ${JSON.stringify({
+      arrivalDistance,
+      arrivalLabel,
+      routeEndpoint,
+      routeLabel,
+      settledPlayerPoint,
+    })}`,
   );
 }
 
@@ -11363,6 +11402,12 @@ async function main() {
     locationId: "tea-house",
     locationName: "Kettle & Lamp",
   });
+  assertOutdoorRouteArrivalContinuity(
+    byLabel,
+    "stage-cafe-move-route-mid",
+    "stage-cafe-move",
+    "Morrow House to Kettle & Lamp",
+  );
   assert.equal(
     byLabel["enter-cafe-interior"]?.activeConversation?.npcId,
     "npc-ada",
@@ -11458,6 +11503,12 @@ async function main() {
     locationId: "boarding-house",
     locationName: "Morrow House",
   });
+  assertOutdoorRouteArrivalContinuity(
+    byLabel,
+    "stage-home-move-route-mid",
+    "stage-home-move",
+    "Kettle & Lamp to Morrow House",
+  );
   assert.match(
     byLabel["stage-home-move"]?.autonomy?.label ?? "",
     /enter/i,
@@ -11567,6 +11618,12 @@ async function main() {
         byLabel["post-first-afternoon-yard-follow-through"],
       ),
       "Expected the post-completion work-yard sequence to progress into a Tomas setup or legal yard-work action.",
+    );
+    assertOutdoorRouteArrivalContinuity(
+      byLabel,
+      "post-first-afternoon-yard-follow-through-route-mid",
+      "post-first-afternoon-yard-follow-through",
+      "Morrow House to North Crane Yard",
     );
   }
 
