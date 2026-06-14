@@ -36,6 +36,7 @@ export function buildRowanVisibleDecisionArtifact(
   return buildRowanVisibleDecisionArtifactFromState({
     activeConversationDecision: game.activeConversation?.decision,
     autonomyActionId: game.rowanAutonomy?.actionId,
+    autonomyDetail: game.rowanAutonomy?.detail,
     autonomyLabel: game.rowanAutonomy?.label,
     autonomyReason: game.rowanAutonomy?.intent?.reason,
     autonomySignals: game.rowanAutonomy?.intent?.signals,
@@ -50,6 +51,7 @@ export function buildRowanVisibleDecisionArtifact(
 export function buildRowanVisibleDecisionArtifactFromState({
   activeConversationDecision,
   autonomyActionId,
+  autonomyDetail,
   autonomyLabel,
   autonomyReason,
   autonomySignals,
@@ -61,6 +63,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
 }: {
   activeConversationDecision?: string;
   autonomyActionId?: string;
+  autonomyDetail?: string;
   autonomyLabel?: string;
   autonomyReason?: string;
   autonomySignals?: string[];
@@ -70,7 +73,12 @@ export function buildRowanVisibleDecisionArtifactFromState({
   recentIndependentResolution?: string;
   travelPhase?: StreetGameState["rowanAutonomy"]["travelPhase"];
 }): RowanVisibleDecisionArtifact | null {
-  if (!planningTrace && !activeConversationDecision) {
+  if (
+    !planningTrace &&
+    !activeConversationDecision &&
+    !autonomyActionId &&
+    !autonomyLabel
+  ) {
     return null;
   }
 
@@ -111,11 +119,13 @@ export function buildRowanVisibleDecisionArtifactFromState({
           selectedOption?.rationale ??
           selectedStep?.rationale ??
           autonomyReason ??
+          autonomyDetail ??
           activeConversationDecision
         }`
       : selectedOption?.rationale ??
           selectedStep?.rationale ??
           autonomyReason ??
+          autonomyDetail ??
           activeConversationDecision,
     132,
   );
@@ -128,12 +138,14 @@ export function buildRowanVisibleDecisionArtifactFromState({
         )
       : rationaleBase;
   const objective = compactDecisionText(
-    planningTrace?.selectedPressureLabel ??
-      planningTrace?.outcomes.find((outcome) => outcome.status !== "met")
-        ?.label ??
-      objectiveText ??
-      activeConversationDecision ??
-      autonomyLabel,
+    planningTrace
+      ? (planningTrace.selectedPressureLabel ??
+          planningTrace.outcomes.find((outcome) => outcome.status !== "met")
+            ?.label ??
+          objectiveText ??
+          activeConversationDecision ??
+          autonomyLabel)
+      : (activeConversationDecision ?? autonomyLabel ?? objectiveText),
     112,
   );
   const backingSummary = backingSummaryForTrace(
@@ -165,11 +177,14 @@ export function buildRowanVisibleDecisionArtifactFromState({
     2,
     72,
   );
+  const artifactSignals = planningTrace
+    ? autonomySignals
+    : autonomySignals?.filter((signal) => !/^Goal:/i.test(signal));
   const constraints = uniqueCompact(
     [
       recentIndependentResolution,
       postFirstAfternoonChoiceSignal,
-      ...(autonomySignals ?? []),
+      ...(artifactSignals ?? []),
       selectedOption?.pressureLabel,
       selectedStep?.validation,
       activeConversationDecision,
@@ -378,8 +393,32 @@ function nextCheckForTraceOutcome(trace: PlanningTrace) {
     70,
   )[0];
 
-  const lead = stripTrailingDecisionPunctuation(label);
+  const lead = nextCheckLeadForOutcome(outcome, label, signal);
   return compactDecisionText(signal ? `${lead}: ${signal}` : label, 118);
+}
+
+function nextCheckLeadForOutcome(
+  outcome: PlanningTrace["outcomes"][number],
+  label: string,
+  signal: string | undefined,
+) {
+  if (signal && outcome.status === "blocked") {
+    if (
+      /^Yard work lead confirmed$/i.test(label) &&
+      /\bnot confirmed\b/i.test(signal)
+    ) {
+      return "Confirm yard work lead";
+    }
+
+    if (
+      /^Tea-house work lead confirmed$/i.test(label) &&
+      /\bnot confirmed\b/i.test(signal)
+    ) {
+      return "Confirm tea-house work lead";
+    }
+  }
+
+  return stripTrailingDecisionPunctuation(label);
 }
 
 function isCurrentOrMetaTraceOutcome(

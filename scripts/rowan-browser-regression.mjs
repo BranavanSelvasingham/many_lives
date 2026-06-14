@@ -2460,8 +2460,28 @@ function visibleDecisionNextCheckForOutcome(trace) {
     70,
   )[0];
 
-  const lead = stripTrailingVisibleDecisionPunctuation(label);
+  const lead = visibleDecisionNextCheckLead(outcome, label, signal);
   return compactVisibleDecisionText(signal ? `${lead}: ${signal}` : label, 118);
+}
+
+function visibleDecisionNextCheckLead(outcome, label, signal) {
+  if (signal && outcome?.status === "blocked") {
+    if (
+      /^Yard work lead confirmed$/i.test(label) &&
+      /\bnot confirmed\b/i.test(signal)
+    ) {
+      return "Confirm yard work lead";
+    }
+
+    if (
+      /^Tea-house work lead confirmed$/i.test(label) &&
+      /\bnot confirmed\b/i.test(signal)
+    ) {
+      return "Confirm tea-house work lead";
+    }
+  }
+
+  return stripTrailingVisibleDecisionPunctuation(label);
 }
 
 function isCurrentOrMetaTraceOutcome(trace, outcome) {
@@ -3098,6 +3118,11 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
     /\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate)\b/i,
     `${label}: decision artifact leaked backend-shaped labels.`,
   );
+  assert.doesNotMatch(
+    playerText,
+    /\b(?:Yard|Tea-house) work lead confirmed\b[^.]{0,90}\bnot confirmed\b/i,
+    `${label}: decision artifact contradicts a confirmed work-lead outcome with an unmet blocker.`,
+  );
 }
 
 function assertVisibleDecisionNextCheckForTrace(
@@ -3616,12 +3641,38 @@ function classifyObjectiveSequenceIntent(visibleText, probe) {
   const families = [];
   const objectiveText = [
     visibleText,
+    probe.objective?.routeKey,
     probe.objective?.text,
     probe.objective?.focus,
     probe.objective?.progress?.label,
+    probe.autonomy?.actionId,
+    probe.autonomy?.label,
+    probe.autonomy?.targetLocationId,
   ]
     .filter(Boolean)
     .join(" ");
+
+  const postFirstAfternoonCommitted = Boolean(
+    probe.firstAfternoon?.completionAcknowledgedAt,
+  );
+  const yardAuthorityText = [
+    probe.objective?.routeKey,
+    probe.autonomy?.actionId,
+    probe.autonomy?.label,
+    probe.autonomy?.targetLocationId,
+    probe.location?.id,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (
+    postFirstAfternoonCommitted &&
+    /\b(?:work-yard|freight yard|freight-yard|Tomas|yard lift|job-yard-shift)\b/i.test(
+      yardAuthorityText,
+    )
+  ) {
+    families.push("yard_work");
+  }
 
   if (
     /\b(?:Ada|Kettle\s*&?\s*Lamp|cafe|lunch work|cup-and-counter)\b/i.test(
@@ -4115,7 +4166,11 @@ function buildObjectiveSequenceAuditEntry({
     .filter(Boolean)
     .join(" ");
   const expectedTargetLocationId =
-    /\b(?:toward Morrow House|Head to Morrow House|Enter Morrow House|return home|head back|take stock|room)\b/i.test(
+    /\b(?:North Crane Yard|freight yard|freight-yard|Tomas|yard lift|job-yard-shift)\b/i.test(
+      activeBeatText,
+    )
+      ? "freight-yard"
+      : /\b(?:toward Morrow House|Head to Morrow House|Enter Morrow House|return home|head back|take stock|room)\b/i.test(
       activeBeatText,
     )
       ? "boarding-house"
@@ -4123,13 +4178,15 @@ function buildObjectiveSequenceAuditEntry({
             activeBeatText,
           )
         ? "tea-house"
-        : intentFamilies.includes("take_stock") ||
-            intentFamilies.includes("return_home")
-          ? "boarding-house"
-          : intentFamilies.includes("ada_kettle_lead") ||
-              intentFamilies.includes("cafe_shift")
-            ? "tea-house"
-            : null;
+        : intentFamilies.includes("yard_work")
+            ? "freight-yard"
+            : intentFamilies.includes("take_stock") ||
+                intentFamilies.includes("return_home")
+              ? "boarding-house"
+              : intentFamilies.includes("ada_kettle_lead") ||
+                  intentFamilies.includes("cafe_shift")
+                ? "tea-house"
+                : null;
   const authorityEvidence = buildObjectiveSequenceAuthorityEvidence({
     autonomy: probe.autonomy ?? null,
     planningTrace,
@@ -6277,6 +6334,7 @@ function buildMovementAuditSummary(timeline) {
     markerSamples: scheduledNpcMarkerSamples,
     routeSamples: scheduledNpcRouteSamples,
     timeline,
+    visualCueSamples: scheduledNpcVisualCueSamples,
   });
 
   const patrolsByLocation = new Map();
@@ -6384,6 +6442,13 @@ function isValidScheduledNpcVisualCueSample(cue) {
     !/\b(cityEvents|worldPressure|routeKey|advance_objective)\b/i.test(
       `${cue.cueLabel} ${cue.cueSignal}`,
     )
+  );
+}
+
+function isUsableScheduledNpcSpatialSample(sample) {
+  return (
+    isValidVisibleScheduledNpcMarkerSample(sample) ||
+    isValidScheduledNpcVisualCueSample(sample)
   );
 }
 
@@ -6690,6 +6755,7 @@ function buildScheduledNpcLocationChangeAudit({
   markerSamples,
   routeSamples,
   timeline,
+  visualCueSamples,
 }) {
   const routeSampleMatches = ({ fromLocationId, npcId, toLocationId }) =>
     routeSamples.filter(
@@ -6704,6 +6770,14 @@ function buildScheduledNpcLocationChangeAudit({
         marker.npcId === npcId &&
         marker.currentLocationId === fromLocationId &&
         marker.toLocationId === toLocationId,
+    );
+  const visualCueSampleMatches = ({ fromLocationId, npcId, toLocationId }) =>
+    visualCueSamples.filter(
+      (cue) =>
+        cue.npcId === npcId &&
+        cue.fromLocationId === fromLocationId &&
+        cue.toLocationId === toLocationId &&
+        cue.cueKind === "current-schedule-stop",
     );
   const changes = [];
 
@@ -6754,6 +6828,13 @@ function buildScheduledNpcLocationChangeAudit({
             toLocationId,
           })
         : [];
+      const matchingVisualCues = currentStopChanged
+        ? visualCueSampleMatches({
+            fromLocationId,
+            npcId,
+            toLocationId,
+          })
+        : [];
       const legalRouteEvidence = matchingRoutes.find(
         (route) =>
           route.legal &&
@@ -6767,7 +6848,10 @@ function buildScheduledNpcLocationChangeAudit({
           ? "same-current-stop/no-route-needed"
           : null;
       const markerEvidence =
-        summarizeScheduledNpcMarkerEvidence(matchingMarkers);
+        summarizeScheduledNpcMarkerEvidence([
+          ...matchingMarkers,
+          ...matchingVisualCues,
+        ]);
       const continuityGapReason =
         currentStopChanged && legalRouteEvidence && !markerEvidence.valid
           ? "marker-not-visible-before-stop-change"
@@ -6798,13 +6882,9 @@ function buildScheduledNpcLocationChangeAudit({
 }
 
 function summarizeScheduledNpcMarkerEvidence(samples) {
-  const usableSamples = samples.filter(
-    (sample) =>
-      sample.visible &&
-      sample.onRoute &&
-      sample.routePathLength > 1 &&
-      typeof sample.routeProgress === "number" &&
-      sample.position,
+  const usableSamples = samples.filter(isUsableScheduledNpcSpatialSample);
+  const hasValidVisualCue = usableSamples.some(
+    isValidScheduledNpcVisualCueSample,
   );
   const progressValues = usableSamples.map((sample) => sample.routeProgress);
   const progressRange =
@@ -6841,8 +6921,9 @@ function summarizeScheduledNpcMarkerEvidence(samples) {
     progressRange: roundAuditNumber(progressRange),
     sampleCount: usableSamples.length,
     valid:
-      usableSamples.length >= 2 &&
-      (progressRange >= 0.015 || maxPositionDelta >= 12),
+      (hasValidVisualCue && usableSamples.length >= 1) ||
+      (usableSamples.length >= 2 &&
+        (progressRange >= 0.015 || maxPositionDelta >= 12)),
   };
 }
 
@@ -8186,6 +8267,13 @@ function compactPostFirstAfternoonMoment(moment) {
 
   const selected = selectedPlanningEvidence(moment);
   return {
+    activeConversation: moment.activeConversation
+      ? {
+          lines: moment.activeConversation.lines ?? null,
+          npcId: moment.activeConversation.npcId ?? null,
+          npcName: moment.activeConversation.npcName ?? null,
+        }
+      : null,
     clock: moment.clock ?? null,
     firstAfternoon: {
       completedAt: moment.firstAfternoon?.completedAt ?? null,
@@ -8236,6 +8324,7 @@ function postFirstAfternoonLivePressureFacts(moment) {
     discoveredJobs: (worldPressure.jobWindows ?? [])
       .filter((job) => job.discovered)
       .map((job) => ({
+        accepted: Boolean(job.accepted),
         completed: Boolean(job.completed),
         id: job.id,
         inWindow: Boolean(job.inWindow),
@@ -8355,6 +8444,49 @@ function postFirstAfternoonLiveRouteProbe(probe) {
   );
 }
 
+function postFirstAfternoonYardFollowThroughProbe(probe) {
+  if (!probe) {
+    return false;
+  }
+
+  const selected = selectedPlanningEvidence(probe);
+  const yardJob = (probe.worldPressure?.jobWindows ?? []).find(
+    (job) => job.id === "job-yard-shift",
+  );
+  const atYard = probe.location?.id === "freight-yard";
+  const yardActionIds = new Set([
+    "accept:job-yard-shift",
+    "work:job-yard-shift",
+    "talk:npc-tomas",
+  ]);
+  const yardAction = yardActionIds.has(probe.autonomy?.actionId ?? "");
+  const tomasSetup = probe.activeConversation?.npcId === "npc-tomas";
+  const yardJobProgressed = Boolean(
+    yardJob?.accepted || yardJob?.completed || yardJob?.missed,
+  );
+  const yardJobClosed = Boolean(yardJob?.completed || yardJob?.missed);
+  const yardText = [
+    probe.objective?.routeKey,
+    probe.objective?.text,
+    probe.autonomy?.label,
+    probe.autonomy?.detail,
+    selected.pressureLabel,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const activeYardObjective =
+    ["dynamic", "conversation"].includes(probe.objective?.source ?? "") &&
+    /\b(?:work-yard|yard|freight|Tomas)\b/i.test(yardText);
+
+  return (
+    Boolean(probe.firstAfternoon?.completionAcknowledgedAt) &&
+    ((activeYardObjective &&
+      (atYard || yardJobProgressed) &&
+      (tomasSetup || yardAction || yardJobProgressed)) ||
+      (atYard && yardJobClosed))
+  );
+}
+
 function isRestOrShelterSelection(summary) {
   const selectedText = [
     summary?.objective?.focus,
@@ -8383,12 +8515,17 @@ function buildPostFirstAfternoonLivePressureEvidence({
   const handoff = byLabel["post-first-afternoon-handoff"] ?? null;
   const rest = byLabel["post-first-afternoon-rest"] ?? null;
   const liveRoute = byLabel["post-first-afternoon-live-route"] ?? null;
+  const followThrough =
+    byLabel["post-first-afternoon-yard-follow-through"] ?? null;
   const handoffSummary = compactPostFirstAfternoonMoment(handoff);
   const restSummary = compactPostFirstAfternoonMoment(rest);
   const liveRouteSummary = compactPostFirstAfternoonMoment(liveRoute);
+  const followThroughSummary = compactPostFirstAfternoonMoment(followThrough);
   const handoffLivePressureOptions = livePressurePlannerOptions(handoff);
   const restLivePressureOptions = livePressurePlannerOptions(rest);
   const liveRoutePressureOptions = livePressurePlannerOptions(liveRoute);
+  const followThroughPressureOptions =
+    livePressurePlannerOptions(followThrough);
 
   return {
     assertionSemantics:
@@ -8398,14 +8535,18 @@ function buildPostFirstAfternoonLivePressureEvidence({
     livePressure: {
       atHandoff: postFirstAfternoonLivePressureFacts(handoff),
       afterRest: postFirstAfternoonLivePressureFacts(rest),
+      atFollowThrough: postFirstAfternoonLivePressureFacts(followThrough),
       atLiveRoute: postFirstAfternoonLivePressureFacts(liveRoute),
+      plannerOptionsAtFollowThrough: followThroughPressureOptions,
       plannerOptionsAtHandoff: handoffLivePressureOptions,
       plannerOptionsAfterRest: restLivePressureOptions,
       plannerOptionsAtLiveRoute: liveRoutePressureOptions,
     },
+    followThrough: followThroughSummary,
     liveRoute: liveRouteSummary,
     notebookFreshness: {
       afterRest: restSummary?.notebook ?? null,
+      atFollowThrough: followThroughSummary?.notebook ?? null,
       atHandoff: handoffSummary?.notebook ?? null,
       atLiveRoute: liveRouteSummary?.notebook ?? null,
     },
@@ -8415,6 +8556,7 @@ function buildPostFirstAfternoonLivePressureEvidence({
           "post-first-afternoon-handoff",
           "post-first-afternoon-rest",
           "post-first-afternoon-live-route",
+          "post-first-afternoon-yard-follow-through",
         ].includes(entry.milestone),
       )
       .map((entry) => ({
@@ -8490,6 +8632,10 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   assert.ok(
     evidence?.liveRoute,
     "Post-first-afternoon follow-through evidence is missing the live-route moment.",
+  );
+  assert.ok(
+    evidence?.followThrough,
+    "Post-first-afternoon follow-through evidence is missing the yard/Tomas follow-through moment.",
   );
   assert.equal(
     evidence.directSimCommandsUsed,
@@ -8656,6 +8802,46 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
       liveRouteTarget,
       "freight-yard",
       "Post-rest yard-work route must target the freight yard.",
+    );
+    const followThrough = evidence.followThrough;
+    const followThroughTarget = followThrough.selected?.targetLocationId ?? null;
+    const followThroughAction = followThrough.selected?.actionId ?? null;
+    const followThroughYardJob = (
+      evidence.livePressure?.atFollowThrough?.discoveredJobs ?? []
+    ).find((job) => job.id === "job-yard-shift");
+    const hasTomasSetup =
+      followThrough.activeConversation?.npcId === "npc-tomas" ||
+      followThroughAction === "talk:npc-tomas";
+    const hasLegalYardAction =
+      followThroughAction === "accept:job-yard-shift" ||
+      followThroughAction === "work:job-yard-shift" ||
+      Boolean(
+        followThroughYardJob?.accepted ||
+          followThroughYardJob?.completed ||
+          followThroughYardJob?.missed,
+      );
+
+    assert.ok(
+      followThrough.location?.id === "freight-yard" ||
+        followThroughTarget === "freight-yard",
+      `Post-rest yard follow-through must reach or remain aimed at North Crane Yard, got ${JSON.stringify(
+        {
+          location: followThrough.location,
+          selected: followThrough.selected,
+        },
+      )}.`,
+    );
+    assert.ok(
+      hasTomasSetup || hasLegalYardAction,
+      `Post-rest yard follow-through must become Tomas setup, legal yard action, or closed/completed yard state: ${JSON.stringify(
+        {
+          activeConversation: followThrough.activeConversation,
+          selected: followThrough.selected,
+          yardJob: followThroughYardJob,
+        },
+        null,
+        2,
+      )}`,
     );
   }
   const liveRouteText = [
@@ -8950,6 +9136,12 @@ async function captureInhabitMoment({
   const dom = probe.independentNpcSurface
     ? await waitForInhabitIndependentNpcSurfaceDom(session, label, probe)
     : await session.readDomSnapshot();
+  const latestProbeForArtifact =
+    probe.autonomy?.visibleDecisionArtifact || probe.rail?.visibleDecisionArtifact
+      ? null
+      : probe.independentNpcSurface
+        ? await session.readBrowserProbe().catch(() => null)
+        : null;
   const controlCandidate = await session.readPlayerControlCandidate();
   assertInhabitPlayerDom(label, dom, controlCandidate, probe);
   const camera = await session.readCameraProbe().catch(() => null);
@@ -8987,6 +9179,8 @@ async function captureInhabitMoment({
     visibleDecisionArtifact:
       probe.autonomy?.visibleDecisionArtifact ??
       probe.rail?.visibleDecisionArtifact ??
+      latestProbeForArtifact?.autonomy?.visibleDecisionArtifact ??
+      latestProbeForArtifact?.rail?.visibleDecisionArtifact ??
       null,
     visualEventCues: probe.visualEventCues ?? [],
     worldPressure: compactWorldPressureSnapshot(probe.worldPressure),
@@ -9904,6 +10098,13 @@ async function runInhabitGameplayPass(session) {
       userQuestion:
         "After resting, does Rowan choose a current-state live pressure route instead of looping on Morrow House or the first-afternoon scaffold?",
     },
+    {
+      label: "post-first-afternoon-yard-follow-through",
+      maxClicks: 6,
+      reached: postFirstAfternoonYardFollowThroughProbe,
+      userQuestion:
+        "Does the selected North Crane Yard pressure turn into a Tomas setup or legal yard-work action instead of stopping at a route target?",
+    },
   ];
 
   for (const milestone of milestones) {
@@ -9980,6 +10181,12 @@ async function runInhabitGameplayPass(session) {
       milestonesReached,
     )}.`,
   );
+  assert.ok(
+    milestonesReached.includes("post-first-afternoon-yard-follow-through"),
+    `Inhabit gameplay pass did not prove a yard/Tomas follow-through after the selected live route: ${JSON.stringify(
+      milestonesReached,
+    )}.`,
+  );
   const handoffMoment = moments.find(
     (moment) => moment.label === "post-first-afternoon-handoff",
   );
@@ -10030,6 +10237,17 @@ async function runInhabitGameplayPass(session) {
   assert.ok(
     postFirstAfternoonLiveRouteProbe(liveRouteMoment),
     "Post-rest browser evidence did not expose a dynamic legal-backed live-pressure route.",
+  );
+  const yardFollowThroughMoment = moments.find(
+    (moment) => moment.label === "post-first-afternoon-yard-follow-through",
+  );
+  assert.ok(
+    yardFollowThroughMoment,
+    "Inhabit gameplay pass did not capture browser evidence for the yard/Tomas follow-through.",
+  );
+  assert.ok(
+    postFirstAfternoonYardFollowThroughProbe(yardFollowThroughMoment),
+    "Post-rest browser evidence did not show the selected yard pressure becoming a Tomas setup or legal yard-work action.",
   );
   const postFirstAfternoonLivePressureEvidence =
     buildPostFirstAfternoonLivePressureEvidence({
@@ -10470,6 +10688,16 @@ function buildRegressionSteps(gameRef) {
     {
       label: "post-first-afternoon-live-route",
       mutate: async () => advanceObjective(gameRef.current.id, true),
+    },
+    {
+      label: "post-first-afternoon-yard-follow-through",
+      mutate: async () => {
+        const routeProgress = await advanceObjective(gameRef.current.id, true);
+        gameRef.current = routeProgress;
+        const arrival = await advanceObjective(routeProgress.id, true);
+        gameRef.current = arrival;
+        return advanceObjective(arrival.id, true);
+      },
     },
     {
       label: "independent-npc-resolution",
@@ -11188,6 +11416,12 @@ async function main() {
       byLabel["post-first-afternoon-live-route"]?.autonomy?.targetLocationId,
       "freight-yard",
       "Expected a post-completion work-yard objective to keep freight yard as the selected live-route target.",
+    );
+    assert.ok(
+      postFirstAfternoonYardFollowThroughProbe(
+        byLabel["post-first-afternoon-yard-follow-through"],
+      ),
+      "Expected the post-completion work-yard sequence to progress into a Tomas setup or legal yard-work action.",
     );
   }
 

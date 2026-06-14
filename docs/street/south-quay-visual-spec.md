@@ -104,6 +104,7 @@ The renderer should consume named intentions like these, then resolve them to ac
 The district is visually acceptable when:
 
 - A user can identify `Kettle & Lamp`, `Morrow House`, `Mercer Repairs`, `Quay Square`, and `Pilgrim Slip` without reading their labels.
+- Route endpoints, labels, and actor markers land at the visible landmark they name; navigation should not look like Rowan or an NPC hopped to a disconnected point on the map.
 - The center reads like a town square rather than leftover open space.
 - The dock edge reads like a waterfront, not a border.
 - Off-map space reads like adjacent town fabric, not darkness.
@@ -126,4 +127,3 @@ Example:
 - `Primary read`: “this is a restaurant with terrace seating”
 - `Must-have cues`: menu board, dining tables, warm windows, awning, planted frontage
 - `Avoid`: generic shopfront, flat roof slab, empty pavement
-

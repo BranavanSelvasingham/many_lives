@@ -9445,7 +9445,7 @@ function drawAmbientCityLife(
   const cityAlpha = runtimeState.snapshot.rowanAutoplayEnabled ? 0.9 : 0.74;
 
   drawCafeWarmWindowEvent(layer, runtimeState, now, hour);
-  drawDockCartEvent(layer, runtimeState, now, hour);
+  drawDockCartEvent(layer, runtimeState, now);
 
   for (const route of AMBIENT_CITY_ROUTES) {
     if (!ambientRouteIsActive(route, hour, game)) {
@@ -9805,7 +9805,6 @@ function drawDockCartEvent(
   layer: PhaserType.GameObjects.Graphics,
   runtimeState: RuntimeState,
   now: number,
-  hour: number,
 ) {
   const game = runtimeState.snapshot.game;
   const anchors =
@@ -9816,7 +9815,7 @@ function drawDockCartEvent(
       includeUpcoming: true,
     });
 
-  if (!anchors || !game || (!eventDriven && (hour < 11.5 || hour > 17))) {
+  if (!anchors || !game || !eventDriven) {
     return;
   }
 

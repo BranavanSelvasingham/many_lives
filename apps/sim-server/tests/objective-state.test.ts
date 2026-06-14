@@ -1294,6 +1294,34 @@ describe("objectiveState classification", () => {
     );
   });
 
+  it("refreshes non-manual work objective copy when live state moves authority to the yard", () => {
+    const world = seedStreetGame("objective-work-yard-copy-refresh");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    if (teaJob) {
+      teaJob.discovered = true;
+      teaJob.completed = true;
+    }
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    if (yardJob) {
+      yardJob.discovered = true;
+      yardJob.accepted = true;
+    }
+    world.player.activeJobId = "job-yard-shift";
+    world.player.objective = undefined;
+
+    const objective = buildPlayerObjectiveState(world, {
+      focus: "work",
+      source: "conversation",
+      text: "Take the cup-and-counter shift at Kettle & Lamp.",
+    });
+
+    expect(objective).toMatchObject({
+      routeKey: "work-yard",
+      text: "Secure paid yard work and follow through.",
+    });
+    expect(objective?.text).not.toMatch(/cup-and-counter|Kettle/i);
+  });
+
   it("keeps work route metadata stable across representative live states", () => {
     const routeCases = [
       {
