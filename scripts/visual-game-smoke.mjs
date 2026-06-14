@@ -2208,6 +2208,66 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
   );
 }
 
+async function waitForOpeningActionCarryForward(
+  session,
+  label,
+  expectedStatuses = ["queued", "in_progress", "completed"],
+  options = {},
+) {
+  const timeoutMs = options.timeoutMs ?? AUTOPLAY_START_TIMEOUT_MS;
+  const startedAt = Date.now();
+  let lastMismatch = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const probe = await session.readBrowserProbe();
+
+    try {
+      assertOpeningActionCarryForward(probe, label, expectedStatuses);
+      return probe;
+    } catch (error) {
+      const page = await session.inspectPage().catch((pageError) => ({
+        error: pageError instanceof Error ? pageError.message : String(pageError),
+      }));
+      lastMismatch = {
+        bodyText: page.bodyText ?? null,
+        error: error instanceof Error ? error.message : String(error),
+        openingActionCarryForward: probe?.openingActionCarryForward ?? null,
+        probe: compactDecisionArtifactProbeDiagnostic(probe),
+        url: page.url ?? null,
+      };
+      await sleep(POLL_INTERVAL_MS);
+    }
+  }
+
+  const basename = safeArtifactName(`${label}-opening-carry-forward-mismatch`);
+  const diagnosticsPath = path.join(OUTPUT_DIR, `${basename}.json`);
+  const screenshotPath = path.join(OUTPUT_DIR, `${basename}.png`);
+  await writeFile(
+    diagnosticsPath,
+    `${JSON.stringify(
+      {
+        capturedAt: new Date().toISOString(),
+        expectedStatuses,
+        label,
+        ...lastMismatch,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await session.captureScreenshot(screenshotPath);
+
+  throw new Error(
+    [
+      `${label}: opening action carry-forward evidence did not stabilize within ${timeoutMs}ms.`,
+      `Diagnostics: ${diagnosticsPath}`,
+      `Screenshot: ${screenshotPath}`,
+      `Last mismatch: ${JSON.stringify(lastMismatch, null, 2)}`,
+    ].join("\n"),
+  );
+}
+
 function assertNoWatchModeReplyAffordances(page, label) {
   assert.deepEqual(
     page.watchModeReplyAffordances ?? [],
@@ -2491,9 +2551,8 @@ async function runResponsiveDecisionArtifactCheck(session) {
   await session.waitForAppReady();
   await session.waitForWatchModeUi(viewport);
 
-  const openingProbe = await session.readBrowserProbe();
-  assertOpeningActionCarryForward(
-    openingProbe,
+  const openingProbe = await waitForOpeningActionCarryForward(
+    session,
     `${viewport.name} responsive decision opening`,
   );
   const advancedProbe = await waitForFreshAutoplayAdvance(
