@@ -27,6 +27,8 @@ Use the narrowest validation that covers the change, but do validate.
 - Run `corepack pnpm --filter @many-lives/many-lives-web build` for Next.js routing, Suspense, server/client boundary, or production-readiness changes.
 - Run `corepack pnpm test` before commit/push when gameplay, routes, sim behavior, or visual smoke coverage changed.
 - Inspect generated screenshots or browser output for visual work. A passing command is not enough for layout or vibe changes.
+- Treat visual noise as a validation failure, not polish debt: screenshots should be free of stale event props, unbacked cue art, accidental halos/rectangles, debug overlays, flicker, obvious tiling seams, unreadable labels, and low-quality artifacts that make the city feel broken or synthetic.
+- Treat navigation incoherence as a validation failure: Rowan and NPCs should not suddenly hop between unrelated locations, route-start/mid/arrival screenshots should form a continuous walkable path, labels and markers should stay attached to the correct actor or landmark, and route endpoints should visually line up with the authored landmark location.
 
 ## Review Bias
 

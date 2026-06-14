@@ -7447,17 +7447,50 @@ function workJob(world: StreetGameState, jobId: string): void {
       `Rowan finishes ${job.title.toLowerCase()} and earns $${job.pay}. Ada says the room stayed easier because he kept up.`,
     );
   } else {
+    if (job.id === "job-yard-shift") {
+      world.player.currentThought =
+        "The yard paid, and now I need to look at what the house had to handle while I was here.";
+    }
     addFeed(
       world,
       "job",
       `You finished ${job.title.toLowerCase()} and earned $${job.pay}. The yard will remember you as someone who stayed until the load was done.`,
     );
+    addYardWorkPumpConsequenceFeed(world, job);
   }
 
   remember(
     world,
     "job",
     `You finished ${job.title.toLowerCase()} and took your pay while the block was still moving.`,
+  );
+}
+
+function addYardWorkPumpConsequenceFeed(
+  world: StreetGameState,
+  job: JobState,
+): void {
+  if (job.id !== "job-yard-shift") {
+    return;
+  }
+
+  const pumpProblem = problemById(world, "problem-pump");
+  if (
+    pumpProblem?.status !== "resolved" ||
+    pumpProblem.resolvedByNpcId !== "npc-mara"
+  ) {
+    return;
+  }
+
+  addFeed(
+    world,
+    "problem",
+    "Choosing the freight-yard lift paid Rowan, but it left the Morrow Yard pump for Mara to contain without him.",
+  );
+  rememberIfNew(
+    world,
+    "problem",
+    "Rowan chose paid yard work while the pump was still live, so Mara contained the house strain herself.",
   );
 }
 
@@ -7734,7 +7767,11 @@ function restAtHome(world: StreetGameState): void {
 
   const pumpSolved = problemById(world, "problem-pump")?.status === "solved";
   const restAdvance = advanceWorldUntilIndependentNpcAction(world, 60);
-  const fullRestEnergy = pumpSolved ? 28 : 24;
+  const fullRestEnergy = postFirstAfternoonNeedsCommitmentRecovery(world)
+    ? 56
+    : pumpSolved
+      ? 28
+      : 24;
   const energyGain = Math.max(
     1,
     Math.round((fullRestEnergy * restAdvance.advancedMinutes) / 60),
@@ -7762,6 +7799,18 @@ function restAtHome(world: StreetGameState): void {
       : "You rested, but the house never quite stopped sounding busy and unfinished.",
   );
   markCurrentObjectiveStepCompleted(world, "rest-home", "rest-hour");
+}
+
+function postFirstAfternoonNeedsCommitmentRecovery(world: StreetGameState) {
+  const yardJob = jobById(world, "job-yard-shift");
+  return Boolean(
+    world.firstAfternoon?.completionAcknowledgedAt &&
+      yardJob?.discovered &&
+      jobWindowOpen(world, yardJob) &&
+      !yardJob.accepted &&
+      !yardJob.completed &&
+      !yardJob.missed,
+  );
 }
 
 function settleFirstAfternoonPlan(world: StreetGameState): void {

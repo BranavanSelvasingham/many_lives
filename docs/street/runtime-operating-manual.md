@@ -66,6 +66,8 @@ Autoplay is a watch mode for Rowan's current autonomy policy. It should feel lik
 - In `?autoplay=1` or `observe=1`, Rowan must not wait for the viewer to click a progression, reply, wait, or action button. Showing a required next-action button in watch mode is a bug unless it is clearly outside observe/autoplay mode.
 - The map must support user panning while autoplay runs, so the viewer can look around without fighting camera snaps.
 - Ambient citizens should move at believable human scale and speed. They are part of the "living city" read, not tiny decorative markers.
+- Rowan and NPC movement should read as continuous navigation through the authored map. Sudden hops between unrelated locations, skipped route segments, marker/label desync, or arrival at a landmark that does not visually match the route endpoint are validation failures.
+- Interior/exterior transitions may change space immediately, but the transition must be explicit in the rail/playback and should not look like a broken map teleport.
 
 When autoplay feels wrong, inspect both:
 
@@ -116,6 +118,9 @@ The right rail should help the player understand the run without covering the wh
 - Edge affordances should indicate when there is no more map to pan in a direction.
 - The map should not leave large unexplained black voids around the authored city.
 - NPC objective cues should mark the NPC and route, not draw a full-location translucent footprint halo. Large low-alpha rectangles around landmarks read as render noise unless the target is the location itself.
+- Visual noise is a validation failure. Screenshots and browser artifacts should be filtered for stale decorative props, unbacked event cues, accidental translucent blocks or halos, debug-only overlays, flicker, obvious tiling seams, blurred or jagged low-quality marks, and labels or icons that obscure the playfield.
+- Every visible event-like prop should either be ordinary authored scenery or backed by current world pressure. If a cart, crowd, marker, route cue, or warning art implies a live event after that event has resolved, treat it as stale artifact noise and fix the backing rule or remove the cue.
+- Navigation coherence is part of visual quality. The route line, moving sprite, marker label, destination label, and authored landmark should agree about where the actor is going; screenshots should show plausible route progression instead of a start point and disconnected arrival.
 - Landmarks should be visually identifiable before labels: cafe, boarding house, square, dock yard, and quay edge should read by shape and props.
 
 Use [docs/street/south-quay-visual-spec.md](/Users/branavan/GitHub/many_lives/docs/street/south-quay-visual-spec.md) for map art direction.
@@ -162,9 +167,11 @@ Use this checklist when the user asks whether the app is playable, ready, or dep
 - Confirm Rowan's next meaningful action has a visible decision artifact or browser artifact: objective, constraints, considered/rejected options, selected action, rationale, and trace-backed next uncertainty when available.
 - Run the final player-POV browser regression: the inhabit gameplay pass must progress from a fresh browser session by visible clicks and pointer drags, not direct sim commands.
 - Confirm Rowan's objective decisions come from current world state and available legal actions, not just the next hardcoded objective trail item.
+- Confirm route continuity: no unexplained teleports, skipped map segments, marker/label desync, or arrivals that do not line up with the authored landmark position. Route-start, route-mid, and arrival screenshots should tell one coherent movement story.
 - Pan to each map edge and confirm the user can tell when the edge is reached.
 - Check desktop, tablet, and phone-sized layouts.
 - Inspect screenshots, not only test output.
+- Reject noisy visual artifacts: stale cue art, unbacked event props, debug overlays, accidental halos/rectangles, bad seams, flicker, or labels/icons that make the city read as cluttered or synthetic.
 - Confirm no visible browser errors.
 - Run `corepack pnpm visual:game`.
 - Run `corepack pnpm lint` and `corepack pnpm --filter @many-lives/many-lives-web build` for code changes.

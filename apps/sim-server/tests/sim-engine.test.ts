@@ -4898,6 +4898,10 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy.actionId).not.toBe("enter:boarding-house");
     expect(world.rowanAutonomy.targetLocationId).not.toBe("boarding-house");
     if (world.player.objective?.routeKey === "work-yard") {
+      expect(world.player.objective.text).toMatch(/yard/i);
+      expect(world.player.objective.text).not.toMatch(
+        /cup-and-counter|Kettle/i,
+      );
       expect(world.rowanAutonomy.targetLocationId).toBe("freight-yard");
     }
     expect(
@@ -4944,5 +4948,87 @@ describe("SimulationEngine street slice", () => {
     expect(artifactText).not.toMatch(
       /routeKey|worldPressure|planningTrace|actionId|targetLocationId|live pressure|predicate/i,
     );
+
+    if (world.player.objective?.routeKey === "work-yard") {
+      let yardWorld = world;
+      const seenActions = new Set<string>();
+      let sawTomasSetup = false;
+      let sawLegalYardAction = false;
+      let sawFreightYard = false;
+      let yardWorkStepArtifactText = "";
+
+      for (let index = 0; index < 8; index += 1) {
+        sawFreightYard ||= yardWorld.player.currentLocationId === "freight-yard";
+        const actionId = yardWorld.rowanAutonomy.actionId;
+        if (yardWorld.player.objective?.routeKey === "work-yard") {
+          expect(yardWorld.player.objective.text).toMatch(/yard/i);
+          expect(yardWorld.player.objective.text).not.toMatch(
+            /cup-and-counter|Kettle/i,
+          );
+        }
+        if (actionId) {
+          seenActions.add(actionId);
+        }
+        sawTomasSetup ||= yardWorld.activeConversation?.npcId === "npc-tomas";
+        sawLegalYardAction ||=
+          actionId === "accept:job-yard-shift" ||
+          actionId === "work:job-yard-shift";
+        if (actionId === "work:job-yard-shift") {
+          yardWorkStepArtifactText = JSON.stringify(
+            buildRowanVisibleDecisionArtifact(yardWorld),
+          );
+        }
+
+        const yardJob = yardWorld.jobs.find(
+          (job) => job.id === "job-yard-shift",
+        );
+        if (yardJob?.accepted || yardJob?.completed || yardJob?.missed) {
+          sawLegalYardAction = true;
+        }
+        if (yardJob?.completed || yardJob?.missed) {
+          break;
+        }
+
+        yardWorld = await engine.runCommand(yardWorld, {
+          type: "advance_objective",
+          allowTimeSkip: true,
+        });
+      }
+
+      const yardJob = yardWorld.jobs.find(
+        (job) => job.id === "job-yard-shift",
+      );
+      expect(sawFreightYard).toBe(true);
+      expect(
+        sawTomasSetup || sawLegalYardAction,
+        `Expected Tomas setup or a legal yard job action, saw ${JSON.stringify([
+          ...seenActions,
+        ])}`,
+      ).toBe(true);
+      expect(yardJob).toMatchObject({
+        discovered: true,
+        missed: false,
+      });
+      expect(yardJob?.accepted || yardJob?.completed).toBe(true);
+      expect(yardWorkStepArtifactText).toMatch(/Freight yard lift/i);
+      expect(yardWorkStepArtifactText).not.toMatch(/cup-and-counter|Kettle/i);
+      expect(yardWorkStepArtifactText).not.toMatch(
+        /routeKey|worldPressure|planningTrace|actionId|targetLocationId|live pressure|predicate/i,
+      );
+
+      if (yardJob?.completed) {
+        expect(yardWorld.feed.map((entry) => entry.text)).toContain(
+          "You finished freight yard lift and earned $24. The yard will remember you as someone who stayed until the load was done.",
+        );
+        if (
+          yardWorld.problems.find((problem) => problem.id === "problem-pump")
+            ?.resolvedByNpcId === "npc-mara"
+        ) {
+          expect(yardWorld.feed.map((entry) => entry.text)).toContain(
+            "Choosing the freight-yard lift paid Rowan, but it left the Morrow Yard pump for Mara to contain without him.",
+          );
+        }
+      }
+    }
   });
 });

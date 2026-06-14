@@ -32,6 +32,7 @@ interface ObjectiveRoute {
   steps: ObjectiveTrailItem[];
   outcomes?: ObjectiveOutcomeDefinition[];
   terminal?: boolean;
+  preferHeadlineText?: boolean;
 }
 
 interface ObjectiveOutcomeDefinition {
@@ -213,8 +214,11 @@ function composeObjective(
   route: ObjectiveRoute,
   previous?: PlayerObjective,
 ): PlayerObjective | undefined {
+  const displayObjectiveText = route.preferHeadlineText
+    ? routeHeadline(route)
+    : objectiveText;
   const completedTrail = buildCompletedTrail(world, previous, route.steps);
-  const outcomes = buildObjectiveOutcomes(world, objectiveText, route);
+  const outcomes = buildObjectiveOutcomes(world, displayObjectiveText, route);
   const progress = buildProgress(outcomes, route.steps);
   const currentStep = route.steps.find((step) => !step.done) ?? route.steps[0];
 
@@ -246,7 +250,7 @@ function composeObjective(
 
   const objective: PlayerObjective = {
     id,
-    text: objectiveText,
+    text: displayObjectiveText,
     createdAt,
     updatedAt,
     focus: route.focus,
@@ -1355,6 +1359,7 @@ function buildWorkRoute(
     source,
     outcomes: routeScaffold.outcomes,
     steps: routeScaffold.steps.map(makeStep),
+    preferHeadlineText: source !== "manual",
   };
 }
 
