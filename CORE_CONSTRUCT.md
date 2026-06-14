@@ -25,6 +25,10 @@ memory, make a visible decision, carry the validated task forward, and update
 what he knows or needs to check next without the player pressing the
 next-action button for him.
 
+The early run should have momentum. A viewer should quickly see Rowan decide,
+move, talk, learn, or make time pass for a concrete reason. Slow ambience is
+valuable only when it surrounds visible progress; it should not replace it.
+
 The older multi-self version is not the current foundation.
 
 It may return later, but only after the single-character city simulation is genuinely fun on its own.
@@ -215,6 +219,11 @@ In watch/autoplay mode, this loop should continue without visible progression,
 reply, wait, or action-button clicks. A required approval click turns Rowan
 back into a stepper and breaks the core fantasy.
 
+This loop should also keep pace. When a legal current-state action is available,
+Rowan should not sit in generic waiting or repeat the same carry-forward beat.
+When waiting is the right action, the game should make the reason and next check
+visible.
+
 ## Clean Loop
 
 The canonical game loop is:
@@ -230,6 +239,10 @@ The canonical game loop is:
 9. New jobs, relationships, and problems become available.
 
 This loop should work before any larger narrative layer is added.
+
+The first minutes should show the loop turning over. A good opening run quickly
+establishes Rowan's aim, sends him somewhere legible, lets him talk or act, and
+produces a new fact, pressure, memory, or next option.
 
 ## Early-Game Priorities
 
@@ -268,6 +281,7 @@ These should stay true as the game evolves:
 - early problems should be local and understandable
 - the world should reveal itself through presence
 - memory should matter quickly
+- pacing should turn attention into progress before the first run feels idle
 - trust and familiarity should be valuable rewards
 - larger stakes should emerge from repeated local play
 
@@ -301,6 +315,7 @@ When making architecture or content decisions, prefer the option that makes the 
 - knowledge earned by going places
 - visible reasoning over objectives, legal actions, and next uncertainty
 - Rowan carrying validated plans forward without manual next-action clicks
+- brisk watch-mode progress through decisions, movement, conversation, and consequences
 
 And less like:
 
@@ -311,6 +326,7 @@ And less like:
 - a game that starts abstract before it becomes human
 - an opaque auto-runner where the player cannot tell why Rowan acted
 - a stepper where the player must click every next action in observe mode
+- a slow ambient diorama where Rowan looks alive but does not visibly progress
 
 ## Update Rule
 

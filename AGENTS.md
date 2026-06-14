@@ -29,15 +29,16 @@ Use the narrowest validation that covers the change, but do validate.
 - Inspect generated screenshots or browser output for visual work. A passing command is not enough for layout or vibe changes.
 - Treat visual noise as a validation failure, not polish debt: screenshots should be free of stale event props, unbacked cue art, accidental halos/rectangles, debug overlays, flicker, obvious tiling seams, unreadable labels, and low-quality artifacts that make the city feel broken or synthetic.
 - Treat navigation incoherence as a validation failure: Rowan and NPCs should not suddenly hop between unrelated locations, route-start/mid/arrival screenshots should form a continuous walkable path, labels and markers should stay attached to the correct actor or landmark, and route endpoints should visually line up with the authored landmark location.
+- Treat weak pacing as a validation failure for autoplay, objective, conversation, and first-run changes: a fresh watch run should move from load to visible decision to validated action quickly, then keep producing visible route progress, conversation progress, world pressure, objective progress, or a reasoned time jump. Long idle spans, repeated generic carry-forward copy, or waits with no in-world reason are regressions.
 
 ## Review Bias
 
-The target is a clean first 3 to 5 minutes: the app should load clearly, show Rowan making understandable choices, let the user pan around the city, and never make the run feel like a stale recording or a broken reload.
+The target is a clean first 3 to 5 minutes: the app should load clearly, show Rowan making understandable choices, move at a brisk human pace, let the user pan around the city, and never make the run feel like a stale recording, a broken reload, or a slow stepper waiting for approval.
 
 When reviewing Rowan autonomy, objectives, autoplay, or AI planning, explicitly audit whether objectives are desired outcomes with route hints or whether `advance_objective` is still primarily following hardcoded trail steps. Flag hardcoded route-following as the core agency gap, even if the resulting path is playable.
 
 Also audit whether Rowan's next meaningful action has a visible decision artifact: current objective, relevant constraints, considered or rejected options, selected action, and concise rationale from the planner/LLM callback after simulator validation. Flag any meaningful autonomous action with no visible reasoning callback as an alignment gap.
 
-For observe/autoplay, explicitly verify whether Rowan carries on with zero visible progression, reply, wait, or action-button clicks. A required next-action click in watch mode is a regression, not acceptable pacing.
+For observe/autoplay, explicitly verify whether Rowan carries on with zero visible progression, reply, wait, or action-button clicks. Also verify momentum: the run should not sit on a static state or repeat generic carry-forward copy when a legal current-state action, conversation reply, objective step, or meaningful time jump is available. A required next-action click in watch mode is a regression, not acceptable pacing.
 
 When reviewing, lead with functional regressions, then visual or tone regressions, then structural cleanup. Keep unrelated refactors out of fixes unless they are needed to make the current behavior reliable.

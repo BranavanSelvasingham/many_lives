@@ -2,7 +2,7 @@
 
 This is the working contract for the current Many Lives street micro-app. Use it before changing or reviewing reload behavior, autoplay, visual layout, conversations, saved runs, or deployment readiness.
 
-The goal is a solid 3 to 5 minute first-run experience: Rowan arrives in South Quay, finds a real lead, moves through a readable city, talks in plain English, and reaches a natural stopping point without the app feeling scripted, stale, or broken.
+The goal is a solid 3 to 5 minute first-run experience: Rowan arrives in South Quay, finds a real lead, moves through a readable city, talks in plain English, and reaches a natural stopping point without the app feeling scripted, stale, slow, or broken.
 
 ## Runtime Surfaces
 
@@ -64,6 +64,7 @@ Autoplay is a watch mode for Rowan's current autonomy policy. It should feel lik
 - The planner/LLM callback is advisory until the simulator validates the selected action. Do not expose raw hidden chain-of-thought, system prompts, or backend-shaped debug state as player UI.
 - The rail and playback beats explain what Rowan is doing. They are not the source of truth.
 - In `?autoplay=1` or `observe=1`, Rowan must not wait for the viewer to click a progression, reply, wait, or action button. Showing a required next-action button in watch mode is a bug unless it is clearly outside observe/autoplay mode.
+- Watch mode should keep a brisk cadence. After load and provider response, Rowan should move from decision artifact to validated action without a long static prelude, and each beat should either advance route position, conversation, objective state, world pressure, memory, or time with a visible reason.
 - The map must support user panning while autoplay runs, so the viewer can look around without fighting camera snaps.
 - Ambient citizens should move at believable human scale and speed. They are part of the "living city" read, not tiny decorative markers.
 - Rowan and NPC movement should read as continuous navigation through the authored map. Sudden hops between unrelated locations, skipped route segments, marker/label desync, or arrival at a landmark that does not visually match the route endpoint are validation failures.
@@ -73,6 +74,17 @@ When autoplay feels wrong, inspect both:
 
 - Game state and available actions from `/sim/game/<id>/state`.
 - UI playback state in [rowanPlayback.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/street/rowanPlayback.ts) and [rowanAutonomy.ts](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/lib/street/rowanAutonomy.ts).
+
+## Pace And Momentum Contract
+
+Pacing is part of agency. The app should not merely be zero-click; it should be watchable because Rowan keeps doing understandable things.
+
+- A fresh `/?new=1` watch run should show, in order, a loaded city, Rowan's immediate aim, a visible decision artifact, a validated action, and a new piece of route, conversation, memory, objective, or world-state evidence without lingering on a static opening panel.
+- The first 3 to 5 minutes should contain several concrete beats: at least one decision, one visible movement or explicit transition, one direct social or work-facing interaction, and one consequence such as a field note, job state, problem pressure, or newly opened option.
+- Passive waits are allowed only when the current world state makes waiting the best legal action. A wait must advance time to a meaningful check, window, arrival, or world change; it must not be a filler loop that repeats generic carry-forward copy.
+- Conversation pacing should get Rowan to a direct answer or actionable uncertainty quickly. Avoid decorative exchanges that delay the next visible choice.
+- If live AI planning is slow or unavailable, deterministic fallback should preserve momentum with a validated current-state action or a clear short waiting state. Provider latency should not make the first run feel stuck.
+- Pacing fixes must not reintroduce hardcoded route-following. Faster progress still has to come from current legal actions, objective predicates, simulator validation, and coherent navigation.
 
 ## Living-World Agency Audit
 
@@ -89,6 +101,7 @@ For planning work on this axis, use [docs/street/living-world-simulation-plan.md
 - AI planning may choose only from validated allowed actions. The simulator remains authoritative for movement, time, consequences, and state mutation.
 - The UI or browser artifacts should expose Rowan's decision rationale as a summarized callback: what he knows, what he is trying to do, what options were available, why one was chosen, what was rejected, and what uncertainty Rowan expects to check next. Reviews should flag any meaningful autonomous action that lacks this evidence.
 - Reviews must report whether observe/autoplay is truly zero-click for the scenario under test. A visible required action button in watch mode is a first-order autoplay regression, not a minor UI preference.
+- Reviews must report whether the run has momentum. If Rowan remains in one visible state without route progress, conversation progress, objective progress, world pressure, memory change, or a reasoned time jump while legal actions are available, treat that as a pacing regression.
 - If a change only makes a scripted path more polished, call that out explicitly. Do not describe it as AI-driven or living-world behavior unless Rowan can choose among state-derived legal actions and the world can change independently.
 
 ## Conversation And Tone Contract
@@ -164,6 +177,7 @@ Use this checklist when the user asks whether the app is playable, ready, or dep
 - Start new from the saved-run prompt and confirm the new id differs.
 - Watch autoplay for 3 to 5 minutes or until the first stopping point.
 - Confirm observe/autoplay does not require visible progression, reply, wait, or action-button clicks.
+- Confirm first-run pacing: Rowan should quickly leave the opening state, show a visible decision, take a validated action, and keep producing concrete route, conversation, objective, memory, world-pressure, or reasoned time-advance beats.
 - Confirm Rowan's next meaningful action has a visible decision artifact or browser artifact: objective, constraints, considered/rejected options, selected action, rationale, and trace-backed next uncertainty when available.
 - Run the final player-POV browser regression: the inhabit gameplay pass must progress from a fresh browser session by visible clicks and pointer drags, not direct sim commands.
 - Confirm Rowan's objective decisions come from current world state and available legal actions, not just the next hardcoded objective trail item.

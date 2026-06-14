@@ -9,7 +9,9 @@ The root problem is not that Rowan needs a prettier route or more authored beats
 The player-facing goal is watchable agency: a viewer can see Rowan understand
 his current aim, weigh live constraints and legal options, choose a validated
 action, carry it forward, and update the next uncertainty without needing to
-press a progression/action/reply button for him.
+press a progression/action/reply button for him. The loop should move briskly:
+the viewer should see decisions become actions and actions become consequences,
+not long static stretches of generic watch-mode copy.
 
 ## Build Goal
 
@@ -68,6 +70,7 @@ For implementation audits, inspect the relevant current files:
 | Rowan chooses from legal current-state actions. | Planner trace and sim tests. | The selected action appears in the current legal action surface or as a validated legal move; rejected options include reasons. | Fail closed with a blocked/idle loop step and diagnostic trace. |
 | Seeded hints cannot override live state. | Poisoned route/trail regression. | Wrong, stale, impossible, or lower-priority route hints do not control the chosen action. | Remove scoring or routing code that reads trail hints as planner authority. |
 | Rowan's reasoning is visible. | Rail/notebook UI, planner trace, and browser artifacts. | Before or during each meaningful autonomous action, the user can see Rowan's current objective, relevant constraints, considered options or rejected reasons, selected action, concise rationale, and trace-backed next uncertainty. | Add a structured decision artifact before adding more actions or visual polish. |
+| The first run has momentum. | Browser regression artifacts, watch-mode screenshots, and playback state. | A fresh watch run quickly leaves the opening state, then keeps producing visible route, conversation, objective, memory, world-pressure, or reasoned time-advance beats while legal actions exist. | Tighten autoplay follow-through, conversation reply cadence, or wait handling before adding new content. |
 | The world changes without Rowan solving everything. | Time-advance tests and browser probe `worldPressure`. | NPC schedules, job windows, problems, and city events mutate while Rowan does unrelated actions or waits. | Add deterministic passive evolution before adding more objectives. |
 | Movement reflects the actual map. | Browser regression route diagnostics and screenshots. | Rowan and sampled NPC paths follow projected walkable graph routes or approved same-tile approach points. | Report dropped waypoints or blocked routes with diagnostics instead of drawing illegal shortcuts. |
 | The loop is auditable in the browser. | `window.__manyLivesStreetProbe()` or browser regression artifacts. | Probe exposes objective predicates, planner considered/selected/rejected options, route legality, NPC route diagnostics, and world pressure. | Add probe fields before claiming behavior is AI-driven. |
@@ -99,6 +102,8 @@ the current delta from this target:
   directly?
 - Does the UI explain enough for a normal viewer without becoming a debug
   dashboard?
+- Does the first run keep moving through visible decisions, actions, and
+  consequences, or does it sit on repeated generic wait/carry-forward states?
 - Does Rowan carry the validated plan forward, or does the run wait for the
   viewer to click the next progression/reply/action control?
 
@@ -114,7 +119,8 @@ evidence and the smallest validation that would catch a regression.
 5. Independent world pressure: NPC schedules, job windows, problem escalation, and city events keep evolving while Rowan waits or does unrelated work.
 6. Spatial authority: Rowan and NPC rendering route through the same projected walkable map graph.
 7. Adversarial regression coverage: stale hints, poisoned trails, blocked routes, impossible anchors, missed jobs, and ignored problems fail loudly.
-8. Player readability and delight: the UI explains why Rowan moved or waited without turning the game into a debug dashboard.
+8. Pacing pressure: autoplay prefers validated current-state actions, direct replies, and meaningful time jumps over static idle loops, without overriding legal action authority.
+9. Player readability and delight: the UI explains why Rowan moved or waited without turning the game into a debug dashboard.
 
 ## Acceptance Criteria
 
@@ -128,6 +134,7 @@ This path is reached only when the following are directly evidenced:
 - Browser diagnostics expose objective predicates, planner trace, world pressure, Rowan route legality, and NPC route legality.
 - Rowan and sampled NPCs render on legal routed paths through the projected walkable map.
 - A fresh `/?new=1` run for the first 3 to 5 minutes reads as Rowan finding his way in a living city, not a replay of a fixed route.
+- The first run keeps a visible cadence: decisions become validated actions, actions produce route, conversation, memory, objective, world-pressure, or reasoned time-advance changes, and generic carry-forward states do not repeat while legal actions are available.
 - Observe/autoplay mode carries the run without visible progression/action-button clicks.
 
 ## `/plan` Command Statement
@@ -135,7 +142,7 @@ This path is reached only when the following are directly evidenced:
 When the user asks for `/plan` in this repo, use this statement:
 
 ```text
-Advance Many Lives one verifiable step toward a seeded living-world simulation: authored data seeds the city, objective predicates define desired outcomes, the world exposes legal current-state actions, Rowan's planner chooses among those actions through a visible LLM/planner reasoning callback with next uncertainty, the simulator validates consequences, Rowan carries the validated task forward without watch-mode approval clicks, the visual map renders only legal routed movement, and independent NPCs, jobs, problems, and city events continue evolving whether Rowan acts on them or not.
+Advance Many Lives one verifiable step toward a seeded living-world simulation: authored data seeds the city, objective predicates define desired outcomes, the world exposes legal current-state actions, Rowan's planner chooses among those actions through a visible LLM/planner reasoning callback with next uncertainty, the simulator validates consequences, Rowan carries the validated task forward at a brisk watchable pace without approval clicks, the visual map renders only legal routed movement, and independent NPCs, jobs, problems, and city events continue evolving whether Rowan acts on them or not.
 ```
 
 Then produce a short turn plan with:
@@ -144,4 +151,5 @@ Then produce a short turn plan with:
 - the reasoning-visibility delta, if Rowan is deciding or planning;
 - the files to inspect or change;
 - the adversarial test that should fail if hardcoded route-following returns;
+- the pacing evidence that should fail if watch mode stalls or repeats generic carry-forward states;
 - the validation commands and screenshots/probe artifacts required before reporting success.
