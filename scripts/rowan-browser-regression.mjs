@@ -8004,6 +8004,16 @@ function assertLateNotebookMatchesCurrentPressure(label, notebook, probe) {
       /^Exit to South Quay$/i,
       `${label}: yard-work Notebook plan should name the yard plan, not the low-level street exit.`,
     );
+    assert.doesNotMatch(
+      notebook?.plan ?? "",
+      /^Head to North Crane Yard\b/i,
+      `${label}: yard-work Notebook plan should name Tomas/freight-window obligation, not just a route command.`,
+    );
+    assert.match(
+      notebook?.plan ?? notebookText,
+      /Tomas|freight window/i,
+      `${label}: yard-work Notebook plan should name Tomas or the freight-window obligation, got ${JSON.stringify(notebook)}.`,
+    );
     return;
   }
 

@@ -209,7 +209,7 @@ const ROWAN_NOTEBOOK_RECOVERY_PLAN =
 const ROWAN_NOTEBOOK_PUMP_PLAN =
   "Handle the Morrow Yard pump before the house has to absorb it without Rowan.";
 const ROWAN_NOTEBOOK_YARD_PLAN =
-  "Head to North Crane Yard before the freight window closes.";
+  "Ask Tomas before the North Crane Yard freight window closes.";
 const ROWAN_NOTEBOOK_STALE_ENTRY_FALLBACK = "Ask the first useful question.";
 const ROWAN_NOTEBOOK_FIELD_NOTE_CLUE =
   "Evidence: Ada's field note says Rowan asked directly, stayed through lunch, and left Kettle & Lamp with pay and a clearer obligation.";

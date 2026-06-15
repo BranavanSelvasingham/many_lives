@@ -2491,10 +2491,11 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     ],
     moveIntents: [
       {
+        label: "Ask Tomas before the freight window closes",
         locationId: "freight-yard",
         npcId: "npc-tomas",
         rationale:
-          "Walk to the freight yard and ask Tomas what work is actually open.",
+          "Ask Tomas whether paid freight work is still open before the loading window closes.",
       },
     ],
   },

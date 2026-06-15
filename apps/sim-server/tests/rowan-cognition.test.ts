@@ -426,7 +426,7 @@ describe("Rowan cognition Notebook authority", () => {
         signals: ["Job: yard work", "Window: still open"],
       },
       key: "objective:work-yard:travel",
-      label: "Head to North Crane Yard",
+      label: "Ask Tomas before the freight window closes",
       layer: "objective",
       mode: "acting",
       stepKind: "move",
@@ -439,7 +439,7 @@ describe("Rowan cognition Notebook authority", () => {
     expect(notebook.belief).toMatch(/Tomas|yard work|freight/i);
     expect(notebook.clue).toMatch(/Tomas|North Crane Yard|freight window/i);
     expect(notebook.confidence).toMatch(/Confirmed|Tomas|freight window/i);
-    expect(notebook.plan).toBe("Head to North Crane Yard");
+    expect(notebook.plan).toBe("Ask Tomas before the freight window closes");
     expect(notebook.authority.beliefId).toBe("belief-tomas-work");
     expectNoStaleOpeningNotebookAuthority(notebook);
   });
@@ -512,9 +512,10 @@ describe("Rowan cognition Notebook authority", () => {
     const notebook = buildRowanCognitionState(world).notebook;
 
     expect(notebook.plan).toBe(
-      "Head to North Crane Yard before the freight window closes.",
+      "Ask Tomas before the North Crane Yard freight window closes.",
     );
     expect(notebook.plan).not.toBe("Exit to South Quay");
+    expect(notebook.plan).not.toMatch(/^Head to North Crane Yard/i);
     expect(notebook.clue).toMatch(/Tomas|North Crane Yard|freight window/i);
     expectNoStaleOpeningNotebookAuthority(notebook);
   });
