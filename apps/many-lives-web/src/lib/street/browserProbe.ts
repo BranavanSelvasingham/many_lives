@@ -651,6 +651,18 @@ export function buildStreetBrowserProbeJson({
       planSettledAt: game.firstAfternoon?.planSettledAt ?? null,
       teaShiftStage: game.firstAfternoon?.teaShiftStage ?? null,
     },
+    feedTail: (game.feed ?? []).slice(0, 8).map((entry) => ({
+      id: entry.id,
+      text: entry.text,
+      time: entry.time,
+      tone: entry.tone,
+    })),
+    memoriesTail: (game.player.memories ?? []).slice(0, 8).map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      time: entry.time,
+    })),
     location: {
       id: game.player.currentLocationId ?? null,
       name: currentLocation?.name ?? game.currentScene.title,
