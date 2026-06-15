@@ -539,6 +539,41 @@ async function runGameCommand(gameId, command) {
   return payload.game;
 }
 
+async function waitForIndependentProblemResolution(gameId, options = {}) {
+  const maxWaitMinutes = options.maxWaitMinutes ?? 180;
+  const waitChunkMinutes = options.waitChunkMinutes ?? 65;
+  let remainingMinutes = maxWaitMinutes;
+  let game = null;
+
+  while (remainingMinutes > 0) {
+    const minutes = Math.min(waitChunkMinutes, remainingMinutes);
+    game = await runGameCommand(gameId, {
+      minutes,
+      silent: remainingMinutes !== maxWaitMinutes,
+      type: "wait",
+    });
+
+    if (independentNpcActionsFromGame(game).length > 0) {
+      return game;
+    }
+
+    remainingMinutes -= minutes;
+  }
+
+  const problems = game ? worldPressureFromGame(game).problems : [];
+  assert.fail(
+    `Timed out waiting for an independent NPC-owned problem resolution. Last state: ${JSON.stringify(
+      {
+        clock: game?.currentTime ?? null,
+        independentNpcActions: game ? independentNpcActionsFromGame(game) : [],
+        problems,
+      },
+      null,
+      2,
+    )}`,
+  );
+}
+
 function browserUrl(gameId) {
   return `${getWebBase()}?gameId=${encodeURIComponent(gameId)}&autoplay=0&observe=1&freezeAutoplay=1`;
 }
@@ -12032,11 +12067,7 @@ function buildRegressionSteps(gameRef) {
     {
       label: "independent-npc-resolution",
       mutate: async () =>
-        runGameCommand(gameRef.current.id, {
-          minutes: 65,
-          silent: false,
-          type: "wait",
-        }),
+        waitForIndependentProblemResolution(gameRef.current.id),
     },
   ];
 }
@@ -12792,6 +12823,7 @@ async function main() {
   assertMovementAuditSummary(movementAudit);
   const independentNpcActionEvidence =
     buildIndependentNpcActionEvidence(timeline);
+  assertIndependentNpcActionEvidence(independentNpcActionEvidence);
   const evidence = await createVisualEvidence({
     overlayChecks,
     timeline,
