@@ -147,6 +147,34 @@ const MAP_AGENCY_TARGET_LABEL_MAX_OFFSET = 120;
 const OUTDOOR_ROUTE_ARRIVAL_CONTINUITY_MAX_DISTANCE = 8;
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
 const INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES = 10;
+const ROUTE_PHASE_ORDER = {
+  start: 0,
+  mid: 1,
+  close: 2,
+};
+const REQUIRED_PLAYER_ROUTE_COVERAGE = [
+  {
+    baseLabel: "stage-cafe-move",
+    label: "first-kettle-route",
+  },
+  {
+    baseLabel: "stage-home-move",
+    label: "return-home-route",
+  },
+  {
+    baseLabel: "post-first-afternoon-live-route",
+    label: "post-first-afternoon-live-route",
+  },
+  {
+    baseLabel: "post-first-afternoon-yard-follow-through",
+    label: "yard-follow-through",
+  },
+  {
+    baseLabel: "post-first-afternoon-yard-outcome",
+    label: "yard-outcome",
+    requiredInEveryAudit: false,
+  },
+];
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
@@ -6364,7 +6392,301 @@ function assertOutdoorRouteArrivalContinuity(
   );
 }
 
-function buildMovementAuditSummary(timeline) {
+function parseRoutePhaseLabel(label) {
+  const match = /^(?<baseLabel>.+)-route-(?<phase>start|mid|close)$/.exec(
+    label,
+  );
+  if (!match?.groups) {
+    return null;
+  }
+
+  return {
+    baseLabel: match.groups.baseLabel,
+    phase: match.groups.phase,
+  };
+}
+
+function compactAuditPoint(point) {
+  if (!point) {
+    return null;
+  }
+
+  return {
+    x: roundAuditNumber(point.x ?? 0),
+    y: roundAuditNumber(point.y ?? 0),
+  };
+}
+
+function routeEndpointDistance(left, right) {
+  if (!left || !right) {
+    return null;
+  }
+
+  return roundAuditNumber(pointDistance(left, right));
+}
+
+function collectPlayerRouteContinuityGaps(entry) {
+  const gaps = [];
+
+  if (!entry.allLegal) {
+    gaps.push("illegal-route-diagnostic");
+  }
+  if (!entry.progressMonotonic) {
+    gaps.push("non-monotonic-route-progress");
+  }
+  if (!entry.sameSpace) {
+    gaps.push("route-space-changed-without-transition");
+  }
+  if (!entry.spaceMatchesProbe) {
+    gaps.push("route-space-probe-mismatch");
+  }
+  if (!entry.endpointStable) {
+    gaps.push("route-endpoint-drift");
+  }
+  if (!entry.targetLocationAgreement) {
+    gaps.push("target-location-arrival-mismatch");
+  }
+  if (!entry.targetLabelAttached) {
+    gaps.push("target-label-detached");
+  }
+  if (entry.arrivalContinuity?.required) {
+    if (entry.arrivalContinuity.status === "failed") {
+      gaps.push("route-endpoint-arrival-diverged");
+    } else if (entry.arrivalContinuity.status !== "passed") {
+      gaps.push("route-arrival-pair-missing");
+    }
+  }
+
+  return gaps;
+}
+
+function buildPlayerRouteContinuityLedger(timeline, options = {}) {
+  const explainedMissingCoverage =
+    options.explainedMissingCoverage ?? {};
+  const byLabel = new Map(timeline.map((entry) => [entry.label, entry]));
+  const groups = new Map();
+
+  for (const [timelineIndex, entry] of timeline.entries()) {
+    const parsed = parseRoutePhaseLabel(entry.label);
+    const route = entry.movement?.playerRoute;
+    if (!parsed || !route?.active) {
+      continue;
+    }
+
+    const targetLabelDistance =
+      entry.mapAgency?.labels?.targetVisible &&
+      entry.mapAgency?.labels?.targetWorldPoint &&
+      entry.mapAgency?.target
+        ? routeEndpointDistance(
+            entry.mapAgency.labels.targetWorldPoint,
+            entry.mapAgency.target,
+          )
+        : null;
+    const phaseEntry = {
+      allDiagnosticsLegal:
+        Boolean(route.legal) &&
+        Boolean(route.reachesDestination) &&
+        Boolean(route.sampledPointsLegal) &&
+        Boolean(
+          route.visualObstaclesClear ?? route.diagnostics?.visualObstaclesClear,
+        ),
+      endpoint: route.worldPath.at(-1) ?? null,
+      label: entry.label,
+      phase: parsed.phase,
+      progress: route.progress,
+      routeTarget: route.target ?? null,
+      spaceId: route.spaceId ?? null,
+      targetLabelDistance,
+      targetLocationId: entry.autonomy?.targetLocationId ?? null,
+      tilePathLength: route.tilePath.length,
+      timelineIndex,
+      worldPathLength: route.worldPath.length,
+    };
+    const group = groups.get(parsed.baseLabel) ?? {
+      baseLabel: parsed.baseLabel,
+      phases: [],
+    };
+    group.phases.push(phaseEntry);
+    groups.set(parsed.baseLabel, group);
+  }
+
+  const entries = [...groups.values()]
+    .map((group) => {
+      const phases = group.phases
+        .sort(
+          (left, right) =>
+            ROUTE_PHASE_ORDER[left.phase] - ROUTE_PHASE_ORDER[right.phase],
+        )
+        .map((phase) => ({
+          ...phase,
+          endpoint: compactAuditPoint(phase.endpoint),
+          routeTarget: compactAuditPoint(phase.routeTarget),
+        }));
+      const rawPhases = group.phases.sort(
+        (left, right) =>
+          ROUTE_PHASE_ORDER[left.phase] - ROUTE_PHASE_ORDER[right.phase],
+      );
+      const firstPhase = rawPhases[0] ?? null;
+      const lastPhase = rawPhases.at(-1) ?? null;
+      const arrivalEntry = byLabel.get(group.baseLabel) ?? null;
+      const routeSpaceIds = [
+        ...new Set(rawPhases.map((phase) => phase.spaceId ?? null)),
+      ];
+      const targetLocationIds = rawPhases
+        .map((phase) => phase.targetLocationId)
+        .filter(Boolean);
+      const targetLocationId = targetLocationIds.at(-1) ?? null;
+      const sameSpace = routeSpaceIds.length <= 1;
+      const spaceMatchesProbe = rawPhases.every((phase) => {
+        const phaseEntry = byLabel.get(phase.label);
+        return (
+          phase.spaceId ===
+          (phaseEntry?.location?.spaceId ??
+            phaseEntry?.movement?.activeSpaceId ??
+            null)
+        );
+      });
+      let maxEndpointDelta = 0;
+      for (let leftIndex = 0; leftIndex < rawPhases.length; leftIndex += 1) {
+        for (
+          let rightIndex = leftIndex + 1;
+          rightIndex < rawPhases.length;
+          rightIndex += 1
+        ) {
+          maxEndpointDelta = Math.max(
+            maxEndpointDelta,
+            pointDistance(
+              rawPhases[leftIndex].endpoint,
+              rawPhases[rightIndex].endpoint,
+            ),
+          );
+        }
+      }
+      const progressMonotonic = rawPhases.every(
+        (phase, index) =>
+          index === 0 || phase.progress + 0.02 >= rawPhases[index - 1].progress,
+      );
+      const allLegal = rawPhases.every(
+        (phase) =>
+          phase.allDiagnosticsLegal &&
+          phase.tilePathLength >= 2 &&
+          phase.worldPathLength >= 2,
+      );
+      const targetLabelAttached = rawPhases.every(
+        (phase) =>
+          phase.targetLabelDistance === null ||
+          phase.targetLabelDistance <= MAP_AGENCY_TARGET_LABEL_MAX_OFFSET,
+      );
+      const endpointStable =
+        maxEndpointDelta <= OUTDOOR_ROUTE_ARRIVAL_CONTINUITY_MAX_DISTANCE;
+      const arrivalPoint =
+        arrivalEntry?.movement?.playerLocationGeometry?.playerWorldPoint ?? null;
+      const arrivalDistance = routeEndpointDistance(
+        lastPhase?.endpoint ?? null,
+        arrivalPoint,
+      );
+      const arrivalRequired =
+        Boolean(arrivalEntry) && firstPhase?.spaceId === "street:south-quay";
+      const arrivalContinuity = {
+        arrivalLabel: arrivalEntry?.label ?? null,
+        arrivalLocationId: arrivalEntry?.location?.id ?? null,
+        distance: arrivalDistance,
+        required: arrivalRequired,
+        routeEndpoint: compactAuditPoint(lastPhase?.endpoint ?? null),
+        settledPlayerPoint: compactAuditPoint(arrivalPoint),
+        status: !arrivalEntry
+          ? "missing-arrival-frame"
+          : !arrivalRequired
+            ? "not-required-for-non-street-route"
+            : !lastPhase?.endpoint || !arrivalPoint
+              ? "missing-settled-geometry"
+              : arrivalDistance <= OUTDOOR_ROUTE_ARRIVAL_CONTINUITY_MAX_DISTANCE
+                ? "passed"
+                : "failed",
+      };
+      const targetLocationAgreement =
+        !targetLocationId ||
+        !arrivalEntry?.location?.id ||
+        arrivalEntry.location.id === targetLocationId;
+      const entry = {
+        allLegal,
+        arrivalContinuity,
+        baseLabel: group.baseLabel,
+        endpointStable,
+        maxEndpointDelta: roundAuditNumber(maxEndpointDelta),
+        phaseCount: phases.length,
+        phases,
+        progressMonotonic,
+        sameSpace,
+        spaceMatchesProbe,
+        targetLabelAttached,
+        targetLocationAgreement,
+        targetLocationId,
+      };
+
+      return {
+        ...entry,
+        gaps: collectPlayerRouteContinuityGaps(entry),
+      };
+    })
+    .sort((left, right) => {
+      const leftIndex = left.phases[0]?.timelineIndex ?? 0;
+      const rightIndex = right.phases[0]?.timelineIndex ?? 0;
+      return leftIndex - rightIndex;
+    });
+
+  const entryByBaseLabel = new Map(
+    entries.map((entry) => [entry.baseLabel, entry]),
+  );
+  const requiredCoverage = REQUIRED_PLAYER_ROUTE_COVERAGE.map(
+    ({ baseLabel, label, requiredInEveryAudit = true }) => {
+      const ledgerEntry = entryByBaseLabel.get(baseLabel) ?? null;
+      const settledEntry = byLabel.get(baseLabel) ?? null;
+      const coveredByRoute = Boolean(ledgerEntry);
+      const coveredAsSettledPhase =
+        !coveredByRoute && Boolean(settledEntry) &&
+        !settledEntry?.movement?.playerRoute?.active;
+      const externalExplanation = explainedMissingCoverage[baseLabel] ?? null;
+      const explainedMissing =
+        !coveredByRoute &&
+        !coveredAsSettledPhase &&
+        (!requiredInEveryAudit || Boolean(externalExplanation));
+      return {
+        baseLabel,
+        explanation: coveredByRoute
+          ? "captured-route-ledger"
+          : coveredAsSettledPhase
+            ? "non-route-or-settled-phase"
+            : explainedMissing
+              ? externalExplanation ?? "not-required-in-this-movement-audit"
+              : "missing-evidence",
+        label,
+        locationId: settledEntry?.location?.id ?? null,
+        requiredInEveryAudit,
+        routeGapCount: ledgerEntry?.gaps.length ?? 0,
+        status:
+          coveredByRoute || coveredAsSettledPhase
+            ? "covered"
+            : explainedMissing
+              ? "explained"
+              : "missing",
+      };
+    },
+  );
+
+  return {
+    entries,
+    gaps: entries.flatMap((entry) =>
+      entry.gaps.map((reason) => ({
+        baseLabel: entry.baseLabel,
+        reason,
+      })),
+    ),
+    requiredCoverage,
+  };
+}
+
+function buildMovementAuditSummary(timeline, options = {}) {
   const playerRoutes = timeline
     .filter((entry) => entry.movement?.playerRoute?.active)
     .map((entry) => {
@@ -6510,6 +6832,11 @@ function buildMovementAuditSummary(timeline) {
     timeline,
     visualCueSamples: scheduledNpcVisualCueSamples,
   });
+  const playerRouteContinuityLedger =
+    buildPlayerRouteContinuityLedger(
+      timeline,
+      options.playerRouteContinuityLedgerOptions,
+    );
 
   const patrolsByLocation = new Map();
   for (const entry of timeline) {
@@ -6561,6 +6888,7 @@ function buildMovementAuditSummary(timeline) {
   return {
     npcPatrols,
     playerLocationGeometrySamples,
+    playerRouteContinuityLedger,
     playerRoutes,
     scheduledNpcContinuityGaps: scheduledNpcLocationChanges.filter(
       (change) => change.continuityGapReason,
@@ -7122,6 +7450,9 @@ function assertMovementAuditSummary(movementAudit) {
     movementAudit,
     "initial-morrow-exterior",
   );
+  assertPlayerRouteContinuityLedger(
+    movementAudit.playerRouteContinuityLedger,
+  );
 
   const patrolByLocationId = new Map(
     movementAudit.npcPatrols.map((patrol) => [patrol.locationId, patrol]),
@@ -7198,6 +7529,39 @@ function assertMovementAuditSummary(movementAudit) {
       movementAudit.scheduledNpcLocationChanges.filter(
         (change) => !change.valid,
       ),
+      null,
+      2,
+    )}`,
+  );
+}
+
+function assertPlayerRouteContinuityLedger(ledger) {
+  assert.ok(
+    ledger,
+    "Expected a reusable player route continuity ledger in movement audit output.",
+  );
+  assert.ok(
+    ledger.entries.length >= 2,
+    `Expected the player route continuity ledger to capture route phase groups, got ${ledger.entries.length}.`,
+  );
+  assert.deepEqual(
+    ledger.gaps,
+    [],
+    `Player route continuity ledger found route gaps: ${JSON.stringify(
+      ledger.gaps,
+      null,
+      2,
+    )}`,
+  );
+
+  const missingRequiredCoverage = ledger.requiredCoverage.filter(
+    (entry) => entry.status === "missing",
+  );
+  assert.deepEqual(
+    missingRequiredCoverage,
+    [],
+    `Player route continuity ledger is missing required route or settled-phase coverage: ${JSON.stringify(
+      missingRequiredCoverage,
       null,
       2,
     )}`,
@@ -11151,7 +11515,14 @@ async function runInhabitGameplayPass(session) {
   const movementAuditMoments = moments.filter(
     (moment) => moment.label !== "independent-npc-resolution",
   );
-  const movementAudit = buildMovementAuditSummary(movementAuditMoments);
+  const movementAudit = buildMovementAuditSummary(movementAuditMoments, {
+    playerRouteContinuityLedgerOptions: {
+      explainedMissingCoverage: {
+        "stage-cafe-move": "covered-by-route-timeline-report",
+        "stage-home-move": "covered-by-route-timeline-report",
+      },
+    },
+  });
   assertOpeningPlayerLocationGeometrySample(
     movementAudit,
     "first-actionable-screen",
@@ -11181,6 +11552,8 @@ async function runInhabitGameplayPass(session) {
     objectiveSequenceRuns,
     panelChecks,
     playerLocationGeometryEvidence: movementAudit.playerLocationGeometrySamples,
+    playerRouteContinuityLedger:
+      movementAudit.playerRouteContinuityLedger,
     postFirstAfternoonLivePressureEvidence,
     progressionClicks: clickLog,
     reportPath,
@@ -11435,6 +11808,7 @@ function buildRegressionSummary({
     overlayChecks,
     phaseDiagnostics,
     playerLocationGeometryEvidence: movementAudit.playerLocationGeometrySamples,
+    playerRouteContinuityLedger: movementAudit.playerRouteContinuityLedger,
     routeDiagnostics: movementAudit.playerRoutes,
     scheduledNpcContinuityGaps: movementAudit.scheduledNpcContinuityGaps,
     scheduledNpcDiagnostics: movementAudit.scheduledNpcRoutes,
