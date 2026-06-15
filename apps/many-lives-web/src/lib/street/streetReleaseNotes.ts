@@ -16,6 +16,11 @@ export const STREET_RELEASE_INFO: StreetReleaseInfo = {
   source: "PR #140",
   features: [
     {
+      title: "Commitment reasoning",
+      body:
+        "Accepted work follow-through now shows as a commitment-specific decision instead of a generic planner beat.",
+    },
+    {
       title: "Morrow House interior",
       body:
         "The opening boarding-house room now reads warmer and keeps its room label legible in the interior camera smoke.",

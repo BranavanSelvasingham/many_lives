@@ -3190,6 +3190,32 @@ describe("SimulationEngine street slice", () => {
       stepKind: "wait",
       targetLocationId: "tea-house",
     });
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedActionId: "work:job-tea-shift",
+      selectedLegalBacking: {
+        source: "simulator-validated-wait",
+      },
+      selectedPressureKind: "commitment",
+      selectedPressureLabel: expect.stringMatching(/cup-and-counter/i),
+    });
+    expect(world.rowanAutonomy.planningTrace?.considered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionId: "work:job-tea-shift",
+          status: "selected",
+        }),
+      ]),
+    );
+    expect(world.rowanAutonomy.planningTrace?.rejected.length).toBeGreaterThan(0);
+    const artifact = buildRowanVisibleDecisionArtifact(world);
+    expect(artifact).toMatchObject({
+      considered: expect.arrayContaining([expect.stringMatching(/Hold/i)]),
+      selectedAction: expect.stringMatching(/Hold/i),
+      sourceSummary: expect.stringMatching(/Commitment follow-through/i),
+    });
+    expect(JSON.stringify(artifact)).not.toMatch(
+      /routeKey|worldPressure|planningTrace|actionId|targetLocationId|live pressure|predicate/i,
+    );
     expectCognitionToMirrorAutonomy(world);
   });
 
@@ -4977,6 +5003,17 @@ describe("SimulationEngine street slice", () => {
           yardWorkStepArtifactText = JSON.stringify(
             buildRowanVisibleDecisionArtifact(yardWorld),
           );
+          expect(yardWorld.rowanAutonomy.planningTrace).toMatchObject({
+            selectedActionId: "work:job-yard-shift",
+            selectedLegalBacking: {
+              source: "current-legal-action-surface",
+            },
+            selectedPressureKind: "commitment",
+            selectedPressureLabel: expect.stringMatching(/Freight yard lift/i),
+          });
+          expect(
+            yardWorld.rowanAutonomy.planningTrace?.rejected.length,
+          ).toBeGreaterThan(0);
         }
 
         const yardJob = yardWorld.jobs.find(

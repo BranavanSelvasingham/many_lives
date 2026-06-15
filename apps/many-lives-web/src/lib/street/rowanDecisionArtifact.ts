@@ -501,6 +501,10 @@ function sourceSummaryForDecisionArtifact(
     return "Live planner recommendation, checked before acting";
   }
 
+  if (planningTrace?.selectedPressureKind === "commitment") {
+    return "Commitment follow-through, checked before acting";
+  }
+
   if (planningTrace) {
     return "Planner recommendation, checked before acting";
   }
