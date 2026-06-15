@@ -11,10 +11,15 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.6",
-  build: "314ef46",
-  source: "PR #140",
+  version: "0.1.7",
+  build: "6659e92",
+  source: "PR #153",
   features: [
+    {
+      title: "Commitment reasoning",
+      body:
+        "Accepted work follow-through now shows as a commitment-specific decision instead of a generic planner beat.",
+    },
     {
       title: "Morrow House interior",
       body:

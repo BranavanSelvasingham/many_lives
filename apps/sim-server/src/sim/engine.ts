@@ -1478,39 +1478,66 @@ function resolveCommittedJobLoopStep(
     committedJob.deferredUntilMinutes !== undefined &&
     world.clock.totalMinutes < committedJob.deferredUntilMinutes
   ) {
+    const actionId = `resume:${committedJob.id}`;
+    const targetTotalMinutes = committedJob.deferredUntilMinutes;
+    const label = `Hold for ${committedJob.title}`;
     return {
-      actionId: `resume:${committedJob.id}`,
+      actionId,
       autoContinue: true,
       detail: `The commitment is still live. Rowan can wait until about ${formatClockAt(
         world,
-        committedJob.deferredUntilMinutes,
+        targetTotalMinutes,
       )}.`,
       effects: ["thought"],
-      key: `job-deferred:${committedJob.id}:${committedJob.deferredUntilMinutes}`,
+      key: `job-deferred:${committedJob.id}:${targetTotalMinutes}`,
       kind: "wait",
-      label: `Hold for ${committedJob.title}`,
+      label,
       layer: "commitment",
+      planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
+        actionId,
+        detail: `Rowan can wait until about ${formatClockAt(
+          world,
+          targetTotalMinutes,
+        )}, then pick the commitment back up.`,
+        kind: "wait",
+        label,
+        targetLocationId: committedJob.locationId,
+        validation: "The commitment is paused until this time.",
+        waitUntilMinutes: targetTotalMinutes,
+      }),
       targetLocationId: committedJob.locationId,
-      waitUntilMinutes: committedJob.deferredUntilMinutes,
+      waitUntilMinutes: targetTotalMinutes,
     };
   }
 
   if (world.player.currentLocationId !== committedJob.locationId) {
+    const actionId = `move:${committedJob.locationId}`;
+    const label = `Get to ${location?.name ?? "the job site"}`;
     return {
-      actionId: `move:${committedJob.locationId}`,
+      actionId,
       autoContinue: true,
       detail: `The shift matters more than wandering right now, so Rowan is routing himself to ${location?.name ?? "the job site"}.`,
       key: `job-travel:${committedJob.id}:${world.player.currentLocationId ?? "none"}:${committedJob.locationId}`,
       kind: "move",
-      label: `Get to ${location?.name ?? "the job site"}`,
+      label,
       layer: "commitment",
+      planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
+        actionId,
+        detail: `The accepted shift is at ${location?.name ?? "the job site"}, so Rowan is taking the validated route there before the work window slips.`,
+        kind: "move",
+        label,
+        targetLocationId: committedJob.locationId,
+        validation: "The destination exists and the simulator will route the move.",
+      }),
       targetLocationId: committedJob.locationId,
     };
   }
 
   if (world.clock.totalMinutes < startTotalMinutes) {
+    const actionId = `work:${committedJob.id}`;
+    const label = `Hold for ${committedJob.title}`;
     return {
-      actionId: `work:${committedJob.id}`,
+      actionId,
       autoContinue: true,
       detail: `Rowan is already in place. The shift starts at ${formatClockAt(
         world,
@@ -1519,8 +1546,17 @@ function resolveCommittedJobLoopStep(
       effects: ["thought"],
       key: `job-start:${committedJob.id}:${startTotalMinutes}`,
       kind: "wait",
-      label: `Hold for ${committedJob.title}`,
+      label,
       layer: "commitment",
+      planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
+        actionId,
+        detail: `Rowan is already at ${location?.name ?? "the job site"} and can wait until the shift starts.`,
+        kind: "wait",
+        label,
+        targetLocationId: committedJob.locationId,
+        validation: "Rowan is already at the job site and the start time is still ahead.",
+        waitUntilMinutes: startTotalMinutes,
+      }),
       targetLocationId: committedJob.locationId,
       waitUntilMinutes: startTotalMinutes,
     };
@@ -1532,8 +1568,14 @@ function resolveCommittedJobLoopStep(
     world.player.energy >= 28
   ) {
     const isFirstAfternoonTeaShift = committedJob.id === "job-tea-shift";
+    const label = isFirstAfternoonTeaShift
+      ? teaShiftWatchLabel(world)
+      : workAlreadyStarted
+        ? `Finish ${committedJob.title}`
+        : `Start ${committedJob.title}`;
+    const actionId = `work:${committedJob.id}`;
     return {
-      actionId: `work:${committedJob.id}`,
+      actionId,
       autoContinue: true,
       detail: isFirstAfternoonTeaShift
         ? teaShiftWatchDetail(world)
@@ -1542,12 +1584,18 @@ function resolveCommittedJobLoopStep(
           : "The shift window is open now. Rowan can start working.",
       key: `job-work:${committedJob.id}:${world.clock.totalMinutes}:${world.firstAfternoon?.teaShiftStage ?? "ready"}`,
       kind: "act",
-      label: isFirstAfternoonTeaShift
-        ? teaShiftWatchLabel(world)
-        : workAlreadyStarted
-          ? `Finish ${committedJob.title}`
-          : `Start ${committedJob.title}`,
+      label,
       layer: "commitment",
+      planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
+        actionId,
+        detail: workAlreadyStarted
+          ? "The work is already in hand, so Rowan can finish it rather than starting a new thread."
+          : `The work window is open at ${location?.name ?? "the job site"} and Rowan has enough energy to start.`,
+        kind: "act",
+        label,
+        targetLocationId: committedJob.locationId,
+        validation: "The work action is available from Rowan's current job-site choices.",
+      }),
       targetLocationId: committedJob.locationId,
     };
   }
@@ -1557,20 +1605,323 @@ function resolveCommittedJobLoopStep(
     world.player.currentLocationId !== world.player.homeLocationId
   ) {
     const home = findLocation(world, world.player.homeLocationId);
+    const actionId = `move:${world.player.homeLocationId}`;
+    const label = `Reset at ${home?.name ?? "Morrow House"}`;
     return {
-      actionId: `move:${world.player.homeLocationId}`,
+      actionId,
       autoContinue: true,
       detail:
         "Rowan needs a quick reset at Morrow House before he burns the shift on tired legs.",
       key: `job-rest:${committedJob.id}:${world.player.currentLocationId ?? "none"}:${world.player.homeLocationId}`,
       kind: "move",
-      label: `Reset at ${home?.name ?? "Morrow House"}`,
+      label,
       layer: "commitment",
+      planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
+        actionId,
+        detail: `Rowan is too tired to work ${committedJob.title} reliably, so he is routing to ${home?.name ?? "Morrow House"} before checking the commitment again.`,
+        kind: "move",
+        label,
+        targetLocationId: world.player.homeLocationId,
+        validation: "Low energy makes rest the safe follow-through move before more work.",
+      }),
       targetLocationId: world.player.homeLocationId,
     };
   }
 
   return undefined;
+}
+
+function buildCommittedJobPlanningTrace(
+  world: StreetGameState,
+  job: JobState,
+  step: {
+    actionId: string;
+    detail: string;
+    kind: RowanAutonomyStepKind;
+    label: string;
+    targetLocationId: string;
+    validation: string;
+    waitUntilMinutes?: number;
+  },
+): RowanPlanningTrace {
+  const selectedLegalBacking = committedJobLegalBacking(world, step);
+  const planKey = `commitment:${job.id}:${step.kind}:${step.actionId}`;
+  const selectedOption: RowanPlanningTraceOption = {
+    actionId: step.actionId,
+    label: step.label,
+    legalBacking: selectedLegalBacking,
+    matchedOutcomeId: `commitment-${job.id}`,
+    pressureId: `commitment:${job.id}`,
+    pressureKind: "commitment",
+    pressureLabel: `${job.title} is the active commitment`,
+    planKey,
+    provenance: "live-pressure",
+    rationale: step.detail,
+    score: 200,
+    status: "selected",
+    targetLocationId: step.targetLocationId,
+  };
+  const immediateAction: RowanPlanningTraceStep = {
+    actionId: step.actionId,
+    kind: step.kind,
+    label: step.label,
+    legal: true,
+    legalBacking: selectedLegalBacking,
+    rationale: step.detail,
+    targetLocationId: step.targetLocationId,
+    validation: step.validation,
+  };
+  const nextSteps = [
+    immediateAction,
+    ...committedJobFollowUpSteps(world, job, step),
+  ];
+  const selectedRecommendation: RowanPlanningTraceSelectedRecommendation = {
+    accepted: true,
+    advisory: false,
+    legalBackingSource: selectedLegalBacking.source,
+    sourceKind: "deterministic-planner",
+    validationSource: selectedLegalBacking.source,
+    validationStatus:
+      selectedLegalBacking.source === "current-legal-action-surface"
+        ? "legal-action-surface-validated"
+        : "simulator-validated",
+  };
+
+  return {
+    blockers: committedJobTraceBlockers(world, job, step),
+    considered: [
+      selectedOption,
+      ...rejectedCommittedJobOptions(world, job, step, selectedLegalBacking),
+    ],
+    immediateAction,
+    nextSteps,
+    outcomes: [
+      {
+        authority: "predicate",
+        evidence: committedJobOutcomeEvidence(world, job, step),
+        id: `commitment-${job.id}`,
+        label: `${job.title} carried through`,
+        status: "open",
+        urgency: 95,
+      },
+    ],
+    plannerIntent: {
+      actionId: step.actionId,
+      label: step.label,
+      matchedOutcomeId: `commitment-${job.id}`,
+      planKey,
+      pressureId: `commitment:${job.id}`,
+      pressureKind: "commitment",
+      pressureLabel: `${job.title} is the active commitment`,
+      rationale: step.detail,
+      targetLocationId: step.targetLocationId,
+    },
+    rejected: rejectedCommittedJobOptions(
+      world,
+      job,
+      step,
+      selectedLegalBacking,
+    ),
+    selectedActionId: step.actionId,
+    selectedLabel: step.label,
+    selectedLegalBacking,
+    selectedMatchedOutcomeId: `commitment-${job.id}`,
+    selectedPlanKey: planKey,
+    selectedPressureId: `commitment:${job.id}`,
+    selectedPressureKind: "commitment",
+    selectedPressureLabel: `${job.title} is the active commitment`,
+    selectedRecommendation,
+    selectedTargetLocationId: step.targetLocationId,
+  };
+}
+
+function committedJobLegalBacking(
+  world: StreetGameState,
+  step: {
+    actionId: string;
+    kind: RowanAutonomyStepKind;
+    targetLocationId: string;
+    waitUntilMinutes?: number;
+  },
+): RowanPlanningTraceLegalBacking {
+  const currentBacking = currentLegalActionBacking(world, step.actionId);
+  if (currentBacking) {
+    return currentBacking;
+  }
+
+  if (step.kind === "wait" || step.waitUntilMinutes !== undefined) {
+    return {
+      actionId: step.actionId,
+      locationId: world.player.currentLocationId,
+      source: "simulator-validated-wait",
+    };
+  }
+
+  return {
+    actionId: step.actionId,
+    locationId: step.targetLocationId,
+    source: "simulator-validated-move",
+  };
+}
+
+function committedJobFollowUpSteps(
+  world: StreetGameState,
+  job: JobState,
+  step: {
+    actionId: string;
+    kind: RowanAutonomyStepKind;
+    targetLocationId: string;
+    waitUntilMinutes?: number;
+  },
+): RowanPlanningTraceStep[] {
+  if (step.kind === "wait" && step.waitUntilMinutes !== undefined) {
+    return [
+      {
+        actionId: `work:${job.id}`,
+        kind: "act",
+        label: `Check ${job.title}`,
+        legal: true,
+        legalBacking: {
+          actionId: `work:${job.id}`,
+          locationId: job.locationId,
+          source: "projected-follow-up-legal-action",
+        },
+        rationale: `At ${formatClockAt(
+          world,
+          step.waitUntilMinutes,
+        )}, Rowan should check whether ${job.title} can move forward.`,
+        targetLocationId: job.locationId,
+        validation: "The follow-up check is tied to the accepted job window.",
+      },
+    ];
+  }
+
+  if (step.kind === "move" && step.targetLocationId !== job.locationId) {
+    return [
+      {
+        actionId: `work:${job.id}`,
+        kind: "act",
+        label: `Recheck ${job.title}`,
+        legal: true,
+        legalBacking: {
+          actionId: `work:${job.id}`,
+          locationId: job.locationId,
+          source: "projected-follow-up-legal-action",
+        },
+        rationale: "After recovering, Rowan should check whether the accepted work can still be completed.",
+        targetLocationId: job.locationId,
+        validation: "The job remains the live obligation after recovery.",
+      },
+    ];
+  }
+
+  if (step.kind === "move") {
+    return [
+      {
+        actionId: `work:${job.id}`,
+        kind: "act",
+        label: `Start ${job.title}`,
+        legal: true,
+        legalBacking: {
+          actionId: `work:${job.id}`,
+          locationId: job.locationId,
+          source: "destination-preview-legal-action",
+        },
+        rationale: "Once Rowan reaches the job site, the next check is whether the work action is open.",
+        targetLocationId: job.locationId,
+        validation: "The job site is the required place to work this commitment.",
+      },
+    ];
+  }
+
+  return [];
+}
+
+function committedJobTraceBlockers(
+  world: StreetGameState,
+  job: JobState,
+  step: {
+    kind: RowanAutonomyStepKind;
+    waitUntilMinutes?: number;
+  },
+) {
+  const blockers: string[] = [];
+  if (step.kind === "wait" && step.waitUntilMinutes !== undefined) {
+    blockers.push(`The useful check is around ${formatClockAt(world, step.waitUntilMinutes)}.`);
+  }
+  if (world.player.energy < 28) {
+    blockers.push("Rowan's energy is low enough that recovery has to come first.");
+  }
+  if (world.player.currentLocationId !== job.locationId) {
+    const location = findLocation(world, job.locationId);
+    blockers.push(`${job.title} is at ${location?.name ?? "the job site"}, not here.`);
+  }
+  return blockers;
+}
+
+function committedJobOutcomeEvidence(
+  world: StreetGameState,
+  job: JobState,
+  step: {
+    kind: RowanAutonomyStepKind;
+    waitUntilMinutes?: number;
+  },
+) {
+  if (step.kind === "wait" && step.waitUntilMinutes !== undefined) {
+    return `Accepted; next check around ${formatClockAt(world, step.waitUntilMinutes)}.`;
+  }
+  if (world.player.currentLocationId === job.locationId) {
+    return "Rowan is at the job site.";
+  }
+  const location = findLocation(world, job.locationId);
+  return `Accepted; job site is ${location?.name ?? "the job site"}.`;
+}
+
+function rejectedCommittedJobOptions(
+  world: StreetGameState,
+  job: JobState,
+  step: {
+    actionId: string;
+    targetLocationId: string;
+  },
+  selectedLegalBacking: RowanPlanningTraceLegalBacking,
+): RowanPlanningTraceOption[] {
+  const pressureId = `commitment:${job.id}`;
+  const pressureKind = "commitment";
+  const pressureLabel = `${job.title} is the active commitment`;
+  const base = {
+    matchedOutcomeId: `commitment-${job.id}`,
+    pressureId,
+    pressureKind,
+    pressureLabel,
+    provenance: "live-pressure" as const,
+    targetLocationId: step.targetLocationId,
+  };
+
+  return [
+    {
+      ...base,
+      actionId: "wait:unrelated",
+      label: "Start a different thread",
+      legalBacking: selectedLegalBacking,
+      planKey: `${pressureId}:defer`,
+      rationale: `${job.title} is already accepted, so unrelated exploration waits until Rowan has honored or closed it.`,
+      reason: "The accepted job is the current obligation.",
+      score: 40,
+      status: "rejected",
+    },
+    {
+      ...base,
+      actionId: "drop:commitment",
+      label: "Let the commitment drift",
+      legalBacking: selectedLegalBacking,
+      planKey: `${pressureId}:drop`,
+      rationale: "Walking away would risk the work window and Rowan's reliability.",
+      reason: "No current state says the accepted work is impossible.",
+      score: 25,
+      status: "rejected",
+    },
+  ];
 }
 
 function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {

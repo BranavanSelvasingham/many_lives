@@ -4243,6 +4243,9 @@ function buildObjectiveSequenceAuthorityEvidence({
       `planner-validation:${selectedRecommendation.validationStatus}`,
     );
   }
+  if (autonomy?.layer === "commitment") {
+    authorityKinds.push("autonomy-action");
+  }
   if (routeRole === "conversation-resolution" && !selectedActionId) {
     authorityKinds.push("conversation-resolution");
   }
@@ -11658,6 +11661,13 @@ function buildDecisionArtifactCoverage(moments) {
           entry.label,
         ),
       ) ?? null,
+    commitmentFollowThroughDecision:
+      withArtifact.find((entry) =>
+        /post-first-afternoon-yard-follow-through|post-first-afternoon-yard-outcome|shift-in-motion/i.test(
+          entry.label,
+        ) &&
+        /commitment follow-through/i.test(entry.sourceSummary ?? ""),
+      ) ?? null,
     laterNextCheckDecision:
       withArtifact.find(
         (entry) =>
@@ -11684,6 +11694,10 @@ function assertDecisionArtifactCoverage(coverage) {
   assert.ok(
     coverage.laterDecision,
     `Inhabit gameplay pass did not capture visible reasoning for a later live-pressure decision: ${JSON.stringify(coverage)}`,
+  );
+  assert.ok(
+    coverage.commitmentFollowThroughDecision,
+    `Inhabit gameplay pass did not distinguish commitment-layer follow-through reasoning from objective-layer planning: ${JSON.stringify(coverage)}`,
   );
   assert.ok(
     coverage.earlyNextCheckDecision,
