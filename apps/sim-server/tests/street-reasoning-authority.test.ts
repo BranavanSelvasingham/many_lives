@@ -164,7 +164,8 @@ const COMMITTED_JOB_ROUTE_WINDOW_DETAIL =
 const COMMITTED_JOB_ROUTE_HEADLINE =
   "Follow through on accepted work before the window closes.";
 const REST_ROUTE_OUTCOME_LABEL = "Recovered with an hour of rest";
-const REST_ROUTE_RETURN_DETAIL = "The day is asking for a pause.";
+const REST_ROUTE_RETURN_DETAIL =
+  "Rowan needs a safe pause before the next live opening costs him tired mistakes.";
 const REST_ROUTE_HOUR_DETAIL =
   "The point is to stop fighting the block long enough to get your legs back.";
 const REST_ROUTE_HEADLINE =

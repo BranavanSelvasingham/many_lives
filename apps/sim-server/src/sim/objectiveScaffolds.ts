@@ -1080,11 +1080,11 @@ const REST_STEP_TEMPLATES: RestRouteStepTemplate[] = [
   {
     id: "rest-return",
     title: ({ homeLocationName }) =>
-      `Get back to ${homeLocationName ?? "Morrow House"}.`,
+      `Return to ${homeLocationName ?? "Morrow House"} to recover.`,
     detail: ({ restRequested }) =>
       restRequested
-        ? "The day is asking for a pause."
-        : "Rowan needs somewhere familiar before the hour does any good.",
+        ? "Rowan needs a safe pause before the next live opening costs him tired mistakes."
+        : "Rowan needs somewhere familiar before the hour can turn into real recovery.",
     progress: ({ atHome }) => (atHome ? "Home" : "Away"),
     done: ({ atHome }) => atHome,
     targetLocationId: ({ homeLocationId }) => homeLocationId,
@@ -2420,6 +2420,15 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     routeKeys: ["settle-core"],
     routeHeadline:
       "Get settled in Brackenport: find a place to stay, steady income, and a few friends.",
+    moveIntents: [
+      {
+        label: "Return to Morrow House to keep the room stable",
+        locationId: ({ world }) => world.player.homeLocationId,
+        rationale:
+          "Morrow House is where Rowan can keep tonight's room safe and turn house standing into a steadier foothold.",
+        when: ({ world }) => Boolean(world.firstAfternoon?.completedAt),
+      },
+    ],
   },
   {
     routeKeys: [],
@@ -2502,6 +2511,14 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   {
     routeKeys: ["rest-home"],
     routeHeadline: "Recover enough at Morrow House to move cleanly again.",
+    moveIntents: [
+      {
+        label: "Return to Morrow House to recover",
+        locationId: ({ world }) => world.player.homeLocationId,
+        rationale:
+          "Morrow House is where Rowan can recover enough to move cleanly, keep tonight's room safe, and choose the next live opening with a clear head.",
+      },
+    ],
   },
   {
     routeKeys: [],
