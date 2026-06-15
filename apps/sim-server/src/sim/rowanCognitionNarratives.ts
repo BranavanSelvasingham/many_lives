@@ -25,7 +25,7 @@ const NOTEBOOK_UNCERTAINTY_BY_BELIEF_ID: Record<string, string> = {
 const NOTEBOOK_ROUTE_PLAN_FALLBACKS: Record<string, string> = {
   "help-pump":
     "Handle the Morrow Yard pump before the house has to absorb it without Rowan.",
-  "work-yard": "Head to North Crane Yard before the freight window closes.",
+  "work-yard": "Ask Tomas before the North Crane Yard freight window closes.",
 };
 
 const NOTEBOOK_NIA_RECOVERY_PLAN =

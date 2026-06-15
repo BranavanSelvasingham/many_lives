@@ -66,7 +66,7 @@ const KETTLE_LAMP_LANDMARK_BOUNDS = {
 };
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
-  /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|carrying the conversation)/i;
+  /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|starting|weighing|continuing|carrying the conversation)/i;
 
 let activeWebBase = DEFAULT_WEB_BASE;
 
