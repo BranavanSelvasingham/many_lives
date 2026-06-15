@@ -99,6 +99,7 @@ function drawV2LandmarkGroundArt(
   drawV2LandmarkCastShadows(layer, visualScene);
   drawV2MacroCompositionPass(layer, visualScene);
   drawV2SurfaceAestheticPass(layer, visualScene);
+  drawV2MaterialDepthPass(layer, visualScene);
   drawV2ComposedPavingPass(layer, visualScene);
   drawV2SquareGroundAccents(layer, visualScene);
   drawV2DockGroundWear(layer, visualScene);
@@ -311,6 +312,172 @@ function drawV2SurfaceAestheticPass(
       );
     }
   });
+}
+
+function drawV2MaterialDepthPass(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  forEachSurfaceDraftCell(visualScene, (cell) => {
+    const seed = cell.col * 31 + cell.row * 43;
+    const paverInset = 5;
+
+    if (cell.kind === "tiled_stone_road" || cell.kind === "walkway") {
+      const isWalkway = cell.kind === "walkway";
+      const highlight = isWalkway ? 0xfff1d7 : 0xead8b6;
+      const joint = isWalkway ? 0xbca886 : 0x9f8b68;
+      const shadow = isWalkway ? 0x887250 : 0x756448;
+      const courseOffset = (cell.row % 2) * 10 + (seed % 5);
+
+      layer.lineStyle(1.1, highlight, isWalkway ? 0.13 : 0.1);
+      layer.lineBetween(
+        cell.x + paverInset,
+        cell.y + paverInset + (seed % 4),
+        cell.x + cell.width - paverInset,
+        cell.y + paverInset + ((seed + 2) % 4),
+      );
+      layer.lineStyle(1.3, shadow, isWalkway ? 0.12 : 0.1);
+      layer.lineBetween(
+        cell.x + paverInset,
+        cell.y + cell.height - paverInset - ((seed + 1) % 4),
+        cell.x + cell.width - paverInset,
+        cell.y + cell.height - paverInset - (seed % 4),
+      );
+
+      layer.lineStyle(1, joint, isWalkway ? 0.12 : 0.1);
+      for (
+        let courseY = cell.y + 13 + (seed % 6);
+        courseY < cell.y + cell.height - 8;
+        courseY += 17
+      ) {
+        layer.lineBetween(
+          cell.x + 9,
+          courseY,
+          cell.x + cell.width - 9,
+          courseY + ((seed + Math.round(courseY)) % 3) - 1,
+        );
+      }
+      for (
+        let jointX = cell.x + 14 + courseOffset;
+        jointX < cell.x + cell.width - 8;
+        jointX += 24
+      ) {
+        layer.lineBetween(
+          jointX,
+          cell.y + 12,
+          jointX + ((seed + Math.round(jointX)) % 5) - 2,
+          cell.y + cell.height - 12,
+        );
+      }
+
+      if (seed % 3 === 0) {
+        layer.fillStyle(highlight, isWalkway ? 0.045 : 0.036);
+        layer.fillRoundedRect(
+          cell.x + 10 + (seed % 12),
+          cell.y + 14 + ((seed + 5) % 12),
+          Math.max(16, cell.width * 0.36),
+          5,
+          2.5,
+        );
+      }
+    }
+
+    if (cell.kind === "paved_asphalt") {
+      layer.fillStyle(0x141b1f, 0.06);
+      layer.fillRect(cell.x, cell.y + cell.height - 5, cell.width, 5);
+      layer.lineStyle(1, 0xc6c4b6, 0.09);
+      layer.lineBetween(
+        cell.x + 8,
+        cell.y + 10 + (seed % 5),
+        cell.x + cell.width - 8,
+        cell.y + 12 + ((seed + 2) % 5),
+      );
+    }
+
+    if (cell.y > visualScene.height * 0.73) {
+      layer.fillStyle(0x224d59, 0.04);
+      layer.fillRect(cell.x, cell.y + cell.height * 0.55, cell.width, 7);
+    }
+  });
+
+  drawV2SquareMaterialDepth(layer, visualScene);
+  drawV2QuayMaterialDepth(layer, visualScene);
+}
+
+function drawV2SquareMaterialDepth(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const square = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "market-square",
+  );
+  if (!square) {
+    return;
+  }
+
+  const { rect } = square;
+  layer.lineStyle(3, 0x7d694d, 0.16);
+  layer.strokeRoundedRect(
+    rect.x - 10,
+    rect.y + rect.height + 12,
+    rect.width + 20,
+    22,
+    10,
+  );
+  layer.lineStyle(1.1, 0xf7edcf, 0.18);
+  for (let x = rect.x + 36; x < rect.x + rect.width - 28; x += 38) {
+    layer.lineBetween(
+      x,
+      rect.y + 22,
+      x + 10,
+      rect.y + rect.height - 24,
+    );
+  }
+  layer.lineStyle(1.2, 0x8f7755, 0.15);
+  for (let y = rect.y + 36; y < rect.y + rect.height - 24; y += 30) {
+    layer.lineBetween(rect.x + 24, y, rect.x + rect.width - 24, y - 5);
+  }
+}
+
+function drawV2QuayMaterialDepth(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  const pier = visualScene.landmarks.find(
+    (landmark) => landmark.locationId === "moss-pier",
+  );
+  const water = visualScene.waterRegions.find(
+    (region) => region.tag === "water_surface",
+  );
+  if (!pier || !water) {
+    return;
+  }
+
+  const { rect } = pier;
+  const waterlineY = Math.max(rect.y + 18, water.rect.y);
+  layer.fillStyle(0x071116, 0.11);
+  layer.fillRoundedRect(
+    rect.x - 16,
+    waterlineY - 10,
+    rect.width + 32,
+    24,
+    8,
+  );
+  layer.lineStyle(2.4, 0xf2d7a3, 0.22);
+  layer.lineBetween(
+    rect.x + 20,
+    waterlineY - 14,
+    rect.x + rect.width - 20,
+    waterlineY - 10,
+  );
+  layer.lineStyle(1.3, 0x4f3a29, 0.18);
+  for (let x = rect.x + 34; x < rect.x + rect.width - 26; x += 36) {
+    layer.lineBetween(x, rect.y + 18, x + 8, rect.y + rect.height - 22);
+  }
+  layer.fillStyle(0xdff7fb, 0.055);
+  for (let x = rect.x + 44; x < rect.x + rect.width - 34; x += 86) {
+    layer.fillEllipse(x, waterlineY + 18, 48, 6);
+  }
 }
 
 function drawV2MacroCompositionPass(
