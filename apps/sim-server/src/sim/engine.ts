@@ -3434,7 +3434,7 @@ function autonomyLabelForNextBeat(
 
   if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
     return (
-      objectiveRouteMoveLabelForLocation(world, targetLocation) ??
+      objectivePlanMoveLabelForLocation(world, plan, targetLocation) ??
       `Head to ${targetLocation.name}`
     );
   }
@@ -3469,6 +3469,39 @@ function objectiveRouteMoveLabelForLocation(
   }
 
   return objectiveRouteMoveIntent(world, objective, location.id)?.label;
+}
+
+function objectivePlanMoveLabelForLocation(
+  world: StreetGameState,
+  plan: Pick<ObjectivePlan, "actionId" | "npcId" | "targetLocationId">,
+  location: LocationState,
+) {
+  const routeLabel = objectiveRouteMoveLabelForLocation(world, location);
+  if (routeLabel) {
+    return routeLabel;
+  }
+
+  if (location.id !== world.player.homeLocationId) {
+    return undefined;
+  }
+
+  if (plan.actionId === "rest:home") {
+    return "Return to Morrow House to recover";
+  }
+
+  if (plan.actionId === "reflect:first-afternoon") {
+    return "Return to Morrow House to take stock";
+  }
+
+  if (plan.actionId?.startsWith("contribute:")) {
+    return "Return to Morrow House to help the house";
+  }
+
+  if (plan.npcId === "npc-mara") {
+    return "Return to Morrow House to talk to Mara";
+  }
+
+  return undefined;
 }
 
 function autonomyLabelForAction(world: StreetGameState, actionId: string) {
@@ -3875,6 +3908,16 @@ function buildPendingMovementReason({
     return routeReason;
   }
 
+  const homeReturnReason = groundedHomeReturnReason({
+    rationale,
+    targetLocationId: loopStep.targetLocationId,
+    targetLocationName,
+    world,
+  });
+  if (homeReturnReason) {
+    return homeReturnReason;
+  }
+
   if (
     rationale &&
     normalizedTarget &&
@@ -3904,6 +3947,54 @@ function buildPendingMovementReason({
   }
 
   return "What Rowan knows now points to a useful next place, so he is following that lead before deciding again.";
+}
+
+function groundedHomeReturnReason({
+  rationale,
+  targetLocationId,
+  targetLocationName,
+  world,
+}: {
+  rationale?: string;
+  targetLocationId?: string;
+  targetLocationName?: string;
+  world: StreetGameState;
+}) {
+  if (!targetLocationId || targetLocationId !== world.player.homeLocationId) {
+    return undefined;
+  }
+
+  const homeName = targetLocationName ?? "Morrow House";
+  const objective = world.player.objective;
+  const objectiveText = objective?.text.toLowerCase() ?? "";
+  const routeKey = objective?.routeKey;
+  const needsRecovery =
+    routeKey === "rest-home" ||
+    objective?.focus === "rest" ||
+    /\b(rest|recover|recovery|reset|tired|energy)\b/.test(objectiveText) ||
+    /\b(rest|recover|recovery|reset|tired|energy)\b/i.test(rationale ?? "");
+
+  if (needsRecovery) {
+    return world.firstAfternoon?.completedAt
+      ? `${homeName} is where Rowan can recover enough to move cleanly, keep tonight's room safe, and let Ada's field-note standing land before choosing the yard work, pump, or another current opening.`
+      : `${homeName} is where Rowan can recover enough to move cleanly before taking another commitment.`;
+  }
+
+  if (
+    routeKey === "first-afternoon" &&
+    Boolean(jobById(world, "job-tea-shift")?.completed)
+  ) {
+    return `${homeName} is where Rowan can take stock after the paid shift, keep tonight's room safe, and decide what the pump or next work window requires.`;
+  }
+
+  if (
+    routeKey === "settle-core" &&
+    Boolean(world.firstAfternoon?.completedAt)
+  ) {
+    return `${homeName} is where Rowan can keep tonight's room safe and turn today's standing into a steadier foothold.`;
+  }
+
+  return undefined;
 }
 
 function buildRowanAutonomySignals({
@@ -4395,7 +4486,7 @@ function immediatePlannerActionLabel(
     const locationId = actionId.slice("move:".length);
     const location = findLocation(world, locationId);
     return location
-      ? (objectiveRouteMoveLabelForLocation(world, location) ??
+      ? (objectivePlanMoveLabelForLocation(world, plan, location) ??
           `Head to ${location.name}`)
       : "Follow the current route";
   }
@@ -4693,7 +4784,11 @@ function traceLegalActionStepAtLocation(
       label:
         world.player.currentLocationId === location.id
           ? action.label
-          : (objectiveRouteMoveLabelForLocation(world, location) ??
+          : (objectivePlanMoveLabelForLocation(
+              world,
+              { actionId, targetLocationId: location.id },
+              location,
+            ) ??
             `Head to ${location.name}`),
       legal: !action.disabled,
       legalBacking: action.disabled

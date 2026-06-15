@@ -1104,6 +1104,101 @@ describe("SimulationEngine street slice", () => {
     });
   });
 
+  it("grounds post-first-afternoon recovery returns to Morrow House", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame(
+      "game-post-first-afternoon-recovery-return-copy",
+    );
+    const genericRouteCopy =
+      /Head to Morrow House|before deciding again|useful next move|Rowan is at [^,.]+,\s*so/i;
+
+    world.firstAfternoon = {
+      completedAt: "Day 1, 16:20",
+      completionAcknowledgedAt: "Day 1, 16:24",
+      fieldNote: {
+        createdAt: "Day 1, 16:20",
+        evidence:
+          "Asked Ada at Kettle & Lamp at 11:20; she offered cup-and-counter shift for $14.",
+        learned:
+          "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+        memory:
+          "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
+        next: "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+      },
+    };
+    const marketSquare = world.locations.find(
+      (location) => location.id === "market-square",
+    );
+    expect(marketSquare).toBeDefined();
+    world.player.currentLocationId = "market-square";
+    world.player.x = marketSquare?.entryX ?? world.player.x;
+    world.player.y = marketSquare?.entryY ?? world.player.y;
+    world.player.energy = 18;
+    world.player.reputation.morrow_house = 2;
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    if (teaJob) {
+      teaJob.accepted = true;
+      teaJob.completed = true;
+      teaJob.discovered = true;
+    }
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Recover enough at Morrow House to move cleanly again.",
+    });
+
+    expect(world.player.objective).toMatchObject({
+      routeKey: "rest-home",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:boarding-house",
+      autoContinue: true,
+      label: "Return to Morrow House to recover",
+      mode: "moving",
+      targetLocationId: "boarding-house",
+    });
+    expect(world.rowanAutonomy.detail).toMatch(
+      /recover enough to move cleanly|keep tonight's room safe|live opening/i,
+    );
+    expect(world.rowanAutonomy.intent?.reason).toMatch(
+      /recover enough to move cleanly|keep tonight's room safe|live opening/i,
+    );
+    expect(
+      [
+        world.rowanAutonomy.label,
+        world.rowanAutonomy.detail,
+        world.rowanAutonomy.intent?.reason,
+      ].join(" "),
+    ).not.toMatch(genericRouteCopy);
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "move:boarding-house",
+      targetLocationId: "boarding-house",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:boarding-house",
+      autoContinue: true,
+      label: "Return to Morrow House to recover",
+      mode: "moving",
+      targetLocationId: "boarding-house",
+    });
+    expect(world.rowanAutonomy.intent?.reason).toMatch(
+      /recover enough to move cleanly|keep tonight's room safe|field-note standing/i,
+    );
+    expect(
+      [
+        world.rowanAutonomy.label,
+        world.rowanAutonomy.detail,
+        world.rowanAutonomy.intent?.reason,
+      ].join(" "),
+    ).not.toMatch(genericRouteCopy);
+  });
+
   it("opens the first afternoon with room talk before the work lead", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-opening");

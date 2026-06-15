@@ -2234,8 +2234,9 @@ describe("objectiveState classification", () => {
         expectedTrail: [
           {
             id: "rest-return",
-            title: "Get back to Morrow House.",
-            detail: "The day is asking for a pause.",
+            title: "Return to Morrow House to recover.",
+            detail:
+              "Rowan needs a safe pause before the next live opening costs him tired mistakes.",
             progress: "Away",
             actionId: undefined,
             done: false,
