@@ -10647,12 +10647,6 @@ function drawDynamicOverlay(
       )
     : undefined;
   const selectedNpc = getSelectedNpc(runtimeState);
-  const selectedFootprint = selectedNpc
-    ? getRuntimeLocationHighlightRect(
-        runtimeState.indices,
-        selectedNpc.currentLocationId,
-      )
-    : undefined;
   const pulse = 0.55 + Math.sin(now / 320) * 0.12;
   const activeInteriorSpace = Boolean(runtimeState.indices.activeSpace);
   const activePlayerMotion = isRuntimePlayerMotionActive(runtimeState, now);
@@ -10688,10 +10682,6 @@ function drawDynamicOverlay(
 
   if (!activeInteriorSpace && currentFootprint) {
     drawFootprintHalo(layer, currentFootprint, 0xa9d7d4, 0.08, 0.48);
-  }
-
-  if (!activeInteriorSpace && selectedFootprint) {
-    drawFootprintHalo(layer, selectedFootprint, 0xf1d09f, 0.12 * pulse, 0.68);
   }
 
   drawPlayerPresenceMarker(layer, playerPixel, now);
