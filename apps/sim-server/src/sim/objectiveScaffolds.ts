@@ -28,7 +28,8 @@ interface SemanticHint {
 
 interface MoveIntentHint {
   actionId?: string;
-  locationId: string;
+  label?: string;
+  locationId: string | ((context: ScaffoldContext) => string | undefined);
   npcId?: string;
   rationale: string;
   when?: (context: ScaffoldContext) => boolean;
@@ -2031,16 +2032,26 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     ],
     moveIntents: [
       {
+        label: "Follow Mara's lead to Kettle & Lamp",
         locationId: "tea-house",
         npcId: "npc-ada",
         rationale:
-          "Walk to Kettle & Lamp and ask Ada whether the lunch work is real.",
+          "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room; ask Ada whether the lunch work is real.",
         when: ({ objective, world }) =>
           objective.routeKey === "mara-ada-lead" ||
           (objective.routeKey === "first-afternoon" &&
             Boolean(world.firstAfternoon?.planSettledAt) &&
             firstAfternoonAdaLeadViable(world) &&
             countPlayerConversationsWithNpc(world, "npc-ada") === 0),
+      },
+      {
+        label: "Return to Morrow House to take stock",
+        locationId: ({ world }) => world.player.homeLocationId,
+        rationale:
+          "The shift paid, and Morrow House is the right place to let the day land.",
+        when: ({ world }) =>
+          Boolean(jobById(world, "job-tea-shift")?.completed) &&
+          !world.firstAfternoon?.completedAt,
       },
     ],
     outcomeMoveRationales: [
@@ -2444,7 +2455,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         locationId: "tea-house",
         npcId: "npc-ada",
         rationale:
-          "Walk to Kettle & Lamp and ask Ada whether the lunch work is real.",
+          "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room; ask Ada whether the lunch work is real.",
       },
     ],
     actionRationales: [
@@ -3070,17 +3081,19 @@ export function objectiveRouteMoveIntent(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
   locationId: string,
-) {
+): Pick<MoveIntentHint, "actionId" | "label" | "npcId" | "rationale"> | undefined {
   const context = { objective, world };
   for (const scaffold of activeScaffolds(objective.routeKey)) {
     const intent = (scaffold.moveIntents ?? []).find(
       (candidate) =>
-        candidate.locationId === locationId &&
+        resolveScaffoldLocationId(candidate.locationId, context) ===
+          locationId &&
         (!candidate.when || candidate.when(context)),
     );
     if (intent) {
       return {
         actionId: intent.actionId,
+        label: intent.label,
         npcId: intent.npcId,
         rationale: intent.rationale,
       };
@@ -3088,6 +3101,13 @@ export function objectiveRouteMoveIntent(
   }
 
   return routeDerivedMoveIntent(world, objective, locationId);
+}
+
+function resolveScaffoldLocationId(
+  locationId: MoveIntentHint["locationId"],
+  context: ScaffoldContext,
+) {
+  return typeof locationId === "function" ? locationId(context) : locationId;
 }
 
 export function objectiveRouteMoveRationaleForOutcome(

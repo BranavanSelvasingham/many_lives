@@ -3334,6 +3334,11 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
   );
   assert.doesNotMatch(
     playerText,
+    /\b(?:Rowan is at [^,.]+,\s*so\b|useful next move|has a reason to get to [^,.]+ before deciding again)\b/i,
+    `${label}: decision artifact fell back to generic route-playback wording.`,
+  );
+  assert.doesNotMatch(
+    playerText,
     /\b(?:Yard|Tea-house) work lead confirmed\b[^.]{0,90}\bnot confirmed\b/i,
     `${label}: decision artifact contradicts a confirmed work-lead outcome with an unmet blocker.`,
   );
@@ -3450,6 +3455,11 @@ function assertVisibleDecisionArtifactDom(label, dom, artifactPayload = null) {
     artifact.text,
     /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate/i,
     `${label}: decision callback leaked debug/planner language.`,
+  );
+  assert.doesNotMatch(
+    artifact.text,
+    /\b(?:Rowan is at [^,.]+,\s*so\b|useful next move|has a reason to get to [^,.]+ before deciding again)\b/i,
+    `${label}: decision callback fell back to generic route-playback wording.`,
   );
 }
 
@@ -4387,7 +4397,7 @@ function buildObjectiveSequenceAuditEntry({
       activeBeatText,
     )
       ? "freight-yard"
-      : /\b(?:toward Morrow House|Head to Morrow House|Enter Morrow House|return home|head back|take stock|room)\b/i.test(
+      : /\b(?:toward Morrow House|Head to Morrow House|Return to Morrow House|Enter Morrow House|return home|head back|take stock|room)\b/i.test(
       activeBeatText,
     )
       ? "boarding-house"
@@ -4750,7 +4760,7 @@ function objectiveSequenceGroupIdForEntry(entry) {
   }
 
   if (
-    /^(?:Exit to South Quay|Head to Kettle & Lamp|On the way to Kettle & Lamp|Enter Kettle & Lamp|Talk to Ada)$/i.test(
+    /^(?:Exit to South Quay|Head to Kettle & Lamp|Follow Mara's lead to Kettle & Lamp|On the way to Kettle & Lamp|Enter Kettle & Lamp|Talk to Ada)$/i.test(
       label,
     ) &&
     (entry.selectedTargetLocationId === "tea-house" ||
@@ -4771,7 +4781,7 @@ function objectiveSequenceGroupIdForEntry(entry) {
   }
 
   if (
-    /^(?:Exit to South Quay|Head to Morrow House|On the way to Morrow House|Enter Morrow House|Take stock)$/i.test(
+    /^(?:Exit to South Quay|Head to Morrow House|Return to Morrow House to take stock|On the way to Morrow House|Enter Morrow House|Take stock)$/i.test(
       label,
     ) &&
     !entry.firstAfternoonCompletionAcknowledgedAt &&

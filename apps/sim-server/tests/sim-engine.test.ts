@@ -1077,11 +1077,11 @@ describe("SimulationEngine street slice", () => {
       targetLocationId: "boarding-house",
     });
     expect(world.rowanAutonomy.detail).toContain(
-      "steps inside before acting",
+      "check the current aim inside",
     );
     expect(world.rowanAutonomy.intent).toMatchObject({
       reason:
-        "Rowan is at Morrow House, so stepping inside is the useful next move.",
+        "Enter Morrow House is available here, and going inside fits Rowan's current aim.",
       signals: expect.arrayContaining([
         "Here: Morrow House",
         "Action: Enter Morrow House",
@@ -2296,7 +2296,7 @@ describe("SimulationEngine street slice", () => {
       immediateActionId: "exit:boarding-house",
       immediateLabel: "Exit to South Quay",
       plannerIntentActionId: "talk:npc-ada",
-      plannerIntentLabel: "Head to Kettle & Lamp",
+      plannerIntentLabel: "Follow Mara's lead to Kettle & Lamp",
     });
   });
 
@@ -4824,7 +4824,7 @@ describe("SimulationEngine street slice", () => {
           entry.autonomyTravelPhase === "route-progress",
       ),
     ).toMatchObject({
-      autonomyLabel: "On the way to Kettle & Lamp",
+      autonomyLabel: "Follow Mara's lead to Kettle & Lamp",
       autonomyTarget: "tea-house",
       locationId: "boarding-house",
     });
@@ -4835,7 +4835,7 @@ describe("SimulationEngine street slice", () => {
           entry.autonomyTravelPhase === "route-progress",
       ),
     ).toMatchObject({
-      autonomyLabel: "On the way to Morrow House",
+      autonomyLabel: "Return to Morrow House to take stock",
       autonomyTarget: "boarding-house",
       locationId: "tea-house",
     });
