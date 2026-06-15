@@ -11,6 +11,8 @@ import {
   buildDeterministicStreetReply,
 } from "../src/ai/streetDialogue.js";
 import { buildDeterministicStreetThoughts } from "../src/ai/streetThoughts.js";
+import { MockAIProvider } from "../src/ai/mockProvider.js";
+import { SimulationEngine } from "../src/sim/engine.js";
 import {
   buildGenericClosedWorkWindowConversationResolution,
   buildNpcConversationImpression,
@@ -1160,6 +1162,111 @@ describe("street reasoning authority", () => {
     expect(cognitionSource).not.toContain("function buildRowanBeliefs");
     expect(cognitionSource).not.toContain("function notebookBeliefScore");
     expect(cognitionSource).not.toContain("function objectiveMatchesBelief");
+  });
+
+  it("keeps poisoned first-afternoon Mara/Ada trail hints behind a current legal action", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-poisoned-ada-route");
+    const currentObjective = world.player.objective as PlayerObjective;
+    const pumpProblem = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+
+    expect(pumpProblem).toBeDefined();
+
+    if (!pumpProblem) {
+      return;
+    }
+
+    world.player.currentLocationId = "courtyard";
+    world.player.x = 3;
+    world.player.y = 11;
+    world.player.knownLocationIds = Array.from(
+      new Set([...world.player.knownLocationIds, "courtyard", "tea-house"]),
+    );
+    world.player.inventory.push({
+      description: "A worn wrench that can handle the yard pump.",
+      id: "item-wrench",
+      name: "Old wrench",
+    });
+    pumpProblem.discovered = true;
+    pumpProblem.status = "active";
+    pumpProblem.urgency = 7;
+    pumpProblem.escalationLevel = 2;
+    world.player.objective = {
+      ...currentObjective,
+      focus: "work",
+      routeKey: "first-afternoon",
+      source: "conversation",
+      text: "Verify Mara's Kettle & Lamp lead before lunch gets busy.",
+      outcomes: [
+        {
+          actionId: "solve:problem-pump",
+          authority: "predicate",
+          id: "live-pump-before-stale-ada-route",
+          label:
+            "Handle the live Morrow Yard pump before chasing stale Ada route hints",
+          status: "open",
+          targetLocationId: "courtyard",
+          urgency: 99,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [
+        {
+          actionId: "move:tea-house",
+          detail:
+            "This poisoned first-afternoon trail should explain old Mara/Ada context, not choose Rowan's current action.",
+          done: false,
+          id: "poisoned-mara-ada-route",
+          targetLocationId: "tea-house",
+          title:
+            "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    const selectedAutonomy = world.rowanAutonomy;
+    const selectedTrace = selectedAutonomy.planningTrace;
+    expect(selectedAutonomy.actionId).toBe("solve:problem-pump");
+    expect(selectedAutonomy.targetLocationId).toBe("courtyard");
+    expect(selectedTrace?.selectedActionId).toBe("solve:problem-pump");
+    expect(selectedTrace?.selectedTargetLocationId).toBe("courtyard");
+    expect(selectedTrace?.selectedPressureKind).toBe("problem");
+    expect(selectedTrace?.selectedPressureLabel).toContain(
+      "Leaking hand pump",
+    );
+    expect(selectedTrace?.selectedLegalBacking).toMatchObject({
+      actionId: "solve:problem-pump",
+      locationId: "courtyard",
+      source: "current-legal-action-surface",
+    });
+    expect(
+      selectedTrace?.considered.find(
+        (option) => option.status === "selected",
+      )?.provenance,
+    ).toBe("live-pressure");
+    expect(selectedTrace?.selectedTargetLocationId).not.toBe("tea-house");
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(
+      world.problems.find((problem) => problem.id === "problem-pump")?.status,
+    ).toBe("solved");
+    expect(world.player.currentLocationId).toBe("courtyard");
   });
 
   it("keeps first-afternoon route outcome and step metadata in scaffold data, not objective-state control flow", () => {
