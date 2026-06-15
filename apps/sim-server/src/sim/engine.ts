@@ -3780,7 +3780,11 @@ function buildRowanAutonomyReason({
       return `${targetLocationName} is where ${lowercaseFirst(actionLabel)} can happen, so Rowan is going there now.`;
     }
 
-    return `What Rowan knows now points to ${targetLocationName}, so he is going there before choosing the next legal action.`;
+    return groundedCurrentOpeningMoveReason({
+      targetLocationId: loopStep.targetLocationId,
+      targetLocationName,
+      world,
+    });
   }
 
   if (loopStep.kind === "talk" && npcName) {
@@ -3942,11 +3946,11 @@ function buildPendingMovementReason({
     return `${target} is tied to the current obligation: ${rationale}.`;
   }
 
-  if (targetLocationName) {
-    return `What Rowan knows now points to ${targetLocationName}, so he is going there before deciding again.`;
-  }
-
-  return "What Rowan knows now points to a useful next place, so he is following that lead before deciding again.";
+  return groundedCurrentOpeningMoveReason({
+    targetLocationId: loopStep.targetLocationId,
+    targetLocationName,
+    world,
+  });
 }
 
 function groundedHomeReturnReason({
@@ -3995,6 +3999,64 @@ function groundedHomeReturnReason({
   }
 
   return undefined;
+}
+
+function groundedCurrentOpeningMoveReason({
+  targetLocationId,
+  targetLocationName,
+  world,
+}: {
+  targetLocationId?: string;
+  targetLocationName?: string;
+  world: StreetGameState;
+}) {
+  if (targetLocationId) {
+    const pump = problemById(world, "problem-pump");
+    if (pump?.locationId === targetLocationId && pump.status === "active") {
+      const hasWrench = world.player.inventory.some(
+        (item) => item.id === "item-wrench",
+      );
+      const target = targetLocationName ?? "Morrow Yard";
+
+      if (hasWrench) {
+        return `${target} is where Rowan can put the wrench to the live pump before the house has to absorb the strain.`;
+      }
+
+      if (pump.discovered) {
+        return `${target} is where Rowan can check the live pump pressure before it becomes house strain.`;
+      }
+
+      return `${target} is where the house problem needs eyes before Rowan commits the recovered hour elsewhere.`;
+    }
+
+    const yardJob = jobById(world, "job-yard-shift");
+    if (
+      yardJob?.locationId === targetLocationId &&
+      yardJob.discovered &&
+      !yardJob.completed &&
+      !yardJob.missed
+    ) {
+      const target = targetLocationName ?? "North Crane Yard";
+      const endMinutes = totalMinutesForDayHour(world.clock.day, yardJob.endHour);
+      const windowText =
+        endMinutes > world.clock.totalMinutes
+          ? ` before ${formatClockAt(world, endMinutes)}`
+          : "";
+      return `${target} is where Rowan can check the paid yard work window${windowText} with his recovered energy.`;
+    }
+  }
+
+  const target = targetLocationName ?? "the next check";
+  const objective = currentObjectiveDirective(world);
+  const obligation = objective?.text
+    ? normalizeAutonomyRationale(
+        playerFacingAutonomyRationale(world, objective.text),
+      )
+    : undefined;
+
+  return obligation
+    ? `${target} is the next check tied to Rowan's current obligation: ${obligation}.`
+    : `${target} is tied to Rowan's current obligation, so he is moving there before acting further.`;
 }
 
 function buildRowanAutonomySignals({

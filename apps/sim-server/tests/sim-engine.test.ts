@@ -1199,6 +1199,102 @@ describe("SimulationEngine street slice", () => {
     ).not.toMatch(genericRouteCopy);
   });
 
+  it("grounds post-rest Morrow Yard moves in live pump pressure instead of generic target copy", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame(
+      "game-post-rest-morrow-yard-grounded-copy",
+    );
+    const genericRouteCopy =
+      /What Rowan knows now points to|useful next place|before deciding again|before choosing the next legal action|Head to Morrow Yard/i;
+
+    world.firstAfternoon = {
+      completedAt: "Day 1, 16:20",
+      completionAcknowledgedAt: "Day 1, 16:24",
+      fieldNote: {
+        createdAt: "Day 1, 16:20",
+        evidence:
+          "Asked Ada at Kettle & Lamp at 11:20; she offered cup-and-counter shift for $14.",
+        learned:
+          "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+        memory:
+          "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
+        next: "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+      },
+    };
+    const freightYard = world.locations.find(
+      (location) => location.id === "freight-yard",
+    );
+    expect(freightYard).toBeDefined();
+    world.player.currentLocationId = "freight-yard";
+    world.player.x = freightYard?.entryX ?? world.player.x;
+    world.player.y = freightYard?.entryY ?? world.player.y;
+    world.player.energy = 52;
+    world.player.lastRestAt = "Day 1, 17:10";
+    world.player.reputation.morrow_house = 2;
+    world.player.knownLocationIds = [
+      ...new Set([...world.player.knownLocationIds, "freight-yard", "courtyard"]),
+    ];
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    expect(pump).toBeDefined();
+    if (pump) {
+      pump.discovered = true;
+      pump.status = "active";
+      pump.urgency = 7;
+      pump.escalationLevel = 2;
+    }
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "rest",
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "rest-home",
+      source: "manual",
+      text: "Recover enough at Morrow House to move cleanly again.",
+      trail: [],
+    };
+    world.player.pendingObjectiveMove = {
+      actionId: "move:courtyard",
+      objectiveText: "Recover enough at Morrow House to move cleanly again.",
+      preparedAt: "Day 1, 17:24",
+      rationale: "",
+      targetLocationId: "courtyard",
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:courtyard",
+      autoContinue: true,
+      mode: "moving",
+      planningTrace: {
+        selectedActionId: "move:courtyard",
+        selectedLegalBacking: {
+          actionId: "move:courtyard",
+          locationId: "courtyard",
+          source: "simulator-validated-move",
+        },
+      },
+      targetLocationId: "courtyard",
+    });
+    expect(world.rowanAutonomy.intent?.reason).toMatch(
+      /Morrow Yard.*live pump pressure|house strain/i,
+    );
+    expect(
+      [
+        world.rowanAutonomy.detail,
+        world.rowanAutonomy.intent?.reason,
+      ].join(" "),
+    ).not.toMatch(genericRouteCopy);
+  });
+
   it("opens the first afternoon with room talk before the work lead", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-opening");
