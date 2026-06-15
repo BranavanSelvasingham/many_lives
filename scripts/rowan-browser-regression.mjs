@@ -2164,6 +2164,12 @@ function buildProbeFromGame(game) {
       label: game.clock.label,
       totalMinutes: game.clock.totalMinutes,
     },
+    feedTail: (game.feed ?? []).slice(0, 8).map((entry) => ({
+      id: entry.id,
+      text: entry.text,
+      time: entry.time,
+      tone: entry.tone,
+    })),
     gameId: game.id,
     location: {
       id: game.player.currentLocationId ?? null,
@@ -2172,6 +2178,12 @@ function buildProbeFromGame(game) {
       x: game.player.x,
       y: game.player.y,
     },
+    memoriesTail: (game.player.memories ?? []).slice(0, 8).map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      time: entry.time,
+    })),
     objective: objectiveProbeFromGame(game),
     worldPressure: worldPressureFromGame(game),
     visualPlayer: {
@@ -8894,8 +8906,12 @@ function compactPostFirstAfternoonMoment(moment) {
       hasLeadFieldNote: Boolean(moment.firstAfternoon?.hasLeadFieldNote),
       teaShiftStage: moment.firstAfternoon?.teaShiftStage ?? null,
     },
+    feedTail: moment.feedTail ?? [],
+    independentNpcActions: moment.independentNpcActions ?? [],
+    independentNpcSurface: moment.independentNpcSurface ?? null,
     label: moment.label,
     location: moment.location ?? null,
+    memoriesTail: moment.memoriesTail ?? [],
     notebook: moment.notebook ?? null,
     objective: {
       focus: moment.objective?.focus ?? null,
@@ -8914,8 +8930,10 @@ function compactPostFirstAfternoonMoment(moment) {
       targetLocationId: outcome.targetLocationId ?? null,
       urgency: outcome.urgency ?? null,
     })),
+    player: moment.player ?? null,
     screenshot: moment.screenshot ?? null,
     selected,
+    yardOutcome: postFirstAfternoonYardOutcomeEvidence(moment),
   };
 }
 
@@ -9098,6 +9116,120 @@ function postFirstAfternoonYardFollowThroughProbe(probe) {
   );
 }
 
+function postFirstAfternoonYardOutcomeEvidence(probe) {
+  const yardJob = (probe?.worldPressure?.jobWindows ?? []).find(
+    (job) => job.id === "job-yard-shift",
+  );
+  const pumpProblem = (probe?.worldPressure?.problems ?? []).find(
+    (problem) => problem.id === "problem-pump",
+  );
+  const feedTail = probe?.feedTail ?? [];
+  const memoriesTail = probe?.memoriesTail ?? [];
+  const independentNpcActions = probe?.independentNpcActions ?? [];
+  const independentNpcSurface = probe?.independentNpcSurface ?? null;
+  const objectiveOutcomeText = (probe?.objective?.outcomes ?? [])
+    .map((outcome) =>
+      [
+        outcome.label,
+        outcome.evidence,
+        ...(outcome.blockers ?? []),
+      ]
+        .filter(Boolean)
+        .join(" "),
+    )
+    .filter(Boolean);
+  const visibleDecisionArtifact =
+    probe?.visibleDecisionArtifact ??
+    probe?.autonomy?.visibleDecisionArtifact ??
+    probe?.rail?.visibleDecisionArtifact ??
+    null;
+  const decisionText = visibleDecisionArtifact
+    ? [
+        visibleDecisionArtifact.objective,
+        visibleDecisionArtifact.selectedAction,
+        visibleDecisionArtifact.rationale,
+        visibleDecisionArtifact.sourceSummary,
+        visibleDecisionArtifact.backingSummary,
+        ...(visibleDecisionArtifact.constraints ?? []),
+        ...(visibleDecisionArtifact.considered ?? []),
+        ...(visibleDecisionArtifact.passedOver ?? []),
+      ]
+    : [];
+  const playerFacingTextParts = [
+    ...feedTail.map((entry) => entry.text),
+    ...memoriesTail.map((entry) => entry.text),
+    ...objectiveOutcomeText,
+    ...decisionText,
+    independentNpcSurface?.title,
+    independentNpcSurface?.detail,
+    independentNpcSurface?.playerFacingSummary,
+  ].filter(Boolean);
+  const playerFacingText = playerFacingTextParts.join(" ");
+  const completed = Boolean(yardJob?.completed);
+  const closed = Boolean(yardJob?.missed);
+  const pumpResolvedByMara =
+    pumpProblem?.status === "resolved" &&
+    pumpProblem.resolvedByNpcId === "npc-mara";
+  const maraPumpActionVisible = independentNpcActions.some(
+    (action) =>
+      action.problemId === "problem-pump" &&
+      action.resolverNpcId === "npc-mara",
+  );
+  const maraPumpTextVisible =
+    /\bMara\b/i.test(playerFacingText) &&
+    /\bpump|Morrow Yard|house strain|without Rowan|contained\b/i.test(
+      playerFacingText,
+    );
+  const pumpConsequenceVisible =
+    !pumpResolvedByMara || maraPumpActionVisible || maraPumpTextVisible;
+  const yardPayTextVisible = playerFacingTextParts.some(
+    (text) =>
+      /\b(?:freight[- ]yard|yard|lift|load|Tomas)\b/i.test(text) &&
+      /\b(?:finished|earned|paid|pay|\$24|took your pay)\b/i.test(text),
+  );
+  const yardCreditTextVisible = playerFacingTextParts.some((text) =>
+    /\b(?:yard will remember|stayed until the load was done|Tomas.*(?:credit|trust|reason)|load was done)\b/i.test(
+      text,
+    ),
+  );
+  const paySurfaced =
+    completed &&
+    (probe?.player?.money ?? 0) >= 50 &&
+    yardPayTextVisible;
+  const yardTrustSurfaced = completed && yardCreditTextVisible;
+  const closedSurfaced =
+    closed &&
+    /\b(?:Tomas|load|yard|no pay|no credit|closed|moved without Rowan|missed|walked away)\b/i.test(
+      playerFacingText,
+    );
+  const completedOutcome = completed && paySurfaced && yardTrustSurfaced;
+  const closedOutcome = closed && closedSurfaced;
+
+  return {
+    closed,
+    closedSurfaced,
+    completed,
+    completedOutcome,
+    feedTail,
+    memoriesTail,
+    outcomeReached: Boolean(
+      probe?.firstAfternoon?.completionAcknowledgedAt &&
+        (completedOutcome || closedOutcome) &&
+        pumpConsequenceVisible,
+    ),
+    paySurfaced,
+    playerMoney: probe?.player?.money ?? null,
+    pumpConsequenceVisible,
+    pumpResolvedByMara,
+    yardJob: yardJob ?? null,
+    yardTrustSurfaced,
+  };
+}
+
+function postFirstAfternoonYardOutcomeProbe(probe) {
+  return postFirstAfternoonYardOutcomeEvidence(probe).outcomeReached;
+}
+
 function isRestOrShelterSelection(summary) {
   const selectedText = [
     summary?.objective?.focus,
@@ -9128,10 +9260,13 @@ function buildPostFirstAfternoonLivePressureEvidence({
   const liveRoute = byLabel["post-first-afternoon-live-route"] ?? null;
   const followThrough =
     byLabel["post-first-afternoon-yard-follow-through"] ?? null;
+  const yardOutcome =
+    byLabel["post-first-afternoon-yard-outcome"] ?? null;
   const handoffSummary = compactPostFirstAfternoonMoment(handoff);
   const restSummary = compactPostFirstAfternoonMoment(rest);
   const liveRouteSummary = compactPostFirstAfternoonMoment(liveRoute);
   const followThroughSummary = compactPostFirstAfternoonMoment(followThrough);
+  const yardOutcomeSummary = compactPostFirstAfternoonMoment(yardOutcome);
   const handoffLivePressureOptions = livePressurePlannerOptions(handoff);
   const restLivePressureOptions = livePressurePlannerOptions(rest);
   const liveRoutePressureOptions = livePressurePlannerOptions(liveRoute);
@@ -9148,6 +9283,7 @@ function buildPostFirstAfternoonLivePressureEvidence({
       afterRest: postFirstAfternoonLivePressureFacts(rest),
       atFollowThrough: postFirstAfternoonLivePressureFacts(followThrough),
       atLiveRoute: postFirstAfternoonLivePressureFacts(liveRoute),
+      atYardOutcome: postFirstAfternoonLivePressureFacts(yardOutcome),
       plannerOptionsAtFollowThrough: followThroughPressureOptions,
       plannerOptionsAtHandoff: handoffLivePressureOptions,
       plannerOptionsAfterRest: restLivePressureOptions,
@@ -9168,6 +9304,7 @@ function buildPostFirstAfternoonLivePressureEvidence({
           "post-first-afternoon-rest",
           "post-first-afternoon-live-route",
           "post-first-afternoon-yard-follow-through",
+          "post-first-afternoon-yard-outcome",
         ].includes(entry.milestone),
       )
       .map((entry) => ({
@@ -9188,6 +9325,7 @@ function buildPostFirstAfternoonLivePressureEvidence({
       atLiveRoute: staleRoutePlannerOptions(liveRoute),
     },
     status: "passed",
+    yardOutcome: yardOutcomeSummary,
     zeroClick: {
       visibleControlClickCount,
       watchedAutoContinueCount,
@@ -9247,6 +9385,10 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   assert.ok(
     evidence?.followThrough,
     "Post-first-afternoon follow-through evidence is missing the yard/Tomas follow-through moment.",
+  );
+  assert.ok(
+    evidence?.yardOutcome,
+    "Post-first-afternoon follow-through evidence is missing the yard outcome moment.",
   );
   assert.equal(
     evidence.directSimCommandsUsed,
@@ -9453,6 +9595,42 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
         null,
         2,
       )}`,
+    );
+
+    const yardOutcome = evidence.yardOutcome?.yardOutcome ?? null;
+    assert.ok(
+      yardOutcome?.outcomeReached,
+      `Post-rest yard follow-through must continue into a visible completed or closed yard outcome, not stop at setup/action selection: ${JSON.stringify(
+        {
+          yardOutcome,
+          moment: evidence.yardOutcome,
+        },
+        null,
+        2,
+      )}`,
+    );
+    assert.ok(
+      yardOutcome.completed || yardOutcome.closed,
+      `Yard outcome must complete or close job-yard-shift: ${JSON.stringify(yardOutcome, null, 2)}`,
+    );
+    if (yardOutcome.completed) {
+      assert.ok(
+        yardOutcome.paySurfaced,
+        `Completed yard work must surface pay in player-facing feed/memory/objective copy: ${JSON.stringify(yardOutcome, null, 2)}`,
+      );
+      assert.ok(
+        yardOutcome.yardTrustSurfaced,
+        `Completed yard work must surface yard/Tomas trust or credit in player-facing copy: ${JSON.stringify(yardOutcome, null, 2)}`,
+      );
+    }
+    assert.ok(
+      yardOutcome.pumpConsequenceVisible,
+      `Yard outcome must keep the Mara/Morrow Yard pump consequence visible when Rowan prioritized paid work: ${JSON.stringify(yardOutcome, null, 2)}`,
+    );
+    assert.ok(
+      (evidence.yardOutcome.clock?.totalMinutes ?? 0) >=
+        (followThrough.clock?.totalMinutes ?? 0),
+      "Yard outcome evidence must be captured after the yard follow-through setup moment.",
     );
   }
   const liveRouteText = [
@@ -9783,10 +9961,12 @@ async function captureInhabitMoment({
         }
       : null,
     firstAfternoon: probe.firstAfternoon,
+    feedTail: probe.feedTail ?? [],
     independentNpcActions: probe.independentNpcActions ?? [],
     independentNpcSurface: probe.independentNpcSurface ?? null,
     label,
     location: probe.location,
+    memoriesTail: probe.memoriesTail ?? [],
     movement: probe.movement ?? null,
     notebook: compactCognitionNotebook(probe),
     objective: probe.objective ?? null,
@@ -10779,6 +10959,29 @@ async function runInhabitGameplayPass(session) {
       "Can I see that another South Quay local solved a live problem without Rowan?",
   });
 
+  const yardOutcomeMilestone = {
+    label: "post-first-afternoon-yard-outcome",
+    maxClicks: 8,
+    reached: postFirstAfternoonYardOutcomeProbe,
+    userQuestion:
+      "Does Rowan's North Crane Yard commitment land as completed or explicitly closed, with pay/credit/consequence visible?",
+  };
+  await clickUntilInhabitMilestone({
+    clickLog,
+    maxClicks: yardOutcomeMilestone.maxClicks,
+    milestone: yardOutcomeMilestone,
+    objectiveSequenceAudit,
+    session,
+  });
+  milestonesReached.push(yardOutcomeMilestone.label);
+  await captureInhabitMoment({
+    index: momentIndex++,
+    label: yardOutcomeMilestone.label,
+    moments,
+    session,
+    userQuestion: yardOutcomeMilestone.userQuestion,
+  });
+
   const visibleControlClickCount = clickLog.filter(
     (entry) => entry.kind === "visible-control-click",
   ).length;
@@ -10823,6 +11026,12 @@ async function runInhabitGameplayPass(session) {
   assert.ok(
     milestonesReached.includes("post-first-afternoon-yard-follow-through"),
     `Inhabit gameplay pass did not prove a yard/Tomas follow-through after the selected live route: ${JSON.stringify(
+      milestonesReached,
+    )}.`,
+  );
+  assert.ok(
+    milestonesReached.includes("post-first-afternoon-yard-outcome"),
+    `Inhabit gameplay pass did not prove a completed or closed yard outcome after follow-through: ${JSON.stringify(
       milestonesReached,
     )}.`,
   );
@@ -10887,6 +11096,17 @@ async function runInhabitGameplayPass(session) {
   assert.ok(
     postFirstAfternoonYardFollowThroughProbe(yardFollowThroughMoment),
     "Post-rest browser evidence did not show the selected yard pressure becoming a Tomas setup or legal yard-work action.",
+  );
+  const yardOutcomeMoment = moments.find(
+    (moment) => moment.label === "post-first-afternoon-yard-outcome",
+  );
+  assert.ok(
+    yardOutcomeMoment,
+    "Inhabit gameplay pass did not capture browser evidence for the yard outcome.",
+  );
+  assert.ok(
+    postFirstAfternoonYardOutcomeProbe(yardOutcomeMoment),
+    "Post-rest browser evidence did not show the yard commitment resolving into completed or closed player-facing outcome.",
   );
   const postFirstAfternoonLivePressureEvidence =
     buildPostFirstAfternoonLivePressureEvidence({
