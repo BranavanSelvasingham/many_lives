@@ -17,6 +17,8 @@ import type {
   RowanNextMove,
 } from "./rowanCognitionModel.js";
 import {
+  rowanNotebookClueText,
+  rowanNotebookConfidenceText,
   rowanNotebookPlanText,
   rowanNotebookUncertaintyForBelief,
 } from "./rowanCognitionNarratives.js";
@@ -69,18 +71,22 @@ export function buildRowanCognitionState(
       currentBelief?.text ??
       primaryNeed?.reason ??
       "South Quay is still mostly unknown, and Rowan needs one reliable person to ask.",
-    clue: currentBelief
-      ? `${currentBelief.source} made this feel ${confidenceAdjective(
-          currentBelief.confidence,
-        )}.`
-      : primaryNeed
-        ? `The strongest pressure right now is ${primaryNeed.label.toLowerCase()}.`
-        : "The room at Morrow House is safe for tonight, but not a future by itself.",
-    confidence: currentBelief
-      ? `${confidenceLabel(currentBelief.confidence)} from ${currentBelief.source}.`
-      : primaryNeed
-        ? `${needStatusLabel(primaryNeed.status)}: ${primaryNeed.reason}`
-        : "Unsettled.",
+    clue:
+      rowanNotebookClueText(world, currentBelief) ??
+      (currentBelief
+        ? `${currentBelief.source} made this feel ${confidenceAdjective(
+            currentBelief.confidence,
+          )}.`
+        : primaryNeed
+          ? `The strongest pressure right now is ${primaryNeed.label.toLowerCase()}.`
+          : "The room at Morrow House is safe for tonight, but not a future by itself."),
+    confidence:
+      rowanNotebookConfidenceText(world, currentBelief) ??
+      (currentBelief
+        ? `${confidenceLabel(currentBelief.confidence)} from ${currentBelief.source}.`
+        : primaryNeed
+          ? `${needStatusLabel(primaryNeed.status)}: ${primaryNeed.reason}`
+          : "Unsettled."),
     plan: rowanNotebookPlanText(world, nextMove),
     title: notebookNeed?.label ?? "First page of the morning",
     uncertainty:

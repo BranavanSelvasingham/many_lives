@@ -209,8 +209,14 @@ const ROWAN_NOTEBOOK_RECOVERY_PLAN =
 const ROWAN_NOTEBOOK_PUMP_PLAN =
   "Handle the Morrow Yard pump before the house has to absorb it without Rowan.";
 const ROWAN_NOTEBOOK_YARD_PLAN =
-  "Follow the yard work window before it closes.";
+  "Head to North Crane Yard before the freight window closes.";
 const ROWAN_NOTEBOOK_STALE_ENTRY_FALLBACK = "Ask the first useful question.";
+const ROWAN_NOTEBOOK_FIELD_NOTE_CLUE =
+  "Evidence: Ada's field note says Rowan asked directly, stayed through lunch, and left Kettle & Lamp with pay and a clearer obligation.";
+const ROWAN_NOTEBOOK_YARD_CLUE =
+  "Evidence: Tomas described paid yard work at North Crane Yard, and the freight window is the obligation Rowan can still try to meet.";
+const ROWAN_NOTEBOOK_PUMP_WITH_TOOL_CLUE =
+  "Evidence: the Morrow Yard pump is active, and Rowan already has the wrench that can make the repair real.";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -1104,6 +1110,9 @@ describe("street reasoning authority", () => {
       ROWAN_NOTEBOOK_PUMP_PLAN,
       ROWAN_NOTEBOOK_YARD_PLAN,
       ROWAN_NOTEBOOK_STALE_ENTRY_FALLBACK,
+      ROWAN_NOTEBOOK_FIELD_NOTE_CLUE,
+      ROWAN_NOTEBOOK_YARD_CLUE,
+      ROWAN_NOTEBOOK_PUMP_WITH_TOOL_CLUE,
     ]) {
       expect(narrativesSource).toContain(notebookCopy);
       expect(cognitionSource).not.toContain(notebookCopy);

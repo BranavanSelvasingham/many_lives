@@ -492,6 +492,18 @@ function objectiveMatchesBelief(world: StreetGameState, belief: RowanBelief) {
         objectiveText,
       );
     case "work":
+      if (
+        /\btomas\b|\byard\b|\bfreight\b|\bnorth crane\b/.test(objectiveText)
+      ) {
+        return belief.id === "belief-tomas-work";
+      }
+      if (
+        /\bada\b|\bkettle\b|\bcafe\b|\btea\b|\bcup-and-counter\b/.test(
+          objectiveText,
+        )
+      ) {
+        return belief.id === "belief-ada-work";
+      }
       return /\bwork\b|\bjob\b|\bshift\b|\bpay\b|\bincome\b/.test(
         objectiveText,
       );

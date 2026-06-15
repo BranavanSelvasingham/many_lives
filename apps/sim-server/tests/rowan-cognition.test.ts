@@ -271,6 +271,8 @@ describe("Rowan cognition Notebook authority", () => {
 
     expect(notebook.title).toBe("Keep enough energy to follow through");
     expect(notebook.belief).toMatch(/Ada|field note|opening room question/i);
+    expect(notebook.clue).toMatch(/Asked Ada|Kettle & Lamp|cup-and-counter/i);
+    expect(notebook.confidence).toMatch(/Confirmed|field note|paid tea shift/i);
     expect(notebook.plan).toBe(
       "Rest at Morrow House long enough to recover, then choose the yard work, pump, or current opening that still matters.",
     );
@@ -345,6 +347,8 @@ describe("Rowan cognition Notebook authority", () => {
 
     expect(notebook.title).toBe("Learn how South Quay fits together");
     expect(notebook.belief).toMatch(/Morrow Yard pump|live house problem/i);
+    expect(notebook.clue).toMatch(/Morrow Yard pump|active|wrench/i);
+    expect(notebook.confidence).toMatch(/Promising|active|tool/i);
     expect(notebook.plan).toBe("Fix the pump");
     expect(notebook.uncertainty).toBe(
       "Can Rowan turn a small fix into a real local foothold?",
@@ -385,7 +389,7 @@ describe("Rowan cognition Notebook authority", () => {
       focus: "work",
       routeKey: "work-yard",
       source: "dynamic",
-      text: "Secure paid yard work and follow through.",
+      text: "Get a real work lead from Tomas at North Crane Yard.",
       outcomes: [
         {
           authority: "predicate",
@@ -433,8 +437,85 @@ describe("Rowan cognition Notebook authority", () => {
 
     expect(notebook.title).toBe("Find steady income");
     expect(notebook.belief).toMatch(/Tomas|yard work|freight/i);
+    expect(notebook.clue).toMatch(/Tomas|North Crane Yard|freight window/i);
+    expect(notebook.confidence).toMatch(/Confirmed|Tomas|freight window/i);
     expect(notebook.plan).toBe("Head to North Crane Yard");
     expect(notebook.authority.beliefId).toBe("belief-tomas-work");
+    expectNoStaleOpeningNotebookAuthority(notebook);
+  });
+
+  it("does not reduce a post-rest yard plan to the low-level street exit", () => {
+    const world = seedStreetGame("game-post-rest-yard-exit-notebook-cognition");
+    const currentObjective = world.player.objective as PlayerObjective;
+    settleFirstAfternoon(world);
+    world.currentTime = "Day 1, 16:26";
+    world.clock.hour = 16;
+    world.clock.minute = 26;
+    world.clock.totalMinutes = 16 * 60 + 26;
+    world.player.energy = 70;
+    world.player.currentLocationId = "boarding-house";
+    world.player.knownNpcIds = Array.from(
+      new Set([...world.player.knownNpcIds, "npc-tomas"]),
+    );
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    if (yardJob) {
+      yardJob.discovered = true;
+    }
+    addNpcReply(
+      world,
+      "npc-tomas",
+      "Tomas",
+      "Yard work pays if you reach the freight window before the load moves.",
+    );
+    world.player.objective = {
+      ...currentObjective,
+      focus: "work",
+      routeKey: "work-yard",
+      source: "dynamic",
+      text: "Get a real work lead from Tomas at North Crane Yard.",
+      outcomes: [
+        {
+          actionId: "accept:job-yard-shift",
+          authority: "predicate",
+          id: "work-commit",
+          label: "Yard work accepted",
+          status: "open",
+          targetLocationId: "freight-yard",
+          urgency: 2,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      trail: [],
+    };
+    world.rowanAutonomy = {
+      actionId: "exit:boarding-house",
+      autoContinue: true,
+      detail:
+        "The yard window is still live, so Rowan should leave Morrow House and reach Tomas before the work moves on.",
+      intent: {
+        reason:
+          "The yard window is still live, so Rowan should leave Morrow House and reach Tomas before the work moves on.",
+        signals: ["Job: yard work", "Window: still open"],
+      },
+      key: "objective:work-yard:exit",
+      label: "Exit to South Quay",
+      layer: "objective",
+      mode: "acting",
+      stepKind: "act",
+      targetLocationId: "boarding-house",
+    };
+
+    const notebook = buildRowanCognitionState(world).notebook;
+
+    expect(notebook.plan).toBe(
+      "Head to North Crane Yard before the freight window closes.",
+    );
+    expect(notebook.plan).not.toBe("Exit to South Quay");
+    expect(notebook.clue).toMatch(/Tomas|North Crane Yard|freight window/i);
     expectNoStaleOpeningNotebookAuthority(notebook);
   });
 
