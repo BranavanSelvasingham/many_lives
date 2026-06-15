@@ -1380,6 +1380,10 @@ async function assertCameraPanContractGuard() {
     "NPC map-agency targets must not draw full location footprint halos that read as blue rectangle artifacts.",
   );
   assert.ok(
+    !streetSource.includes("drawFootprintHalo(layer, selectedFootprint"),
+    "Selected NPC focus must stay actor-attached instead of drawing a full location footprint halo.",
+  );
+  assert.ok(
     streetSource.includes("target-outside-safe-rect") &&
       streetSource.includes("label-would-clamp-away-from-target") &&
       streetSource.includes("pointInsideVisualRect(cue.targetWorld, labelSafeRect)"),
