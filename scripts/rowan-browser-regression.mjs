@@ -1675,23 +1675,7 @@ class CdpSession {
       async () => {
         try {
           const probe = await this.readBrowserProbe();
-          if (!probe) {
-            return null;
-          }
-
-          if (
-            probe.gameId === game.id &&
-            probe.clock?.iso === game.currentTime &&
-            probe.location?.id === (game.player.currentLocationId ?? null) &&
-            probe.location?.x === game.player.x &&
-            probe.location?.y === game.player.y &&
-            probe.autonomy?.label === game.rowanAutonomy.label &&
-            probe.autonomy?.stepKind === game.rowanAutonomy.stepKind &&
-            (probe.autonomy?.targetLocationId ?? null) ===
-              (game.rowanAutonomy.targetLocationId ?? null) &&
-            (probe.activeConversation?.npcId ?? null) ===
-              (game.activeConversation?.npcId ?? null)
-          ) {
+          if (browserProbeMatchesGameSnapshot(probe, game)) {
             return probe;
           }
         } catch {}
@@ -1715,7 +1699,7 @@ class CdpSession {
         }
 
         if (
-          probe?.gameId === previousGame.id &&
+          browserProbeMatchesGameSnapshot(probe, previousGame) &&
           probe.movement?.playerRoute?.active === true &&
           probe.movement?.playerRoute?.worldPath?.length >= 2
         ) {
@@ -1729,13 +1713,7 @@ class CdpSession {
     throw new Error(
       `Timed out waiting for browser session to stage visual movement from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}. Last probe: ${JSON.stringify(
         lastProbe
-          ? {
-              autonomy: lastProbe.autonomy,
-              location: lastProbe.location,
-              movement: lastProbe.movement,
-              visualPlayer: lastProbe.visualPlayer,
-              watchMode: lastProbe.watchMode,
-            }
+          ? compactBrowserProbeForWait(lastProbe)
           : null,
         null,
         2,
@@ -1744,28 +1722,34 @@ class CdpSession {
   }
 
   async waitForVisualRouteProgress(previousGame, nextGame, minimumProgress) {
-    return waitFor(
-      async () => {
-        try {
-          const probe = await this.readBrowserProbe();
-          const route = probe?.movement?.playerRoute;
-          if (!probe || !route) {
-            return null;
-          }
+    const startedAt = Date.now();
+    let lastProbe = null;
 
-          if (
-            probe.gameId === previousGame.id &&
-            route.active === true &&
-            route.progress >= minimumProgress
-          ) {
-            return probe;
-          }
-        } catch {}
+    while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
+      try {
+        const probe = await this.readBrowserProbe();
+        if (probe) {
+          lastProbe = probe;
+        }
+        const route = probe?.movement?.playerRoute;
+        if (
+          browserProbeMatchesGameSnapshot(probe, previousGame) &&
+          route?.active === true &&
+          route.progress >= minimumProgress
+        ) {
+          return probe;
+        }
+      } catch {}
 
-        return null;
-      },
-      SIM_WAIT_TIMEOUT_MS,
-      `Timed out waiting for visual route progress >= ${minimumProgress} from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}.`,
+      await sleep(PROBE_POLL_INTERVAL_MS);
+    }
+
+    throw new Error(
+      `Timed out waiting for visual route progress >= ${minimumProgress} from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}. Last probe: ${JSON.stringify(
+        compactBrowserProbeForWait(lastProbe),
+        null,
+        2,
+      )}`,
     );
   }
 
@@ -3019,6 +3003,72 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
     Boolean(options.allowVisualMove),
     `${label}: browser still thinks the player is in a staged visual move.`,
   );
+}
+
+function browserProbeMatchesGameSnapshot(probe, game) {
+  if (!probe || !game) {
+    return false;
+  }
+
+  return (
+    probe.gameId === game.id &&
+    probe.clock?.iso === game.currentTime &&
+    probe.location?.id === normalizeNullable(game.player.currentLocationId) &&
+    probe.location?.spaceId ===
+      normalizeNullable(game.activeSpaceId ?? game.player.spaceId) &&
+    probe.location?.x === game.player.x &&
+    probe.location?.y === game.player.y &&
+    probe.autonomy?.label === game.rowanAutonomy.label &&
+    probe.autonomy?.stepKind === game.rowanAutonomy.stepKind &&
+    (probe.autonomy?.targetLocationId ?? null) ===
+      normalizeNullable(game.rowanAutonomy.targetLocationId) &&
+    (probe.activeConversation?.npcId ?? null) ===
+      (game.activeConversation?.npcId ?? null)
+  );
+}
+
+function compactBrowserProbeForWait(probe) {
+  if (!probe) {
+    return null;
+  }
+
+  return {
+    autonomy: probe.autonomy
+      ? {
+          label: probe.autonomy.label ?? null,
+          stepKind: probe.autonomy.stepKind ?? null,
+          targetLocationId: probe.autonomy.targetLocationId ?? null,
+        }
+      : null,
+    clock: probe.clock?.iso ?? null,
+    gameId: probe.gameId ?? null,
+    location: probe.location
+      ? {
+          id: probe.location.id ?? null,
+          spaceId: probe.location.spaceId ?? null,
+          x: probe.location.x ?? null,
+          y: probe.location.y ?? null,
+        }
+      : null,
+    movement: probe.movement
+      ? {
+          playerRoute: probe.movement.playerRoute
+            ? {
+                active: probe.movement.playerRoute.active ?? null,
+                progress: probe.movement.playerRoute.progress ?? null,
+                targetLocationId:
+                  probe.movement.playerRoute.targetLocationId ?? null,
+              }
+            : null,
+        }
+      : null,
+    visualPlayer: probe.visualPlayer
+      ? {
+          isMovingToServerState:
+            probe.visualPlayer.isMovingToServerState ?? null,
+        }
+      : null,
+  };
 }
 
 function assertPlanningTracePayload(label, planningTrace) {
@@ -11927,10 +11977,12 @@ function buildRegressionSteps(gameRef) {
       mutate: async () => {
         const routeProgress = await advanceObjective(gameRef.current.id, true);
         gameRef.current = routeProgress;
-        const arrival = await advanceObjective(routeProgress.id, true);
-        gameRef.current = arrival;
-        return advanceObjective(arrival.id, true);
+        return advanceObjective(routeProgress.id, true);
       },
+    },
+    {
+      label: "post-first-afternoon-yard-outcome",
+      mutate: async () => advanceObjective(gameRef.current.id, true),
     },
     {
       label: "independent-npc-resolution",
