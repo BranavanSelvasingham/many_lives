@@ -4920,7 +4920,7 @@ function buildMapAgencyIntentLabelCopy(cue: MapAgencyCue, playerPixel: Point) {
     !cue.targetIsNpc &&
     distanceBetween(playerPixel, cue.targetWorld) > CELL * 1.8
   ) {
-    return "Heading to the next stop";
+    return buildDistantMapAgencyIntentCopy(cue);
   }
 
   return cue.targetWorld || cue.targetLabel
@@ -4928,6 +4928,44 @@ function buildMapAgencyIntentLabelCopy(cue: MapAgencyCue, playerPixel: Point) {
     : cue.detail
       ? `${cue.intent}\n${cue.detail}`
       : cue.intent;
+}
+
+function buildDistantMapAgencyIntentCopy(cue: MapAgencyCue) {
+  const grounded = groundedMapAgencyRouteCopy(`${cue.intent} ${cue.detail}`);
+  if (grounded) {
+    return grounded;
+  }
+
+  return "Following the current obligation";
+}
+
+function groundedMapAgencyRouteCopy(text: string) {
+  const normalized = text.toLowerCase();
+  if (/\bmara\b|\bada\b/.test(normalized)) {
+    return "Following Mara's Ada lead";
+  }
+
+  if (/\blunch\b/.test(normalized)) {
+    return "Protecting the lunch window";
+  }
+
+  if (/\bpaid\b|\bshift\b|\bwork window\b/.test(normalized)) {
+    return "Letting the paid shift land";
+  }
+
+  if (/\broom terms\b|\brent\b/.test(normalized)) {
+    return "Checking the room terms";
+  }
+
+  if (/\benergy\b|\brest\b/.test(normalized)) {
+    return "Taking care of energy";
+  }
+
+  if (/\blead\b|\bclue\b|\bquestion\b/.test(normalized)) {
+    return "Following the live lead";
+  }
+
+  return null;
 }
 
 function setMapAgencyLabel(
@@ -5491,6 +5529,11 @@ function buildMapAgencyIntent({
   }
 
   if (autonomy.mode === "moving" && targetLocation) {
+    const groundedLabel = compactMapAgencyCopy(autonomy.label || "", 34);
+    if (groundedLabel) {
+      return groundedLabel;
+    }
+
     return `Heading to ${mapAgencyLocationName(targetLocation)}`;
   }
 
@@ -5567,7 +5610,7 @@ function buildMapAgencyDetail({
   }
 
   if (autonomy.mode === "moving" && targetLocation) {
-    return `Next stop: ${mapAgencyLocationName(targetLocation)}.`;
+    return `${mapAgencyLocationName(targetLocation)} is tied to Rowan's current obligation.`;
   }
 
   if (game.player.objective?.text) {

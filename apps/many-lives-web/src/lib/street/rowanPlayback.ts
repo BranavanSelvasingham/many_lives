@@ -310,7 +310,7 @@ export function deriveRowanPlaybackBeats(
   if (playerMoveDistance > 0 && !activeSpaceChanged) {
     const moveTargetName =
       locationNameForId(nextGame, nextGame.player.currentLocationId) ??
-      "the next stop";
+      "the current destination";
     const movingWithinInterior =
       previousGame.activeSpaceId?.startsWith("interior:") &&
       previousGame.activeSpaceId === nextGame.activeSpaceId;
@@ -336,7 +336,7 @@ export function deriveRowanPlaybackBeats(
   if (activeSpaceChanged) {
     const locationName =
       locationNameForId(nextGame, nextGame.player.currentLocationId) ??
-      "the next stop";
+      "the current destination";
     const enteringInterior = nextGame.activeSpaceId?.startsWith("interior:");
     beats.push({
       blocking: true,
@@ -360,7 +360,7 @@ export function deriveRowanPlaybackBeats(
   ) {
     const locationName =
       locationNameForId(nextGame, nextGame.player.currentLocationId) ??
-      "the next stop";
+      "the current destination";
     beats.push({
       blocking: true,
       detail: `Rowan reached ${locationName}.`,

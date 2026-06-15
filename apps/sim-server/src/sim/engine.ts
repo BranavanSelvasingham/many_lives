@@ -1407,7 +1407,7 @@ function resolvePendingMoveLoopStep(
     autoContinue: true,
     detail:
       pendingMove.rationale ||
-      `${location?.name ?? "The next place"} is the useful next stop based on what Rowan knows now.`,
+      `${location?.name ?? "The destination"} fits Rowan's current obligation based on what he knows now.`,
     key: `pending:${pendingMove.preparedAt}:${pendingMove.targetLocationId}:${pendingMove.actionId ?? pendingMove.npcId ?? ""}`,
     kind: "move",
     label: autonomyLabelForRouteProgress(world, pendingMove.targetLocationId),
@@ -1429,7 +1429,14 @@ function autonomyLabelForRouteProgress(
   targetLocationId: string,
 ) {
   const location = findLocation(world, targetLocationId);
-  return `On the way to ${location?.name ?? "the next stop"}`;
+  if (location) {
+    return (
+      objectiveRouteMoveLabelForLocation(world, location) ??
+      `On the way to ${location.name}`
+    );
+  }
+
+  return "Following the current route";
 }
 
 function teaShiftWatchLabel(world: StreetGameState) {
@@ -2439,7 +2446,7 @@ function buildMovementFeedText(
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
 ) {
   const rawPurpose = planMovementPurpose(world, plan, objective);
-  const destinationPrefix = `${targetLocation.name.toLowerCase()} is the next stop`;
+  const destinationPrefix = `${targetLocation.name.toLowerCase()} is tied to the current obligation`;
   const purpose =
     rawPurpose.toLowerCase().startsWith(destinationPrefix)
       ? rawPurpose.slice(destinationPrefix.length).replace(/^[:\s]+/, "")
@@ -3426,7 +3433,10 @@ function autonomyLabelForNextBeat(
   }
 
   if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
-    return `Head to ${targetLocation.name}`;
+    return (
+      objectiveRouteMoveLabelForLocation(world, targetLocation) ??
+      `Head to ${targetLocation.name}`
+    );
   }
 
   if (plan.npcId) {
@@ -3447,6 +3457,18 @@ function autonomyLabelForNextBeat(
   }
 
   return "Carry the objective forward";
+}
+
+function objectiveRouteMoveLabelForLocation(
+  world: StreetGameState,
+  location: LocationState,
+) {
+  const objective = currentObjectiveDirective(world);
+  if (!objective) {
+    return undefined;
+  }
+
+  return objectiveRouteMoveIntent(world, objective, location.id)?.label;
 }
 
 function autonomyLabelForAction(world: StreetGameState, actionId: string) {
@@ -3526,9 +3548,19 @@ function autonomyDetailForObjectivePlan(
       : undefined;
 
   if (targetLocation && world.player.currentLocationId !== targetLocation.id) {
-    return `${targetLocation.name} is the next stop: ${normalizeAutonomyRationale(
+    const routeReason = objectiveRouteMoveReasonForLocation(
+      world,
+      plan.targetLocationId,
+      targetLocation.name,
+      plan.npcId ? npcById(world, plan.npcId)?.name : undefined,
+    );
+    if (routeReason) {
+      return routeReason;
+    }
+
+    return `${targetLocation.name} is tied to Rowan's current aim: ${normalizeAutonomyRationale(
       playerFacingAutonomyRationale(world, plan.rationale) ||
-        `get to ${targetLocation.name} and keep the objective moving`,
+        `reach ${targetLocation.name} and keep the objective moving`,
     )}.`;
   }
 
@@ -3566,7 +3598,7 @@ function autonomyDetailForAction(
 
   if (kind === "enter") {
     const location = targetId ? findLocation(world, targetId) : undefined;
-    return `${location?.name ?? "The building"} is the next stop, so Rowan steps inside before acting: ${rationale}.`;
+    return `${location?.name ?? "The building"} is where Rowan can check the current aim inside: ${rationale}.`;
   }
 
   if (kind === "exit") {
@@ -3697,6 +3729,16 @@ function buildRowanAutonomyReason({
   }
 
   if (loopStep.kind === "move" && targetLocationName) {
+    const routeReason = objectiveRouteMoveReasonForLocation(
+      world,
+      loopStep.targetLocationId,
+      targetLocationName,
+      npcName,
+    );
+    if (routeReason) {
+      return routeReason;
+    }
+
     if (npcName) {
       return `${npcName} is tied to the next step, so Rowan is getting to ${targetLocationName} before talking.`;
     }
@@ -3705,7 +3747,7 @@ function buildRowanAutonomyReason({
       return `${targetLocationName} is where ${lowercaseFirst(actionLabel)} can happen, so Rowan is going there now.`;
     }
 
-    return `Rowan has a reason to get to ${targetLocationName} before deciding again.`;
+    return `What Rowan knows now points to ${targetLocationName}, so he is going there before choosing the next legal action.`;
   }
 
   if (loopStep.kind === "talk" && npcName) {
@@ -3723,13 +3765,13 @@ function buildRowanAutonomyReason({
 
     if (currentLocationName) {
       if (/^enter\b/i.test(actionLabel)) {
-        return `Rowan is at ${currentLocationName}, so stepping inside is the useful next move.`;
+        return `${actionLabel} is available here, and going inside fits Rowan's current aim.`;
       }
 
-      return `Rowan is at ${currentLocationName}, so ${lowercaseFirst(actionLabel)} is the useful next move.`;
+      return `${actionLabel} is available at ${currentLocationName}, and it fits Rowan's current aim.`;
     }
 
-    return `${actionLabel} is the useful next thing Rowan can do here.`;
+    return `${actionLabel} is the legal action that fits Rowan's current aim.`;
   }
 
   if (loopStep.kind === "wait") {
@@ -3749,6 +3791,58 @@ function buildRowanAutonomyReason({
   }
 
   return loopStep.detail;
+}
+
+function objectiveRouteMoveReasonForLocation(
+  world: StreetGameState,
+  locationId: string | undefined,
+  locationName: string,
+  npcName?: string,
+) {
+  const objective = currentObjectiveDirective(world);
+  if (!objective || !locationId) {
+    return undefined;
+  }
+
+  const intent = objectiveRouteMoveIntent(world, objective, locationId);
+  if (!intent?.rationale) {
+    return undefined;
+  }
+
+  const rationale = groundedMoveRationaleForLocation(
+    locationName,
+    playerFacingAutonomyRationale(world, intent.rationale) || intent.rationale,
+  );
+  if (!rationale) {
+    return undefined;
+  }
+
+  if (intent.label && /^return\b/i.test(intent.label)) {
+    return `${rationale}.`;
+  }
+
+  if (npcName || intent.npcId) {
+    const npc =
+      npcName ?? (intent.npcId ? npcById(world, intent.npcId)?.name : undefined);
+    return `${locationName} is where ${npc ?? "the right person"} can answer the live question: ${rationale}.`;
+  }
+
+  return `${locationName} is tied to the current obligation: ${rationale}.`;
+}
+
+function groundedMoveRationaleForLocation(
+  locationName: string,
+  rationaleText: string,
+) {
+  const locationPattern = locationName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return normalizeAutonomyRationale(rationaleText)
+    .replace(
+      new RegExp(`^(?:walk|go|get) to ${locationPattern}\\s+and\\s+`, "i"),
+      "",
+    )
+    .replace(/^(?:walk|go|get) to [^,.]+ and\s+/i, "")
+    .replace(/^(?:walk|go|get) to [^,.]+(?:\.|$)/i, "")
+    .trim();
 }
 
 function buildPendingMovementReason({
@@ -3771,6 +3865,16 @@ function buildPendingMovementReason({
   ).replace(/[.!?]+$/g, "");
   const target = targetLocationName ?? "the next place";
   const normalizedTarget = targetLocationName?.toLowerCase();
+  const routeReason = objectiveRouteMoveReasonForLocation(
+    world,
+    loopStep.targetLocationId,
+    target,
+    npcName,
+  );
+  if (routeReason) {
+    return routeReason;
+  }
+
   if (
     rationale &&
     normalizedTarget &&
@@ -3792,7 +3896,7 @@ function buildPendingMovementReason({
   }
 
   if (rationale) {
-    return `${target} is the next stop: ${rationale}.`;
+    return `${target} is tied to the current obligation: ${rationale}.`;
   }
 
   if (targetLocationName) {
@@ -4290,7 +4394,10 @@ function immediatePlannerActionLabel(
   if (actionId.startsWith("move:")) {
     const locationId = actionId.slice("move:".length);
     const location = findLocation(world, locationId);
-    return `Head to ${location?.name ?? "the next stop"}`;
+    return location
+      ? (objectiveRouteMoveLabelForLocation(world, location) ??
+          `Head to ${location.name}`)
+      : "Follow the current route";
   }
 
   if (actionId.startsWith("wait:") && plan.waitUntilMinutes !== undefined) {
@@ -4586,7 +4693,8 @@ function traceLegalActionStepAtLocation(
       label:
         world.player.currentLocationId === location.id
           ? action.label
-          : `Head to ${location.name}`,
+          : (objectiveRouteMoveLabelForLocation(world, location) ??
+            `Head to ${location.name}`),
       legal: !action.disabled,
       legalBacking: action.disabled
         ? undefined
