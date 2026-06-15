@@ -7954,6 +7954,11 @@ function assertNotebookFreshForLateObjective(
 
 function assertLateNotebookMatchesCurrentPressure(label, notebook, probe) {
   const notebookText = compactNotebookText(notebook);
+  assert.match(
+    notebookText,
+    /Evidence|Confirmed|Promising|Possible|field note|Tomas|pump|Nia|Jo|Ada/i,
+    `${label}: late Notebook should expose evidence and confidence, got ${JSON.stringify(notebook)}.`,
+  );
   const routeKey = probe?.objective?.routeKey ?? "";
   const focus = probe?.objective?.focus ?? "";
   const objectiveText = probe?.objective?.text ?? "";
@@ -7994,6 +7999,11 @@ function assertLateNotebookMatchesCurrentPressure(label, notebook, probe) {
       /yard|work|Tomas|freight|income|paid/i,
       `${label}: late Notebook should reflect the current yard-work pressure, got ${JSON.stringify(notebook)}.`,
     );
+    assert.doesNotMatch(
+      notebook?.plan ?? "",
+      /^Exit to South Quay$/i,
+      `${label}: yard-work Notebook plan should name the yard plan, not the low-level street exit.`,
+    );
     return;
   }
 
@@ -8029,6 +8039,7 @@ function compactNotebookText(notebook) {
     notebook?.title,
     notebook?.belief,
     notebook?.clue,
+    notebook?.confidence,
     notebook?.plan,
     notebook?.uncertainty,
   ]
