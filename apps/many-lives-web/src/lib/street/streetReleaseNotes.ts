@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.7",
-  build: "6659e92",
-  source: "PR #153",
+  version: "0.1.8",
+  build: "c31420e",
+  source: "PR #161",
   features: [
     {
-      title: "Commitment reasoning",
+      title: "Grounded yard choices",
       body:
-        "Accepted work follow-through now shows as a commitment-specific decision instead of a generic planner beat.",
+        "After resting, Rowan now weighs Morrow Yard against the room, his energy, and what the house needs next.",
     },
     {
-      title: "Morrow House interior",
+      title: "The city acts too",
       body:
-        "The opening boarding-house room now reads warmer and keeps its room label legible in the interior camera smoke.",
+        "Mara can steady Morrow House and the leaking pump while Rowan is elsewhere, with the change shown as a city beat.",
     },
     {
-      title: "First-screen readability",
+      title: "Fresh and saved runs",
       body:
-        "Mara, Rowan, and the decision callback remain visible while the first room gets clearer parlor cues.",
+        "Browser checks now guard saved runs, autoplay, and visible clues so the opening stays readable after reloads.",
     },
   ],
 };
