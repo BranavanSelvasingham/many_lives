@@ -2528,7 +2528,7 @@ function visibleDecisionArtifactFromGame(game) {
     backingSummary,
     considered: uniqueVisibleDecisionTexts(
       [
-        ...(trace?.considered ?? []).map((option) => option.label),
+        ...(trace?.considered ?? []).map(visibleConsideredOptionText),
         ...(trace?.nextSteps ?? []).map((step) => step.label),
         trace ? undefined : selectedAction,
       ],
@@ -2550,9 +2550,7 @@ function visibleDecisionArtifactFromGame(game) {
     objective,
     passedOver: uniqueVisibleDecisionTexts(
       [
-        ...(trace?.rejected ?? []).map((option) =>
-          option.reason ? `${option.label}: ${option.reason}` : option.label,
-        ),
+        ...(trace?.rejected ?? []).map(visibleRejectedOptionText),
         ...(trace?.blockers ?? []),
       ],
       2,
@@ -2684,6 +2682,62 @@ function stripTrailingVisibleDecisionPunctuation(value) {
   return String(value ?? "")
     .replace(/[.:;,]+\s*$/u, "")
     .trim();
+}
+
+function visibleConsideredOptionText(option) {
+  if (!isRouteCommandOptionLabel(option.label)) {
+    return option.label;
+  }
+
+  return (
+    visibleReasonFirstOptionText(option.label, option.rationale, 92) ??
+    option.label
+  );
+}
+
+function visibleRejectedOptionText(option) {
+  return (
+    visibleReasonFirstOptionText(
+      option.label,
+      option.reason ?? option.rationale,
+      92,
+    ) ?? option.label
+  );
+}
+
+function visibleReasonFirstOptionText(label, reason, max) {
+  const compactReason = compactVisibleDecisionText(reason, max);
+  if (!compactReason) {
+    return undefined;
+  }
+
+  const compactLabel = stripTrailingVisibleDecisionPunctuation(
+    compactVisibleDecisionText(label, 72),
+  );
+  if (!compactLabel) {
+    return compactReason;
+  }
+
+  const reasonWithoutLabel = compactReason
+    .replace(
+      new RegExp(
+        `^${escapeVisibleDecisionRegExp(compactLabel)}\\s*[:\\-]\\s*`,
+        "i",
+      ),
+      "",
+    )
+    .trim();
+  return reasonWithoutLabel || compactReason;
+}
+
+function isRouteCommandOptionLabel(label) {
+  return /^(?:head|walk|go|move|return|enter|cross|follow)\s+(?:to|toward|into|through|back\b)/i.test(
+    String(label ?? "").trim(),
+  );
+}
+
+function escapeVisibleDecisionRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function visibleDecisionBackingSummary(backing, hasTrace) {

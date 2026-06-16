@@ -160,7 +160,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   );
   const considered = uniqueCompact(
     [
-      ...(planningTrace?.considered ?? []).map((option) => option.label),
+      ...(planningTrace?.considered ?? []).map(visibleConsideredOptionText),
       ...(planningTrace?.nextSteps ?? []).map((step) => step.label),
       planningTrace ? undefined : selectedAction,
     ],
@@ -169,9 +169,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   );
   const passedOver = uniqueCompact(
     [
-      ...(planningTrace?.rejected ?? []).map((option) =>
-        option.reason ? `${option.label}: ${option.reason}` : option.label,
-      ),
+      ...(planningTrace?.rejected ?? []).map(visibleRejectedOptionText),
       ...(planningTrace?.blockers ?? []),
     ],
     2,
@@ -439,6 +437,67 @@ function isCurrentOrMetaTraceOutcome(
 
 function stripTrailingDecisionPunctuation(value: string) {
   return value.replace(/[.:;,]+\s*$/u, "").trim();
+}
+
+function visibleConsideredOptionText(
+  option: PlanningTrace["considered"][number],
+) {
+  if (!isRouteCommandOptionLabel(option.label)) {
+    return option.label;
+  }
+
+  return (
+    visibleReasonFirstOptionText(option.label, option.rationale, 92) ??
+    option.label
+  );
+}
+
+function visibleRejectedOptionText(
+  option: PlanningTrace["rejected"][number],
+) {
+  return (
+    visibleReasonFirstOptionText(
+      option.label,
+      option.reason ?? option.rationale,
+      92,
+    ) ?? option.label
+  );
+}
+
+function visibleReasonFirstOptionText(
+  label: string,
+  reason: string | undefined,
+  max: number,
+) {
+  const compactReason = compactDecisionText(reason, max);
+  if (!compactReason) {
+    return undefined;
+  }
+
+  const compactLabel = stripTrailingDecisionPunctuation(
+    compactDecisionText(label, 72),
+  );
+  if (!compactLabel) {
+    return compactReason;
+  }
+
+  const reasonWithoutLabel = compactReason
+    .replace(
+      new RegExp(`^${escapeRegExp(compactLabel)}\\s*[:\\-]\\s*`, "i"),
+      "",
+    )
+    .trim();
+  return reasonWithoutLabel || compactReason;
+}
+
+function isRouteCommandOptionLabel(label: string) {
+  return /^(?:head|walk|go|move|return|enter|cross|follow)\s+(?:to|toward|into|through|back\b)/i.test(
+    label.trim(),
+  );
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function selectedPlanningStep(trace?: PlanningTrace) {
