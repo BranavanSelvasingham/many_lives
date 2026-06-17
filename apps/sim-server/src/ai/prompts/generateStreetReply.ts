@@ -1,6 +1,7 @@
 import type { StreetDialogueRequest } from "../streetDialogue.js";
 import { buildStreetConversationContext } from "../streetDialogue.js";
 import { buildStreetVoicePromptLines } from "../streetVoice.js";
+import { objectiveRouteConversationPromptGroundingLines } from "../../sim/objectiveScaffolds.js";
 import {
   buildPlainConversationContext,
   buildPlainOpenPossibilitiesContext,
@@ -13,7 +14,12 @@ export function buildGenerateStreetReplyPrompt(
   input: StreetDialogueRequest,
 ): string {
   const context = buildStreetConversationContext(input);
-  const requiredGroundingLines = buildRequiredGroundingLines(input);
+  const requiredGroundingLines = objectiveRouteConversationPromptGroundingLines(
+    input.game,
+    input.game.player.objective,
+    input.npcId,
+    input.playerText,
+  );
   const promptContext = {
     placeAndTime: buildPlainPlaceContext(context),
     rowan: buildPlainRowanContext(context),
@@ -63,35 +69,4 @@ export function buildGenerateStreetReplyPrompt(
     `Rowan says: ${input.playerText}`,
     "Use the person's background, voice, and what is on their mind as quiet guidance.",
   ].join("\n");
-}
-
-function buildRequiredGroundingLines(input: StreetDialogueRequest): string[] {
-  const playerText = input.playerText.toLowerCase();
-  const playerAlreadyGroundsMaraLead =
-    /\bada\b/.test(playerText) &&
-    /\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(playerText) &&
-    /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bhelp\b|\bcounter\b|\bpay\b/.test(
-      playerText,
-    );
-  if (
-    input.npcId !== "npc-mara" ||
-    input.game.player.objective?.routeKey !== "first-afternoon" ||
-    input.game.firstAfternoon?.leadFieldNote ||
-    input.game.firstAfternoon?.planSettledAt ||
-    /\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(playerText)
-  ) {
-    return [];
-  }
-
-  return [
-    "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.",
-    "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.",
-    ...(playerAlreadyGroundsMaraLead
-      ? [
-          "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.",
-          "- A short direct confirmation is acceptable here, but it must clearly affirm that exact lead instead of drifting back to room rules.",
-          "- Good shape for this follow-up: Yes, that's the one. Ask her before lunch fills the counter. Or: Exactly. She'll need steady hands before lunch.",
-        ]
-      : []),
-  ];
 }

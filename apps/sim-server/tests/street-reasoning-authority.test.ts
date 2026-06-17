@@ -38,6 +38,12 @@ const MARA_ADA_GROUNDING_FALLBACK_MEMORY =
   "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.";
 const MARA_ADA_GROUNDING_FALLBACK_SUMMARY =
   "Mara has not yet made the Kettle & Lamp lead visible in the conversation.";
+const MARA_ADA_REQUIRED_PROMPT_LINE =
+  "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.";
+const MARA_ADA_PROMPT_OVERRIDE_LINE =
+  "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.";
+const MARA_ADA_GROUNDED_PROMPT_LINE =
+  "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.";
 const NPC_FIRST_CONTACT_PRIMER_COPY = [
   "Mara gives you a measured look, like she's deciding whether you're here for a bed, for work, or just to stop feeling new.",
   "Mara weighs newcomers by whether they settle in, pull their weight, or disappear.",
@@ -618,6 +624,10 @@ describe("street reasoning authority", () => {
       new URL("../src/sim/engine.ts", import.meta.url),
       "utf8",
     );
+    const promptSource = readFileSync(
+      new URL("../src/ai/prompts/generateStreetReply.ts", import.meta.url),
+      "utf8",
+    );
     const scaffoldSource = readFileSync(
       new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
       "utf8",
@@ -628,14 +638,24 @@ describe("street reasoning authority", () => {
       MARA_ADA_GROUNDED_FALLBACK_REPLY,
       MARA_ADA_GROUNDING_FALLBACK_MEMORY,
       MARA_ADA_GROUNDING_FALLBACK_SUMMARY,
+      MARA_ADA_REQUIRED_PROMPT_LINE,
+      MARA_ADA_PROMPT_OVERRIDE_LINE,
+      MARA_ADA_GROUNDED_PROMPT_LINE,
     ]) {
       expect(scaffoldSource).toContain(groundingCopy);
       expect(engineSource).not.toContain(groundingCopy);
+      expect(promptSource).not.toContain(groundingCopy);
     }
 
     expect(scaffoldSource).toContain("conversationGroundingPolicies");
     expect(scaffoldSource).toContain("mara-ada-lead-grounding");
     expect(engineSource).toContain("objectiveRouteConversationGroundingPolicy");
+    expect(promptSource).toContain(
+      "objectiveRouteConversationPromptGroundingLines",
+    );
+    expect(promptSource).not.toContain("buildRequiredGroundingLines");
+    expect(promptSource).not.toContain('input.npcId !== "npc-mara"');
+    expect(promptSource).not.toContain('routeKey !== "first-afternoon"');
     expect(engineSource).not.toContain("groundedMaraAdaLeadReply");
     expect(engineSource).not.toContain("buildMaraAdaLeadGroundingFollowup");
     expect(engineSource).not.toContain("shouldRequireMaraAdaLeadEvidence");

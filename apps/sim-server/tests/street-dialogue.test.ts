@@ -18,6 +18,12 @@ const MARA_ADA_GROUNDING_FOLLOWUP =
   "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
 const MARA_ADA_GROUNDED_FALLBACK_REPLY =
   "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.";
+const MARA_ADA_REQUIRED_PROMPT_LINE =
+  "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.";
+const MARA_ADA_PROMPT_OVERRIDE_LINE =
+  "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.";
+const MARA_ADA_GROUNDED_PROMPT_LINE =
+  "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.";
 
 class UngroundedMaraReplyProvider extends MockAIProvider {
   override readonly name = "openai";
@@ -88,7 +94,8 @@ describe("street dialogue fallback", () => {
         "I'm Rowan. New here. What should I do first if I want to keep the room and find honest work?",
     });
 
-    expect(prompt).toContain("Required for this Mara reply");
+    expect(prompt).toContain(MARA_ADA_REQUIRED_PROMPT_LINE);
+    expect(prompt).toContain(MARA_ADA_PROMPT_OVERRIDE_LINE);
     expect(prompt).toContain("Ada");
     expect(prompt).toContain("Kettle & Lamp");
     expect(prompt).toMatch(/lunch work|shift|counter|pay/i);
@@ -104,11 +111,60 @@ describe("street dialogue fallback", () => {
         "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?",
     });
 
-    expect(prompt).toContain(
-      "Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead",
-    );
+    expect(prompt).toContain(MARA_ADA_GROUNDED_PROMPT_LINE);
     expect(prompt).toContain("clearly affirm that exact lead");
     expect(prompt).toContain("Exactly. She'll need steady hands before lunch.");
+  });
+
+  it("does not add Mara/Ada grounding prompt lines outside the scaffold policy match", () => {
+    const broadQuestion =
+      "I'm Rowan. New here. What should I do first if I want to keep the room and find honest work?";
+    const cases: Array<{
+      label: string;
+      npcId: string;
+      playerText: string;
+      configure?: (world: ReturnType<typeof seedStreetGame>) => void;
+    }> = [
+      {
+        label: "non-Mara speaker",
+        npcId: "npc-ada",
+        playerText: broadQuestion,
+      },
+      {
+        configure: (world) => {
+          if (world.player.objective) {
+            world.player.objective = {
+              ...world.player.objective,
+              routeKey: "work-yard",
+            };
+          }
+        },
+        label: "non-first-afternoon objective",
+        npcId: "npc-mara",
+        playerText: broadQuestion,
+      },
+      {
+        label: "pump-specific question",
+        npcId: "npc-mara",
+        playerText:
+          "Before work, should I focus on the pump leak and find a wrench for the repair?",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const world = seedStreetGame(`game-mara-grounding-negative-${testCase.label}`);
+      testCase.configure?.(world);
+
+      const prompt = buildGenerateStreetReplyPrompt({
+        game: world,
+        npcId: testCase.npcId,
+        playerText: testCase.playerText,
+      });
+
+      expect(prompt, testCase.label).not.toContain(MARA_ADA_REQUIRED_PROMPT_LINE);
+      expect(prompt, testCase.label).not.toContain(MARA_ADA_PROMPT_OVERRIDE_LINE);
+      expect(prompt, testCase.label).not.toContain(MARA_ADA_GROUNDED_PROMPT_LINE);
+    }
   });
 
   it("keeps Mara/Ada grounding follow-up and fallback behavior in scaffold policy", async () => {

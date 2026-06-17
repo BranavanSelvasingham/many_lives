@@ -128,6 +128,9 @@ export interface ObjectiveRouteConversationGroundingPolicy {
 interface ConversationGroundingPolicyHint
   extends ObjectiveRouteConversationGroundingPolicy {
   npcId: string;
+  playerTextGroundsEvidence?: (text: string | undefined) => boolean;
+  promptGroundedPlayerLines?: string[];
+  promptRequiredLines?: string[];
   routeKeys?: string[];
   responseAffirmsEvidence: (text: string | undefined) => boolean;
   responseGroundsEvidence: (text: string | undefined) => boolean;
@@ -2241,6 +2244,16 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?",
         id: "mara-ada-lead-grounding",
         npcId: "npc-mara",
+        playerTextGroundsEvidence: textGroundsMaraAdaLead,
+        promptGroundedPlayerLines: [
+          "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.",
+          "- A short direct confirmation is acceptable here, but it must clearly affirm that exact lead instead of drifting back to room rules.",
+          "- Good shape for this follow-up: Yes, that's the one. Ask her before lunch fills the counter. Or: Exactly. She'll need steady hands before lunch.",
+        ],
+        promptRequiredLines: [
+          "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.",
+          "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.",
+        ],
         resolutionFallback: {
           decision:
             "ask Mara one clearer question before treating Ada's lead as real.",
@@ -3412,6 +3425,20 @@ function matchingConversationGroundingPolicy(
   npc: NpcState,
   playerText: string,
 ) {
+  return matchingConversationGroundingPolicyByNpcId(
+    world,
+    objective,
+    npc.id,
+    playerText,
+  );
+}
+
+function matchingConversationGroundingPolicyByNpcId(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  npcId: string,
+  playerText: string,
+) {
   if (!objective) {
     return undefined;
   }
@@ -3421,7 +3448,7 @@ function matchingConversationGroundingPolicy(
   for (const scaffold of activeScaffolds(objective.routeKey)) {
     const policy = (scaffold.conversationGroundingPolicies ?? []).find(
       (candidate) =>
-        candidate.npcId === npc.id &&
+        candidate.npcId === npcId &&
         (!candidate.routeKeys ||
           candidate.routeKeys.includes(objective.routeKey)) &&
         (!candidate.when || candidate.when(context)),
@@ -3446,6 +3473,32 @@ export function objectiveRouteConversationGroundingPolicy(
     npc,
     playerText,
   );
+}
+
+export function objectiveRouteConversationPromptGroundingLines(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  npcId: string,
+  playerText: string,
+): string[] {
+  const policy = matchingConversationGroundingPolicyByNpcId(
+    world,
+    objective,
+    npcId,
+    playerText,
+  );
+  if (!policy) {
+    return [];
+  }
+
+  const lines = [...(policy.promptRequiredLines ?? [])];
+  const playerTextGroundsEvidence =
+    policy.playerTextGroundsEvidence ?? policy.responseGroundsEvidence;
+  if (playerTextGroundsEvidence(playerText)) {
+    lines.push(...(policy.promptGroundedPlayerLines ?? []));
+  }
+
+  return lines;
 }
 
 export function objectiveRouteTextGroundsConversationPolicy(
