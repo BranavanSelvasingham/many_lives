@@ -573,6 +573,68 @@ interface CompletionOutcomeCopy {
   playerThought: string;
 }
 
+export interface FirstAfternoonObjectiveCopy {
+  focus: ObjectiveFocus;
+  text: string;
+}
+
+export interface FirstAfternoonPlanChoiceCopy {
+  currentThought: string;
+  feedText: string;
+  invalidLocationFeedText: string;
+  memoryText: string;
+}
+
+export interface FirstAfternoonObjectiveChoiceCopy
+  extends FirstAfternoonPlanChoiceCopy {
+  objective: FirstAfternoonObjectiveCopy;
+}
+
+export interface FirstAfternoonCompletionCopy {
+  alreadyCompletedFeedText: string;
+  invalidLocationFeedText: string;
+  missingShiftFeedText: string;
+}
+
+export interface FirstAfternoonFieldNoteCopy {
+  evidence: string;
+  learned: string;
+  memory: string;
+  next: string;
+}
+
+export interface FirstAfternoonLeadFieldNoteCopy
+  extends FirstAfternoonFieldNoteCopy {
+  feedText: string;
+  memoryText: string;
+}
+
+export interface FirstAfternoonFieldNoteInput {
+  adaAnswered: boolean;
+  askedAt?: string;
+  teaShiftPay: number;
+  teaShiftTitle: string;
+}
+
+export interface FirstAfternoonLeadFieldNoteInput {
+  askedAt: string;
+  teaShiftPay: number;
+  teaShiftTitle: string;
+}
+
+interface FirstAfternoonScaffoldCopy {
+  compareChoice: FirstAfternoonObjectiveChoiceCopy;
+  completion: FirstAfternoonCompletionCopy;
+  completionFieldNote: (
+    input: FirstAfternoonFieldNoteInput,
+  ) => FirstAfternoonFieldNoteCopy;
+  leadFieldNote: (
+    input: FirstAfternoonLeadFieldNoteInput,
+  ) => FirstAfternoonLeadFieldNoteCopy;
+  planSettlement: FirstAfternoonPlanChoiceCopy;
+  pumpChoice: FirstAfternoonObjectiveChoiceCopy;
+}
+
 interface RouteActionPressureInput {
   actionId: string;
   actionKind: string;
@@ -594,6 +656,7 @@ interface ObjectiveRouteScaffold {
   conversationThoughts?: ConversationThoughtHint[];
   deterministicOpeningNpcIds?: string[];
   deterministicOpeningRouteKeys?: string[];
+  firstAfternoon?: FirstAfternoonScaffoldCopy;
   moveIntents?: MoveIntentHint[];
   outcomeMoveRationales?: OutcomeMoveRationaleHint[];
   playerFacingRationaleNormalizations?: PlayerFacingRationaleNormalizationHint[];
@@ -2013,6 +2076,85 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       playerThought:
         "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.",
     },
+    firstAfternoon: {
+      compareChoice: {
+        currentThought:
+          "Ada's shift is real, but it sits beside the pump, the house, and whatever else is moving through the square.",
+        feedText:
+          "Rowan keeps Ada's offer in view while checking whether another current opening should come first.",
+        invalidLocationFeedText:
+          "Step inside Kettle & Lamp before comparing Ada's offer.",
+        memoryText:
+          "Rowan did not treat Ada's offer as a script; he paused to compare it against the live state of the block.",
+        objective: {
+          focus: "explore",
+          text: "Compare the live work offer with the pump, the square, and any better lead before committing.",
+        },
+      },
+      completion: {
+        alreadyCompletedFeedText: "The first afternoon is already settled.",
+        invalidLocationFeedText:
+          "Bring Rowan back to Morrow House before calling the first afternoon done.",
+        missingShiftFeedText:
+          "There is still no paid shift to count. Rowan needs one real follow-through first.",
+      },
+      completionFieldNote: ({
+        adaAnswered,
+        askedAt,
+        teaShiftPay,
+        teaShiftTitle,
+      }) => {
+        const normalizedTitle = teaShiftTitle.toLowerCase();
+        return {
+          evidence: adaAnswered
+            ? `Asked Ada at Kettle & Lamp at ${askedAt ?? "late morning"}; she offered ${normalizedTitle} for $${teaShiftPay}.`
+            : `Worked ${normalizedTitle} at Kettle & Lamp and got paid $${teaShiftPay}.`,
+          learned:
+            "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+          memory:
+            "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
+          next:
+            "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+        };
+      },
+      leadFieldNote: ({ askedAt, teaShiftPay, teaShiftTitle }) => ({
+        evidence: `Asked Ada at Kettle & Lamp at ${askedAt}; she offered ${teaShiftTitle.toLowerCase()} for $${teaShiftPay}.`,
+        feedText:
+          "Rowan records the lead as grounded knowledge: Ada at Kettle & Lamp has real lunch work on the table.",
+        learned:
+          "Mara's Kettle & Lamp lead is real: Ada needs steady lunch help today.",
+        memory:
+          "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
+        memoryText:
+          "You verified Mara's lead at Kettle & Lamp: Ada needs steady lunch help and offered the cup-and-counter shift.",
+        next:
+          "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
+      }),
+      planSettlement: {
+        currentThought:
+          "Mara gave me live choices: chase Ada's lunch work, deal with the pump, rest, or make myself useful here. Ada is the best first bet before the noon window closes.",
+        feedText:
+          "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
+        invalidLocationFeedText:
+          "Step inside Morrow House before settling that plan.",
+        memoryText:
+          "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
+      },
+      pumpChoice: {
+        currentThought:
+          "The pump is not glamorous, but solving house trouble is one way to make tonight's bed feel less borrowed.",
+        feedText:
+          "Rowan chooses the Morrow Yard pump as the first proof that he notices what the house needs.",
+        invalidLocationFeedText:
+          "Step inside Morrow House before weighing that lead.",
+        memoryText:
+          "Rowan chose the pump over the obvious work lead because the house itself had a live problem.",
+        objective: {
+          focus: "help",
+          text: "Fix the leaking pump in Morrow Yard before it spreads.",
+        },
+      },
+    },
     deterministicOpeningNpcIds: ["npc-mara", "npc-ada"],
     deterministicOpeningRouteKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
     semanticHints: [
@@ -2632,6 +2774,44 @@ export function objectiveRouteFirstAfternoonCompletionOutcome(): CompletionOutco
   }
 
   throw new Error("First-afternoon completion outcome scaffold is missing.");
+}
+
+function firstAfternoonScaffoldCopy(): FirstAfternoonScaffoldCopy {
+  for (const scaffold of activeScaffolds("first-afternoon")) {
+    if (scaffold.firstAfternoon) {
+      return scaffold.firstAfternoon;
+    }
+  }
+
+  throw new Error("First-afternoon copy scaffold is missing.");
+}
+
+export function objectiveRouteFirstAfternoonPlanSettlementCopy(): FirstAfternoonPlanChoiceCopy {
+  return firstAfternoonScaffoldCopy().planSettlement;
+}
+
+export function objectiveRouteFirstAfternoonPumpChoiceCopy(): FirstAfternoonObjectiveChoiceCopy {
+  return firstAfternoonScaffoldCopy().pumpChoice;
+}
+
+export function objectiveRouteFirstAfternoonCompareChoiceCopy(): FirstAfternoonObjectiveChoiceCopy {
+  return firstAfternoonScaffoldCopy().compareChoice;
+}
+
+export function objectiveRouteFirstAfternoonCompletionCopy(): FirstAfternoonCompletionCopy {
+  return firstAfternoonScaffoldCopy().completion;
+}
+
+export function objectiveRouteFirstAfternoonCompletionFieldNote(
+  input: FirstAfternoonFieldNoteInput,
+): FirstAfternoonFieldNoteCopy {
+  return firstAfternoonScaffoldCopy().completionFieldNote(input);
+}
+
+export function objectiveRouteFirstAfternoonLeadFieldNote(
+  input: FirstAfternoonLeadFieldNoteInput,
+): FirstAfternoonLeadFieldNoteCopy {
+  return firstAfternoonScaffoldCopy().leadFieldNote(input);
 }
 
 export function objectiveRouteHeadline(routeKey: string) {

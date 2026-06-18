@@ -31,7 +31,13 @@ import {
   objectiveRouteConversationGroundingPolicy,
   objectiveRouteConversationHasVisibleEvidence,
   objectiveRouteConversationResolutionPointsToPolicy,
+  objectiveRouteFirstAfternoonCompareChoiceCopy,
+  objectiveRouteFirstAfternoonCompletionCopy,
+  objectiveRouteFirstAfternoonCompletionFieldNote,
   objectiveRouteFirstAfternoonCompletionOutcome,
+  objectiveRouteFirstAfternoonLeadFieldNote,
+  objectiveRouteFirstAfternoonPlanSettlementCopy,
+  objectiveRouteFirstAfternoonPumpChoiceCopy,
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
   objectiveRouteHasNiaBlockLead,
@@ -8430,8 +8436,9 @@ function postFirstAfternoonNeedsCommitmentRecovery(world: StreetGameState) {
 }
 
 function settleFirstAfternoonPlan(world: StreetGameState): void {
+  const copy = objectiveRouteFirstAfternoonPlanSettlementCopy();
   if (!isPlayerInActionSpace(world, world.player.homeLocationId)) {
-    addFeed(world, "info", "Step inside Morrow House before settling that plan.");
+    addFeed(world, "info", copy.invalidLocationFeedText);
     return;
   }
 
@@ -8441,104 +8448,72 @@ function settleFirstAfternoonPlan(world: StreetGameState): void {
   }
 
   world.firstAfternoon.planSettledAt = world.currentTime;
-  world.player.currentThought =
-    "Mara gave me live choices: chase Ada's lunch work, deal with the pump, rest, or make myself useful here. Ada is the best first bet before the noon window closes.";
-  addFeed(
-    world,
-    "memory",
-    "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
-  );
-  rememberIfNew(
-    world,
-    "self",
-    "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
-  );
+  world.player.currentThought = copy.currentThought;
+  addFeed(world, "memory", copy.feedText);
+  rememberIfNew(world, "self", copy.memoryText);
 }
 
 function chooseFirstAfternoonPumpPlan(world: StreetGameState): void {
+  const copy = objectiveRouteFirstAfternoonPumpChoiceCopy();
   if (!isPlayerInActionSpace(world, world.player.homeLocationId)) {
-    addFeed(world, "info", "Step inside Morrow House before weighing that lead.");
+    addFeed(world, "info", copy.invalidLocationFeedText);
     return;
   }
 
   world.firstAfternoon ??= {};
   world.firstAfternoon.planSettledAt ??= world.currentTime;
   discoverProblem(world, "problem-pump");
-  world.player.currentThought =
-    "The pump is not glamorous, but solving house trouble is one way to make tonight's bed feel less borrowed.";
+  world.player.currentThought = copy.currentThought;
   world.player.objective = buildPlayerObjectiveState(world, {
-    focus: "help",
+    focus: copy.objective.focus,
     previous: world.player.objective,
     source: "manual",
-    text: "Fix the leaking pump in Morrow Yard before it spreads.",
+    text: copy.objective.text,
   });
-  addFeed(
-    world,
-    "problem",
-    "Rowan chooses the Morrow Yard pump as the first proof that he notices what the house needs.",
-  );
-  rememberIfNew(
-    world,
-    "self",
-    "Rowan chose the pump over the obvious work lead because the house itself had a live problem.",
-  );
+  addFeed(world, "problem", copy.feedText);
+  rememberIfNew(world, "self", copy.memoryText);
 }
 
 function compareFirstAfternoonOptions(world: StreetGameState): void {
+  const copy = objectiveRouteFirstAfternoonCompareChoiceCopy();
   if (!isPlayerInActionSpace(world, "tea-house")) {
-    addFeed(world, "info", "Step inside Kettle & Lamp before comparing Ada's offer.");
+    addFeed(world, "info", copy.invalidLocationFeedText);
     return;
   }
 
   discoverProblem(world, "problem-pump");
-  world.player.currentThought =
-    "Ada's shift is real, but it sits beside the pump, the house, and whatever else is moving through the square.";
+  world.player.currentThought = copy.currentThought;
   world.player.objective = buildPlayerObjectiveState(world, {
-    focus: "explore",
+    focus: copy.objective.focus,
     previous: world.player.objective,
     source: "manual",
-    text: "Compare the live work offer with the pump, the square, and any better lead before committing.",
+    text: copy.objective.text,
   });
-  addFeed(
-    world,
-    "info",
-    "Rowan keeps Ada's offer in view while checking whether another current opening should come first.",
-  );
-  rememberIfNew(
-    world,
-    "self",
-    "Rowan did not treat Ada's offer as a script; he paused to compare it against the live state of the block.",
-  );
+  addFeed(world, "info", copy.feedText);
+  rememberIfNew(world, "self", copy.memoryText);
 }
 
 function completeFirstAfternoon(world: StreetGameState): void {
+  const copy = objectiveRouteFirstAfternoonCompletionCopy();
   const location = currentLocation(world);
   if (
     !location ||
     location.id !== world.player.homeLocationId ||
     !isPlayerInActionSpace(world, world.player.homeLocationId)
   ) {
-    addFeed(
-      world,
-      "info",
-      "Bring Rowan back to Morrow House before calling the first afternoon done.",
-    );
+    addFeed(world, "info", copy.invalidLocationFeedText);
     return;
   }
 
   const teaShift = jobById(world, "job-tea-shift");
   if (!teaShift?.completed) {
-    addFeed(
-      world,
-      "info",
-      "There is still no paid shift to count. Rowan needs one real follow-through first.",
-    );
+    addFeed(world, "info", copy.missingShiftFeedText);
     return;
   }
 
   world.firstAfternoon ??= {};
   if (world.firstAfternoon.completedAt) {
-    addFeed(world, "info", "The first afternoon is already settled.");
+    addFeed(world, "info", copy.alreadyCompletedFeedText);
     return;
   }
 
@@ -8569,20 +8544,17 @@ function buildFirstAfternoonFieldNote(
   );
   const askedAt = adaQuestion?.time
     ? formatClockAt(world, totalMinutesForIso(adaQuestion.time))
-    : "late morning";
-  const evidence = adaAnswer
-    ? `Asked Ada at Kettle & Lamp at ${askedAt}; she offered ${teaShift.title.toLowerCase()} for $${teaShift.pay}.`
-    : `Worked ${teaShift.title.toLowerCase()} at Kettle & Lamp and got paid $${teaShift.pay}.`;
+    : undefined;
+  const copy = objectiveRouteFirstAfternoonCompletionFieldNote({
+    adaAnswered: Boolean(adaAnswer),
+    askedAt,
+    teaShiftPay: teaShift.pay,
+    teaShiftTitle: teaShift.title,
+  });
 
   return {
     createdAt: world.currentTime,
-    evidence,
-    learned:
-      "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
-    memory:
-      "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
-    next:
-      "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+    ...copy,
   };
 }
 
@@ -8611,26 +8583,20 @@ function ensureFirstAfternoonLeadFieldNote(world: StreetGameState): void {
   }
 
   const askedAt = formatClockAt(world, totalMinutesForIso(adaQuestion.time));
+  const copy = objectiveRouteFirstAfternoonLeadFieldNote({
+    askedAt,
+    teaShiftPay: teaShift.pay,
+    teaShiftTitle: teaShift.title,
+  });
   world.firstAfternoon.leadFieldNote = {
     createdAt: world.currentTime,
-    evidence: `Asked Ada at Kettle & Lamp at ${askedAt}; she offered ${teaShift.title.toLowerCase()} for $${teaShift.pay}.`,
-    learned:
-      "Mara's Kettle & Lamp lead is real: Ada needs steady lunch help today.",
-    memory:
-      "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
-    next:
-      "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
+    evidence: copy.evidence,
+    learned: copy.learned,
+    memory: copy.memory,
+    next: copy.next,
   };
-  addFeed(
-    world,
-    "memory",
-    "Rowan records the lead as grounded knowledge: Ada at Kettle & Lamp has real lunch work on the table.",
-  );
-  rememberIfNew(
-    world,
-    "job",
-    "You verified Mara's lead at Kettle & Lamp: Ada needs steady lunch help and offered the cup-and-counter shift.",
-  );
+  addFeed(world, "memory", copy.feedText);
+  rememberIfNew(world, "job", copy.memoryText);
 }
 
 function resolvePassiveState(
