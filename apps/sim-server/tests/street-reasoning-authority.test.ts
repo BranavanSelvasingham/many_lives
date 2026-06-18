@@ -230,6 +230,25 @@ const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where Rowan can let today's standing settle before he runs himself flat";
 const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where today's standing can turn into a steadier foothold";
+const AUTONOMOUS_OPENING_AND_FOLLOWUP_COPY = [
+  "I'm Rowan. New in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where should I start?",
+  "I'm Rowan. I heard lunch might still need hands. Is that still true?",
+  "I'm Rowan. I'm looking for work. Still need another set of hands in the yard?",
+  "I'm trying to fix the pump. What tool actually gets it done?",
+  "I need the right tool for this. What would actually help me today?",
+  "I'm running thin. Is there anything here that can't wait until I get my legs back?",
+  "Who on this block is worth meeting properly if I'm trying to find my footing?",
+  "I'm still learning South Quay. What should I look at before I miss it?",
+  "Got it. Anything I should know before I ask Ada?",
+  "If I take it, what do you need me to move first?",
+  "When does that cart turn from nuisance into a real jam?",
+  "What should I notice if I'm trying to read this place properly?",
+  "Who should I see after you if I'm trying to get my feet under me here?",
+  "So if the work is not here, where should I try next?",
+  "If I spend the coin, what does it actually unlock for me?",
+  "What am I still missing about this block?",
+  "What can wait until I've got my legs back under me?",
+];
 const ROWAN_NOTEBOOK_FIELD_NOTE_UNCERTAINTY =
   "Which current opening deserves Rowan's recovered hour: North Crane Yard work, the Morrow Yard pump, or another lead?";
 const ROWAN_NOTEBOOK_JO_TOOLS_UNCERTAINTY =
@@ -459,6 +478,33 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
     expect(engineSource).not.toContain(FIRST_AFTERNOON_PLAN_RATIONALE);
+  });
+
+  it("keeps deterministic Rowan opening and follow-up copy in scaffold helpers, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const line of AUTONOMOUS_OPENING_AND_FOLLOWUP_COPY) {
+      expect(scaffoldSource).toContain(line);
+      expect(engineSource).not.toContain(line);
+    }
+
+    expect(scaffoldSource).toContain("AUTONOMOUS_OPENING_SPEECH_RULES");
+    expect(scaffoldSource).toContain("AUTONOMOUS_FOLLOWUP_RULES");
+    expect(scaffoldSource).toContain(
+      "AUTONOMOUS_CONTINUATION_FALLBACK_RULES",
+    );
+    expect(engineSource).toContain("objectiveRouteAutonomousOpeningSpeech");
+    expect(engineSource).toContain("objectiveRouteAutonomousFollowupSpeech");
+    expect(engineSource).toContain(
+      "objectiveRouteAutonomousContinuationFallbackSpeech",
+    );
   });
 
   it("keeps desired-outcome planner scoring rules outside engine control flow", () => {

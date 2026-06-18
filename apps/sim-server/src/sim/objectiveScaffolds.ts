@@ -169,6 +169,69 @@ interface SpeechHint {
   ) => boolean;
 }
 
+type PrimaryRowanNeed = "belonging" | "income" | "shelter" | string;
+
+interface AutonomousOpeningContext {
+  objectiveClause: string;
+  objectiveFocus: ObjectiveFocus;
+  objectiveText: string;
+  primaryNeed?: PrimaryRowanNeed;
+  teaLeadKnown: boolean;
+  yardLeadKnown: boolean;
+}
+
+interface AutonomousOpeningSpeechRule {
+  focus?: ObjectiveFocus;
+  npcId?: string;
+  speech: string | ((context: AutonomousOpeningContext) => string);
+  when?: (context: AutonomousOpeningContext) => boolean;
+}
+
+export interface ObjectiveAutonomousOpeningInput
+  extends AutonomousOpeningContext {
+  npcId: string;
+}
+
+interface AutonomousFollowupContext {
+  objectiveFocus: ObjectiveFocus;
+  objectiveText: string;
+  primaryNeed?: PrimaryRowanNeed;
+  replyNamesAdaLead: boolean;
+  replyNamesTomasLead: boolean;
+  replyText: string;
+  replyTopics: readonly string[];
+}
+
+interface AutonomousFollowupRule {
+  focus: ObjectiveFocus;
+  npcId?: string;
+  followup:
+    | string
+    | undefined
+    | ((context: AutonomousFollowupContext) => string | undefined);
+  when?: (context: AutonomousFollowupContext) => boolean;
+}
+
+export interface ObjectiveAutonomousFollowupInput
+  extends AutonomousFollowupContext {
+  npcId: string;
+}
+
+interface AutonomousContinuationFallbackContext {
+  hasNextNpc: boolean;
+  objectiveFocus: ObjectiveFocus;
+}
+
+interface AutonomousContinuationFallbackRule {
+  focus: ObjectiveFocus;
+  speech:
+    | string
+    | ((context: AutonomousContinuationFallbackContext) => string);
+}
+
+export interface ObjectiveAutonomousContinuationFallbackInput
+  extends AutonomousContinuationFallbackContext {}
+
 interface ActionTargetLocationHint {
   actionId: string;
   locationId: string | ((context: ScaffoldContext) => string | undefined);
@@ -738,6 +801,402 @@ function resolutionPointsToMaraAdaLead(resolution: {
     /\bada\b|\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(text) &&
     /\blunch\b|\bwork\b|\bjob\b|\bshift\b|\bhands?\b|\bcounter\b/.test(text)
   );
+}
+
+const AUTONOMOUS_OPENING_SPEECH_RULES: AutonomousOpeningSpeechRule[] = [
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    speech:
+      "I'm Rowan. New in Brackenport. I've got tonight at Morrow House, and I'd like to be an easy guest. What should I know?",
+    when: ({ primaryNeed }) => primaryNeed === "shelter",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    speech:
+      "I'm Rowan. New here. Who might need an extra pair of hands before lunch gets busy?",
+    when: ({ primaryNeed }) => primaryNeed === "income",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    speech:
+      "I'm Rowan. New in Brackenport. Who around here is kind to newcomers who ask normal questions?",
+    when: ({ primaryNeed }) => primaryNeed === "belonging",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    speech:
+      "I'm Rowan. New in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where should I start?",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-ada",
+    speech: "I'm Rowan. I heard lunch might still need hands. Is that still true?",
+    when: ({ teaLeadKnown }) => teaLeadKnown,
+  },
+  {
+    focus: "settle",
+    npcId: "npc-ada",
+    speech: "I'm new here and trying to be helpful. Need another pair of hands right now?",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-tomas",
+    speech:
+      "I'm Rowan. I heard the yard might still need another set of hands. Still true?",
+    when: ({ yardLeadKnown }) => yardLeadKnown,
+  },
+  {
+    focus: "settle",
+    npcId: "npc-tomas",
+    speech:
+      "I'm Rowan. New in town. If I want a little honest work today, is the yard still short on hands?",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-nia",
+    speech:
+      "I'm new in South Quay. Who should I talk to if I want to understand the place a little better?",
+  },
+  {
+    focus: "settle",
+    speech:
+      "I'm new in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where do I begin?",
+  },
+  {
+    focus: "work",
+    npcId: "npc-ada",
+    speech:
+      "I'm Rowan. I heard you might still need hands for lunch. Is there still room for me?",
+    when: ({ teaLeadKnown }) => teaLeadKnown,
+  },
+  {
+    focus: "work",
+    npcId: "npc-ada",
+    speech:
+      "I'm Rowan. I'm looking for work and happy to help. Do you need another pair of hands?",
+  },
+  {
+    focus: "work",
+    npcId: "npc-tomas",
+    speech:
+      "I'm Rowan. I heard the yard might still be short on hands. Still looking?",
+    when: ({ yardLeadKnown }) => yardLeadKnown,
+  },
+  {
+    focus: "work",
+    npcId: "npc-tomas",
+    speech: "I'm Rowan. I'm looking for work. Still need another set of hands in the yard?",
+  },
+  {
+    focus: "work",
+    speech: "I'm Rowan. I'm trying to start earning today. Where should I begin?",
+  },
+  {
+    focus: "help",
+    npcId: "npc-jo",
+    speech: "I'm trying to fix the pump. What tool actually gets it done?",
+    when: ({ objectiveText }) => objectiveText.includes("pump"),
+  },
+  {
+    focus: "help",
+    speech: "I'm trying to sort out the leaking pump. What matters first?",
+    when: ({ objectiveText }) => objectiveText.includes("pump"),
+  },
+  {
+    focus: "help",
+    speech: "I heard the square might jam up. What's actually wrong with the cart?",
+    when: ({ objectiveText }) => objectiveText.includes("cart"),
+  },
+  {
+    focus: "help",
+    speech: "I'm trying to help before anything gets annoying. What needs a hand?",
+  },
+  {
+    focus: "tool",
+    speech: "I need the right tool for this. What would actually help me today?",
+  },
+  {
+    focus: "rest",
+    speech: "I'm running thin. Is there anything here that can't wait until I get my legs back?",
+  },
+  {
+    focus: "explore",
+    speech: "I'm still learning South Quay. What should I look at before I miss it?",
+  },
+  {
+    focus: "people",
+    speech: "Who on this block is worth meeting properly if I'm trying to find my footing?",
+  },
+  {
+    speech: "I need a wrench today. What's the quickest honest way to get one?",
+    when: ({ objectiveText }) => objectiveText.includes("wrench"),
+  },
+  {
+    speech: "I need to fix the pump. What do I need to know before I start?",
+    when: ({ objectiveText }) => objectiveText.includes("pump"),
+  },
+  {
+    speech: ({ objectiveClause }) =>
+      `I'm trying to ${objectiveClause}. Where is the easiest place to start?`,
+  },
+];
+
+const AUTONOMOUS_FOLLOWUP_RULES: AutonomousFollowupRule[] = [
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    followup: "Got it. Anything I should know before I ask Ada?",
+    when: ({ objectiveText, replyNamesAdaLead }) =>
+      replyNamesAdaLead &&
+      (objectiveText.includes("room") ||
+        objectiveText.includes("first afternoon")),
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    followup: undefined,
+    when: ({ replyNamesAdaLead }) => replyNamesAdaLead,
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    followup: "What helps a room here start feeling less temporary?",
+    when: ({ replyTopics }) =>
+      !hasConversationTopic(replyTopics, "home") &&
+      !hasConversationTopic(replyTopics, "stay"),
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    followup: "And if I need paid work soon, who is good to ask before lunch?",
+    when: ({ replyTopics }) => !hasConversationTopic(replyTopics, "work"),
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    followup: "Who would you talk to next if you were new here?",
+    when: ({ primaryNeed, replyTopics }) =>
+      primaryNeed === "belonging" && !hasConversationTopic(replyTopics, "people"),
+  },
+  {
+    focus: "settle",
+    npcId: "npc-mara",
+    followup: undefined,
+  },
+  {
+    focus: "settle",
+    npcId: "npc-ada",
+    followup: "Do you still need hands, or did lunch beat me here?",
+    when: ({ replyTopics }) => !hasConversationTopic(replyTopics, "work"),
+  },
+  {
+    focus: "settle",
+    npcId: "npc-ada",
+    followup: undefined,
+  },
+  {
+    focus: "settle",
+    npcId: "npc-jo",
+    followup: "What should someone new avoid spending money on?",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-tomas",
+    followup: "Does the yard still need hands, or did I miss the easy part?",
+    when: ({ replyTopics }) =>
+      !hasConversationTopic(replyTopics, "work") &&
+      !hasConversationTopic(replyTopics, "yard"),
+  },
+  {
+    focus: "settle",
+    npcId: "npc-tomas",
+    followup: "If I do a good job here, is there anyone I should check with after?",
+  },
+  {
+    focus: "settle",
+    npcId: "npc-nia",
+    followup: "Who actually makes South Quay feel less strange once you know them?",
+  },
+  {
+    focus: "work",
+    npcId: "npc-ada",
+    followup: undefined,
+    when: ({ replyNamesTomasLead }) => replyNamesTomasLead,
+  },
+  {
+    focus: "work",
+    npcId: "npc-ada",
+    followup: "Do you actually need hands, or should I keep moving?",
+    when: ({ replyTopics }) => !hasConversationTopic(replyTopics, "work"),
+  },
+  {
+    focus: "work",
+    npcId: "npc-ada",
+    followup: undefined,
+    when: ({ replyText }) =>
+      /\bfourteen\b|\bpay\b|\bpays\b|\bshift\b|\bcoin\b|\bcoins\b/.test(
+        replyText,
+      ),
+  },
+  {
+    focus: "work",
+    npcId: "npc-ada",
+    followup: "What does it pay if I keep up?",
+  },
+  {
+    focus: "work",
+    npcId: "npc-tomas",
+    followup: "Is the yard actually short on hands, or am I too late?",
+    when: ({ replyTopics }) =>
+      !hasConversationTopic(replyTopics, "work") &&
+      !hasConversationTopic(replyTopics, "yard"),
+  },
+  {
+    focus: "work",
+    npcId: "npc-tomas",
+    followup: undefined,
+    when: ({ replyText }) =>
+      /\btwenty-four\b|\bcrates?\b|\bcart lane\b|\bbay\b|\bpay\b|\bpays\b/.test(
+        replyText,
+      ),
+  },
+  {
+    focus: "work",
+    npcId: "npc-tomas",
+    followup: "If I take it, what do you need me to move first?",
+  },
+  {
+    focus: "work",
+    npcId: "npc-mara",
+    followup: undefined,
+    when: ({ replyNamesAdaLead }) => replyNamesAdaLead,
+  },
+  {
+    focus: "work",
+    npcId: "npc-mara",
+    followup: "Who on this block actually follows through when work opens up?",
+  },
+  {
+    focus: "help",
+    npcId: "npc-jo",
+    followup: "If I buy the wrench, what am I likely to get wrong at the pump?",
+    when: ({ objectiveText }) => objectiveText.includes("pump"),
+  },
+  {
+    focus: "help",
+    npcId: "npc-mara",
+    followup: "If I fix the pump, what else around the house settles down with it?",
+    when: ({ objectiveText }) => objectiveText.includes("pump"),
+  },
+  {
+    focus: "help",
+    npcId: "npc-nia",
+    followup: "When does that cart turn from nuisance into a real jam?",
+    when: ({ objectiveText }) => objectiveText.includes("cart"),
+  },
+  {
+    focus: "explore",
+    npcId: "npc-mara",
+    followup: "What does somebody new usually misunderstand about this block?",
+  },
+  {
+    focus: "explore",
+    npcId: "npc-ada",
+    followup: "Who here is worth meeting before the day folds up?",
+  },
+  {
+    focus: "explore",
+    npcId: "npc-jo",
+    followup: "What kind of trouble usually walks in before the people do?",
+  },
+  {
+    focus: "explore",
+    npcId: "npc-tomas",
+    followup: "Who in the yard actually decides whether somebody belongs there?",
+  },
+  {
+    focus: "explore",
+    npcId: "npc-nia",
+    followup: "What should I notice if I'm trying to read this place properly?",
+  },
+  {
+    focus: "people",
+    npcId: "npc-mara",
+    followup: "What does somebody new usually misunderstand about this block?",
+  },
+  {
+    focus: "people",
+    npcId: "npc-ada",
+    followup: "Who here is worth meeting before the day folds up?",
+  },
+  {
+    focus: "people",
+    npcId: "npc-jo",
+    followup: "What kind of trouble usually walks in before the people do?",
+  },
+  {
+    focus: "people",
+    npcId: "npc-tomas",
+    followup: "Who in the yard actually decides whether somebody belongs there?",
+  },
+  {
+    focus: "people",
+    npcId: "npc-nia",
+    followup: "What should I notice if I'm trying to read this place properly?",
+  },
+];
+
+const AUTONOMOUS_CONTINUATION_FALLBACK_RULES: AutonomousContinuationFallbackRule[] =
+  [
+    {
+      focus: "settle",
+      speech: ({ hasNextNpc }) =>
+        hasNextNpc
+          ? "Who should I see after you if I'm trying to get my feet under me here?"
+          : "What would stop me from still feeling new by tonight?",
+    },
+    {
+      focus: "work",
+      speech: "So if the work is not here, where should I try next?",
+    },
+    {
+      focus: "help",
+      speech: "What needs doing first?",
+    },
+    {
+      focus: "tool",
+      speech: "If I spend the coin, what does it actually unlock for me?",
+    },
+    {
+      focus: "explore",
+      speech: ({ hasNextNpc }) =>
+        hasNextNpc
+          ? "Who should I go see after you?"
+          : "What am I still missing about this block?",
+    },
+    {
+      focus: "people",
+      speech: ({ hasNextNpc }) =>
+        hasNextNpc
+          ? "Who should I go see after you?"
+          : "What am I still missing about this block?",
+    },
+    {
+      focus: "rest",
+      speech: "What can wait until I've got my legs back under me?",
+    },
+    {
+      focus: "custom",
+      speech: "So where does that leave me right now?",
+    },
+  ];
+
+function hasConversationTopic(topics: readonly string[], topic: string) {
+  return topics.includes(topic);
 }
 
 const SETTLE_ROUTE_OUTCOME_TEMPLATES: SettleRouteOutcomeTemplate[] = [
@@ -3986,6 +4445,78 @@ export function objectiveRouteSpeech(
   }
 
   return undefined;
+}
+
+export function objectiveRouteAutonomousOpeningSpeech(
+  input: ObjectiveAutonomousOpeningInput,
+): string {
+  const context: AutonomousOpeningContext = {
+    objectiveClause: input.objectiveClause,
+    objectiveFocus: input.objectiveFocus,
+    objectiveText: input.objectiveText,
+    primaryNeed: input.primaryNeed,
+    teaLeadKnown: input.teaLeadKnown,
+    yardLeadKnown: input.yardLeadKnown,
+  };
+
+  const rule = AUTONOMOUS_OPENING_SPEECH_RULES.find(
+    (candidate) =>
+      (!candidate.focus || candidate.focus === input.objectiveFocus) &&
+      (!candidate.npcId || candidate.npcId === input.npcId) &&
+      (!candidate.when || candidate.when(context)),
+  );
+  if (!rule) {
+    return `I'm trying to ${input.objectiveClause}. Where is the easiest place to start?`;
+  }
+
+  return typeof rule.speech === "function"
+    ? rule.speech(context)
+    : rule.speech;
+}
+
+export function objectiveRouteAutonomousFollowupSpeech(
+  input: ObjectiveAutonomousFollowupInput,
+) {
+  const context: AutonomousFollowupContext = {
+    objectiveFocus: input.objectiveFocus,
+    objectiveText: input.objectiveText,
+    primaryNeed: input.primaryNeed,
+    replyNamesAdaLead: input.replyNamesAdaLead,
+    replyNamesTomasLead: input.replyNamesTomasLead,
+    replyText: input.replyText,
+    replyTopics: input.replyTopics,
+  };
+
+  const rule = AUTONOMOUS_FOLLOWUP_RULES.find(
+    (candidate) =>
+      candidate.focus === input.objectiveFocus &&
+      (!candidate.npcId || candidate.npcId === input.npcId) &&
+      (!candidate.when || candidate.when(context)),
+  );
+  if (!rule) {
+    return undefined;
+  }
+
+  return typeof rule.followup === "function"
+    ? rule.followup(context)
+    : rule.followup;
+}
+
+export function objectiveRouteAutonomousContinuationFallbackSpeech(
+  input: ObjectiveAutonomousContinuationFallbackInput,
+): string {
+  const rule =
+    AUTONOMOUS_CONTINUATION_FALLBACK_RULES.find(
+      (candidate) => candidate.focus === input.objectiveFocus,
+    ) ??
+    AUTONOMOUS_CONTINUATION_FALLBACK_RULES.find(
+      (candidate) => candidate.focus === "custom",
+    );
+  if (!rule) {
+    return "So where does that leave me right now?";
+  }
+
+  return typeof rule.speech === "function" ? rule.speech(input) : rule.speech;
 }
 
 function activeScaffolds(routeKey: string) {
