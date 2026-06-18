@@ -101,6 +101,35 @@ const FIRST_AFTERNOON_COMPARE_ACTION_DESCRIPTION =
   "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.";
 const FIRST_AFTERNOON_COMPLETION_ACTION_DESCRIPTION =
   "Count what changed today before chasing another errand.";
+const FIRST_AFTERNOON_PLAN_AND_FIELD_NOTE_COPY = [
+  "Mara gave me live choices: chase Ada's lunch work, deal with the pump, rest, or make myself useful here. Ada is the best first bet before the noon window closes.",
+  "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
+  "Step inside Morrow House before settling that plan.",
+  "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
+  "The pump is not glamorous, but solving house trouble is one way to make tonight's bed feel less borrowed.",
+  "Rowan chooses the Morrow Yard pump as the first proof that he notices what the house needs.",
+  "Step inside Morrow House before weighing that lead.",
+  "Rowan chose the pump over the obvious work lead because the house itself had a live problem.",
+  "Fix the leaking pump in Morrow Yard before it spreads.",
+  "Ada's shift is real, but it sits beside the pump, the house, and whatever else is moving through the square.",
+  "Rowan keeps Ada's offer in view while checking whether another current opening should come first.",
+  "Step inside Kettle & Lamp before comparing Ada's offer.",
+  "Compare the live work offer with the pump, the square, and any better lead before committing.",
+  "Rowan did not treat Ada's offer as a script; he paused to compare it against the live state of the block.",
+  "Bring Rowan back to Morrow House before calling the first afternoon done.",
+  "There is still no paid shift to count. Rowan needs one real follow-through first.",
+  "The first afternoon is already settled.",
+  "Asked Ada at Kettle & Lamp at",
+  "Worked ${normalizedTitle} at Kettle & Lamp and got paid",
+  "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+  "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
+  "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+  "Mara's Kettle & Lamp lead is real: Ada needs steady lunch help today.",
+  "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
+  "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
+  "Rowan records the lead as grounded knowledge: Ada at Kettle & Lamp has real lunch work on the table.",
+  "You verified Mara's lead at Kettle & Lamp: Ada needs steady lunch help and offered the cup-and-counter shift.",
+];
 const WEB_FIRST_AFTERNOON_FALLBACK_COPY = [
   "Rowan is stepping inside Morrow House to ask Mara.",
   "Rowan is turning Mara's lead toward Kettle & Lamp.",
@@ -561,6 +590,33 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain("availableActions");
     expect(engineSource).toContain("objectiveRouteAvailableActions");
+  });
+
+  it("keeps first-afternoon plan-choice and field-note copy in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const actionCopy of FIRST_AFTERNOON_PLAN_AND_FIELD_NOTE_COPY) {
+      expect(scaffoldSource).toContain(actionCopy);
+      expect(engineSource).not.toContain(actionCopy);
+    }
+
+    expect(scaffoldSource).toContain("firstAfternoon");
+    expect(scaffoldSource).toContain("completionFieldNote");
+    expect(scaffoldSource).toContain("leadFieldNote");
+    expect(engineSource).toContain(
+      "objectiveRouteFirstAfternoonPlanSettlementCopy",
+    );
+    expect(engineSource).toContain(
+      "objectiveRouteFirstAfternoonCompletionFieldNote",
+    );
+    expect(engineSource).not.toContain("firstAfternoon: {");
   });
 
   it("keeps first-afternoon dialogue fallback copy in scaffold data, not dialogue control flow", () => {

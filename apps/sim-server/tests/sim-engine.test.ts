@@ -600,9 +600,15 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.firstAfternoon?.completedAt).toBeDefined();
     expect(world.firstAfternoon?.fieldNote).toMatchObject({
-      evidence: expect.stringContaining("Kettle & Lamp"),
-      learned: expect.stringContaining("Ada"),
-      next: expect.stringContaining("Morrow Yard pump"),
+      evidence: expect.stringMatching(
+        /^Asked Ada at Kettle & Lamp at \d\d:\d\d; she offered cup-and-counter shift for \$14\.$/,
+      ),
+      learned:
+        "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+      memory:
+        "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
+      next:
+        "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
     });
     expect(
       world.problems.find((problem) => problem.id === "problem-pump"),
@@ -615,6 +621,129 @@ describe("SimulationEngine street slice", () => {
     );
     expect(world.player.memories.map((memory) => memory.text)).toContain(
       "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
+    );
+  });
+
+  it("preserves first-afternoon plan-settle and pump-choice behavior from scaffold copy", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let planWorld = await engine.createGame("game-first-afternoon-plan-copy");
+
+    planWorld = await enterMorrowHouse(engine, planWorld);
+    planWorld = await engine.runCommand(planWorld, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    planWorld = await engine.runCommand(planWorld, {
+      type: "act",
+      actionId: "reflect:first-afternoon-plan",
+    });
+
+    expect(planWorld.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(planWorld.feed.map((entry) => entry.text)).toContain(
+      "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
+    );
+    expect(planWorld.player.memories.map((memory) => memory.text)).toContain(
+      "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
+    );
+
+    let pumpWorld = await engine.createGame("game-first-afternoon-pump-copy");
+    pumpWorld = await enterMorrowHouse(engine, pumpWorld);
+    const pumpProblem = pumpWorld.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    if (pumpProblem) {
+      pumpProblem.discovered = true;
+      pumpProblem.status = "active";
+    }
+    pumpWorld.conversations.push({
+      id: "conversation-test-mara-first-afternoon-pump-choice",
+      locationId: pumpWorld.player.currentLocationId,
+      npcId: "npc-mara",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "Mara, I need a real lead before lunch.",
+      threadId: "thread-test-mara-first-afternoon-pump-choice",
+      time: pumpWorld.currentTime,
+    });
+    pumpWorld = await engine.tick(pumpWorld, 0);
+    pumpWorld = await engine.runCommand(pumpWorld, {
+      type: "act",
+      actionId: "reflect:first-afternoon-pump",
+    });
+
+    expect(pumpWorld.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(pumpWorld.player.objective).toMatchObject({
+      text: "Fix the leaking pump in Morrow Yard before it spreads.",
+    });
+    expect(pumpWorld.feed.map((entry) => entry.text)).toContain(
+      "Rowan chooses the Morrow Yard pump as the first proof that he notices what the house needs.",
+    );
+    expect(pumpWorld.player.memories.map((memory) => memory.text)).toContain(
+      "Rowan chose the pump over the obvious work lead because the house itself had a live problem.",
+    );
+    expect(
+      pumpWorld.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({
+      discovered: true,
+      status: "active",
+    });
+  });
+
+  it("preserves first-afternoon lead-note and compare-choice behavior from scaffold copy", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-lead-compare-copy");
+
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    world = await enterTeaHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.firstAfternoon?.leadFieldNote).toMatchObject({
+      evidence: expect.stringMatching(
+        /^Asked Ada at Kettle & Lamp at \d\d:\d\d; she offered cup-and-counter shift for \$14\.$/,
+      ),
+      learned:
+        "Mara's Kettle & Lamp lead is real: Ada needs steady lunch help today.",
+      memory:
+        "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
+      next:
+        "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
+    });
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "Rowan records the lead as grounded knowledge: Ada at Kettle & Lamp has real lunch work on the table.",
+    );
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      "You verified Mara's lead at Kettle & Lamp: Ada needs steady lunch help and offered the cup-and-counter shift.",
+    );
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "reflect:first-afternoon-compare",
+    });
+
+    expect(world.player.objective).toMatchObject({
+      focus: "explore",
+      text: "Compare the live work offer with the pump, the square, and any better lead before committing.",
+    });
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "Rowan keeps Ada's offer in view while checking whether another current opening should come first.",
+    );
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      "Rowan did not treat Ada's offer as a script; he paused to compare it against the live state of the block.",
     );
   });
 
