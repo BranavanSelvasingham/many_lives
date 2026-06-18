@@ -721,6 +721,7 @@ interface ObjectiveRouteScaffold {
   deterministicOpeningRouteKeys?: string[];
   firstAfternoon?: FirstAfternoonScaffoldCopy;
   moveIntents?: MoveIntentHint[];
+  notebookPlanFallback?: string;
   outcomeMoveRationales?: OutcomeMoveRationaleHint[];
   playerFacingRationaleNormalizations?: PlayerFacingRationaleNormalizationHint[];
   playerThoughts?: PlayerThoughtHint[];
@@ -739,6 +740,64 @@ const ADA_LEAD_ROUTE_KEYS = [
   "mara-ada-lead",
   "work-tea",
 ] as const;
+
+type ObjectiveRouteNotebookRecoveryPlanKind = "nia-block" | "post-afternoon";
+
+interface ObjectiveRouteNotebookBeliefNarrative {
+  clue?: string;
+  clueWithTool?: string;
+  confidence?: string;
+  confidenceWithTool?: string;
+  uncertainty?: string;
+}
+
+const OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_NARRATIVES: Record<
+  string,
+  ObjectiveRouteNotebookBeliefNarrative
+> = {
+  "belief-first-afternoon-field-note": {
+    clue:
+      "Evidence: Ada's field note says Rowan asked directly, stayed through lunch, and left Kettle & Lamp with pay and a clearer obligation.",
+    confidence: "Confirmed by Ada's field note and the paid tea shift.",
+    uncertainty:
+      "Which current opening deserves Rowan's recovered hour: North Crane Yard work, the Morrow Yard pump, or another lead?",
+  },
+  "belief-jo-tools": {
+    clue:
+      "Evidence: Jo can turn scarce coins into the right tool only if Rowan knows which repair deserves it.",
+    uncertainty: "Which local problem is worth spending scarce money on?",
+  },
+  "belief-nia-current-lead": {
+    clue:
+      "Evidence: Jo pointed Rowan toward Nia before the block jam turns into someone else's problem.",
+    uncertainty: "What does Nia know about the block before it jams?",
+  },
+  "belief-pump-standing": {
+    clue:
+      "Evidence: the Morrow Yard pump is discovered, still active, and tied to Rowan's standing at the house.",
+    clueWithTool:
+      "Evidence: the Morrow Yard pump is active, and Rowan already has the wrench that can make the repair real.",
+    confidence:
+      "Promising because the house problem is active and Rowan can test it directly.",
+    confidenceWithTool:
+      "Promising because the problem is active and the needed tool is in Rowan's hands.",
+    uncertainty: "Can Rowan turn a small fix into a real local foothold?",
+  },
+  "belief-tomas-work": {
+    clue:
+      "Evidence: Tomas described paid yard work at North Crane Yard, and the freight window is the obligation Rowan can still try to meet.",
+    confidence: "Confirmed by Tomas and the open freight window.",
+  },
+};
+
+const OBJECTIVE_ROUTE_NOTEBOOK_RECOVERY_PLANS = {
+  "nia-block": "Recover before following Nia's block-jam lead.",
+  "post-afternoon":
+    "Rest at Morrow House long enough to recover, then choose the yard work, pump, or current opening that still matters.",
+} satisfies Record<ObjectiveRouteNotebookRecoveryPlanKind, string>;
+
+const OBJECTIVE_ROUTE_NOTEBOOK_STALE_ENTRY_FALLBACK =
+  "Ask the first useful question.";
 
 function textGroundsMaraAdaLead(text: string | undefined): boolean {
   const normalized = (text ?? "").toLowerCase();
@@ -3057,6 +3116,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   {
     routeKeys: ["help-pump"],
     routeHeadline: "Fix the leaking pump in Morrow Yard before it spreads.",
+    notebookPlanFallback:
+      "Handle the Morrow Yard pump before the house has to absorb it without Rowan.",
   },
   {
     routeKeys: ["help-cart"],
@@ -3104,6 +3165,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   {
     routeKeys: ["work-yard"],
     routeHeadline: "Secure paid yard work and follow through.",
+    notebookPlanFallback:
+      "Ask Tomas before the North Crane Yard freight window closes.",
     semanticHints: [{ locationId: "freight-yard", npcId: "npc-tomas" }],
     semanticMoveBonuses: [
       {
@@ -3271,6 +3334,68 @@ export function objectiveRouteFirstAfternoonLeadFieldNote(
   input: FirstAfternoonLeadFieldNoteInput,
 ): FirstAfternoonLeadFieldNoteCopy {
   return firstAfternoonScaffoldCopy().leadFieldNote(input);
+}
+
+export function objectiveRouteNotebookBeliefClue(input: {
+  beliefId?: string;
+  hasWrench?: boolean;
+}) {
+  const copy = input.beliefId
+    ? OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_NARRATIVES[input.beliefId]
+    : undefined;
+  if (!copy) {
+    return undefined;
+  }
+
+  return input.hasWrench && copy.clueWithTool
+    ? copy.clueWithTool
+    : copy.clue;
+}
+
+export function objectiveRouteNotebookBeliefConfidence(input: {
+  beliefId?: string;
+  hasWrench?: boolean;
+}) {
+  const copy = input.beliefId
+    ? OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_NARRATIVES[input.beliefId]
+    : undefined;
+  if (!copy) {
+    return undefined;
+  }
+
+  return input.hasWrench && copy.confidenceWithTool
+    ? copy.confidenceWithTool
+    : copy.confidence;
+}
+
+export function objectiveRouteNotebookBeliefUncertainty(beliefId?: string) {
+  return beliefId
+    ? OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_NARRATIVES[beliefId]?.uncertainty
+    : undefined;
+}
+
+export function objectiveRouteNotebookPlanFallback(routeKey?: string) {
+  if (!routeKey) {
+    return undefined;
+  }
+
+  for (const scaffold of activeScaffolds(routeKey)) {
+    if (scaffold.notebookPlanFallback) {
+      return scaffold.notebookPlanFallback;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteNotebookRecoveryPlan(
+  kind: ObjectiveRouteNotebookRecoveryPlanKind,
+) {
+  return OBJECTIVE_ROUTE_NOTEBOOK_RECOVERY_PLANS[kind];
+}
+
+export function objectiveRouteNotebookStaleEntryFallback() {
+  return OBJECTIVE_ROUTE_NOTEBOOK_STALE_ENTRY_FALLBACK;
 }
 
 export function objectiveRouteHeadline(routeKey: string) {

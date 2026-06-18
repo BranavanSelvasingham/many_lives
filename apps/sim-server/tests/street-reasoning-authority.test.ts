@@ -1209,13 +1209,17 @@ describe("street reasoning authority", () => {
     expect(objectiveRouteHasNiaBlockLead(world)).toBe(false);
   });
 
-  it("keeps Rowan notebook route copy in a narrative helper, not cognition control flow", () => {
+  it("keeps Rowan notebook route and belief copy in scaffold helpers, not cognition narrative control flow", () => {
     const cognitionSource = readFileSync(
       new URL("../src/sim/rowanCognition.ts", import.meta.url),
       "utf8",
     );
     const narrativesSource = readFileSync(
       new URL("../src/sim/rowanCognitionNarratives.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
       "utf8",
     );
     const modelSource = readFileSync(
@@ -1237,14 +1241,23 @@ describe("street reasoning authority", () => {
       ROWAN_NOTEBOOK_YARD_CLUE,
       ROWAN_NOTEBOOK_PUMP_WITH_TOOL_CLUE,
     ]) {
-      expect(narrativesSource).toContain(notebookCopy);
+      expect(scaffoldSource).toContain(notebookCopy);
+      expect(narrativesSource).not.toContain(notebookCopy);
       expect(cognitionSource).not.toContain(notebookCopy);
     }
 
     expect(cognitionSource).toContain("rowanNotebookPlanText");
     expect(cognitionSource).toContain("rowanNotebookUncertaintyForBelief");
+    expect(narrativesSource).toContain("objectiveRouteNotebookPlanFallback");
+    expect(narrativesSource).toContain(
+      "objectiveRouteNotebookBeliefUncertainty",
+    );
+    expect(scaffoldSource).toContain("notebookPlanFallback");
+    expect(scaffoldSource).toContain("objectiveRouteNotebookBeliefClue");
     expect(narrativesSource).toContain("rowanNotebookUsesRecoveryRestNeed");
     expect(modelSource).toContain("rowanNotebookUsesRecoveryRestNeed");
+    expect(narrativesSource).not.toContain('"help-pump"');
+    expect(narrativesSource).not.toContain('"work-yard"');
     expect(cognitionSource).not.toContain("function notebookPlanText");
     expect(cognitionSource).not.toContain("function uncertaintyForBelief");
     expect(cognitionSource).not.toContain(
