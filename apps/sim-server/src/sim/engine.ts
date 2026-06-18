@@ -25,6 +25,9 @@ import {
   objectiveRouteActionRationale,
   objectiveRouteActionLocationReason,
   objectiveRouteAvailableActions,
+  objectiveRouteAutonomousContinuationFallbackSpeech,
+  objectiveRouteAutonomousFollowupSpeech,
+  objectiveRouteAutonomousOpeningSpeech,
   objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
   objectiveRouteCompletionAcknowledgement,
@@ -7476,81 +7479,15 @@ function buildAutonomousSpeech(
     return scaffoldSpeech;
   }
 
-  switch (objective.focus) {
-    case "settle":
-      if (npc.id === "npc-mara") {
-        if (primaryNeed === "shelter") {
-          return "I'm Rowan. New in Brackenport. I've got tonight at Morrow House, and I'd like to be an easy guest. What should I know?";
-        }
-        if (primaryNeed === "income") {
-          return "I'm Rowan. New here. Who might need an extra pair of hands before lunch gets busy?";
-        }
-        if (primaryNeed === "belonging") {
-          return "I'm Rowan. New in Brackenport. Who around here is kind to newcomers who ask normal questions?";
-        }
-        return "I'm Rowan. New in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where should I start?";
-      }
-      if (npc.id === "npc-ada") {
-        if (teaLeadKnown) {
-          return "I'm Rowan. I heard lunch might still need hands. Is that still true?";
-        }
-        return "I'm new here and trying to be helpful. Need another pair of hands right now?";
-      }
-      if (npc.id === "npc-tomas") {
-        if (yardLeadKnown) {
-          return "I'm Rowan. I heard the yard might still need another set of hands. Still true?";
-        }
-        return "I'm Rowan. New in town. If I want a little honest work today, is the yard still short on hands?";
-      }
-      if (npc.id === "npc-nia") {
-        return "I'm new in South Quay. Who should I talk to if I want to understand the place a little better?";
-      }
-      return "I'm new in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where do I begin?";
-    case "work":
-      if (npc.id === "npc-ada") {
-        if (teaLeadKnown) {
-          return "I'm Rowan. I heard you might still need hands for lunch. Is there still room for me?";
-        }
-        return "I'm Rowan. I'm looking for work and happy to help. Do you need another pair of hands?";
-      }
-      if (npc.id === "npc-tomas") {
-        if (yardLeadKnown) {
-          return "I'm Rowan. I heard the yard might still be short on hands. Still looking?";
-        }
-        return "I'm Rowan. I'm looking for work. Still need another set of hands in the yard?";
-      }
-      return "I'm Rowan. I'm trying to start earning today. Where should I begin?";
-    case "help":
-      if (text.includes("pump")) {
-        return npc.id === "npc-jo"
-          ? "I'm trying to fix the pump. What tool actually gets it done?"
-          : "I'm trying to sort out the leaking pump. What matters first?";
-      }
-      if (text.includes("cart")) {
-        return "I heard the square might jam up. What's actually wrong with the cart?";
-      }
-      return "I'm trying to help before anything gets annoying. What needs a hand?";
-    case "tool":
-      return "I need the right tool for this. What would actually help me today?";
-    case "rest":
-      return "I'm running thin. Is there anything here that can't wait until I get my legs back?";
-    case "explore":
-      return "I'm still learning South Quay. What should I look at before I miss it?";
-    case "people":
-      return "Who on this block is worth meeting properly if I'm trying to find my footing?";
-    default:
-      break;
-  }
-
-  if (text.includes("wrench")) {
-    return "I need a wrench today. What's the quickest honest way to get one?";
-  }
-
-  if (text.includes("pump")) {
-    return "I need to fix the pump. What do I need to know before I start?";
-  }
-
-  return `I'm trying to ${objectiveClause(objective.text)}. Where is the easiest place to start?`;
+  return objectiveRouteAutonomousOpeningSpeech({
+    npcId: npc.id,
+    objectiveClause: objectiveClause(objective.text),
+    objectiveFocus: objective.focus,
+    objectiveText: text,
+    primaryNeed,
+    teaLeadKnown,
+    yardLeadKnown,
+  });
 }
 
 function buildAutonomousFollowup(
@@ -7569,119 +7506,16 @@ function buildAutonomousFollowup(
     normalizedReply,
   );
 
-  if (objectiveFocus === "settle") {
-    switch (npcId) {
-      case "npc-mara":
-        if (replyNamesAdaLead) {
-          if (
-            objectiveText.includes("room") ||
-            objectiveText.includes("first afternoon")
-          ) {
-            return "Got it. Anything I should know before I ask Ada?";
-          }
-          return undefined;
-        }
-        if (!replyTopics.has("home") && !replyTopics.has("stay")) {
-          return "What helps a room here start feeling less temporary?";
-        }
-        if (!replyTopics.has("work")) {
-          return "And if I need paid work soon, who is good to ask before lunch?";
-        }
-        if (primaryNeed === "belonging" && !replyTopics.has("people")) {
-          return "Who would you talk to next if you were new here?";
-        }
-        return undefined;
-      case "npc-ada":
-        if (!replyTopics.has("work")) {
-          return "Do you still need hands, or did lunch beat me here?";
-        }
-        return undefined;
-      case "npc-jo":
-        return "What should someone new avoid spending money on?";
-      case "npc-tomas":
-        if (!replyTopics.has("work") && !replyTopics.has("yard")) {
-          return "Does the yard still need hands, or did I miss the easy part?";
-        }
-        return "If I do a good job here, is there anyone I should check with after?";
-      case "npc-nia":
-        return "Who actually makes South Quay feel less strange once you know them?";
-      default:
-        break;
-    }
-  }
-
-  if (objectiveFocus === "work") {
-    if (npcId === "npc-ada") {
-      if (replyNamesTomasLead) {
-        return undefined;
-      }
-      if (!replyTopics.has("work")) {
-        return "Do you actually need hands, or should I keep moving?";
-      }
-      if (
-        /\bfourteen\b|\bpay\b|\bpays\b|\bshift\b|\bcoin\b|\bcoins\b/.test(
-          normalizedReply,
-        )
-      ) {
-        return undefined;
-      }
-      return "What does it pay if I keep up?";
-    }
-
-    if (npcId === "npc-tomas") {
-      if (!replyTopics.has("work") && !replyTopics.has("yard")) {
-        return "Is the yard actually short on hands, or am I too late?";
-      }
-      if (
-        /\btwenty-four\b|\bcrates?\b|\bcart lane\b|\bbay\b|\bpay\b|\bpays\b/.test(
-          normalizedReply,
-        )
-      ) {
-        return undefined;
-      }
-      return "If I take it, what do you need me to move first?";
-    }
-
-    if (npcId === "npc-mara") {
-      if (replyNamesAdaLead) {
-        return undefined;
-      }
-      return "Who on this block actually follows through when work opens up?";
-    }
-  }
-
-  if (objectiveFocus === "help") {
-    if (objectiveText.includes("pump") && npcId === "npc-jo") {
-      return "If I buy the wrench, what am I likely to get wrong at the pump?";
-    }
-
-    if (objectiveText.includes("pump") && npcId === "npc-mara") {
-      return "If I fix the pump, what else around the house settles down with it?";
-    }
-
-    if (objectiveText.includes("cart") && npcId === "npc-nia") {
-      return "When does that cart turn from nuisance into a real jam?";
-    }
-  }
-
-  if (objectiveFocus === "explore" || objectiveFocus === "people") {
-    switch (npcId) {
-      case "npc-mara":
-        return "What does somebody new usually misunderstand about this block?";
-      case "npc-ada":
-        return "Who here is worth meeting before the day folds up?";
-      case "npc-jo":
-        return "What kind of trouble usually walks in before the people do?";
-      case "npc-tomas":
-        return "Who in the yard actually decides whether somebody belongs there?";
-      case "npc-nia":
-        return "What should I notice if I'm trying to read this place properly?";
-      default:
-        break;
-    }
-  }
-
-  return undefined;
+  return objectiveRouteAutonomousFollowupSpeech({
+    npcId,
+    objectiveFocus,
+    objectiveText,
+    primaryNeed,
+    replyNamesAdaLead,
+    replyNamesTomasLead,
+    replyText: normalizedReply,
+    replyTopics: [...replyTopics],
+  });
 }
 
 function extractActionTargetId(actionId: string) {
@@ -9993,27 +9827,10 @@ function buildAutonomousContinuation(
 
   const nextNpc = nextUntalkedNpc(world, npc.id);
 
-  switch (objective.focus) {
-    case "settle":
-      return nextNpc
-        ? "Who should I see after you if I'm trying to get my feet under me here?"
-        : "What would stop me from still feeling new by tonight?";
-    case "work":
-      return "So if the work is not here, where should I try next?";
-    case "help":
-      return "What needs doing first?";
-    case "tool":
-      return "If I spend the coin, what does it actually unlock for me?";
-    case "explore":
-    case "people":
-      return nextNpc
-        ? `Who should I go see after you?`
-        : "What am I still missing about this block?";
-    case "rest":
-      return "What can wait until I've got my legs back under me?";
-    default:
-      return "So where does that leave me right now?";
-  }
+  return objectiveRouteAutonomousContinuationFallbackSpeech({
+    hasNextNpc: Boolean(nextNpc),
+    objectiveFocus: objective.focus,
+  });
 }
 
 function shouldAskAutonomousFollowup(
