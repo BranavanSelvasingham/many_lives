@@ -2814,6 +2814,7 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\bcityEvents\b/gi, "")
     .replace(/\bjobWindows\b/gi, "")
     .replace(/\bnpcSchedules\b/gi, "")
+    .replace(/\bnpcPressureMoves\b/gi, "")
     .replace(/\bselectedPlanKey\b/gi, "")
     .replace(/\bplanKey\b/gi, "")
     .replace(/\btargetLocationId\b/gi, "")
@@ -2843,10 +2844,61 @@ function compactVisibleDecisionText(value, max) {
   return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}...`;
 }
 
+function npcPressureMovesFromSchedules(npcSchedules) {
+  return (npcSchedules ?? [])
+    .filter(
+      (npc) =>
+        npc.currentScheduleLocationId &&
+        npc.currentLocationId !== npc.currentScheduleLocationId,
+    )
+    .map((npc) => ({
+      currentConcern: npc.currentConcern ?? "",
+      currentLocationId: npc.currentLocationId ?? null,
+      currentScheduleLocationId: npc.currentScheduleLocationId ?? null,
+      id: npc.id,
+      mood: npc.mood ?? null,
+    }));
+}
+
+function sortedNpcPressureMoves(npcPressureMoves) {
+  return (npcPressureMoves ?? [])
+    .map((npc) => ({
+      currentConcern: npc.currentConcern ?? "",
+      currentLocationId: npc.currentLocationId ?? null,
+      currentScheduleLocationId: npc.currentScheduleLocationId ?? null,
+      id: npc.id,
+      mood: npc.mood ?? null,
+    }))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)));
+}
+
 function worldPressureFromGame(game) {
   const currentTotalMinutes = game.clock.totalMinutes;
   const dayOffsetMinutes = Math.max(0, game.clock.day - 1) * 24 * 60;
   const currentHour = game.clock.hour + game.clock.minute / 60;
+  const npcSchedules = (game.npcs ?? []).map((npc) => {
+    const currentSchedule =
+      npc.schedule.find(
+        (entry) =>
+          currentHour >= entry.fromHour && currentHour < entry.toHour,
+      ) ?? null;
+    const nextSchedule =
+      npc.schedule
+        .filter((entry) => entry.fromHour > currentHour)
+        .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
+    return {
+      currentLocationId: npc.currentLocationId,
+      currentConcern: npc.currentConcern,
+      currentScheduleLocationId: currentSchedule?.locationId ?? null,
+      id: npc.id,
+      mood: npc.mood,
+      nextScheduleLocationId: nextSchedule?.locationId ?? null,
+      nextScheduleStartsInMinutes: nextSchedule
+        ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
+        : null,
+    };
+  });
+
   return {
     cityEvents: (game.cityEvents ?? []).map((event) => {
       const startTotal = dayOffsetMinutes + event.startMinute;
@@ -2896,28 +2948,8 @@ function worldPressureFromGame(game) {
         title: job.title,
       };
     }),
-    npcSchedules: (game.npcs ?? []).map((npc) => {
-      const currentSchedule =
-        npc.schedule.find(
-          (entry) =>
-            currentHour >= entry.fromHour && currentHour < entry.toHour,
-        ) ?? null;
-      const nextSchedule =
-        npc.schedule
-          .filter((entry) => entry.fromHour > currentHour)
-          .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
-      return {
-        currentLocationId: npc.currentLocationId,
-        currentConcern: npc.currentConcern,
-        currentScheduleLocationId: currentSchedule?.locationId ?? null,
-        id: npc.id,
-        mood: npc.mood,
-        nextScheduleLocationId: nextSchedule?.locationId ?? null,
-        nextScheduleStartsInMinutes: nextSchedule
-          ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
-          : null,
-      };
-    }),
+    npcPressureMoves: npcPressureMovesFromSchedules(npcSchedules),
+    npcSchedules,
     problems: (game.problems ?? []).map((problem) => ({
       discovered: problem.discovered,
       consequenceAppliedAt: problem.consequenceAppliedAt ?? null,
@@ -3555,7 +3587,7 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
   ].join(" ");
   assert.doesNotMatch(
     playerText,
-    /\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b/i,
+    /\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b/i,
     `${label}: decision artifact leaked backend-shaped labels.`,
   );
   assert.doesNotMatch(
@@ -3800,6 +3832,27 @@ function assertProbeAuditability(label, game, probe) {
       (game.npcs ?? []).length,
     `${label}: world pressure probe is missing NPC schedules.`,
   );
+  const expectedNpcPressureMoves = sortedNpcPressureMoves(
+    npcPressureMovesFromSchedules(probe.worldPressure?.npcSchedules ?? []),
+  );
+  if (expectedNpcPressureMoves.length > 0) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(
+        probe.worldPressure ?? {},
+        "npcPressureMoves",
+      ),
+      `${label}: world pressure probe must expose direct npcPressureMoves when NPCs are away from schedule due live pressure.`,
+    );
+    assert.ok(
+      Array.isArray(probe.worldPressure?.npcPressureMoves),
+      `${label}: world pressure npcPressureMoves must be an array.`,
+    );
+    assert.deepEqual(
+      sortedNpcPressureMoves(probe.worldPressure.npcPressureMoves),
+      expectedNpcPressureMoves,
+      `${label}: world pressure npcPressureMoves must directly match schedule/current pressure mismatches.`,
+    );
+  }
   assert.ok(
     (probe.independentNpcActions ?? []).every(
       (action) => isIndependentLocalAction(action),
@@ -5470,6 +5523,14 @@ function compactWorldPressureSnapshot(worldPressure) {
   if (!worldPressure) {
     return null;
   }
+  const directNpcPressureMoves = Object.prototype.hasOwnProperty.call(
+    worldPressure,
+    "npcPressureMoves",
+  )
+    ? (Array.isArray(worldPressure.npcPressureMoves)
+        ? worldPressure.npcPressureMoves
+        : [])
+    : npcPressureMovesFromSchedules(worldPressure.npcSchedules ?? []);
 
   return {
     cityEvents: (worldPressure.cityEvents ?? []).map((event) => ({
@@ -5490,22 +5551,16 @@ function compactWorldPressureSnapshot(worldPressure) {
       missed: Boolean(job.missed),
       title: job.title,
     })),
-    npcPressureMoves: (worldPressure.npcSchedules ?? [])
-      .filter(
-        (npc) =>
-          npc.currentScheduleLocationId &&
-          npc.currentLocationId !== npc.currentScheduleLocationId,
-      )
-      .map((npc) => ({
-        currentConcern: compactObjectiveSequenceText(
-          npc.currentConcern ?? "",
-          120,
-        ),
-        currentLocationId: npc.currentLocationId,
-        currentScheduleLocationId: npc.currentScheduleLocationId,
-        id: npc.id,
-        mood: npc.mood ?? null,
-      })),
+    npcPressureMoves: directNpcPressureMoves.map((npc) => ({
+      currentConcern: compactObjectiveSequenceText(
+        npc.currentConcern ?? "",
+        120,
+      ),
+      currentLocationId: npc.currentLocationId,
+      currentScheduleLocationId: npc.currentScheduleLocationId,
+      id: npc.id,
+      mood: npc.mood ?? null,
+    })),
     npcSchedules: (worldPressure.npcSchedules ?? []).map((npc) => ({
       currentConcern: compactObjectiveSequenceText(
         npc.currentConcern ?? "",
@@ -8141,7 +8196,7 @@ function assertNotebookUsesCognitionAuthority(label, dom, probe) {
   );
   assert.doesNotMatch(
     normalizedBody,
-    /\b(worldPressure|cityEvents|jobWindows|npcSchedules|planningTrace|routeKey)\b/i,
+    /\b(worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planningTrace|routeKey)\b/i,
     `${label}: player-facing Notebook should not leak backend-shaped debug labels.`,
   );
   assertNotebookFreshForLateObjective(label, normalizedBody, notebook, probe);
@@ -8892,7 +8947,7 @@ async function runOverlayPanelChecks(session) {
         /worldPressure/i,
         /cityEvents/i,
         /jobWindows/i,
-        /npcSchedules/i,
+        /npcSchedules|npcPressureMoves/i,
       ],
     },
     {

@@ -24,6 +24,7 @@ const PLAYER_TEXT_BACKEND_PATTERNS = [
   /\bcityEvents\b/gi,
   /\bjobWindows\b/gi,
   /\bnpcSchedules\b/gi,
+  /\bnpcPressureMoves\b/gi,
   /\bselectedPlanKey\b/gi,
   /\bplanKey\b/gi,
   /\btargetLocationId\b/gi,

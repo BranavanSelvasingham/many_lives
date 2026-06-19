@@ -328,6 +328,42 @@ function planningTraceProbePayload(game: StreetGameState) {
 
 function worldPressureProbePayload(game: StreetGameState) {
   const currentTotalMinutes = game.clock.totalMinutes;
+  const npcSchedules = (game.npcs ?? []).map((npc) => {
+    const currentHour = game.clock.hour + game.clock.minute / 60;
+    const currentSchedule =
+      npc.schedule.find(
+        (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+      ) ?? null;
+    const nextSchedule =
+      npc.schedule
+        .filter((entry) => entry.fromHour > currentHour)
+        .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
+    return {
+      currentLocationId: npc.currentLocationId,
+      currentConcern: npc.currentConcern,
+      currentScheduleLocationId: currentSchedule?.locationId ?? null,
+      id: npc.id,
+      mood: npc.mood,
+      nextScheduleLocationId: nextSchedule?.locationId ?? null,
+      nextScheduleStartsInMinutes: nextSchedule
+        ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
+        : null,
+    };
+  });
+  const npcPressureMoves = npcSchedules
+    .filter(
+      (npc) =>
+        npc.currentScheduleLocationId &&
+        npc.currentLocationId !== npc.currentScheduleLocationId,
+    )
+    .map((npc) => ({
+      currentConcern: npc.currentConcern,
+      currentLocationId: npc.currentLocationId,
+      currentScheduleLocationId: npc.currentScheduleLocationId,
+      id: npc.id,
+      mood: npc.mood,
+    }));
+
   return {
     cityEvents: (game.cityEvents ?? []).map((event) => {
       const startTotal =
@@ -381,28 +417,8 @@ function worldPressureProbePayload(game: StreetGameState) {
         title: job.title,
       };
     }),
-    npcSchedules: (game.npcs ?? []).map((npc) => {
-      const currentHour = game.clock.hour + game.clock.minute / 60;
-      const currentSchedule =
-        npc.schedule.find(
-          (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
-        ) ?? null;
-      const nextSchedule =
-        npc.schedule
-          .filter((entry) => entry.fromHour > currentHour)
-          .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
-      return {
-        currentLocationId: npc.currentLocationId,
-        currentConcern: npc.currentConcern,
-        currentScheduleLocationId: currentSchedule?.locationId ?? null,
-        id: npc.id,
-        mood: npc.mood,
-        nextScheduleLocationId: nextSchedule?.locationId ?? null,
-        nextScheduleStartsInMinutes: nextSchedule
-          ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
-          : null,
-      };
-    }),
+    npcPressureMoves,
+    npcSchedules,
     problems: (game.problems ?? []).map((problem) => ({
       discovered: problem.discovered,
       consequenceAppliedAt: problem.consequenceAppliedAt ?? null,

@@ -466,6 +466,92 @@ describe("Rowan playback helpers", () => {
     });
   });
 
+  it("exposes pressure-moved NPCs directly in the browser world-pressure probe", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const buildProbe = (world: StreetGameState) => {
+      const railView = buildRowanRailViewModel({
+        conversationReplayActive: Boolean(world.activeConversation),
+        fallbackThought: "Rowan is reading the city pressure.",
+        game: asWebGame(world),
+        playback: createEmptyRowanPlaybackState(),
+        quietStatusLabel: world.currentScene.title,
+        watchMode: true,
+      });
+
+      return JSON.parse(
+        buildStreetBrowserProbeJson({
+          activeConversation: world.activeConversation,
+          game: asWebGame(world),
+          rowanRail: railView,
+          snapshot: {
+            rowanWatchModeEnabled: true,
+          },
+        }),
+      );
+    };
+
+    let maraWorld = await engine.createGame("rowan-probe-pressure-mara");
+    maraWorld = await enterMorrowHouse(engine, maraWorld);
+    maraWorld = await engine.runCommand(maraWorld, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    maraWorld = await engine.tick(maraWorld, 9);
+
+    const maraProbe = buildProbe(maraWorld);
+    const maraMove = maraProbe.worldPressure.npcPressureMoves.find(
+      (npc: { id: string }) => npc.id === "npc-mara",
+    );
+
+    expect(
+      Object.prototype.hasOwnProperty.call(
+        maraProbe.worldPressure,
+        "npcPressureMoves",
+      ),
+    ).toBe(true);
+    expect(
+      maraProbe.worldPressure.npcSchedules.find(
+        (npc: { id: string }) => npc.id === "npc-mara",
+      ),
+    ).toMatchObject({
+      currentLocationId: "courtyard",
+      currentScheduleLocationId: "boarding-house",
+    });
+    expect(maraMove).toMatchObject({
+      currentConcern: expect.any(String),
+      currentLocationId: "courtyard",
+      currentScheduleLocationId: "boarding-house",
+      id: "npc-mara",
+      mood: expect.any(String),
+    });
+    expect(maraMove.currentConcern.length).toBeGreaterThan(0);
+
+    let niaWorld = await engine.createGame("rowan-probe-pressure-nia");
+    niaWorld = await engine.tick(niaWorld, 10);
+
+    const niaProbe = buildProbe(niaWorld);
+    const niaMove = niaProbe.worldPressure.npcPressureMoves.find(
+      (npc: { id: string }) => npc.id === "npc-nia",
+    );
+
+    expect(
+      niaProbe.worldPressure.npcSchedules.find(
+        (npc: { id: string }) => npc.id === "npc-nia",
+      ),
+    ).toMatchObject({
+      currentLocationId: "market-square",
+      currentScheduleLocationId: "moss-pier",
+    });
+    expect(niaMove).toMatchObject({
+      currentConcern: expect.any(String),
+      currentLocationId: "market-square",
+      currentScheduleLocationId: "moss-pier",
+      id: "npc-nia",
+      mood: expect.any(String),
+    });
+    expect(niaMove.currentConcern.length).toBeGreaterThan(0);
+  });
+
   it("keeps autoplay blocked until the queued beats are fully consumed", () => {
     const moveBeat: RowanPlaybackBeat = {
       blocking: true,

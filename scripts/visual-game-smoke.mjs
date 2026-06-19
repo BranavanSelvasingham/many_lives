@@ -1812,7 +1812,7 @@ function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = n
     artifact.sourceSummary,
   ].join(" ");
   assert.ok(
-    !/\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b/i.test(
+    !/\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b/i.test(
       playerText,
     ),
     `${label}: decision artifact leaked backend-shaped labels: ${playerText}`,
@@ -1989,6 +1989,7 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\bcityEvents\b/gi, "")
     .replace(/\bjobWindows\b/gi, "")
     .replace(/\bnpcSchedules\b/gi, "")
+    .replace(/\bnpcPressureMoves\b/gi, "")
     .replace(/\bselectedPlanKey\b/gi, "")
     .replace(/\bplanKey\b/gi, "")
     .replace(/\btargetLocationId\b/gi, "")
