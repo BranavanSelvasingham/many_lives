@@ -7,6 +7,7 @@ import {
   buildIndependentNpcActionRecords,
   independentNpcActionBeatDetail,
   independentNpcActionBeatTitle,
+  independentNpcActionRecordKey,
 } from "./independentNpcActions";
 import {
   isObjectiveTrailStepPlayerFacingForPlayback,
@@ -300,9 +301,8 @@ export function deriveRowanPlaybackBeats(
   const activeSpaceChanged =
     previousGame.activeSpaceId !== nextGame.activeSpaceId;
   const previousIndependentActions = new Set(
-    buildIndependentNpcActionRecords(previousGame).map(
-      (action) =>
-        `${action.problemId}|${action.resolverNpcId}|${action.resolvedAt ?? "none"}`,
+    buildIndependentNpcActionRecords(previousGame).map((action) =>
+      independentNpcActionRecordKey(action),
     ),
   );
   const nextIndependentActions = buildIndependentNpcActionRecords(nextGame);
@@ -488,9 +488,7 @@ export function deriveRowanPlaybackBeats(
   }
 
   for (const action of nextIndependentActions) {
-    const actionKey = `${action.problemId}|${action.resolverNpcId}|${
-      action.resolvedAt ?? "none"
-    }`;
+    const actionKey = independentNpcActionRecordKey(action);
     if (previousIndependentActions.has(actionKey)) {
       continue;
     }
@@ -500,8 +498,9 @@ export function deriveRowanPlaybackBeats(
       blocking: true,
       detail: independentNpcActionBeatDetail(action, locationName),
       durationMs: ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
-      key: `city-beat:${action.problemId}:${action.resolverNpcId}:${action.resolvedAt ?? nextGame.currentTime}`,
+      key: `city-beat:${actionKey}`,
       kind: "city_beat",
+      locationId: action.locationId,
       title: independentNpcActionBeatTitle(action, locationName),
       tone: "info",
     });
@@ -917,12 +916,16 @@ function recentBeatFromPlaybackBeat(
 
 function beatStillMatchesGameLocation(
   beat:
-    | Pick<RowanPlaybackBeat, "locationId">
-    | Pick<RecentBeat, "locationId">
+    | Pick<RowanPlaybackBeat, "kind" | "locationId">
+    | Pick<RecentBeat, "kind" | "locationId">
     | null
     | undefined,
   game: StreetGameState,
 ) {
+  if (beat?.kind === "city_beat") {
+    return true;
+  }
+
   return !beat?.locationId || beat.locationId === game.player.currentLocationId;
 }
 

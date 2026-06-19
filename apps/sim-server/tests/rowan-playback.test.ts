@@ -12,6 +12,7 @@ import {
   type RowanPlaybackBeat,
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
 import { buildStreetBrowserProbeJson } from "../../many-lives-web/src/lib/street/browserProbe.js";
+import { buildIndependentNpcActionRecords } from "../../many-lives-web/src/lib/street/independentNpcActions.js";
 import { isObjectiveTrailStepPlayerFacingForPlayback } from "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
@@ -23,6 +24,19 @@ import { enterMorrowHouse, enterTeaHouse } from "./street-test-helpers.js";
 
 function asWebGame(world: StreetGameState) {
   return world as unknown as import("../../many-lives-web/src/lib/street/types.js").StreetGameState;
+}
+
+function setClock(
+  world: StreetGameState,
+  { hour, minute }: { hour: number; minute: number },
+) {
+  world.clock.hour = hour;
+  world.clock.minute = minute;
+  world.clock.totalMinutes = hour * 60 + minute;
+  world.clock.label = hour >= 17 ? "Evening" : "Afternoon";
+  world.currentTime = `2026-03-21T${String(hour).padStart(2, "0")}:${String(
+    minute,
+  ).padStart(2, "0")}:00.000Z`;
 }
 
 describe("Rowan playback helpers", () => {
@@ -196,7 +210,9 @@ describe("Rowan playback helpers", () => {
 
     const resolved = await engine.tick(world, 9);
     const beats = deriveRowanPlaybackBeats(asWebGame(world), asWebGame(resolved));
-    const cityBeat = beats.find((beat) => beat.kind === "city_beat");
+    const cityBeat = beats.find(
+      (beat) => beat.kind === "city_beat" && beat.title === "Nia cleared the square",
+    );
     expect(cityBeat).toBeTruthy();
 
     expect(cityBeat).toMatchObject({
@@ -227,6 +243,122 @@ describe("Rowan playback helpers", () => {
     });
   });
 
+  it("surfaces Tomas closing yard loading as independent local action evidence", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("rowan-playback-yard-city-beat");
+
+    setClock(world, { hour: 16, minute: 30 });
+    world.activeSpaceId = "interior:boarding-house";
+    world.player.spaceId = "interior:boarding-house";
+    world.player.currentLocationId = "boarding-house";
+
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    if (yardJob) {
+      yardJob.discovered = true;
+      yardJob.accepted = false;
+      yardJob.completed = false;
+      yardJob.missed = false;
+    }
+
+    const cart = world.problems.find((problem) => problem.id === "problem-cart");
+    if (cart) {
+      cart.status = "solved";
+    }
+
+    const closed = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 60,
+      silent: true,
+    });
+
+    const records = buildIndependentNpcActionRecords(asWebGame(closed));
+    const yardAction = records.find(
+      (action) => action.actionKind === "job_closure",
+    );
+
+    expect(yardAction).toMatchObject({
+      actionKind: "job_closure",
+      actorName: "Tomas",
+      actorNpcId: "npc-tomas",
+      afterStatus: "closed",
+      beforeStatus: "open",
+      closedAt: "2026-03-21T17:00:00.000Z",
+      jobId: "job-yard-shift",
+      jobTitle: "Freight yard lift",
+      locationId: "freight-yard",
+      occurredAt: "2026-03-21T17:00:00.000Z",
+      subjectId: "job-yard-shift",
+      subjectTitle: "Freight yard lift",
+    });
+    expect(yardAction?.playerFacingSummary).toContain(
+      "Tomas got the North Crane Yard load out with his own crew",
+    );
+    expect(yardAction?.playerFacingSummary).not.toMatch(
+      /\bjob-yard-shift|jobId|problemId|resolverNpcId|actorNpcId\b/i,
+    );
+
+    const beats = deriveRowanPlaybackBeats(asWebGame(world), asWebGame(closed));
+    const cityBeat = beats.find((beat) => beat.kind === "city_beat");
+
+    expect(cityBeat).toMatchObject({
+      detail: expect.stringContaining(
+        "Tomas got the North Crane Yard load out with his own crew",
+      ),
+      kind: "city_beat",
+      locationId: "freight-yard",
+      title: "Tomas closed the yard load",
+    });
+
+    const playback = completeActiveRowanPlaybackBeat({
+      activeBeat: cityBeat!,
+      queuedBeats: [],
+    });
+    const railView = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is watching the block move around him.",
+      game: asWebGame(closed),
+      playback,
+      quietStatusLabel: closed.currentScene.title,
+      watchMode: true,
+    });
+
+    expect(railView.justHappened).toMatchObject({
+      detail: expect.stringContaining("Tomas got the North Crane Yard load out"),
+      title: "Tomas closed the yard load",
+      tone: "info",
+    });
+
+    const probe = JSON.parse(
+      buildStreetBrowserProbeJson({
+        activeConversation: closed.activeConversation,
+        game: asWebGame(closed),
+        rowanRail: railView,
+        snapshot: {
+          rowanPlayback: playback,
+          rowanWatchModeEnabled: true,
+        },
+      }),
+    );
+
+    expect(probe.independentNpcSurface).toMatchObject({
+      actionKind: "job_closure",
+      actorName: "Tomas",
+      afterStatus: "closed",
+      beforeStatus: "open",
+      closedAt: "2026-03-21T17:00:00.000Z",
+      detail: expect.stringContaining("Tomas got the North Crane Yard load out"),
+      jobId: "job-yard-shift",
+      locationId: "freight-yard",
+      slot: "just_happened",
+      title: "Tomas closed the yard load",
+    });
+    expect(
+      `${probe.independentNpcSurface.title} ${probe.independentNpcSurface.detail}`,
+    ).not.toMatch(
+      /\bjob-yard-shift|jobId|problemId|resolverNpcId|actorNpcId\b/i,
+    );
+  });
+
   it("keeps Rowan's active autonomy in Now while an active city beat is separately visible", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("rowan-playback-active-city-beat");
@@ -252,7 +384,9 @@ describe("Rowan playback helpers", () => {
     const cityBeat = deriveRowanPlaybackBeats(
       asWebGame(world),
       asWebGame(resolved),
-    ).find((beat) => beat.kind === "city_beat");
+    ).find(
+      (beat) => beat.kind === "city_beat" && beat.title === "Nia cleared the square",
+    );
     expect(cityBeat).toBeTruthy();
 
     const rowanActing = structuredClone(resolved);

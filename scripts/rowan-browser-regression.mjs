@@ -562,7 +562,7 @@ async function waitForIndependentProblemResolution(gameId, options = {}) {
 
   const problems = game ? worldPressureFromGame(game).problems : [];
   assert.fail(
-    `Timed out waiting for an independent NPC-owned problem resolution. Last state: ${JSON.stringify(
+    `Timed out waiting for an independent local action. Last state: ${JSON.stringify(
       {
         clock: game?.currentTime ?? null,
         independentNpcActions: game ? independentNpcActionsFromGame(game) : [],
@@ -2975,9 +2975,13 @@ function independentNpcActionSummary({
   return `${resolverName} resolved the ${problemTitle.toLowerCase()} without Rowan taking the work.`;
 }
 
+function independentJobClosureSummary({ actorName }) {
+  return `${actorName} got the North Crane Yard load out with his own crew; Rowan gets no pay or credit from that work.`;
+}
+
 function independentNpcActionsFromGame(game) {
   const npcsById = new Map((game.npcs ?? []).map((npc) => [npc.id, npc]));
-  return (game.problems ?? [])
+  const problemRecords = (game.problems ?? [])
     .filter(
       (problem) => problem.status === "resolved" && problem.resolvedByNpcId,
     )
@@ -2986,9 +2990,15 @@ function independentNpcActionsFromGame(game) {
       const resolverName =
         resolver?.name ?? problem.resolvedByNpcId ?? "A local";
       return {
+        actionKind: "problem_resolution",
+        actorConcern: resolver?.currentConcern ?? null,
+        actorMood: resolver?.mood ?? null,
+        actorName: resolverName,
+        actorNpcId: problem.resolvedByNpcId,
         afterStatus: problem.status,
         beforeStatus: "active",
         locationId: problem.locationId,
+        occurredAt: problem.resolvedAt ?? null,
         playerFacingSummary: independentNpcActionSummary({
           problemId: problem.id,
           problemTitle: problem.title,
@@ -3001,21 +3011,126 @@ function independentNpcActionsFromGame(game) {
         resolverMood: resolver?.mood ?? null,
         resolverName,
         resolverNpcId: problem.resolvedByNpcId,
+        subjectId: problem.id,
+        subjectTitle: problem.title,
       };
-    })
+    });
+  const jobRecords = (game.jobs ?? [])
+    .filter(
+      (job) =>
+        job.id === "job-yard-shift" &&
+        job.missed &&
+        Boolean(job.consequenceAppliedAt),
+    )
+    .map((job) => {
+      const actorNpcId = job.giverNpcId || "npc-tomas";
+      const actor = npcsById.get(actorNpcId);
+      const actorName = actor?.name ?? "Tomas";
+      return {
+        actionKind: "job_closure",
+        actorConcern: actor?.currentConcern ?? null,
+        actorMood: actor?.mood ?? null,
+        actorName,
+        actorNpcId,
+        afterStatus: "closed",
+        beforeStatus: "open",
+        closedAt: job.consequenceAppliedAt ?? null,
+        jobId: job.id,
+        jobTitle: job.title,
+        locationId: job.locationId,
+        occurredAt: job.consequenceAppliedAt ?? null,
+        playerFacingSummary: independentJobClosureSummary({ actorName }),
+        resolverConcern: actor?.currentConcern ?? null,
+        resolverMood: actor?.mood ?? null,
+        resolverName: actorName,
+        resolverNpcId: actorNpcId,
+        subjectId: job.id,
+        subjectTitle: job.title,
+      };
+    });
+
+  return [...problemRecords, ...jobRecords]
     .sort((left, right) => {
-      const leftTime = left.resolvedAt
-        ? Date.parse(left.resolvedAt)
+      const leftTime = left.occurredAt
+        ? Date.parse(left.occurredAt)
         : Number.NEGATIVE_INFINITY;
-      const rightTime = right.resolvedAt
-        ? Date.parse(right.resolvedAt)
+      const rightTime = right.occurredAt
+        ? Date.parse(right.occurredAt)
         : Number.NEGATIVE_INFINITY;
       if (leftTime !== rightTime) {
         return rightTime - leftTime;
       }
 
-      return left.problemId.localeCompare(right.problemId);
+      return left.subjectId.localeCompare(right.subjectId);
     });
+}
+
+function independentNpcActionKey(action) {
+  return [
+    action.actionKind ?? "problem_resolution",
+    action.subjectId ?? action.problemId ?? action.jobId ?? "unknown",
+    action.actorNpcId ?? action.resolverNpcId ?? "unknown",
+    independentNpcActionOccurredAt(action) ?? "none",
+  ].join("|");
+}
+
+function independentNpcActionOccurredAt(action) {
+  return action.occurredAt ?? action.resolvedAt ?? action.closedAt ?? null;
+}
+
+function independentNpcActionVisibleText(action) {
+  return [
+    action.title,
+    action.detail,
+    action.playerFacingSummary,
+    action.resolverName,
+    action.actorName,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function independentNpcActionTextIsPlayerFacing(text) {
+  return !/\bjob-yard-shift|resolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId|jobId|actorNpcId|subjectId|actionKind\b/i.test(
+    text ?? "",
+  );
+}
+
+function isProblemResolutionAction(action) {
+  return Boolean(
+    action &&
+      (action.actionKind === "problem_resolution" || action.problemId) &&
+      ["problem-pump", "problem-cart"].includes(action.problemId) &&
+      action.problemTitle &&
+      action.resolverNpcId &&
+      action.resolverName &&
+      action.beforeStatus === "active" &&
+      action.afterStatus === "resolved" &&
+      independentNpcActionOccurredAt(action) &&
+      action.playerFacingSummary &&
+      independentNpcActionTextIsPlayerFacing(action.playerFacingSummary),
+  );
+}
+
+function isJobClosureAction(action) {
+  return Boolean(
+    action &&
+      action.actionKind === "job_closure" &&
+      action.jobId &&
+      action.jobTitle &&
+      action.actorNpcId &&
+      action.actorName &&
+      action.beforeStatus === "open" &&
+      action.afterStatus === "closed" &&
+      independentNpcActionOccurredAt(action) &&
+      action.locationId === "freight-yard" &&
+      action.playerFacingSummary &&
+      independentNpcActionTextIsPlayerFacing(action.playerFacingSummary),
+  );
+}
+
+function isIndependentLocalAction(action) {
+  return isProblemResolutionAction(action) || isJobClosureAction(action);
 }
 
 function findCityEvent(game, id) {
@@ -3687,20 +3802,9 @@ function assertProbeAuditability(label, game, probe) {
   );
   assert.ok(
     (probe.independentNpcActions ?? []).every(
-      (action) =>
-        action.problemId &&
-        action.problemTitle &&
-        action.resolverNpcId &&
-        action.resolverName &&
-        action.beforeStatus === "active" &&
-        action.afterStatus === "resolved" &&
-        action.resolvedAt &&
-        action.playerFacingSummary &&
-        !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
-          action.playerFacingSummary,
-        ),
+      (action) => isIndependentLocalAction(action),
     ),
-    `${label}: independent NPC action probe must expose compact resolver, before/after, time, and player-facing summary evidence.`,
+    `${label}: independent local action probe must expose compact actor, before/after, time, and player-facing summary evidence.`,
   );
 
   if (probe.independentNpcSurface) {
@@ -3710,20 +3814,14 @@ function assertProbeAuditability(label, game, probe) {
       `${label}: independent NPC surface must stay outside Rowan's current Now rail beat.`,
     );
     assert.ok(
-      surface.problemId &&
-        surface.problemTitle &&
-        surface.resolverNpcId &&
-        surface.resolverName &&
-        surface.resolvedAt &&
+      isIndependentLocalAction(surface) &&
         surface.title &&
         surface.detail,
-      `${label}: independent NPC surface must stay backed by problem, resolver, time, title, and visible copy.`,
+      `${label}: independent local action surface must stay backed by subject, actor, time, title, and visible copy.`,
     );
     assert.ok(
-      !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
-        `${surface.title} ${surface.detail}`,
-      ),
-      `${label}: independent NPC surface leaked debug fields into the visible rail copy.`,
+      independentNpcActionTextIsPlayerFacing(`${surface.title} ${surface.detail}`),
+      `${label}: independent local action surface leaked debug fields into the visible rail copy.`,
     );
   }
 }
@@ -3769,7 +3867,7 @@ async function refreshProbeForVisibleIndependentNpcSurface({
     return probe;
   }
 
-  if (!/city beat|steadied|contained/i.test(dom.bodyText ?? "")) {
+  if (!/city beat|steadied|contained|closed|load out/i.test(dom.bodyText ?? "")) {
     return probe;
   }
 
@@ -5550,6 +5648,14 @@ function buildWorldPressureTimeline(snapshots) {
             `Job ${id} completed changed from ${from} to ${to}.`,
         },
         {
+          cause: () => "independent",
+          name: "consequenceAppliedAt",
+          summary: (id, from, to) =>
+            `Job ${id} closure timestamp changed from ${from ?? "none"} to ${
+              to ?? "none"
+            }.`,
+        },
+        {
           cause: () => "rowan-caused",
           name: "discovered",
           summary: (id, from, to) =>
@@ -5797,18 +5903,14 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
   const surfacedByKey = new Map();
   for (const moment of moments ?? []) {
     for (const action of moment.independentNpcActions ?? []) {
-      const key = [
-        action.problemId,
-        action.resolverNpcId,
-        action.resolvedAt,
-      ].join("|");
+      const key = independentNpcActionKey(action);
       if (actionsByKey.has(key)) {
         continue;
       }
       actionsByKey.set(key, {
         ...action,
         observedDelayMinutes: minutesBetweenIso(
-          action.resolvedAt,
+          independentNpcActionOccurredAt(action),
           moment.clock?.iso,
         ),
         firstObservedClock: moment.clock ?? null,
@@ -5822,18 +5924,14 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
       continue;
     }
 
-    const key = [
-      surfaced.problemId,
-      surfaced.resolverNpcId,
-      surfaced.resolvedAt,
-    ].join("|");
+    const key = independentNpcActionKey(surfaced);
     if (surfacedByKey.has(key)) {
       continue;
     }
     surfacedByKey.set(key, {
       ...surfaced,
       surfaceDelayMinutes: minutesBetweenIso(
-        surfaced.resolvedAt,
+        independentNpcActionOccurredAt(surfaced),
         moment.clock?.iso,
       ),
       firstSurfacedClock: moment.clock ?? null,
@@ -5844,13 +5942,23 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
 
   const resolverTimelineChanges = (
     worldPressureAudit?.worldPressureTimeline ?? []
-  ).filter(
-    (change) =>
+  ).filter((change) => {
+    if (
       change.kind === "problem" &&
       change.cause === "independent" &&
       ["resolvedByNpcId", "status"].includes(change.field) &&
-      (change.field !== "status" || change.to === "resolved"),
-  );
+      (change.field !== "status" || change.to === "resolved")
+    ) {
+      return true;
+    }
+
+    return (
+      change.kind === "job-window" &&
+      change.cause === "independent" &&
+      ((change.field === "missed" && change.to === true) ||
+        (change.field === "consequenceAppliedAt" && Boolean(change.to)))
+    );
+  });
 
   return {
     actions: [...actionsByKey.values()],
@@ -5878,7 +5986,7 @@ function assertIndependentNpcActionEvidence(evidence) {
   );
   assert.ok(
     evidence.observedActionCount > 0,
-    `Browser report must capture at least one independent NPC-owned problem resolution. Evidence: ${JSON.stringify(
+    `Browser report must capture at least one independent local action. Evidence: ${JSON.stringify(
       evidence,
       null,
       2,
@@ -5887,20 +5995,11 @@ function assertIndependentNpcActionEvidence(evidence) {
   assert.ok(
     evidence.actions.some(
       (action) =>
-        ["problem-pump", "problem-cart"].includes(action.problemId) &&
-        action.problemTitle &&
-        action.resolverNpcId &&
-        action.resolverName &&
-        action.beforeStatus === "active" &&
-        action.afterStatus === "resolved" &&
-        action.resolvedAt &&
+        isIndependentLocalAction(action) &&
         action.firstObservedLabel &&
-        action.playerFacingSummary &&
-        !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
-          action.playerFacingSummary,
-        ),
+        independentNpcActionTextIsPlayerFacing(action.playerFacingSummary),
     ),
-    `Independent NPC action evidence must connect problem, resolver, before/after state, time, report moment, and player-facing summary. Evidence: ${JSON.stringify(
+    `Independent local action evidence must connect subject, actor, before/after state, time, report moment, and player-facing summary. Evidence: ${JSON.stringify(
       evidence,
       null,
       2,
@@ -5908,7 +6007,7 @@ function assertIndependentNpcActionEvidence(evidence) {
   );
   assert.ok(
     evidence.surfacedActionCount > 0,
-    `Browser report must capture at least one rail-visible independent city beat. Evidence: ${JSON.stringify(
+    `Browser report must capture at least one rail-visible independent local city beat. Evidence: ${JSON.stringify(
       evidence,
       null,
       2,
@@ -5918,18 +6017,16 @@ function assertIndependentNpcActionEvidence(evidence) {
     evidence.surfacedActions.some(
       (action) =>
         action.slot === "just_happened" &&
-        action.problemId &&
-        action.resolverNpcId &&
-        action.resolvedAt &&
+        isIndependentLocalAction(action) &&
         action.title &&
         action.detail &&
         action.firstSurfacedLabel &&
         action.firstSurfacedScreenshot &&
-        !/\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i.test(
-          `${action.title} ${action.detail}`,
+        independentNpcActionTextIsPlayerFacing(
+          independentNpcActionVisibleText(action),
         ),
     ),
-    `Independent NPC rail beats must stay player-facing and screenshot-backed in the browser report. Evidence: ${JSON.stringify(
+    `Independent local rail beats must stay player-facing and screenshot-backed in the browser report. Evidence: ${JSON.stringify(
       evidence,
       null,
       2,
@@ -5938,13 +6035,13 @@ function assertIndependentNpcActionEvidence(evidence) {
   assert.ok(
     evidence.surfacedActions.some(
       (action) =>
-        ["problem-pump", "problem-cart"].includes(action.problemId) &&
+        isIndependentLocalAction(action) &&
         action.surfaceDelayMinutes !== null &&
         action.surfaceDelayMinutes >= 0 &&
         action.surfaceDelayMinutes <=
           INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES,
     ),
-    `Independent NPC rail beats must surface within ${INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES} sim minutes of resolvedAt. Evidence: ${JSON.stringify(
+    `Independent local rail beats must surface within ${INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES} sim minutes of their action timestamp. Evidence: ${JSON.stringify(
       evidence,
       null,
       2,
@@ -5953,13 +6050,36 @@ function assertIndependentNpcActionEvidence(evidence) {
 }
 
 function assertIndependentResolutionDecisionArtifact(moments) {
+  const surfacedProblemMoments = (moments ?? []).filter(
+    (entry) =>
+      entry.independentNpcSurface &&
+      isProblemResolutionAction(entry.independentNpcSurface),
+  );
+
+  if (surfacedProblemMoments.length === 0) {
+    const jobMoment = (moments ?? []).find(
+      (entry) =>
+        entry.independentNpcSurface &&
+        isJobClosureAction(entry.independentNpcSurface),
+    );
+    assert.ok(
+      jobMoment,
+      "Independent local action moment must include either a problem resolution or job/opportunity closure.",
+    );
+    assert.ok(
+      independentNpcActionTextIsPlayerFacing(
+        independentNpcActionVisibleText(jobMoment.independentNpcSurface),
+      ),
+      "Independent local action surface leaked backend-shaped fields.",
+    );
+    return;
+  }
+
   const moment = (moments ?? []).find(
     (entry) =>
       entry.independentNpcSurface &&
       entry.visibleDecisionArtifact &&
-      ["problem-pump", "problem-cart"].includes(
-        entry.independentNpcSurface.problemId,
-      ),
+      isProblemResolutionAction(entry.independentNpcSurface),
   );
   assert.ok(
     moment,
@@ -5994,7 +6114,7 @@ function assertIndependentResolutionDecisionArtifact(moments) {
   );
   assert.doesNotMatch(
     artifactText,
-    /\bresolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId\b/i,
+    /\bjob-yard-shift|resolvedByNpcId|worldPressure|cityEvents|problemId|resolverNpcId|jobId|actorNpcId|subjectId|actionKind\b/i,
     "Independent resolution decision artifact leaked backend-shaped fields.",
   );
 }
