@@ -296,6 +296,33 @@ describe("objectiveState classification", () => {
     );
   });
 
+  it("keeps shared objective outcome authority public types predicate-only", () => {
+    const simTypesSource = readFileSync(
+      new URL("../src/street-sim/types.ts", import.meta.url),
+      "utf8",
+    );
+    const webTypesSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/types.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(simTypesSource).toContain(
+      'export type ObjectiveOutcomeAuthority = "predicate";',
+    );
+    expect(webTypesSource).toContain(
+      'export type ObjectiveOutcomeAuthority = "predicate";',
+    );
+    expect(simTypesSource).not.toContain(
+      'export type ObjectiveOutcomeAuthority = "predicate" | "trail";',
+    );
+    expect(webTypesSource).not.toContain(
+      'export type ObjectiveOutcomeAuthority = "predicate" | "trail";',
+    );
+  });
+
   it("keeps first-afternoon route metadata stable across representative live states", () => {
     const fresh = seedStreetGame("objective-first-afternoon-route-fresh");
     const afterMara = seedStreetGame("objective-first-afternoon-route-mara");

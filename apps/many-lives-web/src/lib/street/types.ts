@@ -282,7 +282,7 @@ export type ObjectiveOutcomeStatus =
   | "met"
   | "failed";
 
-export type ObjectiveOutcomeAuthority = "predicate" | "trail";
+export type ObjectiveOutcomeAuthority = "predicate";
 
 export interface ObjectiveOutcomeState {
   id: string;

@@ -5411,7 +5411,7 @@ function openObjectivePredicateOutcomes(
     .filter(
       (outcome) => {
         if (
-          outcome.authority === "trail" ||
+          hasLegacyTrailOutcomeAuthority(outcome) ||
           outcome.status === "met" ||
           outcome.status === "failed" ||
           !(outcome.targetLocationId || outcome.npcId || outcome.actionId)
@@ -5423,6 +5423,11 @@ function openObjectivePredicateOutcomes(
       },
     )
     .sort((left, right) => right.urgency - left.urgency);
+}
+
+function hasLegacyTrailOutcomeAuthority(outcome: ObjectiveOutcomeState) {
+  // Old saved/external JSON may still carry trail authority; do not treat it as predicate input.
+  return (outcome as { authority?: unknown }).authority === "trail";
 }
 
 function hasOpenObjectivePredicateAuthority(world: StreetGameState) {

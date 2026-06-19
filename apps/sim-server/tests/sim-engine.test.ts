@@ -5243,6 +5243,61 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("ignores legacy trail-authority outcome JSON during predicate planning", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-legacy-trail-authority-outcome");
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Verify Tomas's yard opening from current world state.",
+    });
+    world.activeConversation = undefined;
+    world.conversations = [];
+    world.conversationThreads = {};
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "work",
+      outcomes: [
+        {
+          id: "legacy-trail-yard-visit",
+          label: "Legacy trail outcome should not steer predicate planning.",
+          status: "open",
+          urgency: 9,
+          authority: "trail",
+          blockers: ["Legacy JSON should be ignored by predicate planning."],
+          targetLocationId: "freight-yard",
+        } as PlayerObjective["outcomes"][number] & { authority: "trail" },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "work-tea",
+      source: "manual",
+      text: "Verify Tomas's yard opening from current world state.",
+      trail: [],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove?.targetLocationId).not.toBe(
+      "freight-yard",
+    );
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.provenance === "objective-predicate" &&
+          option.matchedOutcomeId === "legacy-trail-yard-visit",
+      ),
+    ).toBe(false);
+  });
+
   it("routes a wrench objective to Jo instead of reopening Mara", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-tool-route");
