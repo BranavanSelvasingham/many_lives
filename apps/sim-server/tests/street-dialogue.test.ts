@@ -24,6 +24,15 @@ const MARA_ADA_PROMPT_OVERRIDE_LINE =
   "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.";
 const MARA_ADA_GROUNDED_PROMPT_LINE =
   "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.";
+const JO_MONEY_WORK_FOLLOWUP_THOUGHTS = [
+  "He can take his time.",
+  "The wrench is simple enough.",
+  "A calm decision is fine.",
+];
+const JO_MONEY_WORK_SECOND_REPLY =
+  "Paid work is elsewhere. If the pump is your problem, the wrench is the practical part.";
+const JO_MONEY_WORK_THIRD_REPLY =
+  "If the money is tight, spend it only when you know what it helps you fix.";
 
 class UngroundedMaraReplyProvider extends MockAIProvider {
   override readonly name = "openai";
@@ -130,6 +139,79 @@ describe("street dialogue fallback", () => {
       playerText: "Can I help with the cart in the square?",
     });
     expect(niaSolvedReply.reply).toMatch(/clear|gone|loosened|lighter/i);
+  });
+
+  it("preserves scaffold-owned Jo money/work replies with nearby place context", () => {
+    const world = seedStreetGame("game-jo-money-work-nearby");
+    world.conversations.push(
+      {
+        id: "conversation-jo-money-work-recent-1",
+        npcId: "npc-jo",
+        speaker: "npc",
+        speakerName: "Jo",
+        text: JO_MONEY_WORK_SECOND_REPLY,
+        threadId: "conversation-thread-npc-jo",
+        time: world.currentTime,
+      },
+      {
+        id: "conversation-jo-money-work-recent-2",
+        npcId: "npc-jo",
+        speaker: "npc",
+        speakerName: "Jo",
+        text: JO_MONEY_WORK_THIRD_REPLY,
+        threadId: "conversation-thread-npc-jo",
+        time: world.currentTime,
+      },
+    );
+
+    const reply = buildDeterministicStreetReply({
+      game: world,
+      npcId: "npc-jo",
+      playerText: "I need paid work or a way to make my money count.",
+    });
+
+    expect(reply.reply).toBe(
+      "I sell repairs, not shifts. Around Mercer Repairs, a decent tool can still save your afternoon.",
+    );
+    expect(JO_MONEY_WORK_FOLLOWUP_THOUGHTS).toContain(reply.followupThought);
+  });
+
+  it("preserves scaffold-owned Jo money/work replies without nearby place context", () => {
+    const world = seedStreetGame("game-jo-money-work-no-nearby");
+    const jo = world.npcs.find((npc) => npc.id === "npc-jo");
+    expect(jo).toBeDefined();
+    jo!.currentLocationId = "missing-location";
+    world.conversations.push(
+      {
+        id: "conversation-jo-money-work-no-nearby-recent-1",
+        npcId: "npc-jo",
+        speaker: "npc",
+        speakerName: "Jo",
+        text: JO_MONEY_WORK_SECOND_REPLY,
+        threadId: "conversation-thread-npc-jo",
+        time: world.currentTime,
+      },
+      {
+        id: "conversation-jo-money-work-no-nearby-recent-2",
+        npcId: "npc-jo",
+        speaker: "npc",
+        speakerName: "Jo",
+        text: JO_MONEY_WORK_THIRD_REPLY,
+        threadId: "conversation-thread-npc-jo",
+        time: world.currentTime,
+      },
+    );
+
+    const reply = buildDeterministicStreetReply({
+      game: world,
+      npcId: "npc-jo",
+      playerText: "I need paid work or a way to make my money count.",
+    });
+
+    expect(reply.reply).toBe(
+      "I sell repairs, not shifts. A decent tool can still save your afternoon.",
+    );
+    expect(JO_MONEY_WORK_FOLLOWUP_THOUGHTS).toContain(reply.followupThought);
   });
 
   it("requires live Mara first-afternoon replies to ground the Ada work lead", () => {

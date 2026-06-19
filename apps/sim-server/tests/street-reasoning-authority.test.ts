@@ -74,6 +74,20 @@ const PROBLEM_ROUTE_DIALOGUE_CHOICE_KEYS = [
   "nia-cart-active",
   "nia-cart-followup",
 ];
+const JO_MONEY_WORK_DIALOGUE_COPY = [
+  "I sell repairs, not shifts.",
+  "Around ${nearbyPlaceName}",
+  "A decent tool can still save your afternoon.",
+  "Paid work is elsewhere. If the pump is your problem, the wrench is the practical part.",
+  "If the money is tight, spend it only when you know what it helps you fix.",
+  "He can take his time.",
+  "The wrench is simple enough.",
+  "A calm decision is fine.",
+];
+const JO_MONEY_WORK_DIALOGUE_CHOICE_KEYS = [
+  "jo-money-work",
+  "jo-money-work-followup",
+];
 const MARA_ADA_GROUNDING_FOLLOWUP =
   "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
 const MARA_ADA_GROUNDED_FALLBACK_REPLY =
@@ -772,6 +786,30 @@ describe("street reasoning authority", () => {
     }
 
     for (const choiceKey of PROBLEM_ROUTE_DIALOGUE_CHOICE_KEYS) {
+      expect(scaffoldSource).toContain(choiceKey);
+      expect(dialogueSource).not.toContain(choiceKey);
+    }
+  });
+
+  it("keeps Jo money/work dialogue policy in scaffold helper data, not dialogue control flow", () => {
+    const dialogueSource = readFileSync(
+      new URL("../src/ai/streetDialogue.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scaffoldSource).toContain("objectiveRouteJoMoneyWorkDialogue");
+    expect(dialogueSource).toContain("objectiveRouteJoMoneyWorkDialogue");
+
+    for (const dialogueCopy of JO_MONEY_WORK_DIALOGUE_COPY) {
+      expect(scaffoldSource).toContain(dialogueCopy);
+      expect(dialogueSource).not.toContain(dialogueCopy);
+    }
+
+    for (const choiceKey of JO_MONEY_WORK_DIALOGUE_CHOICE_KEYS) {
       expect(scaffoldSource).toContain(choiceKey);
       expect(dialogueSource).not.toContain(choiceKey);
     }

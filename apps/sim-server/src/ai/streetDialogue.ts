@@ -13,6 +13,7 @@ import { buildRowanCognition } from "../sim/rowanCognition.js";
 import {
   objectiveRouteConversationFallback,
   objectiveRouteFirstAfternoonWorkWindowDialogue,
+  objectiveRouteJoMoneyWorkDialogue,
   objectiveRouteProblemDialogue,
 } from "../sim/objectiveScaffolds.js";
 
@@ -604,28 +605,10 @@ export function buildDeterministicStreetReply(
       }
 
       if (topics.has("money") || topics.has("work")) {
-        return {
-          reply: chooseConversationLine(
-            [
-              nearbyPlaceName
-                ? `I sell repairs, not shifts. Around ${nearbyPlaceName}, a decent tool can still save your afternoon.`
-                : "I sell repairs, not shifts. A decent tool can still save your afternoon.",
-              "Paid work is elsewhere. If the pump is your problem, the wrench is the practical part.",
-              "If the money is tight, spend it only when you know what it helps you fix.",
-            ],
-            context,
-            "jo-money-work",
-          ),
-          followupThought: pickFollowupThought(
-            [
-              "He can take his time.",
-              "The wrench is simple enough.",
-              "A calm decision is fine.",
-            ],
-            context,
-            "jo-money-work-followup",
-          ),
-        };
+        return buildRouteDialogueResult(
+          objectiveRouteJoMoneyWorkDialogue({ nearbyPlaceName }),
+          context,
+        );
       }
 
       return {

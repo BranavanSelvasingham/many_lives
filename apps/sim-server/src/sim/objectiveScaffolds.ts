@@ -128,6 +128,10 @@ export interface ObjectiveRouteDialogueReplyVariant {
   replyLines: string[];
 }
 
+export interface ObjectiveRouteJoMoneyWorkDialogueContext {
+  nearbyPlaceName?: string;
+}
+
 interface ProblemRouteDialogueHint extends ObjectiveRouteDialogueReplyVariant {
   kind: ObjectiveRouteProblemDialogueKind;
   npcId: string;
@@ -4800,6 +4804,27 @@ export function objectiveRouteProblemDialogue(
   }
 
   return undefined;
+}
+
+export function objectiveRouteJoMoneyWorkDialogue({
+  nearbyPlaceName,
+}: ObjectiveRouteJoMoneyWorkDialogueContext): ObjectiveRouteDialogueReplyVariant {
+  return {
+    choiceKey: "jo-money-work",
+    followupChoiceKey: "jo-money-work-followup",
+    followupThoughts: [
+      "He can take his time.",
+      "The wrench is simple enough.",
+      "A calm decision is fine.",
+    ],
+    replyLines: [
+      nearbyPlaceName
+        ? `I sell repairs, not shifts. Around ${nearbyPlaceName}, a decent tool can still save your afternoon.`
+        : "I sell repairs, not shifts. A decent tool can still save your afternoon.",
+      "Paid work is elsewhere. If the pump is your problem, the wrench is the practical part.",
+      "If the money is tight, spend it only when you know what it helps you fix.",
+    ],
+  };
 }
 
 export function objectiveRouteFirstAfternoonWorkWindowDialogue(
