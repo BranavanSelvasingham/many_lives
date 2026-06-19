@@ -84,6 +84,54 @@ describe("street dialogue fallback", () => {
     expect(reply.reply).not.toMatch(/prove|earn the softer|helpful thing/i);
   });
 
+  it("preserves scaffold-owned Jo tool and Nia cart problem-route replies", () => {
+    const world = seedStreetGame("game-problem-route-dialogue");
+
+    const joSellReply = buildDeterministicStreetReply({
+      game: world,
+      npcId: "npc-jo",
+      playerText: "What tool actually helps with the pump repair?",
+    });
+    expect(joSellReply.reply).toMatch(/wrench/i);
+    expect(joSellReply.reply).toMatch(/eight coins/i);
+
+    world.player.inventory.push({
+      description: "A worn wrench that can handle the yard pump.",
+      id: "item-wrench",
+      name: "Old wrench",
+    });
+    const joOwnedReply = buildDeterministicStreetReply({
+      game: world,
+      npcId: "npc-jo",
+      playerText: "I have the wrench. How should I handle the pump?",
+    });
+    expect(joOwnedReply.reply).toMatch(/wrench|pump/i);
+    expect(joOwnedReply.reply).not.toMatch(/eight coins/i);
+
+    const cartProblem = world.problems.find(
+      (problem) => problem.id === "problem-cart",
+    );
+    if (cartProblem) {
+      cartProblem.status = "active";
+    }
+    const niaActiveReply = buildDeterministicStreetReply({
+      game: world,
+      npcId: "npc-nia",
+      playerText: "Can I help with the cart in the square?",
+    });
+    expect(niaActiveReply.reply).toMatch(/cart|square/i);
+
+    if (cartProblem) {
+      cartProblem.status = "solved";
+    }
+    const niaSolvedReply = buildDeterministicStreetReply({
+      game: world,
+      npcId: "npc-nia",
+      playerText: "Can I help with the cart in the square?",
+    });
+    expect(niaSolvedReply.reply).toMatch(/clear|gone|loosened|lighter/i);
+  });
+
   it("requires live Mara first-afternoon replies to ground the Ada work lead", () => {
     const world = seedStreetGame("game-mara-live-grounding-prompt");
 

@@ -13,6 +13,7 @@ import { buildRowanCognition } from "../sim/rowanCognition.js";
 import {
   objectiveRouteConversationFallback,
   objectiveRouteFirstAfternoonWorkWindowDialogue,
+  objectiveRouteProblemDialogue,
 } from "../sim/objectiveScaffolds.js";
 
 export interface StreetDialogueRequest {
@@ -591,36 +592,15 @@ export function buildDeterministicStreetReply(
       };
     case "npc-jo":
       if (topics.has("tool") || topics.has("repair") || topics.has("pump")) {
-        return {
-          reply: hasWrench
-            ? chooseConversationLine(
-                [
-                  "You've already got the wrench. Good. Go slow and do not force the old metal.",
-                  "You have the wrench. Try the fitting gently first, then tighten only what moves cleanly.",
-                  "The wrench is the easy part. Take your time with the pump.",
-                ],
-                context,
-                "jo-tool-owned",
-              )
-            : chooseConversationLine(
-                [
-                  "Old wrench, eight coins. It is ugly, but it works.",
-                  "Eight coins for the wrench. It has handled worse than that pump.",
-                  "Eight coins gets you the wrench I would use myself.",
-                ],
-                context,
-                "jo-tool-sell",
-              ),
-          followupThought: pickFollowupThought(
-            [
-              "That wrench has another morning in it.",
-              "The price is fair.",
-              "Old metal, new hands.",
-            ],
-            context,
-            "jo-tool-followup",
-          ),
-        };
+        const routeReply = objectiveRouteProblemDialogue(
+          input.game,
+          input.game.player.objective,
+          npc,
+          hasWrench ? "joToolOwned" : "joToolSell",
+        );
+        if (routeReply) {
+          return buildRouteDialogueResult(routeReply, context);
+        }
       }
 
       if (topics.has("money") || topics.has("work")) {
@@ -816,36 +796,15 @@ export function buildDeterministicStreetReply(
       }
 
       if (topics.has("cart") || topics.has("help")) {
-        return {
-          reply: cartProblem?.status === "solved"
-            ? chooseConversationLine(
-                [
-                  "Square's clear again. Nicely done before everyone had to complain about it.",
-                  "That jam's gone. Good. The square feels lighter already.",
-                  "The square loosened up. Small fix, big difference.",
-                ],
-                context,
-                "nia-cart-solved",
-              )
-            : chooseConversationLine(
-                [
-                  "That split-wheel cart will jam Quay Square once foot traffic picks up. Move it early and everyone has an easier day.",
-                  "That cart will block the square if nobody moves it before the lunch crowd drifts in.",
-                  "Move the cart while it is still a small problem.",
-                ],
-                context,
-                "nia-cart-active",
-              ),
-          followupThought: pickFollowupThought(
-            [
-              "That cart needs moving before lunch.",
-              "The square wants an easier day.",
-              "Small jams get loud fast.",
-            ],
-            context,
-            "nia-cart-followup",
-          ),
-        };
+        const routeReply = objectiveRouteProblemDialogue(
+          input.game,
+          input.game.player.objective,
+          npc,
+          cartProblem?.status === "solved" ? "niaCartSolved" : "niaCartActive",
+        );
+        if (routeReply) {
+          return buildRouteDialogueResult(routeReply, context);
+        }
       }
 
       return {

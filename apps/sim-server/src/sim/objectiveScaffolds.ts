@@ -115,11 +115,23 @@ export type FirstAfternoonWorkWindowDialogueKind =
   | "tomasYardNextStep"
   | "tomasYardWork";
 
+export type ObjectiveRouteProblemDialogueKind =
+  | "joToolOwned"
+  | "joToolSell"
+  | "niaCartActive"
+  | "niaCartSolved";
+
 export interface ObjectiveRouteDialogueReplyVariant {
   choiceKey: string;
   followupChoiceKey: string;
   followupThoughts: string[];
   replyLines: string[];
+}
+
+interface ProblemRouteDialogueHint extends ObjectiveRouteDialogueReplyVariant {
+  kind: ObjectiveRouteProblemDialogueKind;
+  npcId: string;
+  when?: (context: ScaffoldContext) => boolean;
 }
 
 interface FirstAfternoonWorkWindowDialogueHint
@@ -748,6 +760,7 @@ interface ObjectiveRouteScaffold {
   outcomeMoveRationales?: OutcomeMoveRationaleHint[];
   playerFacingRationaleNormalizations?: PlayerFacingRationaleNormalizationHint[];
   playerThoughts?: PlayerThoughtHint[];
+  problemRouteDialogue?: ProblemRouteDialogueHint[];
   routeHeadline?: string;
   routeKeys: string[];
   routeKeyPrefixes?: string[];
@@ -3543,10 +3556,78 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     routeHeadline: "Fix the leaking pump in Morrow Yard before it spreads.",
     notebookPlanFallback:
       "Handle the Morrow Yard pump before the house has to absorb it without Rowan.",
+    problemRouteDialogue: [
+      {
+        choiceKey: "jo-tool-owned",
+        followupChoiceKey: "jo-tool-followup",
+        followupThoughts: [
+          "That wrench has another morning in it.",
+          "The price is fair.",
+          "Old metal, new hands.",
+        ],
+        kind: "joToolOwned",
+        npcId: "npc-jo",
+        replyLines: [
+          "You've already got the wrench. Good. Go slow and do not force the old metal.",
+          "You have the wrench. Try the fitting gently first, then tighten only what moves cleanly.",
+          "The wrench is the easy part. Take your time with the pump.",
+        ],
+      },
+      {
+        choiceKey: "jo-tool-sell",
+        followupChoiceKey: "jo-tool-followup",
+        followupThoughts: [
+          "That wrench has another morning in it.",
+          "The price is fair.",
+          "Old metal, new hands.",
+        ],
+        kind: "joToolSell",
+        npcId: "npc-jo",
+        replyLines: [
+          "Old wrench, eight coins. It is ugly, but it works.",
+          "Eight coins for the wrench. It has handled worse than that pump.",
+          "Eight coins gets you the wrench I would use myself.",
+        ],
+      },
+    ],
   },
   {
     routeKeys: ["help-cart"],
     routeHeadline: "Clear the jammed cart before it snarls the square.",
+    problemRouteDialogue: [
+      {
+        choiceKey: "nia-cart-solved",
+        followupChoiceKey: "nia-cart-followup",
+        followupThoughts: [
+          "That cart needs moving before lunch.",
+          "The square wants an easier day.",
+          "Small jams get loud fast.",
+        ],
+        kind: "niaCartSolved",
+        npcId: "npc-nia",
+        replyLines: [
+          "Square's clear again. Nicely done before everyone had to complain about it.",
+          "That jam's gone. Good. The square feels lighter already.",
+          "The square loosened up. Small fix, big difference.",
+        ],
+      },
+      {
+        choiceKey: "nia-cart-active",
+        followupChoiceKey: "nia-cart-followup",
+        followupThoughts: [
+          "That cart needs moving before lunch.",
+          "The square wants an easier day.",
+          "Small jams get loud fast.",
+        ],
+        kind: "niaCartActive",
+        npcId: "npc-nia",
+        replyLines: [
+          "That split-wheel cart will jam Quay Square once foot traffic picks up. Move it early and everyone has an easier day.",
+          "That cart will block the square if nobody moves it before the lunch crowd drifts in.",
+          "Move the cart while it is still a small problem.",
+        ],
+      },
+    ],
   },
   {
     routeKeys: ["work-tea"],
@@ -4691,6 +4772,30 @@ export function objectiveRouteConversationFallback(
     );
     if (fallback) {
       return fallback;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteProblemDialogue(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  npc: NpcState,
+  kind: ObjectiveRouteProblemDialogueKind,
+): ObjectiveRouteDialogueReplyVariant | undefined {
+  const scaffoldObjective = objective ?? objectiveScaffoldDirectiveForWorld(world);
+  const context: ScaffoldContext = { objective: scaffoldObjective, world };
+
+  for (const scaffold of OBJECTIVE_ROUTE_SCAFFOLDS) {
+    const reply = (scaffold.problemRouteDialogue ?? []).find(
+      (candidate) =>
+        candidate.kind === kind &&
+        candidate.npcId === npc.id &&
+        (!candidate.when || candidate.when(context)),
+    );
+    if (reply) {
+      return reply;
     }
   }
 

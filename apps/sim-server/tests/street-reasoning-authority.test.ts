@@ -46,6 +46,34 @@ const FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_CHOICE_KEYS = [
   "tomas-yard-next-step-closed",
   "tomas-yard-closed",
 ];
+const PROBLEM_ROUTE_DIALOGUE_COPY = [
+  "You've already got the wrench. Good. Go slow and do not force the old metal.",
+  "You have the wrench. Try the fitting gently first, then tighten only what moves cleanly.",
+  "The wrench is the easy part. Take your time with the pump.",
+  "Old wrench, eight coins. It is ugly, but it works.",
+  "Eight coins for the wrench. It has handled worse than that pump.",
+  "Eight coins gets you the wrench I would use myself.",
+  "That wrench has another morning in it.",
+  "The price is fair.",
+  "Old metal, new hands.",
+  "Square's clear again. Nicely done before everyone had to complain about it.",
+  "That jam's gone. Good. The square feels lighter already.",
+  "The square loosened up. Small fix, big difference.",
+  "That split-wheel cart will jam Quay Square once foot traffic picks up. Move it early and everyone has an easier day.",
+  "That cart will block the square if nobody moves it before the lunch crowd drifts in.",
+  "Move the cart while it is still a small problem.",
+  "That cart needs moving before lunch.",
+  "The square wants an easier day.",
+  "Small jams get loud fast.",
+];
+const PROBLEM_ROUTE_DIALOGUE_CHOICE_KEYS = [
+  "jo-tool-owned",
+  "jo-tool-sell",
+  "jo-tool-followup",
+  "nia-cart-solved",
+  "nia-cart-active",
+  "nia-cart-followup",
+];
 const MARA_ADA_GROUNDING_FOLLOWUP =
   "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
 const MARA_ADA_GROUNDED_FALLBACK_REPLY =
@@ -721,6 +749,30 @@ describe("street reasoning authority", () => {
 
     for (const choiceKey of FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_CHOICE_KEYS) {
       expect(scaffoldSource).toContain(`choiceKey: "${choiceKey}"`);
+      expect(dialogueSource).not.toContain(choiceKey);
+    }
+  });
+
+  it("keeps selected Jo/Nia problem-route dialogue policy in scaffold data, not dialogue control flow", () => {
+    const dialogueSource = readFileSync(
+      new URL("../src/ai/streetDialogue.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scaffoldSource).toContain("problemRouteDialogue");
+    expect(dialogueSource).toContain("objectiveRouteProblemDialogue");
+
+    for (const dialogueCopy of PROBLEM_ROUTE_DIALOGUE_COPY) {
+      expect(scaffoldSource).toContain(dialogueCopy);
+      expect(dialogueSource).not.toContain(dialogueCopy);
+    }
+
+    for (const choiceKey of PROBLEM_ROUTE_DIALOGUE_CHOICE_KEYS) {
+      expect(scaffoldSource).toContain(choiceKey);
       expect(dialogueSource).not.toContain(choiceKey);
     }
   });
