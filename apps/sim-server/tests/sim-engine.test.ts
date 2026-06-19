@@ -349,6 +349,39 @@ async function advanceUntil(
   return nextWorld;
 }
 
+function placePlayerAt(world: StreetGameState, locationId: string) {
+  const location = world.locations.find((entry) => entry.id === locationId);
+  expect(location).toBeDefined();
+  if (!location) {
+    return;
+  }
+
+  world.player.currentLocationId = location.id;
+  world.player.x = location.entryX;
+  world.player.y = location.entryY;
+}
+
+async function refreshPendingMoveAutonomy(
+  engine: SimulationEngine,
+  world: StreetGameState,
+  targetLocationId: string,
+  rationale = "",
+) {
+  world.player.pendingObjectiveMove = {
+    actionId: `move:${targetLocationId}`,
+    objectiveText: world.player.objective?.text ?? "Move to the next place.",
+    preparedAt: world.currentTime,
+    rationale,
+    targetLocationId,
+  };
+
+  return engine.runCommand(world, {
+    type: "wait",
+    minutes: 0,
+    silent: true,
+  });
+}
+
 function adjacentUnmarkedDuplicateTravelDecisionBeats(
   trace: Awaited<ReturnType<typeof runRowanLoopSmoke>>["trace"],
 ) {
@@ -1328,6 +1361,128 @@ describe("SimulationEngine street slice", () => {
     ).not.toMatch(genericRouteCopy);
   });
 
+  it("grounds pre-first-afternoon recovery returns to Morrow House", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame(
+      "game-pre-first-afternoon-recovery-return-copy",
+    );
+
+    placePlayerAt(world, "market-square");
+    world.player.energy = 42;
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "rest",
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "rest-home",
+      source: "manual",
+      text: "Recover enough at Morrow House to move cleanly again.",
+      trail: [],
+    };
+
+    world = await refreshPendingMoveAutonomy(
+      engine,
+      world,
+      "boarding-house",
+    );
+
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:boarding-house",
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "boarding-house",
+    });
+    expect(world.rowanAutonomy.intent?.reason).toBe(
+      "Morrow House is where Rowan can recover enough to move cleanly, keep tonight's room safe, and choose the next live opening with a clear head.",
+    );
+  });
+
+  it("grounds first-afternoon paid-shift and settled-standing returns to Morrow House", async () => {
+    const setupEngine = new SimulationEngine(new MockAIProvider());
+    let world = await setupEngine.createGame(
+      "game-first-afternoon-paid-shift-return-copy",
+    );
+
+    for (let step = 0; step < 14; step += 1) {
+      const teaShift = world.jobs.find((job) => job.id === "job-tea-shift");
+      if (
+        teaShift?.completed &&
+        world.player.currentLocationId === "tea-house" &&
+        world.rowanAutonomy.targetLocationId === "boarding-house"
+      ) {
+        break;
+      }
+
+      world = await setupEngine.runCommand(world, {
+        type: "advance_objective",
+        allowTimeSkip: true,
+      });
+    }
+
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      completed: true,
+    });
+    if (world.rowanAutonomy.actionId === "exit:tea-house") {
+      world = await setupEngine.runCommand(world, {
+        type: "advance_objective",
+        allowTimeSkip: true,
+      });
+    }
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:boarding-house",
+      mode: "moving",
+      targetLocationId: "boarding-house",
+    });
+    expect(world.rowanAutonomy.intent?.reason).toMatch(
+      /shift paid|take stock after the paid shift/i,
+    );
+
+    const engine = new SimulationEngine(new MockAIProvider());
+    const settleWorld = await engine.createGame(
+      "game-settle-standing-return-copy",
+    );
+    placePlayerAt(settleWorld, "market-square");
+    settleWorld.firstAfternoon = {
+      completedAt: "Day 1, 16:20",
+      completionAcknowledgedAt: "Day 1, 16:24",
+    };
+    settleWorld.player.objective = {
+      ...(settleWorld.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "settle",
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "settle-core",
+      source: "manual",
+      text: "Build standing at Morrow House so the room stays mine.",
+      trail: [],
+    };
+
+    const refreshedSettleWorld = await refreshPendingMoveAutonomy(
+      engine,
+      settleWorld,
+      "boarding-house",
+    );
+
+    expect(refreshedSettleWorld.rowanAutonomy).toMatchObject({
+      actionId: "move:boarding-house",
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "boarding-house",
+    });
+    expect(refreshedSettleWorld.rowanAutonomy.intent?.reason).toBe(
+      "Morrow House is where Rowan can keep tonight's room safe and turn house standing into a steadier foothold.",
+    );
+  });
+
   it("grounds post-rest Morrow Yard moves in live pump pressure instead of generic target copy", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame(
@@ -1413,8 +1568,8 @@ describe("SimulationEngine street slice", () => {
       },
       targetLocationId: "courtyard",
     });
-    expect(world.rowanAutonomy.intent?.reason).toMatch(
-      /Morrow Yard.*live pump pressure|house strain/i,
+    expect(world.rowanAutonomy.intent?.reason).toBe(
+      "Morrow Yard is where Rowan can check the live pump pressure before it becomes house strain.",
     );
     expect(
       [
@@ -1422,6 +1577,123 @@ describe("SimulationEngine street slice", () => {
         world.rowanAutonomy.intent?.reason,
       ].join(" "),
     ).not.toMatch(genericRouteCopy);
+  });
+
+  it("grounds post-rest Morrow Yard moves by current pump state", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const withWrenchWorld = await engine.createGame(
+      "game-post-rest-pump-wrench-copy",
+    );
+    placePlayerAt(withWrenchWorld, "freight-yard");
+    withWrenchWorld.firstAfternoon = {
+      completedAt: "Day 1, 16:20",
+      completionAcknowledgedAt: "Day 1, 16:24",
+      fieldNote: {
+        createdAt: "Day 1, 16:20",
+        evidence:
+          "Asked Ada at Kettle & Lamp at 11:20; she offered cup-and-counter shift for $14.",
+        learned:
+          "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+        memory:
+          "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
+        next: "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+      },
+    };
+    withWrenchWorld.player.energy = 52;
+    withWrenchWorld.player.lastRestAt = "Day 1, 17:10";
+    withWrenchWorld.player.reputation.morrow_house = 2;
+    withWrenchWorld.player.knownLocationIds = [
+      ...new Set([
+        ...withWrenchWorld.player.knownLocationIds,
+        "freight-yard",
+        "courtyard",
+      ]),
+    ];
+    withWrenchWorld.player.objective = {
+      ...(withWrenchWorld.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "rest",
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "rest-home",
+      source: "manual",
+      text: "Recover enough at Morrow House to move cleanly again.",
+      trail: [],
+    };
+    withWrenchWorld.player.inventory.push({
+      id: "item-wrench",
+      name: "Old wrench",
+      description: "A worn wrench that can handle the yard pump.",
+    });
+    const wrenchPump = withWrenchWorld.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    expect(wrenchPump).toBeDefined();
+    if (wrenchPump) {
+      wrenchPump.discovered = true;
+      wrenchPump.status = "active";
+      wrenchPump.urgency = 7;
+      wrenchPump.escalationLevel = 2;
+    }
+
+    const refreshedWithWrench = await refreshPendingMoveAutonomy(
+      engine,
+      withWrenchWorld,
+      "courtyard",
+    );
+    expect(refreshedWithWrench.rowanAutonomy.intent?.reason).toBe(
+      "Morrow Yard is where Rowan can put the wrench to the live pump before the house has to absorb the strain.",
+    );
+  });
+
+  it("grounds post-rest yard-window moves with the current clock", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("game-post-rest-yard-window-copy");
+    placePlayerAt(world, "courtyard");
+    world.clock.totalMinutes = 16 * 60 + 30;
+    world.clock.hour = 16;
+    world.clock.minute = 30;
+    world.clock.label = "Afternoon";
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "rest",
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "rest-home",
+      source: "manual",
+      text: "Recover enough at Morrow House to move cleanly again.",
+      trail: [],
+    };
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    expect(yardJob).toBeDefined();
+    if (yardJob) {
+      yardJob.discovered = true;
+      yardJob.completed = false;
+      yardJob.missed = false;
+    }
+
+    const refreshedWorld = await refreshPendingMoveAutonomy(
+      engine,
+      world,
+      "freight-yard",
+    );
+
+    expect(refreshedWorld.rowanAutonomy).toMatchObject({
+      actionId: "move:freight-yard",
+      autoContinue: true,
+      mode: "moving",
+      targetLocationId: "freight-yard",
+    });
+    expect(refreshedWorld.rowanAutonomy.intent?.reason).toBe(
+      "North Crane Yard is where Rowan can check the paid yard work window before 17:00 with his recovered energy.",
+    );
   });
 
   it("opens the first afternoon with room talk before the work lead", async () => {

@@ -334,6 +334,19 @@ const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where Rowan can let today's standing settle before he runs himself flat";
 const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where today's standing can turn into a steadier foothold";
+const HOME_RETURN_MOVE_REASON_COPY = [
+  "recover enough to move cleanly, keep tonight's room safe, and let Ada's field-note standing land before choosing the yard work, pump, or another current opening.",
+  "recover enough to move cleanly before taking another commitment.",
+  "take stock after the paid shift, keep tonight's room safe, and decide what the pump or next work window requires.",
+  "keep tonight's room safe and turn today's standing into a steadier foothold.",
+];
+const CURRENT_OPENING_MOVE_REASON_COPY = [
+  "put the wrench to the live pump before the house has to absorb the strain.",
+  "check the live pump pressure before it becomes house strain.",
+  "house problem needs eyes before Rowan commits the recovered hour elsewhere.",
+  "check the paid yard work window",
+  "with his recovered energy.",
+];
 const AUTONOMOUS_OPENING_AND_FOLLOWUP_COPY = [
   "I'm Rowan. New in Brackenport. I'm looking for a room, a little work, and a few friendly faces. Where should I start?",
   "I'm Rowan. I heard lunch might still need hands. Is that still true?",
@@ -1418,6 +1431,33 @@ describe("street reasoning authority", () => {
     expect(engineSource).toContain("objectiveRouteActionLocationReason");
     expect(engineSource).toContain("objectiveRouteHasNiaBlockLead");
     expect(engineSource).not.toContain("objectiveIsNiaBlockLead");
+  });
+
+  it("keeps home-return and current-opening move reason copy in scaffold data", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const moveReasonCopy of [
+      ...HOME_RETURN_MOVE_REASON_COPY,
+      ...CURRENT_OPENING_MOVE_REASON_COPY,
+    ]) {
+      expect(scaffoldSource).toContain(moveReasonCopy);
+      expect(engineSource).not.toContain(moveReasonCopy);
+    }
+
+    expect(scaffoldSource).toContain("homeReturnMoveReasons");
+    expect(scaffoldSource).toContain("currentOpeningMoveReasons");
+    expect(scaffoldSource).toContain("objectiveRouteHomeReturnReason");
+    expect(scaffoldSource).toContain("objectiveRouteCurrentOpeningMoveReason");
+    expect(engineSource).toContain("objectiveRouteHomeReturnReason");
+    expect(engineSource).toContain("objectiveRouteCurrentOpeningMoveReason");
+    expect(engineSource).not.toContain("function groundedHomeReturnReason");
   });
 
   it("keeps Nia block-lead detection behind scaffold authority", () => {

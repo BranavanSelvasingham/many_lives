@@ -53,6 +53,45 @@ interface ActionLocationReasonHint {
   reason: string;
 }
 
+interface HomeReturnMoveReasonInput {
+  rationale?: string;
+  targetLocationId?: string;
+  targetLocationName?: string;
+}
+
+interface HomeReturnMoveReasonHint {
+  priority?: number;
+  reason:
+    | string
+    | ((
+        input: HomeReturnMoveReasonInput & { homeName: string },
+        context: ScaffoldContext,
+      ) => string);
+  when: (
+    input: HomeReturnMoveReasonInput & { homeName: string },
+    context: ScaffoldContext,
+  ) => boolean;
+}
+
+interface CurrentOpeningMoveReasonInput {
+  targetLocationId?: string;
+  targetLocationName?: string;
+}
+
+interface CurrentOpeningMoveReasonHint {
+  priority?: number;
+  reason:
+    | string
+    | ((
+        input: CurrentOpeningMoveReasonInput,
+        context: ScaffoldContext,
+      ) => string);
+  when: (
+    input: CurrentOpeningMoveReasonInput,
+    context: ScaffoldContext,
+  ) => boolean;
+}
+
 interface SemanticMoveBonus {
   locationId: string;
   score: number;
@@ -755,10 +794,12 @@ interface ObjectiveRouteScaffold {
   conversationGroundingPolicies?: ConversationGroundingPolicyHint[];
   conversationTopicSuppressions?: ConversationTopicSuppression[];
   conversationThoughts?: ConversationThoughtHint[];
+  currentOpeningMoveReasons?: CurrentOpeningMoveReasonHint[];
   deterministicOpeningNpcIds?: string[];
   deterministicOpeningRouteKeys?: string[];
   firstAfternoonWorkWindowDialogue?: FirstAfternoonWorkWindowDialogueHint[];
   firstAfternoon?: FirstAfternoonScaffoldCopy;
+  homeReturnMoveReasons?: HomeReturnMoveReasonHint[];
   moveIntents?: MoveIntentHint[];
   notebookPlanFallback?: string;
   outcomeMoveRationales?: OutcomeMoveRationaleHint[];
@@ -3603,6 +3644,16 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
       },
     ],
+    homeReturnMoveReasons: [
+      {
+        priority: 20,
+        reason: ({ homeName }) =>
+          `${homeName} is where Rowan can take stock after the paid shift, keep tonight's room safe, and decide what the pump or next work window requires.`,
+        when: (_input, { objective, world }) =>
+          objective.routeKey === "first-afternoon" &&
+          Boolean(jobById(world, "job-tea-shift")?.completed),
+      },
+    ],
     playerThoughts: [
       {
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
@@ -3660,6 +3711,16 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => Boolean(world.firstAfternoon?.completedAt),
       },
     ],
+    homeReturnMoveReasons: [
+      {
+        priority: 10,
+        reason: ({ homeName }) =>
+          `${homeName} is where Rowan can keep tonight's room safe and turn today's standing into a steadier foothold.`,
+        when: (_input, { objective, world }) =>
+          objective.routeKey === "settle-core" &&
+          Boolean(world.firstAfternoon?.completedAt),
+      },
+    ],
   },
   {
     routeKeys: [],
@@ -3676,6 +3737,34 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     routeHeadline: "Fix the leaking pump in Morrow Yard before it spreads.",
     notebookPlanFallback:
       "Handle the Morrow Yard pump before the house has to absorb it without Rowan.",
+    currentOpeningMoveReasons: [
+      {
+        priority: 20,
+        reason: ({ targetLocationName }, { world }) => {
+          const hasWrench = hasItem(world, "item-wrench");
+          const pump = problemById(world, "problem-pump");
+          const target = targetLocationName ?? "Morrow Yard";
+
+          if (hasWrench) {
+            return `${target} is where Rowan can put the wrench to the live pump before the house has to absorb the strain.`;
+          }
+
+          if (pump?.discovered) {
+            return `${target} is where Rowan can check the live pump pressure before it becomes house strain.`;
+          }
+
+          return `${target} is where the house problem needs eyes before Rowan commits the recovered hour elsewhere.`;
+        },
+        when: ({ targetLocationId }, { world }) => {
+          const pump = problemById(world, "problem-pump");
+          return Boolean(
+            targetLocationId &&
+              pump?.locationId === targetLocationId &&
+              pump.status === "active",
+          );
+        },
+      },
+    ],
     problemRouteDialogue: [
       {
         choiceKey: "jo-tool-owned",
@@ -3810,6 +3899,33 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           "Ask Tomas whether paid freight work is still open before the loading window closes.",
       },
     ],
+    currentOpeningMoveReasons: [
+      {
+        priority: 10,
+        reason: ({ targetLocationName }, { world }) => {
+          const yardJob = jobById(world, "job-yard-shift");
+          const target = targetLocationName ?? "North Crane Yard";
+          const endMinutes = yardJob
+            ? totalMinutesForDayHour(world.clock.day, yardJob.endHour)
+            : 0;
+          const windowText =
+            endMinutes > world.clock.totalMinutes
+              ? ` before ${formatClockAt(world, endMinutes)}`
+              : "";
+          return `${target} is where Rowan can check the paid yard work window${windowText} with his recovered energy.`;
+        },
+        when: ({ targetLocationId }, { world }) => {
+          const yardJob = jobById(world, "job-yard-shift");
+          return Boolean(
+            targetLocationId &&
+              yardJob?.locationId === targetLocationId &&
+              yardJob.discovered &&
+              !yardJob.completed &&
+              !yardJob.missed,
+          );
+        },
+      },
+    ],
   },
   {
     routeKeys: ["rest-home"],
@@ -3820,6 +3936,16 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         locationId: ({ world }) => world.player.homeLocationId,
         rationale:
           "Morrow House is where Rowan can recover enough to move cleanly, keep tonight's room safe, and choose the next live opening with a clear head.",
+      },
+    ],
+    homeReturnMoveReasons: [
+      {
+        priority: 30,
+        reason: ({ homeName }, { world }) =>
+          world.firstAfternoon?.completedAt
+            ? `${homeName} is where Rowan can recover enough to move cleanly, keep tonight's room safe, and let Ada's field-note standing land before choosing the yard work, pump, or another current opening.`
+            : `${homeName} is where Rowan can recover enough to move cleanly before taking another commitment.`,
+        when: (input, context) => recoveryHomeReturnReasonApplies(input, context),
       },
     ],
   },
@@ -4692,6 +4818,83 @@ export function objectiveRouteActionLocationReason(input: {
   return undefined;
 }
 
+export function objectiveRouteHomeReturnReason(input: {
+  rationale?: string;
+  targetLocationId?: string;
+  targetLocationName?: string;
+  world: StreetGameState;
+}) {
+  const { targetLocationId, targetLocationName, world } = input;
+  if (!targetLocationId || targetLocationId !== world.player.homeLocationId) {
+    return undefined;
+  }
+
+  const context = {
+    objective: objectiveScaffoldDirectiveForWorld(world),
+    world,
+  };
+  const reasonInput = {
+    rationale: input.rationale,
+    targetLocationId,
+    targetLocationName,
+    homeName: targetLocationName ?? "Morrow House",
+  };
+  const candidates = OBJECTIVE_ROUTE_SCAFFOLDS.flatMap((scaffold) =>
+    scaffold.homeReturnMoveReasons ?? [],
+  ).sort((left, right) => {
+    return (right.priority ?? 0) - (left.priority ?? 0);
+  });
+
+  for (const hint of candidates) {
+    if (!hint.when(reasonInput, context)) {
+      continue;
+    }
+
+    return typeof hint.reason === "function"
+      ? hint.reason(reasonInput, context)
+      : hint.reason;
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteCurrentOpeningMoveReason(input: {
+  targetLocationId?: string;
+  targetLocationName?: string;
+  world: StreetGameState;
+}) {
+  const { targetLocationId, targetLocationName, world } = input;
+  if (!targetLocationId) {
+    return undefined;
+  }
+
+  const context = {
+    objective: objectiveScaffoldDirectiveForWorld(world),
+    world,
+  };
+  const reasonInput = {
+    targetLocationId,
+    targetLocationName,
+  };
+  const candidates = OBJECTIVE_ROUTE_SCAFFOLDS.flatMap((scaffold) =>
+    scaffold.currentOpeningMoveReasons ?? [],
+  ).sort((left, right) => {
+    return (right.priority ?? 0) - (left.priority ?? 0);
+  });
+
+  for (const hint of candidates) {
+    if (!hint.when(reasonInput, context)) {
+      continue;
+    }
+
+    return typeof hint.reason === "function"
+      ? hint.reason(reasonInput, context)
+      : hint.reason;
+  }
+
+  return undefined;
+}
+
 export function objectiveRouteActionRationale(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
@@ -5451,6 +5654,20 @@ function normalizePlayerFacingRationale(text: string) {
   return text.trim().replace(/[.?!]+$/g, "").toLowerCase();
 }
 
+function recoveryHomeReturnReasonApplies(
+  input: HomeReturnMoveReasonInput,
+  context: ScaffoldContext,
+) {
+  const objectiveText = context.objective.text.toLowerCase();
+  const rationale = input.rationale ?? "";
+  return (
+    context.objective.routeKey === "rest-home" ||
+    context.objective.focus === "rest" ||
+    /\b(rest|recover|recovery|reset|tired|energy)\b/.test(objectiveText) ||
+    /\b(rest|recover|recovery|reset|tired|energy)\b/i.test(rationale)
+  );
+}
+
 function objectiveScaffoldDirectiveForWorld(
   world: StreetGameState,
 ): ObjectiveScaffoldDirective {
@@ -5677,6 +5894,14 @@ function jobWindowClosed(world: StreetGameState, job: JobState | undefined) {
 
 function totalMinutesForDayHour(day: number, hour: number) {
   return (day - 1) * 24 * 60 + hour * 60;
+}
+
+function formatClockAt(world: StreetGameState, totalMinutes: number) {
+  const dayStartMinutes = (world.clock.day - 1) * 24 * 60;
+  const minuteOfDay = Math.max(0, totalMinutes - dayStartMinutes) % (24 * 60);
+  const hour = Math.floor(minuteOfDay / 60);
+  const minute = minuteOfDay % 60;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function countPlayerConversationsWithNpc(

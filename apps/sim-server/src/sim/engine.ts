@@ -34,6 +34,7 @@ import {
   objectiveRouteConversationGroundingPolicy,
   objectiveRouteConversationHasVisibleEvidence,
   objectiveRouteConversationResolutionPointsToPolicy,
+  objectiveRouteCurrentOpeningMoveReason,
   objectiveRouteFirstAfternoonCompareChoiceCopy,
   objectiveRouteFirstAfternoonCompletionCopy,
   objectiveRouteFirstAfternoonCompletionFieldNote,
@@ -44,6 +45,7 @@ import {
   objectiveRouteConversationThought,
   objectiveRouteDeterministicOpening,
   objectiveRouteHasNiaBlockLead,
+  objectiveRouteHomeReturnReason,
   objectiveRouteMoveIntent,
   objectiveRoutePlayerFacingAutonomyRationale,
   objectiveRouteMoveRationaleForOutcome,
@@ -3911,6 +3913,16 @@ function buildPendingMovementReason({
   ).replace(/[.!?]+$/g, "");
   const target = targetLocationName ?? "the next place";
   const normalizedTarget = targetLocationName?.toLowerCase();
+  const homeReturnReason = objectiveRouteHomeReturnReason({
+    rationale,
+    targetLocationId: loopStep.targetLocationId,
+    targetLocationName,
+    world,
+  });
+  if (homeReturnReason) {
+    return homeReturnReason;
+  }
+
   const routeReason = objectiveRouteMoveReasonForLocation(
     world,
     loopStep.targetLocationId,
@@ -3919,16 +3931,6 @@ function buildPendingMovementReason({
   );
   if (routeReason) {
     return routeReason;
-  }
-
-  const homeReturnReason = groundedHomeReturnReason({
-    rationale,
-    targetLocationId: loopStep.targetLocationId,
-    targetLocationName,
-    world,
-  });
-  if (homeReturnReason) {
-    return homeReturnReason;
   }
 
   if (
@@ -3962,54 +3964,6 @@ function buildPendingMovementReason({
   });
 }
 
-function groundedHomeReturnReason({
-  rationale,
-  targetLocationId,
-  targetLocationName,
-  world,
-}: {
-  rationale?: string;
-  targetLocationId?: string;
-  targetLocationName?: string;
-  world: StreetGameState;
-}) {
-  if (!targetLocationId || targetLocationId !== world.player.homeLocationId) {
-    return undefined;
-  }
-
-  const homeName = targetLocationName ?? "Morrow House";
-  const objective = world.player.objective;
-  const objectiveText = objective?.text.toLowerCase() ?? "";
-  const routeKey = objective?.routeKey;
-  const needsRecovery =
-    routeKey === "rest-home" ||
-    objective?.focus === "rest" ||
-    /\b(rest|recover|recovery|reset|tired|energy)\b/.test(objectiveText) ||
-    /\b(rest|recover|recovery|reset|tired|energy)\b/i.test(rationale ?? "");
-
-  if (needsRecovery) {
-    return world.firstAfternoon?.completedAt
-      ? `${homeName} is where Rowan can recover enough to move cleanly, keep tonight's room safe, and let Ada's field-note standing land before choosing the yard work, pump, or another current opening.`
-      : `${homeName} is where Rowan can recover enough to move cleanly before taking another commitment.`;
-  }
-
-  if (
-    routeKey === "first-afternoon" &&
-    Boolean(jobById(world, "job-tea-shift")?.completed)
-  ) {
-    return `${homeName} is where Rowan can take stock after the paid shift, keep tonight's room safe, and decide what the pump or next work window requires.`;
-  }
-
-  if (
-    routeKey === "settle-core" &&
-    Boolean(world.firstAfternoon?.completedAt)
-  ) {
-    return `${homeName} is where Rowan can keep tonight's room safe and turn today's standing into a steadier foothold.`;
-  }
-
-  return undefined;
-}
-
 function groundedCurrentOpeningMoveReason({
   targetLocationId,
   targetLocationName,
@@ -4019,40 +3973,13 @@ function groundedCurrentOpeningMoveReason({
   targetLocationName?: string;
   world: StreetGameState;
 }) {
-  if (targetLocationId) {
-    const pump = problemById(world, "problem-pump");
-    if (pump?.locationId === targetLocationId && pump.status === "active") {
-      const hasWrench = world.player.inventory.some(
-        (item) => item.id === "item-wrench",
-      );
-      const target = targetLocationName ?? "Morrow Yard";
-
-      if (hasWrench) {
-        return `${target} is where Rowan can put the wrench to the live pump before the house has to absorb the strain.`;
-      }
-
-      if (pump.discovered) {
-        return `${target} is where Rowan can check the live pump pressure before it becomes house strain.`;
-      }
-
-      return `${target} is where the house problem needs eyes before Rowan commits the recovered hour elsewhere.`;
-    }
-
-    const yardJob = jobById(world, "job-yard-shift");
-    if (
-      yardJob?.locationId === targetLocationId &&
-      yardJob.discovered &&
-      !yardJob.completed &&
-      !yardJob.missed
-    ) {
-      const target = targetLocationName ?? "North Crane Yard";
-      const endMinutes = totalMinutesForDayHour(world.clock.day, yardJob.endHour);
-      const windowText =
-        endMinutes > world.clock.totalMinutes
-          ? ` before ${formatClockAt(world, endMinutes)}`
-          : "";
-      return `${target} is where Rowan can check the paid yard work window${windowText} with his recovered energy.`;
-    }
+  const scaffoldReason = objectiveRouteCurrentOpeningMoveReason({
+    targetLocationId,
+    targetLocationName,
+    world,
+  });
+  if (scaffoldReason) {
+    return scaffoldReason;
   }
 
   const target = targetLocationName ?? "the next check";
