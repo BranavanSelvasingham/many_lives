@@ -4,6 +4,11 @@ import type {
   RowanAutonomyStepKind,
   StreetGameState,
 } from "../street-sim/types.js";
+import {
+  objectiveRouteNotebookBeliefMatchesObjective,
+  objectiveRouteNotebookBeliefScoreAdjustment,
+  objectiveRouteNotebookBeliefs,
+} from "./objectiveScaffolds.js";
 import { rowanNotebookUsesRecoveryRestNeed } from "./rowanCognitionNarratives.js";
 
 export type RowanNeedKey =
@@ -163,7 +168,6 @@ export function buildRowanNeeds(world: StreetGameState): RowanNeed[] {
 }
 
 export function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
-  const beliefs: RowanBelief[] = [];
   const maraKnown = world.player.knownNpcIds.includes("npc-mara");
   const adaKnown = world.player.knownNpcIds.includes("npc-ada");
   const joKnown = world.player.knownNpcIds.includes("npc-jo");
@@ -179,114 +183,51 @@ export function buildRowanBeliefs(world: StreetGameState): RowanBelief[] {
   );
   const objectiveText = world.player.objective?.text.toLowerCase() ?? "";
   const firstAfternoonSettled = Boolean(world.firstAfternoon?.completedAt);
+  const objectiveSuggestsNiaLead =
+    /\bnia\b|\bblock\b|\bjam\b|\bcart\b|\bsquare\b/.test(objectiveText);
 
-  if (firstAfternoonSettled) {
-    beliefs.push({
-      id: "belief-first-afternoon-field-note",
-      topic: "help",
-      text: "Ada has now seen Rowan ask directly, work through lunch, and record what changed; the opening room question is evidence, not the current plan.",
-      confidence: world.firstAfternoon?.fieldNote ? "confirmed" : "promising",
-      source: "First afternoon field note",
-      locationId: "tea-house",
-      npcId: "npc-ada",
-    });
-  }
-
-  if (maraKnown) {
-    beliefs.push({
-      id: "belief-mara-room",
-      topic: "shelter",
-      text: "Mara is the person most likely to tell Rowan what keeps a room at Morrow House from turning temporary again.",
-      confidence: hasAnyTopic(maraTopics, ["home", "stay"])
-        ? "confirmed"
-        : "promising",
-      source: "Morrow House",
-      npcId: "npc-mara",
-      locationId: "boarding-house",
-    });
-  }
-
-  if (teaJob?.discovered || adaKnown) {
-    beliefs.push({
-      id: "belief-ada-work",
-      topic: "work",
-      text: "Ada may have paid work at Kettle & Lamp if Rowan shows up before the lunch crowd fills the cafe.",
-      confidence: hasAnyTopic(adaTopics, ["work"])
+  return objectiveRouteNotebookBeliefs({
+    firstAfternoonFieldNoteRecorded: Boolean(world.firstAfternoon?.fieldNote),
+    firstAfternoonSettled,
+    knownNpcs: {
+      ada: adaKnown,
+      jo: joKnown,
+      mara: maraKnown,
+      nia: niaKnown,
+      tomas: tomasKnown,
+    },
+    leads: {
+      niaCurrentObjective: objectiveSuggestsNiaLead,
+      pumpDiscovered: Boolean(pumpProblem?.discovered),
+      teaJobDiscovered: Boolean(teaJob?.discovered),
+      yardJobDiscovered: Boolean(yardJob?.discovered),
+    },
+    confidence: {
+      adaWork: hasAnyTopic(adaTopics, ["work"])
         ? "confirmed"
         : teaJob?.discovered
           ? "promising"
           : "possible",
-      source: "Kettle & Lamp",
-      npcId: "npc-ada",
-      locationId: "tea-house",
-    });
-  }
-
-  if (yardJob?.discovered || tomasKnown) {
-    beliefs.push({
-      id: "belief-tomas-work",
-      topic: "work",
-      text: "Tomas may have yard work when the freight window is open and Rowan sounds reliable enough to bother with.",
-      confidence: hasAnyTopic(tomasTopics, ["work", "yard"])
+      firstAfternoonFieldNote: world.firstAfternoon?.fieldNote
+        ? "confirmed"
+        : "promising",
+      maraRoom: hasAnyTopic(maraTopics, ["home", "stay"])
+        ? "confirmed"
+        : "promising",
+      niaCurrentLead: niaKnown ? "promising" : "possible",
+      pumpStanding:
+        pumpProblem?.status === "solved" ? "confirmed" : "promising",
+      tomasWork: hasAnyTopic(tomasTopics, ["work", "yard"])
         ? "confirmed"
         : yardJob?.discovered
           ? "promising"
           : "possible",
-      source: "North Crane Yard",
-      npcId: "npc-tomas",
-      locationId: "freight-yard",
-    });
-  }
-
-  if (joKnown) {
-    beliefs.push({
-      id: "belief-jo-tools",
-      topic: "tool",
-      text: "Jo is the clearest place to turn coins into the right tool when Rowan finally knows what he needs.",
-      confidence: "promising",
-      source: "Mercer Repairs",
-      npcId: "npc-jo",
-      locationId: "repair-stall",
-    });
-  }
-
-  if (pumpProblem?.discovered) {
-    beliefs.push({
-      id: "belief-pump-standing",
-      topic: "help",
-      text:
-        firstAfternoonSettled && pumpProblem.status === "active"
-          ? "The Morrow Yard pump is now a live house problem, not background noise Rowan can keep treating as later."
-          : "Fixing the pump in Morrow Yard could turn house trouble into proof that Rowan notices what needs doing.",
-      confidence: pumpProblem.status === "solved" ? "confirmed" : "promising",
-      source: "Morrow Yard",
-      locationId: "courtyard",
-    });
-  }
-
-  if (/\bnia\b|\bblock\b|\bjam\b|\bcart\b|\bsquare\b/.test(objectiveText)) {
-    beliefs.push({
-      id: "belief-nia-current-lead",
-      topic: "help",
-      text: "Jo's clue points Rowan toward Nia before the block jam turns into someone else's problem.",
-      confidence: niaKnown ? "promising" : "possible",
-      source: joKnown ? "Jo at Mercer Repairs" : "Current lead",
-      npcId: "npc-nia",
-    });
-  }
-
-  if (niaKnown) {
-    beliefs.push({
-      id: "belief-nia-people",
-      topic: "belonging",
-      text: "Nia seems like the kind of person who can explain who matters before Rowan wastes a whole afternoon guessing.",
-      confidence: "possible",
-      source: "South Quay",
-      npcId: "npc-nia",
-    });
-  }
-
-  return beliefs;
+    },
+    pumpStandingVariant:
+      firstAfternoonSettled && pumpProblem?.status === "active"
+        ? "active-house-problem"
+        : "background-proof",
+  });
 }
 
 export function selectNotebookBelief(
@@ -411,20 +352,16 @@ function notebookBeliefScore(
     primaryNeedTopic?: RowanBelief["topic"];
   },
 ) {
-  const direct =
+  const direct = Boolean(
     (context.nextMove?.npcId && belief.npcId === context.nextMove.npcId) ||
-    (context.nextMove?.targetLocationId &&
-      belief.locationId === context.nextMove.targetLocationId);
+      (context.nextMove?.targetLocationId &&
+        belief.locationId === context.nextMove.targetLocationId),
+  );
   const objectiveMatch = objectiveMatchesBelief(world, belief);
   const primaryNeedMatch =
     context.primaryNeedTopic !== undefined &&
     belief.topic === context.primaryNeedTopic;
   const firstAfternoonSettled = Boolean(world.firstAfternoon?.completedAt);
-  const staleOpeningShelter =
-    firstAfternoonSettled &&
-    belief.topic === "shelter" &&
-    world.player.objective?.routeKey !== "first-afternoon" &&
-    world.player.objective?.focus !== "settle";
 
   let score = context.confidenceScore[belief.confidence] * 10;
   if (direct) {
@@ -436,17 +373,14 @@ function notebookBeliefScore(
   if (primaryNeedMatch) {
     score += 40;
   }
-  if (staleOpeningShelter) {
-    score -= 220;
-  }
-  if (
-    firstAfternoonSettled &&
-    belief.topic === "shelter" &&
-    !direct &&
-    !objectiveMatch
-  ) {
-    score -= 90;
-  }
+  score += objectiveRouteNotebookBeliefScoreAdjustment({
+    beliefTopic: belief.topic,
+    direct,
+    firstAfternoonSettled,
+    objectiveFocus: world.player.objective?.focus,
+    objectiveMatch,
+    objectiveRouteKey: world.player.objective?.routeKey,
+  });
 
   return score;
 }
@@ -478,48 +412,11 @@ function objectiveMatchesBelief(world: StreetGameState, belief: RowanBelief) {
     return true;
   }
 
-  switch (belief.topic) {
-    case "help":
-      if (belief.id === "belief-first-afternoon-field-note") {
-        return /\bfirst afternoon\b|\bfield note\b|\brest\b|\brecover\b|\btake stock\b/.test(
-          objectiveText,
-        );
-      }
-      if (belief.id === "belief-pump-standing") {
-        return /\bpump\b|\bleak\b|\bfix\b/.test(objectiveText);
-      }
-      return /\bblock\b|\bjam\b|\bcart\b|\bsquare\b|\bpump\b|\bfix\b|\bhelp\b/.test(
-        objectiveText,
-      );
-    case "work":
-      if (
-        /\btomas\b|\byard\b|\bfreight\b|\bnorth crane\b/.test(objectiveText)
-      ) {
-        return belief.id === "belief-tomas-work";
-      }
-      if (
-        /\bada\b|\bkettle\b|\bcafe\b|\btea\b|\bcup-and-counter\b/.test(
-          objectiveText,
-        )
-      ) {
-        return belief.id === "belief-ada-work";
-      }
-      return /\bwork\b|\bjob\b|\bshift\b|\bpay\b|\bincome\b/.test(
-        objectiveText,
-      );
-    case "shelter":
-      return /\broom\b|\bbed\b|\bstay\b|\bhouse\b|\bshelter\b/.test(
-        objectiveText,
-      );
-    case "tool":
-      return /\bwrench\b|\btool\b|\brepair\b/.test(objectiveText);
-    case "belonging":
-      return /\bperson\b|\bpeople\b|\bfriend\b|\btrust\b|\bknown\b/.test(
-        objectiveText,
-      );
-    default:
-      return false;
-  }
+  return objectiveRouteNotebookBeliefMatchesObjective({
+    beliefId: belief.id,
+    beliefTopic: belief.topic,
+    objectiveText,
+  });
 }
 
 function topicForNeed(

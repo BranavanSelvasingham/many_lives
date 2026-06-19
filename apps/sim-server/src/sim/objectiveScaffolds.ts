@@ -743,6 +743,55 @@ const ADA_LEAD_ROUTE_KEYS = [
 
 type ObjectiveRouteNotebookRecoveryPlanKind = "nia-block" | "post-afternoon";
 
+export type ObjectiveRouteNotebookBeliefTopic =
+  | "shelter"
+  | "work"
+  | "belonging"
+  | "tool"
+  | "help";
+
+export type ObjectiveRouteNotebookBeliefConfidence =
+  | "possible"
+  | "promising"
+  | "confirmed";
+
+export interface ObjectiveRouteNotebookBelief {
+  id: string;
+  topic: ObjectiveRouteNotebookBeliefTopic;
+  text: string;
+  confidence: ObjectiveRouteNotebookBeliefConfidence;
+  source: string;
+  npcId?: string;
+  locationId?: string;
+}
+
+export interface ObjectiveRouteNotebookBeliefCatalogInput {
+  firstAfternoonFieldNoteRecorded: boolean;
+  firstAfternoonSettled: boolean;
+  knownNpcs: {
+    ada: boolean;
+    jo: boolean;
+    mara: boolean;
+    nia: boolean;
+    tomas: boolean;
+  };
+  leads: {
+    niaCurrentObjective: boolean;
+    pumpDiscovered: boolean;
+    teaJobDiscovered: boolean;
+    yardJobDiscovered: boolean;
+  };
+  confidence: {
+    adaWork: ObjectiveRouteNotebookBeliefConfidence;
+    firstAfternoonFieldNote: ObjectiveRouteNotebookBeliefConfidence;
+    maraRoom: ObjectiveRouteNotebookBeliefConfidence;
+    niaCurrentLead: ObjectiveRouteNotebookBeliefConfidence;
+    pumpStanding: ObjectiveRouteNotebookBeliefConfidence;
+    tomasWork: ObjectiveRouteNotebookBeliefConfidence;
+  };
+  pumpStandingVariant: "active-house-problem" | "background-proof";
+}
+
 interface ObjectiveRouteNotebookBeliefNarrative {
   clue?: string;
   clueWithTool?: string;
@@ -750,6 +799,162 @@ interface ObjectiveRouteNotebookBeliefNarrative {
   confidenceWithTool?: string;
   uncertainty?: string;
 }
+
+interface ObjectiveRouteNotebookBeliefTemplate {
+  confidence: (
+    input: ObjectiveRouteNotebookBeliefCatalogInput,
+  ) => ObjectiveRouteNotebookBeliefConfidence;
+  id: string;
+  locationId?: string;
+  npcId?: string;
+  source:
+    | string
+    | ((input: ObjectiveRouteNotebookBeliefCatalogInput) => string);
+  text:
+    | string
+    | ((input: ObjectiveRouteNotebookBeliefCatalogInput) => string);
+  topic: ObjectiveRouteNotebookBeliefTopic;
+  when: (input: ObjectiveRouteNotebookBeliefCatalogInput) => boolean;
+}
+
+interface ObjectiveRouteNotebookBeliefRankingPolicy {
+  id: string;
+  scoreAdjustment: number;
+  when: (input: ObjectiveRouteNotebookBeliefScoreAdjustmentInput) => boolean;
+}
+
+export interface ObjectiveRouteNotebookBeliefObjectiveMatchInput {
+  beliefId: string;
+  beliefTopic: ObjectiveRouteNotebookBeliefTopic;
+  objectiveText: string;
+}
+
+export interface ObjectiveRouteNotebookBeliefScoreAdjustmentInput {
+  beliefTopic: ObjectiveRouteNotebookBeliefTopic;
+  direct: boolean;
+  firstAfternoonSettled: boolean;
+  objectiveFocus?: ObjectiveFocus;
+  objectiveMatch: boolean;
+  objectiveRouteKey?: string;
+}
+
+const OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_TEMPLATES: ObjectiveRouteNotebookBeliefTemplate[] =
+  [
+    {
+      id: "belief-first-afternoon-field-note",
+      topic: "help",
+      text: "Ada has now seen Rowan ask directly, work through lunch, and record what changed; the opening room question is evidence, not the current plan.",
+      confidence: ({ confidence }) => confidence.firstAfternoonFieldNote,
+      source: "First afternoon field note",
+      locationId: "tea-house",
+      npcId: "npc-ada",
+      when: ({ firstAfternoonSettled }) => firstAfternoonSettled,
+    },
+    {
+      id: "belief-mara-room",
+      topic: "shelter",
+      text: "Mara is the person most likely to tell Rowan what keeps a room at Morrow House from turning temporary again.",
+      confidence: ({ confidence }) => confidence.maraRoom,
+      source: "Morrow House",
+      npcId: "npc-mara",
+      locationId: "boarding-house",
+      when: ({ knownNpcs }) => knownNpcs.mara,
+    },
+    {
+      id: "belief-ada-work",
+      topic: "work",
+      text: "Ada may have paid work at Kettle & Lamp if Rowan shows up before the lunch crowd fills the cafe.",
+      confidence: ({ confidence }) => confidence.adaWork,
+      source: "Kettle & Lamp",
+      npcId: "npc-ada",
+      locationId: "tea-house",
+      when: ({ knownNpcs, leads }) => leads.teaJobDiscovered || knownNpcs.ada,
+    },
+    {
+      id: "belief-tomas-work",
+      topic: "work",
+      text: "Tomas may have yard work when the freight window is open and Rowan sounds reliable enough to bother with.",
+      confidence: ({ confidence }) => confidence.tomasWork,
+      source: "North Crane Yard",
+      npcId: "npc-tomas",
+      locationId: "freight-yard",
+      when: ({ knownNpcs, leads }) =>
+        leads.yardJobDiscovered || knownNpcs.tomas,
+    },
+    {
+      id: "belief-jo-tools",
+      topic: "tool",
+      text: "Jo is the clearest place to turn coins into the right tool when Rowan finally knows what he needs.",
+      confidence: () => "promising",
+      source: "Mercer Repairs",
+      npcId: "npc-jo",
+      locationId: "repair-stall",
+      when: ({ knownNpcs }) => knownNpcs.jo,
+    },
+    {
+      id: "belief-pump-standing",
+      topic: "help",
+      text: ({ pumpStandingVariant }) =>
+        pumpStandingVariant === "active-house-problem"
+          ? "The Morrow Yard pump is now a live house problem, not background noise Rowan can keep treating as later."
+          : "Fixing the pump in Morrow Yard could turn house trouble into proof that Rowan notices what needs doing.",
+      confidence: ({ confidence }) => confidence.pumpStanding,
+      source: "Morrow Yard",
+      locationId: "courtyard",
+      when: ({ leads }) => leads.pumpDiscovered,
+    },
+    {
+      id: "belief-nia-current-lead",
+      topic: "help",
+      text: "Jo's clue points Rowan toward Nia before the block jam turns into someone else's problem.",
+      confidence: ({ confidence }) => confidence.niaCurrentLead,
+      source: ({ knownNpcs }) =>
+        knownNpcs.jo ? "Jo at Mercer Repairs" : "Current lead",
+      npcId: "npc-nia",
+      when: ({ leads }) => leads.niaCurrentObjective,
+    },
+    {
+      id: "belief-nia-people",
+      topic: "belonging",
+      text: "Nia seems like the kind of person who can explain who matters before Rowan wastes a whole afternoon guessing.",
+      confidence: () => "possible",
+      source: "South Quay",
+      npcId: "npc-nia",
+      when: ({ knownNpcs }) => knownNpcs.nia,
+    },
+  ];
+
+const OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_RANKING_POLICIES: ObjectiveRouteNotebookBeliefRankingPolicy[] =
+  [
+    {
+      id: "stale-opening-shelter-after-first-afternoon",
+      scoreAdjustment: -220,
+      when: ({
+        beliefTopic,
+        firstAfternoonSettled,
+        objectiveFocus,
+        objectiveRouteKey,
+      }) =>
+        firstAfternoonSettled &&
+        beliefTopic === "shelter" &&
+        objectiveRouteKey !== "first-afternoon" &&
+        objectiveFocus !== "settle",
+    },
+    {
+      id: "settled-shelter-without-live-anchor",
+      scoreAdjustment: -90,
+      when: ({
+        beliefTopic,
+        direct,
+        firstAfternoonSettled,
+        objectiveMatch,
+      }) =>
+        firstAfternoonSettled &&
+        beliefTopic === "shelter" &&
+        !direct &&
+        !objectiveMatch,
+    },
+  ];
 
 const OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_NARRATIVES: Record<
   string,
@@ -3336,6 +3541,86 @@ export function objectiveRouteFirstAfternoonLeadFieldNote(
   return firstAfternoonScaffoldCopy().leadFieldNote(input);
 }
 
+export function objectiveRouteNotebookBeliefs(
+  input: ObjectiveRouteNotebookBeliefCatalogInput,
+): ObjectiveRouteNotebookBelief[] {
+  return OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_TEMPLATES.filter((template) =>
+    template.when(input),
+  ).map((template) => ({
+    id: template.id,
+    topic: template.topic,
+    text: resolveObjectiveRouteNotebookBeliefText(template.text, input),
+    confidence: template.confidence(input),
+    source: resolveObjectiveRouteNotebookBeliefText(template.source, input),
+    npcId: template.npcId,
+    locationId: template.locationId,
+  }));
+}
+
+export function objectiveRouteNotebookBeliefMatchesObjective(
+  input: ObjectiveRouteNotebookBeliefObjectiveMatchInput,
+) {
+  const objectiveText = input.objectiveText.toLowerCase();
+  if (!objectiveText) {
+    return false;
+  }
+
+  switch (input.beliefTopic) {
+    case "help":
+      if (input.beliefId === "belief-first-afternoon-field-note") {
+        return /\bfirst afternoon\b|\bfield note\b|\brest\b|\brecover\b|\btake stock\b/.test(
+          objectiveText,
+        );
+      }
+      if (input.beliefId === "belief-pump-standing") {
+        return /\bpump\b|\bleak\b|\bfix\b/.test(objectiveText);
+      }
+      return /\bblock\b|\bjam\b|\bcart\b|\bsquare\b|\bpump\b|\bfix\b|\bhelp\b/.test(
+        objectiveText,
+      );
+    case "work":
+      if (
+        /\btomas\b|\byard\b|\bfreight\b|\bnorth crane\b/.test(objectiveText)
+      ) {
+        return input.beliefId === "belief-tomas-work";
+      }
+      if (
+        /\bada\b|\bkettle\b|\bcafe\b|\btea\b|\bcup-and-counter\b/.test(
+          objectiveText,
+        )
+      ) {
+        return input.beliefId === "belief-ada-work";
+      }
+      return /\bwork\b|\bjob\b|\bshift\b|\bpay\b|\bincome\b/.test(
+        objectiveText,
+      );
+    case "shelter":
+      return /\broom\b|\bbed\b|\bstay\b|\bhouse\b|\bshelter\b/.test(
+        objectiveText,
+      );
+    case "tool":
+      return /\bwrench\b|\btool\b|\brepair\b/.test(objectiveText);
+    case "belonging":
+      return /\bperson\b|\bpeople\b|\bfriend\b|\btrust\b|\bknown\b/.test(
+        objectiveText,
+      );
+    default:
+      return false;
+  }
+}
+
+export function objectiveRouteNotebookBeliefScoreAdjustment(
+  input: ObjectiveRouteNotebookBeliefScoreAdjustmentInput,
+) {
+  return OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_RANKING_POLICIES.reduce(
+    (scoreAdjustment, policy) =>
+      policy.when(input)
+        ? scoreAdjustment + policy.scoreAdjustment
+        : scoreAdjustment,
+    0,
+  );
+}
+
 export function objectiveRouteNotebookBeliefClue(input: {
   beliefId?: string;
   hasWrench?: boolean;
@@ -3759,6 +4044,15 @@ function resolveMaraAdaLeadRouteValue(
   state: MaraAdaLeadRouteState,
 ) {
   return typeof value === "function" ? value(state) : value;
+}
+
+function resolveObjectiveRouteNotebookBeliefText(
+  value:
+    | string
+    | ((input: ObjectiveRouteNotebookBeliefCatalogInput) => string),
+  input: ObjectiveRouteNotebookBeliefCatalogInput,
+) {
+  return typeof value === "function" ? value(input) : value;
 }
 
 function resolveFirstAfternoonRouteText(

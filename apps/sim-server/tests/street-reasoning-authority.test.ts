@@ -1266,13 +1266,17 @@ describe("street reasoning authority", () => {
     expect(cognitionSource).not.toContain("function objectiveIsNiaBlockLead");
   });
 
-  it("keeps Rowan cognition need and belief model data outside cognition control flow", () => {
+  it("keeps Rowan cognition needs in the model and notebook belief catalog in scaffold data", () => {
     const cognitionSource = readFileSync(
       new URL("../src/sim/rowanCognition.ts", import.meta.url),
       "utf8",
     );
     const modelSource = readFileSync(
       new URL("../src/sim/rowanCognitionModel.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
       "utf8",
     );
 
@@ -1282,6 +1286,12 @@ describe("street reasoning authority", () => {
       "Stop feeling like a stranger",
       "Learn how South Quay fits together",
       "Keep enough energy to follow through",
+    ]) {
+      expect(modelSource).toContain(modelCopyOrMarker);
+      expect(cognitionSource).not.toContain(modelCopyOrMarker);
+    }
+
+    for (const scaffoldCopyOrMarker of [
       "belief-first-afternoon-field-note",
       "belief-mara-room",
       "belief-ada-work",
@@ -1290,23 +1300,47 @@ describe("street reasoning authority", () => {
       "belief-pump-standing",
       "belief-nia-current-lead",
       "belief-nia-people",
+      "Ada has now seen Rowan ask directly, work through lunch, and record what changed; the opening room question is evidence, not the current plan.",
+      "First afternoon field note",
       "Mara is the person most likely to tell Rowan what keeps a room at Morrow House from turning temporary again.",
       "Ada may have paid work at Kettle & Lamp if Rowan shows up before the lunch crowd fills the cafe.",
       "Tomas may have yard work when the freight window is open and Rowan sounds reliable enough to bother with.",
       "Jo is the clearest place to turn coins into the right tool when Rowan finally knows what he needs.",
+      "The Morrow Yard pump is now a live house problem, not background noise Rowan can keep treating as later.",
+      "Fixing the pump in Morrow Yard could turn house trouble into proof that Rowan notices what needs doing.",
       "Jo's clue points Rowan toward Nia before the block jam turns into someone else's problem.",
+      "Jo at Mercer Repairs",
       "Nia seems like the kind of person who can explain who matters before Rowan wastes a whole afternoon guessing.",
     ]) {
-      expect(modelSource).toContain(modelCopyOrMarker);
-      expect(cognitionSource).not.toContain(modelCopyOrMarker);
+      expect(scaffoldSource).toContain(scaffoldCopyOrMarker);
+      expect(modelSource).not.toContain(scaffoldCopyOrMarker);
+      expect(cognitionSource).not.toContain(scaffoldCopyOrMarker);
+    }
+
+    for (const scaffoldPolicyMarker of [
+      "OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_TEMPLATES",
+      "OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_RANKING_POLICIES",
+      "stale-opening-shelter-after-first-afternoon",
+      "settled-shelter-without-live-anchor",
+    ]) {
+      expect(scaffoldSource).toContain(scaffoldPolicyMarker);
+      expect(modelSource).not.toContain(scaffoldPolicyMarker);
     }
 
     expect(cognitionSource).toContain("buildRowanNeeds");
     expect(cognitionSource).toContain("selectNotebookBelief");
+    expect(modelSource).toContain("objectiveRouteNotebookBeliefs");
+    expect(modelSource).toContain("objectiveRouteNotebookBeliefScoreAdjustment");
+    expect(modelSource).toContain(
+      "objectiveRouteNotebookBeliefMatchesObjective",
+    );
     expect(cognitionSource).not.toContain("function buildRowanNeeds");
     expect(cognitionSource).not.toContain("function buildRowanBeliefs");
     expect(cognitionSource).not.toContain("function notebookBeliefScore");
     expect(cognitionSource).not.toContain("function objectiveMatchesBelief");
+    expect(modelSource).not.toContain("staleOpeningShelter");
+    expect(modelSource).not.toContain("score -= 220");
+    expect(modelSource).not.toContain("score -= 90");
   });
 
   it("keeps poisoned first-afternoon Mara/Ada trail hints behind a current legal action", async () => {
