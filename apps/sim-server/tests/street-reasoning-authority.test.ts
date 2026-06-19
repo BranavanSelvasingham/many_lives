@@ -143,6 +143,8 @@ const WEB_FIRST_AFTERNOON_FALLBACK_COPY = [
   "Mara's lead is verified: Ada at Kettle & Lamp has real lunch work on the table.",
   "Mara's lead points to Ada at Kettle & Lamp; lunch work is the best first bet.",
 ];
+const PLAYBACK_NIA_BLOCK_POLICY_ID =
+  "nia-block-lead-hides-morrow-standing";
 const FIRST_AFTERNOON_ROUTE_OUTCOME_LABEL = "Useful first move chosen";
 const FIRST_AFTERNOON_ROUTE_STEP_TITLE = "Choose the first useful move.";
 const FIRST_AFTERNOON_ROUTE_STEP_DETAIL =
@@ -718,6 +720,50 @@ describe("street reasoning authority", () => {
     expect(overlaySource).toContain("buildRowanFallbackNotebookModel");
     expect(overlaySource).toContain(
       "firstAfternoonMaraAdaLeadFieldNoteNextCopy",
+    );
+  });
+
+  it("keeps playback trail visibility policy in scaffold data, not rail control flow", () => {
+    const playbackSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/rowanPlayback.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const playbackScaffoldSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(playbackScaffoldSource).toContain(
+      "PLAYBACK_TRAIL_VISIBILITY_POLICIES",
+    );
+    expect(playbackScaffoldSource).toContain(
+      "isObjectiveTrailStepPlayerFacingForPlayback",
+    );
+    expect(playbackScaffoldSource).toContain(PLAYBACK_NIA_BLOCK_POLICY_ID);
+    expect(playbackScaffoldSource).toContain("\\bnia\\b");
+    expect(playbackScaffoldSource).toContain("\\b(block|jam|cart|square)\\b");
+    expect(playbackScaffoldSource).toContain("\\bmorrow house\\b");
+    expect(playbackScaffoldSource).toContain(
+      "\\b(standing|room stays mine|tonight'?s bed|settle)\\b",
+    );
+
+    expect(playbackSource).toContain(
+      "isObjectiveTrailStepPlayerFacingForPlayback",
+    );
+    expect(playbackSource).not.toContain("trailHintConflictsWithLiveObjective");
+    expect(playbackSource).not.toContain("liveObjectiveIsNiaBlockLead");
+    expect(playbackSource).not.toContain("trailHintIsMorrowStanding");
+    expect(playbackSource).not.toContain("\\bnia\\b");
+    expect(playbackSource).not.toContain("\\b(block|jam|cart|square)\\b");
+    expect(playbackSource).not.toContain("\\bmorrow house\\b");
+    expect(playbackSource).not.toContain(
+      "\\b(standing|room stays mine|tonight'?s bed|settle)\\b",
     );
   });
 

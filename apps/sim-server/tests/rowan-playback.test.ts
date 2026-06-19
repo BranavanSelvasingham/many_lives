@@ -11,6 +11,7 @@ import {
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
+import { isObjectiveTrailStepPlayerFacingForPlayback } from "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
 import type {
@@ -399,6 +400,56 @@ describe("Rowan playback helpers", () => {
       progress: "Standing 2/2",
       targetLocationId: "boarding-house",
     };
+    const liveNiaStep = {
+      id: "ask-nia-block-jam",
+      title: "Ask Nia where the block is about to jam.",
+      detail:
+        "The live lead points to South Quay and the square before the cart turns into the whole block's problem.",
+      done: false,
+      progress: "Nia lead 0/1",
+      targetLocationId: "market-square",
+    };
+
+    expect(
+      isObjectiveTrailStepPlayerFacingForPlayback({
+        objective: {
+          ...currentObjective,
+          routeKey: "people-nia",
+          text: "Ask Nia where the block is about to jam before the square feels it.",
+          outcomes: [
+            {
+              authority: "predicate",
+              id: "nia-block-lead",
+              label: "Ask Nia where the block is about to jam",
+              npcId: "npc-nia",
+              status: "open",
+              urgency: 86,
+            },
+          ],
+        },
+        step: staleStandingStep,
+      }),
+    ).toBe(false);
+    expect(
+      isObjectiveTrailStepPlayerFacingForPlayback({
+        objective: {
+          ...currentObjective,
+          routeKey: "people-nia",
+          text: "Ask Nia where the block is about to jam before the square feels it.",
+          outcomes: [
+            {
+              authority: "predicate",
+              id: "nia-block-lead",
+              label: "Ask Nia where the block is about to jam",
+              npcId: "npc-nia",
+              status: "open",
+              urgency: 86,
+            },
+          ],
+        },
+        step: liveNiaStep,
+      }),
+    ).toBe(true);
 
     world.currentTime = "Day 1, 15:50";
     world.clock.hour = 15;
@@ -429,7 +480,7 @@ describe("Rowan playback helpers", () => {
         label: "0/1 outcomes met",
         total: 1,
       },
-      trail: [staleStandingStep],
+      trail: [staleStandingStep, liveNiaStep],
     };
     world.rowanAutonomy = {
       actionId: "exit:repair-stall",
@@ -468,6 +519,7 @@ describe("Rowan playback helpers", () => {
     ].join(" ");
 
     expect(lateRailText).toMatch(/Nia|South Quay|block|jam/i);
+    expect(railView.next?.title).toBe("Ask Nia where the block is about to jam.");
     expect(lateRailText).not.toMatch(
       /Build standing at Morrow House|room stays mine|tonight's bed/i,
     );
