@@ -20,18 +20,26 @@ interface ScaffoldContext {
   world: StreetGameState;
 }
 
+type ScaffoldStringResolver =
+  | string
+  | ((context: ScaffoldContext) => string | undefined);
+
 interface SemanticHint {
-  locationId?: string | ((context: ScaffoldContext) => string | undefined);
-  npcId?: string;
+  locationId?: ScaffoldStringResolver;
+  npcId?: ScaffoldStringResolver;
   when?: (context: ScaffoldContext) => boolean;
+}
+
+interface MoveIntentContext extends ScaffoldContext {
+  locationId: string;
 }
 
 interface MoveIntentHint {
   actionId?: string;
   label?: string;
-  locationId: string | ((context: ScaffoldContext) => string | undefined);
-  npcId?: string;
-  rationale: string;
+  locationId: ScaffoldStringResolver;
+  npcId?: ScaffoldStringResolver;
+  rationale: string | ((context: MoveIntentContext) => string);
   when?: (context: ScaffoldContext) => boolean;
 }
 
@@ -93,13 +101,9 @@ interface CurrentOpeningMoveReasonHint {
 }
 
 interface SemanticMoveBonus {
-  locationId: string;
+  locationId: ScaffoldStringResolver;
   score: number;
-  when?: (
-    context: ScaffoldContext & {
-      predicateAuthority: boolean;
-    },
-  ) => boolean;
+  when?: (context: SemanticMoveBonusContext) => boolean;
 }
 
 interface ConversationThoughtHint {
@@ -783,9 +787,32 @@ interface RouteActionPressureInput {
   predicateAuthority: boolean;
 }
 
+interface RouteActionPressureContext {
+  objective: ObjectiveScaffoldDirective;
+}
+
+interface RouteActionPressureRule {
+  score:
+    | number
+    | ((
+        input: RouteActionPressureInput,
+        context: RouteActionPressureContext,
+      ) => number);
+  when: (
+    input: RouteActionPressureInput,
+    context: RouteActionPressureContext,
+  ) => boolean;
+}
+
+interface SemanticMoveBonusContext extends ScaffoldContext {
+  planningText: string;
+  predicateAuthority: boolean;
+}
+
 interface ObjectiveRouteScaffold {
   actionRationales?: ActionRationaleHint[];
   actionLocationReasons?: ActionLocationReasonHint[];
+  actionPressureRules?: RouteActionPressureRule[];
   actionTargetLocations?: ActionTargetLocationHint[];
   availableActions?: AvailableActionHint[];
   completionAcknowledgement?: CompletionAcknowledgementHint;
@@ -802,6 +829,8 @@ interface ObjectiveRouteScaffold {
   homeReturnMoveReasons?: HomeReturnMoveReasonHint[];
   moveIntents?: MoveIntentHint[];
   notebookPlanFallback?: string;
+  objectiveFocuses?: ObjectiveFocus[];
+  objectiveMatches?: (objective: ObjectiveScaffoldDirective) => boolean;
   outcomeMoveRationales?: OutcomeMoveRationaleHint[];
   playerFacingRationaleNormalizations?: PlayerFacingRationaleNormalizationHint[];
   playerThoughts?: PlayerThoughtHint[];
@@ -3726,11 +3755,123 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     routeKeys: [],
     routeKeyPrefixes: ["people-"],
     routeHeadline: "Meet people who could become real friends in South Quay.",
+    semanticHints: [{ npcId: peopleRouteNpcId }],
+    moveIntents: [
+      {
+        locationId: peopleRouteNpcLocationId,
+        npcId: peopleRouteNpcId,
+        rationale: peopleRouteMoveRationale,
+        when: (context) => Boolean(peopleRouteNpcLocationId(context)),
+      },
+    ],
+    semanticMoveBonuses: [
+      {
+        locationId: peopleRouteNpcLocationId,
+        score: 24,
+        when: (context) =>
+          !context.predicateAuthority &&
+          Boolean(peopleRouteNpcLocationId(context)),
+      },
+    ],
   },
   {
     routeKeys: [],
     routeKeyPrefixes: ["explore-"],
     routeHeadline: "Learn the lanes and people of South Quay.",
+    actionPressureRules: [
+      {
+        score: -58,
+        when: (input, { objective }) => {
+          if (
+            input.predicateAuthority ||
+            objective.routeKey === "explore-district"
+          ) {
+            return false;
+          }
+
+          const targetLocationId = objective.routeKey.slice("explore-".length);
+          return (
+            input.currentLocationId !== targetLocationId &&
+            input.planTargetLocationId !== targetLocationId
+          );
+        },
+      },
+    ],
+    semanticHints: [{ locationId: exploreRouteSemanticLocationId }],
+    semanticMoveBonuses: [
+      {
+        locationId: exploreRouteMoveBonusLocationId,
+        score: 22,
+        when: (context) => !context.predicateAuthority,
+      },
+    ],
+  },
+  {
+    routeKeys: [],
+    objectiveMatches: (objective) => objective.routeKey.includes("pump"),
+    semanticHints: [
+      { locationId: problemRouteLocationId("problem-pump") },
+      {
+        locationId: "repair-stall",
+        npcId: "npc-jo",
+        when: ({ world }) => !hasItem(world, "item-wrench"),
+      },
+    ],
+    semanticMoveBonuses: [
+      {
+        locationId: problemRouteLocationId("problem-pump"),
+        score: 20,
+        when: ({ predicateAuthority, world }) =>
+          !predicateAuthority && hasItem(world, "item-wrench"),
+      },
+    ],
+  },
+  {
+    routeKeys: [],
+    objectiveMatches: (objective) => objective.routeKey.includes("cart"),
+    semanticHints: [{ locationId: problemRouteLocationId("problem-cart") }],
+  },
+  {
+    routeKeys: [],
+    routeKeyPrefixes: ["tool-"],
+    objectiveFocuses: ["tool"],
+    objectiveMatches: (objective) =>
+      objective.routeKey.includes("tool") || objectiveTextMentionsTool(objective),
+    actionPressureRules: [
+      {
+        score: 36,
+        when: (input, { objective }) =>
+          objective.focus === "tool" && input.actionId === "buy:item-wrench",
+      },
+      {
+        score: -18,
+        when: (input, { objective }) =>
+          objective.focus === "tool" && input.actionKind === "talk",
+      },
+    ],
+    semanticHints: [{ locationId: "repair-stall", npcId: "npc-jo" }],
+    moveIntents: [
+      {
+        actionId: "buy:item-wrench",
+        locationId: "repair-stall",
+        rationale:
+          "Walk to Jo's repair stall and buy the wrench the problem needs.",
+        when: ({ objective, world }) =>
+          (objective.focus === "tool" || objective.routeKey.includes("tool")) &&
+          !hasItem(world, "item-wrench"),
+      },
+    ],
+    semanticMoveBonuses: [
+      {
+        locationId: "repair-stall",
+        score: 28,
+        when: ({ objective, planningText, predicateAuthority, world }) =>
+          (objective.focus === "tool" ||
+            (!predicateAuthority && objective.routeKey.includes("tool")) ||
+            /\b(tool|wrench|jo|repair)\b/.test(planningText.toLowerCase())) &&
+          !hasItem(world, "item-wrench"),
+      },
+    ],
   },
   {
     routeKeys: ["help-pump"],
@@ -3953,6 +4094,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     routeKeys: [],
     routeKeyPrefixes: ["commitment-"],
     routeHeadline: "Follow through on accepted work before the window closes.",
+    semanticHints: [{ locationId: commitmentRouteJobLocationId }],
   },
 ];
 
@@ -3964,26 +4106,22 @@ export function objectiveRouteSemanticHints(
   const npcIds = new Set<string>();
   const context = { objective, world };
 
-  for (const scaffold of activeScaffolds(objective.routeKey)) {
+  for (const scaffold of activeScaffolds(objective)) {
     for (const hint of scaffold.semanticHints ?? []) {
       if (hint.when && !hint.when(context)) {
         continue;
       }
 
-      const locationId =
-        typeof hint.locationId === "function"
-          ? hint.locationId(context)
-          : hint.locationId;
+      const locationId = resolveScaffoldString(hint.locationId, context);
       if (locationId) {
         locationIds.add(locationId);
       }
-      if (hint.npcId) {
-        npcIds.add(hint.npcId);
+      const npcId = resolveScaffoldString(hint.npcId, context);
+      if (npcId) {
+        npcIds.add(npcId);
       }
     }
   }
-
-  addRouteDerivedSemanticHints(world, objective, { locationIds, npcIds });
 
   return {
     locationIds: [...locationIds],
@@ -4713,37 +4851,103 @@ function resolveExploreRouteText(
   return typeof value === "function" ? value(state) : value;
 }
 
+function peopleRouteNpcId({ objective }: ScaffoldContext) {
+  if (!objective.routeKey.startsWith("people-")) {
+    return undefined;
+  }
+
+  const npcId = objective.routeKey.slice("people-".length);
+  return npcId === "locals" ? undefined : npcId;
+}
+
+function peopleRouteNpcLocationId(context: ScaffoldContext) {
+  const npcId = peopleRouteNpcId(context);
+  return npcId ? npcById(context.world, npcId)?.currentLocationId : undefined;
+}
+
+function peopleRouteMoveRationale(context: MoveIntentContext) {
+  const npcId = peopleRouteNpcId(context);
+  const npc = npcId ? npcById(context.world, npcId) : undefined;
+  const location = findLocation(context.world, context.locationId);
+
+  return `Walk to ${location?.name ?? "the next place"} and make a real introduction with ${npc?.name ?? "them"}.`;
+}
+
+function exploreRouteSemanticLocationId({ objective }: ScaffoldContext) {
+  if (!objective.routeKey.startsWith("explore-")) {
+    return undefined;
+  }
+
+  const locationId = objective.routeKey.slice("explore-".length);
+  return locationId === "district" ? undefined : locationId;
+}
+
+function exploreRouteMoveBonusLocationId({ objective }: ScaffoldContext) {
+  return objective.routeKey.startsWith("explore-")
+    ? objective.routeKey.slice("explore-".length)
+    : undefined;
+}
+
+function commitmentRouteJobLocationId({ objective, world }: ScaffoldContext) {
+  if (!objective.routeKey.startsWith("commitment-")) {
+    return undefined;
+  }
+
+  return jobById(world, objective.routeKey.slice("commitment-".length))
+    ?.locationId;
+}
+
+function problemRouteLocationId(problemId: string) {
+  return ({ world }: ScaffoldContext) => problemById(world, problemId)?.locationId;
+}
+
+function objectiveTextMentionsTool(objective: ObjectiveScaffoldDirective) {
+  return /\b(tool|wrench|jo|repair)\b/.test(objective.text.toLowerCase());
+}
+
 export function objectiveRouteMoveIntent(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
   locationId: string,
-): Pick<MoveIntentHint, "actionId" | "label" | "npcId" | "rationale"> | undefined {
+):
+  | { actionId?: string; label?: string; npcId?: string; rationale: string }
+  | undefined {
   const context = { objective, world };
-  for (const scaffold of activeScaffolds(objective.routeKey)) {
+  for (const scaffold of activeScaffolds(objective)) {
     const intent = (scaffold.moveIntents ?? []).find(
       (candidate) =>
-        resolveScaffoldLocationId(candidate.locationId, context) ===
-          locationId &&
+        resolveScaffoldString(candidate.locationId, context) === locationId &&
         (!candidate.when || candidate.when(context)),
     );
     if (intent) {
+      const moveIntentContext = { ...context, locationId };
       return {
         actionId: intent.actionId,
         label: intent.label,
-        npcId: intent.npcId,
-        rationale: intent.rationale,
+        npcId: resolveScaffoldString(intent.npcId, context),
+        rationale: resolveMoveIntentRationale(
+          intent.rationale,
+          moveIntentContext,
+        ),
       };
     }
   }
 
-  return routeDerivedMoveIntent(world, objective, locationId);
+  return undefined;
 }
 
-function resolveScaffoldLocationId(
-  locationId: MoveIntentHint["locationId"],
+function resolveScaffoldString(
+  value: ScaffoldStringResolver | undefined,
   context: ScaffoldContext,
 ) {
-  return typeof locationId === "function" ? locationId(context) : locationId;
+  return typeof value === "function" ? value(context) : value;
+}
+
+function resolveMoveIntentRationale(
+  rationale: MoveIntentHint["rationale"],
+  context: MoveIntentContext,
+) {
+  return typeof rationale === "function" ? rationale(context) : rationale;
 }
 
 export function objectiveRouteMoveRationaleForOutcome(
@@ -5488,49 +5692,35 @@ export function objectiveRouteSemanticMoveBonus(
 ) {
   const context = {
     objective,
+    planningText: input.planningText ?? objective.text,
     predicateAuthority: input.predicateAuthority,
     world,
   };
 
-  const scaffoldScore = activeScaffolds(objective.routeKey)
+  return activeScaffolds(objective)
     .flatMap((scaffold) => scaffold.semanticMoveBonuses ?? [])
     .filter(
       (bonus) =>
-        bonus.locationId === locationId && (!bonus.when || bonus.when(context)),
+        resolveScaffoldString(bonus.locationId, context) === locationId &&
+        (!bonus.when || bonus.when(context)),
     )
     .reduce((total, bonus) => total + bonus.score, 0);
-
-  return (
-    scaffoldScore +
-    routeDerivedSemanticMoveBonus(world, objective, locationId, input)
-  );
 }
 
 export function objectiveRouteActionPressureScore(
   objective: ObjectiveScaffoldDirective,
   input: RouteActionPressureInput,
 ) {
-  if (
-    !input.predicateAuthority &&
-    objective.routeKey.startsWith("explore-") &&
-    objective.routeKey !== "explore-district"
-  ) {
-    const targetLocationId = objective.routeKey.slice("explore-".length);
-    if (
-      input.currentLocationId !== targetLocationId &&
-      input.planTargetLocationId !== targetLocationId
-    ) {
-      return -58;
-    }
-  }
+  const context = { objective };
+  for (const scaffold of activeScaffolds(objective)) {
+    for (const rule of scaffold.actionPressureRules ?? []) {
+      if (!rule.when(input, context)) {
+        continue;
+      }
 
-  if (objective.focus === "tool") {
-    if (input.actionId === "buy:item-wrench") {
-      return 36;
-    }
-
-    if (input.actionKind === "talk") {
-      return -18;
+      return typeof rule.score === "function"
+        ? rule.score(input, context)
+        : rule.score;
     }
   }
 
@@ -5640,13 +5830,21 @@ export function objectiveRouteAutonomousContinuationFallbackSpeech(
   return typeof rule.speech === "function" ? rule.speech(input) : rule.speech;
 }
 
-function activeScaffolds(routeKey: string) {
+function activeScaffolds(input: string | ObjectiveScaffoldDirective) {
+  const objective = typeof input === "string" ? undefined : input;
+  const routeKey = typeof input === "string" ? input : input.routeKey;
+
   return OBJECTIVE_ROUTE_SCAFFOLDS.filter(
     (scaffold) =>
       scaffold.routeKeys.includes(routeKey) ||
       (scaffold.routeKeyPrefixes ?? []).some((prefix) =>
         routeKey.startsWith(prefix),
-      ),
+      ) ||
+      (objective &&
+        Boolean(
+          (scaffold.objectiveFocuses ?? []).includes(objective.focus) ||
+            scaffold.objectiveMatches?.(objective),
+        )),
   );
 }
 
@@ -5703,145 +5901,6 @@ export function objectiveRouteHasNiaBlockLead(world: StreetGameState) {
     /\bnia\b/.test(objectiveText) &&
     /\b(block|jam|cart|square)\b/.test(objectiveText)
   );
-}
-
-function addRouteDerivedSemanticHints(
-  world: StreetGameState,
-  objective: ObjectiveScaffoldDirective,
-  output: {
-    locationIds: Set<string>;
-    npcIds: Set<string>;
-  },
-) {
-  const addProblemLocation = (problemId: string) => {
-    const problem = problemById(world, problemId);
-    if (problem?.locationId) {
-      output.locationIds.add(problem.locationId);
-    }
-  };
-  const addJobLocation = (jobId: string) => {
-    const job = jobById(world, jobId);
-    if (job?.locationId) {
-      output.locationIds.add(job.locationId);
-    }
-  };
-  const planningText = objective.text.toLowerCase();
-
-  if (objective.routeKey.startsWith("people-")) {
-    const npcId = objective.routeKey.slice("people-".length);
-    if (npcId !== "locals") {
-      output.npcIds.add(npcId);
-    }
-  }
-
-  if (objective.routeKey.startsWith("explore-")) {
-    const locationId = objective.routeKey.slice("explore-".length);
-    if (locationId !== "district") {
-      output.locationIds.add(locationId);
-    }
-  }
-
-  if (objective.routeKey.startsWith("commitment-")) {
-    addJobLocation(objective.routeKey.slice("commitment-".length));
-  }
-
-  if (objective.routeKey.includes("pump")) {
-    addProblemLocation("problem-pump");
-    if (!hasItem(world, "item-wrench")) {
-      output.locationIds.add("repair-stall");
-      output.npcIds.add("npc-jo");
-    }
-  }
-
-  if (objective.routeKey.includes("cart")) {
-    addProblemLocation("problem-cart");
-  }
-
-  if (
-    objective.focus === "tool" ||
-    objective.routeKey.includes("tool") ||
-    /\b(tool|wrench|jo|repair)\b/.test(planningText)
-  ) {
-    output.locationIds.add("repair-stall");
-    output.npcIds.add("npc-jo");
-  }
-}
-
-function routeDerivedMoveIntent(
-  world: StreetGameState,
-  objective: ObjectiveScaffoldDirective,
-  locationId: string,
-) {
-  if (objective.routeKey.startsWith("people-")) {
-    const npcId = objective.routeKey.slice("people-".length);
-    const npc = npcById(world, npcId);
-    const location = findLocation(world, locationId);
-    if (npcId !== "locals" && npc?.currentLocationId === locationId) {
-      return {
-        npcId,
-        rationale: `Walk to ${location?.name ?? "the next place"} and make a real introduction with ${npc.name}.`,
-      };
-    }
-  }
-
-  if (
-    (objective.focus === "tool" || objective.routeKey.includes("tool")) &&
-    locationId === "repair-stall" &&
-    !hasItem(world, "item-wrench")
-  ) {
-    return {
-      actionId: "buy:item-wrench",
-      rationale:
-        "Walk to Jo's repair stall and buy the wrench the problem needs.",
-    };
-  }
-
-  return undefined;
-}
-
-function routeDerivedSemanticMoveBonus(
-  world: StreetGameState,
-  objective: ObjectiveScaffoldDirective,
-  locationId: string,
-  input: { planningText?: string; predicateAuthority: boolean },
-) {
-  const planningText = (input.planningText ?? objective.text).toLowerCase();
-  let score = 0;
-
-  if (!input.predicateAuthority && objective.routeKey.startsWith("people-")) {
-    const npcId = objective.routeKey.slice("people-".length);
-    if (npcById(world, npcId)?.currentLocationId === locationId) {
-      score += 24;
-    }
-  }
-
-  if (!input.predicateAuthority && objective.routeKey.startsWith("explore-")) {
-    const targetLocationId = objective.routeKey.slice("explore-".length);
-    if (targetLocationId === locationId) {
-      score += 22;
-    }
-  }
-
-  if (
-    (objective.focus === "tool" ||
-      (!input.predicateAuthority && objective.routeKey.includes("tool")) ||
-      /\b(tool|wrench|jo|repair)\b/.test(planningText)) &&
-    locationId === "repair-stall" &&
-    !hasItem(world, "item-wrench")
-  ) {
-    score += 28;
-  }
-
-  if (
-    !input.predicateAuthority &&
-    objective.routeKey.includes("pump") &&
-    problemById(world, "problem-pump")?.locationId === locationId &&
-    hasItem(world, "item-wrench")
-  ) {
-    score += 20;
-  }
-
-  return score;
 }
 
 function npcById(world: StreetGameState, npcId: string) {

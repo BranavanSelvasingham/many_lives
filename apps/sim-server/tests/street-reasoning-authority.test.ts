@@ -19,7 +19,14 @@ import {
   buildNpcConversationResolution,
   buildSocialNextNpcConversationResolution,
 } from "../src/street-sim/npcNarratives.js";
-import { objectiveRouteHasNiaBlockLead } from "../src/sim/objectiveScaffolds.js";
+import {
+  objectiveRouteActionPressureScore,
+  objectiveRouteHasNiaBlockLead,
+  objectiveRouteMoveIntent,
+  objectiveRouteSemanticHints,
+  objectiveRouteSemanticMoveBonus,
+  type ObjectiveScaffoldDirective,
+} from "../src/sim/objectiveScaffolds.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
@@ -1901,6 +1908,218 @@ describe("street reasoning authority", () => {
     );
     expect(objectiveStateSource).toContain('case "people-talk"');
     expect(objectiveStateSource).toContain('case "explore-go"');
+  });
+
+  it("keeps route-derived semantic, intent, bonus, and pressure rules scaffold-owned", () => {
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldDataSource = scaffoldSource.slice(
+      scaffoldSource.indexOf("const OBJECTIVE_ROUTE_SCAFFOLDS"),
+      scaffoldSource.indexOf("export function objectiveRouteSemanticHints"),
+    );
+    const semanticHintsSource = scaffoldSource.slice(
+      scaffoldSource.indexOf("export function objectiveRouteSemanticHints"),
+      scaffoldSource.indexOf("export function objectiveRouteCompletionAcknowledgement"),
+    );
+    const moveIntentSource = scaffoldSource.slice(
+      scaffoldSource.indexOf("export function objectiveRouteMoveIntent"),
+      scaffoldSource.indexOf("function resolveScaffoldString"),
+    );
+    const semanticBonusSource = scaffoldSource.slice(
+      scaffoldSource.indexOf("export function objectiveRouteSemanticMoveBonus"),
+      scaffoldSource.indexOf("export function objectiveRouteActionPressureScore"),
+    );
+    const actionPressureSource = scaffoldSource.slice(
+      scaffoldSource.indexOf("export function objectiveRouteActionPressureScore"),
+      scaffoldSource.indexOf("export function objectiveRouteSpeech"),
+    );
+
+    expect(scaffoldSource).not.toContain("function addRouteDerivedSemanticHints");
+    expect(scaffoldSource).not.toContain("function routeDerivedMoveIntent");
+    expect(scaffoldSource).not.toContain(
+      "function routeDerivedSemanticMoveBonus",
+    );
+
+    for (const helperSource of [
+      semanticHintsSource,
+      moveIntentSource,
+      semanticBonusSource,
+      actionPressureSource,
+    ]) {
+      expect(helperSource).not.toContain('startsWith("people-")');
+      expect(helperSource).not.toContain('startsWith("explore-")');
+      expect(helperSource).not.toContain('startsWith("commitment-")');
+      expect(helperSource).not.toContain('includes("pump")');
+      expect(helperSource).not.toContain('includes("cart")');
+      expect(helperSource).not.toContain('includes("tool")');
+      expect(helperSource).not.toContain("objectiveTextMentionsTool");
+    }
+
+    for (const scaffoldOwnedRule of [
+      "actionPressureRules",
+      "semanticMoveBonuses",
+      "moveIntents",
+      "objectiveFocuses",
+      "objectiveMatches",
+      "peopleRouteNpcLocationId",
+      "exploreRouteSemanticLocationId",
+      "commitmentRouteJobLocationId",
+      "problemRouteLocationId",
+      "objectiveTextMentionsTool",
+    ]) {
+      expect(scaffoldDataSource).toContain(scaffoldOwnedRule);
+    }
+  });
+
+  it("preserves scaffold-owned route semantics at the exported helper boundary", () => {
+    const world = seedStreetGame("route-scaffold-owned-semantics");
+    const ada = world.npcs.find((npc) => npc.id === "npc-ada");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const cart = world.problems.find((problem) => problem.id === "problem-cart");
+
+    expect(ada?.currentLocationId).toBe("tea-house");
+    expect(teaJob?.locationId).toBe("tea-house");
+    expect(pump?.locationId).toBeDefined();
+    expect(cart?.locationId).toBeDefined();
+    if (!ada || !teaJob || !pump || !cart) {
+      return;
+    }
+
+    const peopleObjective: ObjectiveScaffoldDirective = {
+      focus: "people",
+      routeKey: "people-npc-ada",
+      text: "Meet Ada and make a real introduction.",
+    };
+    const peopleHints = objectiveRouteSemanticHints(world, peopleObjective);
+    expect(peopleHints.npcIds).toContain("npc-ada");
+    expect(
+      objectiveRouteMoveIntent(world, peopleObjective, ada.currentLocationId),
+    ).toMatchObject({
+      npcId: "npc-ada",
+      rationale:
+        "Walk to Kettle & Lamp and make a real introduction with Ada.",
+    });
+    expect(
+      objectiveRouteSemanticMoveBonus(
+        world,
+        peopleObjective,
+        ada.currentLocationId,
+        { predicateAuthority: false },
+      ),
+    ).toBe(24);
+
+    const exploreObjective: ObjectiveScaffoldDirective = {
+      focus: "explore",
+      routeKey: "explore-tea-house",
+      text: "Explore Kettle & Lamp and get your bearings.",
+    };
+    expect(
+      objectiveRouteSemanticHints(world, exploreObjective).locationIds,
+    ).toContain("tea-house");
+    expect(
+      objectiveRouteSemanticMoveBonus(world, exploreObjective, "tea-house", {
+        predicateAuthority: false,
+      }),
+    ).toBe(22);
+    expect(
+      objectiveRouteActionPressureScore(exploreObjective, {
+        actionId: "move:freight-yard",
+        actionKind: "move",
+        currentLocationId: "boarding-house",
+        planTargetLocationId: "freight-yard",
+        predicateAuthority: false,
+      }),
+    ).toBe(-58);
+    expect(
+      objectiveRouteActionPressureScore(exploreObjective, {
+        actionId: "move:tea-house",
+        actionKind: "move",
+        currentLocationId: "boarding-house",
+        planTargetLocationId: "tea-house",
+        predicateAuthority: false,
+      }),
+    ).toBe(0);
+
+    const commitmentObjective: ObjectiveScaffoldDirective = {
+      focus: "work",
+      routeKey: "commitment-job-tea-shift",
+      text: "Follow through on accepted work before the window closes.",
+    };
+    expect(
+      objectiveRouteSemanticHints(world, commitmentObjective).locationIds,
+    ).toContain(teaJob.locationId);
+
+    const toolObjective: ObjectiveScaffoldDirective = {
+      focus: "tool",
+      routeKey: "tool-pump",
+      text: "Buy a wrench for the pump and bring it back.",
+    };
+    const toolHints = objectiveRouteSemanticHints(world, toolObjective);
+    expect(toolHints.locationIds).toEqual(
+      expect.arrayContaining([pump.locationId, "repair-stall"]),
+    );
+    expect(toolHints.npcIds).toContain("npc-jo");
+    expect(
+      objectiveRouteMoveIntent(world, toolObjective, "repair-stall"),
+    ).toMatchObject({
+      actionId: "buy:item-wrench",
+      rationale:
+        "Walk to Jo's repair stall and buy the wrench the problem needs.",
+    });
+    expect(
+      objectiveRouteSemanticMoveBonus(world, toolObjective, "repair-stall", {
+        predicateAuthority: true,
+      }),
+    ).toBe(28);
+    expect(
+      objectiveRouteActionPressureScore(toolObjective, {
+        actionId: "buy:item-wrench",
+        actionKind: "buy",
+        currentLocationId: "repair-stall",
+        planTargetLocationId: "repair-stall",
+        predicateAuthority: false,
+      }),
+    ).toBe(36);
+    expect(
+      objectiveRouteActionPressureScore(toolObjective, {
+        actionId: "talk:npc-jo",
+        actionKind: "talk",
+        currentLocationId: "repair-stall",
+        planTargetLocationId: "repair-stall",
+        predicateAuthority: false,
+      }),
+    ).toBe(-18);
+
+    world.player.inventory.push({
+      description: "A worn wrench that can handle the yard pump.",
+      id: "item-wrench",
+      name: "Old wrench",
+    });
+    const helpPumpObjective: ObjectiveScaffoldDirective = {
+      focus: "help",
+      routeKey: "help-pump",
+      text: "Fix the leaking pump in Morrow Yard.",
+    };
+    expect(
+      objectiveRouteSemanticMoveBonus(
+        world,
+        helpPumpObjective,
+        pump.locationId,
+        { predicateAuthority: false },
+      ),
+    ).toBe(20);
+
+    const helpCartObjective: ObjectiveScaffoldDirective = {
+      focus: "help",
+      routeKey: "help-cart",
+      text: "Clear the jammed cart before it snarls the square.",
+    };
+    expect(
+      objectiveRouteSemanticHints(world, helpCartObjective).locationIds,
+    ).toContain(cart.locationId);
   });
 
   it("keeps committed-job and rest route metadata in scaffold data, not objective-state control flow", () => {
