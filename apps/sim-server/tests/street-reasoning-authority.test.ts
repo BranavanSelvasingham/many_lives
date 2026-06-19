@@ -30,6 +30,22 @@ const FIRST_AFTERNOON_PLAN_RATIONALE =
   "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
 const FIRST_AFTERNOON_DIALOGUE_FALLBACK =
   "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.";
+const FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_COPY = [
+  "Ada's lunch window has already moved on. If you still need coin today, try Tomas at North Crane before the yard closes.",
+  "Pay when you say you will, be kind in the shared spaces, and stop chasing Ada's lunch window. If coin still matters today, ask Tomas at North Crane.",
+  "Lunch already moved on. I cannot pay you for a rush that finished without you, but Tomas may still need hands at North Crane.",
+  "The cup-and-counter work is gone for today. Do not stand here pretending lunch waited.",
+  "You kept up. Tomas by the yard may need another set of hands, and he's easier after someone else has already vouched for you.",
+  "The loading block already moved. I cannot pay hands I did not have when the carts were here.",
+];
+const FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_CHOICE_KEYS = [
+  "mara-work-tea-closed-yard-open",
+  "mara-home-work-closed",
+  "ada-work-tea-closed-yard-open",
+  "ada-yard-handoff",
+  "tomas-yard-next-step-closed",
+  "tomas-yard-closed",
+];
 const MARA_ADA_GROUNDING_FOLLOWUP =
   "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
 const MARA_ADA_GROUNDED_FALLBACK_REPLY =
@@ -681,6 +697,32 @@ describe("street reasoning authority", () => {
     expect(scaffoldSource).toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain(FIRST_AFTERNOON_DIALOGUE_FALLBACK);
     expect(dialogueSource).not.toContain('routeKey === "first-afternoon"');
+  });
+
+  it("keeps first-afternoon closed work-window dialogue policy in scaffold data, not dialogue control flow", () => {
+    const dialogueSource = readFileSync(
+      new URL("../src/ai/streetDialogue.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(scaffoldSource).toContain("firstAfternoonWorkWindowDialogue");
+    expect(dialogueSource).toContain(
+      "objectiveRouteFirstAfternoonWorkWindowDialogue",
+    );
+
+    for (const dialogueCopy of FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_COPY) {
+      expect(scaffoldSource).toContain(dialogueCopy);
+      expect(dialogueSource).not.toContain(dialogueCopy);
+    }
+
+    for (const choiceKey of FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_CHOICE_KEYS) {
+      expect(scaffoldSource).toContain(`choiceKey: "${choiceKey}"`);
+      expect(dialogueSource).not.toContain(choiceKey);
+    }
   });
 
   it("keeps web first-afternoon fallback narrative copy in the web narrative helper", () => {

@@ -107,6 +107,28 @@ interface ConversationFallbackHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+export type FirstAfternoonWorkWindowDialogueKind =
+  | "adaWork"
+  | "adaYardHandoff"
+  | "maraHome"
+  | "maraWork"
+  | "tomasYardNextStep"
+  | "tomasYardWork";
+
+export interface ObjectiveRouteDialogueReplyVariant {
+  choiceKey: string;
+  followupChoiceKey: string;
+  followupThoughts: string[];
+  replyLines: string[];
+}
+
+interface FirstAfternoonWorkWindowDialogueHint
+  extends ObjectiveRouteDialogueReplyVariant {
+  kind: FirstAfternoonWorkWindowDialogueKind;
+  npcId: string;
+  when: (context: ScaffoldContext) => boolean;
+}
+
 export interface ObjectiveRouteConversationResolutionFallback {
   decision: string;
   memoryKind: MemoryEntry["kind"];
@@ -719,6 +741,7 @@ interface ObjectiveRouteScaffold {
   conversationThoughts?: ConversationThoughtHint[];
   deterministicOpeningNpcIds?: string[];
   deterministicOpeningRouteKeys?: string[];
+  firstAfternoonWorkWindowDialogue?: FirstAfternoonWorkWindowDialogueHint[];
   firstAfternoon?: FirstAfternoonScaffoldCopy;
   moveIntents?: MoveIntentHint[];
   notebookPlanFallback?: string;
@@ -3096,6 +3119,203 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         },
       },
     ],
+    firstAfternoonWorkWindowDialogue: [
+      {
+        choiceKey: "mara-work-tea-closed-yard-open",
+        followupChoiceKey: "mara-work-tea-closed-yard-open-followup",
+        followupThoughts: [
+          "The first work lead closed, but the day has not fully shut.",
+          "Tomas is the live option now.",
+          "That answer changed the route instead of pretending time held still.",
+        ],
+        kind: "maraWork",
+        npcId: "npc-mara",
+        replyLines: [
+          "Ada's lunch window has already moved on. If you still need coin today, try Tomas at North Crane before the yard closes.",
+          "Kettle & Lamp already had to solve lunch without you. North Crane Yard is the only work lead I would still chase today.",
+          "Ada was the morning answer. This late, ask Tomas at the yard if he still has a loading block open.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "mara-work-closed",
+        followupChoiceKey: "mara-work-closed-followup",
+        followupThoughts: [
+          "The day closed some doors.",
+          "He needs to stop chasing a stale lead.",
+          "Tomorrow will need a cleaner start.",
+        ],
+        kind: "maraWork",
+        npcId: "npc-mara",
+        replyLines: [
+          "Ada's lunch window is gone, and the yard has likely moved on too. Go take stock before you chase tomorrow badly.",
+          "Today's easy paid windows have closed. Come back to the house, count what is true, and start cleaner tomorrow.",
+          "You missed the useful work hours for today. That does not end the story, but it changes the next move.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "mara-home-tea-closed-yard-open",
+        followupChoiceKey: "mara-home-work-closed-followup",
+        followupThoughts: [
+          "That was a grounded answer.",
+          "The room advice changed with the hour.",
+          "Closed windows matter here.",
+        ],
+        kind: "maraHome",
+        npcId: "npc-mara",
+        replyLines: [
+          "Pay when you say you will, be kind in the shared spaces, and stop chasing Ada's lunch window. If coin still matters today, ask Tomas at North Crane.",
+          "Morrow House keeps people who notice when a window closes. Lunch moved on, but the yard may still have a loading block.",
+          "A room starts feeling like yours when you adapt. Ada's lunch is done; Tomas is the only work lead I would still try today.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "mara-home-work-closed",
+        followupChoiceKey: "mara-home-work-closed-followup",
+        followupThoughts: [
+          "That was a grounded answer.",
+          "The room advice changed with the hour.",
+          "Closed windows matter here.",
+        ],
+        kind: "maraHome",
+        npcId: "npc-mara",
+        replyLines: [
+          "Pay when you say you will, be kind in the shared spaces, and stop chasing closed doors. Tonight is for taking stock.",
+          "Morrow House keeps people who notice when the day has changed. The paid windows moved on; come back clear-eyed.",
+          "A room starts feeling like yours when you adapt. The work windows are gone for today, so count what you still have.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "ada-work-tea-closed-yard-open",
+        followupChoiceKey: "ada-work-tea-closed-yard-open-followup",
+        followupThoughts: [
+          "Ada closed her door without closing the whole day.",
+          "Tomas is the live work lead now.",
+          "The answer changed with the clock.",
+        ],
+        kind: "adaWork",
+        npcId: "npc-ada",
+        replyLines: [
+          "Lunch already moved on. I cannot pay you for a rush that finished without you, but Tomas may still need hands at North Crane.",
+          "You missed my useful window. If you still want today's coin, go ask Tomas before the yard shuts.",
+          "The cup-and-counter work is gone for today. North Crane is the only place I would still ask.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "ada-work-closed",
+        followupChoiceKey: "ada-work-closed-followup",
+        followupThoughts: [
+          "That window is gone.",
+          "The room did not wait.",
+          "Tomorrow needs a better start.",
+        ],
+        kind: "adaWork",
+        npcId: "npc-ada",
+        replyLines: [
+          "Lunch already moved on, and I cannot pay you for a rush that finished without you.",
+          "You missed my useful window. Come earlier tomorrow if you want this room to need you.",
+          "The cup-and-counter work is gone for today. Do not stand here pretending lunch waited.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "ada-yard-handoff",
+        followupChoiceKey: "ada-yard-handoff-followup",
+        followupThoughts: [
+          "Maybe Tomas can use Rowan next.",
+          "He can go see Tomas now.",
+          "The yard will be louder than this.",
+        ],
+        kind: "adaYardHandoff",
+        npcId: "npc-ada",
+        replyLines: [
+          "You kept up. Tomas by the yard may need another set of hands, and he's easier after someone else has already vouched for you.",
+          "You kept pace. If you still want coin, try Tomas before the afternoon goes sleepy.",
+          "You did fine here. North Crane Yard is the next place I would ask, preferably with a full cup in you.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          const yardJob = jobById(world, "job-yard-shift");
+          return Boolean(
+            teaJob?.completed && !yardJob?.discovered && !yardJob?.missed,
+          );
+        },
+      },
+      {
+        choiceKey: "tomas-yard-next-step-closed",
+        followupChoiceKey: "tomas-yard-next-step-closed-followup",
+        followupThoughts: [
+          "The yard did not hold the work open.",
+          "He heard the window close.",
+          "There is no stale shift to take.",
+        ],
+        kind: "tomasYardNextStep",
+        npcId: "npc-tomas",
+        replyLines: [
+          "The loading block already moved. I cannot pay hands I did not have when the carts were here.",
+          "Too late for that run. The lane is clear now because we cleared it without you.",
+          "That work is done for today. Come earlier if you want the yard to build around you.",
+        ],
+        when: ({ world }) => {
+          const yardJob = jobById(world, "job-yard-shift");
+          return Boolean(
+            yardJob?.discovered &&
+              !yardJob.accepted &&
+              !yardJob.completed &&
+              !yardJob.missed &&
+              jobWindowClosed(world, yardJob),
+          );
+        },
+      },
+      {
+        choiceKey: "tomas-yard-closed",
+        followupChoiceKey: "tomas-yard-closed-followup",
+        followupThoughts: [
+          "The yard did not hold the work open.",
+          "He heard the window close.",
+          "There is no stale shift to take.",
+        ],
+        kind: "tomasYardWork",
+        npcId: "npc-tomas",
+        replyLines: [
+          "The loading block already moved. I cannot pay hands I did not have when the carts were here.",
+          "Too late for that run. The lane is clear now because we cleared it without you.",
+          "That work is done for today. Come earlier if you want the yard to build around you.",
+        ],
+        when: ({ world }) => {
+          const yardJob = jobById(world, "job-yard-shift");
+          return jobWindowClosed(world, yardJob);
+        },
+      },
+    ],
     conversationGroundingPolicies: [
       {
         fallbackReason:
@@ -4471,6 +4691,39 @@ export function objectiveRouteConversationFallback(
     );
     if (fallback) {
       return fallback;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteFirstAfternoonWorkWindowDialogue(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  npc: NpcState,
+  kind: FirstAfternoonWorkWindowDialogueKind,
+): ObjectiveRouteDialogueReplyVariant | undefined {
+  const scaffoldObjective: ObjectiveScaffoldDirective =
+    objective ?? {
+      focus: "work",
+      routeKey: "first-afternoon",
+      text: "Find paid work before the afternoon slips.",
+    };
+  const context: ScaffoldContext = { objective: scaffoldObjective, world };
+
+  for (const scaffold of OBJECTIVE_ROUTE_SCAFFOLDS) {
+    if (!scaffold.routeKeys.includes("first-afternoon")) {
+      continue;
+    }
+
+    const reply = (scaffold.firstAfternoonWorkWindowDialogue ?? []).find(
+      (candidate) =>
+        candidate.kind === kind &&
+        candidate.npcId === npc.id &&
+        candidate.when(context),
+    );
+    if (reply) {
+      return reply;
     }
   }
 
