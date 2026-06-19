@@ -281,6 +281,21 @@ describe("objectiveState classification", () => {
     ).toBe(false);
   });
 
+  it("keeps objective-state outcome authority off trail-step fallback code", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(objectiveStateSource).not.toContain(
+      "objectiveOutcomeDefinitionFromTrailStep",
+    );
+    expect(objectiveStateSource).not.toContain('authority: "trail"');
+    expect(objectiveStateSource).not.toContain(
+      'authority: hasExplicitOutcomes ? "predicate" : "trail"',
+    );
+  });
+
   it("keeps first-afternoon route metadata stable across representative live states", () => {
     const fresh = seedStreetGame("objective-first-afternoon-route-fresh");
     const afterMara = seedStreetGame("objective-first-afternoon-route-mara");
@@ -1115,6 +1130,9 @@ describe("objectiveState classification", () => {
     });
     expect(
       objective?.outcomes.every((outcome) => outcome.status === "met"),
+    ).toBe(true);
+    expect(
+      objective?.outcomes.every((outcome) => outcome.authority === "predicate"),
     ).toBe(true);
     expect(objective?.trail.map((step) => step.id)).toEqual([
       "help-pump-inspect",

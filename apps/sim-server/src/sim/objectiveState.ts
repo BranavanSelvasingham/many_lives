@@ -30,7 +30,7 @@ interface ObjectiveRoute {
   focus: ObjectiveFocus;
   source: ObjectiveSource;
   steps: ObjectiveTrailItem[];
-  outcomes?: ObjectiveOutcomeDefinition[];
+  outcomes: ObjectiveOutcomeDefinition[];
   terminal?: boolean;
   preferHeadlineText?: boolean;
 }
@@ -376,32 +376,21 @@ function buildObjectiveOutcomes(
   objectiveText: string,
   route: ObjectiveRoute,
 ): ObjectiveOutcomeState[] {
-  const stepById = new Map(route.steps.map((step) => [step.id, step]));
-  const hasExplicitOutcomes = Boolean(route.outcomes);
-  const definitions =
-    route.outcomes ??
-    route.steps.map((step, index) =>
-      objectiveOutcomeDefinitionFromTrailStep(step, route.steps.length - index),
-    );
+  const definitions = route.outcomes;
 
   return definitions.map((definition, index) => {
-    const matchingStep = stepById.get(definition.id);
     const evaluation =
       evaluateObjectiveOutcome(world, objectiveText, route, definition) ??
-      (matchingStep
-        ? outcomeEvaluation(Boolean(matchingStep.done), {
-            evidence: matchingStep.progress,
-          })
-        : outcomeEvaluation(false, {
-            evidence: definition.fallbackEvidence,
-          }));
+      outcomeEvaluation(false, {
+        evidence: definition.fallbackEvidence,
+      });
 
     return {
       id: definition.id,
       label: definition.label,
       status: evaluation.status,
       urgency: definition.urgency ?? definitions.length - index,
-      authority: hasExplicitOutcomes ? "predicate" : "trail",
+      authority: "predicate",
       blockers: evaluation.blockers,
       evidence: evaluation.evidence ?? definition.fallbackEvidence,
       targetLocationId: definition.targetLocationId,
@@ -409,21 +398,6 @@ function buildObjectiveOutcomes(
       actionId: definition.actionId,
     };
   });
-}
-
-function objectiveOutcomeDefinitionFromTrailStep(
-  step: ObjectiveTrailItem,
-  urgency: number,
-): ObjectiveOutcomeDefinition {
-  return {
-    id: step.id,
-    label: step.title,
-    urgency,
-    fallbackEvidence: step.progress,
-    targetLocationId: step.targetLocationId,
-    npcId: step.npcId,
-    actionId: step.actionId,
-  };
 }
 
 function buildProgress(
@@ -455,11 +429,9 @@ function routeCompleted(
   route: ObjectiveRoute,
 ) {
   const outcomes = buildObjectiveOutcomes(world, objectiveText, route);
-  if (outcomes.length > 0) {
-    return outcomes.every((outcome) => outcome.status === "met");
-  }
-
-  return route.steps.every((step) => step.done);
+  return (
+    outcomes.length > 0 && outcomes.every((outcome) => outcome.status === "met")
+  );
 }
 
 function evaluateObjectiveOutcome(
