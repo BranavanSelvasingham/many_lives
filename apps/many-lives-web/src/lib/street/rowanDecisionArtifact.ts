@@ -458,9 +458,28 @@ function visibleRejectedOptionText(
   return (
     visibleReasonFirstOptionText(
       option.label,
-      option.reason ?? option.rationale,
+      playerFacingRejectedReason(option),
       92,
     ) ?? option.label
+  );
+}
+
+function playerFacingRejectedReason(
+  option: PlanningTrace["rejected"][number],
+) {
+  const reason = option.reason ?? option.rationale;
+  if (isStaleIllegalPlanningReason(reason)) {
+    return "That opening has closed, so Rowan keeps to the confirmed choice.";
+  }
+
+  return reason;
+}
+
+function isStaleIllegalPlanningReason(reason: string | undefined) {
+  return Boolean(
+    reason?.match(
+      /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/i,
+    ),
   );
 }
 
@@ -608,17 +627,24 @@ function compactDecisionText(value: string | null | undefined, max: number) {
     text = text.replace(pattern, "");
   }
   text = text
+    .replace(
+      /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/gi,
+      "That opening has closed for now.",
+    )
     .replace(/^Action:\s*/i, "")
     .replace(/\bcurrent objective\b/gi, "current aim")
+    .replace(/\bcurrent world state\b/gi, "current situation")
     .replace(/\bplanner trace\b/gi, "Rowan weighs")
     .replace(/\bis an open desired-state predicate\b/gi, "")
     .replace(/\bdesired-state predicate\b/gi, "aim")
     .replace(/\bstale predicate\b/gi, "stale lead")
     .replace(/\bpredicate\b/gi, "aim")
     .replace(/\bRejected because\b/gi, "")
+    .replace(/\bno longer legal\b/gi, "not available now")
     .replace(/\bdominant live pressure\b/gi, "strongest current reason")
     .replace(/\blive pressure\b/gi, "current reason")
-    .replace(/\broute hint action\b/gi, "suggested move")
+    .replace(/\b(?:objective action|route hint action)\b/gi, "opening")
+    .replace(/\bsuggested move\b/gi, "option")
     .replace(/\broute hint\b/gi, "suggested path")
     .replace(/\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi, "")
     .replace(/\s{2,}/g, " ")

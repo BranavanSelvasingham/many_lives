@@ -2699,9 +2699,24 @@ function visibleRejectedOptionText(option) {
   return (
     visibleReasonFirstOptionText(
       option.label,
-      option.reason ?? option.rationale,
+      playerFacingRejectedReason(option),
       92,
     ) ?? option.label
+  );
+}
+
+function playerFacingRejectedReason(option) {
+  const reason = option?.reason ?? option?.rationale;
+  if (isStaleIllegalPlanningReason(reason)) {
+    return "That opening has closed, so Rowan keeps to the confirmed choice.";
+  }
+
+  return reason;
+}
+
+function isStaleIllegalPlanningReason(reason) {
+  return /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/i.test(
+    String(reason ?? ""),
   );
 }
 
@@ -2788,6 +2803,10 @@ function compactVisibleDecisionText(value, max) {
   }
   let text = String(value).replace(/\s+/g, " ").trim();
   text = text
+    .replace(
+      /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/gi,
+      "That opening has closed for now.",
+    )
     .replace(/\badvance_objective\b/gi, "")
     .replace(/\bplanningTrace\b/gi, "")
     .replace(/\brouteKey\b/gi, "")
@@ -2801,15 +2820,18 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\bactionId\b/gi, "")
     .replace(/^Action:\s*/i, "")
     .replace(/\bcurrent objective\b/gi, "current aim")
+    .replace(/\bcurrent world state\b/gi, "current situation")
     .replace(/\bplanner trace\b/gi, "Rowan weighs")
     .replace(/\bis an open desired-state predicate\b/gi, "")
     .replace(/\bdesired-state predicate\b/gi, "aim")
     .replace(/\bstale predicate\b/gi, "stale lead")
     .replace(/\bpredicate\b/gi, "aim")
     .replace(/\bRejected because\b/gi, "")
+    .replace(/\bno longer legal\b/gi, "not available now")
     .replace(/\bdominant live pressure\b/gi, "strongest current reason")
     .replace(/\blive pressure\b/gi, "current reason")
-    .replace(/\broute hint action\b/gi, "suggested move")
+    .replace(/\b(?:objective action|route hint action)\b/gi, "opening")
+    .replace(/\bsuggested move\b/gi, "option")
     .replace(/\broute hint\b/gi, "suggested path")
     .replace(
       /\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi,
@@ -3418,7 +3440,7 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
   ].join(" ");
   assert.doesNotMatch(
     playerText,
-    /\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate)\b/i,
+    /\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b/i,
     `${label}: decision artifact leaked backend-shaped labels.`,
   );
   assert.doesNotMatch(
@@ -3540,9 +3562,29 @@ function assertVisibleDecisionArtifactDom(label, dom, artifactPayload = null) {
       `${label}: decision callback should show Rowan's short-horizon check.`,
     );
   }
+  const passedOverOptionVisible = (artifactPayload?.passedOver ?? []).some(
+    (entry) =>
+      typeof entry === "string" &&
+      entry.length > 0 &&
+      artifact.text.includes(entry.slice(0, Math.min(entry.length, 24))),
+  );
+  if (passedOverOptionVisible) {
+    assert.match(
+      artifact.text,
+      /Not now/i,
+      `${label}: decision callback should show rejected options with a player-facing label.`,
+    );
+  }
+  if (artifactPayload?.passedOver?.length) {
+    assert.doesNotMatch(
+      artifact.text,
+      /Passed over/i,
+      `${label}: decision callback should not use the old rejected-option label.`,
+    );
+  }
   assert.doesNotMatch(
     artifact.text,
-    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|Rejected because|live pressure|predicate/i,
+    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate/i,
     `${label}: decision callback leaked debug/planner language.`,
   );
   assert.doesNotMatch(

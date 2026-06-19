@@ -278,7 +278,7 @@ export function buildVisibleDecisionArtifactHtml(
       ${
         passedOver.length
           ? `<div class="ml-decision-passed-over">
-              <span>Passed over</span>
+              <span>Not now</span>
               ${passedOver
                 .map(
                   (option) =>

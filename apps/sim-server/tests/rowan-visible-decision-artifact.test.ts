@@ -92,6 +92,104 @@ describe("Rowan visible decision artifact", () => {
     );
   });
 
+  it("rewrites stale illegal rejection diagnostics as player-facing passed-over reasons", () => {
+    const diagnosticReasons = [
+      "Rejected because this route hint action is no longer legal in the current world state.",
+      "Rejected because this objective action is no longer legal in the current world state.",
+    ];
+
+    for (const reason of diagnosticReasons) {
+      const artifact = buildRowanVisibleDecisionArtifactFromState({
+        autonomyActionId: "talk:npc-nia",
+        autonomyLabel: "Ask Nia what still needs doing",
+        autonomyReason:
+          "Nia is the strongest confirmed lead, so Rowan should speak with her.",
+        objectiveText: "Find a useful opening without chasing stale leads.",
+        planningTrace: {
+          blockers: [],
+          considered: [
+            {
+              actionId: "talk:npc-nia",
+              label: "Ask Nia what still needs doing",
+              matchedOutcomeId: "confirm-nia-lead",
+              planKey: "confirm-nia-lead",
+              pressureId: "first-lead",
+              pressureKind: "objective",
+              pressureLabel: "Confirm the strongest lead",
+              provenance: "legal-action" as const,
+              rationale:
+                "Nia is available now and can confirm which opening still matters.",
+              score: 8,
+              status: "selected" as const,
+              targetLocationId: "quay",
+              npcId: "npc-nia",
+            },
+          ],
+          nextSteps: [
+            {
+              actionId: "talk:npc-nia",
+              kind: "talk",
+              label: "Ask Nia what still needs doing",
+              legal: true,
+              rationale: "Use the confirmed local lead before chasing another opening.",
+              validation: "The current choices include speaking with Nia.",
+              targetLocationId: "quay",
+              npcId: "npc-nia",
+            },
+          ],
+          outcomes: [
+            {
+              blockers: [],
+              evidence: "Nia is nearby and available.",
+              id: "confirm-nia-lead",
+              label: "Confirm the strongest lead",
+              status: "blocked",
+              urgency: 8,
+            },
+          ],
+          rejected: [
+            {
+              actionId: "move:courtyard",
+              label: "Head to Morrow Yard",
+              matchedOutcomeId: "stale-yard-lead",
+              planKey: "stale-yard-lead",
+              pressureId: "yard",
+              pressureKind: "objective",
+              pressureLabel: "Old yard lead",
+              provenance: "route-scaffold" as const,
+              rationale: "The old yard lead was checked against the choices.",
+              reason,
+              score: 0,
+              status: "rejected" as const,
+              targetLocationId: "courtyard",
+            },
+          ],
+          selectedActionId: "talk:npc-nia",
+          selectedLabel: "Ask Nia what still needs doing",
+          selectedLegalBacking: {
+            actionId: "talk:npc-nia",
+            locationId: "quay",
+            source: "current-legal-action-surface",
+          },
+          selectedMatchedOutcomeId: "confirm-nia-lead",
+          selectedPlanKey: "confirm-nia-lead",
+          selectedPressureId: "first-lead",
+          selectedPressureKind: "objective",
+          selectedPressureLabel: "Confirm the strongest lead",
+          selectedTargetLocationId: "quay",
+        },
+      });
+
+      expect(artifact?.passedOver[0]).toBe(
+        "That opening has closed, so Rowan keeps to the confirmed choice.",
+      );
+      expect(artifact?.passedOver.join(" ")).not.toMatch(
+        /suggested move|no longer legal|current world state|route hint action|Rejected because|objective action/i,
+      );
+      expect(artifact?.passedOver.join(" ")).not.toContain(reason);
+    }
+  });
+
   it("preserves route labels when no player-facing rationale exists", () => {
     const artifact = buildRowanVisibleDecisionArtifactFromState({
       autonomyActionId: "wait:steady",
