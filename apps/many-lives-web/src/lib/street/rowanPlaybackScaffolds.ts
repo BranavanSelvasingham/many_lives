@@ -10,6 +10,12 @@ export type PlaybackTrailVisibilityPolicy = {
   trailPatterns: readonly RegExp[];
 };
 
+export type PlaybackHomeRestLocationPolicy = {
+  homeLocationIds: readonly string[];
+  homeLocationNamePatterns: readonly RegExp[];
+  id: string;
+};
+
 export const PLAYBACK_TRAIL_VISIBILITY_POLICIES: readonly PlaybackTrailVisibilityPolicy[] =
   [
     {
@@ -21,6 +27,13 @@ export const PLAYBACK_TRAIL_VISIBILITY_POLICIES: readonly PlaybackTrailVisibilit
       ],
     },
   ];
+
+export const PLAYBACK_HOME_REST_LOCATION_POLICY: PlaybackHomeRestLocationPolicy =
+  {
+    homeLocationIds: ["boarding-house"],
+    homeLocationNamePatterns: [/morrow house|boarding house/i],
+    id: "home-rest-location",
+  };
 
 export function isObjectiveTrailStepPlayerFacingForPlayback({
   objective,
@@ -40,6 +53,24 @@ export function isObjectiveTrailStepPlayerFacingForPlayback({
     (policy) =>
       matchesEveryPattern(objectiveText, policy.objectivePatterns) &&
       matchesEveryPattern(trailText, policy.trailPatterns),
+  );
+}
+
+export function isPlaybackHomeRestLocation({
+  locationId,
+  locationName,
+}: {
+  locationId: string | null | undefined;
+  locationName: string | null | undefined;
+}) {
+  return (
+    Boolean(
+      locationId &&
+        PLAYBACK_HOME_REST_LOCATION_POLICY.homeLocationIds.includes(locationId),
+    ) ||
+    PLAYBACK_HOME_REST_LOCATION_POLICY.homeLocationNamePatterns.some((pattern) =>
+      pattern.test(locationName ?? ""),
+    )
   );
 }
 

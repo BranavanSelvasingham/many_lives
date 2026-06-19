@@ -8,7 +8,10 @@ import {
   independentNpcActionBeatDetail,
   independentNpcActionBeatTitle,
 } from "./independentNpcActions";
-import { isObjectiveTrailStepPlayerFacingForPlayback } from "./rowanPlaybackScaffolds";
+import {
+  isObjectiveTrailStepPlayerFacingForPlayback,
+  isPlaybackHomeRestLocation,
+} from "./rowanPlaybackScaffolds";
 import type { StreetGameState } from "./types";
 
 export const ROWAN_PLAYBACK_TIMING_MS = {
@@ -529,12 +532,16 @@ export function deriveRowanPlaybackBeats(
         beat.kind === "objective_shift",
     );
     if (!alreadyExplained) {
-      const atHome =
-        nextGame.player.currentLocationId === "boarding-house" ||
-        /morrow house|boarding house/i.test(
-          locationNameForId(nextGame, nextGame.player.currentLocationId) ?? "",
-        );
-      if (energyDelta > 0 && atHome) {
+      if (
+        energyDelta > 0 &&
+        isPlaybackHomeRestLocation({
+          locationId: nextGame.player.currentLocationId,
+          locationName: locationNameForId(
+            nextGame,
+            nextGame.player.currentLocationId,
+          ),
+        })
+      ) {
         beats.push({
           blocking: true,
           detail: appendResourceDelta(

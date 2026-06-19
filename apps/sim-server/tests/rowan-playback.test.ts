@@ -387,6 +387,64 @@ describe("Rowan playback helpers", () => {
     expect(railView.next).toBeNull();
   });
 
+  it("classifies a long positive-energy time jump at home as a rest beat", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-home-rest-beat");
+    const beforeRest = structuredClone(world);
+    beforeRest.player.currentLocationId = "boarding-house";
+    beforeRest.player.energy = 31;
+
+    const afterRest = structuredClone(beforeRest);
+    afterRest.clock.totalMinutes += 60;
+    afterRest.clock.hour += 1;
+    afterRest.currentTime = "Day 1, 10:00";
+    afterRest.player.energy = 43;
+
+    const beats = deriveRowanPlaybackBeats(
+      asWebGame(beforeRest),
+      asWebGame(afterRest),
+    );
+
+    expect(beats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "rest",
+          locationId: "boarding-house",
+          title: "Rest complete",
+        }),
+      ]),
+    );
+  });
+
+  it("does not classify a long positive-energy time jump away from home as rest", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-away-time-jump");
+    const beforeJump = structuredClone(world);
+    beforeJump.player.currentLocationId = "tea-house";
+    beforeJump.player.energy = 31;
+
+    const afterJump = structuredClone(beforeJump);
+    afterJump.clock.totalMinutes += 60;
+    afterJump.clock.hour += 1;
+    afterJump.currentTime = "Day 1, 10:00";
+    afterJump.player.energy = 43;
+
+    const beats = deriveRowanPlaybackBeats(
+      asWebGame(beforeJump),
+      asWebGame(afterJump),
+    );
+
+    expect(beats.map((beat) => beat.kind)).not.toContain("rest");
+    expect(beats).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "time_passed",
+          title: "Time passed",
+        }),
+      ]),
+    );
+  });
+
   it("does not promote stale Morrow standing trail hints after the Nia lead takes over", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     const world = await engine.createGame("rowan-playback-late-nia-trail");

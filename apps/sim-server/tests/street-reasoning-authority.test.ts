@@ -274,6 +274,7 @@ const ROWAN_NOTEBOOK_YARD_CLUE =
   "Evidence: Tomas described paid yard work at North Crane Yard, and the freight window is the obligation Rowan can still try to meet.";
 const ROWAN_NOTEBOOK_PUMP_WITH_TOOL_CLUE =
   "Evidence: the Morrow Yard pump is active, and Rowan already has the wrench that can make the repair real.";
+const PLAYBACK_HOME_REST_POLICY_ID = "home-rest-location";
 
 function worldWithPoisonedTrail(): StreetGameState {
   const world = seedStreetGame("game-reasoning-poisoned-trail");
@@ -764,6 +765,37 @@ describe("street reasoning authority", () => {
     expect(playbackSource).not.toContain("\\bmorrow house\\b");
     expect(playbackSource).not.toContain(
       "\\b(standing|room stays mine|tonight'?s bed|settle)\\b",
+    );
+  });
+
+  it("keeps playback rest location policy in scaffold data, not rail control flow", () => {
+    const playbackSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/rowanPlayback.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const playbackScaffoldSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(playbackScaffoldSource).toContain(
+      "PLAYBACK_HOME_REST_LOCATION_POLICY",
+    );
+    expect(playbackScaffoldSource).toContain("isPlaybackHomeRestLocation");
+    expect(playbackScaffoldSource).toContain(PLAYBACK_HOME_REST_POLICY_ID);
+    expect(playbackScaffoldSource).toContain('"boarding-house"');
+    expect(playbackScaffoldSource).toContain("morrow house|boarding house");
+
+    expect(playbackSource).toContain("isPlaybackHomeRestLocation");
+    expect(playbackSource).not.toContain("/morrow house|boarding house/i");
+    expect(playbackSource).not.toContain(
+      'currentLocationId === "boarding-house"',
     );
   });
 
