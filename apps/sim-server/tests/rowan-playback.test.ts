@@ -11,6 +11,7 @@ import {
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
+import { buildStreetBrowserProbeJson } from "../../many-lives-web/src/lib/street/browserProbe.js";
 import { isObjectiveTrailStepPlayerFacingForPlayback } from "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
@@ -223,6 +224,111 @@ describe("Rowan playback helpers", () => {
       detail: expect.stringContaining("Nia cleared the jammed handcart"),
       title: "Nia cleared the square",
       tone: "info",
+    });
+  });
+
+  it("keeps Rowan's active autonomy in Now while an active city beat is separately visible", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("rowan-playback-active-city-beat");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 10,
+      y: 7,
+    });
+    world = await engine.tick(world, 3);
+    const activeCart = world.problems.find(
+      (problem) => problem.id === "problem-cart",
+    );
+    if (activeCart) {
+      activeCart.discovered = true;
+    }
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "inspect:problem-cart",
+    });
+
+    const resolved = await engine.tick(world, 9);
+    const cityBeat = deriveRowanPlaybackBeats(
+      asWebGame(world),
+      asWebGame(resolved),
+    ).find((beat) => beat.kind === "city_beat");
+    expect(cityBeat).toBeTruthy();
+
+    const rowanActing = structuredClone(resolved);
+    rowanActing.firstAfternoon = {
+      ...rowanActing.firstAfternoon,
+      planSettledAt: "Day 1, 10:00",
+    };
+    rowanActing.rowanAutonomy = {
+      ...rowanActing.rowanAutonomy,
+      actionId: "work:job-yard-shift",
+      autoContinue: true,
+      detail:
+        "Rowan is finishing the freight yard lift before the load window closes.",
+      intent: {
+        reason:
+          "The yard job is still legal now, so Rowan should finish the lift before checking anything else.",
+        signals: ["Action: Finish Freight yard lift"],
+      },
+      key: "plan:test:yard-lift",
+      label: "Finish Freight yard lift",
+      layer: "objective",
+      mode: "acting",
+      stepKind: "act",
+      targetLocationId: "freight-yard",
+    };
+    const playback = {
+      activeBeat: cityBeat!,
+      queuedBeats: [],
+    };
+    const railView = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is watching the block move around him.",
+      game: asWebGame(rowanActing),
+      playback,
+      quietStatusLabel: rowanActing.currentScene.title,
+      watchMode: true,
+    });
+
+    expect(isBlockingRowanPlaybackForGame(playback, asWebGame(rowanActing))).toBe(
+      true,
+    );
+    expect(railView.now).toMatchObject({
+      detail: expect.stringContaining("finishing the freight yard lift"),
+      title: "Finish Freight yard lift",
+      tone: "objective",
+    });
+    expect(railView.justHappened).toMatchObject({
+      detail: expect.stringContaining("Nia cleared the jammed handcart"),
+      title: "Nia cleared the square",
+      tone: "info",
+    });
+    expect(railView.statusLabel).toBe("City beat");
+    expect(railView.shouldAutoOpen).toBe(true);
+
+    const probe = JSON.parse(
+      buildStreetBrowserProbeJson({
+        activeConversation: rowanActing.activeConversation,
+        game: asWebGame(rowanActing),
+        rowanRail: railView,
+        snapshot: {
+          rowanPlayback: playback,
+          rowanWatchModeEnabled: true,
+        },
+      }),
+    );
+
+    expect(probe.rail.now).toBe("Finish Freight yard lift");
+    expect(probe.rail.justHappened).toBe("Nia cleared the square");
+    expect(probe.independentNpcSurface).toMatchObject({
+      detail: expect.stringContaining("Nia cleared the jammed handcart"),
+      playerFacingSummary: expect.stringContaining(
+        "Nia cleared the jammed handcart",
+      ),
+      problemId: "problem-cart",
+      slot: "just_happened",
+      title: "Nia cleared the square",
     });
   });
 

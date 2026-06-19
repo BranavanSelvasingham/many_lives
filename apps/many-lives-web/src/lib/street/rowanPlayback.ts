@@ -647,6 +647,11 @@ export function buildRowanRailViewModel({
       ? buildConversationLineBeat(game)
       : null;
   const activeBeat = liveConversationBeat ?? alignedPlayback?.activeBeat;
+  const activeCityBeat =
+    !liveConversationBeat && alignedPlayback?.activeBeat?.kind === "city_beat"
+      ? alignedPlayback.activeBeat
+      : null;
+  const activeNowBeat = activeCityBeat ? null : activeBeat;
   const useConversationTranscript = Boolean(liveConversationBeat);
   const completedObjectiveAutonomy =
     objectiveIsComplete(game) &&
@@ -696,9 +701,9 @@ export function buildRowanRailViewModel({
     title: "Ask Mara how to keep tonight's room.",
     tone: "objective",
   };
-  const activeBeatCard = activeBeat
+  const activeBeatCard = activeNowBeat
     ? {
-        ...railCardFromBeat(activeBeat),
+        ...railCardFromBeat(activeNowBeat),
         decisionArtifact: autonomyCard.decisionArtifact,
       }
     : null;
@@ -708,10 +713,10 @@ export function buildRowanRailViewModel({
       ? openingNowCard
       : autonomyCard;
   const nextCard =
-    activeBeat?.kind === "thread_line"
+    activeNowBeat?.kind === "thread_line"
       ? null
-      : activeBeat
-        ? buildNextRailCard(autonomyCard, activeBeat)
+      : activeNowBeat
+        ? buildNextRailCard(autonomyCard, activeNowBeat)
         : openingBeat
           ? openingNextCard
           : buildObjectiveNextRailCard(game, autonomyCard);
@@ -728,7 +733,9 @@ export function buildRowanRailViewModel({
           : quietStatusLabel;
   const justHappened = useConversationTranscript
     ? null
-    : alignedPlayback?.lastCompletedBeat
+    : activeCityBeat
+      ? railCardFromBeat(activeCityBeat)
+      : alignedPlayback?.lastCompletedBeat
       ? {
           detail: alignedPlayback.lastCompletedBeat.detail,
           title: alignedPlayback.lastCompletedBeat.title,

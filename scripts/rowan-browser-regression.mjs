@@ -3664,8 +3664,8 @@ function assertProbeAuditability(label, game, probe) {
   if (probe.independentNpcSurface) {
     const surface = probe.independentNpcSurface;
     assert.ok(
-      ["now", "just_happened"].includes(surface.slot),
-      `${label}: independent NPC surface must say whether it is the current or just-happened rail beat.`,
+      surface.slot === "just_happened",
+      `${label}: independent NPC surface must stay outside Rowan's current Now rail beat.`,
     );
     assert.ok(
       surface.problemId &&
@@ -5875,7 +5875,7 @@ function assertIndependentNpcActionEvidence(evidence) {
   assert.ok(
     evidence.surfacedActions.some(
       (action) =>
-        ["now", "just_happened"].includes(action.slot) &&
+        action.slot === "just_happened" &&
         action.problemId &&
         action.resolverNpcId &&
         action.resolvedAt &&

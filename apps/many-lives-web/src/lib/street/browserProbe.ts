@@ -427,9 +427,11 @@ function independentNpcActionsProbePayload(game: StreetGameState) {
 
 function independentNpcSurfaceProbePayload({
   game,
+  rowanRail,
   snapshot,
 }: {
   game: StreetGameState;
+  rowanRail: RowanRailViewModel;
   snapshot: StreetBrowserProbeSnapshot;
 }) {
   const activeBeat = snapshot.rowanPlayback?.activeBeat;
@@ -442,7 +444,10 @@ function independentNpcSurfaceProbePayload({
     return {
       ...activeMatch,
       detail: activeBeat?.detail ?? activeMatch.playerFacingSummary,
-      slot: "now",
+      slot:
+        rowanRail.justHappened?.title === activeBeat?.title
+          ? "just_happened"
+          : "now",
       title: activeBeat?.title ?? null,
     };
   }
@@ -694,6 +699,7 @@ export function buildStreetBrowserProbeJson({
     independentNpcActions: independentNpcActionsProbePayload(game),
     independentNpcSurface: independentNpcSurfaceProbePayload({
       game,
+      rowanRail,
       snapshot,
     }),
     worldPressure: worldPressureProbePayload(game),
