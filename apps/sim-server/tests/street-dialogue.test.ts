@@ -93,6 +93,103 @@ describe("street dialogue fallback", () => {
     expect(reply.reply).not.toMatch(/prove|earn the softer|helpful thing/i);
   });
 
+  it("preserves scaffold-owned open work-window replies and closed-window precedence", () => {
+    const cases: Array<{
+      expectedFollowupThought: string;
+      expectedReply: string;
+      id: string;
+      npcId: string;
+      playerText: string;
+      setup?: (world: ReturnType<typeof seedStreetGame>) => void;
+    }> = [
+      {
+        expectedFollowupThought: "Ada will set him straight kindly.",
+        expectedReply:
+          "Start with Ada at Kettle & Lamp. She will tell you quickly if lunch needs help.",
+        id: "mara-work",
+        npcId: "npc-mara",
+        playerText: "I need work today.",
+      },
+      {
+        expectedFollowupThought: "That is the heart of it.",
+        expectedReply:
+          "Morrow House keeps people who make the place easier to wake up in. Ada may still need help through lunch if you want the room to feel less temporary.",
+        id: "mara-home",
+        npcId: "npc-mara",
+        playerText: "How do I keep the room and pay rent?",
+      },
+      {
+        expectedFollowupThought: "He might manage the room.",
+        expectedReply:
+          "I could use help through lunch: clear cups, wipe tables, keep an eye on the counter. The shift pays fourteen if you can stay steady.",
+        id: "ada-open",
+        npcId: "npc-ada",
+        playerText: "I heard you might have paid work.",
+      },
+      {
+        expectedFollowupThought: "That is clear enough.",
+        expectedReply:
+          "First thing is simple: stack the small crates by the service bay and leave the handcart lane open. Twenty-four when it is done.",
+        id: "tomas-next",
+        npcId: "npc-tomas",
+        playerText:
+          "If I take it, what exactly do you need me to move first?",
+        setup: (world) => {
+          const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+          if (yardJob) {
+            yardJob.discovered = true;
+          }
+        },
+      },
+      {
+        expectedFollowupThought: "Keep it simple.",
+        expectedReply:
+          "The yard needs another set of hands for a short run. Twenty-four if you can start with the bay crates now.",
+        id: "tomas-offer",
+        npcId: "npc-tomas",
+        playerText: "Any work or money at the yard?",
+      },
+      {
+        expectedFollowupThought:
+          "That answer changed the route instead of pretending time held still.",
+        expectedReply:
+          "Ada was the morning answer. This late, ask Tomas at the yard if he still has a loading block open.",
+        id: "mara-closed",
+        npcId: "npc-mara",
+        playerText: "I need work today.",
+        setup: (world) => {
+          world.clock = {
+            day: 1,
+            hour: 15,
+            label: "Afternoon",
+            minute: 0,
+            totalMinutes: 15 * 60,
+          };
+          const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+          if (teaJob) {
+            teaJob.missed = true;
+          }
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const world = seedStreetGame(`game-open-window-${testCase.id}`);
+      testCase.setup?.(world);
+
+      const reply = buildDeterministicStreetReply({
+        game: world,
+        npcId: testCase.npcId,
+        playerText: testCase.playerText,
+      });
+
+      expect(reply.reply, testCase.id).toBe(testCase.expectedReply);
+      expect(reply.followupThought, testCase.id).toBe(
+        testCase.expectedFollowupThought,
+      );
+    }
+  });
+
   it("preserves scaffold-owned Jo tool and Nia cart problem-route replies", () => {
     const world = seedStreetGame("game-problem-route-dialogue");
 

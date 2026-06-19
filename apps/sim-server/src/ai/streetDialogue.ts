@@ -347,7 +347,6 @@ export function buildDeterministicStreetReply(
   }
 
   const topics = detectTopics(input.playerText);
-  const teaJob = input.game.jobs.find((job) => job.id === "job-tea-shift");
   const yardJob = input.game.jobs.find((job) => job.id === "job-yard-shift");
   const pumpProblem = input.game.problems.find((problem) => problem.id === "problem-pump");
   const cartProblem = input.game.problems.find((problem) => problem.id === "problem-cart");
@@ -400,27 +399,6 @@ export function buildDeterministicStreetReply(
         if (routeReply) {
           return buildRouteDialogueResult(routeReply, context);
         }
-
-        return {
-          reply: chooseConversationLine(
-            [
-              "Ask Ada at Kettle & Lamp before lunch. She always knows who could use an extra pair of hands.",
-              "Kettle & Lamp may need help before the lunch crowd wanders in. Try Ada now.",
-              "Start with Ada at Kettle & Lamp. She will tell you quickly if lunch needs help.",
-            ],
-            context,
-            "mara-work",
-          ),
-          followupThought: pickFollowupThought(
-            [
-              "Ada will set him straight kindly.",
-              "That should be enough to start.",
-              "A tea room is a gentle first step.",
-            ],
-            context,
-            "mara-work-followup",
-          ),
-        };
       }
 
       if (topics.has("home") || topics.has("rent")) {
@@ -433,27 +411,6 @@ export function buildDeterministicStreetReply(
         if (routeReply) {
           return buildRouteDialogueResult(routeReply, context);
         }
-
-        return {
-          reply: chooseConversationLine(
-            [
-              "Pay when you say you will, be kind in the shared spaces, and rinse your cup before it becomes everyone's cup. If you need coin today, ask Ada at Kettle & Lamp before lunch.",
-              "Morrow House keeps people who make the place easier to wake up in. Ada may still need help through lunch if you want the room to feel less temporary.",
-              "A room starts feeling like yours when you treat the house like it is partly yours too. Start with Ada at Kettle & Lamp if you need honest work today.",
-            ],
-            context,
-            "mara-home",
-          ),
-          followupThought: pickFollowupThought(
-            [
-              "That is the heart of it.",
-              "Keep the house easy.",
-              "A fair answer is enough.",
-            ],
-            context,
-            "mara-home-followup",
-          ),
-        };
       }
 
       if (currentNpcObjectiveOutcome && !topicsRequestSpecificLead(topics)) {
@@ -502,38 +459,15 @@ export function buildDeterministicStreetReply(
       };
     case "npc-ada":
       if (topics.has("work") || topics.has("money")) {
-        const closedWindowReply =
+        const workWindowReply =
           objectiveRouteFirstAfternoonWorkWindowDialogue(
             input.game,
             input.game.player.objective,
             npc,
             "adaWork",
           );
-        if (closedWindowReply) {
-          return buildRouteDialogueResult(closedWindowReply, context);
-        }
-
-        if (!teaJob?.accepted && !teaJob?.completed && !teaJob?.missed) {
-          return {
-            reply: chooseConversationLine(
-              [
-                "I could use help through lunch: clear cups, wipe tables, keep an eye on the counter. The shift pays fourteen if you can stay steady.",
-                "Lunch is coming. Clear cups, wipe tables, listen the first time. Fourteen for the shift, and tea after if we both survive it.",
-                "I can use steady hands through lunch. It is simple work, and it pays fourteen.",
-              ],
-              context,
-              "ada-work-open",
-            ),
-            followupThought: pickFollowupThought(
-              [
-                "He might manage the room.",
-                "Steady is plenty.",
-                "Tea after, if he survives lunch.",
-              ],
-              context,
-              "ada-work-open-followup",
-            ),
-          };
+        if (workWindowReply) {
+          return buildRouteDialogueResult(workWindowReply, context);
         }
 
         const yardHandoffReply =
@@ -639,37 +573,16 @@ export function buildDeterministicStreetReply(
         !yardJob.completed &&
         !yardJob.missed
       ) {
-        const closedWindowReply =
+        const workWindowReply =
           objectiveRouteFirstAfternoonWorkWindowDialogue(
             input.game,
             input.game.player.objective,
             npc,
             "tomasYardNextStep",
           );
-        if (closedWindowReply) {
-          return buildRouteDialogueResult(closedWindowReply, context);
+        if (workWindowReply) {
+          return buildRouteDialogueResult(workWindowReply, context);
         }
-
-        return {
-          reply: chooseConversationLine(
-            [
-              "Take the short loading block if you want it. Start with the lighter crates by the bay, keep the cart lane clear, and I will pay twenty-four when the run is done.",
-              "First thing is simple: stack the small crates by the service bay and leave the handcart lane open. Twenty-four when it is done.",
-              "If you are in, start with the crates nearest the bay door. Keep the lane clear for the handcart, finish the run, and the pay is twenty-four.",
-            ],
-            context,
-            "tomas-yard-next-step",
-          ),
-          followupThought: pickFollowupThought(
-            [
-              "That is clear enough.",
-              "Crates first, then pay.",
-              "He gave the actual job.",
-            ],
-            context,
-            "tomas-yard-next-step-followup",
-          ),
-        };
       }
 
       if (
@@ -678,38 +591,15 @@ export function buildDeterministicStreetReply(
         topics.has("yard") ||
         topics.has("next_step")
       ) {
-        const closedWindowReply =
+        const workWindowReply =
           objectiveRouteFirstAfternoonWorkWindowDialogue(
             input.game,
             input.game.player.objective,
             npc,
             "tomasYardWork",
           );
-        if (closedWindowReply) {
-          return buildRouteDialogueResult(closedWindowReply, context);
-        }
-
-        if (!yardJob?.accepted && !yardJob?.completed && !yardJob?.missed) {
-          return {
-            reply: chooseConversationLine(
-              [
-                "Short loading block by the yard. Twenty-four coins if you keep the cart lane clear and stack the lighter crates by the bay.",
-                "One loading block. Keep up, finish clean, and I pay twenty-four. Start with the crates by the service bay.",
-                "The yard needs another set of hands for a short run. Twenty-four if you can start with the bay crates now.",
-              ],
-              context,
-              "tomas-yard-offer",
-            ),
-            followupThought: pickFollowupThought(
-              [
-                "Keep it simple.",
-                "He either lifts or he doesn't.",
-                "The path can stay clear.",
-              ],
-              context,
-              "tomas-yard-offer-followup",
-            ),
-          };
+        if (workWindowReply) {
+          return buildRouteDialogueResult(workWindowReply, context);
         }
 
         return {

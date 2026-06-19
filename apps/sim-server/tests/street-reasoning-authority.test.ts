@@ -46,6 +46,50 @@ const FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_CHOICE_KEYS = [
   "tomas-yard-next-step-closed",
   "tomas-yard-closed",
 ];
+const FIRST_AFTERNOON_OPEN_WORK_WINDOW_DIALOGUE_COPY = [
+  "Ask Ada at Kettle & Lamp before lunch. She always knows who could use an extra pair of hands.",
+  "Kettle & Lamp may need help before the lunch crowd wanders in. Try Ada now.",
+  "Start with Ada at Kettle & Lamp. She will tell you quickly if lunch needs help.",
+  "Ada will set him straight kindly.",
+  "That should be enough to start.",
+  "A tea room is a gentle first step.",
+  "Pay when you say you will, be kind in the shared spaces, and rinse your cup before it becomes everyone's cup. If you need coin today, ask Ada at Kettle & Lamp before lunch.",
+  "Morrow House keeps people who make the place easier to wake up in. Ada may still need help through lunch if you want the room to feel less temporary.",
+  "A room starts feeling like yours when you treat the house like it is partly yours too. Start with Ada at Kettle & Lamp if you need honest work today.",
+  "That is the heart of it.",
+  "Keep the house easy.",
+  "A fair answer is enough.",
+  "I could use help through lunch: clear cups, wipe tables, keep an eye on the counter. The shift pays fourteen if you can stay steady.",
+  "Lunch is coming. Clear cups, wipe tables, listen the first time. Fourteen for the shift, and tea after if we both survive it.",
+  "I can use steady hands through lunch. It is simple work, and it pays fourteen.",
+  "He might manage the room.",
+  "Steady is plenty.",
+  "Tea after, if he survives lunch.",
+  "Take the short loading block if you want it. Start with the lighter crates by the bay, keep the cart lane clear, and I will pay twenty-four when the run is done.",
+  "First thing is simple: stack the small crates by the service bay and leave the handcart lane open. Twenty-four when it is done.",
+  "If you are in, start with the crates nearest the bay door. Keep the lane clear for the handcart, finish the run, and the pay is twenty-four.",
+  "That is clear enough.",
+  "Crates first, then pay.",
+  "He gave the actual job.",
+  "Short loading block by the yard. Twenty-four coins if you keep the cart lane clear and stack the lighter crates by the bay.",
+  "One loading block. Keep up, finish clean, and I pay twenty-four. Start with the crates by the service bay.",
+  "The yard needs another set of hands for a short run. Twenty-four if you can start with the bay crates now.",
+  "Keep it simple.",
+  "He either lifts or he doesn't.",
+  "The path can stay clear.",
+];
+const FIRST_AFTERNOON_OPEN_WORK_WINDOW_DIALOGUE_CHOICE_KEYS = [
+  "mara-work",
+  "mara-work-followup",
+  "mara-home",
+  "mara-home-followup",
+  "ada-work-open",
+  "ada-work-open-followup",
+  "tomas-yard-next-step",
+  "tomas-yard-next-step-followup",
+  "tomas-yard-offer",
+  "tomas-yard-offer-followup",
+];
 const PROBLEM_ROUTE_DIALOGUE_COPY = [
   "You've already got the wrench. Good. Go slow and do not force the old metal.",
   "You have the wrench. Try the fitting gently first, then tighten only what moves cleanly.",
@@ -741,7 +785,7 @@ describe("street reasoning authority", () => {
     expect(dialogueSource).not.toContain('routeKey === "first-afternoon"');
   });
 
-  it("keeps first-afternoon closed work-window dialogue policy in scaffold data, not dialogue control flow", () => {
+  it("keeps first-afternoon work-window dialogue policy in scaffold data, not dialogue control flow", () => {
     const dialogueSource = readFileSync(
       new URL("../src/ai/streetDialogue.ts", import.meta.url),
       "utf8",
@@ -756,13 +800,19 @@ describe("street reasoning authority", () => {
       "objectiveRouteFirstAfternoonWorkWindowDialogue",
     );
 
-    for (const dialogueCopy of FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_COPY) {
+    for (const dialogueCopy of [
+      ...FIRST_AFTERNOON_OPEN_WORK_WINDOW_DIALOGUE_COPY,
+      ...FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_COPY,
+    ]) {
       expect(scaffoldSource).toContain(dialogueCopy);
       expect(dialogueSource).not.toContain(dialogueCopy);
     }
 
-    for (const choiceKey of FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_CHOICE_KEYS) {
-      expect(scaffoldSource).toContain(`choiceKey: "${choiceKey}"`);
+    for (const choiceKey of [
+      ...FIRST_AFTERNOON_OPEN_WORK_WINDOW_DIALOGUE_CHOICE_KEYS,
+      ...FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_CHOICE_KEYS,
+    ]) {
+      expect(scaffoldSource).toContain(choiceKey);
       expect(dialogueSource).not.toContain(choiceKey);
     }
   });

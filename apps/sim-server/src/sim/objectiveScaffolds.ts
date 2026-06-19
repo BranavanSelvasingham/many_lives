@@ -3138,6 +3138,26 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     ],
     firstAfternoonWorkWindowDialogue: [
       {
+        choiceKey: "mara-work",
+        followupChoiceKey: "mara-work-followup",
+        followupThoughts: [
+          "Ada will set him straight kindly.",
+          "That should be enough to start.",
+          "A tea room is a gentle first step.",
+        ],
+        kind: "maraWork",
+        npcId: "npc-mara",
+        replyLines: [
+          "Ask Ada at Kettle & Lamp before lunch. She always knows who could use an extra pair of hands.",
+          "Kettle & Lamp may need help before the lunch crowd wanders in. Try Ada now.",
+          "Start with Ada at Kettle & Lamp. She will tell you quickly if lunch needs help.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          return !jobWindowClosed(world, teaJob);
+        },
+      },
+      {
         choiceKey: "mara-work-tea-closed-yard-open",
         followupChoiceKey: "mara-work-tea-closed-yard-open-followup",
         followupThoughts: [
@@ -3180,6 +3200,26 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         },
       },
       {
+        choiceKey: "mara-home",
+        followupChoiceKey: "mara-home-followup",
+        followupThoughts: [
+          "That is the heart of it.",
+          "Keep the house easy.",
+          "A fair answer is enough.",
+        ],
+        kind: "maraHome",
+        npcId: "npc-mara",
+        replyLines: [
+          "Pay when you say you will, be kind in the shared spaces, and rinse your cup before it becomes everyone's cup. If you need coin today, ask Ada at Kettle & Lamp before lunch.",
+          "Morrow House keeps people who make the place easier to wake up in. Ada may still need help through lunch if you want the room to feel less temporary.",
+          "A room starts feeling like yours when you treat the house like it is partly yours too. Start with Ada at Kettle & Lamp if you need honest work today.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          return !jobWindowClosed(world, teaJob);
+        },
+      },
+      {
         choiceKey: "mara-home-tea-closed-yard-open",
         followupChoiceKey: "mara-home-work-closed-followup",
         followupThoughts: [
@@ -3219,6 +3259,31 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
           return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+        },
+      },
+      {
+        choiceKey: "ada-work-open",
+        followupChoiceKey: "ada-work-open-followup",
+        followupThoughts: [
+          "He might manage the room.",
+          "Steady is plenty.",
+          "Tea after, if he survives lunch.",
+        ],
+        kind: "adaWork",
+        npcId: "npc-ada",
+        replyLines: [
+          "I could use help through lunch: clear cups, wipe tables, keep an eye on the counter. The shift pays fourteen if you can stay steady.",
+          "Lunch is coming. Clear cups, wipe tables, listen the first time. Fourteen for the shift, and tea after if we both survive it.",
+          "I can use steady hands through lunch. It is simple work, and it pays fourteen.",
+        ],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          return Boolean(
+            !teaJob?.accepted &&
+              !teaJob?.completed &&
+              !teaJob?.missed &&
+              !jobWindowClosed(world, teaJob),
+          );
         },
       },
       {
@@ -3287,6 +3352,32 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         },
       },
       {
+        choiceKey: "tomas-yard-next-step",
+        followupChoiceKey: "tomas-yard-next-step-followup",
+        followupThoughts: [
+          "That is clear enough.",
+          "Crates first, then pay.",
+          "He gave the actual job.",
+        ],
+        kind: "tomasYardNextStep",
+        npcId: "npc-tomas",
+        replyLines: [
+          "Take the short loading block if you want it. Start with the lighter crates by the bay, keep the cart lane clear, and I will pay twenty-four when the run is done.",
+          "First thing is simple: stack the small crates by the service bay and leave the handcart lane open. Twenty-four when it is done.",
+          "If you are in, start with the crates nearest the bay door. Keep the lane clear for the handcart, finish the run, and the pay is twenty-four.",
+        ],
+        when: ({ world }) => {
+          const yardJob = jobById(world, "job-yard-shift");
+          return Boolean(
+            yardJob?.discovered &&
+              !yardJob.accepted &&
+              !yardJob.completed &&
+              !yardJob.missed &&
+              !jobWindowClosed(world, yardJob),
+          );
+        },
+      },
+      {
         choiceKey: "tomas-yard-next-step-closed",
         followupChoiceKey: "tomas-yard-next-step-closed-followup",
         followupThoughts: [
@@ -3309,6 +3400,31 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
               !yardJob.completed &&
               !yardJob.missed &&
               jobWindowClosed(world, yardJob),
+          );
+        },
+      },
+      {
+        choiceKey: "tomas-yard-offer",
+        followupChoiceKey: "tomas-yard-offer-followup",
+        followupThoughts: [
+          "Keep it simple.",
+          "He either lifts or he doesn't.",
+          "The path can stay clear.",
+        ],
+        kind: "tomasYardWork",
+        npcId: "npc-tomas",
+        replyLines: [
+          "Short loading block by the yard. Twenty-four coins if you keep the cart lane clear and stack the lighter crates by the bay.",
+          "One loading block. Keep up, finish clean, and I pay twenty-four. Start with the crates by the service bay.",
+          "The yard needs another set of hands for a short run. Twenty-four if you can start with the bay crates now.",
+        ],
+        when: ({ world }) => {
+          const yardJob = jobById(world, "job-yard-shift");
+          return Boolean(
+            !yardJob?.accepted &&
+              !yardJob?.completed &&
+              !yardJob?.missed &&
+              !jobWindowClosed(world, yardJob),
           );
         },
       },
