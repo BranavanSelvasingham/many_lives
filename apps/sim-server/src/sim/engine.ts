@@ -33,6 +33,7 @@ import {
   objectiveRouteActionTargetLocation,
   objectiveRouteCompletionAcknowledgement,
   objectiveRouteCompletionIdleCopy,
+  objectiveRouteCompletionRationale,
   objectiveRouteConversationGroundingPolicy,
   objectiveRouteConversationHasVisibleEvidence,
   objectiveRouteConversationResolutionPointsToPolicy,
@@ -3822,7 +3823,15 @@ function buildRowanAutonomyReason({
   }
 
   if (loopStep.kind === "idle" && isCurrentObjectiveComplete(world)) {
-    return "This is a natural stopping point: the objective is complete and Rowan has enough from today to sleep on.";
+    const completionRationale = objectiveRouteCompletionRationale(
+      world,
+      loopStep.objective ?? currentObjectiveDirective(world),
+    );
+
+    return (
+      completionRationale ??
+      "This objective is complete. Set a new direction when Rowan is ready to keep going."
+    );
   }
 
   return loopStep.detail;

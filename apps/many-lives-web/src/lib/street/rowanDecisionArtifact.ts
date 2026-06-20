@@ -41,6 +41,7 @@ export function buildRowanVisibleDecisionArtifact(
     autonomyLabel: game.rowanAutonomy?.label,
     autonomyReason: game.rowanAutonomy?.intent?.reason,
     autonomySignals: game.rowanAutonomy?.intent?.signals,
+    completedObjective: objectiveIsComplete(game),
     objectiveText: game.player.objective?.text,
     postFirstAfternoonChoiceSignal: postFirstAfternoonChoiceSignal(game),
     planningTrace: game.rowanAutonomy?.planningTrace,
@@ -56,6 +57,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomyLabel,
   autonomyReason,
   autonomySignals,
+  completedObjective,
   objectiveText,
   postFirstAfternoonChoiceSignal,
   planningTrace,
@@ -68,6 +70,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   autonomyLabel?: string;
   autonomyReason?: string;
   autonomySignals?: string[];
+  completedObjective?: boolean;
   objectiveText?: string;
   postFirstAfternoonChoiceSignal?: string;
   planningTrace?: PlanningTrace;
@@ -119,14 +122,14 @@ export function buildRowanVisibleDecisionArtifactFromState({
       ? `${selectedFollowUpLabel}: ${
           selectedOption?.rationale ??
           selectedStep?.rationale ??
-          autonomyReason ??
-          autonomyDetail ??
+          (completedObjective ? autonomyDetail : autonomyReason) ??
+          (completedObjective ? autonomyReason : autonomyDetail) ??
           activeConversationDecision
         }`
       : selectedOption?.rationale ??
           selectedStep?.rationale ??
-          autonomyReason ??
-          autonomyDetail ??
+          (completedObjective ? autonomyDetail : autonomyReason) ??
+          (completedObjective ? autonomyReason : autonomyDetail) ??
           activeConversationDecision,
     132,
   );
@@ -212,6 +215,13 @@ export function buildRowanVisibleDecisionArtifactFromState({
       travelPhase,
     ),
   };
+}
+
+function objectiveIsComplete(game: StreetGameState) {
+  const progress = game.player.objective?.progress;
+  return Boolean(
+    progress && progress.total > 0 && progress.completed >= progress.total,
+  );
 }
 
 function postFirstAfternoonChoiceSignal(game: StreetGameState) {

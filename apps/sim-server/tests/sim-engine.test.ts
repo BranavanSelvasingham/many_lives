@@ -49,6 +49,12 @@ const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where Rowan can let today's standing settle before he runs himself flat";
 const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where today's standing can turn into a steadier foothold";
+const FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL =
+  "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.";
+const FIRST_AFTERNOON_COMPLETION_RATIONALE =
+  "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.";
+const GENERIC_COMPLETED_OBJECTIVE_RATIONALE =
+  "This objective is complete. Set a new direction when Rowan is ready to keep going.";
 
 type PlanningAIProviderResult =
   | StreetPlanningResult
@@ -876,6 +882,99 @@ describe("SimulationEngine street slice", () => {
     ).toBe(NIA_RECOVERY_PLAYER_RATIONALE);
     expect(playerFacingAutonomyRationale(world, "Morrow House standing built")).toBe(
       NIA_STANDING_PLAYER_RATIONALE,
+    );
+  });
+
+  it("uses scaffold completion copy for first-afternoon completed-objective autonomy rationale", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame(
+      "game-first-afternoon-completion-rationale",
+    );
+    const currentObjective = world.player.objective as PlayerObjective;
+    const teaShift = world.jobs.find((job) => job.id === "job-tea-shift");
+    expect(teaShift).toBeDefined();
+
+    placePlayerAt(world, "boarding-house");
+    world.firstAfternoon = {
+      ...world.firstAfternoon,
+      fieldNote: {
+        createdAt: world.currentTime,
+        evidence: "Rowan took stock after the paid shift.",
+        learned: "The first afternoon has landed.",
+        memory: "Rowan earned a foothold and has enough to sleep on.",
+        next: "Choose tomorrow from live state.",
+      },
+      leadFieldNote: {
+        createdAt: world.currentTime,
+        evidence: "Asked Ada at Kettle & Lamp.",
+        learned: "The Kettle & Lamp lead is real.",
+        memory: "Ada saw Rowan verify the lead and follow through.",
+        next: "Ada's offer is now a current choice.",
+      },
+      planSettledAt: world.currentTime,
+      teaShiftStage: "paid",
+      completedAt: world.currentTime,
+    };
+    if (teaShift) {
+      teaShift.accepted = true;
+      teaShift.completed = true;
+      teaShift.discovered = true;
+    }
+    world.player.objective = {
+      ...currentObjective,
+      routeKey: "first-afternoon",
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: false,
+      detail: FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL,
+      label: "First afternoon complete",
+      stepKind: "idle",
+    });
+    expect(world.rowanAutonomy.intent?.reason).toBe(
+      FIRST_AFTERNOON_COMPLETION_RATIONALE,
+    );
+  });
+
+  it("uses generic completed-objective autonomy rationale without scaffold completion copy", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-generic-completion-rationale");
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Rest at Morrow House until Rowan can move cleanly again.",
+    });
+
+    const currentObjective = world.player.objective as PlayerObjective;
+    placePlayerAt(world, "boarding-house");
+    world.player.energy = 50;
+    world.player.lastRestAt = world.currentTime;
+    world.player.objective = {
+      ...currentObjective,
+      routeKey: "rest-home",
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: false,
+      detail:
+        "Rowan has checked off this objective. Set a new direction when you want to keep going.",
+      label: "Objective complete",
+      stepKind: "idle",
+    });
+    expect(world.rowanAutonomy.intent?.reason).toBe(
+      GENERIC_COMPLETED_OBJECTIVE_RATIONALE,
     );
   });
 

@@ -2,6 +2,25 @@ import { describe, expect, it } from "vitest";
 import { buildRowanVisibleDecisionArtifactFromState } from "../../many-lives-web/src/lib/street/rowanDecisionArtifact.js";
 
 describe("Rowan visible decision artifact", () => {
+  it("uses completed-objective detail for card rationale while preserving short banner reason", () => {
+    const shortReason =
+      "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.";
+    const fullDetail =
+      "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.";
+
+    const artifact = buildRowanVisibleDecisionArtifactFromState({
+      autonomyDetail: fullDetail,
+      autonomyLabel: "First afternoon complete",
+      autonomyReason: shortReason,
+      completedObjective: true,
+      objectiveText:
+        "Make Rowan's first afternoon count: understand the room, earn a little money, and end with a real foothold.",
+    });
+
+    expect(artifact?.rationale).toBe(fullDetail);
+    expect(artifact?.rationale).not.toBe(shortReason);
+  });
+
   it("keeps rejected route labels out of reason-led visible options", () => {
     const rejectedYardOption = {
       actionId: "move:courtyard",

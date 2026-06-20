@@ -737,6 +737,11 @@ interface CompletionIdleCopyHint extends ObjectiveRouteCompletionIdleCopy {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+interface CompletionRationaleHint {
+  rationale: string;
+  when?: (context: ScaffoldContext) => boolean;
+}
+
 interface CompletionOutcomeCopy {
   feedText: string;
   memoryText: string;
@@ -1186,6 +1191,7 @@ interface ObjectiveRouteScaffold {
   availableActions?: AvailableActionHint[];
   completionAcknowledgement?: CompletionAcknowledgementHint;
   completionIdleCopy?: CompletionIdleCopyHint;
+  completionRationale?: CompletionRationaleHint;
   completionOutcome?: CompletionOutcomeCopy;
   conversationFallbacks?: ConversationFallbackHint[];
   conversationGroundingPolicies?: ConversationGroundingPolicyHint[];
@@ -3280,6 +3286,13 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         objective.routeKey === "first-afternoon" &&
         Boolean(world.firstAfternoon?.completedAt),
     },
+    completionRationale: {
+      rationale:
+        "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.",
+      when: ({ objective, world }) =>
+        objective.routeKey === "first-afternoon" &&
+        Boolean(world.firstAfternoon?.completedAt),
+    },
     completionOutcome: {
       feedText:
         "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
@@ -4578,6 +4591,28 @@ export function objectiveRouteCompletionIdleCopy(
         detail: completionIdleCopy.detail,
         label: completionIdleCopy.label,
       };
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteCompletionRationale(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const completionRationale = scaffold.completionRationale;
+    if (
+      completionRationale &&
+      (!completionRationale.when || completionRationale.when(context))
+    ) {
+      return completionRationale.rationale;
     }
   }
 
