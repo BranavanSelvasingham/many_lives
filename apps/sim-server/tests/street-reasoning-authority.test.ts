@@ -129,6 +129,28 @@ const PROBLEM_ROUTE_DIALOGUE_CHOICE_KEYS = [
   "nia-cart-active",
   "nia-cart-followup",
 ];
+const PASSIVE_PROBLEM_PRESSURE_COPY = [
+  "The jammed cart has started pinching the square instead of waiting politely at the edge.",
+  "Quay Square's cart problem grew sharper while Rowan spent the hour elsewhere.",
+  "By late afternoon the cart jam is no longer a small nuisance; everyone crossing the square has to work around it.",
+  "The square remembered that nobody moved on the cart before it became public friction.",
+  "The Morrow Yard pump has started spreading water across the stones while Rowan is elsewhere.",
+  "The pump did not wait for Rowan's route; by early afternoon it had become harder to ignore.",
+  "The pump leak is turning house trouble into a shared headache before evening.",
+  "Morrow House's pump problem kept worsening on its own while the day moved forward.",
+  "The Morrow Yard pump was left until evening and turned into house strain.",
+  "By evening the Morrow Yard pump stopped being a small fix and became house strain Rowan has to live with.",
+  "Ignoring the pump cost Rowan standing at Morrow House.",
+  "The square had to route itself around the jammed cart after nobody cleared it in time.",
+  "The handcart jam hardened into a square-wide nuisance before Rowan moved on it.",
+  "The square remembered that the cart problem was left until it slowed everybody down.",
+  "Mara contained the pump herself after the house waited as long as it could.",
+  "Mara got the pump contained before evening, but Morrow House had to solve that strain without Rowan.",
+  "The pump did not wait for Rowan's route. Mara contained it herself, and the house noticed.",
+  "Nia cleared the handcart after the square got tired of bending around it.",
+  "Nia got the jammed handcart rolling while Rowan was elsewhere; the square solved that one without him.",
+  "The jammed cart did not wait for Rowan. Nia cleared it once the square pressure peaked.",
+];
 const JO_MONEY_WORK_DIALOGUE_COPY = [
   "I sell repairs, not shifts.",
   "Around ${nearbyPlaceName}",
@@ -976,6 +998,38 @@ describe("street reasoning authority", () => {
       expect(scaffoldSource).toContain(choiceKey);
       expect(dialogueSource).not.toContain(choiceKey);
     }
+  });
+
+  it("keeps passive problem-pressure narratives in street-sim data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const pressureNarrativesSource = readFileSync(
+      new URL(
+        "../src/street-sim/problemPressureNarratives.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    for (const pressureCopy of PASSIVE_PROBLEM_PRESSURE_COPY) {
+      expect(pressureNarrativesSource).toContain(pressureCopy);
+      expect(engineSource).not.toContain(pressureCopy);
+    }
+
+    expect(pressureNarrativesSource).toContain("PROBLEM_PRESSURE_NARRATIVES");
+    expect(pressureNarrativesSource).toContain("problemEscalationStages");
+    expect(pressureNarrativesSource).toContain(
+      "problemExpiryConsequenceNarrative",
+    );
+    expect(pressureNarrativesSource).toContain(
+      "independentProblemResolutionNarrative",
+    );
+    expect(engineSource).toContain("problemEscalationStages");
+    expect(engineSource).toContain("problemExpiryConsequenceNarrative");
+    expect(engineSource).toContain("independentProblemResolutionNarrative");
+    expect(engineSource).not.toContain("PROBLEM_ESCALATION_STAGES");
   });
 
   it("keeps Jo money/work dialogue policy in scaffold helper data, not dialogue control flow", () => {

@@ -6,6 +6,11 @@ import type {
 } from "../ai/provider.js";
 import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
 import { syncCityEvents } from "../street-sim/cityEvents.js";
+import {
+  independentProblemResolutionNarrative,
+  problemEscalationStages,
+  problemExpiryConsequenceNarrative,
+} from "../street-sim/problemPressureNarratives.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
 import {
   buildGenericClosedWorkWindowConversationResolution,
@@ -119,57 +124,6 @@ const MIN_STREET_PLANNER_CONFIDENCE = 0.55;
 const JOB_WINDOW_PRESSURE_MINUTES = 45;
 
 const BASE_DAY = "2026-03-21T00:00:00.000Z";
-
-type ProblemEscalationStage = {
-  atMinute: number;
-  feedText: string;
-  level: number;
-  memoryText: string;
-  urgency: number;
-};
-
-const PROBLEM_ESCALATION_STAGES: Record<string, ProblemEscalationStage[]> = {
-  "problem-cart": [
-    {
-      atMinute: 14 * 60,
-      feedText:
-        "The jammed cart has started pinching the square instead of waiting politely at the edge.",
-      level: 1,
-      memoryText:
-        "Quay Square's cart problem grew sharper while Rowan spent the hour elsewhere.",
-      urgency: 4,
-    },
-    {
-      atMinute: 16 * 60,
-      feedText:
-        "By late afternoon the cart jam is no longer a small nuisance; everyone crossing the square has to work around it.",
-      level: 2,
-      memoryText:
-        "The square remembered that nobody moved on the cart before it became public friction.",
-      urgency: 5,
-    },
-  ],
-  "problem-pump": [
-    {
-      atMinute: 13 * 60,
-      feedText:
-        "The Morrow Yard pump has started spreading water across the stones while Rowan is elsewhere.",
-      level: 1,
-      memoryText:
-        "The pump did not wait for Rowan's route; by early afternoon it had become harder to ignore.",
-      urgency: 4,
-    },
-    {
-      atMinute: 15 * 60,
-      feedText:
-        "The pump leak is turning house trouble into a shared headache before evening.",
-      level: 2,
-      memoryText:
-        "Morrow House's pump problem kept worsening on its own while the day moved forward.",
-      urgency: 5,
-    },
-  ],
-};
 
 type ObjectivePlan = {
   score: number;
@@ -8383,6 +8337,7 @@ function applyProblemExpiryConsequences(
   problem.consequenceAppliedAt = world.currentTime;
 
   if (problem.id === "problem-pump") {
+    const narrative = problemExpiryConsequenceNarrative(problem.id);
     world.player.reputation.morrow_house = clamp(
       (world.player.reputation.morrow_house ?? 0) - 1,
       0,
@@ -8391,50 +8346,31 @@ function applyProblemExpiryConsequences(
     const mara = npcById(world, "npc-mara");
     if (mara) {
       mara.trust = clamp(mara.trust - 1, 0, 10);
-      rememberNpcIfNew(
-        mara,
-        "The Morrow Yard pump was left until evening and turned into house strain.",
-      );
+      if (narrative) {
+        rememberNpcIfNew(mara, narrative.npcMemoryText);
+      }
     }
-    if (problem.discovered) {
-      addFeed(
-        world,
-        "problem",
-        "By evening the Morrow Yard pump stopped being a small fix and became house strain Rowan has to live with.",
-      );
-      rememberIfNew(
-        world,
-        "problem",
-        "Ignoring the pump cost Rowan standing at Morrow House.",
-      );
+    if (problem.discovered && narrative) {
+      addFeed(world, "problem", narrative.discoveredFeedText);
+      rememberIfNew(world, "problem", narrative.discoveredMemoryText);
     }
     return;
   }
 
   if (problem.id === "problem-cart") {
+    const narrative = problemExpiryConsequenceNarrative(problem.id);
     world.player.reputation.south_quay = clamp(
       (world.player.reputation.south_quay ?? 0) - 1,
       0,
       10,
     );
     const nia = npcById(world, "npc-nia");
-    if (nia) {
-      rememberNpcIfNew(
-        nia,
-        "The square had to route itself around the jammed cart after nobody cleared it in time.",
-      );
+    if (nia && narrative) {
+      rememberNpcIfNew(nia, narrative.npcMemoryText);
     }
-    if (problem.discovered) {
-      addFeed(
-        world,
-        "problem",
-        "The handcart jam hardened into a square-wide nuisance before Rowan moved on it.",
-      );
-      rememberIfNew(
-        world,
-        "problem",
-        "The square remembered that the cart problem was left until it slowed everybody down.",
-      );
+    if (problem.discovered && narrative) {
+      addFeed(world, "problem", narrative.discoveredFeedText);
+      rememberIfNew(world, "problem", narrative.discoveredMemoryText);
     }
   }
 }
@@ -8448,6 +8384,7 @@ function resolveIndependentNpcActions(
   const pumpProblem = problemById(world, "problem-pump");
   const mara = npcById(world, "npc-mara");
   const pumpResolutionMinute = totalMinutesForDayHour(world.clock.day, 17.5);
+  const pumpNarrative = independentProblemResolutionNarrative("problem-pump");
 
   if (
     pumpProblem?.status === "active" &&
@@ -8459,33 +8396,25 @@ function resolveIndependentNpcActions(
     pumpProblem.resolvedAt ??= world.currentTime;
     pumpProblem.resolvedByNpcId ??= mara.id;
     pumpProblem.urgency = 0;
-    rememberNpcIfNew(
-      mara,
-      "Mara contained the pump herself after the house waited as long as it could.",
-    );
-    if (pumpProblem.discovered) {
+    if (pumpNarrative) {
+      rememberNpcIfNew(mara, pumpNarrative.npcMemoryText);
+    }
+    if (pumpProblem.discovered && pumpNarrative) {
       world.player.reputation.morrow_house = clamp(
         (world.player.reputation.morrow_house ?? 0) - 1,
         0,
         10,
       );
       mara.trust = clamp(mara.trust - 1, 0, 10);
-      addFeed(
-        world,
-        "problem",
-        "Mara got the pump contained before evening, but Morrow House had to solve that strain without Rowan.",
-      );
-      rememberIfNew(
-        world,
-        "problem",
-        "The pump did not wait for Rowan's route. Mara contained it herself, and the house noticed.",
-      );
+      addFeed(world, "problem", pumpNarrative.discoveredFeedText);
+      rememberIfNew(world, "problem", pumpNarrative.discoveredMemoryText);
     }
   }
 
   const cartProblem = problemById(world, "problem-cart");
   const nia = npcById(world, "npc-nia");
   const cartResolutionMinute = totalMinutesForDayHour(world.clock.day, 16.5);
+  const cartNarrative = independentProblemResolutionNarrative("problem-cart");
 
   if (
     cartProblem?.status === "active" &&
@@ -8497,21 +8426,12 @@ function resolveIndependentNpcActions(
     cartProblem.resolvedAt ??= world.currentTime;
     cartProblem.resolvedByNpcId ??= nia.id;
     cartProblem.urgency = 0;
-    rememberNpcIfNew(
-      nia,
-      "Nia cleared the handcart after the square got tired of bending around it.",
-    );
-    if (cartProblem.discovered) {
-      addFeed(
-        world,
-        "problem",
-        "Nia got the jammed handcart rolling while Rowan was elsewhere; the square solved that one without him.",
-      );
-      rememberIfNew(
-        world,
-        "problem",
-        "The jammed cart did not wait for Rowan. Nia cleared it once the square pressure peaked.",
-      );
+    if (cartNarrative) {
+      rememberNpcIfNew(nia, cartNarrative.npcMemoryText);
+    }
+    if (cartProblem.discovered && cartNarrative) {
+      addFeed(world, "problem", cartNarrative.discoveredFeedText);
+      rememberIfNew(world, "problem", cartNarrative.discoveredMemoryText);
     }
   }
 }
@@ -8585,7 +8505,7 @@ function resolveProblemEscalation(
     return;
   }
 
-  const stages = PROBLEM_ESCALATION_STAGES[problem.id] ?? [];
+  const stages = problemEscalationStages(problem.id);
   const stage = stages
     .filter((candidate) => world.clock.totalMinutes >= candidate.atMinute)
     .sort((left, right) => right.level - left.level)[0];
