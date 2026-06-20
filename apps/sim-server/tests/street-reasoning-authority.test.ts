@@ -163,6 +163,21 @@ const PASSIVE_JOB_OUTCOME_COPY = [
   "Tomas did not hold the freight yard load for Rowan; the work moved without him and closed that window.",
   "Tomas closed the loading block with his own crew before Rowan ever came asking.",
 ];
+const ACTIVE_JOB_WORK_COPY = [
+  "Lunch starts to fill Kettle & Lamp. Rowan clears cups, wipes tables, and learns where Ada points before she has to say it twice.",
+  "Rowan started the lunch rush at Kettle & Lamp by keeping the small things moving.",
+  "The rush crests. Rowan keeps the counter moving, catches a tray before it tips, and Ada gives one small nod that counts.",
+  "Ada trusts steady hands more than big promises.",
+  "That was tiring, but it turned an afternoon into proof. I should go back to Morrow House and let it land.",
+  "Rowan finishes {jobTitle} and earns ${pay}. Ada says the room stayed easier because he kept up.",
+  "The yard paid, and now I need to look at what the house had to handle while I was here.",
+  "You finished {jobTitle} and earned ${pay}. The yard will remember you as someone who stayed until the load was done.",
+  "You finished {jobTitle} and took your pay while the block was still moving.",
+  "Rowan kept {jobTitle} moving until the city changed around him; the work is still in hand.",
+  "Rowan started {jobTitle} before the window closed and still needs to finish it.",
+  "Choosing the freight-yard lift paid Rowan, but it left the Morrow Yard pump for Mara to contain without him.",
+  "Rowan chose paid yard work while the pump was still live, so Mara contained the house strain herself.",
+];
 const JO_MONEY_WORK_DIALOGUE_COPY = [
   "I sell repairs, not shifts.",
   "Around ${nearbyPlaceName}",
@@ -1087,6 +1102,32 @@ describe("street reasoning authority", () => {
     expect(engineSource).toContain("passiveMissedJobNarrative");
     expect(engineSource).toContain("independentNpcJobClosureNarrative");
     expect(engineSource).not.toContain("JOB_NARRATIVES");
+  });
+
+  it("keeps active job work narratives in street-sim data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const jobNarrativesSource = readFileSync(
+      new URL("../src/street-sim/jobNarratives.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const jobCopy of ACTIVE_JOB_WORK_COPY) {
+      expect(jobNarrativesSource).toContain(jobCopy);
+      expect(engineSource).not.toContain(jobCopy);
+    }
+
+    expect(jobNarrativesSource).toContain("activeJobStageNarrative");
+    expect(jobNarrativesSource).toContain("activeJobInterruptionNarrative");
+    expect(jobNarrativesSource).toContain("activeJobCompletionNarrative");
+    expect(jobNarrativesSource).toContain("yardWorkPumpConsequenceNarrative");
+    expect(engineSource).toContain("activeJobStageNarrative");
+    expect(engineSource).toContain("activeJobInterruptionNarrative");
+    expect(engineSource).toContain("activeJobCompletionNarrative");
+    expect(engineSource).toContain("yardWorkPumpConsequenceNarrative");
+    expect(engineSource).not.toContain("GENERIC_ACTIVE_JOB_COMPLETION");
   });
 
   it("keeps Jo money/work dialogue policy in scaffold helper data, not dialogue control flow", () => {

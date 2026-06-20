@@ -12,8 +12,12 @@ import {
   problemExpiryConsequenceNarrative,
 } from "../street-sim/problemPressureNarratives.js";
 import {
+  activeJobCompletionNarrative,
+  activeJobInterruptionNarrative,
+  activeJobStageNarrative,
   independentNpcJobClosureNarrative,
   passiveMissedJobNarrative,
+  yardWorkPumpConsequenceNarrative,
 } from "../street-sim/jobNarratives.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
 import {
@@ -7570,16 +7574,19 @@ function workJob(world: StreetGameState, jobId: string): void {
       if (workStageThought) {
         world.player.currentThought = workStageThought;
       }
-      addFeed(
-        world,
-        "job",
-        "Lunch starts to fill Kettle & Lamp. Rowan clears cups, wipes tables, and learns where Ada points before she has to say it twice.",
-      );
-      rememberIfNew(
-        world,
-        "job",
-        "Rowan started the lunch rush at Kettle & Lamp by keeping the small things moving.",
-      );
+      const stageNarrative = activeJobStageNarrative(job.id, {
+        stage: world.firstAfternoon.teaShiftStage,
+      });
+      if (stageNarrative) {
+        addFeed(world, "job", stageNarrative.feedText);
+        if (stageNarrative.memory) {
+          rememberIfNew(
+            world,
+            stageNarrative.memory.kind,
+            stageNarrative.memory.text,
+          );
+        }
+      }
       return;
     }
 
@@ -7599,16 +7606,19 @@ function workJob(world: StreetGameState, jobId: string): void {
       if (workStageThought) {
         world.player.currentThought = workStageThought;
       }
-      addFeed(
-        world,
-        "job",
-        "The rush crests. Rowan keeps the counter moving, catches a tray before it tips, and Ada gives one small nod that counts.",
-      );
-      rememberIfNew(
-        world,
-        "person",
-        "Ada trusts steady hands more than big promises.",
-      );
+      const stageNarrative = activeJobStageNarrative(job.id, {
+        stage: world.firstAfternoon.teaShiftStage,
+      });
+      if (stageNarrative) {
+        addFeed(world, "job", stageNarrative.feedText);
+        if (stageNarrative.memory) {
+          rememberIfNew(
+            world,
+            stageNarrative.memory.kind,
+            stageNarrative.memory.text,
+          );
+        }
+      }
       return;
     }
   }
@@ -7640,16 +7650,12 @@ function workJob(world: StreetGameState, jobId: string): void {
     world.player.energy = clamp(world.player.energy - energyCost, 12, 100);
     world.player.activeJobId = job.id;
     job.accepted = true;
-    addFeed(
-      world,
-      "job",
-      `Rowan kept ${job.title.toLowerCase()} moving until the city changed around him; the work is still in hand.`,
-    );
-    rememberIfNew(
-      world,
-      "job",
-      `Rowan started ${job.title.toLowerCase()} before the window closed and still needs to finish it.`,
-    );
+    const interruptionNarrative = activeJobInterruptionNarrative(job.id, {
+      jobTitle: job.title,
+      pay: job.pay,
+    });
+    addFeed(world, "job", interruptionNarrative.feedText);
+    rememberIfNew(world, "job", interruptionNarrative.memoryText);
     return;
   }
 
@@ -7667,35 +7673,25 @@ function workJob(world: StreetGameState, jobId: string): void {
     npc.trust += 1;
   }
 
+  const completionNarrative = activeJobCompletionNarrative(job.id, {
+    jobTitle: job.title,
+    pay: job.pay,
+  });
+
   if (job.id === "job-tea-shift") {
     world.firstAfternoon ??= {};
     world.firstAfternoon.teaShiftStage = "paid";
     discoverJob(world, "job-yard-shift");
-    world.player.currentThought =
-      "That was tiring, but it turned an afternoon into proof. I should go back to Morrow House and let it land.";
-    addFeed(
-      world,
-      "job",
-      `Rowan finishes ${job.title.toLowerCase()} and earns $${job.pay}. Ada says the room stayed easier because he kept up.`,
-    );
-  } else {
-    if (job.id === "job-yard-shift") {
-      world.player.currentThought =
-        "The yard paid, and now I need to look at what the house had to handle while I was here.";
-    }
-    addFeed(
-      world,
-      "job",
-      `You finished ${job.title.toLowerCase()} and earned $${job.pay}. The yard will remember you as someone who stayed until the load was done.`,
-    );
+  }
+  if (completionNarrative.currentThought) {
+    world.player.currentThought = completionNarrative.currentThought;
+  }
+  addFeed(world, "job", completionNarrative.feedText);
+  if (job.id !== "job-tea-shift") {
     addYardWorkPumpConsequenceFeed(world, job);
   }
 
-  remember(
-    world,
-    "job",
-    `You finished ${job.title.toLowerCase()} and took your pay while the block was still moving.`,
-  );
+  remember(world, "job", completionNarrative.memoryText);
 }
 
 function addYardWorkPumpConsequenceFeed(
@@ -7714,16 +7710,13 @@ function addYardWorkPumpConsequenceFeed(
     return;
   }
 
-  addFeed(
-    world,
-    "problem",
-    "Choosing the freight-yard lift paid Rowan, but it left the Morrow Yard pump for Mara to contain without him.",
-  );
-  rememberIfNew(
-    world,
-    "problem",
-    "Rowan chose paid yard work while the pump was still live, so Mara contained the house strain herself.",
-  );
+  const narrative = yardWorkPumpConsequenceNarrative(job.id);
+  if (!narrative) {
+    return;
+  }
+
+  addFeed(world, "problem", narrative.feedText);
+  rememberIfNew(world, "problem", narrative.memoryText);
 }
 
 function movePlayerWithinActiveSpaceForWork(
