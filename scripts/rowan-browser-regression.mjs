@@ -3920,7 +3920,17 @@ async function refreshProbeForVisibleIndependentNpcSurface({
     return probe;
   }
 
-  if (!/city beat|steadied|contained|closed|load out/i.test(dom.bodyText ?? "")) {
+  const domShowsIndependentSurface = (candidateDom) =>
+    /city beat|steadied|contained|closed|load out/i.test(
+      candidateDom?.bodyText ?? "",
+    );
+  const playbackPending = Boolean(
+    probe.watchMode?.pendingPlayback ||
+      probe.playback?.activeKind ||
+      (probe.playback?.queuedCount ?? 0) > 0,
+  );
+
+  if (!playbackPending && !domShowsIndependentSurface(dom)) {
     return probe;
   }
 
@@ -3929,6 +3939,19 @@ async function refreshProbeForVisibleIndependentNpcSurface({
       const refreshedProbe = await session.readBrowserProbe();
       if (refreshedProbe.independentNpcSurface) {
         return refreshedProbe;
+      }
+      const refreshedDom = await session
+        .readDomSnapshot(`${label}:independent-npc-surface-refresh-dom`)
+        .catch(() => null);
+      if (!domShowsIndependentSurface(refreshedDom)) {
+        return null;
+      }
+
+      const surfaceProbe = await session
+        .readBrowserProbe(`${label}:independent-npc-surface-refresh-probe`)
+        .catch(() => null);
+      if (surfaceProbe?.independentNpcSurface) {
+        return surfaceProbe;
       }
       return null;
     },

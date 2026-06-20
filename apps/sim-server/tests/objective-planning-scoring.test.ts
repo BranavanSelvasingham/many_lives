@@ -19,6 +19,39 @@ function outcome(
 }
 
 describe("objective planning desired-outcome scoring", () => {
+  it("scores active commitments for active work, resumes, and waits", () => {
+    const world = seedStreetGame("game-active-commitment-scoring");
+    world.player.activeJobId = "job-tea-shift";
+
+    expect(
+      scorePlanForDesiredOutcomes(
+        world,
+        {
+          actionId: "work:job-tea-shift",
+          targetLocationId: "tea-house",
+        },
+        [outcome("active-commitment", 7)],
+      ),
+    ).toBe(21);
+    expect(
+      scorePlanForDesiredOutcomes(
+        world,
+        {
+          actionId: "resume:job-tea-shift",
+          targetLocationId: "tea-house",
+        },
+        [outcome("active-commitment", 7)],
+      ),
+    ).toBe(14);
+    expect(
+      scorePlanForDesiredOutcomes(
+        world,
+        { waitUntilMinutes: world.clock.totalMinutes + 30 },
+        [outcome("active-commitment", 7)],
+      ),
+    ).toBe(7);
+  });
+
   it("keeps job-window scoring aligned with targeted action metadata", () => {
     const world = seedStreetGame("game-job-window-scoring");
 

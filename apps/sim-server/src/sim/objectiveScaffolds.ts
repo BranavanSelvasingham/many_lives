@@ -804,6 +804,175 @@ interface RouteActionPressureRule {
   ) => boolean;
 }
 
+export interface ObjectiveDesiredOutcomeScoringInput {
+  actionId: string;
+  job?: JobState;
+  kind?: string;
+  locationId?: string;
+  npcId?: string;
+  plan: {
+    waitUntilMinutes?: number;
+  };
+  priority: number;
+  world: StreetGameState;
+}
+
+type ObjectiveDesiredOutcomeScoringRule = (
+  input: ObjectiveDesiredOutcomeScoringInput,
+) => number;
+
+export const OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICY_IDS = [
+  "active-commitment",
+  "income",
+  "shelter-stability",
+  "social-anchors",
+  "useful-help",
+  "tool-ready",
+  "recover",
+  "map-knowledge",
+] as const;
+
+type ObjectiveDesiredOutcomeScorePolicyId =
+  (typeof OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICY_IDS)[number];
+
+const OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICIES: Record<
+  ObjectiveDesiredOutcomeScorePolicyId,
+  ObjectiveDesiredOutcomeScoringRule
+> = {
+  "active-commitment": ({ job, kind, locationId, plan, priority, world }) => {
+    if (job?.id === world.player.activeJobId && kind === "work") {
+      return priority * 3;
+    }
+
+    if (job?.id === world.player.activeJobId && kind === "resume") {
+      return priority * 2;
+    }
+
+    if (locationId && job?.locationId === locationId) {
+      return priority;
+    }
+
+    if (plan.waitUntilMinutes !== undefined) {
+      return priority;
+    }
+
+    return 0;
+  },
+  income: ({ kind, locationId, npcId, priority, world }) => {
+    if (kind === "work") {
+      return priority * 2.6;
+    }
+
+    if (kind === "accept") {
+      return priority * 2.1;
+    }
+
+    if (npcId === "npc-ada" || npcId === "npc-tomas") {
+      return priority * 1.4;
+    }
+
+    if (
+      locationId &&
+      world.jobs.some(
+        (candidate) =>
+          candidate.locationId === locationId &&
+          !candidate.completed &&
+          !candidate.missed,
+      )
+    ) {
+      return priority;
+    }
+
+    return 0;
+  },
+  "shelter-stability": ({ kind, locationId, npcId, priority, world }) => {
+    if (kind === "contribute") {
+      return priority * 2.5;
+    }
+
+    if (npcId === "npc-mara") {
+      return priority * 1.8;
+    }
+
+    if (locationId === world.player.homeLocationId) {
+      return priority * 0.7;
+    }
+
+    return 0;
+  },
+  "social-anchors": ({ npcId, priority, world }) => {
+    if (!npcId) {
+      return 0;
+    }
+
+    const npc = npcById(world, npcId);
+    return priority * (npc?.known ? 1.2 : 1.8);
+  },
+  "useful-help": ({ kind, locationId, npcId, priority, world }) => {
+    if (kind === "solve") {
+      return priority * 4.2;
+    }
+
+    if (kind === "inspect") {
+      return priority * 2.2;
+    }
+
+    if (kind === "buy") {
+      return priority * 1.2;
+    }
+
+    if (
+      locationId &&
+      world.problems.some(
+        (candidate) =>
+          candidate.locationId === locationId &&
+          (candidate.status === "active" || candidate.discovered),
+      )
+    ) {
+      return priority;
+    }
+
+    if (npcId === "npc-mara" || npcId === "npc-jo" || npcId === "npc-nia") {
+      return priority * 0.9;
+    }
+
+    return 0;
+  },
+  "tool-ready": ({ kind, locationId, npcId, priority }) => {
+    if (kind === "buy") {
+      return priority * 2.8;
+    }
+
+    if (npcId === "npc-jo" || locationId === "repair-stall") {
+      return priority * 1.3;
+    }
+
+    return 0;
+  },
+  recover: ({ kind, locationId, priority, world }) => {
+    if (kind === "rest") {
+      return priority * 2.7;
+    }
+
+    if (locationId === world.player.homeLocationId) {
+      return priority;
+    }
+
+    return 0;
+  },
+  "map-knowledge": ({ kind, locationId, npcId, priority, world }) => {
+    if (locationId && !world.player.knownLocationIds.includes(locationId)) {
+      return priority * 1.7;
+    }
+
+    if (npcId || kind === "inspect") {
+      return priority;
+    }
+
+    return 0;
+  },
+};
+
 interface SemanticMoveBonusContext extends ScaffoldContext {
   planningText: string;
   predicateAuthority: boolean;
@@ -5727,6 +5896,17 @@ export function objectiveRouteActionPressureScore(
   return 0;
 }
 
+export function objectiveDesiredOutcomeScoreAdjustment(
+  outcomeId: string,
+  input: ObjectiveDesiredOutcomeScoringInput,
+) {
+  if (!isObjectiveDesiredOutcomeScorePolicyId(outcomeId)) {
+    return 0;
+  }
+
+  return OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICIES[outcomeId](input);
+}
+
 export function objectiveRouteSpeech(
   world: StreetGameState,
   objective: ObjectiveScaffoldDirective,
@@ -5905,6 +6085,14 @@ export function objectiveRouteHasNiaBlockLead(world: StreetGameState) {
 
 function npcById(world: StreetGameState, npcId: string) {
   return world.npcs.find((entry) => entry.id === npcId);
+}
+
+function isObjectiveDesiredOutcomeScorePolicyId(
+  outcomeId: string,
+): outcomeId is ObjectiveDesiredOutcomeScorePolicyId {
+  return (OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICY_IDS as readonly string[]).includes(
+    outcomeId,
+  );
 }
 
 function findLocation(world: StreetGameState, locationId: string) {

@@ -641,12 +641,53 @@ describe("street reasoning authority", () => {
       new URL("../src/sim/objectivePlanningScoring.ts", import.meta.url),
       "utf8",
     );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldPolicyIds = [
+      "active-commitment",
+      "income",
+      "shelter-stability",
+      "social-anchors",
+      "useful-help",
+      "tool-ready",
+      "recover",
+      "map-knowledge",
+    ];
 
-    expect(scoringSource).toContain("DESIRED_OUTCOME_SCORE_RULES");
+    expect(scaffoldSource).toContain(
+      "OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICY_IDS",
+    );
+    expect(scaffoldSource).toContain(
+      "export function objectiveDesiredOutcomeScoreAdjustment",
+    );
+    expect(scaffoldSource).toContain(
+      "const OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICIES",
+    );
+    expect(scoringSource).toContain("objectiveDesiredOutcomeScoreAdjustment");
+    expect(scoringSource).not.toContain("DESIRED_OUTCOME_SCORE_RULES");
+    expect(scoringSource).not.toContain(
+      "const OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICIES",
+    );
     expect(scoringSource).toContain("scoreJobWindowOutcome");
     expect(scoringSource).toContain(
       "outcome.id.startsWith(JOB_WINDOW_OUTCOME_PREFIX)",
     );
+    expect(scoringSource).toContain("scorePlanForTargetedOutcome");
+    for (const policyId of scaffoldPolicyIds) {
+      expect(scaffoldSource).toContain(`"${policyId}"`);
+      expect(scoringSource).not.toContain(`"${policyId}"`);
+    }
+    for (const multiplier of [
+      "priority * 2.6",
+      "priority * 4.2",
+      "priority * 2.8",
+      "priority * 2.7",
+    ]) {
+      expect(scaffoldSource).toContain(multiplier);
+      expect(scoringSource).not.toContain(multiplier);
+    }
     expect(engineSource).toContain("scorePlanForDesiredOutcomes");
     expect(engineSource).not.toContain("function scorePlanForDesiredOutcomes");
     expect(engineSource).not.toContain('case "active-commitment"');
