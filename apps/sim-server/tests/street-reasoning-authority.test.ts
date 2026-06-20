@@ -151,6 +151,18 @@ const PASSIVE_PROBLEM_PRESSURE_COPY = [
   "Nia got the jammed handcart rolling while Rowan was elsewhere; the square solved that one without him.",
   "The jammed cart did not wait for Rowan. Nia cleared it once the square pressure peaked.",
 ];
+const PASSIVE_JOB_OUTCOME_COPY = [
+  "Ada's lunch window moved on without Rowan; the room learned to solve the rush without him.",
+  "Rowan let the lunch rush move on without committing steady hands.",
+  "You missed Ada's lunch window, so that paid foothold is no longer waiting.",
+  "North Crane Yard finished its loading block without Rowan, and Tomas has less reason to hold space for him next time.",
+  "Rowan missed the loading block after the yard had already made room for him.",
+  "You missed the freight yard loading block, closing that work window for the day.",
+  "Tomas closed the loading block with his own crew after Rowan left the yard waiting.",
+  "Tomas got the North Crane Yard load out with his own crew; Rowan gets no pay or credit from that work.",
+  "Tomas did not hold the freight yard load for Rowan; the work moved without him and closed that window.",
+  "Tomas closed the loading block with his own crew before Rowan ever came asking.",
+];
 const JO_MONEY_WORK_DIALOGUE_COPY = [
   "I sell repairs, not shifts.",
   "Around ${nearbyPlaceName}",
@@ -1030,6 +1042,29 @@ describe("street reasoning authority", () => {
     expect(engineSource).toContain("problemExpiryConsequenceNarrative");
     expect(engineSource).toContain("independentProblemResolutionNarrative");
     expect(engineSource).not.toContain("PROBLEM_ESCALATION_STAGES");
+  });
+
+  it("keeps passive job outcome narratives in street-sim data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const jobNarrativesSource = readFileSync(
+      new URL("../src/street-sim/jobNarratives.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const jobCopy of PASSIVE_JOB_OUTCOME_COPY) {
+      expect(jobNarrativesSource).toContain(jobCopy);
+      expect(engineSource).not.toContain(jobCopy);
+    }
+
+    expect(jobNarrativesSource).toContain("JOB_NARRATIVES");
+    expect(jobNarrativesSource).toContain("passiveMissedJobNarrative");
+    expect(jobNarrativesSource).toContain("independentNpcJobClosureNarrative");
+    expect(engineSource).toContain("passiveMissedJobNarrative");
+    expect(engineSource).toContain("independentNpcJobClosureNarrative");
+    expect(engineSource).not.toContain("JOB_NARRATIVES");
   });
 
   it("keeps Jo money/work dialogue policy in scaffold helper data, not dialogue control flow", () => {

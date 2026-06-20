@@ -11,6 +11,10 @@ import {
   problemEscalationStages,
   problemExpiryConsequenceNarrative,
 } from "../street-sim/problemPressureNarratives.js";
+import {
+  independentNpcJobClosureNarrative,
+  passiveMissedJobNarrative,
+} from "../street-sim/jobNarratives.js";
 import { seedStreetGame } from "../street-sim/seedGame.js";
 import {
   buildGenericClosedWorkWindowConversationResolution,
@@ -8286,44 +8290,16 @@ function missJobFromPassiveWorld(
     giver.trust = clamp(giver.trust - 1, 0, 10);
   }
 
-  if (job.id === "job-tea-shift") {
-    if (giver) {
-      rememberNpcIfNew(
-        giver,
-        "Rowan let the lunch rush move on without committing steady hands.",
-      );
-    }
-    addFeed(
-      world,
-      "job",
-      "Ada's lunch window moved on without Rowan; the room learned to solve the rush without him.",
-    );
-    rememberIfNew(
-      world,
-      "job",
-      "You missed Ada's lunch window, so that paid foothold is no longer waiting.",
-    );
+  const narrative = passiveMissedJobNarrative(job.id);
+  if (!narrative) {
     return;
   }
 
-  if (job.id === "job-yard-shift") {
-    if (giver) {
-      rememberNpcIfNew(
-        giver,
-        "Rowan missed the loading block after the yard had already made room for him.",
-      );
-    }
-    addFeed(
-      world,
-      "job",
-      "North Crane Yard finished its loading block without Rowan, and Tomas has less reason to hold space for him next time.",
-    );
-    rememberIfNew(
-      world,
-      "job",
-      "You missed the freight yard loading block, closing that work window for the day.",
-    );
+  if (giver) {
+    rememberNpcIfNew(giver, narrative.npcMemoryText);
   }
+  addFeed(world, "job", narrative.feedText);
+  rememberIfNew(world, "job", narrative.playerMemoryText);
 }
 
 function applyProblemExpiryConsequences(
@@ -8469,32 +8445,28 @@ function resolveTomasYardLoading(
   }
 
   const tomas = npcById(world, "npc-tomas");
+  const narrative = independentNpcJobClosureNarrative(yardJob.id, {
+    wasLiveToRowan,
+  });
   if (tomas) {
     if (wasLiveToRowan) {
       tomas.trust = clamp(tomas.trust - 1, 0, 10);
     }
-    rememberNpcIfNew(
-      tomas,
-      wasLiveToRowan
-        ? "Tomas closed the loading block with his own crew after Rowan left the yard waiting."
-        : "Tomas closed the loading block with his own crew before Rowan ever came asking.",
-    );
+    if (narrative) {
+      rememberNpcIfNew(tomas, narrative.npcMemoryText);
+    }
   }
 
   if (!wasLiveToRowan) {
     return;
   }
 
-  addFeed(
-    world,
-    "job",
-    "Tomas got the North Crane Yard load out with his own crew; Rowan gets no pay or credit from that work.",
-  );
-  rememberIfNew(
-    world,
-    "job",
-    "Tomas did not hold the freight yard load for Rowan; the work moved without him and closed that window.",
-  );
+  if (narrative?.playerFeedText) {
+    addFeed(world, "job", narrative.playerFeedText);
+  }
+  if (narrative?.playerMemoryText) {
+    rememberIfNew(world, "job", narrative.playerMemoryText);
+  }
 }
 
 function resolveProblemEscalation(
