@@ -32,6 +32,7 @@ import {
   objectiveRouteActionPressureScore,
   objectiveRouteActionTargetLocation,
   objectiveRouteCompletionAcknowledgement,
+  objectiveRouteCompletionIdleCopy,
   objectiveRouteConversationGroundingPolicy,
   objectiveRouteConversationHasVisibleEvidence,
   objectiveRouteConversationResolutionPointsToPolicy,
@@ -1943,21 +1944,20 @@ function resolveObjectiveLoopStep(world: StreetGameState): RowanLoopStep {
   }
 
   if (isCurrentObjectiveComplete(world)) {
-    const firstAfternoonComplete =
-      world.firstAfternoon?.completedAt &&
-      world.player.objective?.routeKey === "first-afternoon";
+    const completionIdleCopy = objectiveRouteCompletionIdleCopy(
+      world,
+      objective,
+    );
 
     return {
       autoContinue: false,
-      detail: firstAfternoonComplete
-        ? "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead."
-        : "Rowan has checked off this objective. Set a new direction when you want to keep going.",
+      detail:
+        completionIdleCopy?.detail ??
+        "Rowan has checked off this objective. Set a new direction when you want to keep going.",
       effects: ["memory", "objective"],
       key: `complete:${world.player.objective?.routeKey ?? "objective"}:${world.player.objective?.updatedAt ?? world.currentTime}:${world.firstAfternoon?.completedAt ?? "done"}`,
       kind: "idle",
-      label: firstAfternoonComplete
-        ? "First afternoon complete"
-        : "Objective complete",
+      label: completionIdleCopy?.label ?? "Objective complete",
       layer: "objective",
       objective,
     };

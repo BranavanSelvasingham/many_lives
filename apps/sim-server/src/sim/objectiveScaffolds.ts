@@ -728,6 +728,15 @@ interface CompletionAcknowledgementHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+export interface ObjectiveRouteCompletionIdleCopy {
+  detail: string;
+  label: string;
+}
+
+interface CompletionIdleCopyHint extends ObjectiveRouteCompletionIdleCopy {
+  when?: (context: ScaffoldContext) => boolean;
+}
+
 interface CompletionOutcomeCopy {
   feedText: string;
   memoryText: string;
@@ -1176,6 +1185,7 @@ interface ObjectiveRouteScaffold {
   actionTargetLocations?: ActionTargetLocationHint[];
   availableActions?: AvailableActionHint[];
   completionAcknowledgement?: CompletionAcknowledgementHint;
+  completionIdleCopy?: CompletionIdleCopyHint;
   completionOutcome?: CompletionOutcomeCopy;
   conversationFallbacks?: ConversationFallbackHint[];
   conversationGroundingPolicies?: ConversationGroundingPolicyHint[];
@@ -3262,6 +3272,14 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         Boolean(world.firstAfternoon?.completedAt),
       when: ({ objective }) => objective.routeKey === "first-afternoon",
     },
+    completionIdleCopy: {
+      detail:
+        "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.",
+      label: "First afternoon complete",
+      when: ({ objective, world }) =>
+        objective.routeKey === "first-afternoon" &&
+        Boolean(world.firstAfternoon?.completedAt),
+    },
     completionOutcome: {
       feedText:
         "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
@@ -4534,6 +4552,31 @@ export function objectiveRouteCompletionAcknowledgement(
       return {
         feedText: acknowledgement.feedText,
         memoryText: acknowledgement.memoryText,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteCompletionIdleCopy(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const completionIdleCopy = scaffold.completionIdleCopy;
+    if (
+      completionIdleCopy &&
+      (!completionIdleCopy.when || completionIdleCopy.when(context))
+    ) {
+      return {
+        detail: completionIdleCopy.detail,
+        label: completionIdleCopy.label,
       };
     }
   }

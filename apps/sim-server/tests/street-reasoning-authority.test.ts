@@ -22,6 +22,7 @@ import {
 import {
   objectiveRouteActionPressureScore,
   objectiveRouteHasNiaBlockLead,
+  objectiveRouteCompletionIdleCopy,
   objectiveRouteMoveIntent,
   objectiveRouteSemanticHints,
   objectiveRouteSemanticMoveBonus,
@@ -203,6 +204,9 @@ const FIRST_AFTERNOON_COMPLETION_FEED =
   "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.";
 const FIRST_AFTERNOON_COMPLETION_MEMORY =
   "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.";
+const FIRST_AFTERNOON_COMPLETION_IDLE_LABEL = "First afternoon complete";
+const FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL =
+  "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.";
 const FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT =
   "Tonight's bed holds. I earned real money, and tomorrow has a lead.";
 const FIRST_AFTERNOON_COMPLETION_OUTCOME_PLAYER_THOUGHT =
@@ -1487,10 +1491,44 @@ describe("street reasoning authority", () => {
     for (const acknowledgementCopy of [
       FIRST_AFTERNOON_COMPLETION_FEED,
       FIRST_AFTERNOON_COMPLETION_MEMORY,
+      FIRST_AFTERNOON_COMPLETION_IDLE_LABEL,
+      FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL,
     ]) {
       expect(scaffoldSource).toContain(acknowledgementCopy);
       expect(engineSource).not.toContain(acknowledgementCopy);
     }
+
+    expect(scaffoldSource).toContain("completionIdleCopy");
+    expect(engineSource).toContain("objectiveRouteCompletionIdleCopy");
+  });
+
+  it("resolves first-afternoon completion idle copy through scaffold data", () => {
+    const world = seedStreetGame("game-first-afternoon-idle-copy-scaffold");
+    const objective: ObjectiveScaffoldDirective = {
+      focus: "settle",
+      routeKey: "first-afternoon",
+      text: "Make the first afternoon count.",
+    };
+
+    world.firstAfternoon = {
+      ...world.firstAfternoon,
+      completedAt: world.currentTime,
+    };
+
+    expect(objectiveRouteCompletionIdleCopy(world, objective)).toEqual({
+      label: FIRST_AFTERNOON_COMPLETION_IDLE_LABEL,
+      detail: FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL,
+    });
+
+    expect(
+      objectiveRouteCompletionIdleCopy(world, {
+        ...objective,
+        routeKey: "mara-ada-lead",
+      }),
+    ).toBeUndefined();
+
+    world.firstAfternoon.completedAt = undefined;
+    expect(objectiveRouteCompletionIdleCopy(world, objective)).toBeUndefined();
   });
 
   it("keeps first-afternoon completion player-thought copy in scaffold data, not thought control flow", () => {
