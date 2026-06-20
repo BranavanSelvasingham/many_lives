@@ -25,6 +25,7 @@ import {
   objectiveRouteMoveIntent,
   objectiveRouteSemanticHints,
   objectiveRouteSemanticMoveBonus,
+  objectiveRouteWorkStageWatchCopy,
   type ObjectiveScaffoldDirective,
 } from "../src/sim/objectiveScaffolds.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
@@ -190,6 +191,14 @@ const FIRST_AFTERNOON_TEA_RUSH_THOUGHT =
   "The room is filling. Cups first, tables second, keep moving.";
 const FIRST_AFTERNOON_TEA_COUNTER_THOUGHT =
   "Ada is not watching every step now. That probably means I am keeping up.";
+const FIRST_AFTERNOON_TEA_SHIFT_WATCH_COPY = [
+  "Start the lunch rush",
+  "Lunch is filling Kettle & Lamp. Rowan can start with cups, tables, and the counter.",
+  "Keep the lunch rush moving",
+  "The room is busy now. Rowan can keep clearing cups and watching Ada's rhythm.",
+  "Finish the cup-and-counter shift",
+  "The rush is almost through. Rowan can finish the last counter pass and collect the pay.",
+];
 const FIRST_AFTERNOON_COMPLETION_FEED =
   "Rowan closes the first-afternoon note and lets tomorrow's lead compete with the live work and trouble still moving around South Quay.";
 const FIRST_AFTERNOON_COMPLETION_MEMORY =
@@ -1402,6 +1411,67 @@ describe("street reasoning authority", () => {
       expect(engineSource).not.toContain(stageThought);
       expect(thoughtsSource).not.toContain(stageThought);
     }
+  });
+
+  it("keeps first-afternoon tea-shift watch copy in scaffold data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const watchCopy of FIRST_AFTERNOON_TEA_SHIFT_WATCH_COPY) {
+      expect(scaffoldSource).toContain(watchCopy);
+      expect(engineSource).not.toContain(watchCopy);
+    }
+
+    expect(scaffoldSource).toContain("workStageWatchCopy");
+    expect(engineSource).toContain("objectiveRouteWorkStageWatchCopy");
+    expect(engineSource).not.toContain("teaShiftWatchLabel");
+    expect(engineSource).not.toContain("teaShiftWatchDetail");
+  });
+
+  it("resolves first-afternoon tea-shift watch copy through scaffold data", () => {
+    const world = seedStreetGame("game-tea-shift-watch-copy-scaffold");
+    const objective: ObjectiveScaffoldDirective = {
+      focus: "settle",
+      routeKey: "first-afternoon",
+      text: "Make the first afternoon count.",
+    };
+
+    expect(
+      objectiveRouteWorkStageWatchCopy(world, objective, {
+        jobId: "job-tea-shift",
+        stage: undefined,
+      }),
+    ).toEqual({
+      label: "Start the lunch rush",
+      detail:
+        "Lunch is filling Kettle & Lamp. Rowan can start with cups, tables, and the counter.",
+    });
+    expect(
+      objectiveRouteWorkStageWatchCopy(world, objective, {
+        jobId: "job-tea-shift",
+        stage: "rush",
+      }),
+    ).toEqual({
+      label: "Keep the lunch rush moving",
+      detail:
+        "The room is busy now. Rowan can keep clearing cups and watching Ada's rhythm.",
+    });
+    expect(
+      objectiveRouteWorkStageWatchCopy(world, objective, {
+        jobId: "job-tea-shift",
+        stage: "counter",
+      }),
+    ).toEqual({
+      label: "Finish the cup-and-counter shift",
+      detail:
+        "The rush is almost through. Rowan can finish the last counter pass and collect the pay.",
+    });
   });
 
   it("keeps first-afternoon completion acknowledgement copy in scaffold data, not engine control flow", () => {

@@ -58,6 +58,7 @@ import {
   objectiveRouteTextAffirmsConversationPolicy,
   objectiveRouteTextGroundsConversationPolicy,
   objectiveRouteWorkStageThought,
+  objectiveRouteWorkStageWatchCopy,
 } from "./objectiveScaffolds.js";
 import {
   buildRowanCognition,
@@ -1451,28 +1452,6 @@ function autonomyLabelForRouteProgress(
   return "Following the current route";
 }
 
-function teaShiftWatchLabel(world: StreetGameState) {
-  switch (world.firstAfternoon?.teaShiftStage) {
-    case "rush":
-      return "Keep the lunch rush moving";
-    case "counter":
-      return "Finish the cup-and-counter shift";
-    default:
-      return "Start the lunch rush";
-  }
-}
-
-function teaShiftWatchDetail(world: StreetGameState) {
-  switch (world.firstAfternoon?.teaShiftStage) {
-    case "rush":
-      return "The room is busy now. Rowan can keep clearing cups and watching Ada's rhythm.";
-    case "counter":
-      return "The rush is almost through. Rowan can finish the last counter pass and collect the pay.";
-    default:
-      return "Lunch is filling Kettle & Lamp. Rowan can start with cups, tables, and the counter.";
-  }
-}
-
 function resolveCommittedJobLoopStep(
   world: StreetGameState,
 ): RowanLoopStep | undefined {
@@ -1586,21 +1565,28 @@ function resolveCommittedJobLoopStep(
     (currentHour(world) < committedJob.endHour || workAlreadyStarted) &&
     world.player.energy >= 28
   ) {
-    const isFirstAfternoonTeaShift = committedJob.id === "job-tea-shift";
-    const label = isFirstAfternoonTeaShift
-      ? teaShiftWatchLabel(world)
-      : workAlreadyStarted
+    const workStageWatchCopy = objectiveRouteWorkStageWatchCopy(
+      world,
+      currentObjectiveDirective(world),
+      {
+        jobId: committedJob.id,
+        stage: world.firstAfternoon?.teaShiftStage,
+      },
+    );
+    const label =
+      workStageWatchCopy?.label ??
+      (workAlreadyStarted
         ? `Finish ${committedJob.title}`
-        : `Start ${committedJob.title}`;
+        : `Start ${committedJob.title}`);
     const actionId = `work:${committedJob.id}`;
     return {
       actionId,
       autoContinue: true,
-      detail: isFirstAfternoonTeaShift
-        ? teaShiftWatchDetail(world)
-        : workAlreadyStarted
+      detail:
+        workStageWatchCopy?.detail ??
+        (workAlreadyStarted
           ? "Rowan already started this shift before the window closed, so he can finish the work in hand."
-          : "The shift window is open now. Rowan can start working.",
+          : "The shift window is open now. Rowan can start working."),
       key: `job-work:${committedJob.id}:${world.clock.totalMinutes}:${world.firstAfternoon?.teaShiftStage ?? "ready"}`,
       kind: "act",
       label,
@@ -8814,6 +8800,7 @@ function buildScene(world: StreetGameState) {
 
 function buildAvailableActions(world: StreetGameState): ActionOption[] {
   const location = currentLocation(world);
+  const objective = currentObjectiveDirective(world);
   const space = activeSpace(world);
   const playerSpaceId = activeSpaceId(world);
   const actionSpaceReady = isPlayerInActionSpace(world, location?.id);
@@ -8894,23 +8881,30 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
             : undefined,
       });
     } else {
-      const firstAfternoonTeaShift = job.id === "job-tea-shift";
       const actionId = `work:${job.id}`;
       const workAlreadyStarted = jobIsStartedCommitment(world, job);
+      const workStageWatchCopy = objectiveRouteWorkStageWatchCopy(
+        world,
+        objective,
+        {
+          jobId: job.id,
+          stage: world.firstAfternoon?.teaShiftStage,
+        },
+      );
       const remainingWorkMinutes = Math.max(
         5,
         job.durationMinutes - (job.progressMinutes ?? 0),
       );
       actions.push({
         id: actionId,
-        label: firstAfternoonTeaShift
-          ? teaShiftWatchLabel(world)
-          : workAlreadyStarted
+        label:
+          workStageWatchCopy?.label ??
+          (workAlreadyStarted
             ? `Finish ${job.title}`
-            : `Work ${job.title}`,
-        description: firstAfternoonTeaShift
-          ? teaShiftWatchDetail(world)
-          : `${remainingWorkMinutes} minutes for $${job.pay}.`,
+            : `Work ${job.title}`),
+        description:
+          workStageWatchCopy?.detail ??
+          `${remainingWorkMinutes} minutes for $${job.pay}.`,
         kind: "work_job",
         emphasis: "high",
         ...spatial(actionId, job.locationId),

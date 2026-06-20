@@ -120,13 +120,29 @@ interface PlayerThoughtHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+export type WorkStageStage = NonNullable<
+  NonNullable<StreetGameState["firstAfternoon"]>["teaShiftStage"]
+>;
+
 interface WorkStageThoughtHint {
   jobId: string;
   routeKeys?: string[];
-  stage: NonNullable<
-    NonNullable<StreetGameState["firstAfternoon"]>["teaShiftStage"]
-  >;
+  stage: WorkStageStage;
   thought: string;
+  when?: (context: ScaffoldContext) => boolean;
+}
+
+type WorkStageWatchCopyStage = "ready" | "rush" | "counter";
+
+export interface WorkStageWatchCopy {
+  detail: string;
+  label: string;
+}
+
+interface WorkStageWatchCopyHint extends WorkStageWatchCopy {
+  jobId: string;
+  routeKeys?: string[];
+  stage: WorkStageWatchCopyStage;
   when?: (context: ScaffoldContext) => boolean;
 }
 
@@ -1185,6 +1201,7 @@ interface ObjectiveRouteScaffold {
   semanticMoveBonuses?: SemanticMoveBonus[];
   semanticHints?: SemanticHint[];
   speechHints?: SpeechHint[];
+  workStageWatchCopy?: WorkStageWatchCopyHint[];
   workStageThoughts?: WorkStageThoughtHint[];
 }
 
@@ -4051,6 +4068,32 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           "Ada is not watching every step now. That probably means I am keeping up.",
       },
     ],
+    workStageWatchCopy: [
+      {
+        jobId: "job-tea-shift",
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        stage: "ready",
+        label: "Start the lunch rush",
+        detail:
+          "Lunch is filling Kettle & Lamp. Rowan can start with cups, tables, and the counter.",
+      },
+      {
+        jobId: "job-tea-shift",
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        stage: "rush",
+        label: "Keep the lunch rush moving",
+        detail:
+          "The room is busy now. Rowan can keep clearing cups and watching Ada's rhythm.",
+      },
+      {
+        jobId: "job-tea-shift",
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        stage: "counter",
+        label: "Finish the cup-and-counter shift",
+        detail:
+          "The rush is almost through. Rowan can finish the last counter pass and collect the pay.",
+      },
+    ],
     speechHints: [
       {
         npcId: "npc-mara",
@@ -5620,6 +5663,73 @@ export function objectiveRouteWorkStageThought(
   }
 
   return undefined;
+}
+
+function normalizeWorkStageWatchCopyStage(
+  stage: WorkStageStage | undefined,
+): WorkStageWatchCopyStage {
+  if (stage === "rush" || stage === "counter") {
+    return stage;
+  }
+
+  return "ready";
+}
+
+function findWorkStageWatchCopy(
+  scaffolds: ObjectiveRouteScaffold[],
+  context: ScaffoldContext | undefined,
+  input: { jobId: string; stage: WorkStageWatchCopyStage },
+): WorkStageWatchCopy | undefined {
+  for (const scaffold of scaffolds) {
+    const copy = (scaffold.workStageWatchCopy ?? []).find((candidate) => {
+      if (candidate.jobId !== input.jobId || candidate.stage !== input.stage) {
+        return false;
+      }
+
+      if (
+        context &&
+        candidate.routeKeys &&
+        !candidate.routeKeys.includes(context.objective.routeKey)
+      ) {
+        return false;
+      }
+
+      return !candidate.when || (context && candidate.when(context));
+    });
+    if (copy) {
+      return {
+        detail: copy.detail,
+        label: copy.label,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteWorkStageWatchCopy(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+  input: {
+    jobId: string;
+    stage: WorkStageStage | undefined;
+  },
+): WorkStageWatchCopy | undefined {
+  const stage = normalizeWorkStageWatchCopyStage(input.stage);
+  const context = objective ? { objective, world } : undefined;
+
+  return (
+    (objective
+      ? findWorkStageWatchCopy(activeScaffolds(objective.routeKey), context, {
+          jobId: input.jobId,
+          stage,
+        })
+      : undefined) ??
+    findWorkStageWatchCopy(OBJECTIVE_ROUTE_SCAFFOLDS, undefined, {
+      jobId: input.jobId,
+      stage,
+    })
+  );
 }
 
 export function objectiveRouteConversationFallback(
