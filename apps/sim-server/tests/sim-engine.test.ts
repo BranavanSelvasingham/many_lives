@@ -53,6 +53,8 @@ const FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL =
   "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.";
 const FIRST_AFTERNOON_COMPLETION_RATIONALE =
   "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.";
+const FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL =
+  "The first afternoon is complete: room to return to, paid shift, and a real foothold.";
 const GENERIC_COMPLETED_OBJECTIVE_RATIONALE =
   "This objective is complete. Set a new direction when Rowan is ready to keep going.";
 
@@ -940,6 +942,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy.intent?.reason).toBe(
       FIRST_AFTERNOON_COMPLETION_RATIONALE,
     );
+    expect(world.summary).toContain(FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL);
   });
 
   it("uses generic completed-objective autonomy rationale without scaffold completion copy", async () => {
@@ -976,6 +979,8 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy.intent?.reason).toBe(
       GENERIC_COMPLETED_OBJECTIVE_RATIONALE,
     );
+    expect(world.summary).toContain("That objective is checked off.");
+    expect(world.summary).not.toContain(FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL);
   });
 
   it("keeps first-afternoon reflection action availability and metadata unchanged", async () => {

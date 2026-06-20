@@ -742,6 +742,11 @@ interface CompletionRationaleHint {
   when?: (context: ScaffoldContext) => boolean;
 }
 
+interface CompletionSummaryTailHint {
+  text: string;
+  when?: (context: ScaffoldContext) => boolean;
+}
+
 interface CompletionOutcomeCopy {
   feedText: string;
   memoryText: string;
@@ -1192,6 +1197,7 @@ interface ObjectiveRouteScaffold {
   completionAcknowledgement?: CompletionAcknowledgementHint;
   completionIdleCopy?: CompletionIdleCopyHint;
   completionRationale?: CompletionRationaleHint;
+  completionSummaryTail?: CompletionSummaryTailHint;
   completionOutcome?: CompletionOutcomeCopy;
   conversationFallbacks?: ConversationFallbackHint[];
   conversationGroundingPolicies?: ConversationGroundingPolicyHint[];
@@ -3293,6 +3299,12 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         objective.routeKey === "first-afternoon" &&
         Boolean(world.firstAfternoon?.completedAt),
     },
+    completionSummaryTail: {
+      text: " The first afternoon is complete: room to return to, paid shift, and a real foothold.",
+      when: ({ objective, world }) =>
+        objective.routeKey === "first-afternoon" &&
+        Boolean(world.firstAfternoon?.completedAt),
+    },
     completionOutcome: {
       feedText:
         "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
@@ -4613,6 +4625,28 @@ export function objectiveRouteCompletionRationale(
       (!completionRationale.when || completionRationale.when(context))
     ) {
       return completionRationale.rationale;
+    }
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteCompletionSummaryTail(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective | undefined,
+) {
+  if (!objective) {
+    return undefined;
+  }
+
+  const context = { objective, world };
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    const completionSummaryTail = scaffold.completionSummaryTail;
+    if (
+      completionSummaryTail &&
+      (!completionSummaryTail.when || completionSummaryTail.when(context))
+    ) {
+      return completionSummaryTail.text;
     }
   }
 

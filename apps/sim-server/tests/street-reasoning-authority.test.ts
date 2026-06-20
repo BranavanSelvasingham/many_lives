@@ -24,6 +24,7 @@ import {
   objectiveRouteHasNiaBlockLead,
   objectiveRouteCompletionIdleCopy,
   objectiveRouteCompletionRationale,
+  objectiveRouteCompletionSummaryTail,
   objectiveRouteMoveIntent,
   objectiveRouteSemanticHints,
   objectiveRouteSemanticMoveBonus,
@@ -210,6 +211,8 @@ const FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL =
   "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.";
 const FIRST_AFTERNOON_COMPLETION_RATIONALE =
   "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.";
+const FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL =
+  "The first afternoon is complete: room to return to, paid shift, and a real foothold.";
 const FIRST_AFTERNOON_COMPLETED_OBJECTIVE_BANNER_RATIONALE =
   "This is a natural stopping point: the objective is complete and Rowan has enough from today to sleep on.";
 const FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT =
@@ -1499,6 +1502,7 @@ describe("street reasoning authority", () => {
       FIRST_AFTERNOON_COMPLETION_IDLE_LABEL,
       FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL,
       FIRST_AFTERNOON_COMPLETION_RATIONALE,
+      FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL,
     ]) {
       expect(scaffoldSource).toContain(acknowledgementCopy);
       expect(engineSource).not.toContain(acknowledgementCopy);
@@ -1509,8 +1513,10 @@ describe("street reasoning authority", () => {
     );
     expect(scaffoldSource).toContain("completionIdleCopy");
     expect(scaffoldSource).toContain("completionRationale");
+    expect(scaffoldSource).toContain("completionSummaryTail");
     expect(engineSource).toContain("objectiveRouteCompletionIdleCopy");
     expect(engineSource).toContain("objectiveRouteCompletionRationale");
+    expect(engineSource).toContain("objectiveRouteCompletionSummaryTail");
   });
 
   it("resolves first-afternoon completion idle copy through scaffold data", () => {
@@ -1533,6 +1539,9 @@ describe("street reasoning authority", () => {
     expect(objectiveRouteCompletionRationale(world, objective)).toBe(
       FIRST_AFTERNOON_COMPLETION_RATIONALE,
     );
+    expect(objectiveRouteCompletionSummaryTail(world, objective)).toContain(
+      FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL,
+    );
 
     expect(
       objectiveRouteCompletionIdleCopy(world, {
@@ -1546,10 +1555,17 @@ describe("street reasoning authority", () => {
         routeKey: "mara-ada-lead",
       }),
     ).toBeUndefined();
+    expect(
+      objectiveRouteCompletionSummaryTail(world, {
+        ...objective,
+        routeKey: "mara-ada-lead",
+      }),
+    ).toBeUndefined();
 
     world.firstAfternoon.completedAt = undefined;
     expect(objectiveRouteCompletionIdleCopy(world, objective)).toBeUndefined();
     expect(objectiveRouteCompletionRationale(world, objective)).toBeUndefined();
+    expect(objectiveRouteCompletionSummaryTail(world, objective)).toBeUndefined();
   });
 
   it("keeps first-afternoon completion player-thought copy in scaffold data, not thought control flow", () => {

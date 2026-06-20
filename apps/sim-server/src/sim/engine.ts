@@ -34,6 +34,7 @@ import {
   objectiveRouteCompletionAcknowledgement,
   objectiveRouteCompletionIdleCopy,
   objectiveRouteCompletionRationale,
+  objectiveRouteCompletionSummaryTail,
   objectiveRouteConversationGroundingPolicy,
   objectiveRouteConversationHasVisibleEvidence,
   objectiveRouteConversationResolutionPointsToPolicy,
@@ -9097,18 +9098,13 @@ function buildSummary(world: StreetGameState): string {
     objective?.progress.total &&
     objective.progress.completed >= objective.progress.total,
   );
-  const firstAfternoonComplete = Boolean(
-    world.firstAfternoon?.completedAt &&
-    objective?.routeKey === "first-afternoon",
-  );
 
-  const objectiveTail = firstAfternoonComplete
-    ? " The first afternoon is complete: room to return to, paid shift, and a real foothold."
-    : objectiveComplete
-      ? " That objective is checked off."
-      : objective
-        ? ` I'm still trying to ${objectiveClause(objective.text)}.`
-        : "";
+  const objectiveTail = objectiveComplete
+    ? (objectiveRouteCompletionSummaryTail(world, objective) ??
+      " That objective is checked off.")
+    : objective
+      ? ` I'm still trying to ${objectiveClause(objective.text)}.`
+      : "";
   const nextStepTail =
     !objectiveComplete && world.rowanAutonomy?.autoContinue
       ? ` Right now Rowan is choosing ${objectiveClause(world.rowanAutonomy.label)}.`
