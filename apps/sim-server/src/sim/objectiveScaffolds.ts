@@ -1,3 +1,4 @@
+import type { StreetPlanningObjectiveOutcome } from "../ai/provider.js";
 import type {
   ActionKind,
   JobState,
@@ -820,6 +821,180 @@ export interface ObjectiveDesiredOutcomeScoringInput {
 type ObjectiveDesiredOutcomeScoringRule = (
   input: ObjectiveDesiredOutcomeScoringInput,
 ) => number;
+
+type GenericPlanningDesiredOutcomePolicyId =
+  | "income"
+  | "shelter-stability"
+  | "social-anchors"
+  | "useful-help"
+  | "tool-ready"
+  | "recover"
+  | "map-knowledge";
+
+interface GenericPlanningDesiredOutcomeContext extends ScaffoldContext {
+  activeJob?: JobState;
+  activeProblem?: ProblemState;
+  completedJobs: number;
+  knownPeople: number;
+  planningText: string;
+  solvedProblems: number;
+  trustedPeople: number;
+}
+
+interface GenericPlanningDesiredOutcomePolicy {
+  evidence?: (context: GenericPlanningDesiredOutcomeContext) => string | undefined;
+  focusMatches?: ObjectiveFocus[];
+  id: GenericPlanningDesiredOutcomePolicyId;
+  label:
+    | string
+    | ((context: GenericPlanningDesiredOutcomeContext) => string);
+  priority:
+    | number
+    | ((context: GenericPlanningDesiredOutcomeContext) => number);
+  status: (
+    context: GenericPlanningDesiredOutcomeContext,
+  ) => StreetPlanningObjectiveOutcome["status"];
+  textMatches?: RegExp;
+  when?: (context: GenericPlanningDesiredOutcomeContext) => boolean;
+}
+
+const GENERIC_PLANNING_DESIRED_OUTCOME_POLICIES: GenericPlanningDesiredOutcomePolicy[] =
+  [
+    {
+      id: "shelter-stability",
+      label: "Keep tonight's room and improve Rowan's standing at Morrow House.",
+      priority: 9,
+      status: ({ world }) =>
+        (world.player.reputation.morrow_house ?? 0) >= 2 ? "met" : "open",
+      evidence: ({ world }) =>
+        `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
+      focusMatches: ["settle"],
+      textMatches: /room|stay|bed|home|foothold/,
+    },
+    {
+      id: "income",
+      label: "Turn one real lead into money or a live work commitment.",
+      priority: 8,
+      status: ({ activeJob, completedJobs }) =>
+        completedJobs > 0 || activeJob ? "met" : "open",
+      evidence: ({ world }) => `$${world.player.money} on hand`,
+      focusMatches: ["settle"],
+      textMatches: /room|stay|bed|home|foothold/,
+    },
+    {
+      id: "social-anchors",
+      label: "Build enough local ties that Rowan is not only passing through.",
+      priority: 5,
+      status: ({ trustedPeople }) => (trustedPeople >= 2 ? "met" : "open"),
+      evidence: ({ knownPeople }) => `${knownPeople} known people`,
+      focusMatches: ["settle"],
+      textMatches: /room|stay|bed|home|foothold/,
+    },
+    {
+      id: "income",
+      label: "Earn money or secure a credible work commitment.",
+      priority: 10,
+      status: ({ activeJob, completedJobs }) =>
+        completedJobs > 0 || activeJob ? "met" : "open",
+      evidence: ({ world }) => `$${world.player.money} on hand`,
+      focusMatches: ["work"],
+      textMatches: /work|job|money|earn|pay|shift/,
+    },
+    {
+      id: "useful-help",
+      label: ({ activeProblem }) =>
+        activeProblem
+          ? `Resolve ${activeProblem.title.toLowerCase()} before it spreads.`
+          : "Find and resolve a concrete local problem.",
+      priority: 9,
+      status: ({ activeProblem, solvedProblems }) =>
+        activeProblem?.status === "solved" || solvedProblems > 0
+          ? "met"
+          : "open",
+      evidence: ({ activeProblem }) => activeProblem?.summary,
+      focusMatches: ["help"],
+      textMatches: /help|fix|solve|repair|problem|pump|cart/,
+    },
+    {
+      id: "tool-ready",
+      label: "Get the tool Rowan needs before trying the repair.",
+      priority: 8,
+      status: ({ world }) => (hasItem(world, "item-wrench") ? "met" : "open"),
+      evidence: ({ world }) =>
+        hasItem(world, "item-wrench") ? "Wrench in inventory" : "No wrench yet",
+      focusMatches: ["tool"],
+      textMatches: /tool|wrench|buy/,
+    },
+    {
+      id: "recover",
+      label: "Recover enough energy to make the next commitment safely.",
+      priority: ({ world }) => (world.player.energy < 35 ? 10 : 7),
+      status: ({ world }) => (world.player.energy < 45 ? "open" : "met"),
+      evidence: ({ world }) => `${world.player.energy} energy`,
+      focusMatches: ["rest"],
+      textMatches: /rest|recover|sleep|tired|energy/,
+      when: ({ world }) => world.player.energy < 35,
+    },
+    {
+      id: "social-anchors",
+      label: "Meet and deepen real local connections.",
+      priority: 9,
+      status: ({ trustedPeople }) => (trustedPeople >= 2 ? "met" : "open"),
+      evidence: ({ knownPeople, trustedPeople }) =>
+        `${knownPeople} known people, ${trustedPeople} trusted`,
+      focusMatches: ["people"],
+      textMatches: /people|friend|trust|meet/,
+    },
+    {
+      id: "map-knowledge",
+      label: "Make South Quay more legible by visiting places and asking locals.",
+      priority: 8,
+      status: ({ world }) =>
+        world.player.knownLocationIds.length >= 4 ? "met" : "open",
+      evidence: ({ world }) =>
+        `${world.player.knownLocationIds.length} known places`,
+      focusMatches: ["explore"],
+      textMatches: /explore|map|learn|district|bearings/,
+    },
+  ];
+
+export function buildGenericStreetPlanningOutcomes(
+  world: StreetGameState,
+  objective: ObjectiveScaffoldDirective,
+  input: { planningText: string },
+): StreetPlanningObjectiveOutcome[] {
+  const planningText = input.planningText.toLowerCase();
+  const outcomes: StreetPlanningObjectiveOutcome[] = [];
+  const context: GenericPlanningDesiredOutcomeContext = {
+    activeJob: activeGenericPlanningJob(world),
+    activeProblem: mostRelevantGenericPlanningProblem(world, planningText),
+    completedJobs: world.jobs.filter((job) => job.completed).length,
+    knownPeople: world.player.knownNpcIds.length,
+    objective,
+    planningText,
+    solvedProblems: world.problems.filter(
+      (problem) => problem.status === "solved",
+    ).length,
+    trustedPeople: world.npcs.filter((npc) => npc.trust >= 2).length,
+    world,
+  };
+
+  for (const policy of GENERIC_PLANNING_DESIRED_OUTCOME_POLICIES) {
+    if (!genericPlanningDesiredOutcomeApplies(policy, context)) {
+      continue;
+    }
+
+    addGenericPlanningOutcome(outcomes, {
+      id: policy.id,
+      label: resolveGenericPlanningOutcomeValue(policy.label, context),
+      priority: resolveGenericPlanningOutcomeValue(policy.priority, context),
+      status: policy.status(context),
+      evidence: policy.evidence?.(context),
+    });
+  }
+
+  return outcomes;
+}
 
 export const OBJECTIVE_DESIRED_OUTCOME_SCORE_POLICY_IDS = [
   "active-commitment",
@@ -6085,6 +6260,68 @@ export function objectiveRouteHasNiaBlockLead(world: StreetGameState) {
 
 function npcById(world: StreetGameState, npcId: string) {
   return world.npcs.find((entry) => entry.id === npcId);
+}
+
+function genericPlanningDesiredOutcomeApplies(
+  policy: GenericPlanningDesiredOutcomePolicy,
+  context: GenericPlanningDesiredOutcomeContext,
+) {
+  return Boolean(
+    policy.focusMatches?.includes(context.objective.focus) ||
+      policy.textMatches?.test(context.planningText) ||
+      policy.when?.(context),
+  );
+}
+
+function addGenericPlanningOutcome(
+  outcomes: StreetPlanningObjectiveOutcome[],
+  outcome: StreetPlanningObjectiveOutcome,
+) {
+  const existing = outcomes.find((candidate) => candidate.id === outcome.id);
+  if (existing) {
+    existing.priority = Math.max(existing.priority, outcome.priority);
+    if (existing.status !== "at_risk") {
+      existing.status = outcome.status;
+    }
+    existing.evidence ??= outcome.evidence;
+    return;
+  }
+
+  outcomes.push(outcome);
+}
+
+function resolveGenericPlanningOutcomeValue<T extends string | number>(
+  value: T | ((context: GenericPlanningDesiredOutcomeContext) => T),
+  context: GenericPlanningDesiredOutcomeContext,
+) {
+  return typeof value === "function" ? value(context) : value;
+}
+
+function activeGenericPlanningJob(world: StreetGameState) {
+  return world.jobs.find(
+    (job) =>
+      job.id === world.player.activeJobId &&
+      job.accepted &&
+      !job.completed &&
+      !job.missed,
+  );
+}
+
+function mostRelevantGenericPlanningProblem(
+  world: StreetGameState,
+  planningText: string,
+) {
+  if (planningText.includes("cart")) {
+    return problemById(world, "problem-cart");
+  }
+
+  if (planningText.includes("pump") || planningText.includes("wrench")) {
+    return problemById(world, "problem-pump");
+  }
+
+  return world.problems
+    .filter((problem) => problem.status === "active" || problem.discovered)
+    .sort((left, right) => right.urgency - left.urgency)[0];
 }
 
 function isObjectiveDesiredOutcomeScorePolicyId(

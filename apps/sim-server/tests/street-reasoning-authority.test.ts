@@ -701,6 +701,61 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain('outcome.id.startsWith("job-window-")');
   });
 
+  it("keeps generic desired-outcome construction policy in objective scaffolds", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+    const policyStart = scaffoldSource.indexOf(
+      "const GENERIC_PLANNING_DESIRED_OUTCOME_POLICIES",
+    );
+    const helperStart = scaffoldSource.indexOf(
+      "export function buildGenericStreetPlanningOutcomes",
+    );
+    const policySource = scaffoldSource.slice(policyStart, helperStart);
+    const genericConstructionNeedles = [
+      'id: "shelter-stability"',
+      `label: "Keep tonight's room and improve Rowan's standing at Morrow House."`,
+      "textMatches: /room|stay|bed|home|foothold/",
+      'id: "income"',
+      'label: "Turn one real lead into money or a live work commitment."',
+      'label: "Earn money or secure a credible work commitment."',
+      "textMatches: /work|job|money|earn|pay|shift/",
+      'id: "social-anchors"',
+      "textMatches: /people|friend|trust|meet/",
+      'id: "useful-help"',
+      '"Find and resolve a concrete local problem."',
+      "textMatches: /help|fix|solve|repair|problem|pump|cart/",
+      'id: "tool-ready"',
+      'label: "Get the tool Rowan needs before trying the repair."',
+      "textMatches: /tool|wrench|buy/",
+      'id: "recover"',
+      'label: "Recover enough energy to make the next commitment safely."',
+      "textMatches: /rest|recover|sleep|tired|energy/",
+      'id: "map-knowledge"',
+      'label: "Make South Quay more legible by visiting places and asking locals."',
+      "textMatches: /explore|map|learn|district|bearings/",
+    ];
+
+    expect(policyStart).toBeGreaterThanOrEqual(0);
+    expect(helperStart).toBeGreaterThan(policyStart);
+    expect(scaffoldSource).toContain(
+      "export function buildGenericStreetPlanningOutcomes",
+    );
+    expect(engineSource).toContain("buildGenericStreetPlanningOutcomes");
+    expect(engineSource).not.toContain(
+      "GENERIC_PLANNING_DESIRED_OUTCOME_POLICIES",
+    );
+    for (const needle of genericConstructionNeedles) {
+      expect(policySource).toContain(needle);
+      expect(engineSource).not.toContain(needle);
+    }
+  });
+
   it("keeps route scaffold pressure advisory behind predicate and live pressure", () => {
     const engineSource = readFileSync(
       new URL("../src/sim/engine.ts", import.meta.url),

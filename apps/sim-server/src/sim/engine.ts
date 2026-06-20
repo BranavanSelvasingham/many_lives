@@ -22,6 +22,7 @@ import {
 import { scoreNpcForObjectiveAffinity } from "./npcObjectiveAffinity.js";
 import { scorePlanForDesiredOutcomes } from "./objectivePlanningScoring.js";
 import {
+  buildGenericStreetPlanningOutcomes,
   objectiveRouteActionRationale,
   objectiveRouteActionLocationReason,
   objectiveRouteAvailableActions,
@@ -5217,8 +5218,11 @@ function buildStreetPlanningOutcomes(
   world: StreetGameState,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
 ): StreetPlanningObjectiveOutcome[] {
-  const outcomes: StreetPlanningObjectiveOutcome[] = [];
-  const text = objectivePlanningText(world, objective).toLowerCase();
+  const planningText = objectivePlanningText(world, objective);
+  const outcomes: StreetPlanningObjectiveOutcome[] =
+    buildGenericStreetPlanningOutcomes(world, objective, {
+      planningText,
+    });
   const addOutcome = (
     id: string,
     label: string,
@@ -5247,47 +5251,7 @@ function buildStreetPlanningOutcomes(
     outcomes.push({ id, label, priority, status, evidence, ...metadata });
   };
 
-  const completedJobs = world.jobs.filter((job) => job.completed).length;
   const activeJob = activeJobForIntent(world);
-  const knownPeople = world.player.knownNpcIds.length;
-  const trustedPeople = world.npcs.filter((npc) => npc.trust >= 2).length;
-  const solvedProblems = world.problems.filter(
-    (problem) => problem.status === "solved",
-  ).length;
-
-  if (objective.focus === "settle" || /room|stay|bed|home|foothold/.test(text)) {
-    addOutcome(
-      "shelter-stability",
-      "Keep tonight's room and improve Rowan's standing at Morrow House.",
-      9,
-      (world.player.reputation.morrow_house ?? 0) >= 2 ? "met" : "open",
-      `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
-    );
-    addOutcome(
-      "income",
-      "Turn one real lead into money or a live work commitment.",
-      8,
-      completedJobs > 0 || activeJob ? "met" : "open",
-      `$${world.player.money} on hand`,
-    );
-    addOutcome(
-      "social-anchors",
-      "Build enough local ties that Rowan is not only passing through.",
-      5,
-      trustedPeople >= 2 ? "met" : "open",
-      `${knownPeople} known people`,
-    );
-  }
-
-  if (objective.focus === "work" || /work|job|money|earn|pay|shift/.test(text)) {
-    addOutcome(
-      "income",
-      "Earn money or secure a credible work commitment.",
-      10,
-      completedJobs > 0 || activeJob ? "met" : "open",
-      `$${world.player.money} on hand`,
-    );
-  }
 
   if (activeJob) {
     const endMinutes = totalMinutesForDayHour(world.clock.day, activeJob.endHour);
@@ -5312,66 +5276,6 @@ function buildStreetPlanningOutcomes(
         blockers: [`${job.title} closes around ${formatHour(job.endHour)}.`],
         targetLocationId: job.locationId,
       },
-    );
-  }
-
-  if (
-    objective.focus === "help" ||
-    /help|fix|solve|repair|problem|pump|cart/.test(text)
-  ) {
-    const activeProblem = mostRelevantProblem(world, text);
-    addOutcome(
-      "useful-help",
-      activeProblem
-        ? `Resolve ${activeProblem.title.toLowerCase()} before it spreads.`
-        : "Find and resolve a concrete local problem.",
-      9,
-      activeProblem?.status === "solved" || solvedProblems > 0 ? "met" : "open",
-      activeProblem?.summary,
-    );
-  }
-
-  if (objective.focus === "tool" || /tool|wrench|buy/.test(text)) {
-    addOutcome(
-      "tool-ready",
-      "Get the tool Rowan needs before trying the repair.",
-      8,
-      hasItem(world, "item-wrench") ? "met" : "open",
-      hasItem(world, "item-wrench") ? "Wrench in inventory" : "No wrench yet",
-    );
-  }
-
-  if (
-    objective.focus === "rest" ||
-    /rest|recover|sleep|tired|energy/.test(text) ||
-    world.player.energy < 35
-  ) {
-    addOutcome(
-      "recover",
-      "Recover enough energy to make the next commitment safely.",
-      world.player.energy < 35 ? 10 : 7,
-      world.player.energy < 45 ? "open" : "met",
-      `${world.player.energy} energy`,
-    );
-  }
-
-  if (objective.focus === "people" || /people|friend|trust|meet/.test(text)) {
-    addOutcome(
-      "social-anchors",
-      "Meet and deepen real local connections.",
-      9,
-      trustedPeople >= 2 ? "met" : "open",
-      `${knownPeople} known people, ${trustedPeople} trusted`,
-    );
-  }
-
-  if (objective.focus === "explore" || /explore|map|learn|district|bearings/.test(text)) {
-    addOutcome(
-      "map-knowledge",
-      "Make South Quay more legible by visiting places and asking locals.",
-      8,
-      world.player.knownLocationIds.length >= 4 ? "met" : "open",
-      `${world.player.knownLocationIds.length} known places`,
     );
   }
 
@@ -6879,21 +6783,6 @@ function dedupeObjectivePlans(plans: ObjectivePlan[]) {
   }
 
   return [...byAction.values()];
-}
-
-function mostRelevantProblem(world: StreetGameState, planningText: string) {
-  const normalized = planningText.toLowerCase();
-  if (normalized.includes("cart")) {
-    return problemById(world, "problem-cart");
-  }
-
-  if (normalized.includes("pump") || normalized.includes("wrench")) {
-    return problemById(world, "problem-pump");
-  }
-
-  return world.problems
-    .filter((problem) => problem.status === "active" || problem.discovered)
-    .sort((left, right) => right.urgency - left.urgency)[0];
 }
 
 function objectivePlanningText(
