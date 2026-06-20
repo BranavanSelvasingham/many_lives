@@ -4,6 +4,8 @@ import { SimulationEngine } from "../src/sim/engine.js";
 import { enterMorrowHouse, enterTeaHouse } from "./street-test-helpers.js";
 
 describe("World time pressure", () => {
+  type TestWorld = Awaited<ReturnType<SimulationEngine["createGame"]>>;
+
   function setClock(world: Awaited<ReturnType<SimulationEngine["createGame"]>>, {
     hour,
     minute,
@@ -18,6 +20,36 @@ describe("World time pressure", () => {
     world.currentTime = `2026-03-21T${String(hour).padStart(2, "0")}:${String(
       minute,
     ).padStart(2, "0")}:00.000Z`;
+  }
+
+  function npcById(world: TestWorld, npcId: string) {
+    const npc = world.npcs.find((candidate) => candidate.id === npcId);
+    expect(npc).toBeDefined();
+    return npc!;
+  }
+
+  function jobById(world: TestWorld, jobId: string) {
+    const job = world.jobs.find((candidate) => candidate.id === jobId);
+    expect(job).toBeDefined();
+    return job!;
+  }
+
+  function problemById(world: TestWorld, problemId: string) {
+    const problem = world.problems.find(
+      (candidate) => candidate.id === problemId,
+    );
+    expect(problem).toBeDefined();
+    return problem!;
+  }
+
+  async function refreshedWorld(
+    engine: SimulationEngine,
+    gameId: string,
+    arrange: (world: TestWorld) => void,
+  ) {
+    const world = await engine.createGame(gameId);
+    arrange(world);
+    return engine.tick(world, 0);
   }
 
   it("lets jobs expire if the player drifts past their window", async () => {
@@ -350,6 +382,289 @@ describe("World time pressure", () => {
       currentLocationId: "market-square",
       currentObjective:
         "Stay with Quay Square until the jam stops bending everybody's route.",
+    });
+  });
+
+  it("preserves NPC state-dependent objective and concern branches through refresh", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+
+    let world = await refreshedWorld(
+      engine,
+      "game-npc-inner-mara-default",
+      (nextWorld) => {
+        setClock(nextWorld, { hour: 11, minute: 0 });
+        const pump = problemById(nextWorld, "problem-pump");
+        pump.status = "hidden";
+        pump.discovered = false;
+        delete pump.escalationLevel;
+      },
+    );
+    expect(npcById(world, "npc-mara")).toMatchObject({
+      currentConcern: "Keep the house from slipping into rent talk.",
+      currentObjective:
+        "Keep Morrow House steady, safe, and pleasant to come back to.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-mara-active",
+      (nextWorld) => {
+        setClock(nextWorld, { hour: 13, minute: 0 });
+        const pump = problemById(nextWorld, "problem-pump");
+        pump.status = "active";
+        pump.discovered = true;
+        pump.escalationLevel = 2;
+      },
+    );
+    expect(npcById(world, "npc-mara")).toMatchObject({
+      currentConcern: "That pump is turning house trouble public.",
+      currentObjective:
+        "Get eyes on Morrow Yard before the pump turns house strain into rent talk.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-mara-resolved",
+      (nextWorld) => {
+        const pump = problemById(nextWorld, "problem-pump");
+        pump.status = "resolved";
+        pump.discovered = true;
+      },
+    );
+    expect(npcById(world, "npc-mara")).toMatchObject({
+      currentConcern:
+        "The pump is contained, but the house had to handle it without Rowan.",
+      currentObjective:
+        "Keep the house from turning Rowan's absence into the whole story.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-mara-expired",
+      (nextWorld) => {
+        const pump = problemById(nextWorld, "problem-pump");
+        pump.status = "expired";
+        pump.discovered = true;
+      },
+    );
+    expect(npcById(world, "npc-mara")).toMatchObject({
+      currentConcern:
+        "The pump is not a future worry anymore; the house is already paying for it.",
+      currentObjective:
+        "Keep Morrow House steady, safe, and pleasant to come back to.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-ada-missed",
+      (nextWorld) => {
+        const teaJob = jobById(nextWorld, "job-tea-shift");
+        teaJob.missed = true;
+      },
+    );
+    expect(npcById(world, "npc-ada")).toMatchObject({
+      currentConcern:
+        "Lunch already had to run without the hands Rowan could have offered.",
+      currentObjective:
+        "Keep Kettle & Lamp warm, bright, and welcoming through lunch.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-ada-accepted",
+      (nextWorld) => {
+        const teaJob = jobById(nextWorld, "job-tea-shift");
+        teaJob.accepted = true;
+        teaJob.completed = false;
+        teaJob.missed = false;
+      },
+    );
+    expect(npcById(world, "npc-ada")).toMatchObject({
+      currentConcern: "The room needs speed, not apologies.",
+      currentObjective:
+        "Keep Kettle & Lamp warm, bright, and welcoming through lunch.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-ada-default",
+      (nextWorld) => {
+        setClock(nextWorld, { hour: 13, minute: 0 });
+      },
+    );
+    expect(npcById(world, "npc-ada")).toMatchObject({
+      currentConcern: "Keep the room from falling behind the cups.",
+      currentObjective:
+        "Keep Kettle & Lamp warm, bright, and welcoming through lunch.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-jo-resolved",
+      (nextWorld) => {
+        const pump = problemById(nextWorld, "problem-pump");
+        pump.status = "resolved";
+      },
+    );
+    expect(npcById(world, "npc-jo")).toMatchObject({
+      currentConcern:
+        "Mara already contained the leak; the wrench is no longer the live bottleneck.",
+      currentObjective:
+        "Keep honest repairs moving and make sure good tools find the right hands.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-jo-needs-wrench",
+      (nextWorld) => {
+        const pump = problemById(nextWorld, "problem-pump");
+        pump.status = "active";
+        pump.discovered = true;
+        nextWorld.player.inventory = [];
+      },
+    );
+    expect(npcById(world, "npc-jo")).toMatchObject({
+      currentConcern: "That wrench should leave the bench before dusk.",
+      currentObjective:
+        "Keep honest repairs moving and make sure good tools find the right hands.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-jo-default",
+      (nextWorld) => {
+        const pump = problemById(nextWorld, "problem-pump");
+        pump.status = "hidden";
+        pump.discovered = false;
+      },
+    );
+    expect(npcById(world, "npc-jo")).toMatchObject({
+      currentConcern:
+        "The stall is quiet enough for dry jokes, small repairs, and one wrench waiting on the bench.",
+      currentObjective:
+        "Keep honest repairs moving and make sure good tools find the right hands.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-tomas-missed",
+      (nextWorld) => {
+        const yardJob = jobById(nextWorld, "job-yard-shift");
+        yardJob.missed = true;
+      },
+    );
+    expect(npcById(world, "npc-tomas")).toMatchObject({
+      currentConcern:
+        "The load moved without Rowan, which says plenty in a working yard.",
+      currentObjective: "Clear the yard without turning the afternoon sour.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-tomas-accepted",
+      (nextWorld) => {
+        const yardJob = jobById(nextWorld, "job-yard-shift");
+        yardJob.accepted = true;
+        yardJob.completed = false;
+        yardJob.missed = false;
+      },
+    );
+    expect(npcById(world, "npc-tomas")).toMatchObject({
+      currentConcern: "That lift needs finishing clean.",
+      currentObjective: "Clear the yard without turning the afternoon sour.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-tomas-default",
+      (nextWorld) => {
+        setClock(nextWorld, { hour: 14, minute: 0 });
+      },
+    );
+    expect(npcById(world, "npc-tomas")).toMatchObject({
+      currentConcern:
+        "Keep the yard moving without rushing anyone into a mistake.",
+      currentObjective: "Clear the yard without turning the afternoon sour.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-nia-active",
+      (nextWorld) => {
+        const cart = problemById(nextWorld, "problem-cart");
+        cart.status = "active";
+        cart.escalationLevel = 2;
+      },
+    );
+    expect(npcById(world, "npc-nia")).toMatchObject({
+      currentConcern:
+        "That jam in Quay Square is about to become everybody's problem.",
+      currentObjective:
+        "Stay with Quay Square until the jam stops bending everybody's route.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-nia-resolved",
+      (nextWorld) => {
+        const cart = problemById(nextWorld, "problem-cart");
+        cart.status = "resolved";
+      },
+    );
+    expect(npcById(world, "npc-nia")).toMatchObject({
+      currentConcern:
+        "The square is moving again, but it had to handle the cart itself.",
+      currentObjective:
+        "Stay ahead of what the block is about to notice and share good leads without making a scene.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-nia-expired",
+      (nextWorld) => {
+        const cart = problemById(nextWorld, "problem-cart");
+        cart.status = "expired";
+      },
+    );
+    expect(npcById(world, "npc-nia")).toMatchObject({
+      currentConcern:
+        "The square already spent the afternoon working around a problem that could have moved sooner.",
+      currentObjective:
+        "Stay ahead of what the block is about to notice and share good leads without making a scene.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-nia-moss-pier",
+      (nextWorld) => {
+        setClock(nextWorld, { hour: 16, minute: 0 });
+        const cart = problemById(nextWorld, "problem-cart");
+        cart.status = "solved";
+      },
+    );
+    expect(npcById(world, "npc-nia")).toMatchObject({
+      currentConcern:
+        "Watch what comes off the boats before the story gets retold.",
+      currentLocationId: "moss-pier",
+      currentObjective:
+        "Stay ahead of what the block is about to notice and share good leads without making a scene.",
+    });
+
+    world = await refreshedWorld(
+      engine,
+      "game-npc-inner-nia-default",
+      (nextWorld) => {
+        setClock(nextWorld, { hour: 12, minute: 0 });
+        const cart = problemById(nextWorld, "problem-cart");
+        cart.status = "solved";
+      },
+    );
+    expect(npcById(world, "npc-nia")).toMatchObject({
+      currentConcern:
+        "Quay Square and the pier are full of tiny details she enjoys catching first.",
+      currentLocationId: "market-square",
+      currentObjective:
+        "Stay ahead of what the block is about to notice and share good leads without making a scene.",
     });
   });
 

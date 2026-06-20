@@ -23,6 +23,7 @@ import {
   buildSocialNextNpcConversationResolution,
   getNpcFirstContactPrimer,
   getNpcNarrative,
+  npcInnerStateNarrative,
 } from "../street-sim/npcNarratives.js";
 import {
   buildPlayerObjectiveState,
@@ -9056,26 +9057,20 @@ function syncNpcInnerState(world: StreetGameState) {
 
   for (const npc of world.npcs) {
     const narrative = getNpcNarrative(npc.id);
+    const innerNarrative = npcInnerStateNarrative(npc.id, {
+      cartProblem,
+      currentHour: hour,
+      npcCurrentLocationId: npc.currentLocationId,
+      playerHasWrench,
+      pumpProblem,
+      teaJob,
+      yardJob,
+    });
 
     switch (npc.id) {
       case "npc-mara":
-        npc.currentObjective =
-          pumpProblem?.status === "resolved"
-            ? "Keep the house from turning Rowan's absence into the whole story."
-            : pumpProblem?.status === "active" &&
-                (pumpProblem.escalationLevel ?? 0) >= 2
-              ? "Get eyes on Morrow Yard before the pump turns house strain into rent talk."
-              : narrative.objective;
-        npc.currentConcern =
-          pumpProblem?.status === "resolved"
-            ? "The pump is contained, but the house had to handle it without Rowan."
-            : pumpProblem?.status === "expired"
-            ? "The pump is not a future worry anymore; the house is already paying for it."
-            : pumpProblem?.discovered && pumpProblem.status === "active"
-            ? "That pump is turning house trouble public."
-            : hour < 12
-              ? "Keep the house from slipping into rent talk."
-              : "Decide whether this newcomer means strain, help, or maybe a future here.";
+        npc.currentObjective = innerNarrative.currentObjective;
+        npc.currentConcern = innerNarrative.currentConcern;
         npc.mood =
           pumpProblem?.status === "resolved"
             ? "guarded"
@@ -9087,15 +9082,8 @@ function syncNpcInnerState(world: StreetGameState) {
         npc.openness = clamp(npc.openness || 58, 36, 92);
         break;
       case "npc-ada":
-        npc.currentObjective = narrative.objective;
-        npc.currentConcern =
-          teaJob?.missed
-            ? "Lunch already had to run without the hands Rowan could have offered."
-            : teaJob?.accepted && !teaJob.completed
-            ? "The room needs speed, not apologies."
-            : hour < 12.5
-              ? narrative.context
-              : "Keep the room from falling behind the cups.";
+        npc.currentObjective = innerNarrative.currentObjective;
+        npc.currentConcern = innerNarrative.currentConcern;
         npc.mood = teaJob?.missed
           ? "cool"
           : teaJob?.accepted && !teaJob.completed
@@ -9104,47 +9092,20 @@ function syncNpcInnerState(world: StreetGameState) {
         npc.openness = clamp(npc.openness || 50, 30, 88);
         break;
       case "npc-jo":
-        npc.currentObjective = narrative.objective;
-        npc.currentConcern =
-          pumpProblem?.status === "resolved"
-            ? "Mara already contained the leak; the wrench is no longer the live bottleneck."
-            : pumpProblem?.discovered &&
-          pumpProblem.status === "active" &&
-          !playerHasWrench
-            ? "That wrench should leave the bench before dusk."
-            : narrative.context;
+        npc.currentObjective = innerNarrative.currentObjective;
+        npc.currentConcern = innerNarrative.currentConcern;
         npc.mood = "dry";
         npc.openness = clamp(npc.openness || 44, 22, 82);
         break;
       case "npc-tomas":
-        npc.currentObjective = narrative.objective;
-        npc.currentConcern =
-          yardJob?.missed
-            ? "The load moved without Rowan, which says plenty in a working yard."
-            : yardJob?.accepted && !yardJob.completed
-            ? "That lift needs finishing clean."
-            : hour < 14
-              ? narrative.context
-              : "Keep the yard moving without rushing anyone into a mistake.";
+        npc.currentObjective = innerNarrative.currentObjective;
+        npc.currentConcern = innerNarrative.currentConcern;
         npc.mood = yardJob?.missed ? "guarded" : "busy";
         npc.openness = clamp(npc.openness || 34, 18, 74);
         break;
       case "npc-nia":
-        npc.currentObjective =
-          cartProblem?.status === "active" &&
-          (cartProblem.escalationLevel ?? 0) >= 2
-            ? "Stay with Quay Square until the jam stops bending everybody's route."
-            : narrative.objective;
-        npc.currentConcern =
-          cartProblem?.status === "resolved"
-            ? "The square is moving again, but it had to handle the cart itself."
-            : cartProblem?.status === "expired"
-            ? "The square already spent the afternoon working around a problem that could have moved sooner."
-            : cartProblem?.status === "active"
-            ? "That jam in Quay Square is about to become everybody's problem."
-            : npc.currentLocationId === "moss-pier"
-              ? "Watch what comes off the boats before the story gets retold."
-              : narrative.context;
+        npc.currentObjective = innerNarrative.currentObjective;
+        npc.currentConcern = innerNarrative.currentConcern;
         npc.mood =
           cartProblem?.status === "resolved"
             ? "satisfied"
@@ -9154,8 +9115,8 @@ function syncNpcInnerState(world: StreetGameState) {
         npc.openness = clamp(npc.openness || 60, 34, 94);
         break;
       default:
-        npc.currentObjective ||= narrative.objective;
-        npc.currentConcern ||= narrative.context;
+        npc.currentObjective ||= innerNarrative.currentObjective;
+        npc.currentConcern ||= innerNarrative.currentConcern;
         npc.summary ||= narrative.backstory;
         npc.mood ||= "steady";
         npc.openness = clamp(npc.openness || 50, 20, 90);

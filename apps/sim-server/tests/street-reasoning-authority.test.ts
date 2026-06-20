@@ -222,6 +222,28 @@ const NPC_CONVERSATION_RESOLUTION_COPY = [
   "Rowan might keep pace when the cafe fills up.",
   "Rowan paid attention to where the block might jam up.",
 ];
+const NPC_INNER_STATE_NARRATIVE_COPY = [
+  "Keep the house from turning Rowan's absence into the whole story.",
+  "Get eyes on Morrow Yard before the pump turns house strain into rent talk.",
+  "The pump is contained, but the house had to handle it without Rowan.",
+  "The pump is not a future worry anymore; the house is already paying for it.",
+  "That pump is turning house trouble public.",
+  "Keep the house from slipping into rent talk.",
+  "Decide whether this newcomer means strain, help, or maybe a future here.",
+  "Lunch already had to run without the hands Rowan could have offered.",
+  "The room needs speed, not apologies.",
+  "Keep the room from falling behind the cups.",
+  "Mara already contained the leak; the wrench is no longer the live bottleneck.",
+  "That wrench should leave the bench before dusk.",
+  "The load moved without Rowan, which says plenty in a working yard.",
+  "That lift needs finishing clean.",
+  "Keep the yard moving without rushing anyone into a mistake.",
+  "Stay with Quay Square until the jam stops bending everybody's route.",
+  "The square is moving again, but it had to handle the cart itself.",
+  "The square already spent the afternoon working around a problem that could have moved sooner.",
+  "That jam in Quay Square is about to become everybody's problem.",
+  "Watch what comes off the boats before the story gets retold.",
+];
 const FIRST_AFTERNOON_RETURN_HOME_THOUGHT =
   "I should head back to Morrow House and let today land.";
 const FIRST_AFTERNOON_TEA_RUSH_THOUGHT =
@@ -1297,6 +1319,26 @@ describe("street reasoning authority", () => {
     expect(engineSource).not.toContain(
       "closedWorkWindowConversationResolution",
     );
+  });
+
+  it("keeps NPC inner-state objective and concern copy in NPC narrative data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const npcNarrativesSource = readFileSync(
+      new URL("../src/street-sim/npcNarratives.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const innerStateCopy of NPC_INNER_STATE_NARRATIVE_COPY) {
+      expect(npcNarrativesSource).toContain(innerStateCopy);
+      expect(engineSource).not.toContain(innerStateCopy);
+    }
+
+    expect(npcNarrativesSource).toContain("NPC_INNER_STATE_NARRATIVES");
+    expect(npcNarrativesSource).toContain("npcInnerStateNarrative");
+    expect(engineSource).toContain("npcInnerStateNarrative");
   });
 
   it("preserves selected NPC-owned conversation resolution payloads exactly", () => {

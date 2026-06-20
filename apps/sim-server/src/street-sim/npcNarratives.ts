@@ -1,4 +1,4 @@
-import type { MemoryEntry } from "./types.js";
+import type { JobState, MemoryEntry, ProblemState } from "./types.js";
 
 export interface NpcNarrativeProfile {
   backstory: string;
@@ -37,6 +37,27 @@ export type NpcConversationResolutionKey =
   | "tomas-closed-yard-window"
   | "tomas-live-yard-shift"
   | "nia-live-cart-jam";
+
+export type NpcInnerStateNarrativeContext = {
+  cartProblem?: Pick<
+    ProblemState,
+    "discovered" | "escalationLevel" | "status"
+  >;
+  currentHour: number;
+  npcCurrentLocationId?: string;
+  playerHasWrench: boolean;
+  pumpProblem?: Pick<
+    ProblemState,
+    "discovered" | "escalationLevel" | "status"
+  >;
+  teaJob?: Pick<JobState, "accepted" | "completed" | "missed">;
+  yardJob?: Pick<JobState, "accepted" | "completed" | "missed">;
+};
+
+export type NpcInnerStateNarrative = {
+  currentConcern: string;
+  currentObjective: string;
+};
 
 export const NPC_NARRATIVES: Record<string, NpcNarrativeProfile> = {
   "npc-mara": {
@@ -107,6 +128,65 @@ export const NPC_NARRATIVES: Record<string, NpcNarrativeProfile> = {
     voice: "breezy, quick, observant, and cheerfully nosy.",
   },
 };
+
+const NPC_INNER_STATE_NARRATIVES = {
+  "npc-mara": {
+    concerns: {
+      afternoonDefault:
+        "Decide whether this newcomer means strain, help, or maybe a future here.",
+      morningDefault: "Keep the house from slipping into rent talk.",
+      pumpActive: "That pump is turning house trouble public.",
+      pumpExpired:
+        "The pump is not a future worry anymore; the house is already paying for it.",
+      pumpResolved:
+        "The pump is contained, but the house had to handle it without Rowan.",
+    },
+    objectives: {
+      pumpEscalating:
+        "Get eyes on Morrow Yard before the pump turns house strain into rent talk.",
+      pumpResolved:
+        "Keep the house from turning Rowan's absence into the whole story.",
+    },
+  },
+  "npc-ada": {
+    concerns: {
+      afternoonDefault: "Keep the room from falling behind the cups.",
+      teaAccepted: "The room needs speed, not apologies.",
+      teaMissed:
+        "Lunch already had to run without the hands Rowan could have offered.",
+    },
+  },
+  "npc-jo": {
+    concerns: {
+      pumpNeedsWrench: "That wrench should leave the bench before dusk.",
+      pumpResolved:
+        "Mara already contained the leak; the wrench is no longer the live bottleneck.",
+    },
+  },
+  "npc-tomas": {
+    concerns: {
+      afternoonDefault:
+        "Keep the yard moving without rushing anyone into a mistake.",
+      yardAccepted: "That lift needs finishing clean.",
+      yardMissed:
+        "The load moved without Rowan, which says plenty in a working yard.",
+    },
+  },
+  "npc-nia": {
+    concerns: {
+      cartActive: "That jam in Quay Square is about to become everybody's problem.",
+      cartExpired:
+        "The square already spent the afternoon working around a problem that could have moved sooner.",
+      cartResolved:
+        "The square is moving again, but it had to handle the cart itself.",
+      mossPier: "Watch what comes off the boats before the story gets retold.",
+    },
+    objectives: {
+      cartEscalating:
+        "Stay with Quay Square until the jam stops bending everybody's route.",
+    },
+  },
+} as const;
 
 const NPC_CONVERSATION_RESOLUTIONS: Record<
   NpcConversationResolutionKey,
@@ -267,6 +347,99 @@ export function getNpcFirstContactPrimer(
   npcId: string,
 ): NpcFirstContactPrimer | undefined {
   return NPC_NARRATIVES[npcId]?.firstContactPrimer;
+}
+
+export function npcInnerStateNarrative(
+  npcId: string,
+  context: NpcInnerStateNarrativeContext,
+): NpcInnerStateNarrative {
+  const narrative = getNpcNarrative(npcId);
+
+  switch (npcId) {
+    case "npc-mara":
+      return {
+        currentObjective:
+          context.pumpProblem?.status === "resolved"
+            ? NPC_INNER_STATE_NARRATIVES["npc-mara"].objectives.pumpResolved
+            : context.pumpProblem?.status === "active" &&
+                (context.pumpProblem.escalationLevel ?? 0) >= 2
+              ? NPC_INNER_STATE_NARRATIVES["npc-mara"].objectives
+                  .pumpEscalating
+              : narrative.objective,
+        currentConcern:
+          context.pumpProblem?.status === "resolved"
+            ? NPC_INNER_STATE_NARRATIVES["npc-mara"].concerns.pumpResolved
+            : context.pumpProblem?.status === "expired"
+              ? NPC_INNER_STATE_NARRATIVES["npc-mara"].concerns.pumpExpired
+              : context.pumpProblem?.discovered &&
+                  context.pumpProblem.status === "active"
+                ? NPC_INNER_STATE_NARRATIVES["npc-mara"].concerns.pumpActive
+                : context.currentHour < 12
+                  ? NPC_INNER_STATE_NARRATIVES["npc-mara"].concerns
+                      .morningDefault
+                  : NPC_INNER_STATE_NARRATIVES["npc-mara"].concerns
+                      .afternoonDefault,
+      };
+    case "npc-ada":
+      return {
+        currentObjective: narrative.objective,
+        currentConcern: context.teaJob?.missed
+          ? NPC_INNER_STATE_NARRATIVES["npc-ada"].concerns.teaMissed
+          : context.teaJob?.accepted && !context.teaJob.completed
+            ? NPC_INNER_STATE_NARRATIVES["npc-ada"].concerns.teaAccepted
+            : context.currentHour < 12.5
+              ? narrative.context
+              : NPC_INNER_STATE_NARRATIVES["npc-ada"].concerns
+                  .afternoonDefault,
+      };
+    case "npc-jo":
+      return {
+        currentObjective: narrative.objective,
+        currentConcern:
+          context.pumpProblem?.status === "resolved"
+            ? NPC_INNER_STATE_NARRATIVES["npc-jo"].concerns.pumpResolved
+            : context.pumpProblem?.discovered &&
+                context.pumpProblem.status === "active" &&
+                !context.playerHasWrench
+              ? NPC_INNER_STATE_NARRATIVES["npc-jo"].concerns.pumpNeedsWrench
+              : narrative.context,
+      };
+    case "npc-tomas":
+      return {
+        currentObjective: narrative.objective,
+        currentConcern: context.yardJob?.missed
+          ? NPC_INNER_STATE_NARRATIVES["npc-tomas"].concerns.yardMissed
+          : context.yardJob?.accepted && !context.yardJob.completed
+            ? NPC_INNER_STATE_NARRATIVES["npc-tomas"].concerns.yardAccepted
+            : context.currentHour < 14
+              ? narrative.context
+              : NPC_INNER_STATE_NARRATIVES["npc-tomas"].concerns
+                  .afternoonDefault,
+      };
+    case "npc-nia":
+      return {
+        currentObjective:
+          context.cartProblem?.status === "active" &&
+          (context.cartProblem.escalationLevel ?? 0) >= 2
+            ? NPC_INNER_STATE_NARRATIVES["npc-nia"].objectives.cartEscalating
+            : narrative.objective,
+        currentConcern:
+          context.cartProblem?.status === "resolved"
+            ? NPC_INNER_STATE_NARRATIVES["npc-nia"].concerns.cartResolved
+            : context.cartProblem?.status === "expired"
+              ? NPC_INNER_STATE_NARRATIVES["npc-nia"].concerns.cartExpired
+              : context.cartProblem?.status === "active"
+                ? NPC_INNER_STATE_NARRATIVES["npc-nia"].concerns.cartActive
+                : context.npcCurrentLocationId === "moss-pier"
+                  ? NPC_INNER_STATE_NARRATIVES["npc-nia"].concerns.mossPier
+                  : narrative.context,
+      };
+    default:
+      return {
+        currentObjective: narrative.objective,
+        currentConcern: narrative.context,
+      };
+  }
 }
 
 export function buildNpcConversationResolution(
