@@ -58,6 +58,15 @@ const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
   minX: 180,
   minY: 550,
 };
+const OPENING_AUTOPLAY_PROGRESS_EVIDENCE = new Set([
+  "first-afternoon-plan-settled",
+  "first-afternoon-lead-recorded",
+  "first-afternoon-completed",
+  "ada-conversation-active",
+  "rowan-at-tea-house",
+  "kettle-lamp-next-action",
+  "route-progress-to-tea-house",
+]);
 const KETTLE_LAMP_LANDMARK_BOUNDS = {
   maxX: 1550,
   maxY: 700,
@@ -1677,6 +1686,17 @@ function assertOpeningActionCarryForward(
     false,
     `${label}: watch-mode opening carry-forward should not require visible input: ${JSON.stringify(carryForward)}.`,
   );
+  if (carryForward.progressedBeyondOpening) {
+    assert.equal(
+      carryForward.status,
+      "completed",
+      `${label}: superseded opening carry-forward should report the opening action completed: ${JSON.stringify(carryForward)}.`,
+    );
+    assert.ok(
+      openingActionProgressEvidence(carryForward).length > 0,
+      `${label}: superseded opening carry-forward is missing concrete first-run progress evidence: ${JSON.stringify(carryForward)}.`,
+    );
+  }
   if (carryForward.status !== "completed") {
     assert.equal(
       carryForward.geometry?.nearActionLocation,
@@ -1684,6 +1704,29 @@ function assertOpeningActionCarryForward(
       `${label}: queued opening action should keep Rowan near the Morrow House door: ${JSON.stringify(carryForward)}.`,
     );
   }
+}
+
+function openingActionProgressEvidence(carryForward) {
+  return (carryForward?.completionEvidence ?? []).filter(
+    (entry) =>
+      OPENING_AUTOPLAY_PROGRESS_EVIDENCE.has(entry) ||
+      String(entry).startsWith("first-afternoon-tea-shift-"),
+  );
+}
+
+function openingActionHasAutoplayProgressed(browserProbe) {
+  const carryForward = browserProbe?.openingActionCarryForward;
+  if (!carryForward) {
+    return false;
+  }
+
+  return Boolean(
+    carryForward.status === "completed" &&
+      carryForward.watchMode?.enabled &&
+      carryForward.requiredVisibleInput === false &&
+      (carryForward.progressedBeyondOpening ||
+        openingActionProgressEvidence(carryForward).length > 0),
+  );
 }
 
 function pointInsideBounds(point, bounds) {
@@ -2119,6 +2162,28 @@ function compactDecisionArtifactDiagnostic(artifact) {
   };
 }
 
+function compactOpeningActionCarryForwardDiagnostic(carryForward) {
+  if (!carryForward) {
+    return null;
+  }
+
+  return {
+    completionEvidence: carryForward.completionEvidence ?? [],
+    currentLocationId: carryForward.currentLocationId ?? null,
+    currentSpaceId: carryForward.currentSpaceId ?? null,
+    firstAfternoon: carryForward.firstAfternoon ?? null,
+    phase: carryForward.phase ?? null,
+    progressEvidence: openingActionProgressEvidence(carryForward),
+    progressedBeyondOpening: Boolean(carryForward.progressedBeyondOpening),
+    requiredVisibleInput: carryForward.requiredVisibleInput ?? null,
+    selectedActionId: carryForward.selectedActionId ?? null,
+    status: carryForward.status ?? null,
+    supersededBy: carryForward.supersededBy ?? null,
+    targetLocationId: carryForward.targetLocationId ?? null,
+    watchMode: carryForward.watchMode ?? null,
+  };
+}
+
 function compactDecisionArtifactProbeDiagnostic(probe) {
   if (!probe) {
     return null;
@@ -2139,7 +2204,26 @@ function compactDecisionArtifactProbeDiagnostic(probe) {
         }
       : null,
     clock: probe.clock ?? null,
+    firstAfternoon: probe.firstAfternoon ?? null,
     gameId: probe.gameId ?? null,
+    location: probe.location ?? null,
+    movement: probe.movement
+      ? {
+          playerRoute: probe.movement.playerRoute
+            ? {
+                active: probe.movement.playerRoute.active,
+                legal: probe.movement.playerRoute.legal,
+                progress: probe.movement.playerRoute.progress,
+                reachesDestination:
+                  probe.movement.playerRoute.reachesDestination,
+                target: probe.movement.playerRoute.target,
+              }
+            : null,
+        }
+      : null,
+    openingActionCarryForward: compactOpeningActionCarryForwardDiagnostic(
+      probe.openingActionCarryForward,
+    ),
     rail: probe.rail
       ? {
           next: probe.rail.next,
@@ -2265,9 +2349,14 @@ async function waitForOpeningActionCarryForward(
       lastMismatch = {
         bodyText: page.bodyText ?? null,
         error: error instanceof Error ? error.message : String(error),
-        openingActionCarryForward: probe?.openingActionCarryForward ?? null,
+        openingActionCarryForward:
+          compactOpeningActionCarryForwardDiagnostic(
+            probe?.openingActionCarryForward,
+          ),
         probe: compactDecisionArtifactProbeDiagnostic(probe),
         url: page.url ?? null,
+        visibleProgressionControls: page.visibleProgressionControls ?? null,
+        watchModeReplyAffordances: page.watchModeReplyAffordances ?? null,
       };
       await sleep(POLL_INTERVAL_MS);
     }
@@ -2373,6 +2462,9 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
     true,
     `${label}: opening probe is not in watch mode.`,
   );
+  if (openingActionHasAutoplayProgressed(openingProbe)) {
+    return openingProbe;
+  }
 
   return waitFor(
     async () => {
@@ -2382,6 +2474,7 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
       }
 
       const advanced =
+        openingActionHasAutoplayProgressed(probe) ||
         probe.clock?.totalMinutes > openingProbe.clock?.totalMinutes ||
         probe.autonomy?.key !== openingProbe.autonomy?.key ||
         probe.location?.id !== openingProbe.location?.id ||
@@ -2390,7 +2483,9 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
       return advanced ? probe : false;
     },
     AUTOPLAY_START_TIMEOUT_MS,
-    `${label} did not leave the opening Watch Rowan begin state within ${AUTOPLAY_START_TIMEOUT_MS}ms.`,
+    `${label} did not leave the opening Watch Rowan begin state within ${AUTOPLAY_START_TIMEOUT_MS}ms. Opening state: ${JSON.stringify(
+      compactDecisionArtifactProbeDiagnostic(openingProbe),
+    )}`,
   );
 }
 
@@ -2404,14 +2499,36 @@ async function runFreshAutoplayStartCheck(session) {
 
   const openingProbe = await session.readBrowserProbe();
   const openingMapAgency = await session.waitForMapAgencyProbe(viewport);
-  assertMorrowMapAgencyTargetCorrelation(
-    openingMapAgency,
-    "fresh autoplay opening",
-  );
-  assertKettleMapAgencyTargetCorrelation(
-    openingMapAgency,
-    "fresh autoplay opening",
-  );
+  const openingAlreadyProgressed =
+    openingActionHasAutoplayProgressed(openingProbe);
+  if (openingAlreadyProgressed) {
+    const mapShowsKettle = assertKettleMapAgencyTargetCorrelation(
+      openingMapAgency,
+      "fresh autoplay opening progressed",
+    );
+    assert.ok(
+      mapShowsKettle ||
+        Boolean(openingProbe.activeConversation?.npcId) ||
+        openingProbe.location?.id === "tea-house",
+      `fresh autoplay opening already progressed, but map agency did not show the next first-run target: ${JSON.stringify(
+        {
+          mapAgency: openingMapAgency,
+          opening: compactOpeningActionCarryForwardDiagnostic(
+            openingProbe.openingActionCarryForward,
+          ),
+        },
+      )}.`,
+    );
+  } else {
+    assertMorrowMapAgencyTargetCorrelation(
+      openingMapAgency,
+      "fresh autoplay opening",
+    );
+    assertKettleMapAgencyTargetCorrelation(
+      openingMapAgency,
+      "fresh autoplay opening",
+    );
+  }
   assertOpeningActionCarryForward(openingProbe, "fresh autoplay opening", [
     "queued",
     "in_progress",
@@ -2523,6 +2640,7 @@ async function runFreshAutoplayStartCheck(session) {
       clock: openingProbe.clock,
       location: openingProbe.location,
       mapAgency: openingMapAgency,
+      openingAlreadyProgressed,
       openingActionCarryForward: openingProbe.openingActionCarryForward,
       rail: openingProbe.rail,
       watchMode: openingProbe.watchMode,
@@ -2636,11 +2754,19 @@ async function runResponsiveDecisionArtifactCheck(session) {
       autonomy: advancedProbe.autonomy,
       clock: advancedProbe.clock,
       location: advancedProbe.location,
+      openingActionCarryForward: advancedProbe.openingActionCarryForward,
       rail: advancedProbe.rail,
       visibleDecisionArtifact: advancedProbe.autonomy?.visibleDecisionArtifact,
       watchMode: advancedProbe.watchMode,
     },
     expandedDecisionArtifact: page.decisionArtifact,
+    opening: {
+      autonomy: openingProbe.autonomy,
+      clock: openingProbe.clock,
+      location: openingProbe.location,
+      openingActionCarryForward: openingProbe.openingActionCarryForward,
+      watchMode: openingProbe.watchMode,
+    },
     screenshotPath,
     viewport,
   };

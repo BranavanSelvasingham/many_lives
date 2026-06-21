@@ -484,6 +484,74 @@ function independentNpcSurfaceProbePayload({
   return null;
 }
 
+function openingActionCompletionEvidence({
+  currentSpaceId,
+  game,
+  snapshot,
+}: {
+  currentSpaceId: string | null;
+  game: StreetGameState;
+  snapshot: StreetBrowserProbeSnapshot;
+}) {
+  const evidence: string[] = [];
+  const routeGeometry = snapshot.movement?.playerLocationGeometry ?? null;
+
+  if (currentSpaceId === "interior:boarding-house") {
+    evidence.push("entered-morrow-house");
+  }
+  if (game.activeConversation?.npcId === "npc-mara") {
+    evidence.push("mara-conversation-active");
+  }
+  if (game.firstAfternoon?.planSettledAt) {
+    evidence.push("first-afternoon-plan-settled");
+  }
+  if (game.firstAfternoon?.leadFieldNote) {
+    evidence.push("first-afternoon-lead-recorded");
+  }
+  if (game.firstAfternoon?.teaShiftStage) {
+    evidence.push(`first-afternoon-tea-shift-${game.firstAfternoon.teaShiftStage}`);
+  }
+  if (game.firstAfternoon?.completedAt) {
+    evidence.push("first-afternoon-completed");
+  }
+  if (game.activeConversation?.npcId === "npc-ada") {
+    evidence.push("ada-conversation-active");
+  }
+  if (game.player.currentLocationId === "tea-house") {
+    evidence.push("rowan-at-tea-house");
+  }
+  if (
+    game.rowanAutonomy.targetLocationId === "tea-house" ||
+    game.rowanAutonomy.actionId === "move:tea-house" ||
+    game.rowanAutonomy.actionId === "enter:tea-house" ||
+    game.rowanAutonomy.npcId === "npc-ada"
+  ) {
+    evidence.push("kettle-lamp-next-action");
+  }
+  if (
+    routeGeometry?.targetLocationId === "tea-house" &&
+    (snapshot.optimisticPlayerPosition || snapshot.movement?.playerRoute?.active)
+  ) {
+    evidence.push("route-progress-to-tea-house");
+  }
+
+  return Array.from(new Set(evidence));
+}
+
+function openingActionSupersededByAutoplayProgress(evidence: string[]) {
+  return evidence.some((entry) =>
+    [
+      "first-afternoon-plan-settled",
+      "first-afternoon-lead-recorded",
+      "first-afternoon-completed",
+      "ada-conversation-active",
+      "rowan-at-tea-house",
+      "kettle-lamp-next-action",
+      "route-progress-to-tea-house",
+    ].includes(entry) || entry.startsWith("first-afternoon-tea-shift-"),
+  );
+}
+
 function openingActionCarryForwardProbePayload({
   game,
   rowanRail,
@@ -493,16 +561,22 @@ function openingActionCarryForwardProbePayload({
   rowanRail: RowanRailViewModel;
   snapshot: StreetBrowserProbeSnapshot;
 }) {
-  const firstAfternoonActive =
-    game.player.objective?.routeKey === "first-afternoon" &&
-    !game.firstAfternoon?.planSettledAt &&
-    !game.firstAfternoon?.teaShiftStage &&
-    !game.firstAfternoon?.completedAt;
   const geometry = snapshot.movement?.playerLocationGeometry ?? null;
   const currentSpaceId = game.activeSpaceId ?? game.player.spaceId ?? null;
+  const completionEvidence = openingActionCompletionEvidence({
+    currentSpaceId,
+    game,
+    snapshot,
+  });
+  const progressedBeyondOpening =
+    openingActionSupersededByAutoplayProgress(completionEvidence);
+  const firstAfternoonRelevant =
+    game.player.objective?.routeKey === "first-afternoon" &&
+    !game.firstAfternoon?.completionAcknowledgedAt;
   const completed =
-    currentSpaceId === "interior:boarding-house" ||
-    game.activeConversation?.npcId === "npc-mara";
+    completionEvidence.includes("entered-morrow-house") ||
+    completionEvidence.includes("mara-conversation-active") ||
+    progressedBeyondOpening;
   const selectedActionId =
     completed
       ? "enter:boarding-house"
@@ -527,7 +601,10 @@ function openingActionCarryForwardProbePayload({
     targetLocationId === "boarding-house" ||
     completed;
 
-  if (!firstAfternoonActive || !openingActionSelected) {
+  if (
+    (!firstAfternoonRelevant && !progressedBeyondOpening) ||
+    !openingActionSelected
+  ) {
     return null;
   }
 
@@ -544,17 +621,35 @@ function openingActionCarryForwardProbePayload({
       : watchModeEnabled
         ? "queued"
         : "ready";
+  const phase = progressedBeyondOpening
+    ? "superseded_by_autoplay_progress"
+    : completed
+      ? "opening_completed"
+      : inProgress
+        ? "opening_in_progress"
+        : watchModeEnabled
+          ? "opening_queued"
+          : "opening_ready_for_input";
 
   return {
     assertion: watchModeEnabled
       ? "Watch mode has the opening action selected and does not require a visible input."
       : "Player mode leaves the opening action ready for explicit input.",
+    completionEvidence,
     currentLocationId: game.player.currentLocationId ?? null,
     currentLocationName:
       game.locations.find(
         (location) => location.id === game.player.currentLocationId,
       )?.name ?? null,
     currentSpaceId,
+    firstAfternoon: {
+      completedAt: game.firstAfternoon?.completedAt ?? null,
+      completionAcknowledgedAt:
+        game.firstAfternoon?.completionAcknowledgedAt ?? null,
+      hasLeadFieldNote: Boolean(game.firstAfternoon?.leadFieldNote),
+      planSettledAt: game.firstAfternoon?.planSettledAt ?? null,
+      teaShiftStage: game.firstAfternoon?.teaShiftStage ?? null,
+    },
     geometry: geometry
       ? {
           anchorLocationId: geometry.anchorLocationId,
@@ -564,10 +659,22 @@ function openingActionCarryForwardProbePayload({
           playerWorldPoint: geometry.playerWorldPoint,
         }
       : null,
-    requiredVisibleInput: !watchModeEnabled,
+    phase,
+    progressedBeyondOpening,
+    requiredVisibleInput: !watchModeEnabled && !completed,
     selectedActionId,
     selectedActionLabel,
     status,
+    supersededBy: progressedBeyondOpening
+      ? {
+          activeConversationNpcId: game.activeConversation?.npcId ?? null,
+          actionId: game.rowanAutonomy.actionId ?? null,
+          label: game.rowanAutonomy.label ?? null,
+          locationId: game.player.currentLocationId ?? null,
+          mode: game.rowanAutonomy.mode,
+          targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
+        }
+      : null,
     targetLocationId,
     targetLocationName: targetLocation?.name ?? null,
     watchMode: {
