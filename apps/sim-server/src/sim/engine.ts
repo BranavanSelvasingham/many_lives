@@ -105,6 +105,7 @@ import type {
   NpcState,
   ObjectiveFocus,
   ObjectiveOutcomeState,
+  PendingObjectiveMove,
   ProblemState,
   RowanAutonomyEffect,
   RowanAutonomyIntent,
@@ -178,6 +179,12 @@ type ObjectivePlanningPressure = {
 type ObjectivePlanningPressureMatch = {
   pressure: ObjectivePlanningPressure;
   score: number;
+};
+
+type PendingMoveActionReference = {
+  actionId: string;
+  targetLocationId?: string;
+  npcId?: string;
 };
 
 type ConversationResolution = {
@@ -2652,6 +2659,219 @@ function pendingObjectiveMoveMatches(
   );
 }
 
+function pendingObjectiveMoveStillViable(
+  world: StreetGameState,
+  pendingMove: PendingObjectiveMove,
+) {
+  if (!findLocation(world, pendingMove.targetLocationId)) {
+    return false;
+  }
+
+  if (
+    pendingObjectiveMoveActionReferences(pendingMove).some(
+      (reference) =>
+        !pendingObjectiveMoveActionReferenceStillLive(
+          world,
+          pendingMove,
+          reference,
+        ),
+    )
+  ) {
+    return false;
+  }
+
+  return pendingObjectiveMovePressureIds(pendingMove).every((pressureId) =>
+    pendingObjectiveMovePressureStillLive(world, pressureId),
+  );
+}
+
+function pendingObjectiveMoveActionReferences(
+  pendingMove: PendingObjectiveMove,
+) {
+  const references: PendingMoveActionReference[] = [];
+  const addReference = (
+    actionId: string | undefined,
+    targetLocationId: string | undefined,
+    npcId?: string,
+  ) => {
+    const resolvedActionId = actionId ?? (npcId ? `talk:${npcId}` : undefined);
+    if (!resolvedActionId || resolvedActionId.startsWith("move:")) {
+      return;
+    }
+
+    references.push({
+      actionId: resolvedActionId,
+      targetLocationId,
+      npcId,
+    });
+  };
+
+  addReference(
+    pendingMove.actionId,
+    pendingMove.targetLocationId,
+    pendingMove.npcId,
+  );
+
+  const trace = pendingMove.planningTrace;
+  addReference(
+    trace?.plannerIntent?.actionId,
+    trace?.plannerIntent?.targetLocationId,
+    trace?.plannerIntent?.npcId,
+  );
+  addReference(
+    trace?.immediateAction?.actionId,
+    trace?.immediateAction?.targetLocationId,
+    trace?.immediateAction?.npcId,
+  );
+  addReference(
+    trace?.intendedFollowUp?.actionId,
+    trace?.intendedFollowUp?.targetLocationId,
+    trace?.intendedFollowUp?.npcId,
+  );
+
+  for (const option of trace?.considered ?? []) {
+    if (option.status === "selected") {
+      addReference(option.actionId, option.targetLocationId, option.npcId);
+    }
+  }
+
+  return dedupePendingMoveActionReferences(references);
+}
+
+function dedupePendingMoveActionReferences(
+  references: PendingMoveActionReference[],
+) {
+  const seen = new Set<string>();
+  return references.filter((reference) => {
+    const key = [
+      reference.actionId,
+      reference.targetLocationId ?? "no-location",
+      reference.npcId ?? "no-npc",
+    ].join("|");
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function pendingObjectiveMoveActionReferenceStillLive(
+  world: StreetGameState,
+  pendingMove: PendingObjectiveMove,
+  reference: PendingMoveActionReference,
+) {
+  const targetLocationId =
+    reference.targetLocationId ?? pendingMove.targetLocationId;
+  const liveTargetLocationId = targetLocationIdForActionId(
+    world,
+    reference.actionId,
+  );
+
+  if (
+    liveTargetLocationId &&
+    targetLocationId &&
+    liveTargetLocationId !== targetLocationId
+  ) {
+    return false;
+  }
+
+  if (
+    !pendingObjectiveMoveEntityStillLive(
+      world,
+      reference.actionId,
+      targetLocationId,
+    )
+  ) {
+    return false;
+  }
+
+  const preview = previewWorldAtLocation(world, targetLocationId);
+  return buildAvailableActions(preview).some(
+    (action) => action.id === reference.actionId && !action.disabled,
+  );
+}
+
+function pendingObjectiveMoveEntityStillLive(
+  world: StreetGameState,
+  actionId: string,
+  targetLocationId: string,
+) {
+  const [kind, targetId] = actionId.split(":");
+  if (!targetId) {
+    return false;
+  }
+
+  switch (kind) {
+    case "accept":
+    case "work":
+    case "resume": {
+      const job = jobById(world, targetId);
+      return Boolean(
+        job &&
+          job.locationId === targetLocationId &&
+          !job.completed &&
+          !job.missed,
+      );
+    }
+    case "inspect":
+    case "solve": {
+      const problem = problemById(world, targetId);
+      return Boolean(
+        problem &&
+          problem.locationId === targetLocationId &&
+          problem.status === "active",
+      );
+    }
+    case "talk": {
+      const npc = npcById(world, targetId);
+      return Boolean(npc && npc.currentLocationId === targetLocationId);
+    }
+    default:
+      return true;
+  }
+}
+
+function pendingObjectiveMovePressureIds(
+  pendingMove: PendingObjectiveMove,
+) {
+  return [
+    pendingMove.planningTrace?.selectedPressureId,
+    pendingMove.planningTrace?.plannerIntent?.pressureId,
+    ...((pendingMove.planningTrace?.considered ?? [])
+      .filter((option) => option.status === "selected")
+      .map((option) => option.pressureId)),
+  ].filter((pressureId): pressureId is string => Boolean(pressureId));
+}
+
+function pendingObjectiveMovePressureStillLive(
+  world: StreetGameState,
+  pressureId: string,
+) {
+  const [kind, targetId, linkedId] = pressureId.split(":");
+
+  switch (kind) {
+    case "job": {
+      const job = targetId ? jobById(world, targetId) : undefined;
+      return jobWindowOpen(world, job);
+    }
+    case "problem": {
+      const problem = targetId ? problemById(world, targetId) : undefined;
+      return problem?.status === "active";
+    }
+    case "tool": {
+      const problemId = linkedId?.startsWith("problem-")
+        ? linkedId
+        : undefined;
+      const problem = problemId ? problemById(world, problemId) : undefined;
+      return !problemId || problem?.status === "active";
+    }
+    default:
+      return true;
+  }
+}
+
 function reconcilePendingObjectiveMove(world: StreetGameState) {
   const pendingMove = world.player.pendingObjectiveMove;
   if (!pendingMove) {
@@ -2662,7 +2882,8 @@ function reconcilePendingObjectiveMove(world: StreetGameState) {
   if (
     !objective ||
     pendingMove.objectiveText !== objective.text ||
-    pendingMove.targetLocationId === world.player.currentLocationId
+    pendingMove.targetLocationId === world.player.currentLocationId ||
+    !pendingObjectiveMoveStillViable(world, pendingMove)
   ) {
     clearPendingObjectiveMove(world);
   }

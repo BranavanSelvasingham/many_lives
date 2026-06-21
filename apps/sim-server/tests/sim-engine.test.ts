@@ -5004,6 +5004,257 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("keeps a queued objective move when passive refresh still leaves the target live", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-live-pending-yard-move-survives");
+    const boardingHouse = world.locations.find(
+      (location) => location.id === "boarding-house",
+    );
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+
+    expect(boardingHouse).toBeDefined();
+    expect(yardJob).toBeDefined();
+    if (!boardingHouse || !yardJob) {
+      return;
+    }
+
+    world.player.x = boardingHouse.entryX;
+    world.player.y = boardingHouse.entryY;
+    world.player.currentLocationId = boardingHouse.id;
+    world.player.knownLocationIds = [
+      ...new Set([
+        ...world.player.knownLocationIds,
+        "boarding-house",
+        "freight-yard",
+      ]),
+    ];
+    world.clock.totalMinutes = 16 * 60;
+    world.clock.hour = 16;
+    world.clock.minute = 0;
+    world.clock.label = "Afternoon";
+    yardJob.discovered = true;
+    yardJob.completed = false;
+    yardJob.missed = false;
+    yardJob.accepted = false;
+    world.activeConversation = undefined;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "work",
+      outcomes: [
+        {
+          id: "predicate-take-yard-shift",
+          label: "Take the freight yard lift before it closes.",
+          status: "open",
+          urgency: 8,
+          authority: "predicate",
+          actionId: "accept:job-yard-shift",
+          blockers: ["The yard job has to remain a live legal target."],
+          targetLocationId: "freight-yard",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "work-yard",
+      source: "manual",
+      text: "Take the freight yard lift before the window closes.",
+      trail: [
+        {
+          id: "yard-shift-route",
+          title: "Go to Morrow Yard while the lift is still live.",
+          detail:
+            "This pending move should survive only while the yard job remains legal.",
+          done: false,
+          actionId: "accept:job-yard-shift",
+          targetLocationId: "freight-yard",
+        },
+      ],
+    };
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "move:freight-yard",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:freight-yard",
+      mode: "moving",
+      targetLocationId: "freight-yard",
+      travelPhase: "route-progress",
+    });
+
+    world = await engine.tick(world, 1);
+
+    expect(world.clock.totalMinutes).toBe(16 * 60 + 30);
+    expect(world.jobs.find((job) => job.id === "job-yard-shift")).toMatchObject({
+      discovered: true,
+      missed: false,
+    });
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "move:freight-yard",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:freight-yard",
+      mode: "moving",
+      targetLocationId: "freight-yard",
+      travelPhase: "route-progress",
+    });
+    expectCognitionToMirrorAutonomy(world);
+  });
+
+  it("clears a queued objective move when passive world advancement resolves its live target", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-stale-pending-pump-move-clears");
+    const repairStall = world.locations.find(
+      (location) => location.id === "repair-stall",
+    );
+    const pumpProblem = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+
+    expect(repairStall).toBeDefined();
+    expect(pumpProblem).toBeDefined();
+    expect(mara).toBeDefined();
+    if (!repairStall || !pumpProblem || !mara) {
+      return;
+    }
+
+    world.player.x = repairStall.entryX;
+    world.player.y = repairStall.entryY;
+    world.player.currentLocationId = repairStall.id;
+    world.player.knownLocationIds = [
+      ...new Set([
+        ...world.player.knownLocationIds,
+        "courtyard",
+        "repair-stall",
+      ]),
+    ];
+    world.player.inventory.push({
+      id: "item-wrench",
+      name: "Old wrench",
+      description: "A worn wrench that can handle the yard pump.",
+    });
+    world.clock.totalMinutes = 17 * 60;
+    world.clock.hour = 17;
+    world.clock.minute = 0;
+    world.clock.label = "Afternoon";
+    pumpProblem.discovered = true;
+    pumpProblem.escalatedAt = world.currentTime;
+    pumpProblem.escalationLevel = 2;
+    pumpProblem.status = "active";
+    pumpProblem.urgency = 5;
+    mara.currentLocationId = "courtyard";
+    mara.currentSpaceId = STREET_SPACE_ID;
+    world.activeConversation = undefined;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "help",
+      outcomes: [
+        {
+          id: "predicate-fix-pump",
+          label: "Fix the leaking pump before Morrow House has to absorb it.",
+          status: "open",
+          urgency: 8,
+          authority: "predicate",
+          actionId: "solve:problem-pump",
+          blockers: ["The pump has to remain a live legal target."],
+          targetLocationId: "courtyard",
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "0/1 outcomes met",
+        total: 1,
+      },
+      routeKey: "help-pump",
+      source: "manual",
+      text: "Fix the leaking pump in Morrow Yard.",
+      trail: [
+        {
+          id: "pump-route",
+          title: "Go to Morrow Yard while the pump is still live.",
+          detail:
+            "This pending move should clear when passive time resolves the pump.",
+          done: false,
+          actionId: "solve:problem-pump",
+          targetLocationId: "courtyard",
+        },
+      ],
+    };
+
+    const queuedObjectiveText = world.player.objective.text;
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.player.pendingObjectiveMove).toMatchObject({
+      actionId: "move:courtyard",
+      targetLocationId: "courtyard",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:courtyard",
+      mode: "moving",
+      targetLocationId: "courtyard",
+      travelPhase: "route-progress",
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.nextSteps.some(
+        (step) => step.actionId === "solve:problem-pump" && step.legal,
+      ),
+    ).toBe(true);
+
+    world = await engine.tick(world, 1);
+
+    expect(world.clock.totalMinutes).toBe(17 * 60 + 30);
+    expect(world.player.currentLocationId).toBe("repair-stall");
+    expect(world.player.objective?.text).toBe(queuedObjectiveText);
+    expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
+      discovered: true,
+      resolvedByNpcId: "npc-mara",
+      status: "resolved",
+    });
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-pump",
+    );
+    expect(world.player.pendingObjectiveMove).toBeUndefined();
+    expect(world.rowanAutonomy).not.toMatchObject({
+      mode: "moving",
+      targetLocationId: "courtyard",
+      travelPhase: "route-progress",
+    });
+    expect(world.rowanAutonomy.travelPhase).toBeUndefined();
+    expect(world.rowanAutonomy.planningTrace?.selectedActionId).not.toBe(
+      "move:courtyard",
+    );
+    expect(world.rowanAutonomy.planningTrace?.selectedPressureId).not.toBe(
+      "problem:problem-pump",
+    );
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.some(
+        (option) =>
+          option.status === "selected" &&
+          (option.actionId === "move:courtyard" ||
+            option.pressureId === "problem:problem-pump"),
+      ) ?? false,
+    ).toBe(false);
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: false,
+      stepKind: "idle",
+    });
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("lets urgent live pressure outrank stale tool route move intent", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-urgent-job-over-tool-move-intent");
