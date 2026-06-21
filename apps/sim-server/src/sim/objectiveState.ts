@@ -53,6 +53,7 @@ interface BuildObjectiveOptions {
 }
 
 type ObjectiveScores = Record<ObjectiveFocus, number>;
+type WorkLead = "tea" | "yard";
 
 interface ConversationObjectiveRoute {
   text: string;
@@ -1297,7 +1298,8 @@ function buildWorkRoute(
   source: ObjectiveSource,
   textHint = "",
 ): ObjectiveRoute {
-  const lead = chooseWorkLead(world, textHint);
+  const reconciledLead = staleNamedWorkLeadAlternate(world, textHint);
+  const lead = reconciledLead ?? chooseWorkLead(world, textHint);
   const teaJob = jobById(world, "job-tea-shift");
   const yardJob = jobById(world, "job-yard-shift");
   const leadNpc =
@@ -1331,7 +1333,7 @@ function buildWorkRoute(
     source,
     outcomes: routeScaffold.outcomes,
     steps: routeScaffold.steps.map(makeStep),
-    preferHeadlineText: source !== "manual",
+    preferHeadlineText: source !== "manual" || Boolean(reconciledLead),
   };
 }
 
@@ -1646,7 +1648,7 @@ function latestConversationLineOrder(lines: { id: string }[]) {
   return match ? Number(match[1]) : 0;
 }
 
-function chooseWorkLead(world: StreetGameState, textHint = "") {
+function chooseWorkLead(world: StreetGameState, textHint = ""): WorkLead {
   const teaJob = jobById(world, "job-tea-shift");
   const yardJob = jobById(world, "job-yard-shift");
   const activeJob = world.jobs.find(
@@ -1665,6 +1667,11 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
 
   if (activeJob?.id === "job-yard-shift") {
     return "yard" as const;
+  }
+
+  const reconciledLead = staleNamedWorkLeadAlternate(world, hint);
+  if (reconciledLead) {
+    return reconciledLead;
   }
 
   if (hint.includes("ada") || hint.includes("tea") || hint.includes("kettle")) {
@@ -1708,6 +1715,77 @@ function chooseWorkLead(world: StreetGameState, textHint = "") {
   }
 
   return "tea" as const;
+}
+
+function staleNamedWorkLeadAlternate(
+  world: StreetGameState,
+  textHint = "",
+): WorkLead | undefined {
+  const namedLead = namedWorkLead(textHint);
+  if (!namedLead || !workLeadJobUnavailable(world, namedLead)) {
+    return undefined;
+  }
+
+  const alternateLead: WorkLead = namedLead === "tea" ? "yard" : "tea";
+  return liveAlternateWorkJobHasPressure(world, alternateLead)
+    ? alternateLead
+    : undefined;
+}
+
+function namedWorkLead(textHint: string): WorkLead | undefined {
+  const hint = textHint.toLowerCase();
+  if (!hint) {
+    return undefined;
+  }
+
+  const namesTea =
+    /\b(ada|kettle|tea[- ]?house|cup[- ]and[- ]counter|counter|apron|tray|booths?|tables?|rush)\b/.test(
+      hint,
+    );
+  const namesYard =
+    /\b(tomas|yard|freight|north crane|crane yard|gloves?|bays?|lift)\b/.test(
+      hint,
+    );
+
+  if (namesTea === namesYard) {
+    return undefined;
+  }
+
+  return namesYard ? "yard" : "tea";
+}
+
+function workLeadJobUnavailable(world: StreetGameState, lead: WorkLead) {
+  const job =
+    lead === "yard"
+      ? jobById(world, "job-yard-shift")
+      : jobById(world, "job-tea-shift");
+
+  return Boolean(
+    job &&
+      !job.completed &&
+      (job.missed || currentHour(world) >= job.endHour),
+  );
+}
+
+function liveAlternateWorkJobHasPressure(
+  world: StreetGameState,
+  lead: WorkLead,
+) {
+  const job =
+    lead === "yard"
+      ? jobById(world, "job-yard-shift")
+      : jobById(world, "job-tea-shift");
+
+  return Boolean(
+    job &&
+      (job.discovered || job.accepted) &&
+      !job.completed &&
+      !job.missed &&
+      currentHour(world) < job.endHour &&
+      (job.accepted ||
+        world.player.activeJobId === job.id ||
+        jobWindowAtRisk(world, job)),
+  );
 }
 
 function choosePeopleTarget(world: StreetGameState, textHint = "") {

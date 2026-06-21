@@ -3124,6 +3124,115 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("reconciles a stale explicit Ada work objective to live yard pressure", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-stale-explicit-work-objective");
+    const teaHouse = world.locations.find(
+      (location) => location.id === "tea-house",
+    );
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+
+    expect(teaHouse).toBeDefined();
+    expect(teaJob).toBeDefined();
+    expect(yardJob).toBeDefined();
+    if (!teaHouse || !teaJob || !yardJob) {
+      return;
+    }
+
+    world.player.x = teaHouse.entryX;
+    world.player.y = teaHouse.entryY;
+    world.player.currentLocationId = teaHouse.id;
+    world.player.knownLocationIds = [
+      ...new Set([
+        ...world.player.knownLocationIds,
+        "tea-house",
+        "freight-yard",
+        "boarding-house",
+      ]),
+    ];
+    world.clock.totalMinutes = 16 * 60 + 30;
+    world.clock.hour = 16;
+    world.clock.minute = 30;
+    world.clock.label = "Afternoon";
+    teaJob.discovered = true;
+    teaJob.accepted = false;
+    teaJob.completed = false;
+    teaJob.missed = true;
+    yardJob.discovered = true;
+    yardJob.accepted = false;
+    yardJob.completed = false;
+    yardJob.missed = false;
+    world.player.activeJobId = undefined;
+    world.activeConversation = undefined;
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Get cup-and-counter work from Ada at Kettle & Lamp today.",
+    });
+
+    expect(world.player.objective).toMatchObject({
+      focus: "work",
+      routeKey: "work-yard",
+      source: "manual",
+    });
+    expect(world.player.objective?.text).toMatch(/yard/i);
+    expect(world.player.objective?.text).not.toMatch(
+      /Ada|Kettle|cup-and-counter/i,
+    );
+    expect(
+      world.player.objective?.trail.some(
+        (step) =>
+          !step.done &&
+          (step.targetLocationId === "tea-house" ||
+            step.actionId === "accept:job-tea-shift" ||
+            step.actionId === "work:job-tea-shift"),
+      ),
+    ).toBe(false);
+    expect(
+      world.player.objective?.outcomes.some(
+        (outcome) =>
+          outcome.targetLocationId === "freight-yard" ||
+          outcome.actionId === "accept:job-yard-shift",
+      ),
+    ).toBe(true);
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    const selected = world.rowanAutonomy.planningTrace?.considered.find(
+      (option) => option.status === "selected",
+    );
+    expect(world.player.objective).toMatchObject({
+      focus: "work",
+      routeKey: "work-yard",
+    });
+    expect(world.player.objective?.text).toMatch(/yard/i);
+    expect(world.player.objective?.text).not.toMatch(
+      /Ada|Kettle|cup-and-counter/i,
+    );
+    expect(world.rowanAutonomy).toMatchObject({
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("tea-house");
+    expect(selected).toMatchObject({
+      targetLocationId: "freight-yard",
+    });
+    expect(selected?.actionId).toMatch(
+      /^move:freight-yard$|^accept:job-yard-shift$/,
+    );
+    expect(selected?.provenance).not.toBe("route-scaffold");
+    expect(selected?.provenance).not.toBe("stale-predicate");
+    expect(
+      world.rowanAutonomy.planningTrace?.outcomes.some(
+        (outcome) => outcome.id === "job-window-job-yard-shift",
+      ),
+    ).toBe(true);
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("branches the same seeded objective through generic live pressure", async () => {
     const buildPostMaraWorld = async (gameId: string) => {
       const engine = new SimulationEngine(new MockAIProvider());
