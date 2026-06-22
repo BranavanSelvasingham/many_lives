@@ -183,6 +183,7 @@ type ObjectivePlanningPressureMatch = {
 
 type PendingMoveActionReference = {
   actionId: string;
+  current?: boolean;
   targetLocationId?: string;
   npcId?: string;
 };
@@ -2667,8 +2668,13 @@ function pendingObjectiveMoveStillViable(
     return false;
   }
 
+  const actionReferences = [
+    ...pendingObjectiveMoveActionReferences(pendingMove),
+    ...legacyPendingObjectiveMoveActionReferences(world, pendingMove),
+  ];
+
   if (
-    pendingObjectiveMoveActionReferences(pendingMove).some(
+    actionReferences.some(
       (reference) =>
         !pendingObjectiveMoveActionReferenceStillLive(
           world,
@@ -2738,6 +2744,97 @@ function pendingObjectiveMoveActionReferences(
   return dedupePendingMoveActionReferences(references);
 }
 
+function legacyPendingObjectiveMoveActionReferences(
+  world: StreetGameState,
+  pendingMove: PendingObjectiveMove,
+) {
+  if (pendingMove.planningTrace) {
+    return [];
+  }
+
+  const objective = world.player.objective;
+  if (!objective || objective.text !== pendingMove.objectiveText) {
+    return [];
+  }
+
+  const outcomeReferences = legacyPendingObjectiveMoveReferencesFromCandidates(
+    world,
+    pendingMove,
+    objective.outcomes
+      .filter((outcome) => !hasLegacyTrailOutcomeAuthority(outcome))
+      .map((outcome) => ({
+        actionId: outcome.actionId,
+        current: objectiveOutcomeIsStillCurrent(outcome),
+        npcId: outcome.npcId,
+        targetLocationId: outcome.targetLocationId,
+      })),
+  );
+  if (outcomeReferences.length > 0) {
+    return outcomeReferences;
+  }
+
+  return legacyPendingObjectiveMoveReferencesFromCandidates(
+    world,
+    pendingMove,
+    objective.trail.map((trailItem) => ({
+      actionId: trailItem.actionId,
+      current: !trailItem.done,
+      npcId: trailItem.npcId,
+      targetLocationId: trailItem.targetLocationId,
+    })),
+  );
+}
+
+function legacyPendingObjectiveMoveReferencesFromCandidates(
+  world: StreetGameState,
+  pendingMove: PendingObjectiveMove,
+  candidates: {
+    actionId?: string;
+    current: boolean;
+    npcId?: string;
+    targetLocationId?: string;
+  }[],
+) {
+  const references: PendingMoveActionReference[] = [];
+  for (const candidate of candidates) {
+    const actionId =
+      candidate.actionId ??
+      (candidate.npcId ? `talk:${candidate.npcId}` : undefined);
+    const targetLocationId =
+      candidate.targetLocationId ??
+      (actionId ? targetLocationIdForActionId(world, actionId) : undefined);
+    if (targetLocationId !== pendingMove.targetLocationId) {
+      continue;
+    }
+
+    if (!actionId || actionId.startsWith("move:")) {
+      if (candidate.current === false) {
+        references.push({
+          actionId:
+            pendingMove.actionId ?? `move:${pendingMove.targetLocationId}`,
+          current: false,
+          targetLocationId,
+          npcId: candidate.npcId,
+        });
+      }
+      continue;
+    }
+
+    references.push({
+      actionId,
+      current: candidate.current,
+      targetLocationId,
+      npcId: candidate.npcId,
+    });
+  }
+
+  return dedupePendingMoveActionReferences(references);
+}
+
+function objectiveOutcomeIsStillCurrent(outcome: ObjectiveOutcomeState) {
+  return outcome.status !== "met" && outcome.status !== "failed";
+}
+
 function dedupePendingMoveActionReferences(
   references: PendingMoveActionReference[],
 ) {
@@ -2745,6 +2842,7 @@ function dedupePendingMoveActionReferences(
   return references.filter((reference) => {
     const key = [
       reference.actionId,
+      reference.current === false ? "not-current" : "current",
       reference.targetLocationId ?? "no-location",
       reference.npcId ?? "no-npc",
     ].join("|");
@@ -2762,6 +2860,10 @@ function pendingObjectiveMoveActionReferenceStillLive(
   pendingMove: PendingObjectiveMove,
   reference: PendingMoveActionReference,
 ) {
+  if (reference.current === false) {
+    return false;
+  }
+
   const targetLocationId =
     reference.targetLocationId ?? pendingMove.targetLocationId;
   const liveTargetLocationId = targetLocationIdForActionId(
