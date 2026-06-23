@@ -10,7 +10,10 @@ import {
   buildStreetConversationContext,
   buildDeterministicStreetReply,
 } from "../src/ai/streetDialogue.js";
-import { buildDeterministicStreetThoughts } from "../src/ai/streetThoughts.js";
+import {
+  buildDeterministicStreetThoughts,
+  sanitizeThought,
+} from "../src/ai/streetThoughts.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
 import {
@@ -258,6 +261,67 @@ const NPC_INNER_STATE_NARRATIVE_COPY = [
   "The square already spent the afternoon working around a problem that could have moved sooner.",
   "That jam in Quay Square is about to become everybody's problem.",
   "Watch what comes off the boats before the story gets retold.",
+];
+const STREET_THOUGHT_NARRATIVE_COPY = [
+  "I need a wrench first.",
+  "I should go fix that pump.",
+  "I should check that pump.",
+  "I need to move that cart.",
+  "I should check that cart.",
+  "Mercer Repairs is the next stop if Rowan wants to handle the pump.",
+  "The pump talk only matters if Rowan comes back with a tool.",
+  "Rowan has a clear next errand now.",
+  "The pump is still waiting.",
+  "Rowan knows where to start now.",
+  "A small repair would make the house easier today.",
+  "Maybe Rowan went to look at the pump.",
+  "If Rowan follows through, the house gets quieter tonight.",
+  "A useful promise usually turns into a short walk.",
+  "Ada is a good next stop if Rowan wants work.",
+  "Rowan has enough to go ask Ada now.",
+  "A clear lead is better than another hallway conversation.",
+  "If Rowan wants the shift, he can start with the cups.",
+  "The room is busy, but there is space for steady hands.",
+  "I gave Rowan the terms. Now he can decide.",
+  "If Rowan comes back, I hope he is ready for lunch.",
+  "The room will show quickly whether he can keep pace.",
+  "A steady pair of hands would still help if Rowan returns in time.",
+  "If Rowan held up here, Tomas is the next place to try.",
+  "The tea room was one kind of work. The yard will be another.",
+  "Rowan can take this momentum to Tomas while the lead is fresh.",
+  "The wrench part is done. The pump is the next bit.",
+  "Once the wrench leaves my stall, the rest is patience.",
+  "If Rowan bought the tool, he knows where to take it.",
+  "Either Rowan buys the wrench or finds another way to handle the leak.",
+  "The pump is not getting fixed by talking at my bench.",
+  "Eight coins is a lot when you are new. Still, it would help.",
+  "If Rowan wants the coins, the load is right here.",
+  "The work is right here. Rowan can start with the crates.",
+  "The terms are clear enough now.",
+  "If Rowan shows, put him on the load and keep it simple.",
+  "If Rowan wants the shift, it is still here in the yard.",
+  "A short shift will tell me enough.",
+  "If Rowan sees the jam early, moving the cart is enough.",
+  "The square will get noisy if Rowan waits too long.",
+  "This is a small fix while it is still small.",
+  "Maybe Rowan caught the problem while it was still small.",
+  "If Rowan listened, Quay Square might stay loose today.",
+  "Someone moving the cart early would help.",
+  "Maybe Rowan headed toward Kettle & Lamp after all.",
+  "If Rowan keeps the lead warm, the tea house still makes sense.",
+  "The next answer for Rowan is probably not here anymore.",
+  "That pump is making the yard harder than it needs to be.",
+  "I need that pump sorted before supper.",
+  "A small leak becomes everyone's problem fast.",
+  "At least the yard is holding now.",
+  "Good. That's one less house problem spreading.",
+  "That fix bought the house some quiet.",
+  "That wrench should move before long.",
+  "Somebody's going to need that wrench today.",
+  "That pump leak is good for tool sales.",
+  "That cart is going to jam the square.",
+  "Somebody needs to move that cart early.",
+  "That bad wheel is going to jam things up.",
 ];
 const FIRST_AFTERNOON_RETURN_HOME_THOUGHT =
   "I should head back to Morrow House and let today land.";
@@ -677,6 +741,36 @@ function worldWithCompletedFirstAfternoonPlayerThought(): StreetGameState {
 
   world.firstAfternoon = {
     completedAt: world.currentTime,
+  };
+
+  return world;
+}
+
+function worldWithRecentConversationLead(
+  npcId: string,
+  objectiveText: string,
+  decision = "",
+): StreetGameState {
+  const world = seedStreetGame(`game-recent-conversation-lead-${npcId}`);
+  const npc = world.npcs.find((entry) => entry.id === npcId);
+
+  if (!npc) {
+    throw new Error(`Missing NPC ${npcId}`);
+  }
+
+  world.player.currentLocationId = npc.currentLocationId;
+  npc.lastInteractionAt = world.currentTime;
+  world.conversationThreads = {
+    ...world.conversationThreads,
+    [npcId]: {
+      decision,
+      id: `thread-${npcId}`,
+      lines: [],
+      updatedAt: world.currentTime,
+      npcId,
+      objectiveText,
+      summary: objectiveText,
+    },
   };
 
   return world;
@@ -1380,6 +1474,31 @@ describe("street reasoning authority", () => {
     expect(npcNarrativesSource).toContain("NPC_INNER_STATE_NARRATIVES");
     expect(npcNarrativesSource).toContain("npcInnerStateNarrative");
     expect(engineSource).toContain("npcInnerStateNarrative");
+  });
+
+  it("keeps problem-route and conversation-lead thought copy in street-sim data, not thought control flow", () => {
+    const thoughtsSource = readFileSync(
+      new URL("../src/ai/streetThoughts.ts", import.meta.url),
+      "utf8",
+    );
+    const thoughtNarrativesSource = readFileSync(
+      new URL("../src/street-sim/thoughtNarratives.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const thoughtCopy of STREET_THOUGHT_NARRATIVE_COPY) {
+      expect(thoughtNarrativesSource).toContain(thoughtCopy);
+      expect(thoughtsSource).not.toContain(thoughtCopy);
+    }
+
+    expect(thoughtNarrativesSource).toContain("PROBLEM_ROUTE_PLAYER_THOUGHTS");
+    expect(thoughtNarrativesSource).toContain(
+      "RECENT_CONVERSATION_LEAD_THOUGHTS",
+    );
+    expect(thoughtNarrativesSource).toContain("NPC_PROBLEM_THOUGHTS");
+    expect(thoughtsSource).toContain("problemRoutePlayerThought");
+    expect(thoughtsSource).toContain("recentConversationLeadThoughts");
+    expect(thoughtsSource).toContain("npcProblemThoughts");
   });
 
   it("preserves selected NPC-owned conversation resolution payloads exactly", () => {
@@ -2732,6 +2851,97 @@ describe("street reasoning authority", () => {
     expect(thoughts.playerThought).not.toMatch(
       /bed|tomorrow|lead|Morrow House|let today land/i,
     );
+  });
+
+  it("keeps live problem-route pump and cart thoughts visible through street-sim data", () => {
+    const pumpWorld = worldWithStaleFirstAfternoonThoughtAndLivePump();
+    const cartWorld = seedStreetGame("game-reasoning-live-cart-thought");
+    const cart = cartWorld.problems.find(
+      (problem) => problem.id === "problem-cart",
+    );
+
+    cartWorld.rowanAutonomy = {
+      actionId: "solve:problem-cart",
+      autoContinue: true,
+      detail: "The cart is active, so moving it is the live useful move.",
+      intent: {
+        reason: "The cart is active, so moving it is the live useful move.",
+        signals: ["Problem: cart active"],
+      },
+      key: "objective:solve:cart",
+      label: "Move the cart",
+      layer: "objective",
+      mode: "acting",
+      stepKind: "act",
+      targetLocationId: "quay-square",
+    };
+    if (cart) {
+      cart.discovered = true;
+      cart.status = "active";
+    }
+
+    expect(buildDeterministicStreetThoughts(pumpWorld).playerThought).toBe(
+      "I should go fix that pump.",
+    );
+    expect(buildDeterministicStreetThoughts(cartWorld).playerThought).toBe(
+      "I need to move that cart.",
+    );
+  });
+
+  it("keeps recent conversation lead thoughts visible through street-sim data", () => {
+    const maraWorld = worldWithRecentConversationLead(
+      "npc-mara",
+      "Buy a wrench and fix the pump.",
+      "get to Mercer Repairs for a wrench, then come back to the pump.",
+    );
+    const adaWorld = worldWithRecentConversationLead(
+      "npc-ada",
+      "Take the cup-and-counter shift at Kettle & Lamp.",
+      "stay with Ada and take the tea-house shift if the room still needs the hands.",
+    );
+
+    expect([
+      "Mercer Repairs is the next stop if Rowan wants to handle the pump.",
+      "The pump talk only matters if Rowan comes back with a tool.",
+      "Rowan has a clear next errand now.",
+    ].map(sanitizeThought)).toContain(
+      buildDeterministicStreetThoughts(maraWorld).npcThoughts["npc-mara"],
+    );
+    expect([
+      "If Rowan wants the shift, he can start with the cups.",
+      "The room is busy, but there is space for steady hands.",
+      "I gave Rowan the terms. Now he can decide.",
+    ].map(sanitizeThought)).toContain(
+      buildDeterministicStreetThoughts(adaWorld).npcThoughts["npc-ada"],
+    );
+  });
+
+  it("keeps NPC problem-state reactions visible through street-sim data", () => {
+    const world = seedStreetGame("game-reasoning-npc-problem-thoughts");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const cart = world.problems.find((problem) => problem.id === "problem-cart");
+
+    if (pump) {
+      pump.discovered = true;
+      pump.status = "active";
+    }
+    if (cart) {
+      cart.discovered = true;
+      cart.status = "active";
+    }
+
+    const thoughts = buildDeterministicStreetThoughts(world);
+
+    expect([
+      "That pump is making the yard harder than it needs to be.",
+      "I need that pump sorted before supper.",
+      "A small leak becomes everyone's problem fast.",
+    ].map(sanitizeThought)).toContain(thoughts.npcThoughts["npc-mara"]);
+    expect([
+      "That cart is going to jam the square.",
+      "Somebody needs to move that cart early.",
+      "That bad wheel is going to jam things up.",
+    ].map(sanitizeThought)).toContain(thoughts.npcThoughts["npc-nia"]);
   });
 
   it("keeps first-afternoon cafe-stage thoughts when the tea shift is the active commitment", () => {
