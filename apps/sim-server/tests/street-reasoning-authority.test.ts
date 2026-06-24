@@ -34,6 +34,10 @@ import {
   objectiveRouteWorkStageWatchCopy,
   type ObjectiveScaffoldDirective,
 } from "../src/sim/objectiveScaffolds.js";
+import {
+  buildFirstAfternoonCompletionContinueCopy,
+  firstAfternoonMaraAdaLeadFieldNoteNextCopy,
+} from "../../many-lives-web/src/lib/street/rowanFallbackNarrative.js";
 import { seedStreetGame } from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
@@ -407,6 +411,7 @@ const WEB_FIRST_AFTERNOON_FALLBACK_COPY = [
   "Ada's offer is live: take the cup-and-counter shift, compare another real pressure, or deliberately walk away.",
   "Mara's lead is verified: Ada at Kettle & Lamp has real lunch work on the table.",
   "Mara's lead points to Ada at Kettle & Lamp; lunch work is the best first bet.",
+  "Close the field note, then weigh rest, the yard window, and the Morrow Yard pump.",
 ];
 const PLAYBACK_NIA_BLOCK_POLICY_ID =
   "nia-block-lead-hides-morrow-standing";
@@ -1286,6 +1291,117 @@ describe("street reasoning authority", () => {
     expect(overlaySource).toContain("buildRowanFallbackNotebookModel");
     expect(overlaySource).toContain(
       "firstAfternoonMaraAdaLeadFieldNoteNextCopy",
+    );
+  });
+
+  it("prefers simulator-owned first-afternoon next copy before web fallback copy", () => {
+    const world = seedStreetGame("game-web-first-afternoon-next-authority");
+    const webWorld = world as unknown as Parameters<
+      typeof buildFirstAfternoonCompletionContinueCopy
+    >[0];
+
+    webWorld.firstAfternoon = {
+      completedAt: webWorld.currentTime,
+      fieldNote: {
+        createdAt: webWorld.currentTime,
+        evidence: "Server completion evidence.",
+        learned: "Server completion learning.",
+        memory: "Server completion memory.",
+        next: "Server field-note next should win.",
+      },
+      leadFieldNote: {
+        createdAt: webWorld.currentTime,
+        evidence: "Server lead evidence.",
+        learned: "Server lead learning.",
+        memory: "Server lead memory.",
+        next: "Server lead next should win.",
+      },
+      teaShiftStage: "paid",
+    };
+    webWorld.rowanCognition = {
+      notebook: {
+        belief: "Notebook belief.",
+        clue: "Notebook clue.",
+        confidence: "Notebook confidence.",
+        plan: "Notebook plan should win when no field note next exists.",
+        title: "Notebook title.",
+        uncertainty: "Notebook uncertainty.",
+        authority: {},
+      },
+    };
+    webWorld.rowanAutonomy = {
+      actionId: "solve:problem-pump",
+      autoContinue: true,
+      detail: "Autonomy detail should win when cognition is absent.",
+      intent: {
+        reason: "Autonomy rationale should win when cognition is absent.",
+        signals: [],
+      },
+      key: "objective:solve:pump",
+      label: "Fix the pump",
+      mode: "acting",
+      targetLocationId: "boarding-house",
+    };
+    webWorld.player.objective = {
+      ...webWorld.player.objective!,
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "live-objective",
+          label: "Objective outcome should win when autonomy is absent.",
+          status: "open",
+          urgency: 50,
+        },
+      ],
+      progress: {
+        completed: 0,
+        label: "Objective progress should not beat the outcome label.",
+        total: 1,
+      },
+      text: "Objective text should be available before fallback.",
+    };
+
+    expect(
+      firstAfternoonMaraAdaLeadFieldNoteNextCopy(
+        webWorld,
+        "Web fallback lead copy.",
+      ),
+    ).toBe("Server lead next should win.");
+
+    const stageWorld = seedStreetGame(
+      "game-web-first-afternoon-stage-next-authority",
+    ) as unknown as Parameters<
+      typeof firstAfternoonMaraAdaLeadFieldNoteNextCopy
+    >[0];
+    stageWorld.firstAfternoon = { teaShiftStage: "counter" };
+    expect(
+      firstAfternoonMaraAdaLeadFieldNoteNextCopy(
+        stageWorld,
+        "Web fallback lead copy.",
+      ),
+    ).toBe(
+      "Finish the counter pass, collect the pay, then let the work become a real field note.",
+    );
+
+    expect(buildFirstAfternoonCompletionContinueCopy(webWorld)).toBe(
+      "Server field-note next should win.",
+    );
+
+    webWorld.firstAfternoon.fieldNote = undefined;
+    expect(buildFirstAfternoonCompletionContinueCopy(webWorld)).toBe(
+      "Notebook plan should win when no field note next exists.",
+    );
+
+    webWorld.rowanCognition = undefined;
+    expect(buildFirstAfternoonCompletionContinueCopy(webWorld)).toBe(
+      "Autonomy rationale should win when cognition is absent.",
+    );
+
+    webWorld.rowanAutonomy.intent = undefined;
+    webWorld.rowanAutonomy.label = "";
+    webWorld.rowanAutonomy.detail = "";
+    expect(buildFirstAfternoonCompletionContinueCopy(webWorld)).toBe(
+      "Objective outcome should win when autonomy is absent.",
     );
   });
 

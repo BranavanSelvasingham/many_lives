@@ -111,6 +111,8 @@ import {
 } from "@/lib/street/browserProbe";
 import {
   buildFirstAfternoonActiveConversationContinueCopy,
+  buildFirstAfternoonCompletionContinueCopy,
+  buildFirstAfternoonCompletionWatchStatusCopy,
   buildFirstAfternoonOpeningManualContinueCopy,
   buildFirstAfternoonOpeningMapAgencyDetail,
   buildFirstAfternoonOpeningWatchContinueCopy,
@@ -5704,12 +5706,14 @@ function buildWatchModePrimaryContinueCopy({
 function buildWatchModePassiveStatusCopy({
   activeConversationNpc,
   autonomy,
+  game,
   firstAfternoonOpening,
   firstAfternoonCompletionCanAdvance,
   primaryContinueCopy,
 }: {
   activeConversationNpc: NpcState | null;
   autonomy: StreetGameState["rowanAutonomy"];
+  game: StreetGameState;
   firstAfternoonOpening: boolean;
   firstAfternoonCompletionCanAdvance: boolean;
   primaryContinueCopy: string;
@@ -5725,7 +5729,7 @@ function buildWatchModePassiveStatusCopy({
   }
 
   if (firstAfternoonCompletionCanAdvance) {
-    return "Rowan is weighing the field note, then continuing automatically.";
+    return buildFirstAfternoonCompletionWatchStatusCopy(game);
   }
 
   if (autonomy.mode === "conversation") {
@@ -7101,7 +7105,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         rowanAutoplayEnabled: watchModeUiEnabled,
       })
     : firstAfternoonCompletionCanAdvance
-      ? "Close the field note, then weigh rest, the yard window, and the Morrow Yard pump."
+      ? buildFirstAfternoonCompletionContinueCopy(game)
       : watchModeUiEnabled
       ? buildWatchModePrimaryContinueCopy({
           autonomy: rowanAutonomy,
@@ -7125,6 +7129,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             ? (railConversationNpc ?? selectedNpc)
             : null,
           autonomy: rowanAutonomy,
+          game,
           firstAfternoonOpening,
           firstAfternoonCompletionCanAdvance,
           primaryContinueCopy,

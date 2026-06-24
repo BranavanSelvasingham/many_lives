@@ -1,5 +1,5 @@
-import type { MemoryThread } from "@/lib/street/journalModel";
-import type { StreetGameState } from "@/lib/street/types";
+import type { MemoryThread } from "./journalModel";
+import type { StreetGameState } from "./types";
 
 export type RowanNotebookNarrativeModel = {
   belief: string;
@@ -39,6 +39,66 @@ const FIRST_AFTERNOON_FIELD_NOTE_TITLES: Record<
   "first-afternoon": "First afternoon settled",
   "mara-ada-lead": "Mara's lead verified",
 };
+
+const FIRST_AFTERNOON_COMPLETION_CONTINUE_FALLBACK_COPY =
+  "Close the field note, then weigh rest, the yard window, and the Morrow Yard pump.";
+
+const FIRST_AFTERNOON_COMPLETION_WATCH_STATUS_FALLBACK_COPY =
+  "Rowan is weighing the field note, then continuing automatically.";
+
+function narrativeCopy(value?: string | null) {
+  const normalized = value?.replace(/\s+/g, " ").trim();
+  return normalized || null;
+}
+
+function firstPresentNarrativeCopy(
+  ...values: Array<string | null | undefined>
+) {
+  for (const value of values) {
+    const copy = narrativeCopy(value);
+    if (copy) {
+      return copy;
+    }
+  }
+
+  return null;
+}
+
+function rowanObjectiveNextCopy(game: StreetGameState) {
+  return firstPresentNarrativeCopy(
+    game.player.objective?.outcomes.find((outcome) => outcome.status !== "met")
+      ?.label,
+    game.player.objective?.progress?.label,
+    game.player.objective?.text,
+  );
+}
+
+function rowanAutonomyNextCopy(game: StreetGameState) {
+  const autonomy = game.rowanAutonomy;
+  return firstPresentNarrativeCopy(
+    autonomy.intent?.reason,
+    autonomy.detail !== autonomy.label ? autonomy.detail : null,
+    autonomy.label,
+  );
+}
+
+function rowanCognitionNextCopy(game: StreetGameState) {
+  return firstPresentNarrativeCopy(
+    game.rowanCognition?.notebook?.plan,
+    game.rowanCognition?.nextMove?.text,
+    game.rowanCognition?.nextMove?.rationale,
+    game.rowanCognition?.notebook?.uncertainty,
+  );
+}
+
+function firstAfternoonCompletionAuthorityCopy(game: StreetGameState) {
+  return firstPresentNarrativeCopy(
+    game.firstAfternoon?.fieldNote?.next,
+    rowanCognitionNextCopy(game),
+    rowanAutonomyNextCopy(game),
+    rowanObjectiveNextCopy(game),
+  );
+}
 
 export function buildFirstAfternoonOpeningMapAgencyDetail(
   firstAfternoonOpening: boolean,
@@ -98,6 +158,11 @@ export function firstAfternoonMaraAdaLeadFieldNoteNextCopy(
   game: StreetGameState,
   fallback: string,
 ) {
+  const serverLeadNext = narrativeCopy(game.firstAfternoon?.leadFieldNote?.next);
+  if (serverLeadNext) {
+    return serverLeadNext;
+  }
+
   const teaJob = game.jobs.find((job) => job.id === "job-tea-shift");
   const stage = game.firstAfternoon?.teaShiftStage;
   if (game.firstAfternoon?.completedAt || game.firstAfternoon?.fieldNote) {
@@ -125,6 +190,24 @@ export function firstAfternoonMaraAdaLeadFieldNoteNextCopy(
   }
 
   return fallback;
+}
+
+export function buildFirstAfternoonCompletionContinueCopy(
+  game: StreetGameState,
+) {
+  return (
+    firstAfternoonCompletionAuthorityCopy(game) ??
+    FIRST_AFTERNOON_COMPLETION_CONTINUE_FALLBACK_COPY
+  );
+}
+
+export function buildFirstAfternoonCompletionWatchStatusCopy(
+  game: StreetGameState,
+) {
+  return (
+    firstAfternoonCompletionAuthorityCopy(game) ??
+    FIRST_AFTERNOON_COMPLETION_WATCH_STATUS_FALLBACK_COPY
+  );
 }
 
 export function buildRowanFallbackNotebookModel({
