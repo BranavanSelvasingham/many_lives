@@ -175,7 +175,7 @@ describe("Rowan visible decision artifact", () => {
               pressureId: "yard",
               pressureKind: "objective",
               pressureLabel: "Old yard lead",
-              provenance: "route-scaffold" as const,
+              provenance: "stale-trail" as const,
               rationale: "The old yard lead was checked against the choices.",
               reason,
               score: 0,

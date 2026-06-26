@@ -546,7 +546,8 @@ export type RowanPlanningTraceProvenance =
   | "live-pressure"
   | "objective-predicate"
   | "route-scaffold"
-  | "stale-predicate";
+  | "stale-predicate"
+  | "stale-trail";
 
 export type RowanPlanningTraceLegalBackingSource =
   | "conversation-resolution"

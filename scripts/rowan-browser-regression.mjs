@@ -116,6 +116,11 @@ const WEB_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_WEB_START_TIMEOUT_MS ?? "45000",
 );
 const PROBE_POLL_INTERVAL_MS = 250;
+const SCAFFOLD_ONLY_TRACE_PROVENANCES = new Set([
+  "route-scaffold",
+  "stale-predicate",
+  "stale-trail",
+]);
 const FALLBACK_WEB_PORT = Number(
   process.env.MANY_LIVES_BROWSER_WEB_FALLBACK_PORT ?? "3101",
 );
@@ -3406,10 +3411,8 @@ function assertPlanningTracePayload(label, planningTrace) {
   );
   assert.ok(
     selectedTraceOption &&
-      !["route-scaffold", "stale-predicate"].includes(
-        selectedTraceOption.provenance,
-      ),
-    `${label}: selected planner option must not have stale predicate or route scaffold provenance.`,
+      !SCAFFOLD_ONLY_TRACE_PROVENANCES.has(selectedTraceOption.provenance),
+    `${label}: selected planner option must not have stale predicate, stale trail, or route scaffold provenance.`,
   );
   assert.ok(
     selectedLegalBacking?.source &&
@@ -4567,7 +4570,7 @@ function buildObjectiveSequenceAuthorityEvidence({
 
   const rejectedStaleOptions = (planningTrace.rejected ?? [])
     .filter((option) =>
-      ["route-scaffold", "stale-predicate"].includes(option.provenance),
+      SCAFFOLD_ONLY_TRACE_PROVENANCES.has(option.provenance),
     )
     .slice(0, 4)
     .map(compactPlanningTraceOption);
@@ -4826,9 +4829,7 @@ function buildObjectiveSequenceAuditEntry({
       routeRole,
       selectedActionId,
     }) &&
-    ["route-scaffold", "stale-predicate"].includes(
-      authorityEvidence.selectedProvenance,
-    )
+    SCAFFOLD_ONLY_TRACE_PROVENANCES.has(authorityEvidence.selectedProvenance)
   ) {
     failureReasons.push("selected-trace-provenance-is-scaffold-only");
   }
@@ -5346,9 +5347,7 @@ function buildEarlyAgencyAuthorityLedger({
     .filter(({ entry }) => objectiveSequenceEntryNeedsPlannerAuthority(entry))
     .map(({ entry, index }) => compactEarlyAgencyDecisionEntry(entry, index));
   const selectedRouteScaffoldEntries = decisionEntries.filter((entry) =>
-    ["route-scaffold", "stale-predicate"].includes(
-      entry.selectedProvenance ?? "",
-    ),
+    SCAFFOLD_ONLY_TRACE_PROVENANCES.has(entry.selectedProvenance ?? ""),
   );
   const missingLegalBackingEntries = decisionEntries.filter(
     (entry) =>
@@ -5466,7 +5465,7 @@ function assertEarlyAgencyAuthorityLedger(ledger) {
   assert.equal(
     ledger.selectedRouteScaffoldEntries.length,
     0,
-    `Early agency selected route-scaffold/stale authority: ${JSON.stringify(
+    `Early agency selected route-scaffold/stale-predicate/stale-trail authority: ${JSON.stringify(
       ledger.selectedRouteScaffoldEntries,
       null,
       2,
@@ -9793,7 +9792,7 @@ function staleRoutePlannerOptions(moment) {
 
   return [...(trace.considered ?? []), ...(trace.rejected ?? [])]
     .filter((option) =>
-      ["route-scaffold", "stale-predicate"].includes(option.provenance),
+      SCAFFOLD_ONLY_TRACE_PROVENANCES.has(option.provenance),
     )
     .map(compactPlanningTraceOption);
 }
@@ -9842,7 +9841,7 @@ function postFirstAfternoonLiveRouteProbe(probe) {
     Boolean(
       selected.pressureId || selected.pressureKind || selected.matchedOutcomeId,
     ) &&
-    !["route-scaffold", "stale-predicate"].includes(selected.provenance) &&
+    !SCAFFOLD_ONLY_TRACE_PROVENANCES.has(selected.provenance) &&
     !(
       selected.actionId === "exit:boarding-house" &&
       probe.location?.spaceId === "interior:boarding-house"
@@ -10219,7 +10218,7 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   assert.equal(
     evidence.handoff.selected?.provenance,
     "objective-predicate",
-    "Post-first-afternoon rest handoff must not be route-scaffold authority.",
+    "Post-first-afternoon rest handoff must be objective-predicate authority.",
   );
   assert.ok(
     evidence.handoff.firstAfternoon?.completionAcknowledgedAt,
@@ -10320,7 +10319,7 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
     "Post-rest live route must expose current-state predicate or live-pressure authority.",
   );
   assert.ok(
-    !["route-scaffold", "stale-predicate"].includes(
+    !SCAFFOLD_ONLY_TRACE_PROVENANCES.has(
       evidence.liveRoute.selected?.provenance,
     ),
     `Post-rest live route selected stale route authority: ${evidence.liveRoute.selected?.provenance}.`,

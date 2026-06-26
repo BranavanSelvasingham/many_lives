@@ -4671,7 +4671,7 @@ function staleObjectiveActionTraceOptions(
         targetLocationId,
         npcId: step.npcId,
         planKey: `stale-trail|${step.id}|${step.actionId ?? "no-action"}|${targetLocationId ?? "no-location"}`,
-        provenance: "route-scaffold" as const,
+        provenance: "stale-trail" as const,
       };
     });
 

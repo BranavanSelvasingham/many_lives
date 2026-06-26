@@ -2921,14 +2921,14 @@ describe("SimulationEngine street slice", () => {
       provenance: "objective-predicate",
       targetLocationId: "tea-house",
     });
-    expect(["route-scaffold", "stale-predicate"]).not.toContain(
+    expect(["route-scaffold", "stale-predicate", "stale-trail"]).not.toContain(
       selected?.provenance,
     );
     expect(
       trace?.rejected.some(
         (option) =>
           option.actionId === "move:moss-pier" &&
-          option.provenance === "route-scaffold" &&
+          option.provenance === "stale-trail" &&
           option.reason?.includes("no longer legal"),
       ),
     ).toBe(true);
@@ -3105,11 +3105,14 @@ describe("SimulationEngine street slice", () => {
     );
     expect(selected?.provenance).not.toBe("route-scaffold");
     expect(selected?.provenance).not.toBe("stale-predicate");
+    expect(selected?.provenance).not.toBe("stale-trail");
     expect(
       world.rowanAutonomy.planningTrace?.considered.some(
         (option) =>
           option.status === "selected" &&
-          option.provenance === "route-scaffold" &&
+          ["route-scaffold", "stale-predicate", "stale-trail"].includes(
+            option.provenance,
+          ) &&
           option.targetLocationId === "tea-house",
       ),
     ).toBe(false);
@@ -3225,6 +3228,7 @@ describe("SimulationEngine street slice", () => {
     );
     expect(selected?.provenance).not.toBe("route-scaffold");
     expect(selected?.provenance).not.toBe("stale-predicate");
+    expect(selected?.provenance).not.toBe("stale-trail");
     expect(
       world.rowanAutonomy.planningTrace?.outcomes.some(
         (outcome) => outcome.id === "job-window-job-yard-shift",
@@ -4528,7 +4532,9 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.considered.some(
         (option) =>
           option.status === "selected" &&
-          ["route-scaffold", "stale-predicate"].includes(option.provenance),
+          ["route-scaffold", "stale-predicate", "stale-trail"].includes(
+            option.provenance,
+          ),
       ),
     ).toBe(false);
     expect(
@@ -5865,7 +5871,8 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.rejected.some(
         (option) =>
           option.actionId === "solve:problem-cart" &&
-          option.provenance === "route-scaffold" &&
+          option.provenance === "stale-trail" &&
+          option.planKey.startsWith("stale-trail|") &&
           option.reason?.includes("no longer legal"),
       ),
     ).toBe(true);
@@ -5873,7 +5880,9 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.considered.some(
         (option) =>
           option.status === "selected" &&
-          ["route-scaffold", "stale-predicate"].includes(option.provenance),
+          ["route-scaffold", "stale-predicate", "stale-trail"].includes(
+            option.provenance,
+          ),
       ),
     ).toBe(false);
   });
@@ -6392,7 +6401,7 @@ describe("SimulationEngine street slice", () => {
       world.rowanAutonomy.planningTrace?.considered.find(
         (option) => option.status === "selected",
       )?.provenance,
-    ).not.toMatch(/route-scaffold|stale-predicate/);
+    ).not.toMatch(/route-scaffold|stale-predicate|stale-trail/);
     expect(
       [
         world.player.objective?.routeKey,
