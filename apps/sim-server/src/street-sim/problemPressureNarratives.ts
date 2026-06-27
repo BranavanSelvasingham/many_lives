@@ -18,7 +18,22 @@ export type IndependentProblemResolutionNarrative = {
   npcMemoryText: string;
 };
 
+export type ActiveProblemInspectNarrative = {
+  feedText: string;
+};
+
+type ActiveProblemSolveNarrativeTemplate = {
+  feedText: string;
+  memoryText: string;
+};
+
+export type ActiveProblemSolveNarrative = ActiveProblemSolveNarrativeTemplate;
+
 type ProblemPressureNarrative = {
+  activeAction?: {
+    inspect?: ActiveProblemInspectNarrative;
+    solve?: ActiveProblemSolveNarrativeTemplate;
+  };
   escalationStages: ProblemEscalationStage[];
   expiry: ProblemExpiryConsequenceNarrative;
   independentResolution: IndependentProblemResolutionNarrative;
@@ -26,11 +41,27 @@ type ProblemPressureNarrative = {
 
 type ProblemPressureProblemId = "problem-cart" | "problem-pump";
 
+type ActiveProblemNarrativeFacts = {
+  rewardMoney: number;
+};
+
 const PROBLEM_PRESSURE_NARRATIVES: Record<
   ProblemPressureProblemId,
   ProblemPressureNarrative
 > = {
   "problem-cart": {
+    activeAction: {
+      inspect: {
+        feedText:
+          "The split wheel on the handcart is already starting to jam foot traffic through the square.",
+      },
+      solve: {
+        feedText:
+          "You got the jammed handcart rolling again and the square paid you ${rewardMoney} to stop being in everybody's way.",
+        memoryText:
+          "You learned that even small street problems become reputation if you solve them before they spread.",
+      },
+    },
     escalationStages: [
       {
         atMinute: 14 * 60,
@@ -69,6 +100,18 @@ const PROBLEM_PRESSURE_NARRATIVES: Record<
     },
   },
   "problem-pump": {
+    activeAction: {
+      inspect: {
+        feedText:
+          "Up close, the pump in Morrow Yard is one wrench-turn away from either a fix or a worse leak.",
+      },
+      solve: {
+        feedText:
+          "You tightened the pump in Morrow Yard, slowed the leak, and Mara pressed ${rewardMoney} into your hand before the stones flooded again.",
+        memoryText:
+          "Morrow House started to remember you as someone who fixes shared trouble instead of adding to it.",
+      },
+    },
     escalationStages: [
       {
         atMinute: 13 * 60,
@@ -116,6 +159,35 @@ function problemPressureNarrative(
       Record<string, ProblemPressureNarrative>
     >
   )[problemId];
+}
+
+function renderActiveProblemSolveNarrative(
+  template: ActiveProblemSolveNarrativeTemplate,
+  facts: ActiveProblemNarrativeFacts,
+): ActiveProblemSolveNarrative {
+  const render = (text: string) =>
+    text.split("{rewardMoney}").join(String(facts.rewardMoney));
+
+  return {
+    feedText: render(template.feedText),
+    memoryText: render(template.memoryText),
+  };
+}
+
+export function activeProblemInspectNarrative(
+  problemId: string,
+): ActiveProblemInspectNarrative | undefined {
+  return problemPressureNarrative(problemId)?.activeAction?.inspect;
+}
+
+export function activeProblemSolveNarrative(
+  problemId: string,
+  facts: ActiveProblemNarrativeFacts,
+): ActiveProblemSolveNarrative | undefined {
+  const narrative = problemPressureNarrative(problemId)?.activeAction?.solve;
+  return narrative
+    ? renderActiveProblemSolveNarrative(narrative, facts)
+    : undefined;
 }
 
 export function problemEscalationStages(

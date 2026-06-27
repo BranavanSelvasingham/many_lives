@@ -7,6 +7,8 @@ import type {
 import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
 import { syncCityEvents } from "../street-sim/cityEvents.js";
 import {
+  activeProblemInspectNarrative,
+  activeProblemSolveNarrative,
   independentProblemResolutionNarrative,
   problemEscalationStages,
   problemExpiryConsequenceNarrative,
@@ -8141,16 +8143,13 @@ function solveProblem(world: StreetGameState, problemId: string): void {
     world.player.money += problem.rewardMoney;
     world.player.reputation.morrow_house += 1;
     problem.status = "solved";
-    addFeed(
-      world,
-      "problem",
-      `You tightened the pump in Morrow Yard, slowed the leak, and Mara pressed $${problem.rewardMoney} into your hand before the stones flooded again.`,
-    );
-    remember(
-      world,
-      "problem",
-      "Morrow House started to remember you as someone who fixes shared trouble instead of adding to it.",
-    );
+    const narrative = activeProblemSolveNarrative(problem.id, {
+      rewardMoney: problem.rewardMoney,
+    });
+    if (narrative) {
+      addFeed(world, "problem", narrative.feedText);
+      remember(world, "problem", narrative.memoryText);
+    }
     return;
   }
 
@@ -8160,16 +8159,13 @@ function solveProblem(world: StreetGameState, problemId: string): void {
     world.player.money += problem.rewardMoney;
     world.player.reputation.south_quay += 1;
     problem.status = "solved";
-    addFeed(
-      world,
-      "problem",
-      `You got the jammed handcart rolling again and the square paid you $${problem.rewardMoney} to stop being in everybody's way.`,
-    );
-    remember(
-      world,
-      "problem",
-      "You learned that even small street problems become reputation if you solve them before they spread.",
-    );
+    const narrative = activeProblemSolveNarrative(problem.id, {
+      rewardMoney: problem.rewardMoney,
+    });
+    if (narrative) {
+      addFeed(world, "problem", narrative.feedText);
+      remember(world, "problem", narrative.memoryText);
+    }
   }
 }
 
@@ -8185,20 +8181,18 @@ function inspectLead(world: StreetGameState, targetId: string): void {
 
   if (targetId === "problem-pump") {
     discoverProblem(world, "problem-pump");
-    addFeed(
-      world,
-      "problem",
-      "Up close, the pump in Morrow Yard is one wrench-turn away from either a fix or a worse leak.",
-    );
+    const narrative = activeProblemInspectNarrative(targetId);
+    if (narrative) {
+      addFeed(world, "problem", narrative.feedText);
+    }
   }
 
   if (targetId === "problem-cart") {
     discoverProblem(world, "problem-cart");
-    addFeed(
-      world,
-      "problem",
-      "The split wheel on the handcart is already starting to jam foot traffic through the square.",
-    );
+    const narrative = activeProblemInspectNarrative(targetId);
+    if (narrative) {
+      addFeed(world, "problem", narrative.feedText);
+    }
   }
 }
 

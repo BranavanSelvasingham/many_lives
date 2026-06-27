@@ -1222,6 +1222,18 @@ describe("SimulationEngine street slice", () => {
       x: 3,
       y: 13,
     });
+    const pumpBeforeSolve = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    if (!pumpBeforeSolve) {
+      throw new Error("Missing pump problem");
+    }
+    const beforeSolve = {
+      energy: world.player.energy,
+      money: world.player.money,
+      reputation: world.player.reputation.morrow_house,
+      rewardMoney: pumpBeforeSolve.rewardMoney,
+    };
     world = await engine.runCommand(world, {
       type: "act",
       actionId: "solve:problem-pump",
@@ -1233,7 +1245,127 @@ describe("SimulationEngine street slice", () => {
     expect(
       world.player.inventory.some((item) => item.id === "item-wrench"),
     ).toBe(true);
-    expect(world.player.reputation.morrow_house).toBeGreaterThan(1);
+    expect(world.player.energy).toBe(Math.max(12, beforeSolve.energy - 10));
+    expect(world.player.money).toBe(
+      beforeSolve.money + beforeSolve.rewardMoney,
+    );
+    expect(world.player.reputation.morrow_house).toBe(
+      beforeSolve.reputation + 1,
+    );
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "You tightened the pump in Morrow Yard, slowed the leak, and Mara pressed $12 into your hand before the stones flooded again.",
+    );
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      "Morrow House started to remember you as someone who fixes shared trouble instead of adding to it.",
+    );
+  });
+
+  it("preserves pump and cart inspect action narratives", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let pumpWorld = await engine.createGame("game-pump-inspect-copy");
+
+    pumpWorld = await engine.runCommand(pumpWorld, {
+      type: "move_to",
+      x: 3,
+      y: 13,
+    });
+    pumpWorld = await engine.runCommand(pumpWorld, {
+      type: "act",
+      actionId: "inspect:problem-pump",
+    });
+
+    expect(
+      pumpWorld.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({
+      discovered: true,
+      status: "active",
+    });
+    expect(pumpWorld.feed.map((entry) => entry.text)).toContain(
+      "Up close, the pump in Morrow Yard is one wrench-turn away from either a fix or a worse leak.",
+    );
+    expect(pumpWorld.player.memories.map((memory) => memory.text)).toContain(
+      "You noticed leaking hand pump.",
+    );
+
+    let cartWorld = await engine.createGame("game-cart-inspect-copy");
+    const cart = cartWorld.problems.find(
+      (problem) => problem.id === "problem-cart",
+    );
+    if (!cart) {
+      throw new Error("Missing cart problem");
+    }
+    cart.status = "active";
+    cartWorld = await engine.runCommand(cartWorld, {
+      type: "move_to",
+      x: 12,
+      y: 10,
+    });
+    cartWorld = await engine.runCommand(cartWorld, {
+      type: "act",
+      actionId: "inspect:problem-cart",
+    });
+
+    expect(
+      cartWorld.problems.find((problem) => problem.id === "problem-cart"),
+    ).toMatchObject({
+      discovered: true,
+      status: "active",
+    });
+    expect(cartWorld.feed.map((entry) => entry.text)).toContain(
+      "The split wheel on the handcart is already starting to jam foot traffic through the square.",
+    );
+    expect(cartWorld.player.memories.map((memory) => memory.text)).toContain(
+      "You noticed jammed handcart.",
+    );
+  });
+
+  it("preserves cart solve action narrative and effects", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-cart-solve-copy");
+    const cart = world.problems.find(
+      (problem) => problem.id === "problem-cart",
+    );
+    if (!cart) {
+      throw new Error("Missing cart problem");
+    }
+    cart.status = "active";
+    cart.discovered = true;
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 12,
+      y: 10,
+    });
+    const beforeSolve = {
+      energy: world.player.energy,
+      money: world.player.money,
+      reputation: world.player.reputation.south_quay,
+      rewardMoney: cart.rewardMoney,
+    };
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "solve:problem-cart",
+    });
+
+    expect(
+      world.problems.find((problem) => problem.id === "problem-cart"),
+    ).toMatchObject({
+      discovered: true,
+      status: "solved",
+    });
+    expect(world.player.energy).toBe(Math.max(12, beforeSolve.energy - 8));
+    expect(world.player.money).toBe(
+      beforeSolve.money + beforeSolve.rewardMoney,
+    );
+    expect(world.player.reputation.south_quay).toBe(
+      beforeSolve.reputation + 1,
+    );
+    expect(world.feed.map((entry) => entry.text)).toContain(
+      "You got the jammed handcart rolling again and the square paid you $8 to stop being in everybody's way.",
+    );
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      "You learned that even small street problems become reputation if you solve them before they spread.",
+    );
   });
 
   it("blocks movement to walkable tiles that are not actually reachable", async () => {

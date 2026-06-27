@@ -158,6 +158,14 @@ const PASSIVE_PROBLEM_PRESSURE_COPY = [
   "Nia got the jammed handcart rolling while Rowan was elsewhere; the square solved that one without him.",
   "The jammed cart did not wait for Rowan. Nia cleared it once the square pressure peaked.",
 ];
+const ACTIVE_PROBLEM_ACTION_COPY = [
+  "The split wheel on the handcart is already starting to jam foot traffic through the square.",
+  "You got the jammed handcart rolling again and the square paid you ${rewardMoney} to stop being in everybody's way.",
+  "You learned that even small street problems become reputation if you solve them before they spread.",
+  "Up close, the pump in Morrow Yard is one wrench-turn away from either a fix or a worse leak.",
+  "You tightened the pump in Morrow Yard, slowed the leak, and Mara pressed ${rewardMoney} into your hand before the stones flooded again.",
+  "Morrow House started to remember you as someone who fixes shared trouble instead of adding to it.",
+];
 const PASSIVE_JOB_OUTCOME_COPY = [
   "Ada's lunch window moved on without Rowan; the room learned to solve the rush without him.",
   "Rowan let the lunch rush move on without committing steady hands.",
@@ -1178,6 +1186,32 @@ describe("street reasoning authority", () => {
     expect(engineSource).toContain("problemExpiryConsequenceNarrative");
     expect(engineSource).toContain("independentProblemResolutionNarrative");
     expect(engineSource).not.toContain("PROBLEM_ESCALATION_STAGES");
+  });
+
+  it("keeps active problem action narratives in street-sim data, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const pressureNarrativesSource = readFileSync(
+      new URL(
+        "../src/street-sim/problemPressureNarratives.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    for (const problemActionCopy of ACTIVE_PROBLEM_ACTION_COPY) {
+      expect(pressureNarrativesSource).toContain(problemActionCopy);
+      expect(engineSource).not.toContain(problemActionCopy);
+    }
+
+    expect(pressureNarrativesSource).toContain(
+      "activeProblemInspectNarrative",
+    );
+    expect(pressureNarrativesSource).toContain("activeProblemSolveNarrative");
+    expect(engineSource).toContain("activeProblemInspectNarrative");
+    expect(engineSource).toContain("activeProblemSolveNarrative");
   });
 
   it("keeps passive job outcome narratives in street-sim data, not engine control flow", () => {
