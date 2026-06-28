@@ -9,10 +9,15 @@ import { syncCityEvents } from "../street-sim/cityEvents.js";
 import {
   activeProblemInspectNarrative,
   activeProblemSolveNarrative,
-  independentProblemResolutionNarrative,
   problemEscalationStages,
-  problemExpiryConsequenceNarrative,
 } from "../street-sim/problemPressureNarratives.js";
+import {
+  problemPressureIndependentResolution,
+  problemPressurePassiveActivation,
+  problemPressurePassiveExpiry,
+  type ProblemPressureConsequenceResolution,
+  type ProblemPressureEffectScope,
+} from "../street-sim/problemPressureRules.js";
 import {
   activeJobCompletionNarrative,
   activeJobInterruptionNarrative,
@@ -8534,38 +8539,26 @@ function resolvePassiveState(
     missJobFromPassiveWorld(world, teaJob);
   }
 
-  const cartProblem = problemById(world, "problem-cart");
-  if (
-    cartProblem &&
-    cartProblem.status === "hidden" &&
-    currentHour(world) >= 12
-  ) {
-    cartProblem.status = "active";
+  const hour = currentHour(world);
+  for (const problem of world.problems) {
+    const activation = problemPressurePassiveActivation(problem, hour);
+    if (activation) {
+      problem.status = activation.toStatus;
+    }
   }
 
-  const pumpProblem = problemById(world, "problem-pump");
-  if (
-    pumpProblem &&
-    pumpProblem.status === "active" &&
-    currentHour(world) >= 18
-  ) {
-    pumpProblem.status = "expired";
-    pumpProblem.expiredAt ??= world.currentTime;
-    applyProblemExpiryConsequences(world, pumpProblem);
+  for (const problem of world.problems) {
+    const expiry = problemPressurePassiveExpiry(problem, hour);
+    if (expiry) {
+      problem.status = expiry.toStatus;
+      problem.expiredAt ??= world.currentTime;
+      applyProblemExpiryConsequences(world, problem, expiry);
+    }
   }
 
-  if (
-    cartProblem &&
-    cartProblem.status === "active" &&
-    currentHour(world) >= 17
-  ) {
-    cartProblem.status = "expired";
-    cartProblem.expiredAt ??= world.currentTime;
-    applyProblemExpiryConsequences(world, cartProblem);
+  for (const problem of world.problems) {
+    resolveProblemEscalation(world, problem);
   }
-
-  resolveProblemEscalation(world, pumpProblem);
-  resolveProblemEscalation(world, cartProblem);
   resolveIndependentNpcActions(world, options);
 }
 
@@ -8616,50 +8609,74 @@ function missJobFromPassiveWorld(
 function applyProblemExpiryConsequences(
   world: StreetGameState,
   problem: ProblemState,
+  expiry: ProblemPressureConsequenceResolution,
 ): void {
   if (problem.consequenceAppliedAt) {
     return;
   }
 
   problem.consequenceAppliedAt = world.currentTime;
+  applyProblemPressureConsequences(world, problem, expiry);
+}
 
-  if (problem.id === "problem-pump") {
-    const narrative = problemExpiryConsequenceNarrative(problem.id);
-    world.player.reputation.morrow_house = clamp(
-      (world.player.reputation.morrow_house ?? 0) - 1,
-      0,
-      10,
+function applyProblemPressureConsequences(
+  world: StreetGameState,
+  problem: ProblemState,
+  resolution: ProblemPressureConsequenceResolution,
+): void {
+  for (const adjustment of resolution.consequence.reputationAdjustments ?? []) {
+    if (!problemPressureEffectApplies(problem, adjustment.applyWhen)) {
+      continue;
+    }
+    world.player.reputation[adjustment.reputationId] = clamp(
+      (world.player.reputation[adjustment.reputationId] ?? 0) +
+        adjustment.delta,
+      adjustment.minimum,
+      adjustment.maximum,
     );
-    const mara = npcById(world, "npc-mara");
-    if (mara) {
-      mara.trust = clamp(mara.trust - 1, 0, 10);
-      if (narrative) {
-        rememberNpcIfNew(mara, narrative.npcMemoryText);
+  }
+
+  for (const adjustment of resolution.consequence.npcTrustAdjustments ?? []) {
+    if (!problemPressureEffectApplies(problem, adjustment.applyWhen)) {
+      continue;
+    }
+    const npc = npcById(world, adjustment.npcId);
+    if (npc) {
+      npc.trust = clamp(
+        npc.trust + adjustment.delta,
+        adjustment.minimum,
+        adjustment.maximum,
+      );
+    }
+  }
+
+  if (resolution.narrative) {
+    for (const npcMemory of resolution.consequence.npcMemories ?? []) {
+      if (!problemPressureEffectApplies(problem, npcMemory.applyWhen)) {
+        continue;
+      }
+      const npc = npcById(world, npcMemory.npcId);
+      if (npc) {
+        rememberNpcIfNew(npc, resolution.narrative.npcMemoryText);
       }
     }
-    if (problem.discovered && narrative) {
-      addFeed(world, "problem", narrative.discoveredFeedText);
-      rememberIfNew(world, "problem", narrative.discoveredMemoryText);
-    }
-    return;
-  }
 
-  if (problem.id === "problem-cart") {
-    const narrative = problemExpiryConsequenceNarrative(problem.id);
-    world.player.reputation.south_quay = clamp(
-      (world.player.reputation.south_quay ?? 0) - 1,
-      0,
-      10,
-    );
-    const nia = npcById(world, "npc-nia");
-    if (nia && narrative) {
-      rememberNpcIfNew(nia, narrative.npcMemoryText);
-    }
-    if (problem.discovered && narrative) {
-      addFeed(world, "problem", narrative.discoveredFeedText);
-      rememberIfNew(world, "problem", narrative.discoveredMemoryText);
+    if (problem.discovered) {
+      addFeed(world, "problem", resolution.narrative.discoveredFeedText);
+      rememberIfNew(
+        world,
+        "problem",
+        resolution.narrative.discoveredMemoryText,
+      );
     }
   }
+}
+
+function problemPressureEffectApplies(
+  problem: ProblemState,
+  scope: ProblemPressureEffectScope,
+): boolean {
+  return scope === "always" || problem.discovered;
 }
 
 function resolveIndependentNpcActions(
@@ -8668,58 +8685,21 @@ function resolveIndependentNpcActions(
 ): void {
   resolveTomasYardLoading(world, options);
 
-  const pumpProblem = problemById(world, "problem-pump");
-  const mara = npcById(world, "npc-mara");
-  const pumpResolutionMinute = totalMinutesForDayHour(world.clock.day, 17.5);
-  const pumpNarrative = independentProblemResolutionNarrative("problem-pump");
+  for (const problem of world.problems) {
+    const resolution = problemPressureIndependentResolution({
+      clock: world.clock,
+      findNpc: (npcId) => npcById(world, npcId),
+      problem,
+    });
+    if (!resolution) {
+      continue;
+    }
 
-  if (
-    pumpProblem?.status === "active" &&
-    (pumpProblem.escalationLevel ?? 0) >= 2 &&
-    world.clock.totalMinutes >= pumpResolutionMinute &&
-    mara?.currentLocationId === "courtyard"
-  ) {
-    pumpProblem.status = "resolved";
-    pumpProblem.resolvedAt ??= world.currentTime;
-    pumpProblem.resolvedByNpcId ??= mara.id;
-    pumpProblem.urgency = 0;
-    if (pumpNarrative) {
-      rememberNpcIfNew(mara, pumpNarrative.npcMemoryText);
-    }
-    if (pumpProblem.discovered && pumpNarrative) {
-      world.player.reputation.morrow_house = clamp(
-        (world.player.reputation.morrow_house ?? 0) - 1,
-        0,
-        10,
-      );
-      mara.trust = clamp(mara.trust - 1, 0, 10);
-      addFeed(world, "problem", pumpNarrative.discoveredFeedText);
-      rememberIfNew(world, "problem", pumpNarrative.discoveredMemoryText);
-    }
-  }
-
-  const cartProblem = problemById(world, "problem-cart");
-  const nia = npcById(world, "npc-nia");
-  const cartResolutionMinute = totalMinutesForDayHour(world.clock.day, 16.5);
-  const cartNarrative = independentProblemResolutionNarrative("problem-cart");
-
-  if (
-    cartProblem?.status === "active" &&
-    (cartProblem.escalationLevel ?? 0) >= 2 &&
-    world.clock.totalMinutes >= cartResolutionMinute &&
-    nia?.currentLocationId === "market-square"
-  ) {
-    cartProblem.status = "resolved";
-    cartProblem.resolvedAt ??= world.currentTime;
-    cartProblem.resolvedByNpcId ??= nia.id;
-    cartProblem.urgency = 0;
-    if (cartNarrative) {
-      rememberNpcIfNew(nia, cartNarrative.npcMemoryText);
-    }
-    if (cartProblem.discovered && cartNarrative) {
-      addFeed(world, "problem", cartNarrative.discoveredFeedText);
-      rememberIfNew(world, "problem", cartNarrative.discoveredMemoryText);
-    }
+    problem.status = resolution.toStatus;
+    problem.resolvedAt ??= world.currentTime;
+    problem.resolvedByNpcId ??= resolution.responsibleNpcId;
+    problem.urgency = 0;
+    applyProblemPressureConsequences(world, problem, resolution);
   }
 }
 

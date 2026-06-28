@@ -1168,6 +1168,10 @@ describe("street reasoning authority", () => {
       ),
       "utf8",
     );
+    const pressureRulesSource = readFileSync(
+      new URL("../src/street-sim/problemPressureRules.ts", import.meta.url),
+      "utf8",
+    );
 
     for (const pressureCopy of PASSIVE_PROBLEM_PRESSURE_COPY) {
       expect(pressureNarrativesSource).toContain(pressureCopy);
@@ -1182,10 +1186,43 @@ describe("street reasoning authority", () => {
     expect(pressureNarrativesSource).toContain(
       "independentProblemResolutionNarrative",
     );
+    expect(pressureRulesSource).toContain("PROBLEM_PRESSURE_RULES");
+    expect(pressureRulesSource).toContain("problemPressurePassiveActivation");
+    expect(pressureRulesSource).toContain("problemPressurePassiveExpiry");
+    expect(pressureRulesSource).toContain(
+      "problemPressureIndependentResolution",
+    );
     expect(engineSource).toContain("problemEscalationStages");
-    expect(engineSource).toContain("problemExpiryConsequenceNarrative");
-    expect(engineSource).toContain("independentProblemResolutionNarrative");
+    expect(engineSource).toContain("problemPressurePassiveActivation");
+    expect(engineSource).toContain("problemPressurePassiveExpiry");
+    expect(engineSource).toContain("problemPressureIndependentResolution");
     expect(engineSource).not.toContain("PROBLEM_ESCALATION_STAGES");
+
+    const passivePressureStart = engineSource.indexOf(
+      "function resolvePassiveState",
+    );
+    const passivePressureEnd = engineSource.indexOf(
+      "function resolveTomasYardLoading",
+    );
+    expect(passivePressureStart).toBeGreaterThanOrEqual(0);
+    expect(passivePressureEnd).toBeGreaterThan(passivePressureStart);
+    const passivePressureEngineSource = engineSource.slice(
+      passivePressureStart,
+      passivePressureEnd,
+    );
+    for (const passiveRuleToken of [
+      '"problem-pump"',
+      '"problem-cart"',
+      '"npc-mara"',
+      '"npc-nia"',
+      '"courtyard"',
+      '"market-square"',
+      "morrow_house",
+      "south_quay",
+    ]) {
+      expect(passivePressureEngineSource).not.toContain(passiveRuleToken);
+      expect(pressureRulesSource).toContain(passiveRuleToken);
+    }
   });
 
   it("keeps active problem action narratives in street-sim data, not engine control flow", () => {
