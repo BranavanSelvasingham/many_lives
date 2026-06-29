@@ -1237,6 +1237,10 @@ describe("street reasoning authority", () => {
       ),
       "utf8",
     );
+    const actionRulesSource = readFileSync(
+      new URL("../src/street-sim/problemActionRules.ts", import.meta.url),
+      "utf8",
+    );
 
     for (const problemActionCopy of ACTIVE_PROBLEM_ACTION_COPY) {
       expect(pressureNarrativesSource).toContain(problemActionCopy);
@@ -1247,8 +1251,55 @@ describe("street reasoning authority", () => {
       "activeProblemInspectNarrative",
     );
     expect(pressureNarrativesSource).toContain("activeProblemSolveNarrative");
-    expect(engineSource).toContain("activeProblemInspectNarrative");
-    expect(engineSource).toContain("activeProblemSolveNarrative");
+    expect(actionRulesSource).toContain("activeProblemInspectNarrative");
+    expect(actionRulesSource).toContain("activeProblemSolveNarrative");
+    expect(engineSource).toContain("activeProblemInspectAction");
+    expect(engineSource).toContain("activeProblemSolveAction");
+    expect(engineSource).not.toContain("activeProblemInspectNarrative");
+    expect(engineSource).not.toContain("activeProblemSolveNarrative");
+  });
+
+  it("keeps active problem action effects in street-sim rules, not engine control flow", () => {
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const actionRulesSource = readFileSync(
+      new URL("../src/street-sim/problemActionRules.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(actionRulesSource).toContain("PROBLEM_ACTION_RULES");
+    expect(actionRulesSource).toContain("activeProblemInspectAction");
+    expect(actionRulesSource).toContain("activeProblemSolveAction");
+    expect(engineSource).toContain("activeProblemInspectAction");
+    expect(engineSource).toContain("activeProblemSolveAction");
+
+    const activeProblemStart = engineSource.indexOf("function solveProblem");
+    const activeProblemEnd = engineSource.indexOf(
+      "function contributeToLocation",
+    );
+    expect(activeProblemStart).toBeGreaterThanOrEqual(0);
+    expect(activeProblemEnd).toBeGreaterThan(activeProblemStart);
+    const activeProblemEngineSource = engineSource.slice(
+      activeProblemStart,
+      activeProblemEnd,
+    );
+
+    for (const activeRuleToken of [
+      '"problem-pump"',
+      '"problem-cart"',
+      '"morrow_house"',
+      '"south_quay"',
+      "durationMinutes: 60",
+      "durationMinutes: 30",
+      "delta: -10",
+      "delta: -8",
+      'toStatus: "solved"',
+    ]) {
+      expect(activeProblemEngineSource).not.toContain(activeRuleToken);
+      expect(actionRulesSource).toContain(activeRuleToken);
+    }
   });
 
   it("keeps passive job outcome narratives in street-sim data, not engine control flow", () => {

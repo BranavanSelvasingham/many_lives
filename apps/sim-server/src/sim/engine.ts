@@ -7,8 +7,10 @@ import type {
 import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
 import { syncCityEvents } from "../street-sim/cityEvents.js";
 import {
-  activeProblemInspectNarrative,
-  activeProblemSolveNarrative,
+  activeProblemInspectAction,
+  activeProblemSolveAction,
+} from "../street-sim/problemActionRules.js";
+import {
   problemEscalationStages,
 } from "../street-sim/problemPressureNarratives.js";
 import {
@@ -8142,35 +8144,25 @@ function solveProblem(world: StreetGameState, problemId: string): void {
     return;
   }
 
-  if (problem.id === "problem-pump") {
-    advanceWorld(world, 60);
-    world.player.energy = clamp(world.player.energy - 10, 12, 100);
-    world.player.money += problem.rewardMoney;
-    world.player.reputation.morrow_house += 1;
-    problem.status = "solved";
-    const narrative = activeProblemSolveNarrative(problem.id, {
-      rewardMoney: problem.rewardMoney,
-    });
-    if (narrative) {
-      addFeed(world, "problem", narrative.feedText);
-      remember(world, "problem", narrative.memoryText);
-    }
+  const action = activeProblemSolveAction(problem);
+  if (!action) {
     return;
   }
 
-  if (problem.id === "problem-cart") {
-    advanceWorld(world, 30);
-    world.player.energy = clamp(world.player.energy - 8, 12, 100);
-    world.player.money += problem.rewardMoney;
-    world.player.reputation.south_quay += 1;
-    problem.status = "solved";
-    const narrative = activeProblemSolveNarrative(problem.id, {
-      rewardMoney: problem.rewardMoney,
-    });
-    if (narrative) {
-      addFeed(world, "problem", narrative.feedText);
-      remember(world, "problem", narrative.memoryText);
-    }
+  advanceWorld(world, action.durationMinutes);
+  world.player.energy = clamp(
+    world.player.energy + action.energy.delta,
+    action.energy.minimum,
+    action.energy.maximum,
+  );
+  world.player.money += action.moneyReward;
+  world.player.reputation[action.reputation.reputationId] =
+    world.player.reputation[action.reputation.reputationId] +
+    action.reputation.delta;
+  problem.status = action.toStatus;
+  if (action.narrative) {
+    addFeed(world, "problem", action.narrative.feedText);
+    remember(world, "problem", action.narrative.memoryText);
   }
 }
 
@@ -8184,20 +8176,14 @@ function inspectLead(world: StreetGameState, targetId: string): void {
     return;
   }
 
-  if (targetId === "problem-pump") {
-    discoverProblem(world, "problem-pump");
-    const narrative = activeProblemInspectNarrative(targetId);
-    if (narrative) {
-      addFeed(world, "problem", narrative.feedText);
-    }
+  const action = activeProblemInspectAction(targetId);
+  if (!action) {
+    return;
   }
 
-  if (targetId === "problem-cart") {
-    discoverProblem(world, "problem-cart");
-    const narrative = activeProblemInspectNarrative(targetId);
-    if (narrative) {
-      addFeed(world, "problem", narrative.feedText);
-    }
+  discoverProblem(world, action.discoverProblemId);
+  if (action.narrative) {
+    addFeed(world, "problem", action.narrative.feedText);
   }
 }
 
