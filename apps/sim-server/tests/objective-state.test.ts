@@ -70,6 +70,12 @@ function addWrench(world: StreetGameState) {
   });
 }
 
+function objectiveOutcome(objective: PlayerObjective | undefined, id: string) {
+  const outcome = objective?.outcomes.find((entry) => entry.id === id);
+  expect(outcome).toBeDefined();
+  return outcome!;
+}
+
 function setClock(world: StreetGameState, hour: number, minute = 0) {
   world.clock.hour = hour;
   world.clock.minute = minute;
@@ -2762,6 +2768,219 @@ describe("objectiveState classification", () => {
     expect(objectiveStateSource).toContain("problemClosedByWorld(problem)");
     expect(objectiveStateSource).toContain("problemCleared(problem)");
     expect(objectiveStateSource).toContain('hasItem(world, "item-wrench")');
+  });
+
+  it("preserves problem and tool objective outcome blockers and evidence", () => {
+    const cartActive = seedStreetGame("objective-cart-active-copy");
+    setProblemState(cartActive, "problem-cart", {
+      discovered: false,
+      status: "active",
+    });
+    const cartActiveObjective = buildPlayerObjectiveState(cartActive, {
+      focus: "help",
+      source: "manual",
+      text: "Clear the jammed cart in Quay Square.",
+    });
+
+    expect(
+      objectiveOutcome(cartActiveObjective, "cart-discovered"),
+    ).toMatchObject({
+      blockers: ["The jammed cart has not been inspected yet."],
+      status: "blocked",
+    });
+    expect(
+      objectiveOutcome(cartActiveObjective, "cart-discovered").evidence,
+    ).toBeUndefined();
+    expect(objectiveOutcome(cartActiveObjective, "cart-solved")).toMatchObject({
+      blockers: ["The jammed cart is still active."],
+      evidence: "active",
+      status: "blocked",
+    });
+
+    const cartExpired = seedStreetGame("objective-cart-expired-copy");
+    setProblemState(cartExpired, "problem-cart", {
+      discovered: true,
+      status: "expired",
+    });
+    const cartExpiredObjective = buildPlayerObjectiveState(cartExpired, {
+      focus: "help",
+      source: "manual",
+      text: "Clear the jammed cart in Quay Square.",
+    });
+    expect(objectiveOutcome(cartExpiredObjective, "cart-solved")).toMatchObject(
+      {
+        blockers: ["The jammed cart got worse before anyone cleared it."],
+        evidence: "expired",
+        status: "failed",
+      },
+    );
+
+    const pumpNoWrench = seedStreetGame("objective-pump-no-wrench-copy");
+    setProblemState(pumpNoWrench, "problem-pump", {
+      discovered: false,
+      status: "active",
+    });
+    const pumpNoWrenchObjective = buildPlayerObjectiveState(pumpNoWrench, {
+      focus: "help",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+    });
+
+    expect(
+      objectiveOutcome(pumpNoWrenchObjective, "pump-discovered"),
+    ).toMatchObject({
+      blockers: ["The pump problem has not been inspected yet."],
+      status: "blocked",
+    });
+    expect(
+      objectiveOutcome(pumpNoWrenchObjective, "wrench-in-inventory"),
+    ).toMatchObject({
+      blockers: ["Rowan does not have a wrench yet."],
+      evidence: "active",
+      status: "blocked",
+    });
+    expect(
+      objectiveOutcome(pumpNoWrenchObjective, "pump-solved"),
+    ).toMatchObject({
+      blockers: ["The pump needs a wrench before Rowan can solve it."],
+      evidence: "active",
+      status: "blocked",
+    });
+
+    const pumpWithWrench = seedStreetGame("objective-pump-with-wrench-copy");
+    setProblemState(pumpWithWrench, "problem-pump", {
+      discovered: true,
+      status: "active",
+    });
+    addWrench(pumpWithWrench);
+    const pumpWithWrenchObjective = buildPlayerObjectiveState(pumpWithWrench, {
+      focus: "help",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+    });
+    expect(
+      objectiveOutcome(pumpWithWrenchObjective, "wrench-in-inventory"),
+    ).toMatchObject({
+      evidence: "Wrench in inventory.",
+      status: "met",
+    });
+    expect(
+      objectiveOutcome(pumpWithWrenchObjective, "pump-solved"),
+    ).toMatchObject({
+      blockers: ["The pump is still active."],
+      evidence: "active",
+      status: "blocked",
+    });
+
+    const pumpResolved = seedStreetGame("objective-pump-resolved-copy");
+    setProblemState(pumpResolved, "problem-pump", {
+      discovered: true,
+      status: "resolved",
+    });
+    const pumpResolvedObjective = buildPlayerObjectiveState(pumpResolved, {
+      focus: "help",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+    });
+    expect(
+      objectiveOutcome(pumpResolvedObjective, "wrench-in-inventory"),
+    ).toMatchObject({
+      evidence: "The pump was already contained by the house.",
+      status: "met",
+    });
+    expect(
+      objectiveOutcome(pumpResolvedObjective, "pump-solved"),
+    ).toMatchObject({
+      evidence: "resolved",
+      status: "met",
+    });
+
+    const pumpExpired = seedStreetGame("objective-pump-expired-copy");
+    setProblemState(pumpExpired, "problem-pump", {
+      discovered: true,
+      status: "expired",
+    });
+    const pumpExpiredObjective = buildPlayerObjectiveState(pumpExpired, {
+      focus: "help",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+    });
+    expect(
+      objectiveOutcome(pumpExpiredObjective, "wrench-in-inventory"),
+    ).toMatchObject({
+      evidence: "expired",
+      status: "met",
+    });
+    expect(objectiveOutcome(pumpExpiredObjective, "pump-solved")).toMatchObject(
+      {
+        blockers: ["The pump got away before anyone contained it."],
+        evidence: "expired",
+        status: "failed",
+      },
+    );
+
+    const toolNoWrench = seedStreetGame("objective-tool-no-wrench-copy");
+    setProblemState(toolNoWrench, "problem-pump", {
+      discovered: true,
+      status: "active",
+    });
+    const toolNoWrenchObjective = buildPlayerObjectiveState(toolNoWrench, {
+      focus: "tool",
+      source: "manual",
+      text: "Buy a wrench for the pump and bring it back.",
+    });
+    expect(
+      objectiveOutcome(toolNoWrenchObjective, "tool-return"),
+    ).toMatchObject({
+      blockers: ["Rowan does not have a wrench yet."],
+      evidence: "courtyard",
+      status: "blocked",
+    });
+    expect(objectiveOutcome(toolNoWrenchObjective, "tool-use")).toMatchObject({
+      blockers: ["The target problem needs the right tool first."],
+      evidence: "active",
+      status: "blocked",
+    });
+
+    const toolAway = seedStreetGame("objective-tool-away-copy");
+    setProblemState(toolAway, "problem-pump", {
+      discovered: true,
+      status: "active",
+    });
+    addWrench(toolAway);
+    toolAway.player.currentLocationId = "boarding-house";
+    const toolAwayObjective = buildPlayerObjectiveState(toolAway, {
+      focus: "tool",
+      source: "manual",
+      text: "Buy a wrench for the pump and bring it back.",
+    });
+    expect(objectiveOutcome(toolAwayObjective, "tool-return")).toMatchObject({
+      blockers: ["The tool has not reached the problem yet."],
+      evidence: "courtyard",
+      status: "blocked",
+    });
+    expect(objectiveOutcome(toolAwayObjective, "tool-use")).toMatchObject({
+      blockers: ["The target problem is still active."],
+      evidence: "active",
+      status: "blocked",
+    });
+
+    const toolExpired = seedStreetGame("objective-tool-expired-copy");
+    setProblemState(toolExpired, "problem-pump", {
+      discovered: true,
+      status: "expired",
+    });
+    addWrench(toolExpired);
+    const toolExpiredObjective = buildPlayerObjectiveState(toolExpired, {
+      focus: "tool",
+      source: "manual",
+      text: "Buy a wrench for the pump and bring it back.",
+    });
+    expect(objectiveOutcome(toolExpiredObjective, "tool-use")).toMatchObject({
+      blockers: ["The target problem got worse before the tool reached it."],
+      evidence: "expired",
+      status: "failed",
+    });
   });
 
   it("keeps cart help route metadata stable across live problem states", () => {

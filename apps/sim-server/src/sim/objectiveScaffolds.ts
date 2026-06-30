@@ -5,6 +5,7 @@ import type {
   MemoryEntry,
   NpcState,
   ObjectiveFocus,
+  ObjectiveOutcomeStatus,
   ObjectiveTrailItem,
   ProblemState,
   StreetGameState,
@@ -660,6 +661,28 @@ interface HelpProblemRouteOutcomeTemplate {
     | string
     | ((state: HelpProblemRouteState) => string | undefined);
   urgency: number;
+}
+
+export interface ObjectiveRouteOutcomeEvaluation {
+  status: ObjectiveOutcomeStatus;
+  blockers?: string[];
+  evidence?: string;
+}
+
+interface ObjectiveRouteOutcomeEvaluationOptions {
+  blockers?: string[];
+  evidence?: string;
+  failed?: boolean;
+}
+
+interface HelpProblemRouteOutcomeEvaluationTemplate {
+  evaluate: (state: HelpProblemRouteState) => ObjectiveRouteOutcomeEvaluation;
+  ids: readonly string[];
+}
+
+interface ToolProblemRouteOutcomeEvaluationTemplate {
+  evaluate: (state: ToolProblemRouteState) => ObjectiveRouteOutcomeEvaluation;
+  ids: readonly string[];
 }
 
 interface ToolProblemRouteStepTemplate {
@@ -2404,6 +2427,29 @@ const CART_PROBLEM_OUTCOME_TEMPLATES: HelpProblemRouteOutcomeTemplate[] = [
   },
 ];
 
+const CART_PROBLEM_OUTCOME_EVALUATION_TEMPLATES: HelpProblemRouteOutcomeEvaluationTemplate[] =
+  [
+    {
+      ids: ["help-cart-inspect", "cart-discovered"],
+      evaluate: ({ problemDiscovered }) =>
+        objectiveRouteOutcomeEvaluation(problemDiscovered, {
+          blockers: ["The jammed cart has not been inspected yet."],
+        }),
+    },
+    {
+      ids: ["help-cart-solve", "cart-solved"],
+      evaluate: ({ problemCleared, problemStatus }) =>
+        objectiveRouteOutcomeEvaluation(problemCleared, {
+          blockers:
+            problemStatus === "expired"
+              ? ["The jammed cart got worse before anyone cleared it."]
+              : ["The jammed cart is still active."],
+          evidence: problemStatus,
+          failed: problemStatus === "expired",
+        }),
+    },
+  ];
+
 const CART_PROBLEM_STEP_TEMPLATES: HelpProblemRouteStepTemplate[] = [
   {
     id: "help-cart-inspect",
@@ -2468,6 +2514,47 @@ const PUMP_PROBLEM_OUTCOME_TEMPLATES: HelpProblemRouteOutcomeTemplate[] = [
       problemActive ? problemLocationId : undefined,
   },
 ];
+
+const PUMP_PROBLEM_OUTCOME_EVALUATION_TEMPLATES: HelpProblemRouteOutcomeEvaluationTemplate[] =
+  [
+    {
+      ids: ["help-pump-inspect", "pump-discovered"],
+      evaluate: ({ problemDiscovered }) =>
+        objectiveRouteOutcomeEvaluation(problemDiscovered, {
+          blockers: ["The pump problem has not been inspected yet."],
+        }),
+    },
+    {
+      ids: ["help-pump-tool", "tool-buy", "wrench-in-inventory"],
+      evaluate: ({ hasWrench, problemClosed, problemStatus }) =>
+        objectiveRouteOutcomeEvaluation(hasWrench || problemClosed, {
+          blockers:
+            problemStatus === "expired"
+              ? ["The pump got away before the tool mattered."]
+              : ["Rowan does not have a wrench yet."],
+          evidence: hasWrench
+            ? "Wrench in inventory."
+            : problemStatus === "resolved"
+              ? "The pump was already contained by the house."
+              : problemStatus,
+          failed: problemStatus === "expired",
+        }),
+    },
+    {
+      ids: ["help-pump-fix", "pump-solved"],
+      evaluate: ({ hasWrench, problemCleared, problemStatus }) =>
+        objectiveRouteOutcomeEvaluation(problemCleared, {
+          blockers:
+            problemStatus === "expired"
+              ? ["The pump got away before anyone contained it."]
+              : hasWrench
+                ? ["The pump is still active."]
+                : ["The pump needs a wrench before Rowan can solve it."],
+          evidence: problemStatus,
+          failed: problemStatus === "expired",
+        }),
+    },
+  ];
 
 const PUMP_PROBLEM_STEP_TEMPLATES: HelpProblemRouteStepTemplate[] = [
   {
@@ -2537,6 +2624,33 @@ const PUMP_PROBLEM_STEP_TEMPLATES: HelpProblemRouteStepTemplate[] = [
     targetLocationId: ({ problemLocationId }) => problemLocationId,
   },
 ];
+
+const TOOL_PROBLEM_OUTCOME_EVALUATION_TEMPLATES: ToolProblemRouteOutcomeEvaluationTemplate[] =
+  [
+    {
+      ids: ["tool-return"],
+      evaluate: ({ hasWrench, targetLocationId, toolAtProblem }) =>
+        objectiveRouteOutcomeEvaluation(hasWrench && toolAtProblem, {
+          blockers: hasWrench
+            ? ["The tool has not reached the problem yet."]
+            : ["Rowan does not have a wrench yet."],
+          evidence: targetLocationId,
+        }),
+    },
+    {
+      ids: ["tool-use"],
+      evaluate: ({ hasWrench, targetCleared, targetStatus }) =>
+        objectiveRouteOutcomeEvaluation(targetCleared, {
+          blockers: hasWrench
+            ? targetStatus === "expired"
+              ? ["The target problem got worse before the tool reached it."]
+              : ["The target problem is still active."]
+            : ["The target problem needs the right tool first."],
+          evidence: targetStatus,
+          failed: targetStatus === "expired",
+        }),
+    },
+  ];
 
 const TOOL_PROBLEM_OUTCOME_TEMPLATES: ToolProblemRouteOutcomeTemplate[] = [
   {
@@ -5114,6 +5228,33 @@ export function objectiveRouteRestRouteScaffold(state: RestRouteState): {
   };
 }
 
+export function objectiveRouteProblemToolOutcomeEvaluation(
+  outcomeId: string,
+  state: {
+    cartProblem: HelpProblemRouteState;
+    pumpProblem: HelpProblemRouteState;
+    toolProblem: ToolProblemRouteState;
+  },
+): ObjectiveRouteOutcomeEvaluation | undefined {
+  return (
+    evaluateHelpProblemRouteOutcome(
+      CART_PROBLEM_OUTCOME_EVALUATION_TEMPLATES,
+      outcomeId,
+      state.cartProblem,
+    ) ??
+    evaluateHelpProblemRouteOutcome(
+      PUMP_PROBLEM_OUTCOME_EVALUATION_TEMPLATES,
+      outcomeId,
+      state.pumpProblem,
+    ) ??
+    evaluateToolProblemRouteOutcome(
+      TOOL_PROBLEM_OUTCOME_EVALUATION_TEMPLATES,
+      outcomeId,
+      state.toolProblem,
+    )
+  );
+}
+
 export function objectiveRouteCartProblemRouteScaffold(
   state: HelpProblemRouteState,
 ): {
@@ -5207,6 +5348,52 @@ export function objectiveRouteToolProblemRouteScaffold(
         state,
       ),
     })),
+  };
+}
+
+function evaluateHelpProblemRouteOutcome(
+  templates: HelpProblemRouteOutcomeEvaluationTemplate[],
+  outcomeId: string,
+  state: HelpProblemRouteState,
+) {
+  return templates
+    .find((template) => template.ids.includes(outcomeId))
+    ?.evaluate(state);
+}
+
+function evaluateToolProblemRouteOutcome(
+  templates: ToolProblemRouteOutcomeEvaluationTemplate[],
+  outcomeId: string,
+  state: ToolProblemRouteState,
+) {
+  return templates
+    .find((template) => template.ids.includes(outcomeId))
+    ?.evaluate(state);
+}
+
+function objectiveRouteOutcomeEvaluation(
+  met: boolean,
+  options: ObjectiveRouteOutcomeEvaluationOptions = {},
+): ObjectiveRouteOutcomeEvaluation {
+  if (met) {
+    return {
+      status: "met",
+      evidence: options.evidence,
+    };
+  }
+
+  if (options.failed) {
+    return {
+      status: "failed",
+      blockers: options.blockers,
+      evidence: options.evidence,
+    };
+  }
+
+  return {
+    status: options.blockers?.length ? "blocked" : "open",
+    blockers: options.blockers,
+    evidence: options.evidence,
   };
 }
 

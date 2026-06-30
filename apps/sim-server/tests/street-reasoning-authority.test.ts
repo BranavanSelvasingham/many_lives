@@ -136,6 +136,23 @@ const PROBLEM_ROUTE_DIALOGUE_CHOICE_KEYS = [
   "nia-cart-active",
   "nia-cart-followup",
 ];
+const PROBLEM_TOOL_OUTCOME_COPY = [
+  "The jammed cart has not been inspected yet.",
+  "The jammed cart got worse before anyone cleared it.",
+  "The jammed cart is still active.",
+  "The pump problem has not been inspected yet.",
+  "The pump got away before the tool mattered.",
+  "Rowan does not have a wrench yet.",
+  "Wrench in inventory.",
+  "The pump was already contained by the house.",
+  "The pump got away before anyone contained it.",
+  "The pump is still active.",
+  "The pump needs a wrench before Rowan can solve it.",
+  "The tool has not reached the problem yet.",
+  "The target problem got worse before the tool reached it.",
+  "The target problem is still active.",
+  "The target problem needs the right tool first.",
+];
 const PASSIVE_PROBLEM_PRESSURE_COPY = [
   "The jammed cart has started pinching the square instead of waiting politely at the edge.",
   "Quay Square's cart problem grew sharper while Rowan spent the hour elsewhere.",
@@ -2678,6 +2695,56 @@ describe("street reasoning authority", () => {
     );
     expect(objectiveStateSource).toContain('case "people-talk"');
     expect(objectiveStateSource).toContain('case "explore-go"');
+  });
+
+  it("keeps problem and tool outcome policy copy in scaffold helpers, not objective-state control flow", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const outcomeCopy of PROBLEM_TOOL_OUTCOME_COPY) {
+      expect(scaffoldSource).toContain(outcomeCopy);
+      expect(objectiveStateSource).not.toContain(outcomeCopy);
+    }
+
+    for (const outcomeCase of [
+      "help-cart-inspect",
+      "cart-discovered",
+      "help-cart-solve",
+      "cart-solved",
+      "help-pump-inspect",
+      "pump-discovered",
+      "help-pump-tool",
+      "tool-buy",
+      "wrench-in-inventory",
+      "help-pump-fix",
+      "pump-solved",
+      "tool-return",
+      "tool-use",
+    ]) {
+      expect(objectiveStateSource).not.toContain(`case "${outcomeCase}"`);
+    }
+
+    expect(scaffoldSource).toContain(
+      "objectiveRouteProblemToolOutcomeEvaluation",
+    );
+    expect(scaffoldSource).toContain(
+      "CART_PROBLEM_OUTCOME_EVALUATION_TEMPLATES",
+    );
+    expect(scaffoldSource).toContain(
+      "PUMP_PROBLEM_OUTCOME_EVALUATION_TEMPLATES",
+    );
+    expect(scaffoldSource).toContain(
+      "TOOL_PROBLEM_OUTCOME_EVALUATION_TEMPLATES",
+    );
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteProblemToolOutcomeEvaluation",
+    );
   });
 
   it("keeps route-derived semantic, intent, bonus, and pressure rules scaffold-owned", () => {

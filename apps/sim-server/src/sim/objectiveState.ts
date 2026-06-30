@@ -18,6 +18,7 @@ import {
   objectiveRouteHeadline as objectiveRouteScaffoldHeadline,
   objectiveRouteMaraAdaLeadRouteScaffold,
   objectiveRoutePeopleRouteScaffold,
+  objectiveRouteProblemToolOutcomeEvaluation,
   objectiveRoutePumpProblemRouteScaffold,
   objectiveRouteRestRouteScaffold,
   objectiveRouteSettleRouteScaffold,
@@ -446,7 +447,35 @@ function evaluateObjectiveOutcome(
   const pumpProblem = problemById(world, "problem-pump");
   const cartProblem = problemById(world, "problem-cart");
   const hasWrench = hasItem(world, "item-wrench");
+  const toolTargetProblem = objectiveTargetProblem(world, objectiveText);
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
+  const problemToolEvaluation = objectiveRouteProblemToolOutcomeEvaluation(
+    definition.id,
+    {
+      cartProblem: buildHelpProblemRouteState(
+        cartProblem,
+        cartProblem ? findLocation(world, cartProblem.locationId) : undefined,
+        hasWrench,
+      ),
+      pumpProblem: buildHelpProblemRouteState(
+        pumpProblem,
+        pumpProblem ? findLocation(world, pumpProblem.locationId) : undefined,
+        hasWrench,
+      ),
+      toolProblem: buildToolProblemRouteState(
+        world,
+        toolTargetProblem,
+        toolTargetProblem
+          ? findLocation(world, toolTargetProblem.locationId)
+          : undefined,
+        hasWrench,
+      ),
+    },
+  );
+
+  if (problemToolEvaluation) {
+    return problemToolEvaluation;
+  }
 
   switch (definition.id) {
     case "mara-ada-hear-lead":
@@ -653,82 +682,6 @@ function evaluateObjectiveOutcome(
           evidence: `$${world.player.money} on hand`,
         },
       );
-    case "help-cart-inspect":
-    case "cart-discovered":
-      return outcomeEvaluation(Boolean(cartProblem?.discovered), {
-        blockers: ["The jammed cart has not been inspected yet."],
-      });
-    case "help-cart-solve":
-    case "cart-solved":
-      return outcomeEvaluation(problemCleared(cartProblem), {
-        blockers:
-          cartProblem?.status === "expired"
-            ? ["The jammed cart got worse before anyone cleared it."]
-            : ["The jammed cart is still active."],
-        evidence: cartProblem?.status,
-        failed: cartProblem?.status === "expired",
-      });
-    case "help-pump-inspect":
-    case "pump-discovered":
-      return outcomeEvaluation(Boolean(pumpProblem?.discovered), {
-        blockers: ["The pump problem has not been inspected yet."],
-      });
-    case "help-pump-tool":
-    case "tool-buy":
-    case "wrench-in-inventory":
-      return outcomeEvaluation(hasWrench || problemClosedByWorld(pumpProblem), {
-        blockers:
-          pumpProblem?.status === "expired"
-            ? ["The pump got away before the tool mattered."]
-            : ["Rowan does not have a wrench yet."],
-        evidence: hasWrench
-          ? "Wrench in inventory."
-          : pumpProblem?.status === "resolved"
-            ? "The pump was already contained by the house."
-            : pumpProblem?.status,
-        failed: pumpProblem?.status === "expired",
-      });
-    case "help-pump-fix":
-    case "pump-solved":
-      return outcomeEvaluation(problemCleared(pumpProblem), {
-        blockers:
-          pumpProblem?.status === "expired"
-            ? ["The pump got away before anyone contained it."]
-            : hasWrench
-              ? ["The pump is still active."]
-              : ["The pump needs a wrench before Rowan can solve it."],
-        evidence: pumpProblem?.status,
-        failed: pumpProblem?.status === "expired",
-      });
-    case "tool-return": {
-      const target = objectiveTargetProblem(world, objectiveText);
-      return outcomeEvaluation(
-        hasWrench &&
-          Boolean(
-            target &&
-            (world.player.currentLocationId === target.locationId ||
-              problemClosedByWorld(target)),
-          ),
-        {
-          blockers: hasWrench
-            ? ["The tool has not reached the problem yet."]
-            : ["Rowan does not have a wrench yet."],
-          evidence: target?.locationId,
-        },
-      );
-    }
-    case "tool-use": {
-      const target = objectiveTargetProblem(world, objectiveText);
-      return outcomeEvaluation(problemCleared(target), {
-        blockers: hasWrench
-          ? target?.status === "expired"
-            ? ["The target problem got worse before the tool reached it."]
-            : ["The target problem is still active."]
-          : ["The target problem needs the right tool first."],
-        evidence: target?.status,
-        failed: target?.status === "expired",
-      });
-    }
     case "rest-return":
       return outcomeEvaluation(atHome, {
         blockers: ["Rowan is not somewhere familiar enough to rest."],
