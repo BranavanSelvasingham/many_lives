@@ -5338,6 +5338,142 @@ export function objectiveRouteProblemToolOutcomeEvaluation(
   );
 }
 
+export function objectiveRouteScaffoldOutcomeEvaluation(input: {
+  outcomeId: string;
+  routeKey: string;
+  world: StreetGameState;
+}): ObjectiveRouteOutcomeEvaluation | undefined {
+  const { outcomeId, routeKey, world } = input;
+  const teaJob = jobById(world, "job-tea-shift");
+  const teaLeadViable = firstAfternoonOutcomeAdaLeadViable(world, teaJob);
+  const atHome = world.player.currentLocationId === world.player.homeLocationId;
+
+  switch (outcomeId) {
+    case "mara-ada-hear-lead":
+    case "first-afternoon-room":
+      return objectiveRouteOutcomeEvaluation(firstAfternoonRoomTermsKnown(world), {
+        evidence:
+          "Mara has explained what tonight's room and first lead require.",
+      });
+    case "mara-ada-form-intent":
+      return objectiveRouteOutcomeEvaluation(routeKey === "mara-ada-lead", {
+        blockers: ["Rowan has not made the verification intent explicit yet."],
+        evidence:
+          routeKey === "mara-ada-lead"
+            ? "The current objective is explicitly to verify Mara's Ada lead."
+            : undefined,
+      });
+    case "first-afternoon-choose-move":
+      return objectiveRouteOutcomeEvaluation(
+        Boolean(world.firstAfternoon?.planSettledAt),
+        {
+          blockers: [
+            teaLeadViable
+              ? "Rowan has not chosen the useful first move yet."
+              : "Ada's lunch window has slipped; Rowan needs a current live alternative.",
+          ],
+          evidence: world.firstAfternoon?.planSettledAt,
+        },
+      );
+    case "mara-ada-walk-route":
+      return objectiveRouteOutcomeEvaluation(
+        world.player.currentLocationId === "tea-house" ||
+          countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
+          Boolean(world.firstAfternoon?.leadFieldNote),
+        { evidence: world.player.currentLocationId },
+      );
+    case "mara-ada-ask-directly":
+    case "first-afternoon-ada-lead":
+      return objectiveRouteOutcomeEvaluation(
+        countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
+          Boolean(teaJob?.accepted || teaJob?.completed),
+        {
+          blockers: [
+            teaLeadViable
+              ? "Ada has not confirmed the Kettle & Lamp lead yet."
+              : "Ada's lunch work is no longer a live lead.",
+          ],
+          evidence: teaJob?.discovered
+            ? "Kettle & Lamp work is discovered."
+            : undefined,
+        },
+      );
+    case "mara-ada-record-evidence":
+    case "first-afternoon-record-lead":
+      return objectiveRouteOutcomeEvaluation(
+        Boolean(world.firstAfternoon?.leadFieldNote),
+        {
+          blockers: ["The lead has not been recorded as grounded evidence."],
+          evidence: world.firstAfternoon?.leadFieldNote?.evidence,
+        },
+      );
+    case "mara-ada-open-choice":
+      return objectiveRouteOutcomeEvaluation(
+        Boolean(
+          world.firstAfternoon?.leadFieldNote &&
+            teaJob?.discovered &&
+            teaLeadViable,
+        ),
+        {
+          blockers: ["The lead has not opened a legal work choice yet."],
+          evidence: teaJob?.discovered
+            ? "Cup-and-counter shift is available."
+            : undefined,
+        },
+      );
+    case "first-afternoon-take-shift":
+      return objectiveRouteOutcomeEvaluation(
+        Boolean(
+          teaJob?.accepted ||
+            teaJob?.completed ||
+            world.player.activeJobId === "job-tea-shift",
+        ),
+        {
+          blockers: teaJob?.missed
+            ? ["The cup-and-counter shift window has slipped."]
+            : ["Rowan has not committed to the cup-and-counter shift."],
+          evidence: teaJob?.accepted ? "Shift accepted." : undefined,
+          failed: Boolean(teaJob?.missed && !teaJob.completed),
+        },
+      );
+    case "first-afternoon-start-shift":
+      return objectiveRouteOutcomeEvaluation(
+        Boolean(
+          world.firstAfternoon?.teaShiftStage === "rush" ||
+            world.firstAfternoon?.teaShiftStage === "counter" ||
+            world.firstAfternoon?.teaShiftStage === "paid" ||
+            teaJob?.completed,
+        ),
+        {
+          blockers: ["The lunch rush has not started for Rowan yet."],
+          evidence: world.firstAfternoon?.teaShiftStage,
+        },
+      );
+    case "first-afternoon-finish-shift":
+      return objectiveRouteOutcomeEvaluation(Boolean(teaJob?.completed), {
+        blockers: teaJob?.missed
+          ? ["The cup-and-counter shift was missed."]
+          : ["The cup-and-counter shift is not finished yet."],
+        evidence: teaJob?.completed
+          ? "Ada paid Rowan for the shift."
+          : undefined,
+        failed: Boolean(teaJob?.missed && !teaJob.completed),
+      });
+    case "first-afternoon-take-stock":
+      return objectiveRouteOutcomeEvaluation(
+        Boolean(world.firstAfternoon?.completedAt),
+        {
+          blockers: atHome
+            ? ["Rowan has not taken stock yet."]
+            : ["Rowan is not back at Morrow House yet."],
+          evidence: world.firstAfternoon?.fieldNote?.evidence,
+        },
+      );
+    default:
+      return undefined;
+  }
+}
+
 export function objectiveRouteCartProblemRouteScaffold(
   state: HelpProblemRouteState,
 ): {
@@ -6907,6 +7043,18 @@ function jobWindowOpen(world: StreetGameState, job: JobState | undefined) {
 
 function firstAfternoonAdaLeadViable(world: StreetGameState) {
   return jobWindowOpen(world, jobById(world, "job-tea-shift"));
+}
+
+function firstAfternoonOutcomeAdaLeadViable(
+  world: StreetGameState,
+  teaJob: JobState | undefined,
+) {
+  return Boolean(
+    teaJob &&
+      !teaJob.completed &&
+      !teaJob.missed &&
+      world.clock.hour + world.clock.minute / 60 < teaJob.endHour,
+  );
 }
 
 function jobWindowClosed(world: StreetGameState, job: JobState | undefined) {

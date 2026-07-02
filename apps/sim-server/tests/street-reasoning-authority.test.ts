@@ -2564,8 +2564,33 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain("FIRST_AFTERNOON_OUTCOME_TEMPLATES");
     expect(scaffoldSource).toContain("FIRST_AFTERNOON_STEP_TEMPLATES");
+    for (const outcomeCase of [
+      "first-afternoon-room",
+      "first-afternoon-choose-move",
+      "first-afternoon-ada-lead",
+      "first-afternoon-record-lead",
+      "first-afternoon-take-shift",
+      "first-afternoon-start-shift",
+      "first-afternoon-finish-shift",
+      "first-afternoon-take-stock",
+    ]) {
+      expect(scaffoldSource).toContain(`"${outcomeCase}"`);
+      expect(objectiveStateSource).not.toContain(`case "${outcomeCase}"`);
+    }
+    for (const predicateCopy of [
+      "Ada's lunch window has slipped; Rowan needs a current live alternative.",
+      "The cup-and-counter shift window has slipped.",
+      "Ada paid Rowan for the shift.",
+      "Rowan is not back at Morrow House yet.",
+    ]) {
+      expect(scaffoldSource).toContain(predicateCopy);
+      expect(objectiveStateSource).not.toContain(predicateCopy);
+    }
     expect(objectiveStateSource).toContain(
       "objectiveRouteFirstAfternoonRouteScaffold",
+    );
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteScaffoldOutcomeEvaluation",
     );
   });
 
@@ -2592,10 +2617,32 @@ describe("street reasoning authority", () => {
 
     expect(scaffoldSource).toContain("MARA_ADA_LEAD_OUTCOME_TEMPLATES");
     expect(scaffoldSource).toContain("MARA_ADA_LEAD_STEP_TEMPLATES");
+    for (const outcomeCase of [
+      "mara-ada-hear-lead",
+      "mara-ada-form-intent",
+      "mara-ada-walk-route",
+      "mara-ada-ask-directly",
+      "mara-ada-record-evidence",
+      "mara-ada-open-choice",
+    ]) {
+      expect(scaffoldSource).toContain(`"${outcomeCase}"`);
+      expect(objectiveStateSource).not.toContain(`case "${outcomeCase}"`);
+    }
+    for (const predicateCopy of [
+      "The current objective is explicitly to verify Mara's Ada lead.",
+      "Ada's lunch work is no longer a live lead.",
+      "The lead has not opened a legal work choice yet.",
+      "Cup-and-counter shift is available.",
+    ]) {
+      expect(scaffoldSource).toContain(predicateCopy);
+      expect(objectiveStateSource).not.toContain(predicateCopy);
+    }
     expect(objectiveStateSource).toContain(
       "objectiveRouteMaraAdaLeadRouteScaffold",
     );
-    expect(objectiveStateSource).toContain('case "mara-ada-form-intent"');
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteScaffoldOutcomeEvaluation",
+    );
   });
 
   it("keeps work route outcome, step, and headline metadata in scaffold data, not objective-state control flow", () => {

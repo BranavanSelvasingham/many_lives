@@ -613,6 +613,128 @@ describe("objectiveState classification", () => {
     });
   });
 
+  it("preserves first-afternoon shift and take-stock predicate evidence and failures", () => {
+    const setupLeadAndTeaJob = (world: StreetGameState) => {
+      addConversationWith(world, "npc-mara");
+      addConversationWith(world, "npc-ada");
+      setFirstAfternoonLeadFieldNote(world);
+      world.firstAfternoon = {
+        ...world.firstAfternoon,
+        planSettledAt: world.currentTime,
+      };
+      const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+      if (!teaJob) {
+        throw new Error("Missing tea shift job");
+      }
+      teaJob.discovered = true;
+      return teaJob;
+    };
+
+    const accepted = seedStreetGame(
+      "objective-first-afternoon-shift-accepted",
+    );
+    const acceptedTeaJob = setupLeadAndTeaJob(accepted);
+    acceptedTeaJob.accepted = true;
+    const acceptedObjective = firstAfternoonObjective(accepted);
+    expect(
+      objectiveOutcome(acceptedObjective, "first-afternoon-take-shift"),
+    ).toMatchObject({
+      evidence: "Shift accepted.",
+      status: "met",
+    });
+    expect(
+      objectiveOutcome(acceptedObjective, "first-afternoon-start-shift"),
+    ).toMatchObject({
+      blockers: ["The lunch rush has not started for Rowan yet."],
+      status: "blocked",
+    });
+
+    const started = seedStreetGame("objective-first-afternoon-shift-started");
+    const startedTeaJob = setupLeadAndTeaJob(started);
+    startedTeaJob.accepted = true;
+    started.player.activeJobId = "job-tea-shift";
+    started.firstAfternoon = {
+      ...started.firstAfternoon,
+      teaShiftStage: "rush",
+    };
+    const startedObjective = firstAfternoonObjective(started);
+    expect(
+      objectiveOutcome(startedObjective, "first-afternoon-start-shift"),
+    ).toMatchObject({
+      evidence: "rush",
+      status: "met",
+    });
+
+    const completed = seedStreetGame(
+      "objective-first-afternoon-shift-completed",
+    );
+    const completedTeaJob = setupLeadAndTeaJob(completed);
+    completedTeaJob.completed = true;
+    completed.player.currentLocationId = "tea-house";
+    completed.firstAfternoon = {
+      ...completed.firstAfternoon,
+      teaShiftStage: "paid",
+    };
+    const completedObjective = firstAfternoonObjective(completed);
+    expect(
+      objectiveOutcome(completedObjective, "first-afternoon-finish-shift"),
+    ).toMatchObject({
+      evidence: "Ada paid Rowan for the shift.",
+      status: "met",
+    });
+    expect(
+      objectiveOutcome(completedObjective, "first-afternoon-take-stock"),
+    ).toMatchObject({
+      blockers: ["Rowan is not back at Morrow House yet."],
+      status: "blocked",
+    });
+
+    completed.player.currentLocationId = completed.player.homeLocationId;
+    const homeObjective = firstAfternoonObjective(completed);
+    expect(
+      objectiveOutcome(homeObjective, "first-afternoon-take-stock"),
+    ).toMatchObject({
+      blockers: ["Rowan has not taken stock yet."],
+      status: "blocked",
+    });
+
+    completed.firstAfternoon = {
+      ...completed.firstAfternoon,
+      completedAt: completed.currentTime,
+      fieldNote: {
+        createdAt: completed.currentTime,
+        evidence: "Ada paid Rowan after the Kettle & Lamp shift.",
+        learned: "Tonight's room holds.",
+        memory: "The first afternoon ended with paid work.",
+        next: "Let tomorrow's lead compete with live pressure.",
+      },
+    };
+    const stockObjective = firstAfternoonObjective(completed);
+    expect(
+      objectiveOutcome(stockObjective, "first-afternoon-take-stock"),
+    ).toMatchObject({
+      evidence: "Ada paid Rowan after the Kettle & Lamp shift.",
+      status: "met",
+    });
+
+    const missed = seedStreetGame("objective-first-afternoon-shift-missed");
+    const missedTeaJob = setupLeadAndTeaJob(missed);
+    missedTeaJob.missed = true;
+    const missedObjective = firstAfternoonObjective(missed);
+    expect(
+      objectiveOutcome(missedObjective, "first-afternoon-take-shift"),
+    ).toMatchObject({
+      blockers: ["The cup-and-counter shift window has slipped."],
+      status: "failed",
+    });
+    expect(
+      objectiveOutcome(missedObjective, "first-afternoon-finish-shift"),
+    ).toMatchObject({
+      blockers: ["The cup-and-counter shift was missed."],
+      status: "failed",
+    });
+  });
+
   it("exposes Mara's Ada lead as predicate authority, not trail authority", () => {
     const world = seedStreetGame("objective-mara-ada-predicates");
 
@@ -858,6 +980,160 @@ describe("objectiveState classification", () => {
       done: true,
       progress: "Choice unlocked",
       targetLocationId: "tea-house",
+    });
+  });
+
+  it("preserves Mara/Ada lead predicate sources and work-choice gating", () => {
+    const heardCases = [
+      {
+        name: "conversation",
+        setup: (world: StreetGameState) => addConversationWith(world, "npc-mara"),
+      },
+      {
+        name: "plan",
+        setup: (world: StreetGameState) => {
+          world.firstAfternoon = {
+            ...world.firstAfternoon,
+            planSettledAt: world.currentTime,
+          };
+        },
+      },
+      {
+        name: "field-note",
+        setup: setFirstAfternoonLeadFieldNote,
+      },
+    ];
+
+    for (const testCase of heardCases) {
+      const world = seedStreetGame(`objective-mara-ada-heard-${testCase.name}`);
+      testCase.setup(world);
+      expect(
+        objectiveOutcome(
+          maraAdaLeadObjective(world),
+          "mara-ada-hear-lead",
+        ),
+      ).toMatchObject({
+        evidence:
+          "Mara has explained what tonight's room and first lead require.",
+        status: "met",
+      });
+    }
+
+    const reachedByLocation = seedStreetGame(
+      "objective-mara-ada-reached-location",
+    );
+    reachedByLocation.player.currentLocationId = "tea-house";
+    expect(
+      objectiveOutcome(
+        maraAdaLeadObjective(reachedByLocation),
+        "mara-ada-walk-route",
+      ),
+    ).toMatchObject({
+      evidence: "tea-house",
+      status: "met",
+    });
+
+    const reachedByAda = seedStreetGame("objective-mara-ada-reached-ada");
+    addConversationWith(reachedByAda, "npc-ada");
+    expect(
+      objectiveOutcome(
+        maraAdaLeadObjective(reachedByAda),
+        "mara-ada-walk-route",
+      ),
+    ).toMatchObject({
+      status: "met",
+    });
+    expect(
+      objectiveOutcome(
+        maraAdaLeadObjective(reachedByAda),
+        "mara-ada-ask-directly",
+      ),
+    ).toMatchObject({
+      status: "met",
+    });
+
+    const verifiedByAcceptedJob = seedStreetGame(
+      "objective-mara-ada-verified-accepted-job",
+    );
+    const acceptedTeaJob = verifiedByAcceptedJob.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    if (!acceptedTeaJob) {
+      throw new Error("Missing tea shift job");
+    }
+    acceptedTeaJob.accepted = true;
+    expect(
+      objectiveOutcome(
+        maraAdaLeadObjective(verifiedByAcceptedJob),
+        "mara-ada-ask-directly",
+      ),
+    ).toMatchObject({
+      status: "met",
+    });
+
+    const verifiedByCompletedJob = seedStreetGame(
+      "objective-mara-ada-verified-completed-job",
+    );
+    const completedTeaJob = verifiedByCompletedJob.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    if (!completedTeaJob) {
+      throw new Error("Missing tea shift job");
+    }
+    completedTeaJob.completed = true;
+    expect(
+      objectiveOutcome(
+        maraAdaLeadObjective(verifiedByCompletedJob),
+        "mara-ada-ask-directly",
+      ),
+    ).toMatchObject({
+      status: "met",
+    });
+
+    const noteOnly = seedStreetGame("objective-mara-ada-choice-note-only");
+    setFirstAfternoonLeadFieldNote(noteOnly);
+    expect(
+      objectiveOutcome(maraAdaLeadObjective(noteOnly), "mara-ada-open-choice"),
+    ).toMatchObject({
+      blockers: ["The lead has not opened a legal work choice yet."],
+      status: "blocked",
+    });
+
+    const choiceOpen = seedStreetGame("objective-mara-ada-choice-open");
+    setFirstAfternoonLeadFieldNote(choiceOpen);
+    const choiceTeaJob = choiceOpen.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    if (!choiceTeaJob) {
+      throw new Error("Missing tea shift job");
+    }
+    choiceTeaJob.discovered = true;
+    expect(
+      objectiveOutcome(maraAdaLeadObjective(choiceOpen), "mara-ada-open-choice"),
+    ).toMatchObject({
+      evidence: "Cup-and-counter shift is available.",
+      status: "met",
+    });
+
+    const closedChoice = seedStreetGame("objective-mara-ada-choice-closed");
+    setFirstAfternoonLeadFieldNote(closedChoice);
+    const closedChoiceTeaJob = closedChoice.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    if (!closedChoiceTeaJob) {
+      throw new Error("Missing tea shift job");
+    }
+    closedChoiceTeaJob.discovered = true;
+    closedChoiceTeaJob.missed = true;
+    expect(
+      objectiveOutcome(
+        maraAdaLeadObjective(closedChoice),
+        "mara-ada-open-choice",
+      ),
+    ).toMatchObject({
+      blockers: ["The lead has not opened a legal work choice yet."],
+      evidence: "Cup-and-counter shift is available.",
+      status: "blocked",
     });
   });
 

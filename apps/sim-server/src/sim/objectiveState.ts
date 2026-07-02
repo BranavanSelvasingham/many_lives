@@ -22,6 +22,7 @@ import {
   objectiveRoutePumpProblemRouteScaffold,
   objectiveRouteRestRouteScaffold,
   objectiveRouteScaffoldAbsorbsConversationFocus,
+  objectiveRouteScaffoldOutcomeEvaluation,
   objectiveRouteScaffoldRetainedRouteKey,
   objectiveRouteScaffoldRouteKeyForObjectiveText,
   objectiveRouteSettleRouteScaffold,
@@ -433,8 +434,16 @@ function evaluateObjectiveOutcome(
   route: ObjectiveRoute,
   definition: ObjectiveOutcomeDefinition,
 ): ObjectiveOutcomeEvaluation | undefined {
-  const teaJob = jobById(world, "job-tea-shift");
-  const teaLeadViable = firstAfternoonAdaLeadViable(world, teaJob);
+  const scaffoldEvaluation = objectiveRouteScaffoldOutcomeEvaluation({
+    outcomeId: definition.id,
+    routeKey: route.key,
+    world,
+  });
+
+  if (scaffoldEvaluation) {
+    return scaffoldEvaluation;
+  }
+
   const pumpProblem = problemById(world, "problem-pump");
   const cartProblem = problemById(world, "problem-cart");
   const hasWrench = hasItem(world, "item-wrench");
@@ -469,124 +478,6 @@ function evaluateObjectiveOutcome(
   }
 
   switch (definition.id) {
-    case "mara-ada-hear-lead":
-    case "first-afternoon-room":
-      return outcomeEvaluation(
-        countPlayerConversationsWithNpc(world, "npc-mara") > 0 ||
-          Boolean(
-            world.firstAfternoon?.planSettledAt ||
-            world.firstAfternoon?.leadFieldNote,
-          ),
-        {
-          evidence:
-            "Mara has explained what tonight's room and first lead require.",
-        },
-      );
-    case "mara-ada-form-intent":
-      return outcomeEvaluation(route.key === "mara-ada-lead", {
-        blockers: ["Rowan has not made the verification intent explicit yet."],
-        evidence:
-          route.key === "mara-ada-lead"
-            ? "The current objective is explicitly to verify Mara's Ada lead."
-            : undefined,
-      });
-    case "first-afternoon-choose-move":
-      return outcomeEvaluation(Boolean(world.firstAfternoon?.planSettledAt), {
-        blockers: [
-          teaLeadViable
-            ? "Rowan has not chosen the useful first move yet."
-            : "Ada's lunch window has slipped; Rowan needs a current live alternative.",
-        ],
-        evidence: world.firstAfternoon?.planSettledAt,
-      });
-    case "mara-ada-walk-route":
-      return outcomeEvaluation(
-        world.player.currentLocationId === "tea-house" ||
-          countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
-          Boolean(world.firstAfternoon?.leadFieldNote),
-        { evidence: world.player.currentLocationId },
-      );
-    case "mara-ada-ask-directly":
-    case "first-afternoon-ada-lead":
-      return outcomeEvaluation(
-        countPlayerConversationsWithNpc(world, "npc-ada") > 0 ||
-          Boolean(teaJob?.accepted || teaJob?.completed),
-        {
-          blockers: [
-            teaLeadViable
-              ? "Ada has not confirmed the Kettle & Lamp lead yet."
-              : "Ada's lunch work is no longer a live lead.",
-          ],
-          evidence: teaJob?.discovered
-            ? "Kettle & Lamp work is discovered."
-            : undefined,
-        },
-      );
-    case "mara-ada-record-evidence":
-    case "first-afternoon-record-lead":
-      return outcomeEvaluation(Boolean(world.firstAfternoon?.leadFieldNote), {
-        blockers: ["The lead has not been recorded as grounded evidence."],
-        evidence: world.firstAfternoon?.leadFieldNote?.evidence,
-      });
-    case "mara-ada-open-choice":
-      return outcomeEvaluation(
-        Boolean(
-          world.firstAfternoon?.leadFieldNote &&
-          teaJob?.discovered &&
-          teaLeadViable,
-        ),
-        {
-          blockers: ["The lead has not opened a legal work choice yet."],
-          evidence: teaJob?.discovered
-            ? "Cup-and-counter shift is available."
-            : undefined,
-        },
-      );
-    case "first-afternoon-take-shift":
-      return outcomeEvaluation(
-        Boolean(
-          teaJob?.accepted ||
-          teaJob?.completed ||
-          world.player.activeJobId === "job-tea-shift",
-        ),
-        {
-          blockers: teaJob?.missed
-            ? ["The cup-and-counter shift window has slipped."]
-            : ["Rowan has not committed to the cup-and-counter shift."],
-          evidence: teaJob?.accepted ? "Shift accepted." : undefined,
-          failed: Boolean(teaJob?.missed && !teaJob.completed),
-        },
-      );
-    case "first-afternoon-start-shift":
-      return outcomeEvaluation(
-        Boolean(
-          world.firstAfternoon?.teaShiftStage === "rush" ||
-          world.firstAfternoon?.teaShiftStage === "counter" ||
-          world.firstAfternoon?.teaShiftStage === "paid" ||
-          teaJob?.completed,
-        ),
-        {
-          blockers: ["The lunch rush has not started for Rowan yet."],
-          evidence: world.firstAfternoon?.teaShiftStage,
-        },
-      );
-    case "first-afternoon-finish-shift":
-      return outcomeEvaluation(Boolean(teaJob?.completed), {
-        blockers: teaJob?.missed
-          ? ["The cup-and-counter shift was missed."]
-          : ["The cup-and-counter shift is not finished yet."],
-        evidence: teaJob?.completed
-          ? "Ada paid Rowan for the shift."
-          : undefined,
-        failed: Boolean(teaJob?.missed && !teaJob.completed),
-      });
-    case "first-afternoon-take-stock":
-      return outcomeEvaluation(Boolean(world.firstAfternoon?.completedAt), {
-        blockers: atHome
-          ? ["Rowan has not taken stock yet."]
-          : ["Rowan is not back at Morrow House yet."],
-        evidence: world.firstAfternoon?.fieldNote?.evidence,
-      });
     case "settle-terms": {
       const maraTopics = npcReplyTopics(world, "npc-mara");
       return outcomeEvaluation(
