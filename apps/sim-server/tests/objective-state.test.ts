@@ -36,6 +36,32 @@ function addNpcReplyWith(world: StreetGameState, npcId: string, text: string) {
   });
 }
 
+function addConversationObjective(
+  world: StreetGameState,
+  npcId: string,
+  objectiveText: string,
+) {
+  const threadId = `thread-${world.id}-${npcId}-objective`;
+  const line = {
+    id: `conversation-${world.id}-${npcId}-objective`,
+    locationId: world.player.currentLocationId,
+    npcId,
+    speaker: "npc" as const,
+    speakerName: npcId,
+    text: objectiveText,
+    threadId,
+    time: world.currentTime,
+  };
+  world.conversationThreads[npcId] = {
+    id: threadId,
+    lines: [line],
+    locationId: world.player.currentLocationId,
+    npcId,
+    objectiveText,
+    updatedAt: world.currentTime,
+  };
+}
+
 function setFirstAfternoonLeadFieldNote(world: StreetGameState) {
   world.firstAfternoon = {
     ...world.firstAfternoon,
@@ -833,6 +859,159 @@ describe("objectiveState classification", () => {
       progress: "Choice unlocked",
       targetLocationId: "tea-house",
     });
+  });
+
+  it("keeps first-afternoon route retention and text matching owned by scaffolds", () => {
+    const objectiveStateSource = readFileSync(
+      new URL("../src/sim/objectiveState.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+
+    for (const helperName of [
+      "shouldKeepFirstAfternoonRoute",
+      "shouldKeepMaraAdaLeadRoute",
+      "shouldFirstAfternoonAbsorbConversationRoute",
+      "shouldMaraAdaLeadAbsorbConversationRoute",
+      "isMaraAdaLeadObjectiveText",
+    ]) {
+      expect(objectiveStateSource).not.toContain(helperName);
+    }
+
+    for (const policySnippet of [
+      "completionAcknowledgedAt",
+      'normalizedIncludes(text, "first afternoon")',
+      "grounded knowledge",
+      "what rowan learns",
+    ]) {
+      expect(objectiveStateSource).not.toContain(policySnippet);
+    }
+
+    expect(scaffoldSource).toContain("objectiveStatePolicies");
+    expect(scaffoldSource).toContain(
+      "objectiveRouteScaffoldRetainedRouteKey",
+    );
+    expect(scaffoldSource).toContain(
+      "objectiveRouteScaffoldAbsorbsConversationFocus",
+    );
+    expect(scaffoldSource).toContain(
+      "objectiveRouteScaffoldRouteKeyForObjectiveText",
+    );
+    expect(scaffoldSource).toContain("completionAcknowledgedAt");
+    expect(scaffoldSource).toContain("textMatchesMaraAdaLeadObjective");
+  });
+
+  it("retains first-afternoon through settle/work conversation routes until acknowledgement", () => {
+    const cases = [
+      {
+        expectedReleasedRouteKey: "settle-core",
+        npcId: "npc-mara",
+        text: "Find out what it takes to keep my room at Morrow House tonight.",
+      },
+      {
+        expectedReleasedRouteKey: "work-tea",
+        npcId: "npc-ada",
+        text: "Earn money at Kettle & Lamp before lunch.",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const world = seedStreetGame(
+        `objective-first-afternoon-retains-${testCase.expectedReleasedRouteKey}`,
+      );
+      const previous = firstAfternoonObjective(world);
+      expect(previous?.routeKey).toBe("first-afternoon");
+      world.player.objective = previous;
+      addConversationObjective(world, testCase.npcId, testCase.text);
+
+      const retained = buildPlayerObjectiveState(world, { previous });
+
+      expect(retained).toMatchObject({
+        routeKey: "first-afternoon",
+        text: previous?.text,
+      });
+
+      world.firstAfternoon = {
+        ...world.firstAfternoon,
+        completionAcknowledgedAt: world.currentTime,
+      };
+
+      const released = buildPlayerObjectiveState(world, { previous });
+
+      expect(released?.routeKey).toBe(testCase.expectedReleasedRouteKey);
+    }
+  });
+
+  it("retains Mara's Ada lead through settle/work conversation routes", () => {
+    const cases = [
+      {
+        npcId: "npc-mara",
+        text: "Find out what it takes to keep my room at Morrow House tonight.",
+      },
+      {
+        npcId: "npc-ada",
+        text: "Earn money at Kettle & Lamp before lunch.",
+      },
+    ];
+
+    for (const testCase of cases) {
+      const world = seedStreetGame(
+        `objective-mara-ada-retains-${testCase.npcId}`,
+      );
+      const previous = maraAdaLeadObjective(world, "seed");
+      expect(previous?.routeKey).toBe("mara-ada-lead");
+      world.player.objective = previous;
+      addConversationObjective(world, testCase.npcId, testCase.text);
+
+      const retained = buildPlayerObjectiveState(world, { previous });
+
+      expect(retained).toMatchObject({
+        routeKey: "mara-ada-lead",
+        text: previous?.text,
+      });
+    }
+  });
+
+  it("routes explicit first-afternoon and Mara/Ada text while preserving unrelated objectives", () => {
+    const firstAfternoonWorld = seedStreetGame(
+      "objective-explicit-first-afternoon-text",
+    );
+    const firstAfternoon = buildPlayerObjectiveState(firstAfternoonWorld, {
+      source: "manual",
+      text: "Make Rowan's first afternoon count before the day moves on.",
+    });
+
+    expect(firstAfternoon?.routeKey).toBe("first-afternoon");
+
+    const maraAdaWorld = seedStreetGame("objective-explicit-mara-ada-text");
+    const maraAda = buildPlayerObjectiveState(maraAdaWorld, {
+      source: "manual",
+      text: "Verify Mara's lead by walking to Kettle & Lamp, asking Ada about lunch work, and recording what Rowan learns.",
+    });
+
+    expect(maraAda?.routeKey).toBe("mara-ada-lead");
+
+    const manualSettleWorld = seedStreetGame("objective-manual-settle-text");
+    const manualSettle = buildPlayerObjectiveState(manualSettleWorld, {
+      source: "manual",
+      text: "Find out what it takes to keep my room at Morrow House tonight.",
+    });
+
+    expect(manualSettle?.routeKey).toBe("settle-core");
+
+    const conversationWorld = seedStreetGame("objective-unrelated-conversation");
+    conversationWorld.player.knownNpcIds = Array.from(
+      new Set([...conversationWorld.player.knownNpcIds, "npc-nia"]),
+    );
+    const conversationPeople = buildPlayerObjectiveState(conversationWorld, {
+      source: "conversation",
+      text: "Ask Nia where the block is about to jam before the square feels it.",
+    });
+
+    expect(conversationPeople?.routeKey).toBe("people-npc-nia");
   });
 
   it("exposes settle routes as room, standing, work, income, and people predicates", () => {

@@ -7,6 +7,8 @@ import type {
   ObjectiveFocus,
   ObjectiveOutcomeStatus,
   ObjectiveTrailItem,
+  ObjectiveSource,
+  PlayerObjective,
   ProblemState,
   StreetGameState,
 } from "../street-sim/types.js";
@@ -53,6 +55,23 @@ interface OutcomeMoveRationaleHint {
 interface PlayerFacingRationaleNormalizationHint {
   matches: (normalizedRationale: string, context: ScaffoldContext) => boolean;
   rationale: string | ((context: ScaffoldContext) => string);
+}
+
+interface ObjectiveRouteTextMatchInput {
+  normalizedText: string;
+  previous?: PlayerObjective;
+  source: ObjectiveSource;
+  text: string;
+}
+
+interface ObjectiveRouteSelectionPolicy {
+  absorbConversationFocuses?: ObjectiveFocus[];
+  matchesObjectiveText?: (input: ObjectiveRouteTextMatchInput) => boolean;
+  retainPrevious?: (input: {
+    previous: PlayerObjective;
+    world: StreetGameState;
+  }) => boolean;
+  routeKey: string;
 }
 
 interface ActionLocationReasonHint {
@@ -1236,6 +1255,7 @@ interface ObjectiveRouteScaffold {
   notebookPlanFallback?: string;
   objectiveFocuses?: ObjectiveFocus[];
   objectiveMatches?: (objective: ObjectiveScaffoldDirective) => boolean;
+  objectiveStatePolicies?: ObjectiveRouteSelectionPolicy[];
   outcomeMoveRationales?: OutcomeMoveRationaleHint[];
   playerFacingRationaleNormalizations?: PlayerFacingRationaleNormalizationHint[];
   playerThoughts?: PlayerThoughtHint[];
@@ -3427,6 +3447,34 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       playerThought:
         "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.",
     },
+    objectiveStatePolicies: [
+      {
+        absorbConversationFocuses: ["settle", "work"],
+        matchesObjectiveText: ({ text }) =>
+          textMatchesMaraAdaLeadObjective(text),
+        retainPrevious: ({ previous }) =>
+          previous.routeKey === "mara-ada-lead",
+        routeKey: "mara-ada-lead",
+      },
+      {
+        absorbConversationFocuses: ["settle", "work"],
+        matchesObjectiveText: ({
+          normalizedText,
+          previous,
+          source,
+          text,
+        }) =>
+          normalizedText.includes("first afternoon") ||
+          (previous?.routeKey === "first-afternoon" &&
+            source !== "manual" &&
+            normalizeObjectiveRouteTextForPolicy(text) ===
+              normalizeObjectiveRouteTextForPolicy(previous.text)),
+        retainPrevious: ({ previous, world }) =>
+          previous.routeKey === "first-afternoon" &&
+          !world.firstAfternoon?.completionAcknowledgedAt,
+        routeKey: "first-afternoon",
+      },
+    ],
     firstAfternoon: {
       compareChoice: {
         currentThought:
@@ -5002,6 +5050,41 @@ export function objectiveRouteDefaultTextForFocus(focus: ObjectiveFocus) {
     default:
       return undefined;
   }
+}
+
+export function objectiveRouteScaffoldRetainedRouteKey(
+  world: StreetGameState,
+  previous: PlayerObjective,
+) {
+  return objectiveRouteSelectionPolicies().find((policy) =>
+    policy.retainPrevious?.({ previous, world }),
+  )?.routeKey;
+}
+
+export function objectiveRouteScaffoldAbsorbsConversationFocus(
+  routeKey: string | undefined,
+  focus: ObjectiveFocus,
+) {
+  return Boolean(
+    routeKey &&
+      objectiveRouteSelectionPolicyForRouteKey(
+        routeKey,
+      )?.absorbConversationFocuses?.includes(focus),
+  );
+}
+
+export function objectiveRouteScaffoldRouteKeyForObjectiveText(input: {
+  previous?: PlayerObjective;
+  source: ObjectiveSource;
+  text: string;
+}) {
+  const normalizedText = input.text.toLowerCase();
+  return objectiveRouteSelectionPolicies().find((policy) =>
+    policy.matchesObjectiveText?.({
+      ...input,
+      normalizedText,
+    }),
+  )?.routeKey;
 }
 
 export function objectiveRoutePeopleRouteScaffold(state: PeopleRouteState): {
@@ -6610,6 +6693,55 @@ function activeScaffolds(input: string | ObjectiveScaffoldDirective) {
             scaffold.objectiveMatches?.(objective),
         )),
   );
+}
+
+function objectiveRouteSelectionPolicies() {
+  return OBJECTIVE_ROUTE_SCAFFOLDS.flatMap(
+    (scaffold) => scaffold.objectiveStatePolicies ?? [],
+  );
+}
+
+function objectiveRouteSelectionPolicyForRouteKey(routeKey: string) {
+  return objectiveRouteSelectionPolicies().find(
+    (policy) => policy.routeKey === routeKey,
+  );
+}
+
+function textMatchesMaraAdaLeadObjective(text: string) {
+  const normalized = text.toLowerCase();
+  const pointsToMaraLead =
+    /\bmara\b/.test(normalized) &&
+    /\blead\b|\bverify\b|\bgrounded knowledge\b|\bgrounded\b/.test(
+      normalized,
+    );
+  const pointsToAdaWork =
+    /\bada\b|\bkettle & lamp\b|\btea[- ]house\b/.test(normalized) &&
+    /\bwork\b|\blunch\b|\bshift\b|\bhands?\b|\bask\b/.test(normalized);
+  const asksForFieldNote =
+    /\brecord\b|\bfield note\b|\bwhat rowan learns\b|\bevidence\b/.test(
+      normalized,
+    );
+
+  return pointsToAdaWork && (pointsToMaraLead || asksForFieldNote);
+}
+
+function normalizeObjectiveRouteTextForPolicy(text: string) {
+  const cleaned = text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^"+|"+$/g, "");
+  const maxChars = 140;
+  if (cleaned.length <= maxChars) {
+    return cleaned;
+  }
+
+  const withinLimit = cleaned.slice(0, maxChars).trimEnd();
+  const lastSpace = withinLimit.lastIndexOf(" ");
+  const base =
+    lastSpace > Math.floor(maxChars * 0.7)
+      ? withinLimit.slice(0, lastSpace)
+      : withinLimit;
+  return `${base.replace(/["'.,!?;:]+$/g, "").trimEnd()}...`;
 }
 
 function normalizePlayerFacingRationale(text: string) {

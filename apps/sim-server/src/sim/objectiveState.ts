@@ -21,6 +21,9 @@ import {
   objectiveRouteProblemToolOutcomeEvaluation,
   objectiveRoutePumpProblemRouteScaffold,
   objectiveRouteRestRouteScaffold,
+  objectiveRouteScaffoldAbsorbsConversationFocus,
+  objectiveRouteScaffoldRetainedRouteKey,
+  objectiveRouteScaffoldRouteKeyForObjectiveText,
   objectiveRouteSettleRouteScaffold,
   objectiveRouteToolProblemRouteScaffold,
   objectiveRouteWorkRouteScaffold,
@@ -100,31 +103,29 @@ export function buildPlayerObjectiveState(
   const explicitSource = options.source ?? previous?.source ?? "dynamic";
   const conversationRoute =
     explicitSource === "manual" ? undefined : chooseConversationRoute(world);
+  const retainedScaffoldRouteKey = previous
+    ? objectiveRouteScaffoldRetainedRouteKey(world, previous)
+    : undefined;
+  const retainedScaffoldRoute =
+    previous && retainedScaffoldRouteKey
+      ? buildRouteForScaffoldRouteKey(
+          world,
+          retainedScaffoldRouteKey,
+          previous.source,
+        )
+      : undefined;
 
   if (
     previous &&
     explicitText &&
     explicitSource === "conversation" &&
-    shouldKeepFirstAfternoonRoute(world, previous) &&
-    shouldFirstAfternoonAbsorbConversationRoute(
+    retainedScaffoldRoute &&
+    objectiveRouteScaffoldAbsorbsConversationFocus(
+      retainedScaffoldRoute.key,
       explicitFocus ?? classifyObjective(explicitText),
     )
   ) {
-    const route = buildFirstAfternoonRoute(world, previous.source);
-    return composeObjective(world, previous.text, route, previous);
-  }
-
-  if (
-    previous &&
-    explicitText &&
-    explicitSource === "conversation" &&
-    shouldKeepMaraAdaLeadRoute(previous) &&
-    shouldMaraAdaLeadAbsorbConversationRoute(
-      explicitFocus ?? classifyObjective(explicitText),
-    )
-  ) {
-    const route = buildMaraAdaLeadRoute(world, previous.source);
-    return composeObjective(world, previous.text, route, previous);
+    return composeObjective(world, previous.text, retainedScaffoldRoute, previous);
   }
 
   if (explicitText) {
@@ -140,24 +141,14 @@ export function buildPlayerObjectiveState(
 
   if (
     previous &&
-    shouldKeepFirstAfternoonRoute(world, previous) &&
+    retainedScaffoldRoute &&
     (!conversationRoute ||
-      shouldFirstAfternoonAbsorbConversationRoute(
+      objectiveRouteScaffoldAbsorbsConversationFocus(
+        retainedScaffoldRoute.key,
         conversationRoute.route.focus,
       ))
   ) {
-    const previousRoute = buildFirstAfternoonRoute(world, previous.source);
-    return composeObjective(world, previous.text, previousRoute, previous);
-  }
-
-  if (
-    previous &&
-    shouldKeepMaraAdaLeadRoute(previous) &&
-    (!conversationRoute ||
-      shouldMaraAdaLeadAbsorbConversationRoute(conversationRoute.route.focus))
-  ) {
-    const previousRoute = buildMaraAdaLeadRoute(world, previous.source);
-    return composeObjective(world, previous.text, previousRoute, previous);
+    return composeObjective(world, previous.text, retainedScaffoldRoute, previous);
   }
 
   if (conversationRoute && routeHasWork(conversationRoute.route)) {
@@ -866,28 +857,6 @@ function objectiveTargetProblem(world: StreetGameState, objectiveText: string) {
   );
 }
 
-function shouldKeepFirstAfternoonRoute(
-  world: StreetGameState,
-  previous: PlayerObjective,
-) {
-  return (
-    previous.routeKey === "first-afternoon" &&
-    !world.firstAfternoon?.completionAcknowledgedAt
-  );
-}
-
-function shouldKeepMaraAdaLeadRoute(previous: PlayerObjective) {
-  return previous.routeKey === "mara-ada-lead";
-}
-
-function shouldFirstAfternoonAbsorbConversationRoute(focus: ObjectiveFocus) {
-  return focus === "settle" || focus === "work";
-}
-
-function shouldMaraAdaLeadAbsorbConversationRoute(focus: ObjectiveFocus) {
-  return focus === "settle" || focus === "work";
-}
-
 function shouldInterruptCurrentObjective(
   world: StreetGameState,
   previous: PlayerObjective,
@@ -1055,17 +1024,17 @@ function buildRouteForObjectiveText(
   source: ObjectiveSource,
   previous?: PlayerObjective,
 ): ObjectiveRoute {
-  if (isMaraAdaLeadObjectiveText(text)) {
-    return buildMaraAdaLeadRoute(world, source);
-  }
-
-  if (
-    normalizedIncludes(text, "first afternoon") ||
-    (previous?.routeKey === "first-afternoon" &&
-      source !== "manual" &&
-      normalizeObjectiveText(text) === normalizeObjectiveText(previous.text))
-  ) {
-    return buildFirstAfternoonRoute(world, source);
+  const scaffoldRoute = buildRouteForScaffoldRouteKey(
+    world,
+    objectiveRouteScaffoldRouteKeyForObjectiveText({
+      previous,
+      source,
+      text,
+    }),
+    source,
+  );
+  if (scaffoldRoute) {
+    return scaffoldRoute;
   }
 
   switch (focus) {
@@ -1085,6 +1054,21 @@ function buildRouteForObjectiveText(
     case "custom":
     default:
       return buildSettleRoute(world, source, text);
+  }
+}
+
+function buildRouteForScaffoldRouteKey(
+  world: StreetGameState,
+  routeKey: string | undefined,
+  source: ObjectiveSource,
+): ObjectiveRoute | undefined {
+  switch (routeKey) {
+    case "mara-ada-lead":
+      return buildMaraAdaLeadRoute(world, source);
+    case "first-afternoon":
+      return buildFirstAfternoonRoute(world, source);
+    default:
+      return undefined;
   }
 }
 
@@ -2033,22 +2017,6 @@ function hasConfirmedWorkLead(world: StreetGameState) {
 
 function normalizedIncludes(text: string, needle: string) {
   return text.toLowerCase().includes(needle.toLowerCase());
-}
-
-function isMaraAdaLeadObjectiveText(text: string) {
-  const normalized = text.toLowerCase();
-  const pointsToMaraLead =
-    /\bmara\b/.test(normalized) &&
-    /\blead\b|\bverify\b|\bgrounded knowledge\b|\bgrounded\b/.test(normalized);
-  const pointsToAdaWork =
-    /\bada\b|\bkettle & lamp\b|\btea[- ]house\b/.test(normalized) &&
-    /\bwork\b|\blunch\b|\bshift\b|\bhands?\b|\bask\b/.test(normalized);
-  const asksForFieldNote =
-    /\brecord\b|\bfield note\b|\bwhat rowan learns\b|\bevidence\b/.test(
-      normalized,
-    );
-
-  return pointsToAdaWork && (pointsToMaraLead || asksForFieldNote);
 }
 
 function detectTopics(text: string) {
