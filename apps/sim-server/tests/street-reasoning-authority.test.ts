@@ -2586,8 +2586,18 @@ describe("street reasoning authority", () => {
       expect(scaffoldSource).toContain(predicateCopy);
       expect(objectiveStateSource).not.toContain(predicateCopy);
     }
-    expect(objectiveStateSource).toContain(
+    for (const routeConstructionSnippet of [
+      'case "first-afternoon"',
+      "buildFirstAfternoonRoute",
       "objectiveRouteFirstAfternoonRouteScaffold",
+      "wrappedFirstAfternoon",
+      "hasStartedTeaShift",
+    ]) {
+      expect(objectiveStateSource).not.toContain(routeConstructionSnippet);
+    }
+    expect(scaffoldSource).toContain("objectiveRouteScaffoldRouteForRouteKey");
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteScaffoldRouteForRouteKey",
     );
     expect(objectiveStateSource).toContain(
       "objectiveRouteScaffoldOutcomeEvaluation",
@@ -2637,8 +2647,18 @@ describe("street reasoning authority", () => {
       expect(scaffoldSource).toContain(predicateCopy);
       expect(objectiveStateSource).not.toContain(predicateCopy);
     }
-    expect(objectiveStateSource).toContain(
+    for (const routeConstructionSnippet of [
+      'case "mara-ada-lead"',
+      "buildMaraAdaLeadRoute",
       "objectiveRouteMaraAdaLeadRouteScaffold",
+      "hasFormedVerificationIntent",
+      "hasOpenWorkChoice",
+    ]) {
+      expect(objectiveStateSource).not.toContain(routeConstructionSnippet);
+    }
+    expect(scaffoldSource).toContain("objectiveRouteScaffoldRouteForRouteKey");
+    expect(objectiveStateSource).toContain(
+      "objectiveRouteScaffoldRouteForRouteKey",
     );
     expect(objectiveStateSource).toContain(
       "objectiveRouteScaffoldOutcomeEvaluation",

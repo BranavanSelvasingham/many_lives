@@ -386,6 +386,16 @@ export interface ObjectiveRouteOutcomeDefinition {
   actionId?: string;
 }
 
+export interface ObjectiveRouteScaffoldRoute {
+  key: string;
+  focus: ObjectiveFocus;
+  source: ObjectiveSource;
+  steps: ObjectiveTrailItem[];
+  outcomes: ObjectiveRouteOutcomeDefinition[];
+  terminal?: boolean;
+  preferHeadlineText?: boolean;
+}
+
 export interface FirstAfternoonRouteState {
   atHome: boolean;
   hasActiveTeaJob: boolean;
@@ -5085,6 +5095,133 @@ export function objectiveRouteScaffoldRouteKeyForObjectiveText(input: {
       normalizedText,
     }),
   )?.routeKey;
+}
+
+export function objectiveRouteScaffoldRouteForRouteKey(input: {
+  routeKey: string | undefined;
+  source: ObjectiveSource;
+  world: StreetGameState;
+}): ObjectiveRouteScaffoldRoute | undefined {
+  switch (input.routeKey) {
+    case "mara-ada-lead":
+      return buildMaraAdaLeadRoute(input.world, input.source);
+    case "first-afternoon":
+      return buildFirstAfternoonRoute(input.world, input.source);
+    default:
+      return undefined;
+  }
+}
+
+function buildMaraAdaLeadRoute(
+  world: StreetGameState,
+  source: ObjectiveSource,
+): ObjectiveRouteScaffoldRoute {
+  const home = findLocation(world, world.player.homeLocationId);
+  const teaJob = jobById(world, "job-tea-shift");
+  const teaLeadViable = firstAfternoonRouteAdaLeadViable(world, teaJob);
+  const hasTalkedToMara =
+    countPlayerConversationsWithNpc(world, "npc-mara") > 0;
+  const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
+  const hasFormedVerificationIntent = hasSettledPlan || source !== "seed";
+  const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
+  const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
+  const hasOpenWorkChoice = Boolean(
+    hasLeadFieldNote && teaJob?.discovered && teaLeadViable,
+  );
+  const hasReachedTeaHouse =
+    world.player.currentLocationId === "tea-house" ||
+    hasTalkedToAda ||
+    hasLeadFieldNote;
+  const scaffold = objectiveRouteMaraAdaLeadRouteScaffold({
+    hasFormedVerificationIntent,
+    hasLeadFieldNote,
+    hasLeadViable: teaLeadViable,
+    hasOpenWorkChoice,
+    hasReachedTeaHouse,
+    hasTalkedToAda,
+    hasTalkedToMara,
+    homeLocationId: home?.id,
+  });
+
+  return {
+    key: "mara-ada-lead",
+    focus: "work",
+    source,
+    terminal: true,
+    outcomes: scaffold.outcomes,
+    steps: scaffold.steps,
+  };
+}
+
+function buildFirstAfternoonRoute(
+  world: StreetGameState,
+  source: ObjectiveSource,
+): ObjectiveRouteScaffoldRoute {
+  const home = findLocation(world, world.player.homeLocationId);
+  const teaJob = jobById(world, "job-tea-shift");
+  const teaLeadViable = firstAfternoonRouteAdaLeadViable(world, teaJob);
+  const hasTalkedToMara =
+    countPlayerConversationsWithNpc(world, "npc-mara") > 0;
+  const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
+  const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
+  const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
+  const hasRoomTerms = hasTalkedToMara || hasSettledPlan || hasLeadFieldNote;
+  const hasTakenTeaShift = Boolean(
+    teaJob?.accepted ||
+      teaJob?.completed ||
+      world.player.activeJobId === "job-tea-shift",
+  );
+  const hasFinishedTeaShift = Boolean(teaJob?.completed);
+  const teaShiftStage = world.firstAfternoon?.teaShiftStage;
+  const hasStartedTeaShift = Boolean(
+    teaShiftStage === "rush" ||
+      teaShiftStage === "counter" ||
+      teaShiftStage === "paid" ||
+      hasFinishedTeaShift,
+  );
+  const atHome = world.player.currentLocationId === world.player.homeLocationId;
+  const wrappedFirstAfternoon = Boolean(world.firstAfternoon?.completedAt);
+  const routeScaffold = objectiveRouteFirstAfternoonRouteScaffold({
+    atHome,
+    hasActiveTeaJob: world.player.activeJobId === "job-tea-shift",
+    hasFinishedTeaShift,
+    hasLeadFieldNote,
+    hasRoomTerms,
+    hasSettledPlan,
+    hasStartedTeaShift,
+    hasTakenTeaShift,
+    hasTalkedToAda,
+    hasTalkedToMara,
+    homeLocationId: home?.id,
+    teaJobAccepted: Boolean(teaJob?.accepted),
+    teaJobCompleted: Boolean(teaJob?.completed),
+    teaJobDiscovered: Boolean(teaJob?.discovered),
+    teaJobId: teaJob?.id,
+    teaJobMissed: Boolean(teaJob?.missed),
+    teaLeadViable,
+    teaShiftStage,
+    wrappedFirstAfternoon,
+  });
+
+  return {
+    key: "first-afternoon",
+    focus: "settle",
+    source,
+    terminal: true,
+    outcomes: routeScaffold.outcomes,
+    steps: routeScaffold.steps.map(makeObjectiveRouteStep),
+  };
+}
+
+function firstAfternoonRouteAdaLeadViable(
+  world: StreetGameState,
+  teaJob = jobById(world, "job-tea-shift"),
+) {
+  return firstAfternoonOutcomeAdaLeadViable(world, teaJob);
+}
+
+function makeObjectiveRouteStep(step: ObjectiveTrailItem): ObjectiveTrailItem {
+  return step;
 }
 
 export function objectiveRoutePeopleRouteScaffold(state: PeopleRouteState): {
