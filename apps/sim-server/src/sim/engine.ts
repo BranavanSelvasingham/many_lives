@@ -1220,7 +1220,6 @@ async function advanceObjective(
 
 function acknowledgeFirstAfternoonCompletion(world: StreetGameState): boolean {
   if (
-    world.player.objective?.routeKey !== "first-afternoon" ||
     !world.firstAfternoon?.completedAt ||
     world.firstAfternoon.completionAcknowledgedAt ||
     !isCurrentObjectiveComplete(world)

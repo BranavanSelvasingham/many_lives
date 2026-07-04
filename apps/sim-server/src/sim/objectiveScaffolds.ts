@@ -1261,6 +1261,7 @@ interface ObjectiveRouteScaffold {
   firstAfternoonWorkWindowDialogue?: FirstAfternoonWorkWindowDialogueHint[];
   firstAfternoon?: FirstAfternoonScaffoldCopy;
   homeReturnMoveReasons?: HomeReturnMoveReasonHint[];
+  notebookRecoveryPlanKind?: ObjectiveRouteNotebookRecoveryPlanKind;
   moveIntents?: MoveIntentHint[];
   notebookPlanFallback?: string;
   objectiveFocuses?: ObjectiveFocus[];
@@ -4673,6 +4674,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
   {
     routeKeys: ["rest-home"],
     routeHeadline: "Recover enough at Morrow House to move cleanly again.",
+    notebookRecoveryPlanKind: "post-afternoon",
     moveIntents: [
       {
         label: "Return to Morrow House to recover",
@@ -5027,6 +5029,46 @@ export function objectiveRouteNotebookPlanFallback(routeKey?: string) {
   }
 
   return undefined;
+}
+
+export function objectiveRouteNotebookRecoveryPlanKind(input: {
+  actionId?: string;
+  objective?: ObjectiveScaffoldDirective;
+  world: StreetGameState;
+}): ObjectiveRouteNotebookRecoveryPlanKind | undefined {
+  const objective =
+    input.objective ?? objectiveScaffoldDirectiveForWorld(input.world);
+
+  for (const scaffold of activeScaffolds(objective.routeKey)) {
+    if (scaffold.notebookRecoveryPlanKind) {
+      return scaffold.notebookRecoveryPlanKind;
+    }
+  }
+
+  if (objective.focus === "rest" || input.actionId === "rest:home") {
+    return "post-afternoon";
+  }
+
+  return undefined;
+}
+
+export function objectiveRouteNotebookUsesRecoveryRestNeed(input: {
+  actionId?: string;
+  objective?: ObjectiveScaffoldDirective;
+  world: StreetGameState;
+}) {
+  if (
+    !input.world.firstAfternoon?.completedAt ||
+    input.actionId !== "enter:boarding-house"
+  ) {
+    return false;
+  }
+
+  const objective =
+    input.objective ?? objectiveScaffoldDirectiveForWorld(input.world);
+  return activeScaffolds(objective.routeKey).some(
+    (scaffold) => scaffold.notebookRecoveryPlanKind === "post-afternoon",
+  );
 }
 
 export function objectiveRouteNotebookRecoveryPlan(

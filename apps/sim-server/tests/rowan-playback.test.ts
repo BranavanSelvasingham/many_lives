@@ -16,6 +16,7 @@ import { buildIndependentNpcActionRecords } from "../../many-lives-web/src/lib/s
 import { isObjectiveTrailStepPlayerFacingForPlayback } from "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
+import { seedStreetGame } from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
   StreetGameState,
@@ -463,6 +464,53 @@ describe("Rowan playback helpers", () => {
       problemId: "problem-cart",
       slot: "just_happened",
       title: "Nia cleared the square",
+    });
+  });
+
+  it("keeps opening carry-forward probe relevance tied to state and selected action", () => {
+    const world = seedStreetGame("rowan-playback-opening-carry-forward");
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      routeKey: "renamed-opening-route",
+    };
+    world.rowanAutonomy = {
+      ...world.rowanAutonomy,
+      actionId: "enter:boarding-house",
+      autoContinue: true,
+      detail: "Rowan can step inside Morrow House and make the room concrete.",
+      key: "opening:enter-boarding-house",
+      label: "Enter Morrow House",
+      layer: "objective",
+      mode: "acting",
+      stepKind: "act",
+      targetLocationId: "boarding-house",
+    };
+
+    const playback = createEmptyRowanPlaybackState();
+    const railView = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is getting the first room settled.",
+      game: asWebGame(world),
+      playback,
+      quietStatusLabel: world.currentScene.title,
+      watchMode: true,
+    });
+    const probe = JSON.parse(
+      buildStreetBrowserProbeJson({
+        activeConversation: world.activeConversation,
+        game: asWebGame(world),
+        rowanRail: railView,
+        snapshot: {
+          rowanPlayback: playback,
+          rowanWatchModeEnabled: true,
+        },
+      }),
+    );
+
+    expect(probe.openingActionCarryForward).toMatchObject({
+      requiredVisibleInput: false,
+      selectedActionId: "enter:boarding-house",
+      status: "queued",
     });
   });
 

@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import { MockAIProvider } from "../ai/mockProvider.js";
 import { SimulationEngine } from "./engine.js";
+import { objectiveRouteCompletionIdleCopy } from "./objectiveScaffolds.js";
 import type { StreetGameState } from "../street-sim/types.js";
 import type { GameCommand } from "../types/api.js";
 
@@ -359,6 +360,11 @@ function guardCompletedJobsAreNotMissed(
 
 function isSuccessfulSmokeEndState(world: StreetGameState): boolean {
   const teaShift = world.jobs.find((job) => job.id === "job-tea-shift");
+  const completionIdleCopy = objectiveRouteCompletionIdleCopy(
+    world,
+    world.player.objective,
+  );
+  const objectiveProgress = world.player.objective?.progress;
 
   return Boolean(
     teaShift?.completed &&
@@ -367,11 +373,11 @@ function isSuccessfulSmokeEndState(world: StreetGameState): boolean {
     world.firstAfternoon?.completedAt &&
     world.clock.label === "Afternoon" &&
     world.player.currentLocationId === world.player.homeLocationId &&
-    world.player.objective?.routeKey === "first-afternoon" &&
-    world.player.objective.progress.completed >=
-      world.player.objective.progress.total &&
+    completionIdleCopy &&
+    objectiveProgress &&
+    objectiveProgress.completed >= objectiveProgress.total &&
     world.rowanAutonomy.stepKind === "idle" &&
-    world.rowanAutonomy.label === "First afternoon complete",
+    world.rowanAutonomy.label === completionIdleCopy.label,
   );
 }
 

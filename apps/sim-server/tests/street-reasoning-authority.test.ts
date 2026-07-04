@@ -29,6 +29,7 @@ import {
   objectiveRouteCompletionRationale,
   objectiveRouteCompletionSummaryTail,
   objectiveRouteMoveIntent,
+  objectiveRouteNotebookRecoveryPlanKind,
   objectiveRouteSemanticHints,
   objectiveRouteSemanticMoveBonus,
   objectiveRouteWorkStageWatchCopy,
@@ -1619,6 +1620,47 @@ describe("street reasoning authority", () => {
     );
   });
 
+  it("keeps browser opening carry-forward relevance state-derived instead of route-key gated", () => {
+    const browserProbeSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/browserProbe.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(browserProbeSource).toContain("openingActionStillRelevant");
+    expect(browserProbeSource).toContain("openingActionSelected");
+    expect(browserProbeSource).not.toContain('routeKey === "first-afternoon"');
+  });
+
+  it("keeps web opening and post-afternoon presentation checks state-derived", () => {
+    const playbackSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/rowanPlayback.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const decisionArtifactSource = readFileSync(
+      new URL(
+        "../../many-lives-web/src/lib/street/rowanDecisionArtifact.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+
+    expect(playbackSource).toContain("isFirstAfternoonOpening");
+    expect(playbackSource).not.toContain('routeKey === "first-afternoon"');
+    expect(decisionArtifactSource).toContain("postFirstAfternoonChoiceSignal");
+    expect(decisionArtifactSource).not.toContain(
+      'objectiveRouteKey === "rest-home"',
+    );
+    expect(decisionArtifactSource).not.toContain(
+      'objectiveRouteKey === "first-afternoon"',
+    );
+  });
+
   it("keeps Mara/Ada lead-grounding copy in scaffold policy, not engine control flow", () => {
     const engineSource = readFileSync(
       new URL("../src/sim/engine.ts", import.meta.url),
@@ -2041,6 +2083,10 @@ describe("street reasoning authority", () => {
       new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
       "utf8",
     );
+    const smokeSource = readFileSync(
+      new URL("../src/sim/rowanLoopSmoke.ts", import.meta.url),
+      "utf8",
+    );
 
     for (const acknowledgementCopy of [
       FIRST_AFTERNOON_COMPLETION_FEED,
@@ -2063,6 +2109,9 @@ describe("street reasoning authority", () => {
     expect(engineSource).toContain("objectiveRouteCompletionIdleCopy");
     expect(engineSource).toContain("objectiveRouteCompletionRationale");
     expect(engineSource).toContain("objectiveRouteCompletionSummaryTail");
+    expect(engineSource).not.toContain('routeKey !== "first-afternoon"');
+    expect(smokeSource).toContain("objectiveRouteCompletionIdleCopy");
+    expect(smokeSource).not.toContain('routeKey === "first-afternoon"');
   });
 
   it("resolves first-afternoon completion idle copy through scaffold data", () => {
@@ -2347,9 +2396,17 @@ describe("street reasoning authority", () => {
       "objectiveRouteNotebookBeliefUncertainty",
     );
     expect(scaffoldSource).toContain("notebookPlanFallback");
+    expect(scaffoldSource).toContain("notebookRecoveryPlanKind");
     expect(scaffoldSource).toContain("objectiveRouteNotebookBeliefClue");
+    expect(scaffoldSource).toContain("objectiveRouteNotebookRecoveryPlanKind");
+    expect(scaffoldSource).toContain(
+      "objectiveRouteNotebookUsesRecoveryRestNeed",
+    );
+    expect(narrativesSource).toContain("objectiveRouteNotebookRecoveryPlanKind");
     expect(narrativesSource).toContain("rowanNotebookUsesRecoveryRestNeed");
-    expect(modelSource).toContain("rowanNotebookUsesRecoveryRestNeed");
+    expect(modelSource).toContain("objectiveRouteNotebookRecoveryPlanKind");
+    expect(narrativesSource).not.toContain('routeKey === "rest-home"');
+    expect(modelSource).not.toContain('routeKey === "rest-home"');
     expect(narrativesSource).not.toContain('"help-pump"');
     expect(narrativesSource).not.toContain('"work-yard"');
     expect(cognitionSource).not.toContain("function notebookPlanText");
@@ -2358,6 +2415,23 @@ describe("street reasoning authority", () => {
       "function isPostFirstAfternoonHomeRecoveryEntry",
     );
     expect(cognitionSource).not.toContain("function objectiveIsNiaBlockLead");
+  });
+
+  it("resolves post-afternoon notebook recovery through scaffold route metadata", () => {
+    const world = seedStreetGame("game-post-afternoon-recovery-kind-scaffold");
+    const objective: ObjectiveScaffoldDirective = {
+      focus: "rest",
+      routeKey: "rest-home",
+      text: "Recover enough at Morrow House to move cleanly again.",
+    };
+
+    expect(
+      objectiveRouteNotebookRecoveryPlanKind({
+        actionId: "enter:boarding-house",
+        objective,
+        world,
+      }),
+    ).toBe("post-afternoon");
   });
 
   it("keeps Rowan cognition needs in the model and notebook belief catalog in scaffold data", () => {

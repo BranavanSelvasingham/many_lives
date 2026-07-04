@@ -779,13 +779,14 @@ export function isFirstAfternoonOpening(game: StreetGameState) {
     );
 
   return Boolean(
-    game.player.objective?.routeKey === "first-afternoon" &&
-      activeSpaceId === "street:south-quay" &&
+    activeSpaceId === "street:south-quay" &&
       progress &&
       progress.completed === 0 &&
       !game.activeConversation &&
       !hasConversationHistory &&
+      !game.firstAfternoon?.completionAcknowledgedAt &&
       !game.firstAfternoon?.planSettledAt &&
+      !game.firstAfternoon?.leadFieldNote &&
       !game.firstAfternoon?.teaShiftStage &&
       !game.firstAfternoon?.completedAt,
   );

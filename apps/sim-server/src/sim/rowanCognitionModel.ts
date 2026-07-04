@@ -8,6 +8,7 @@ import {
   objectiveRouteNotebookBeliefMatchesObjective,
   objectiveRouteNotebookBeliefScoreAdjustment,
   objectiveRouteNotebookBeliefs,
+  objectiveRouteNotebookRecoveryPlanKind,
 } from "./objectiveScaffolds.js";
 import { rowanNotebookUsesRecoveryRestNeed } from "./rowanCognitionNarratives.js";
 
@@ -264,13 +265,14 @@ export function selectNotebookNeed(
   belief?: RowanBelief,
 ) {
   const objectiveFocus = world.player.objective?.focus;
-  const objectiveRouteKey = world.player.objective?.routeKey;
   const nextMove = cognition.nextMove;
+  const recoveryPlanKind = objectiveRouteNotebookRecoveryPlanKind({
+    actionId: nextMove?.actionId,
+    world,
+  });
 
   if (
-    objectiveFocus === "rest" ||
-    objectiveRouteKey === "rest-home" ||
-    nextMove?.actionId === "rest:home" ||
+    recoveryPlanKind === "post-afternoon" ||
     rowanNotebookUsesRecoveryRestNeed(world, nextMove)
   ) {
     return cognition.needs.find((need) => need.key === "rest");

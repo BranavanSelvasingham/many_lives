@@ -552,6 +552,27 @@ function openingActionSupersededByAutoplayProgress(evidence: string[]) {
   );
 }
 
+function openingActionStillRelevant(game: StreetGameState) {
+  const progress = game.player.objective?.progress;
+  const hasConversationHistory =
+    game.conversations.length > 0 ||
+    Object.values(game.conversationThreads).some(
+      (thread) => thread.lines.length > 0,
+    );
+
+  return Boolean(
+    !game.firstAfternoon?.completionAcknowledgedAt &&
+      !game.firstAfternoon?.planSettledAt &&
+      !game.firstAfternoon?.leadFieldNote &&
+      !game.firstAfternoon?.teaShiftStage &&
+      !game.firstAfternoon?.completedAt &&
+      progress &&
+      progress.completed === 0 &&
+      !game.activeConversation &&
+      !hasConversationHistory,
+  );
+}
+
 function openingActionCarryForwardProbePayload({
   game,
   rowanRail,
@@ -570,13 +591,12 @@ function openingActionCarryForwardProbePayload({
   });
   const progressedBeyondOpening =
     openingActionSupersededByAutoplayProgress(completionEvidence);
-  const firstAfternoonRelevant =
-    game.player.objective?.routeKey === "first-afternoon" &&
-    !game.firstAfternoon?.completionAcknowledgedAt;
   const completed =
     completionEvidence.includes("entered-morrow-house") ||
     completionEvidence.includes("mara-conversation-active") ||
     progressedBeyondOpening;
+  const openingActionRelevant =
+    completed || progressedBeyondOpening || openingActionStillRelevant(game);
   const selectedActionId =
     completed
       ? "enter:boarding-house"
@@ -602,7 +622,7 @@ function openingActionCarryForwardProbePayload({
     completed;
 
   if (
-    (!firstAfternoonRelevant && !progressedBeyondOpening) ||
+    !openingActionRelevant ||
     !openingActionSelected
   ) {
     return null;

@@ -4,7 +4,9 @@ import {
   objectiveRouteNotebookBeliefConfidence,
   objectiveRouteNotebookBeliefUncertainty,
   objectiveRouteNotebookPlanFallback,
+  objectiveRouteNotebookRecoveryPlanKind,
   objectiveRouteNotebookRecoveryPlan,
+  objectiveRouteNotebookUsesRecoveryRestNeed,
   objectiveRouteNotebookStaleEntryFallback,
 } from "./objectiveScaffolds.js";
 
@@ -50,11 +52,10 @@ export function rowanNotebookUsesRecoveryRestNeed(
   world: StreetGameState,
   nextMove?: NotebookNextMoveLike,
 ) {
-  return (
-    Boolean(world.firstAfternoon?.completedAt) &&
-    world.player.objective?.routeKey === "rest-home" &&
-    nextMove?.actionId === "enter:boarding-house"
-  );
+  return objectiveRouteNotebookUsesRecoveryRestNeed({
+    actionId: nextMove?.actionId,
+    world,
+  });
 }
 
 export function rowanNotebookPlanText(
@@ -65,13 +66,12 @@ export function rowanNotebookPlanText(
     return objectiveRouteNotebookRecoveryPlan("nia-block");
   }
 
-  if (
-    world.player.objective?.routeKey === "rest-home" ||
-    world.player.objective?.focus === "rest" ||
-    nextMove?.actionId === "rest:home" ||
-    rowanNotebookUsesRecoveryRestNeed(world, nextMove)
-  ) {
-    return objectiveRouteNotebookRecoveryPlan("post-afternoon");
+  const recoveryPlanKind = objectiveRouteNotebookRecoveryPlanKind({
+    actionId: nextMove?.actionId,
+    world,
+  });
+  if (recoveryPlanKind) {
+    return objectiveRouteNotebookRecoveryPlan(recoveryPlanKind);
   }
 
   const routePlan = rowanNotebookRoutePlanText(world, nextMove);

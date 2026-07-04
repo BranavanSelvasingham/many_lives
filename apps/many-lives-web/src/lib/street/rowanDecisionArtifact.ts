@@ -225,12 +225,12 @@ function objectiveIsComplete(game: StreetGameState) {
 }
 
 function postFirstAfternoonChoiceSignal(game: StreetGameState) {
-  const objectiveRouteKey = game.player.objective?.routeKey;
+  const objective = game.player.objective;
   if (
     !game.firstAfternoon?.completedAt ||
     !game.firstAfternoon?.completionAcknowledgedAt ||
-    !objectiveRouteKey ||
-    objectiveRouteKey === "first-afternoon"
+    !objective ||
+    objectiveIsComplete(game)
   ) {
     return undefined;
   }
@@ -259,7 +259,7 @@ function postFirstAfternoonChoiceSignal(game: StreetGameState) {
     return undefined;
   }
 
-  if (objectiveRouteKey === "rest-home") {
+  if (objective.focus === "rest") {
     return `Recovering before weighing ${formatChoiceContrast(openings)}.`;
   }
 
