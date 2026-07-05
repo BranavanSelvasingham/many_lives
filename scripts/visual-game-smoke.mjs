@@ -1855,7 +1855,7 @@ function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = n
     artifact.sourceSummary,
   ].join(" ");
   assert.ok(
-    !/\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b/i.test(
+    !/(?:\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b|That opening has closed|keeps to the confirmed choice)/i.test(
       playerText,
     ),
     `${label}: decision artifact leaked backend-shaped labels: ${playerText}`,
@@ -2023,7 +2023,7 @@ function compactVisibleDecisionText(value, max) {
   text = text
     .replace(
       /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/gi,
-      "That opening has closed for now.",
+      "",
     )
     .replace(/\badvance_objective\b/gi, "")
     .replace(/\bplanningTrace\b/gi, "")
@@ -2131,7 +2131,7 @@ function assertVisibleDecisionArtifactDom(
   );
   assert.doesNotMatch(
     decisionArtifact.text,
-    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate/i,
+    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate|That opening has closed|keeps to the confirmed choice/i,
     `${label}: decision artifact leaked debug/planner language.`,
   );
 }

@@ -2554,10 +2554,7 @@ function visibleDecisionArtifactFromGame(game) {
     ...(nextCheck ? { nextCheck } : {}),
     objective,
     passedOver: uniqueVisibleDecisionTexts(
-      [
-        ...(trace?.rejected ?? []).map(visibleRejectedOptionText),
-        ...(trace?.blockers ?? []),
-      ],
+      [...(trace?.rejected ?? []).map(visibleRejectedOptionText)],
       2,
       72,
     ),
@@ -2701,27 +2698,50 @@ function visibleConsideredOptionText(option) {
 }
 
 function visibleRejectedOptionText(option) {
-  return (
-    visibleReasonFirstOptionText(
-      option.label,
-      playerFacingRejectedReason(option),
-      92,
-    ) ?? option.label
-  );
+  const reason = playerFacingRejectedReason(option);
+  if (reason === null) {
+    return undefined;
+  }
+
+  return visibleReasonFirstOptionText(option.label, reason, 92) ?? option.label;
 }
 
 function playerFacingRejectedReason(option) {
-  const reason = option?.reason ?? option?.rationale;
-  if (isStaleIllegalPlanningReason(reason)) {
-    return "That opening has closed, so Rowan keeps to the confirmed choice.";
+  const reason =
+    typeof option?.reason === "string" ? option.reason.trim() : "";
+  const rationale =
+    typeof option?.rationale === "string" ? option.rationale.trim() : "";
+
+  if (reason) {
+    if (isNonPlayerFacingRejectedReason(reason)) {
+      return null;
+    }
+
+    return reason;
   }
 
-  return reason;
+  if (rationale && isNonPlayerFacingRejectedReason(rationale)) {
+    return null;
+  }
+
+  return rationale;
 }
 
 function isStaleIllegalPlanningReason(reason) {
   return /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/i.test(
     String(reason ?? ""),
+  );
+}
+
+function isNonPlayerFacingRejectedReason(reason) {
+  return (
+    isStaleIllegalPlanningReason(reason) ||
+    /\bis\s+the\s+dominant\s+live\s+pressure\s+right\s+now\.?/i.test(
+      String(reason ?? ""),
+    ) ||
+    /\bdoes\s+not\s+target\s+the\s+open\s+objective\s+predicate\b/i.test(
+      String(reason ?? ""),
+    )
   );
 }
 
@@ -2810,7 +2830,7 @@ function compactVisibleDecisionText(value, max) {
   text = text
     .replace(
       /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/gi,
-      "That opening has closed for now.",
+      "",
     )
     .replace(/\badvance_objective\b/gi, "")
     .replace(/\bplanningTrace\b/gi, "")
@@ -3590,7 +3610,7 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
   ].join(" ");
   assert.doesNotMatch(
     playerText,
-    /\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b/i,
+    /(?:\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b|That opening has closed|keeps to the confirmed choice)/i,
     `${label}: decision artifact leaked backend-shaped labels.`,
   );
   assert.doesNotMatch(
@@ -3734,7 +3754,7 @@ function assertVisibleDecisionArtifactDom(label, dom, artifactPayload = null) {
   }
   assert.doesNotMatch(
     artifact.text,
-    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate/i,
+    /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate|That opening has closed|keeps to the confirmed choice/i,
     `${label}: decision callback leaked debug/planner language.`,
   );
   assert.doesNotMatch(

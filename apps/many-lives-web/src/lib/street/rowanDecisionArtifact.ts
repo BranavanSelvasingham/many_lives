@@ -172,10 +172,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
     64,
   );
   const passedOver = uniqueCompact(
-    [
-      ...(planningTrace?.rejected ?? []).map(visibleRejectedOptionText),
-      ...(planningTrace?.blockers ?? []),
-    ],
+    [...(planningTrace?.rejected ?? []).map(visibleRejectedOptionText)],
     2,
     72,
   );
@@ -466,24 +463,33 @@ function visibleConsideredOptionText(
 function visibleRejectedOptionText(
   option: PlanningTrace["rejected"][number],
 ) {
-  return (
-    visibleReasonFirstOptionText(
-      option.label,
-      playerFacingRejectedReason(option),
-      92,
-    ) ?? option.label
-  );
+  const reason = playerFacingRejectedReason(option);
+  if (reason === null) {
+    return undefined;
+  }
+
+  return visibleReasonFirstOptionText(option.label, reason, 92) ?? option.label;
 }
 
 function playerFacingRejectedReason(
   option: PlanningTrace["rejected"][number],
 ) {
-  const reason = option.reason ?? option.rationale;
-  if (isStaleIllegalPlanningReason(reason)) {
-    return "That opening has closed, so Rowan keeps to the confirmed choice.";
+  const reason = option.reason?.trim();
+  const rationale = option.rationale?.trim();
+
+  if (reason) {
+    if (isNonPlayerFacingRejectedReason(reason)) {
+      return null;
+    }
+
+    return reason;
   }
 
-  return reason;
+  if (rationale && isNonPlayerFacingRejectedReason(rationale)) {
+    return null;
+  }
+
+  return rationale;
 }
 
 function isStaleIllegalPlanningReason(reason: string | undefined) {
@@ -491,6 +497,19 @@ function isStaleIllegalPlanningReason(reason: string | undefined) {
     reason?.match(
       /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/i,
     ),
+  );
+}
+
+function isNonPlayerFacingRejectedReason(reason: string | undefined) {
+  return Boolean(
+    reason &&
+      (isStaleIllegalPlanningReason(reason) ||
+        /\bis\s+the\s+dominant\s+live\s+pressure\s+right\s+now\.?/i.test(
+          reason,
+        ) ||
+        /\bdoes\s+not\s+target\s+the\s+open\s+objective\s+predicate\b/i.test(
+          reason,
+        )),
   );
 }
 
@@ -640,7 +659,7 @@ function compactDecisionText(value: string | null | undefined, max: number) {
   text = text
     .replace(
       /\b(?:Rejected because\s+)?this\s+(?:objective action|route hint action|suggested move)\s+is\s+no\s+longer\s+legal\s+in\s+the\s+current\s+world\s+state\.?/gi,
-      "That opening has closed for now.",
+      "",
     )
     .replace(/^Action:\s*/i, "")
     .replace(/\bcurrent objective\b/gi, "current aim")

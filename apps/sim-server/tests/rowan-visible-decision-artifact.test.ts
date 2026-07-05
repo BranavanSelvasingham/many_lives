@@ -111,7 +111,7 @@ describe("Rowan visible decision artifact", () => {
     );
   });
 
-  it("rewrites stale illegal rejection diagnostics as player-facing passed-over reasons", () => {
+  it("suppresses stale illegal rejection diagnostics from passed-over options", () => {
     const diagnosticReasons = [
       "Rejected because this route hint action is no longer legal in the current world state.",
       "Rejected because this objective action is no longer legal in the current world state.",
@@ -125,7 +125,7 @@ describe("Rowan visible decision artifact", () => {
           "Nia is the strongest confirmed lead, so Rowan should speak with her.",
         objectiveText: "Find a useful opening without chasing stale leads.",
         planningTrace: {
-          blockers: [],
+          blockers: ["Rowan has not chosen the useful first move yet."],
           considered: [
             {
               actionId: "talk:npc-nia",
@@ -182,6 +182,18 @@ describe("Rowan visible decision artifact", () => {
               status: "rejected" as const,
               targetLocationId: "courtyard",
             },
+            {
+              actionId: "exit:boarding-house",
+              label: "Exit to South Quay",
+              planKey: "exit:boarding-house",
+              provenance: "legal-action" as const,
+              rationale: "Exit to South Quay at Morrow House",
+              reason:
+                "Rejected because Room terms understood is an open desired-state predicate is the dominant live pressure right now.",
+              score: 2,
+              status: "rejected" as const,
+              targetLocationId: "boarding-house",
+            },
           ],
           selectedActionId: "talk:npc-nia",
           selectedLabel: "Ask Nia what still needs doing",
@@ -199,11 +211,9 @@ describe("Rowan visible decision artifact", () => {
         },
       });
 
-      expect(artifact?.passedOver[0]).toBe(
-        "That opening has closed, so Rowan keeps to the confirmed choice.",
-      );
+      expect(artifact?.passedOver).toEqual([]);
       expect(artifact?.passedOver.join(" ")).not.toMatch(
-        /suggested move|no longer legal|current world state|route hint action|Rejected because|objective action/i,
+        /That opening has closed|keeps to the confirmed choice|suggested move|no longer legal|current world state|route hint action|Rejected because|objective action|dominant live pressure|useful first move/i,
       );
       expect(artifact?.passedOver.join(" ")).not.toContain(reason);
     }
