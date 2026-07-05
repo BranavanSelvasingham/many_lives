@@ -468,7 +468,7 @@ describe("objectiveState classification", () => {
       },
       {
         id: "first-afternoon-ada-lead",
-        label: "Ada lead verified",
+        label: "Ask Ada directly",
         urgency: 6,
       },
       {
@@ -856,7 +856,7 @@ describe("objectiveState classification", () => {
       },
       {
         id: "mara-ada-ask-directly",
-        label: "Ada lead verified directly",
+        label: "Ask Ada directly",
         urgency: 3,
       },
       {

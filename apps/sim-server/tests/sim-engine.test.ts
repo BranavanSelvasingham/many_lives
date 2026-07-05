@@ -28,7 +28,7 @@ import {
 
 const STREET_SPACE_ID = "street:south-quay";
 const ADA_LEAD_OUTCOME_MOVE_RATIONALE =
-  "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room";
+  "Mara's lead points to Ada at Kettle & Lamp; Rowan needs to ask her directly before lunch fills the room";
 const BAD_ADA_AT_MORROW_PLAYER_RATIONALE =
   "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs to leave Morrow House and reach the cafe first";
 const FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE =
@@ -131,6 +131,20 @@ class LiveDialogueAIProvider extends MockAIProvider {
       followupThought: `${npcName} is responding through the live provider.`,
       reply: `${npcName} live reply for Rowan.`,
     };
+  }
+}
+
+class ThinAdaLiveAIProvider extends LiveDialogueAIProvider {
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    if (input.npcId === "npc-ada") {
+      this.replyRequests.push(input);
+      return {
+        followupThought: "Ada is answering too thinly.",
+        reply: "Yes.",
+      };
+    }
+
+    return super.generateStreetReply(input);
   }
 }
 
@@ -821,7 +835,7 @@ describe("SimulationEngine street slice", () => {
       "game-player-facing-autonomy-rationale-copy",
     );
 
-    expect(playerFacingAutonomyRationale(world, "Ada lead verified")).toBe(
+    expect(playerFacingAutonomyRationale(world, "Ask Ada directly")).toBe(
       ADA_LEAD_OUTCOME_MOVE_RATIONALE,
     );
     expect(
@@ -2148,6 +2162,42 @@ describe("SimulationEngine street slice", () => {
       world.activeConversation?.lines.find((line) => line.speaker === "npc")
         ?.text,
     ).toContain("Ada live reply for Rowan.");
+  });
+
+  it("grounds thin live Ada replies with concrete lunch-work evidence", async () => {
+    const provider = new ThinAdaLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-thin-ada-evidence-gate");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-ada",
+      24,
+    );
+
+    const adaLines = world.activeConversation?.lines ?? [];
+    const visibleAdaText = adaLines.map((line) => line.text).join(" ");
+    const lastAdaReply = adaLines
+      .filter((line) => line.speaker === "npc")
+      .at(-1)?.text;
+
+    expect(
+      provider.replyRequests.filter((request) => request.npcId === "npc-ada")
+        .length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(visibleAdaText).toMatch(/Can you say exactly what work is available/i);
+    expect(lastAdaReply).toMatch(/help through lunch|clear cups|counter/i);
+    expect(lastAdaReply).toMatch(/pays fourteen/i);
+    expect(lastAdaReply).not.toMatch(/^Yes\.?$/i);
+    expect(world.aiRuntime?.fallbackReasons.join(" ")).toMatch(
+      /Live Ada reply did not make the lunch work offer concrete/i,
+    );
+    expect(world.firstAfternoon?.leadFieldNote).toMatchObject({
+      evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
+      learned: expect.stringContaining("Ada needs steady lunch help"),
+      next: expect.stringContaining("Ada's offer is now a current choice"),
+    });
   });
 
   it("does not let vague Mara dialogue invisibly unlock the Ada lead", async () => {

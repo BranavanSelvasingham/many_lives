@@ -307,7 +307,7 @@ export function buildRowanFallbackNotebookModel({
         primaryPerson?.id === "npc-mara"
           ? "Mara says follow-through matters more than worry."
           : "Morrow House is safe to return to if Rowan brings back something real.",
-      confidence: teaJob?.discovered ? "Confirmed lead." : "Unconfirmed.",
+      confidence: teaJob?.discovered ? "Unconfirmed by Ada." : "Unconfirmed.",
       plan: currentPlanHint ?? "Walk to Kettle & Lamp and ask Ada directly.",
       title: "A useful lead",
       uncertainty: "Does Ada actually need help today?",

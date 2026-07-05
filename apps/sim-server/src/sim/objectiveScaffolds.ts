@@ -1614,6 +1614,57 @@ function resolutionPointsToMaraAdaLead(resolution: {
   );
 }
 
+function textGroundsAdaLunchWorkOffer(text: string | undefined): boolean {
+  const normalized = (text ?? "").toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    /\b(no|not|don't|do not|isn't|closed|can't|cannot|missed|gone|too late)\b/.test(
+      normalized,
+    )
+  ) {
+    return false;
+  }
+
+  return (
+    /\blunch\b|\bcup(?:s)?\b|\bcounter\b|\btables?\b|\btea[- ]?house\b|\bkettle\b|\blamp\b/.test(
+      normalized,
+    ) &&
+    /\bwork\b|\bhelp\b|\bhands?\b|\bshift\b|\buse\b|\bneed(?:s|ed)?\b|\bclear\b|\bwipe\b|\bkeep\b/.test(
+      normalized,
+    ) &&
+    /\bfourteen\b|\b14\b|\bpay\b|\bpays\b|\bpaid\b|\boffer\b|\boffered\b|\bavailable\b|\bon the table\b|\bthrough lunch\b/.test(
+      normalized,
+    )
+  );
+}
+
+function resolutionPointsToAdaLunchWorkOffer(resolution: {
+  decision?: string;
+  memoryText?: string;
+  objectiveText?: string;
+  summary?: string;
+}): boolean {
+  const text = [
+    resolution.decision,
+    resolution.memoryText,
+    resolution.objectiveText,
+    resolution.summary,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    /\bada\b|\bkettle\b|\blamp\b|\btea[- ]?house\b/.test(text) &&
+    /\blunch\b|\bwork\b|\bshift\b|\bhands?\b|\bcounter\b|\bpay\b|\bfourteen\b|\b14\b/.test(
+      text,
+    )
+  );
+}
+
 const AUTONOMOUS_OPENING_SPEECH_RULES: AutonomousOpeningSpeechRule[] = [
   {
     focus: "settle",
@@ -2937,7 +2988,7 @@ const FIRST_AFTERNOON_OUTCOME_TEMPLATES: FirstAfternoonRouteOutcomeTemplate[] =
     },
     {
       id: "first-afternoon-ada-lead",
-      label: "Ada lead verified",
+      label: "Ask Ada directly",
       urgency: 6,
       npcId: ({
         hasFinishedTeaShift,
@@ -3285,7 +3336,7 @@ const MARA_ADA_LEAD_OUTCOME_TEMPLATES: MaraAdaLeadRouteOutcomeTemplate[] = [
   },
   {
     id: "mara-ada-ask-directly",
-    label: "Ada lead verified directly",
+    label: "Ask Ada directly",
     urgency: 3,
     npcId: ({ hasLeadFieldNote, hasLeadViable, hasTalkedToAda }) =>
       hasTalkedToAda || hasLeadFieldNote || !hasLeadViable
@@ -3591,7 +3642,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         locationId: "tea-house",
         npcId: "npc-ada",
         rationale:
-          "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room; ask Ada whether the lunch work is real.",
+          "Mara's lead points to Ada at Kettle & Lamp; Rowan needs to ask her directly before lunch fills the room.",
         when: ({ objective, world }) =>
           objective.routeKey === "mara-ada-lead" ||
           (objective.routeKey === "first-afternoon" &&
@@ -3611,9 +3662,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     ],
     outcomeMoveRationales: [
       {
-        matches: (outcomeLabel) => outcomeLabel.includes("ada lead verified"),
+        matches: (outcomeLabel) =>
+          outcomeLabel.includes("ask ada directly"),
         rationale:
-          "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room",
+          "Mara's lead points to Ada at Kettle & Lamp; Rowan needs to ask her directly before lunch fills the room",
       },
       {
         matches: (outcomeLabel) =>
@@ -3633,9 +3685,9 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     playerFacingRationaleNormalizations: [
       {
         matches: (normalizedRationale) =>
-          normalizedRationale.includes("ada lead verified"),
+          normalizedRationale.includes("ask ada directly"),
         rationale:
-          "Mara's lead points to Ada at Kettle & Lamp before lunch fills the room",
+          "Mara's lead points to Ada at Kettle & Lamp; Rowan needs to ask her directly before lunch fills the room",
       },
       {
         matches: (normalizedRationale) =>
@@ -4138,6 +4190,52 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           !/\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(
             playerText.toLowerCase(),
           ),
+      },
+      {
+        fallbackReason:
+          "Live Ada reply did not make the lunch work offer concrete.",
+        fallbackReply: {
+          followupThought:
+            "Ada is making the offer concrete enough to act on.",
+          reply:
+            "I can use help through lunch: clear cups, wipe tables, and keep the counter moving. It pays fourteen if you can stay steady.",
+        },
+        followupPlayerText:
+          "Can you say exactly what work is available here at Kettle & Lamp today?",
+        id: "ada-lunch-work-offer-grounding",
+        npcId: "npc-ada",
+        promptGroundedPlayerLines: [
+          "- Rowan is asking whether Ada has real lunch work available now. Answer with the actual work, not only yes or no.",
+          "- Good shape for this answer: I can use help through lunch: clear cups, wipe tables, keep the counter moving. It pays fourteen.",
+        ],
+        promptRequiredLines: [
+          "- Required for this Ada reply: make the offer concrete by naming lunch or the Kettle & Lamp counter work, the task, and the pay or live availability.",
+          "- Do not answer only with 'yes' or a generic confirmation; the player must see what Ada is offering before the shift choice opens.",
+        ],
+        resolutionFallback: {
+          decision:
+            "ask Ada for the concrete lunch-work terms before treating the lead as verified.",
+          memoryKind: "self",
+          memoryText:
+            "Ada's answer was not specific enough yet to turn Mara's lead into grounded work evidence.",
+          summary:
+            "Ada has not yet made the Kettle & Lamp lunch-work offer visible in the conversation.",
+        },
+        responseAffirmsEvidence: textGroundsAdaLunchWorkOffer,
+        responseGroundsEvidence: textGroundsAdaLunchWorkOffer,
+        resolutionPointsToEvidence: resolutionPointsToAdaLunchWorkOffer,
+        routeKeys: [...ADA_LEAD_ROUTE_KEYS],
+        when: ({ world }) => {
+          const teaJob = jobById(world, "job-tea-shift");
+          return Boolean(
+            !world.firstAfternoon?.leadFieldNote &&
+              teaJob &&
+              !teaJob.accepted &&
+              !teaJob.completed &&
+              !teaJob.missed &&
+              jobWindowOpen(world, teaJob),
+          );
+        },
       },
     ],
     actionRationales: [
@@ -6787,7 +6885,7 @@ export function objectiveRouteScriptedReply(
 
       return {
         reply:
-          "Yes. Lunch is about to start. Clear cups, wipe tables, and keep the counter moving. It pays fourteen if you can stay steady.",
+          "I can use help through lunch: clear cups, wipe tables, and keep the counter moving. It pays fourteen if you can stay steady.",
         followupThought:
           "Rowan asked plainly, which is the fastest way Ada knows how to answer.",
       };
