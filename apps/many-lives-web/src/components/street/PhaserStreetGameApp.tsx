@@ -9554,6 +9554,7 @@ function drawAmbientCityLife(
 
   drawCafeWarmWindowEvent(layer, runtimeState, now, hour);
   drawDockCartEvent(layer, runtimeState, now);
+  drawPierHandsHarborBeat(layer, runtimeState, now, hour);
 
   for (const route of AMBIENT_CITY_ROUTES) {
     if (!ambientRouteIsActive(route, hour, game)) {
@@ -9745,7 +9746,7 @@ function drawCafeWarmWindowEvent(
     locationId: "tea-house",
     locationName: locationNameForCue(game, "tea-house", "Kettle & Lamp"),
     signal:
-      "warm awning lights, prep staff, steam, menu board, and set tables",
+      "warm awning lanterns, prep staff with trays, steam, menu board, and set tables",
     visibleLabel:
       cityEventVisibleLabel(game, "event-cafe-prep", {
         includeResolved: true,
@@ -9800,6 +9801,17 @@ function drawCafeWarmWindowEvent(
     awningX + awningWidth - 8,
     awningY + 10,
   );
+  const lanternY = awningY + 15;
+  for (let index = 0; index < 5; index += 1) {
+    const lanternX = awningX + awningWidth * (0.13 + index * 0.185);
+    const lanternBob = Math.sin(now / 620 + index * 0.48) * 0.7;
+    layer.lineStyle(1.3, 0x4a3326, 0.46);
+    layer.lineBetween(lanternX, lanternY - 5, lanternX, lanternY + 4);
+    layer.fillStyle(0x5f3e2c, 0.78);
+    layer.fillRoundedRect(lanternX - 4.6, lanternY + lanternBob, 9.2, 8.8, 3);
+    layer.fillStyle(0xffdc99, 0.64 * pulse);
+    layer.fillCircle(lanternX, lanternY + 4.2 + lanternBob, 3.2);
+  }
 
   layer.fillStyle(0xffe4ad, 0.13 * pulse);
   layer.fillRoundedRect(
@@ -9824,27 +9836,59 @@ function drawCafeWarmWindowEvent(
     rect.x + rect.width * 0.69,
     serviceGlowY + 18,
   );
+  const prepRailX = rect.x + rect.width * 0.24;
+  const prepRailY = serviceGlowY + 6;
+  layer.fillStyle(0x34271f, 0.6);
+  layer.fillRoundedRect(prepRailX, prepRailY, rect.width * 0.36, 12, 5);
+  for (let index = 0; index < 3; index += 1) {
+    const cupX = prepRailX + 20 + index * 28;
+    layer.fillStyle(index === 1 ? 0xd99d6d : 0xf0cf8c, 0.82);
+    layer.fillRoundedRect(cupX - 6, prepRailY - 5, 12, 10, 4);
+    layer.lineStyle(1.5, 0xfff4d0, 0.32 * pulse);
+    layer.lineBetween(cupX - 2, prepRailY - 9, cupX + 3, prepRailY - 17);
+    layer.lineBetween(cupX + 3, prepRailY - 17, cupX, prepRailY - 23);
+  }
 
+  const serverOne = {
+    x: rect.x + rect.width * 0.32,
+    y: serviceGlowY + 18,
+  };
   drawAmbientPedestrian(layer, {
     accent: 0xf0cf8c,
-    alpha: 0.86,
+    alpha: 0.9,
     color: 0x485f61,
     facing: 1,
-    scale: 0.62,
+    scale: 0.72,
     step: Math.sin(now / 620) * 0.08,
-    x: rect.x + rect.width * 0.34,
-    y: serviceGlowY + 16,
+    x: serverOne.x,
+    y: serverOne.y,
   });
+  layer.lineStyle(2.4, 0xf0cf8c, 0.64);
+  layer.lineBetween(serverOne.x + 8, serverOne.y - 3, serverOne.x + 25, serverOne.y - 9);
+  layer.fillStyle(0x6c5138, 0.68);
+  layer.fillRoundedRect(serverOne.x + 22, serverOne.y - 13, 32, 8, 4);
+  layer.fillStyle(0xffedbd, 0.86);
+  layer.fillCircle(serverOne.x + 31, serverOne.y - 16, 3.2);
+  layer.fillCircle(serverOne.x + 44, serverOne.y - 16, 3.2);
+
+  const serverTwo = {
+    x: rect.x + rect.width * 0.56,
+    y: serviceGlowY + 19,
+  };
   drawAmbientPedestrian(layer, {
     accent: 0xd99d6d,
-    alpha: 0.78,
+    alpha: 0.82,
     color: 0x5b4a45,
     facing: -1,
-    scale: 0.56,
+    scale: 0.64,
     step: Math.sin(now / 580 + 0.7) * 0.08,
-    x: rect.x + rect.width * 0.54,
-    y: serviceGlowY + 18,
+    x: serverTwo.x,
+    y: serverTwo.y,
   });
+  layer.lineStyle(2.2, 0xd9c5a0, 0.58);
+  layer.lineBetween(serverTwo.x - 8, serverTwo.y - 2, serverTwo.x - 28, serverTwo.y - 5);
+  layer.fillStyle(0xf7e5bd, 0.68);
+  layer.fillRoundedRect(serverTwo.x - 36, serverTwo.y - 12, 16, 17, 4);
 
   for (let index = 0; index < 3; index += 1) {
     const x = startX + index * (windowWidth + rect.width * 0.08);
@@ -9875,12 +9919,15 @@ function drawCafeWarmWindowEvent(
   for (let index = 0; index < 3; index += 1) {
     const tableX = rect.x + rect.width * (0.2 + index * 0.18);
     layer.fillStyle(0x5a4030, 0.58);
-    layer.fillEllipse(tableX, tableY + 13, 54, 14);
+    layer.fillEllipse(tableX, tableY + 14, 62, 16);
+    layer.fillStyle(0x4b3427, 0.56);
+    layer.fillRoundedRect(tableX - 33, tableY - 3, 12, 9, 3);
+    layer.fillRoundedRect(tableX + 21, tableY - 3, 12, 9, 3);
     layer.fillStyle(0xf0cf8c, 0.84);
-    layer.fillEllipse(tableX, tableY, 38, 16);
+    layer.fillEllipse(tableX, tableY, 44, 18);
     layer.fillStyle(0xffedbd, 0.86);
-    layer.fillCircle(tableX - 8, tableY - 6, 3.4);
-    layer.fillCircle(tableX + 8, tableY - 6, 3.4);
+    layer.fillCircle(tableX - 8, tableY - 6, 4);
+    layer.fillCircle(tableX + 8, tableY - 6, 4);
     layer.lineStyle(
       1.5,
       0xf7e5bd,
@@ -9892,7 +9939,7 @@ function drawCafeWarmWindowEvent(
     for (let steam = 0; steam < 2; steam += 1) {
       const steamX = tableX - 7 + steam * 14;
       const steamLift = Math.sin(now / 460 + index + steam) * 2;
-      layer.lineStyle(1.4, 0xfff4d0, 0.34 * pulse);
+      layer.lineStyle(1.8, 0xfff4d0, 0.38 * pulse);
       layer.lineBetween(
         steamX,
         tableY - 12 + steamLift,
@@ -9934,7 +9981,8 @@ function drawDockCartEvent(
     cue: "square handcart",
     locationId: "market-square",
     locationName: locationNameForCue(game, "market-square", "Quay Square"),
-    signal: "large rolling cart, handlers, stacked crates, and visible wheels",
+    signal:
+      "large rolling cart, handlers, strapped crates, rope line, and visible wheels",
     visibleLabel: cityEventVisibleLabel(game, "event-square-cart", {
       includeUpcoming: true,
     }),
@@ -9952,7 +10000,7 @@ function drawDockCartEvent(
   const x = rect.x + rect.width * (0.24 + eased * 0.44);
   const y = rect.y + rect.height * 0.33;
   const lift = Math.sin(now / 180) * 1.2;
-  const scale = 1.24;
+  const scale = 1.3;
 
   layer.lineStyle(4, 0xf1dfb2, 0.14);
   for (let index = 0; index < 3; index += 1) {
@@ -9975,6 +10023,9 @@ function drawDockCartEvent(
     23 * scale,
     6 * scale,
   );
+  layer.lineStyle(2 * scale, 0x4d3424, 0.34);
+  layer.lineBetween(x - 22 * scale, y + 3 * scale + lift, x + 24 * scale, y + 3 * scale + lift);
+  layer.lineBetween(x - 16 * scale, y + 12 * scale + lift, x + 18 * scale, y + 12 * scale + lift);
   layer.fillStyle(0xc7b38c, 0.86);
   layer.fillRoundedRect(
     x - 22 * scale,
@@ -9998,6 +10049,9 @@ function drawDockCartEvent(
     15 * scale,
     5 * scale,
   );
+  layer.lineStyle(1.8 * scale, 0x4c3423, 0.44);
+  layer.lineBetween(x + 1 * scale, y - 34 * scale + lift, x + 1 * scale, y - 20 * scale + lift);
+  layer.lineBetween(x + 14 * scale, y - 34 * scale + lift, x + 14 * scale, y - 20 * scale + lift);
   layer.lineStyle(3.4 * scale, 0x4a3423, 0.68);
   layer.lineBetween(
     x + 24 * scale,
@@ -10017,13 +10071,20 @@ function drawDockCartEvent(
   layer.fillStyle(0xf0cf8c, 0.52);
   layer.fillCircle(x - 18 * scale, y + 19 * scale + lift, 2.7 * scale);
   layer.fillCircle(x + 18 * scale, y + 19 * scale + lift, 2.7 * scale);
+  layer.lineStyle(1.3 * scale, 0xf0cf8c, 0.46);
+  layer.lineBetween(x - 18 * scale, y + 13 * scale + lift, x - 18 * scale, y + 25 * scale + lift);
+  layer.lineBetween(x - 24 * scale, y + 19 * scale + lift, x - 12 * scale, y + 19 * scale + lift);
+  layer.lineBetween(x + 18 * scale, y + 13 * scale + lift, x + 18 * scale, y + 25 * scale + lift);
+  layer.lineBetween(x + 12 * scale, y + 19 * scale + lift, x + 24 * scale, y + 19 * scale + lift);
+  layer.lineStyle(2.2, 0xd0b484, 0.42);
+  layer.lineBetween(x + 40 * scale, y + 2 * scale + lift, x + 64 * scale, y - 4 * scale);
 
   drawAmbientPedestrian(layer, {
     accent: 0xd7bc79,
     alpha: 0.78,
     color: 0x4a5961,
     facing: 1,
-    scale: 0.62,
+    scale: 0.72,
     step: Math.sin(now / 480) * 0.1,
     x: x - 45 * scale,
     y: y + 11,
@@ -10033,7 +10094,7 @@ function drawDockCartEvent(
     alpha: 0.72,
     color: 0x5b4d49,
     facing: -1,
-    scale: 0.58,
+    scale: 0.68,
     step: Math.sin(now / 520 + 0.5) * 0.1,
     x: x + 54 * scale,
     y: y + 5,
@@ -10069,7 +10130,7 @@ function drawSquarePasserbyBeat(
     locationId: "market-square",
     locationName: locationNameForCue(game, "market-square", "Quay Square"),
     signal:
-      "broad crossing marks, paired pedestrians, pause bubble, and hand gesture",
+      "broad stone crossing marks, paired pedestrians, shared parcel, pause bubble, and hand gesture",
     visibleLabel:
       cityEventVisibleLabel(game, "event-market-crossing") ??
       cityEventVisibleLabel(game, "event-square-cart", {
@@ -10086,7 +10147,9 @@ function drawSquarePasserbyBeat(
   for (let index = 0; index < 4; index += 1) {
     const markX = rect.x + rect.width * (0.24 + index * 0.1);
     const markY = rect.y + rect.height * 0.33 + index * 7;
-    layer.lineStyle(4.8, 0xf1dfb2, pausing ? 0.36 : 0.28);
+    layer.lineStyle(7, 0x5c5141, 0.08);
+    layer.lineBetween(markX + 1.5, markY + 1.5, markX + 50, markY + 25.5);
+    layer.lineStyle(6.2, 0xf1dfb2, pausing ? 0.4 : 0.3);
     layer.lineBetween(markX, markY, markX + 48, markY + 24);
   }
 
@@ -10119,6 +10182,17 @@ function drawSquarePasserbyBeat(
     return;
   }
 
+  layer.fillStyle(0x071016, 0.16);
+  layer.fillRoundedRect(x + 17, y - 8, 24, 15, 5);
+  layer.fillStyle(0xb98a5e, 0.86);
+  layer.fillRoundedRect(x + 15, y - 11, 24, 14, 4);
+  layer.lineStyle(1.6, 0xf0cf8c, 0.42);
+  layer.lineBetween(x + 20, y - 11, x + 20, y + 2);
+  layer.lineBetween(x + 33, y - 11, x + 33, y + 2);
+  layer.lineStyle(2.4, 0xf0cf8c, 0.76);
+  layer.lineBetween(x + 10, y - 5, x + 18, y - 9);
+  layer.lineBetween(x + 42, y - 2, x + 37, y - 8);
+
   layer.fillStyle(0xf7e5bd, 0.84);
   layer.fillRoundedRect(x + 22, y - 62, 44, 24, 8);
   layer.fillTriangle(x + 25, y - 39, x + 18, y - 29, x + 34, y - 39);
@@ -10129,6 +10203,58 @@ function drawSquarePasserbyBeat(
   layer.lineStyle(2.8, 0xf0cf8c, 0.78);
   layer.lineBetween(x - 10, y - 8, x - 24, y - 26);
   layer.lineBetween(x - 24, y - 26, x - 18, y - 35);
+}
+
+function drawPierHandsHarborBeat(
+  layer: PhaserType.GameObjects.Graphics,
+  runtimeState: RuntimeState,
+  now: number,
+  hour: number,
+) {
+  const game = runtimeState.snapshot.game;
+  const anchors = runtimeState.indices.visualScene?.locationAnchors["moss-pier"];
+  const route = AMBIENT_CITY_ROUTES.find((candidate) => candidate.id === "pier-hands");
+  if (!game || !anchors || !route || !ambientRouteIsActive(route, hour, game)) {
+    return;
+  }
+
+  const rect = anchors.highlight;
+  const dockX = rect.x + rect.width * (0.66 + Math.sin(now / 6400) * 0.035);
+  const dockY = rect.y + rect.height * 0.2;
+  const waterX = rect.x + rect.width * 0.87;
+  const waterY = rect.y + rect.height * 0.34 + Math.sin(now / 900) * 1.4;
+
+  layer.lineStyle(2.2, 0xd0b484, 0.36);
+  layer.lineBetween(dockX - 36, dockY + 18, waterX - 6, waterY);
+  layer.lineStyle(2.6, 0x6d543a, 0.46);
+  for (let ring = 0; ring < 3; ring += 1) {
+    layer.strokeEllipse(dockX - 48 + ring * 4, dockY + 19, 22 - ring * 5, 11 - ring * 2);
+  }
+
+  drawAmbientPedestrian(layer, {
+    accent: 0xa8c0cc,
+    alpha: 0.8,
+    color: 0x374c56,
+    facing: 1,
+    scale: 0.86,
+    step: Math.sin(now / 720) * 0.12,
+    x: dockX - 8,
+    y: dockY + 14,
+  });
+  layer.fillStyle(0x7f6040, 0.76);
+  layer.fillRoundedRect(dockX + 20, dockY + 9, 30, 18, 5);
+  layer.lineStyle(1.7, 0xf0cf8c, 0.36);
+  layer.lineBetween(dockX + 26, dockY + 9, dockX + 26, dockY + 27);
+  layer.lineBetween(dockX + 42, dockY + 9, dockX + 42, dockY + 27);
+
+  layer.fillStyle(0x071016, 0.16);
+  layer.fillEllipse(waterX + 1, waterY + 8, 26, 9);
+  layer.fillStyle(0xa95e3a, 0.84);
+  layer.fillRoundedRect(waterX - 7, waterY - 10, 14, 18, 5);
+  layer.fillStyle(0xf0cf8c, 0.78);
+  layer.fillRoundedRect(waterX - 5, waterY - 15, 10, 7, 3);
+  layer.lineStyle(1.4, 0xefe2bf, 0.42);
+  layer.lineBetween(waterX, waterY - 17, waterX, waterY - 25);
 }
 
 function drawAmbientPedestrian(
