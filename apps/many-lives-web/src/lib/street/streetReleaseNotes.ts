@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.8",
-  build: "c31420e",
-  source: "PR #161",
+  version: "0.1.9",
+  build: "fe4bcf5",
+  source: "Main release",
   features: [
     {
-      title: "Grounded yard choices",
+      title: "South Quay feels busier",
       body:
-        "After resting, Rowan now weighs Morrow Yard against the room, his energy, and what the house needs next.",
+        "Kettle & Lamp, Quay Square, and the pier now show clearer event-backed street life as Rowan moves through town.",
     },
     {
-      title: "The city acts too",
+      title: "Ada's lead is grounded",
       body:
-        "Mara can steady Morrow House and the leaking pump while Rowan is elsewhere, with the change shown as a city beat.",
+        "Rowan now treats Mara's tip as unconfirmed until Ada answers directly, then records the lunch work terms as evidence.",
     },
     {
-      title: "Fresh and saved runs",
+      title: "Cleaner decisions",
       body:
-        "Browser checks now guard saved runs, autoplay, and visible clues so the opening stays readable after reloads.",
+        "Closed or stale options stay out of the current decision card, keeping watch mode focused on what Rowan can do now.",
     },
   ],
 };
