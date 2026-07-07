@@ -74,6 +74,23 @@ const FRINGE_ZONE_KINDS: VisualFringeZoneKind[] = [
 
 const FRINGE_EDGES: VisualFringeZoneEdge[] = ["north", "east", "south", "west"];
 
+function getLandmarkSignText(module: VisualLandmarkModule) {
+  if (module.text) {
+    return module.text;
+  }
+
+  switch (module.variant) {
+    case "cafe":
+      return "KETTLE & LAMP";
+    case "workshop":
+      return "MERCER REPAIRS";
+    case "yard":
+      return "N. CRANE YARD";
+    default:
+      return null;
+  }
+}
+
 const PROP_CLUSTER_KINDS: VisualPropClusterKind[] = [
   "cafe_terrace",
   "square_bench_pair",
@@ -2333,7 +2350,7 @@ function renderLandmarkPreview(landmark: VisualScene["landmarks"][number], index
             x={landmark.rect.x + landmark.rect.width / 2}
             y={landmark.rect.y + 35}
           >
-            BOARDING HOUSE
+            MORROW HOUSE
           </text>
           <rect
             fill="#e3d7c9"
@@ -2871,6 +2888,23 @@ function renderLandmarkModulePreview(
   }
 
   if (module.kind === "sign") {
+    const signText = getLandmarkSignText(module);
+    const signFill =
+      module.variant === "cafe"
+        ? "#f7edd2"
+        : module.variant === "workshop"
+          ? "#f1e1c7"
+          : "#f0dfb8";
+    const signFontFamily =
+      module.variant === "cafe"
+        ? "Georgia, serif"
+        : "Arial Black, Impact, sans-serif";
+    const signFontSize =
+      module.variant === "cafe"
+        ? Math.max(12, rect.height * 0.42)
+        : module.variant === "workshop"
+          ? Math.max(11, rect.height * 0.4)
+          : Math.max(10, rect.height * 0.36);
     const fill =
       module.variant === "cafe"
         ? "#384a3f"
@@ -2892,32 +2926,18 @@ function renderLandmarkModulePreview(
           x={rect.x}
           y={rect.y}
         />
-        {module.variant === "cafe" ? (
+        {signText ? (
           <text
-            fill="#f7edd2"
-            fontFamily="Georgia, serif"
-            fontSize={Math.max(16, rect.height * 0.55)}
+            fill={signFill}
+            fontFamily={signFontFamily}
+            fontSize={signFontSize}
             fontWeight="700"
-            letterSpacing="4"
+            letterSpacing={module.variant === "cafe" ? "1.1" : "0.5"}
             textAnchor="middle"
             x={rect.x + rect.width / 2}
             y={rect.y + rect.height / 2 + Math.max(4, rect.height * 0.12)}
           >
-            CAFE
-          </text>
-        ) : null}
-        {module.variant === "yard" ? (
-          <text
-            fill="#f0dfb8"
-            fontFamily="Arial Black, Impact, sans-serif"
-            fontSize={Math.max(12, rect.height * 0.44)}
-            fontWeight="700"
-            letterSpacing="2.2"
-            textAnchor="middle"
-            x={rect.x + rect.width / 2}
-            y={rect.y + rect.height / 2 + Math.max(4, rect.height * 0.12)}
-          >
-            DOCK YARD
+            {signText}
           </text>
         ) : null}
       </g>
@@ -5958,7 +5978,7 @@ export function VisualSceneBuilder() {
               x="36"
               y="14.2"
             >
-              CAFE
+              K&L
             </text>
             <circle cx="20" cy="31.4" fill="#8f6a4a" r="2.4" />
             <circle cx="52" cy="31.4" fill="#8f6a4a" r="2.4" />

@@ -92,6 +92,25 @@ function addLandmarkTextNode(
   objects.assetStructureNodes.push(label);
 }
 
+function getLandmarkSignText(
+  landmarkModule: VisualScene["landmarkModules"][number],
+) {
+  if (landmarkModule.text) {
+    return landmarkModule.text;
+  }
+
+  switch (landmarkModule.variant) {
+    case "cafe":
+      return "KETTLE & LAMP";
+    case "workshop":
+      return "MERCER REPAIRS";
+    case "yard":
+      return "N. CRANE YARD";
+    default:
+      return null;
+  }
+}
+
 function drawV2LandmarkGroundArt(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
@@ -788,7 +807,7 @@ function drawV2LandmarkStructureArt(
         color: "#f4ead2",
         fontFamily: "Georgia, serif",
         fontSize: 14,
-        text: "BOARDING HOUSE",
+        text: "MORROW HOUSE",
         x: landmark.rect.x + landmark.rect.width / 2,
         y: landmark.rect.y + 27,
       });
@@ -2794,7 +2813,12 @@ function drawLandmarkModules(
   }
 
   for (const landmarkModule of visualScene.landmarkModules) {
-    if (landmarkModule.kind !== "sign") {
+    const signText =
+      landmarkModule.kind === "sign"
+        ? getLandmarkSignText(landmarkModule)
+        : null;
+
+    if (!signText) {
       continue;
     }
 
@@ -2802,8 +2826,22 @@ function drawLandmarkModules(
       addLandmarkTextNode(objects, {
         color: "#f7edd2",
         fontFamily: "Georgia, serif",
-        fontSize: Math.max(16, landmarkModule.rect.height * 0.55),
-        text: "CAFE",
+        fontSize: Math.max(12, landmarkModule.rect.height * 0.42),
+        text: signText,
+        x: landmarkModule.rect.x + landmarkModule.rect.width / 2,
+        y:
+          landmarkModule.rect.y +
+          landmarkModule.rect.height / 2 +
+          Math.max(4, landmarkModule.rect.height * 0.12),
+      });
+    }
+
+    if (landmarkModule.variant === "workshop") {
+      addLandmarkTextNode(objects, {
+        color: "#f1e1c7",
+        fontFamily: "Arial Black, Impact, sans-serif",
+        fontSize: Math.max(11, landmarkModule.rect.height * 0.4),
+        text: signText,
         x: landmarkModule.rect.x + landmarkModule.rect.width / 2,
         y:
           landmarkModule.rect.y +
@@ -2816,8 +2854,8 @@ function drawLandmarkModules(
       addLandmarkTextNode(objects, {
         color: "#f0dfb8",
         fontFamily: "Arial Black, Impact, sans-serif",
-        fontSize: Math.max(12, landmarkModule.rect.height * 0.44),
-        text: "DOCK YARD",
+        fontSize: Math.max(10, landmarkModule.rect.height * 0.36),
+        text: signText,
         x: landmarkModule.rect.x + landmarkModule.rect.width / 2,
         y:
           landmarkModule.rect.y +
