@@ -8728,7 +8728,7 @@ async function runAutoplayObservation(session) {
         }
         return null;
       },
-      140_000,
+      AUTOPLAY_OBSERVATION_TIMEOUT_MS,
       "Autoplay did not reach first-afternoon completion without manual advance clicks.",
     );
     completedProbe = completion.probe;
