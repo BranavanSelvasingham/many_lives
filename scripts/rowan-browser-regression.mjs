@@ -1761,9 +1761,15 @@ class CdpSession {
     );
   }
 
-  async waitForVisualRouteProgress(previousGame, nextGame, minimumProgress) {
+  async waitForVisualRouteProgress(
+    previousGame,
+    nextGame,
+    minimumProgress,
+    options = {},
+  ) {
     const startedAt = Date.now();
     let lastProbe = null;
+    let bestRouteProbe = options.fallbackProbe ?? null;
 
     while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
       try {
@@ -1774,10 +1780,19 @@ class CdpSession {
         const route = probe?.movement?.playerRoute;
         if (
           browserProbeMatchesGameSnapshot(probe, previousGame) &&
-          route?.active === true &&
-          route.progress >= minimumProgress
+          route?.active === true
         ) {
-          return probe;
+          const bestProgress =
+            bestRouteProbe?.movement?.playerRoute?.progress ?? -1;
+          if (route.progress >= bestProgress) {
+            bestRouteProbe = probe;
+          }
+          if (route.progress >= minimumProgress) {
+            return probe;
+          }
+        }
+        if (browserProbeMatchesGameSnapshot(probe, nextGame) && bestRouteProbe) {
+          return bestRouteProbe;
         }
       } catch {}
 
@@ -12563,6 +12578,7 @@ async function main() {
           previousGame,
           game,
           0.35,
+          { fallbackProbe: routeStartProbe },
         );
         const routeMidLabel = `${step.label}-route-mid`;
         const routeMidCapture = await captureBrowserMovementState({
@@ -12595,6 +12611,7 @@ async function main() {
             previousGame,
             game,
             0.82,
+            { fallbackProbe: routeMidProbe },
           );
           const routeCloseLabel = `${step.label}-route-close`;
           const routeCloseCapture = await captureBrowserMovementState({
