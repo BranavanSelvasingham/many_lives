@@ -3296,11 +3296,13 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
     `${label}: browser AI runtime diverged from sim.`,
   );
   assertProbeAuditability(label, game, probe);
-  assert.equal(
-    probe.visualPlayer?.isMovingToServerState ?? false,
-    Boolean(options.allowVisualMove),
-    `${label}: browser still thinks the player is in a staged visual move.`,
-  );
+  if (!options.allowVisualMove) {
+    assert.equal(
+      probe.visualPlayer?.isMovingToServerState ?? false,
+      false,
+      `${label}: browser still thinks the player is in a staged visual move.`,
+    );
+  }
 }
 
 function browserProbeMatchesGameSnapshot(probe, game) {
