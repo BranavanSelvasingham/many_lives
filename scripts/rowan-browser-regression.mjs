@@ -1810,7 +1810,15 @@ class CdpSession {
             return probe;
           }
         }
-        if (browserProbeMatchesGameSnapshot(probe, nextGame) && bestRouteProbe) {
+        const routeSnapshotSettled =
+          bestRouteProbe &&
+          route?.active !== true &&
+          (browserProbeMatchesGameCoreSnapshot(probe, previousGame) ||
+            browserProbeMatchesGameCoreSnapshot(probe, nextGame));
+        if (
+          routeSnapshotSettled ||
+          (browserProbeMatchesGameSnapshot(probe, nextGame) && bestRouteProbe)
+        ) {
           return bestRouteProbe;
         }
       } catch {}
@@ -3406,19 +3414,7 @@ function browserProbeMatchesGameSnapshot(probe, game) {
   const expectedPlanningTrace = planningTraceProbeFromGame(game);
 
   return (
-    probe.gameId === game.id &&
-    probe.clock?.iso === game.currentTime &&
-    probe.location?.id === normalizeNullable(game.player.currentLocationId) &&
-    probe.location?.spaceId ===
-      normalizeNullable(game.activeSpaceId ?? game.player.spaceId) &&
-    probe.location?.x === game.player.x &&
-    probe.location?.y === game.player.y &&
-    probe.autonomy?.label === game.rowanAutonomy.label &&
-    probe.autonomy?.stepKind === game.rowanAutonomy.stepKind &&
-    (probe.autonomy?.targetLocationId ?? null) ===
-      normalizeNullable(game.rowanAutonomy.targetLocationId) &&
-    (probe.activeConversation?.npcId ?? null) ===
-      (game.activeConversation?.npcId ?? null) &&
+    browserProbeMatchesGameCoreSnapshot(probe, game) &&
     isDeepStrictEqual(probe.cityEvents ?? [], activeCityEvents(game)) &&
     isDeepStrictEqual(
       probe.independentNpcActions ?? [],
@@ -3432,6 +3428,26 @@ function browserProbeMatchesGameSnapshot(probe, game) {
       )) &&
     isDeepStrictEqual(probe.worldPressure, worldPressureFromGame(game)) &&
     isDeepStrictEqual(probe.aiRuntime ?? null, aiRuntimeProbeFromGame(game))
+  );
+}
+
+function browserProbeMatchesGameCoreSnapshot(probe, game) {
+  return Boolean(
+    probe &&
+      game &&
+      probe.gameId === game.id &&
+      probe.clock?.iso === game.currentTime &&
+      probe.location?.id === normalizeNullable(game.player.currentLocationId) &&
+      probe.location?.spaceId ===
+        normalizeNullable(game.activeSpaceId ?? game.player.spaceId) &&
+      probe.location?.x === game.player.x &&
+      probe.location?.y === game.player.y &&
+      probe.autonomy?.label === game.rowanAutonomy.label &&
+      probe.autonomy?.stepKind === game.rowanAutonomy.stepKind &&
+      (probe.autonomy?.targetLocationId ?? null) ===
+        normalizeNullable(game.rowanAutonomy.targetLocationId) &&
+      (probe.activeConversation?.npcId ?? null) ===
+        (game.activeConversation?.npcId ?? null),
   );
 }
 
