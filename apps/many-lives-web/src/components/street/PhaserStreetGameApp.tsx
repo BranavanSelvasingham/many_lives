@@ -1107,16 +1107,6 @@ export function PhaserStreetGameApp() {
     pendingVisualGameUpdateRef.current = null;
   }, []);
 
-  const markAutoContinueBeatStarted = useCallback(
-    (nextGame: StreetGameState) => {
-      const key = buildWatchModeAdvanceKey(nextGame);
-      autoContinueBeatStartedRef.current = key
-        ? { key, startedAtMs: performance.now() }
-        : null;
-    },
-    [],
-  );
-
   const applyGameUpdate = useCallback(
     (nextGame: StreetGameState, requestId?: number) => {
       if (
@@ -1212,7 +1202,6 @@ export function PhaserStreetGameApp() {
             }
 
             pendingVisualGameUpdateRef.current = null;
-            markAutoContinueBeatStarted(nextGame);
             gameRef.current = nextGame;
             startTransition(() => {
               setGame(nextGame);
@@ -1231,7 +1220,6 @@ export function PhaserStreetGameApp() {
         return true;
       }
 
-      markAutoContinueBeatStarted(nextGame);
       gameRef.current = nextGame;
       startTransition(() => {
         setGame(nextGame);
@@ -1247,7 +1235,6 @@ export function PhaserStreetGameApp() {
     },
     [
       clearPendingVisualGameUpdate,
-      markAutoContinueBeatStarted,
       publishWaypoint,
       rowanWatchModeEnabled,
     ],
@@ -1554,6 +1541,9 @@ export function PhaserStreetGameApp() {
       ? isFirstAfternoonCompletionAcknowledgementPending(game)
       : false;
     const autoContinueKey = buildWatchModeAdvanceKey(game);
+    if (!autoContinueKey) {
+      autoContinueBeatStartedRef.current = null;
+    }
     if (
       lastObjectiveAutoContinueKeyRef.current &&
       lastObjectiveAutoContinueKeyRef.current !== autoContinueKey
@@ -1587,7 +1577,11 @@ export function PhaserStreetGameApp() {
       return;
     }
 
-    const beatStarted = autoContinueBeatStartedRef.current;
+    let beatStarted = autoContinueBeatStartedRef.current;
+    if (beatStarted?.key !== autoContinueKey) {
+      beatStarted = { key: autoContinueKey, startedAtMs: performance.now() };
+      autoContinueBeatStartedRef.current = beatStarted;
+    }
     const delayMs = remainingAutoplayDelayMs(
       autoContinueDelayMsForBeat(game),
       beatStarted?.key === autoContinueKey ? beatStarted.startedAtMs : null,
