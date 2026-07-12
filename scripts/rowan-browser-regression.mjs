@@ -4455,6 +4455,37 @@ function normalizeVisibleActionText(value) {
     .toLowerCase();
 }
 
+function visibleDecisionArtifactMatchesDom(dom, artifactPayload = null) {
+  if (!artifactPayload) {
+    return true;
+  }
+
+  const artifact = dom?.visibleDecisionArtifact ?? null;
+  if (!artifact?.visible) {
+    return false;
+  }
+  if (
+    artifactPayload.sourceSummary &&
+    artifact.source !== artifactPayload.sourceSummary
+  ) {
+    return false;
+  }
+
+  const visibleText = normalizeVisibleActionText(artifact.text);
+  return [
+    artifactPayload.objective,
+    artifactPayload.selectedAction,
+    artifactPayload.rationale,
+    artifactPayload.nextCheck,
+  ]
+    .filter(Boolean)
+    .every((value) => {
+      const expected = normalizeVisibleActionText(value);
+      const prefix = expected.slice(0, Math.min(expected.length, 24)).trim();
+      return prefix.length > 0 && visibleText.includes(prefix);
+    });
+}
+
 function assertVisibleDecisionArtifactDom(label, dom, artifactPayload = null) {
   const artifact = dom?.visibleDecisionArtifact ?? null;
   assert.ok(artifact, `${label}: missing player-facing decision callback.`);
@@ -11894,12 +11925,21 @@ async function captureInhabitMoment({
   let dom = probe.independentNpcSurface
     ? await waitForInhabitIndependentNpcSurfaceDom(session, label, probe)
     : await session.readDomSnapshot(`${label}:dom-snapshot`);
-  if (
-    probe.watchMode?.enabled &&
-    !probe.watchMode.frozen &&
-    probe.activeConversation &&
-    !hasVisibleWatchModeConversationCopy(dom)
-  ) {
+  const isCoherentMoment = (candidateProbe, candidateDom) => {
+    const missingWatchConversationCopy =
+      candidateProbe.watchMode?.enabled &&
+      !candidateProbe.watchMode.frozen &&
+      candidateProbe.activeConversation &&
+      !hasVisibleWatchModeConversationCopy(candidateDom);
+    const decisionPayload = candidateProbe.autonomy?.planningTrace
+      ? candidateProbe.autonomy.visibleDecisionArtifact
+      : null;
+    return (
+      !missingWatchConversationCopy &&
+      visibleDecisionArtifactMatchesDom(candidateDom, decisionPayload)
+    );
+  };
+  if (!isCoherentMoment(probe, dom)) {
     const coherentMoment = await waitFor(
       async () => {
         const latestProbe = await session.readBrowserProbe(
@@ -11917,17 +11957,14 @@ async function captureInhabitMoment({
         const latestDom = await session.readDomSnapshot(
           `${label}:coherent-dom-snapshot`,
         );
-        if (
-          latestProbe.activeConversation &&
-          !hasVisibleWatchModeConversationCopy(latestDom)
-        ) {
+        if (!isCoherentMoment(latestProbe, latestDom)) {
           return null;
         }
 
         return { dom: latestDom, probe: latestProbe };
       },
       15_000,
-      `${label}: timed out waiting for coherent watch-mode conversation evidence.`,
+      `${label}: timed out waiting for coherent player-facing evidence.`,
     );
     probe = coherentMoment.probe;
     dom = coherentMoment.dom;
