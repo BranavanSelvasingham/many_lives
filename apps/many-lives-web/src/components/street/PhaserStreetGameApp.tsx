@@ -1450,7 +1450,7 @@ export function PhaserStreetGameApp() {
 
   const handleAdvanceObjective = useCallback(async (
     options: AdvanceObjectiveOptions = {},
-  ) => {
+  ): Promise<boolean> => {
     const activeGame = gameRef.current;
     if (!activeGame || busyLabelRef.current) {
       return false;
@@ -1462,7 +1462,7 @@ export function PhaserStreetGameApp() {
       ? `Following Rowan: ${rowanAutonomy.label}...`
       : "Continuing Rowan's plan...";
 
-    await runWithBusy(busyCopy, async () => {
+    return runWithBusy(busyCopy, async () => {
       const requestId = nextRequestId();
       const nextGame = await advanceStreetObjective(activeGame.id, {
         allowTimeSkip: true,
