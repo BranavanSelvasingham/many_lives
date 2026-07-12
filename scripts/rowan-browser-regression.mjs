@@ -1170,6 +1170,88 @@ class CdpSession {
     return probe;
   }
 
+  async readAutoplayPacingProbe(label = "autoplay-pacing-probe") {
+    const probe = await this.evaluateForRead(`(() => {
+      const parseProbe = (selector) => {
+        const script = document.querySelector(selector);
+        if (!script) {
+          return null;
+        }
+        try {
+          return JSON.parse(script.textContent || "null");
+        } catch (error) {
+          return { parseError: String(error), selector };
+        }
+      };
+      const payload = parseProbe("#ml-browser-probe");
+      if (!payload || payload.parseError) {
+        return payload;
+      }
+      const movement = parseProbe("#ml-browser-movement-probe");
+      if (movement?.parseError) {
+        return movement;
+      }
+      payload.movement = movement ?? payload.movement;
+      return payload;
+    })()`, label);
+
+    if (probe?.parseError) {
+      throw new Error(
+        `Could not parse ${probe.selector ?? "autoplay pacing probe"}: ${probe.parseError}`,
+      );
+    }
+
+    return probe;
+  }
+
+  async readAutoplayDomAudit(label = "autoplay-dom-audit") {
+    return this.evaluateForRead(`(() => {
+      const compactText = (element) =>
+        element?.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+      const progressionSelectors = [
+        "[data-advance-objective]:not([disabled])",
+        "[data-action-id]:not([disabled])",
+        "[data-wait-minutes]:not([disabled])"
+      ];
+      const visibleProgressionControls = progressionSelectors.flatMap((selector) =>
+        Array.from(document.querySelectorAll(selector)).map((element) => ({
+          actionId: element.getAttribute("data-action-id"),
+          advancesObjective: element.hasAttribute("data-advance-objective"),
+          selector,
+          text: compactText(element),
+          waitMinutes: element.getAttribute("data-wait-minutes")
+        }))
+      );
+      const watchModeReplyAffordances = document.querySelector(".ml-root.is-watch-mode")
+        ? Array.from(
+            document.querySelectorAll(
+              "[data-conversation-panel] .ml-chat-bubble.is-player"
+            )
+          )
+            .filter((element) => {
+              const passiveTranscript =
+                element.getAttribute("data-watch-mode-transcript-line") === "rowan";
+              const clickableAncestor = element.closest(
+                "button,[role='button'],a[href],[data-action-id],[data-advance-objective],[data-wait-minutes]"
+              );
+              return !passiveTranscript || Boolean(clickableAncestor);
+            })
+            .map((element) => ({
+              passiveTranscript:
+                element.getAttribute("data-watch-mode-transcript-line") === "rowan",
+              text: compactText(element)
+            }))
+        : [];
+      const bodyText = compactText(document.body);
+      return {
+        bodyText,
+        bodyTextSample: bodyText.slice(0, 1600),
+        visibleProgressionControls,
+        watchModeReplyAffordances
+      };
+    })()`, label);
+  }
+
   async readMapAgencyProbe(label = "map-agency-probe") {
     const probe = await this.evaluateForRead(`(() => {
       const script = document.querySelector("#ml-browser-map-agency-probe");
@@ -9397,9 +9479,9 @@ async function runAutoplayObservation(session) {
   let lastProbeSignature = null;
   const pacingStartedAt = Date.now();
   await session.navigate(url);
-  const startProbe = await session.readBrowserProbe();
+  const startProbe = await session.readAutoplayPacingProbe();
   const startDom = await session
-    .readDomSnapshot("fresh-autoplay-observation:start-dom")
+    .readAutoplayDomAudit("fresh-autoplay-observation:start-dom")
     .catch(() => null);
   assert.equal(
     startProbe.watchMode?.enabled,
@@ -9432,7 +9514,7 @@ async function runAutoplayObservation(session) {
   try {
     const completion = await waitFor(
       async () => {
-        const probe = await session.readBrowserProbe();
+        const probe = await session.readAutoplayPacingProbe();
         let sampleDom = null;
         const now = Date.now();
         const probeSample = sampleAutoplayObservationSample({
@@ -9453,7 +9535,7 @@ async function runAutoplayObservation(session) {
         if (shouldSample) {
           if (shouldAuditDom) {
             sampleDom = await session
-              .readDomSnapshot("fresh-autoplay-observation:dom-snapshot")
+              .readAutoplayDomAudit("fresh-autoplay-observation:dom-audit")
               .catch(() => null);
             lastDomAuditAt = now;
           }
@@ -9472,14 +9554,7 @@ async function runAutoplayObservation(session) {
           probe?.firstAfternoon?.completedAt ||
           /first afternoon complete/i.test(probe?.autonomy?.label ?? "")
         ) {
-          return {
-            dom:
-              sampleDom ??
-              (await session
-                .readDomSnapshot("fresh-autoplay-observation:completed-dom")
-                .catch(() => null)),
-            probe,
-          };
+          return { probe };
         }
         return null;
       },
@@ -9488,11 +9563,9 @@ async function runAutoplayObservation(session) {
       AUTOPLAY_PACING_SAMPLE_INTERVAL_MS,
     );
     completedProbe = completion.probe;
-    dom =
-      completion.dom ??
-      (await session
-        .readDomSnapshot("fresh-autoplay-observation:final-dom")
-        .catch(() => null));
+    dom = await session.readDomSnapshot(
+      "fresh-autoplay-observation:final-dom",
+    );
     const completedSample = sampleAutoplayObservationSample({
       dom,
       elapsedMs: Date.now() - pacingStartedAt,
