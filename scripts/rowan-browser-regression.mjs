@@ -4883,15 +4883,22 @@ function assertNoVisibleWatchModeProgressionControls(label, probe, dom) {
   );
 
   if (probe.activeConversation) {
-    const visibleConversationCopy = [dom.conversationText, dom.bodyText]
-      .filter(Boolean)
-      .join(" ");
     assert.match(
-      visibleConversationCopy,
+      visibleWatchModeConversationCopy(dom),
       /Rowan (?:replies automatically|is replying automatically|will answer automatically|will keep the conversation moving|is carrying the conversation)/i,
       `${label}: watch-mode conversation does not expose passive carry-forward copy.`,
     );
   }
+}
+
+function visibleWatchModeConversationCopy(dom) {
+  return [dom?.conversationText, dom?.bodyText].filter(Boolean).join(" ");
+}
+
+function hasVisibleWatchModeConversationCopy(dom) {
+  return /Rowan (?:replies automatically|is replying automatically|will answer automatically|will keep the conversation moving|is carrying the conversation)/i.test(
+    visibleWatchModeConversationCopy(dom),
+  );
 }
 
 function assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom) {
@@ -11883,10 +11890,48 @@ async function captureInhabitMoment({
   userQuestion,
 }) {
   await closeInhabitSupportPanel(session);
-  const probe = probeOverride ?? (await waitForInhabitSettled(session, label));
-  const dom = probe.independentNpcSurface
+  let probe = probeOverride ?? (await waitForInhabitSettled(session, label));
+  let dom = probe.independentNpcSurface
     ? await waitForInhabitIndependentNpcSurfaceDom(session, label, probe)
     : await session.readDomSnapshot(`${label}:dom-snapshot`);
+  if (
+    probe.watchMode?.enabled &&
+    !probe.watchMode.frozen &&
+    probe.activeConversation &&
+    !hasVisibleWatchModeConversationCopy(dom)
+  ) {
+    const coherentMoment = await waitFor(
+      async () => {
+        const latestProbe = await session.readBrowserProbe(
+          `${label}:coherent-browser-probe`,
+        );
+        if (
+          !latestProbe ||
+          latestProbe.visualPlayer?.isMovingToServerState ||
+          latestProbe.playback?.activeKind ||
+          (latestProbe.playback?.queuedCount ?? 0) > 0
+        ) {
+          return null;
+        }
+
+        const latestDom = await session.readDomSnapshot(
+          `${label}:coherent-dom-snapshot`,
+        );
+        if (
+          latestProbe.activeConversation &&
+          !hasVisibleWatchModeConversationCopy(latestDom)
+        ) {
+          return null;
+        }
+
+        return { dom: latestDom, probe: latestProbe };
+      },
+      15_000,
+      `${label}: timed out waiting for coherent watch-mode conversation evidence.`,
+    );
+    probe = coherentMoment.probe;
+    dom = coherentMoment.dom;
+  }
   const latestProbeForArtifact =
     probe.autonomy?.visibleDecisionArtifact || probe.rail?.visibleDecisionArtifact
       ? null
