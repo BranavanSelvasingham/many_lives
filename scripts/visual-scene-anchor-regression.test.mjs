@@ -12,17 +12,24 @@ const TSX_LOADER = fileURLToPath(
 );
 
 const inspectionSource = String.raw`
-  import {
+  import * as visualScenesNamespace from "./apps/many-lives-web/src/lib/street/visualScenes.ts";
+  import * as visualContractNamespace from "./apps/many-lives-web/src/lib/street/southQuayVisualContract.ts";
+
+  const visualScenesModule =
+    visualScenesNamespace.default ?? visualScenesNamespace;
+  const visualContractModule =
+    visualContractNamespace.default ?? visualContractNamespace;
+  const {
     cloneVisualSceneDocument,
     collectVisualSceneWarnings,
     getVisualScene,
     getVisualSceneDocument,
-  } from "./apps/many-lives-web/src/lib/street/visualScenes.ts";
-  import {
+  } = visualScenesModule;
+  const {
     collectSouthQuayVisualContractDiagnostics,
     SOUTH_QUAY_VISUAL_CONTRACT_REVISION,
     SOUTH_QUAY_VISUAL_CONTRACT_SOURCE,
-  } from "./apps/many-lives-web/src/lib/street/southQuayVisualContract.ts";
+  } = visualContractModule;
 
   const authoredScene = getVisualSceneDocument("south-quay-v2");
   if (!authoredScene?.visualContract) {
