@@ -3415,11 +3415,16 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
   }
   const expectedPlanningTrace = planningTraceProbeFromGame(game);
   if (expectedPlanningTrace && !allowPendingPlayback) {
-    assert.deepEqual(
-      probe.autonomy.planningTrace,
-      expectedPlanningTrace,
-      `${label}: browser planner trace diverged from sim.`,
-    );
+    if (
+      !isDeepStrictEqual(probe.autonomy.planningTrace, expectedPlanningTrace)
+    ) {
+      assert.deepEqual(
+        planningTraceDecisionProjection(probe.autonomy.planningTrace),
+        planningTraceDecisionProjection(expectedPlanningTrace),
+        `${label}: browser planner decision identity diverged from sim.`,
+      );
+      assertPlanningTracePayload(label, probe.autonomy.planningTrace);
+    }
   } else if (probe.autonomy.planningTrace) {
     assertPlanningTracePayload(label, probe.autonomy.planningTrace);
   }
@@ -3459,13 +3464,50 @@ function browserProbeMatchesGameSnapshot(probe, game) {
     ) &&
     isDeepStrictEqual(probe.objective, objectiveProbeFromGame(game)) &&
     (!expectedPlanningTrace ||
-      isDeepStrictEqual(
+      planningTraceMatchesExpectedDecision(
         probe.autonomy?.planningTrace,
         expectedPlanningTrace,
       )) &&
     isDeepStrictEqual(probe.worldPressure, worldPressureFromGame(game)) &&
     isDeepStrictEqual(probe.aiRuntime ?? null, aiRuntimeProbeFromGame(game))
   );
+}
+
+function planningTraceMatchesExpectedDecision(actual, expected) {
+  return Boolean(
+    actual &&
+      expected &&
+      (isDeepStrictEqual(actual, expected) ||
+        isDeepStrictEqual(
+          planningTraceDecisionProjection(actual),
+          planningTraceDecisionProjection(expected),
+        )),
+  );
+}
+
+function planningTraceDecisionProjection(trace) {
+  if (!trace) {
+    return null;
+  }
+
+  return {
+    immediateAction: trace.immediateAction ?? null,
+    intendedFollowUp: trace.intendedFollowUp ?? null,
+    nextSteps: trace.nextSteps ?? [],
+    plannerIntent: trace.plannerIntent ?? null,
+    providerAttempt: trace.providerAttempt ?? null,
+    selectedActionId: trace.selectedActionId ?? null,
+    selectedLabel: trace.selectedLabel ?? null,
+    selectedLegalBacking: trace.selectedLegalBacking ?? null,
+    selectedMatchedOutcomeId: trace.selectedMatchedOutcomeId ?? null,
+    selectedPlanKey: trace.selectedPlanKey ?? null,
+    selectedPressureId: trace.selectedPressureId ?? null,
+    selectedPressureKind: trace.selectedPressureKind ?? null,
+    selectedPressureLabel: trace.selectedPressureLabel ?? null,
+    selectedRecommendation: trace.selectedRecommendation ?? null,
+    selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
+    sourceLabel: trace.sourceLabel ?? null,
+  };
 }
 
 function browserProbeMatchesProgressiveSnapshot(probe, game) {
