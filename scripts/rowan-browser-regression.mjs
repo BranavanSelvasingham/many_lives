@@ -2512,6 +2512,7 @@ async function launchBrowserSession(url) {
     [
       "--headless=new",
       "--no-sandbox",
+      "--disable-gpu",
       "--disable-dev-shm-usage",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
