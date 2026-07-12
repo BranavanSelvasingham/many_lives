@@ -610,7 +610,7 @@ export function buildStreetOverlayStyle({
         padding-top: 7px;
         font-size: 11px;
         line-height: 1.42;
-        color: rgba(247, 227, 187, 0.82);
+        color: rgba(239, 246, 248, 0.92);
       }
       .ml-decision-artifact.is-compact .ml-decision-rationale {
         margin-top: 8px;

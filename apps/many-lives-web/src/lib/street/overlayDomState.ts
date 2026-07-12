@@ -2,6 +2,7 @@ export type OverlayRenderState = {
   activeFieldKey: string | null;
   commandRailNearBottom: boolean;
   commandRailScrollTop: number | null;
+  commandRailWasCollapsed: boolean;
   fieldSelectionEnd: number | null;
   fieldSelectionStart: number | null;
   fieldValueByKey: Map<string, string>;
@@ -86,6 +87,9 @@ export function captureOverlayRenderState(
         56
       : false,
     commandRailScrollTop: commandRail?.scrollTop ?? null,
+    commandRailWasCollapsed: Boolean(
+      root.querySelector(".ml-root.is-rail-collapsed"),
+    ),
     fieldSelectionEnd: activeField?.selectionEnd ?? null,
     fieldSelectionStart: activeField?.selectionStart ?? null,
     fieldValueByKey,
@@ -149,10 +153,15 @@ export function restoreOverlayRenderState(
     '[data-preserve-scroll="command-rail"]',
   );
   if (commandRail) {
+    const commandRailWasOpened =
+      state.commandRailWasCollapsed &&
+      Boolean(root.querySelector(".ml-root.is-rail-expanded"));
     const commandRailIdentityMatches =
       (state.scrollIdentityByKey.get("command-rail") ?? "") ===
       (commandRail.dataset.preserveScrollKey ?? "");
-    if (!commandRailIdentityMatches) {
+    if (commandRailWasOpened) {
+      commandRail.scrollTop = 0;
+    } else if (!commandRailIdentityMatches) {
       scrollCommandRailToDirective(commandRail);
     } else if (state.commandRailNearBottom) {
       commandRail.scrollTop = commandRail.scrollHeight;
