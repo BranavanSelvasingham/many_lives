@@ -13472,9 +13472,28 @@ async function main() {
       observeCarryForwardMs: OBSERVE_CARRY_FORWARD_TIMEOUT_MS,
     },
   };
-  const session = USE_CHROME_DRIVER
+  let session = USE_CHROME_DRIVER
     ? await launchBrowserSession(browserUrl(game.id))
     : null;
+  const browserPageErrors = [];
+
+  const recycleBrowserSession = async (label) => {
+    if (!USE_CHROME_DRIVER || !session) {
+      return;
+    }
+
+    traceRegression(`recycle-session:${label}:closing`);
+    browserPageErrors.push(...session.pageErrors);
+    const previousSession = session;
+    session = null;
+    await withTimeout(
+      Promise.resolve(previousSession.close()),
+      CLEANUP_TIMEOUT_MS,
+      `Timed out recycling Chrome before ${label}.`,
+    );
+    session = await launchBrowserSession(browserUrl(game.id));
+    traceRegression(`recycle-session:${label}:ready`);
+  };
 
   const writeCheckpointSummary = async (outputStatus, extraDiagnostics = {}) => {
     const checkpoint = {
@@ -13750,6 +13769,7 @@ async function main() {
         () => runOverlayPanelChecks(session),
       );
       await writeCheckpointSummary("overlay-checks-complete");
+      await recycleBrowserSession("autoplay-observation");
       autoplayObservation = await runBrowserPhase(
         "autoplay-observation",
         AUTOPLAY_OBSERVATION_TIMEOUT_MS,
@@ -13768,16 +13788,18 @@ async function main() {
         () => runObserveOnlyCarryForwardObservation(session),
       );
       await writeCheckpointSummary("observe-only-carry-forward-complete");
+      await recycleBrowserSession("inhabit-gameplay");
       inhabitGameplay = await runBrowserPhase(
         "inhabit-gameplay",
         INHABIT_GAMEPLAY_TIMEOUT_MS,
         () => runInhabitGameplayPass(session),
       );
       await writeCheckpointSummary("inhabit-gameplay-complete");
+      const allPageErrors = [...browserPageErrors, ...session.pageErrors];
       assert.deepEqual(
-        session.pageErrors,
+        allPageErrors,
         [],
-        `Browser emitted runtime/log errors: ${JSON.stringify(session.pageErrors, null, 2)}`,
+        `Browser emitted runtime/log errors: ${JSON.stringify(allPageErrors, null, 2)}`,
       );
       browserChecksCompleted = true;
     }
