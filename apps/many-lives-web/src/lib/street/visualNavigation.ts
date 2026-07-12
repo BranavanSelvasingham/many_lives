@@ -279,10 +279,87 @@ export function isVisualWorldPathLegal(
   }
 
   return worldPath.every((point) =>
+    isVisualWorldPointLegal(point, walkableRuntimePoints, tolerance),
+  );
+}
+
+function isVisualWorldPointLegal(
+  point: Point,
+  walkableRuntimePoints: WalkableRuntimePoint[],
+  tolerance: number,
+) {
+  return (
     walkableRuntimePoints.some(
-      (walkablePoint) => distanceBetween(walkablePoint.world, point) <= tolerance,
+      (walkablePoint) =>
+        distanceBetween(walkablePoint.world, point) <= tolerance,
+    ) ||
+    pointFallsOnAdjacentWalkableSegment(
+      point,
+      walkableRuntimePoints,
+      tolerance,
+    )
+  );
+}
+
+function pointFallsOnAdjacentWalkableSegment(
+  point: Point,
+  walkableRuntimePoints: WalkableRuntimePoint[],
+  tolerance: number,
+) {
+  const pointByTile = new Map(
+    walkableRuntimePoints.map((walkablePoint) => [
+      `${walkablePoint.tile.x},${walkablePoint.tile.y}`,
+      walkablePoint,
+    ]),
+  );
+  const neighborOffsets = [
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+    { x: 0, y: 1 },
+    { x: 0, y: -1 },
+  ];
+
+  for (const from of walkableRuntimePoints) {
+    for (const offset of neighborOffsets) {
+      const to = pointByTile.get(
+        `${from.tile.x + offset.x},${from.tile.y + offset.y}`,
+      );
+      if (!to) {
+        continue;
+      }
+
+      if (distanceToSegment(point, from.world, to.world) <= tolerance) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+function distanceToSegment(point: Point, from: Point, to: Point) {
+  const segmentX = to.x - from.x;
+  const segmentY = to.y - from.y;
+  const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY;
+
+  if (segmentLengthSquared <= 0.0001) {
+    return distanceBetween(point, from);
+  }
+
+  const progress = Math.max(
+    0,
+    Math.min(
+      1,
+      ((point.x - from.x) * segmentX + (point.y - from.y) * segmentY) /
+        segmentLengthSquared,
     ),
   );
+  const nearest = {
+    x: from.x + segmentX * progress,
+    y: from.y + segmentY * progress,
+  };
+
+  return distanceBetween(point, nearest);
 }
 
 export function projectVisualNavigationTileCenter(

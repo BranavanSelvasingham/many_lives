@@ -279,6 +279,51 @@ describe("street visual navigation surface", () => {
       expectWorldPathToAvoidAuthoredObstacles(locationId, visualScene, worldPath);
     }
   });
+
+  it("keeps fractional starts on adjacent walkable interior segments legal", () => {
+    const tiles: MapTile[] = [];
+    for (let y = 0; y < 10; y += 1) {
+      for (let x = 0; x < 14; x += 1) {
+        const wall = x === 0 || y === 0 || x === 13 || y === 9;
+        const table = x >= 5 && x < 7 && y === 5;
+        tiles.push({
+          kind: wall || table ? "wall" : "floor",
+          locationId: "tea-house",
+          walkable: !(wall || table),
+          x,
+          y,
+        });
+      }
+    }
+    const game = {
+      map: {
+        height: 10,
+        tiles,
+        width: 14,
+      },
+    } as unknown as StreetGameState;
+    const surface = buildVisualNavigationSurface(game, null);
+    const route = resolveVisualRoute({
+      blockedByVisualScene: surface.blockedByVisualScene,
+      end: { x: 7, y: 8 },
+      routeFinder: surface.routeFinder,
+      start: { x: 7, y: 5.108 },
+      startWorldPoint: { x: 396, y: 280.32 },
+      visualScene: null,
+      walkableRuntimePoints: surface.walkableRuntimePoints,
+    });
+
+    expect(route.reachesDestination).toBe(true);
+    expect(route.diagnostics.legal).toBe(true);
+    expect(route.diagnostics.sampledPointsLegal).toBe(true);
+    expect(route.diagnostics.visualObstaclesClear).toBe(true);
+    expect(route.tilePath).toEqual([
+      { x: 7, y: 5.108 },
+      { x: 7, y: 6 },
+      { x: 7, y: 7 },
+      { x: 7, y: 8 },
+    ]);
+  });
 });
 
 function expectWorldPathToAvoidAuthoredObstacles(
