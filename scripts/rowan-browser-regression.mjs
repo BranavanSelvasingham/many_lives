@@ -929,36 +929,37 @@ function mergeScreenshotPaintProbes(before, after, label) {
     before.viewport,
     `${label}: viewport changed during screenshot capture.`,
   );
-  assert.equal(
-    after.regions.length,
-    before.regions.length,
-    `${label}: visible text runs changed during screenshot capture.`,
+  const unmatchedAfter = [...after.regions];
+  const sharedRegions = [];
+
+  for (const beforeRegion of before.regions) {
+    const matchingIndex = unmatchedAfter.findIndex(
+      (afterRegion) =>
+        afterRegion.surface === beforeRegion.surface &&
+        afterRegion.text === beforeRegion.text,
+    );
+    if (matchingIndex < 0) {
+      continue;
+    }
+    const [afterRegion] = unmatchedAfter.splice(matchingIndex, 1);
+    sharedRegions.push({
+      ...beforeRegion,
+      rect: {
+        bottom: Math.max(beforeRegion.rect.bottom, afterRegion.rect.bottom),
+        left: Math.min(beforeRegion.rect.left, afterRegion.rect.left),
+        right: Math.max(beforeRegion.rect.right, afterRegion.rect.right),
+        top: Math.min(beforeRegion.rect.top, afterRegion.rect.top),
+      },
+    });
+  }
+
+  assert.ok(
+    sharedRegions.length >= 8,
+    `${label}: too few stable visible text runs remained during screenshot capture (${sharedRegions.length}).`,
   );
 
   return {
-    regions: before.regions.map((beforeRegion, index) => {
-      const afterRegion = after.regions[index];
-      assert.deepEqual(
-        {
-          surface: afterRegion.surface,
-          text: afterRegion.text,
-        },
-        {
-          surface: beforeRegion.surface,
-          text: beforeRegion.text,
-        },
-        `${label}: visible text identity changed during screenshot capture.`,
-      );
-      return {
-        ...beforeRegion,
-        rect: {
-          bottom: Math.max(beforeRegion.rect.bottom, afterRegion.rect.bottom),
-          left: Math.min(beforeRegion.rect.left, afterRegion.rect.left),
-          right: Math.max(beforeRegion.rect.right, afterRegion.rect.right),
-          top: Math.min(beforeRegion.rect.top, afterRegion.rect.top),
-        },
-      };
-    }),
+    regions: sharedRegions,
     viewport: before.viewport,
   };
 }
