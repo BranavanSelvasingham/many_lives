@@ -10132,6 +10132,7 @@ function buildWatchPacingAudit(clickLog) {
   const watchedBeats = clickLog
     .filter((entry) => entry.kind === "watched-auto-continue")
     .map((entry) => ({
+      appDurationMs: entry.appDurationMs ?? null,
       beforeAutonomyLabel: entry.beforeAutonomyLabel ?? null,
       completionAutoContinue: Boolean(entry.completionAutoContinue),
       durationMs: entry.durationMs ?? null,
@@ -10723,7 +10724,8 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
 function assertWatchPacingAudit(watchPacingAudit) {
   assert.ok(
     watchPacingAudit.openingFirstActionBeats.every(
-      (entry) => (entry.durationMs ?? Infinity) <= 1_600,
+      (entry) =>
+        (entry.appDurationMs ?? entry.durationMs ?? Infinity) <= 1_600,
     ),
     `Opening first-action watch beat should carry forward promptly: ${JSON.stringify(
       watchPacingAudit.openingFirstActionBeats,
@@ -12563,12 +12565,19 @@ async function clickUntilInhabitMilestone({
       };
       clickLog.push(logEntry);
       const startedAt = Date.now();
-      await waitForInhabitTransition(
+      const transitionedProbe = await waitForInhabitTransition(
         session,
         beforeSignature,
         `${milestone.label}-watch-${attempt + 1}`,
       );
       logEntry.durationMs = Date.now() - startedAt;
+      const beforeAppMonotonicMs = probe.timing?.appMonotonicMs;
+      const afterAppMonotonicMs = transitionedProbe.timing?.appMonotonicMs;
+      logEntry.appDurationMs =
+        typeof beforeAppMonotonicMs === "number" &&
+        typeof afterAppMonotonicMs === "number"
+          ? Math.max(0, afterAppMonotonicMs - beforeAppMonotonicMs)
+          : null;
       await closeInhabitSupportPanel(session);
       continue;
     }
