@@ -229,6 +229,7 @@ import {
 } from "@/lib/street/visualScenes";
 
 const BOUND_GAME_REFRESH_MS = 900;
+const BROWSER_MOVEMENT_PROBE_SYNC_INTERVAL_MS = 200;
 const CAMERA_EDGE_CUE_DURATION_MS = 520;
 const CAMERA_EDGE_CUE_NAMES: CameraEdgeName[] = [
   "north",
@@ -930,6 +931,7 @@ type RuntimeState = {
   conversationAutostartTimerId: number | null;
   conversationReplay: ConversationReplayState;
   indices: RuntimeIndices;
+  lastBrowserMovementProbeSyncAt: number;
   lastCameraInteractionAt: number;
   mapKey: string;
   objects: RuntimeObjects | null;
@@ -1847,6 +1849,7 @@ async function createRuntime(options: {
       timerId: null,
     },
     indices: initialIndices,
+    lastBrowserMovementProbeSyncAt: Number.NEGATIVE_INFINITY,
     lastCameraInteractionAt: Number.NEGATIVE_INFINITY,
     mapKey: createMapKey(initialSnapshot.game),
     objects: null,
@@ -4042,7 +4045,13 @@ function renderDynamicScene(
     cameraFollowPixel,
     playerPixel,
   });
-  syncBrowserMovementProbe(objects.overlayDom, runtimeState);
+  if (
+    now - runtimeState.lastBrowserMovementProbeSyncAt >=
+    BROWSER_MOVEMENT_PROBE_SYNC_INTERVAL_MS
+  ) {
+    syncBrowserMovementProbe(objects.overlayDom, runtimeState);
+    runtimeState.lastBrowserMovementProbeSyncAt = now;
+  }
 }
 
 function renderOverlay(objects: RuntimeObjects, runtimeState: RuntimeState) {
@@ -4082,6 +4091,17 @@ function installStreetProbeAccessor(root: HTMLDivElement) {
         : null;
     } catch {
       payload.mapAgency = null;
+    }
+
+    const movementScript = root.querySelector<HTMLScriptElement>(
+      "#ml-browser-movement-probe",
+    );
+    try {
+      payload.movement = movementScript?.textContent
+        ? JSON.parse(movementScript.textContent)
+        : payload.movement;
+    } catch {
+      // Keep the snapshot-level movement payload if the live probe is absent.
     }
 
     const rectFor = (element: Element | null) => {
@@ -4144,21 +4164,16 @@ function syncBrowserMovementProbe(
   root: HTMLElement,
   runtimeState: RuntimeState,
 ) {
-  const probeElement = root.querySelector<HTMLScriptElement>("#ml-browser-probe");
-  if (!probeElement?.textContent) {
+  const probeElement = root.querySelector<HTMLScriptElement>(
+    "#ml-browser-movement-probe",
+  );
+  if (!probeElement) {
     return;
   }
 
-  try {
-    const payload = JSON.parse(probeElement.textContent) as Record<
-      string,
-      unknown
-    >;
-    payload.movement = buildBrowserMovementDiagnostics(runtimeState);
-    probeElement.textContent = JSON.stringify(payload).replace(/</g, "\\u003c");
-  } catch {
-    // Keep the visual runtime moving if the debug probe is temporarily absent.
-  }
+  probeElement.textContent = JSON.stringify(
+    buildBrowserMovementDiagnostics(runtimeState),
+  ).replace(/</g, "\\u003c");
 }
 
 function clearConversationReplayTimer(runtimeState: RuntimeState) {
@@ -7296,6 +7311,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       </button>
     `
     : "";
+  const browserMovementDiagnostics = buildBrowserMovementDiagnostics(runtimeState);
   const browserProbeJson = buildStreetBrowserProbeJson({
     activeConversation: railActiveConversation,
     conversationNpcName: railConversationNpc?.name,
@@ -7303,7 +7319,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     rowanRail,
     snapshot: {
       ...snapshot,
-      movement: buildBrowserMovementDiagnostics(runtimeState),
+      movement: browserMovementDiagnostics,
       rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
       rowanAutoplayFrozen: snapshot.rowanAutoplayFrozen,
       rowanWatchModeEnabled: snapshot.rowanWatchModeEnabled,
@@ -7658,6 +7674,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                   : ""
               }
               <script id="ml-browser-probe" type="application/json">${browserProbeJson}</script>
+              <script id="ml-browser-movement-probe" type="application/json">${JSON.stringify(
+                browserMovementDiagnostics,
+              ).replace(/</g, "\\u003c")}</script>
               <script id="ml-browser-map-agency-probe" type="application/json">null</script>
               <script id="ml-browser-visual-hierarchy-probe" type="application/json">null</script>
               <script id="ml-browser-npc-presence-probe" type="application/json">${npcPresenceProbeJson}</script>
