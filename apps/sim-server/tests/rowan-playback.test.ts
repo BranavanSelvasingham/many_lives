@@ -8,6 +8,7 @@ import {
   deriveRowanPlaybackBeats,
   isBlockingRowanPlayback,
   isBlockingRowanPlaybackForGame,
+  settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
@@ -658,6 +659,35 @@ describe("Rowan playback helpers", () => {
 
     expect(playback.activeBeat).toBe(arrivalBeat);
     expect(isBlockingRowanPlayback(playback)).toBe(false);
+  });
+
+  it("settles move playback when the visual route has already arrived", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-settled-route");
+    const moved = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    const beats = deriveRowanPlaybackBeats(asWebGame(world), asWebGame(moved));
+    const playback = startNextRowanPlaybackBeat(
+      appendRowanPlaybackBeats(createEmptyRowanPlaybackState(), beats),
+    );
+
+    expect(playback.activeBeat?.kind).toBe("move");
+    expect(isBlockingRowanPlayback(playback)).toBe(true);
+
+    const settled = settleCompletedMovePlayback(
+      playback,
+      asWebGame(moved),
+    );
+
+    expect(settled.activeBeat).toBeUndefined();
+    expect(settled.lastCompletedBeat).toBeUndefined();
+    expect(settled.queuedBeats.every((beat) => beat.kind !== "move")).toBe(
+      true,
+    );
+    expect(isBlockingRowanPlayback(settled)).toBe(false);
   });
 
   it("drops playback beats that no longer match Rowan's current location", async () => {

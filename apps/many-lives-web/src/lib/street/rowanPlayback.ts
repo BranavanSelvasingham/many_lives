@@ -236,6 +236,24 @@ export function isBlockingRowanPlaybackForGame(
   return isBlockingRowanPlayback(alignRowanPlaybackWithGame(state, game));
 }
 
+export function settleCompletedMovePlayback(
+  state: RowanPlaybackState,
+  game: StreetGameState,
+) {
+  const aligned = alignRowanPlaybackWithGame(state, game);
+  const settled =
+    aligned.activeBeat?.kind === "move"
+      ? completeActiveRowanPlaybackBeat(aligned)
+      : aligned;
+  const queuedBeats = settled.queuedBeats.filter(
+    (beat) => beat.kind !== "move",
+  );
+
+  return queuedBeats.length === settled.queuedBeats.length
+    ? settled
+    : { ...settled, queuedBeats };
+}
+
 export function estimateLiveConversationBeatMs(game: StreetGameState): number {
   if (!game.activeConversation?.lines.length) {
     return 0;

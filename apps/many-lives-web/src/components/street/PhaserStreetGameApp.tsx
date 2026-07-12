@@ -163,6 +163,7 @@ import {
   isBlockingRowanPlaybackForGame,
   isFirstAfternoonOpening,
   ROWAN_PLAYBACK_TIMING_MS,
+  settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RecentBeat,
   type RowanPlaybackState,
@@ -1205,7 +1206,7 @@ export function PhaserStreetGameApp() {
               setOptimisticPlayerMoveDurationMs(null);
               publishWaypoint(null);
               setRowanPlayback((current) =>
-                alignRowanPlaybackWithGame(current, nextGame),
+                settleCompletedMovePlayback(current, nextGame),
               );
             });
           }, transitionMs),
