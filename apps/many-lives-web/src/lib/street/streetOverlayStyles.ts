@@ -2579,6 +2579,9 @@ export function buildStreetOverlayStyle({
       .ml-root.is-rail-expanded .ml-rail-thought {
         display: none;
       }
+      .ml-root.is-collapsible-rail.is-rail-expanded .ml-rail-peek-label {
+        display: none;
+      }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-command-rail {
         flex: 0 0 0;
         max-height: 0;
