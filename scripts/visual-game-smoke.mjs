@@ -1958,6 +1958,10 @@ async function assertWatchModeFeelGuard() {
     streetSource,
     "FIRST_AFTERNOON_COMPLETION_DWELL_MS",
   );
+  const renderFpsLimit = readNumericConst(
+    streetSource,
+    "RUNTIME_RENDER_FPS_LIMIT",
+  );
   const readableDelayRanges = {
     acting: [2_600, 3_400],
     conversation: [2_800, 3_800],
@@ -1975,6 +1979,10 @@ async function assertWatchModeFeelGuard() {
   assert.ok(
     completionDelay >= 3_400 && completionDelay <= 4_500,
     `First-afternoon completion dwell should remain readable but bounded: ${completionDelay}ms.`,
+  );
+  assert.ok(
+    renderFpsLimit >= 24 && renderFpsLimit <= 40,
+    `Dynamic city rendering should stay smooth without starving watch-mode timers: ${renderFpsLimit}fps.`,
   );
   assert.ok(
     !streetSource.includes("Nudge Rowan"),

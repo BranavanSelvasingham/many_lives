@@ -83,6 +83,9 @@ const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
 const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_SAMPLE_INTERVAL_MS ?? "1250",
 );
+const AUTOPLAY_DOM_AUDIT_INTERVAL_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_DOM_AUDIT_INTERVAL_MS ?? "5000",
+);
 const AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS ??
     "12000",
@@ -9390,6 +9393,8 @@ async function runAutoplayObservation(session) {
   let pacingCompleted = false;
   let pacingFailure = null;
   let lastSampleAt = 0;
+  let lastDomAuditAt = 0;
+  let lastProbeSignature = null;
   const pacingStartedAt = Date.now();
   await session.navigate(url);
   const startProbe = await session.readBrowserProbe();
@@ -9414,6 +9419,8 @@ async function runAutoplayObservation(session) {
     }),
   );
   lastSampleAt = Date.now();
+  lastDomAuditAt = lastSampleAt;
+  lastProbeSignature = autoplayObservationSignature(pacingSamples.at(-1));
 
   const screenshotPath = path.join(
     OUTPUT_DIR,
@@ -9428,14 +9435,28 @@ async function runAutoplayObservation(session) {
         const probe = await session.readBrowserProbe();
         let sampleDom = null;
         const now = Date.now();
+        const probeSample = sampleAutoplayObservationSample({
+          dom: null,
+          elapsedMs: now - pacingStartedAt,
+          probe,
+        });
+        const probeSignature = autoplayObservationSignature(probeSample);
+        const probeChanged = probeSignature !== lastProbeSignature;
+        const shouldAuditDom =
+          probeChanged ||
+          now - lastDomAuditAt >= AUTOPLAY_DOM_AUDIT_INTERVAL_MS;
         const shouldSample =
-          pacingSamples.length === 0 ||
-          now - lastSampleAt >= AUTOPLAY_PACING_SAMPLE_INTERVAL_MS;
+          probeChanged ||
+          (shouldAuditDom &&
+            now - lastSampleAt >= AUTOPLAY_PACING_SAMPLE_INTERVAL_MS);
 
         if (shouldSample) {
-          sampleDom = await session
-            .readDomSnapshot("fresh-autoplay-observation:dom-snapshot")
-            .catch(() => null);
+          if (shouldAuditDom) {
+            sampleDom = await session
+              .readDomSnapshot("fresh-autoplay-observation:dom-snapshot")
+              .catch(() => null);
+            lastDomAuditAt = now;
+          }
           pacingSamples.push(
             sampleAutoplayObservationSample({
               dom: sampleDom,
@@ -9444,6 +9465,7 @@ async function runAutoplayObservation(session) {
             }),
           );
           lastSampleAt = now;
+          lastProbeSignature = probeSignature;
         }
 
         if (
