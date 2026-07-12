@@ -11,14 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.10",
-  build: "604b574",
+  version: "0.1.11",
+  build: "7c7d7e3",
   source: "Main release",
   features: [
     {
-      title: "Named landmark signs",
+      title: "A more living first afternoon",
       body:
-        "South Quay's first map read now uses in-world place names for Morrow House, Kettle & Lamp, and North Crane Yard instead of generic category signs.",
+        "Rowan now chooses from current legal options while schedules, commitments, and neighborhood pressures keep changing around him.",
+    },
+    {
+      title: "Brisk, honest watch mode",
+      body:
+        "The opening reaches visible decisions and consequences faster, without repeated advances, required viewer clicks, or overstated AI provenance.",
+    },
+    {
+      title: "Clearer South Quay",
+      body:
+        "Landmarks, routes, responsive rails, and event cues now read more consistently across desktop, tablet, and phone layouts.",
     },
   ],
 };
