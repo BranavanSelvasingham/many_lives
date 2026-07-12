@@ -46,6 +46,16 @@ jobs:
           MANY_LIVES_APP_HARNESS_DIR: ${{ runner.temp }}/manylives-app-harness
         run: pnpm test
 
+      - name: Upload failed harness diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: manylives-harness-failure-${{ github.sha }}
+          path: ${{ runner.temp }}/manylives-app-harness
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Prepare artifact for deployment
         run: |
           rm -rf deployment

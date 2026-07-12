@@ -68,6 +68,7 @@ export interface OpenAIProviderOptions {
 
 export const DEFAULT_OPENAI_TIMEOUT_MS = 25_000;
 const MAX_OPENAI_TIMEOUT_MS = 30_000;
+export const OPENAI_PLANNER_TOTAL_BUDGET_MS = 6_000;
 export const DEFAULT_OPENAI_RETRY_COUNT = 1;
 const MAX_OPENAI_RETRY_COUNT = 2;
 const DEFAULT_OPENAI_RETRY_DELAY_MS = 250;
@@ -245,7 +246,11 @@ export class OpenAIProvider implements AIProvider {
       "planStreetNextAction",
       input.game,
       async () => {
-        const output = await this.createTextResponse(prompt, 160);
+        const output = await this.createTextResponse(
+          prompt,
+          160,
+          OPENAI_PLANNER_TOTAL_BUDGET_MS,
+        );
         return normalizeStreetPlanningResult(output, input);
       },
       () => this.fallback.planStreetNextAction(input),
@@ -312,15 +317,37 @@ export class OpenAIProvider implements AIProvider {
   private async createTextResponse(
     prompt: string,
     maxOutputTokens: number,
+    totalBudgetMs?: number,
   ): Promise<string> {
     const attemptCount = this.retryCount() + 1;
+    const budget =
+      totalBudgetMs === undefined
+        ? undefined
+        : {
+            deadline: Date.now() + totalBudgetMs,
+            totalMs: totalBudgetMs,
+          };
     let lastError: unknown;
 
     for (let attemptIndex = 0; attemptIndex < attemptCount; attemptIndex += 1) {
+      const remainingBudgetMs =
+        budget === undefined ? undefined : budget.deadline - Date.now();
+      if (budget && remainingBudgetMs !== undefined && remainingBudgetMs <= 0) {
+        throw new OpenAIPlannerBudgetError(budget.totalMs);
+      }
+
+      const requestTimeoutMs = this.requestTimeoutMs();
+      const attemptTimeoutMs =
+        remainingBudgetMs === undefined
+          ? requestTimeoutMs
+          : Math.min(requestTimeoutMs, remainingBudgetMs);
+      const budgetEndsThisAttempt =
+        remainingBudgetMs !== undefined &&
+        remainingBudgetMs <= requestTimeoutMs;
       const abortController = new AbortController();
       const timeoutId = setTimeout(() => {
         abortController.abort();
-      }, this.requestTimeoutMs());
+      }, attemptTimeoutMs);
 
       try {
         const response = await fetch("https://api.openai.com/v1/responses", {
@@ -369,15 +396,32 @@ export class OpenAIProvider implements AIProvider {
 
         return outputText;
       } catch (error) {
-        lastError = error;
+        lastError =
+          budgetEndsThisAttempt && abortController.signal.aborted && budget
+            ? new OpenAIPlannerBudgetError(budget.totalMs)
+            : error;
         const hasRetryLeft = attemptIndex < attemptCount - 1;
-        if (!hasRetryLeft || !isRetryableOpenAIRequestError(error)) {
-          throw error;
+        if (!hasRetryLeft || !isRetryableOpenAIRequestError(lastError)) {
+          throw lastError;
         }
-
-        await delay(this.retryDelayMs(attemptIndex));
       } finally {
         clearTimeout(timeoutId);
+      }
+
+      const retryDelayMs = this.retryDelayMs(attemptIndex);
+      if (!budget) {
+        await delay(retryDelayMs);
+        continue;
+      }
+
+      const remainingRetryBudgetMs = budget.deadline - Date.now();
+      if (remainingRetryBudgetMs <= 0) {
+        throw new OpenAIPlannerBudgetError(budget.totalMs);
+      }
+
+      await delay(Math.min(retryDelayMs, remainingRetryBudgetMs));
+      if (Date.now() >= budget.deadline) {
+        throw new OpenAIPlannerBudgetError(budget.totalMs);
       }
     }
 
@@ -422,6 +466,13 @@ class OpenAIResponseError extends Error {
   constructor(readonly status: number) {
     super(`OpenAI request failed with ${status}`);
     this.name = "OpenAIResponseError";
+  }
+}
+
+class OpenAIPlannerBudgetError extends Error {
+  constructor(budgetMs: number) {
+    super(`OpenAI planner exceeded its ${budgetMs}ms total latency budget`);
+    this.name = "OpenAIPlannerBudgetError";
   }
 }
 

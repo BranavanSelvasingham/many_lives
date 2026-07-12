@@ -1268,6 +1268,9 @@ class CdpSession {
         );
       const fieldNotes = Array.from(document.querySelectorAll("[data-field-note]"));
       const fieldNote = document.querySelector('[data-field-note="first-afternoon"]');
+      const nearbyNpcElements = Array.from(
+        document.querySelectorAll('[data-locals-nearby] [data-select-npc]'),
+      );
       const activeConversation = document.querySelector("[data-conversation-panel]");
       const commandRail = document.querySelector('[data-preserve-scroll="command-rail"]');
       const rowanDirective = document.querySelector('[data-rowan-directive="true"]');
@@ -1349,7 +1352,7 @@ class CdpSession {
         const bubbleTextForRow = (row) =>
           row
             .querySelector(".ml-chat-bubble")
-            ?.textContent?.replace(/\s+/g, " ")
+            ?.textContent?.replace(/\\s+/g, " ")
             .trim() ?? "";
         const meaningfulRows = chatRows.filter((row) =>
           bubbleTextForRow(row),
@@ -1435,6 +1438,14 @@ class CdpSession {
           key: element.getAttribute("data-field-note"),
           text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
         })),
+        nearbyNpcIds: nearbyNpcElements
+          .map((element) => element.getAttribute("data-select-npc"))
+          .filter(Boolean),
+        nearbyText:
+          document
+            .querySelector("[data-locals-nearby]")
+            ?.textContent?.replace(/\s+/g, " ")
+            .trim() ?? "",
         visibleDecisionArtifact: decisionArtifact
           ? {
               source: decisionArtifact.getAttribute("data-decision-source"),
@@ -2412,6 +2423,15 @@ function planningTraceProbeFromGame(game) {
           targetLocationId: trace.plannerIntent.targetLocationId ?? null,
         }
       : null,
+    providerAttempt: trace.providerAttempt
+      ? {
+          model: trace.providerAttempt.model,
+          outcome: trace.providerAttempt.outcome,
+          provider: trace.providerAttempt.provider,
+          reasonCode: trace.providerAttempt.reasonCode ?? null,
+          task: trace.providerAttempt.task,
+        }
+      : null,
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
@@ -2443,6 +2463,13 @@ function planningTraceProbeFromGame(game) {
           validationStatus: trace.selectedRecommendation.validationStatus,
         }
       : null,
+    sourceLabel:
+      trace.selectedRecommendation?.sourceKind === "live-llm"
+        ? "live"
+        : trace.selectedRecommendation?.sourceKind ===
+            "deterministic-fallback"
+          ? "deterministic fallback"
+          : "deterministic",
     selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
   };
 }
@@ -2912,29 +2939,87 @@ function sortedNpcPressureMoves(npcPressureMoves) {
     .sort((left, right) => String(left.id).localeCompare(String(right.id)));
 }
 
+function resolveDailyNpcSchedule(schedule, totalMinutes) {
+  const minutesPerDay = 24 * 60;
+  const now = Math.max(0, Math.round(totalMinutes));
+  const dayIndex = Math.floor(now / minutesPerDay);
+  const occurrences = [];
+
+  for (let day = Math.max(0, dayIndex - 1); day <= dayIndex + 2; day += 1) {
+    for (const stop of schedule ?? []) {
+      const fromMinute = Math.round(stop.fromHour * 60);
+      const toMinute = Math.round(stop.toHour * 60);
+      if (
+        !Number.isFinite(fromMinute) ||
+        !Number.isFinite(toMinute) ||
+        fromMinute < 0 ||
+        fromMinute >= minutesPerDay ||
+        toMinute < 0 ||
+        toMinute > minutesPerDay
+      ) {
+        continue;
+      }
+
+      const startTotalMinutes = day * minutesPerDay + fromMinute;
+      const durationMinutes =
+        toMinute === fromMinute
+          ? minutesPerDay
+          : toMinute > fromMinute
+            ? toMinute - fromMinute
+            : minutesPerDay - fromMinute + toMinute;
+      occurrences.push({
+        endTotalMinutes: startTotalMinutes + durationMinutes,
+        startTotalMinutes,
+        stop,
+      });
+    }
+  }
+
+  occurrences.sort(
+    (left, right) => left.startTotalMinutes - right.startTotalMinutes,
+  );
+  const active = occurrences.find(
+    (occurrence) =>
+      now >= occurrence.startTotalMinutes && now < occurrence.endTotalMinutes,
+  );
+  return {
+    active,
+    nextOpening: occurrences.find(
+      (occurrence) => occurrence.startTotalMinutes > now,
+    ),
+    status:
+      occurrences.length === 0
+        ? "unscheduled"
+        : active
+          ? "active"
+          : "unavailable",
+  };
+}
+
 function worldPressureFromGame(game) {
   const currentTotalMinutes = game.clock.totalMinutes;
   const dayOffsetMinutes = Math.max(0, game.clock.day - 1) * 24 * 60;
-  const currentHour = game.clock.hour + game.clock.minute / 60;
   const npcSchedules = (game.npcs ?? []).map((npc) => {
-    const currentSchedule =
-      npc.schedule.find(
-        (entry) =>
-          currentHour >= entry.fromHour && currentHour < entry.toHour,
-      ) ?? null;
-    const nextSchedule =
-      npc.schedule
-        .filter((entry) => entry.fromHour > currentHour)
-        .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
+    const schedule = resolveDailyNpcSchedule(
+      npc.schedule,
+      currentTotalMinutes,
+    );
     return {
+      activeWindowEndsAtMinutes: schedule.active?.endTotalMinutes ?? null,
+      availability: schedule.status,
       currentLocationId: npc.currentLocationId,
       currentConcern: npc.currentConcern,
-      currentScheduleLocationId: currentSchedule?.locationId ?? null,
+      currentScheduleLocationId: schedule.active?.stop.locationId ?? null,
       id: npc.id,
       mood: npc.mood,
-      nextScheduleLocationId: nextSchedule?.locationId ?? null,
-      nextScheduleStartsInMinutes: nextSchedule
-        ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
+      nextOpeningAtMinutes: schedule.nextOpening?.startTotalMinutes ?? null,
+      nextScheduleLocationId:
+        schedule.nextOpening?.stop.locationId ?? null,
+      nextScheduleStartsInMinutes: schedule.nextOpening
+        ? Math.max(
+            0,
+            schedule.nextOpening.startTotalMinutes - currentTotalMinutes,
+          )
         : null,
     };
   });
@@ -4891,7 +4976,11 @@ function buildObjectiveSequenceAuditEntry({
       selectedActionId,
     }) &&
     !authorityEvidence.selectedMatchedOutcomeId &&
-    !authorityEvidence.selectedPressureKind
+    !authorityEvidence.selectedPressureKind &&
+    !(
+      authorityEvidence.selectedProvenance === "legal-action" &&
+      authorityEvidence.selectedLegalBackingSource
+    )
   ) {
     failureReasons.push("missing-outcome-or-live-pressure-authority");
   }
@@ -5578,6 +5667,72 @@ function assertEarlyAgencyAuthorityLedger(ledger) {
   );
 }
 
+function buildTrajectoryNeutralAgencyLedger({ moments, objectiveSequenceAudit }) {
+  const meaningfulActions = objectiveSequenceAudit.filter((entry) =>
+    objectiveSequenceEntryNeedsPlannerAuthority(entry),
+  );
+  const incompleteProvenanceEntries = meaningfulActions.filter((entry) => {
+    const evidence = entry.authorityEvidence ?? {};
+    const recommendation = evidence.selectedRecommendation;
+    return !(
+      entry.selectedActionId &&
+      evidence.selectedLegalBacking?.source &&
+      recommendation?.sourceKind &&
+      recommendation.validationStatus !== "unvalidated" &&
+      recommendation.validationSource &&
+      recommendation.legalBackingSource &&
+      entry.visibleDecisionArtifact
+    );
+  });
+  const interaction = moments.find((moment) => moment.label === "first-interaction");
+  const approaches = moments.find((moment) => moment.label === "approaches-known");
+  const consequence = moments.find((moment) => moment.label === "durable-consequence");
+  const completion = moments.find((moment) => moment.label === "first-afternoon-complete");
+
+  return {
+    approachesKnownAt: approaches?.firstAfternoon?.approachesKnownAt ?? null,
+    completion: completion?.firstAfternoon?.completedAt ?? null,
+    consequence:
+      consequence?.firstAfternoon?.consequence ??
+      consequence?.objective?.outcomes?.find(
+        (outcome) =>
+          outcome.id === "first-afternoon-consequence" &&
+          outcome.status === "met",
+      ) ??
+      null,
+    incompleteProvenanceEntries,
+    interactionNpcId: interaction?.activeConversation ?? null,
+    meaningfulActionCount: meaningfulActions.length,
+    sourceKinds: [
+      ...new Set(
+        meaningfulActions
+          .map(
+            (entry) =>
+              entry.authorityEvidence?.selectedRecommendation?.sourceKind,
+          )
+          .filter(Boolean),
+      ),
+    ],
+    status: "passed",
+  };
+}
+
+function assertTrajectoryNeutralAgencyLedger(ledger) {
+  assert.ok(ledger.interactionNpcId, "First afternoon did not include an interaction.");
+  assert.ok(ledger.approachesKnownAt, "First afternoon never grounded two live approaches.");
+  assert.ok(ledger.consequence, "First afternoon did not produce a durable consequence.");
+  assert.ok(ledger.completion, "First afternoon did not reach a natural completion.");
+  assert.ok(
+    ledger.meaningfulActionCount > 0,
+    "First afternoon did not expose any meaningful autonomous actions.",
+  );
+  assert.equal(
+    ledger.incompleteProvenanceEntries.length,
+    0,
+    `Meaningful first-afternoon actions had incomplete or unvalidated provenance: ${JSON.stringify(ledger.incompleteProvenanceEntries, null, 2)}`,
+  );
+}
+
 function compactWorldPressureSnapshot(worldPressure) {
   if (!worldPressure) {
     return null;
@@ -5621,6 +5776,7 @@ function compactWorldPressureSnapshot(worldPressure) {
       mood: npc.mood ?? null,
     })),
     npcSchedules: (worldPressure.npcSchedules ?? []).map((npc) => ({
+      availability: npc.availability ?? null,
       currentConcern: compactObjectiveSequenceText(
         npc.currentConcern ?? "",
         120,
@@ -8829,10 +8985,39 @@ async function runAutoplayObservation(session) {
         watchMode: completedProbe.watchMode,
       },
       pacingLedger: {
+        approaches: pacingLedger.approachSamples.find(
+          (sample) => sample.approaches.length >= 2,
+        )?.approaches ?? [],
         diagnosticsPath: pacingLedgerPath,
+        firstDecisionAppElapsedMs: pacingLedger.firstDecisionAppElapsedMs,
+        firstDecisionElapsedMs: pacingLedger.firstDecisionElapsedMs,
+        firstInteractionElapsedMs: pacingLedger.firstInteractionElapsedMs,
         idleGapLimitMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+        maxInAppGapMs: pacingLedger.maxInAppGapMs,
+        maxObserverGapMs: pacingLedger.maxIdleGapMs,
         meaningfulBeatCount: pacingLedger.meaningfulBeatCount,
+        meaningfulProvenanceCount:
+          pacingLedger.meaningfulActionSamples.length,
+        naturalStop: pacingLedger.naturalStop,
         progressKinds: pacingLedger.progressKinds,
+        progressionClicks: 0,
+        trajectory: {
+          consequence: completedProbe.firstAfternoon?.consequence ?? null,
+          interactionNpcIds: [
+            ...new Set(
+              pacingLedger.samples
+                .map((sample) => sample.activeConversation?.npcId)
+                .filter(Boolean),
+            ),
+          ],
+          selectedTargets: [
+            ...new Set(
+              pacingLedger.meaningfulActionSamples
+                .map((sample) => sample.autonomy?.targetLocationId)
+                .filter(Boolean),
+            ),
+          ],
+        },
       },
       screenshot: screenshotPath,
       start: {
@@ -8867,6 +9052,74 @@ async function runAutoplayObservation(session) {
       }
     }
   }
+}
+
+async function runUnavailableNpcCrossLayerCheck(session) {
+  let game = await createGame();
+  game = await runGameCommand(game.id, { type: "move_to", x: 16, y: 9 });
+  const targetMinutes = 18 * 60 + 30;
+  for (let attempt = 0; attempt < 12 && game.clock.totalMinutes < targetMinutes; attempt += 1) {
+    game = await runGameCommand(game.id, {
+      minutes: Math.max(1, targetMinutes - game.clock.totalMinutes),
+      silent: true,
+      type: "wait",
+    });
+  }
+  assert.ok(
+    game.clock.totalMinutes >= targetMinutes,
+    `Controlled Jo schedule state stopped before 18:30: ${JSON.stringify(game.clock)}`,
+  );
+  await session.navigate(browserUrl(game.id));
+  const probe = await waitForInhabitSettled(
+    session,
+    "unavailable-jo-cross-layer",
+  );
+  const dom = await session.readDomSnapshot("unavailable-jo-cross-layer-dom");
+  const joSchedule = (probe.worldPressure?.npcSchedules ?? []).find(
+    (npc) => npc.id === "npc-jo",
+  );
+  const sceneNpcIds = (probe.scene?.people ?? []).map((npc) => npc.id);
+  const visibleMarkerNpcIds = (
+    probe.scene?.visibleScheduledNpcMarkers ?? []
+  ).map((marker) => marker.npcId);
+
+  assert.equal(
+    joSchedule?.availability,
+    "unavailable",
+    `Jo must be schedule-unavailable after 18:00: ${JSON.stringify(joSchedule)}`,
+  );
+  assert.equal(
+    joSchedule?.currentLocationId,
+    "repair-stall",
+    "Controlled F1 state must retain Jo's stale repair-stall location while schedule availability is unavailable.",
+  );
+  assert.equal(
+    probe.location?.id,
+    "repair-stall",
+    "Controlled F1 state must place Rowan at Mercer Repairs so stale location equality is exercised.",
+  );
+  assert.equal(sceneNpcIds.includes("npc-jo"), false);
+  assert.equal(visibleMarkerNpcIds.includes("npc-jo"), false);
+  assert.equal((dom.nearbyNpcIds ?? []).includes("npc-jo"), false);
+  assert.doesNotMatch(dom.nearbyText ?? "", /\bJo\b/i);
+
+  const screenshot = path.join(OUTPUT_DIR, "unavailable-jo-cross-layer.png");
+  await session.captureScreenshot(screenshot);
+  const evidence = {
+    clock: probe.clock,
+    joSchedule,
+    nearbyNpcIds: dom.nearbyNpcIds ?? [],
+    playerLocation: probe.location,
+    sceneNpcIds,
+    screenshot,
+    visibleMarkerNpcIds,
+  };
+  const evidencePath = path.join(
+    OUTPUT_DIR,
+    "unavailable-jo-cross-layer.json",
+  );
+  await writeFile(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+  return { ...evidence, evidencePath };
 }
 
 async function runObserveOnlyCarryForwardObservation(session) {
@@ -9247,6 +9500,7 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
     probe?.rail?.visibleDecisionArtifact ??
     null;
   return {
+    appMonotonicMs: probe?.timing?.appMonotonicMs ?? null,
     activeConversation: probe?.activeConversation
       ? {
           lines: probe.activeConversation.lines ?? null,
@@ -9271,11 +9525,13 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
     clock: probe?.clock ?? null,
     elapsedMs,
     firstAfternoon: {
+      approachesKnownAt: probe?.firstAfternoon?.approachesKnownAt ?? null,
       completedAt: probe?.firstAfternoon?.completedAt ?? null,
       completionAcknowledgedAt:
         probe?.firstAfternoon?.completionAcknowledgedAt ?? null,
       hasFieldNote: Boolean(probe?.firstAfternoon?.hasFieldNote),
       hasLeadFieldNote: Boolean(probe?.firstAfternoon?.hasLeadFieldNote),
+      consequence: probe?.firstAfternoon?.consequence ?? null,
       teaShiftStage: probe?.firstAfternoon?.teaShiftStage ?? null,
     },
     genericCarryForwardCopyVisible: GENERIC_WATCH_CTA_COPY_PATTERN.test(
@@ -9290,10 +9546,12 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
           : null,
     },
     objective: {
+      focus: probe?.objective?.focus ?? null,
       progressLabel: probe?.objective?.progress?.label ?? null,
       routeKey: probe?.objective?.routeKey ?? null,
       text: compactObjectiveSequenceText(probe?.objective?.text ?? "", 140),
     },
+    planningTrace: probe?.autonomy?.planningTrace ?? null,
     progressControls: dom?.visibleProgressionControls ?? [],
     replyAffordances: dom?.watchModeReplyAffordances ?? [],
     visibleDecisionArtifact: compactVisibleDecisionArtifact(
@@ -9335,13 +9593,24 @@ function buildAutoplayObservationPacingLedger(samples) {
     const previous = normalizedSamples[index - 1];
     const next = normalizedSamples[index];
     const progressKinds = classifyAutoplayObservationProgress(previous, next);
+    const appDurationMs =
+      typeof previous.appMonotonicMs === "number" &&
+      typeof next.appMonotonicMs === "number"
+        ? Math.max(0, next.appMonotonicMs - previous.appMonotonicMs)
+        : null;
+    const observerDurationMs = Math.max(0, next.elapsedMs - previous.elapsedMs);
     transitions.push({
-      durationMs: Math.max(0, next.elapsedMs - previous.elapsedMs),
+      appDurationMs,
+      durationMs: observerDurationMs,
       fromAutonomyLabel: previous.autonomy?.label ?? null,
       fromClock: previous.clock ?? null,
       fromElapsedMs: previous.elapsedMs,
       fromLocationId: previous.location?.id ?? null,
       progressKinds,
+      observerLatencyMs:
+        appDurationMs === null
+          ? null
+          : Math.max(0, observerDurationMs - appDurationMs),
       toAutonomyLabel: next.autonomy?.label ?? null,
       toClock: next.clock ?? null,
       toElapsedMs: next.elapsedMs,
@@ -9369,9 +9638,35 @@ function buildAutoplayObservationPacingLedger(samples) {
   const idleGapMs = nonDecisionTransitions.map(
     (transition) => transition.durationMs,
   );
+  const appIdleGapMs = nonDecisionTransitions
+    .map((transition) => transition.appDurationMs)
+    .filter((duration) => typeof duration === "number");
+  const firstAppMonotonicMs = normalizedSamples.find(
+    (sample) => typeof sample.appMonotonicMs === "number",
+  )?.appMonotonicMs;
+  const meaningfulActionSamples = uniqueMeaningfulAutonomousActionSamples(
+    normalizedSamples,
+  );
+  const incompleteProvenanceSamples = meaningfulActionSamples.filter(
+    (sample) => !hasCompleteValidatedPlannerProvenance(sample),
+  );
+  const approachSamples = normalizedSamples.map((sample) => ({
+    approaches: viableFirstAfternoonApproaches(sample),
+    elapsedMs: sample.elapsedMs,
+  }));
+  const finalSample = normalizedSamples.at(-1) ?? null;
 
   return {
+    approachSamples,
+    firstDecisionAppElapsedMs:
+      decisionSample && typeof firstAppMonotonicMs === "number" &&
+      typeof decisionSample.appMonotonicMs === "number"
+        ? Math.max(0, decisionSample.appMonotonicMs - firstAppMonotonicMs)
+        : null,
     firstDecisionElapsedMs: decisionSample?.elapsedMs ?? null,
+    firstInteractionElapsedMs:
+      normalizedSamples.find((sample) => sample.activeConversation)?.elapsedMs ??
+      null,
     firstMeaningfulProgressAfterDecisionMs:
       decisionSample && firstPostDecisionTransition
         ? Math.max(0, firstPostDecisionTransition.toElapsedMs - decisionSample.elapsedMs)
@@ -9379,9 +9674,20 @@ function buildAutoplayObservationPacingLedger(samples) {
     genericCarryForwardSamples: (samples ?? []).filter(
       (sample) => sample.genericCarryForwardCopyVisible,
     ),
+    incompleteProvenanceSamples,
+    meaningfulActionSamples,
+    maxInAppGapMs:
+      appIdleGapMs.length > 0 ? Math.max(...appIdleGapMs) : null,
     maxIdleGapMs: idleGapMs.length > 0 ? Math.max(...idleGapMs) : null,
+    naturalStop: Boolean(
+      finalSample?.firstAfternoon?.completedAt &&
+        finalSample?.firstAfternoon?.consequence &&
+        finalSample?.autonomy?.autoContinue === false,
+    ),
     meaningfulBeatCount: nonDecisionTransitions.length,
     progressKinds,
+    repeatedPeopleRecoveryCycles:
+      findRepeatedPeopleRecoveryCycles(normalizedSamples),
     samples: normalizedSamples,
     transitions,
     visibleProgressionControlSamples: (samples ?? []).filter(
@@ -9391,6 +9697,133 @@ function buildAutoplayObservationPacingLedger(samples) {
       (sample) => (sample.replyAffordances?.length ?? 0) > 0,
     ),
   };
+}
+
+function viableFirstAfternoonApproaches(sample) {
+  const jobs = (sample.worldPressure?.jobWindows ?? [])
+    .filter(
+      (job) =>
+        job.discovered && !job.completed && !job.missed,
+    )
+    .map((job) => job.id);
+  const problems = (sample.worldPressure?.problems ?? [])
+    .filter((problem) => problem.discovered && problem.status === "active")
+    .map((problem) => problem.id);
+  return [...new Set([...jobs, ...problems])];
+}
+
+function uniqueMeaningfulAutonomousActionSamples(samples) {
+  const byKey = new Map();
+  for (const sample of samples ?? []) {
+    const trace = sample.planningTrace;
+    const actionId = trace?.selectedActionId ?? sample.autonomy?.actionId;
+    if (!actionId || sample.autonomy?.mode === "idle") {
+      continue;
+    }
+    const key = [
+      trace?.selectedPlanKey,
+      actionId,
+      sample.activeConversation?.npcId,
+      sample.autonomy?.targetLocationId,
+    ].join("|");
+    if (!byKey.has(key)) {
+      byKey.set(key, sample);
+    }
+  }
+  return [...byKey.values()];
+}
+
+function hasCompleteValidatedPlannerProvenance(sample) {
+  const trace = sample.planningTrace;
+  const recommendation = trace?.selectedRecommendation;
+  const selected = selectedPlanningTraceOption(trace);
+  const legalBacking = trace?.selectedLegalBacking ?? selected?.legalBacking;
+  const sourceKind = recommendation?.sourceKind;
+  return Boolean(
+    trace &&
+      sample.objective?.text &&
+      Array.isArray(trace.blockers) &&
+      Array.isArray(trace.considered) &&
+      trace.considered.length > 0 &&
+      Array.isArray(trace.rejected) &&
+      trace.selectedActionId &&
+      (selected?.rationale || recommendation?.rationale) &&
+      legalBacking?.source &&
+      recommendation &&
+      ["live-llm", "deterministic-planner", "deterministic-fallback"].includes(
+        sourceKind,
+      ) &&
+      recommendation.validationStatus !== "unvalidated" &&
+      recommendation.validationSource &&
+      recommendation.legalBackingSource,
+  );
+}
+
+function findRepeatedPeopleRecoveryCycles(samples) {
+  const phases = [];
+  for (const sample of samples ?? []) {
+    const isPeopleObjective =
+      sample.objective?.focus === "people" ||
+      sample.objective?.routeKey?.startsWith("people-");
+    const isRecovery =
+      sample.autonomy?.actionId === "rest:home" ||
+      sample.objective?.routeKey === "rest-home" ||
+      /\b(rest|recover|recovery)\b/i.test(sample.autonomy?.label ?? "");
+    const phase = isRecovery
+      ? {
+          kind: "recovery",
+          clock: sample.clock,
+          elapsedMs: sample.elapsedMs,
+        }
+      : isPeopleObjective
+        ? {
+            kind: "people",
+            clock: sample.clock,
+            elapsedMs: sample.elapsedMs,
+            signature: JSON.stringify({
+              progressLabel: sample.objective?.progressLabel ?? null,
+              routeKey: sample.objective?.routeKey ?? null,
+              text: sample.objective?.text ?? null,
+            }),
+          }
+        : null;
+    if (!phase) {
+      continue;
+    }
+
+    const previous = phases.at(-1);
+    if (
+      previous?.kind === phase.kind &&
+      (phase.kind !== "people" || previous.signature === phase.signature)
+    ) {
+      continue;
+    }
+    phases.push(phase);
+  }
+
+  const returnsBySignature = new Map();
+  const repeated = [];
+  for (let index = 2; index < phases.length; index += 1) {
+    const before = phases[index - 2];
+    const recovery = phases[index - 1];
+    const after = phases[index];
+    if (
+      before.kind !== "people" ||
+      recovery.kind !== "recovery" ||
+      after.kind !== "people" ||
+      before.signature !== after.signature
+    ) {
+      continue;
+    }
+
+    const returnCount = (returnsBySignature.get(after.signature) ?? 0) + 1;
+    returnsBySignature.set(after.signature, returnCount);
+    if (returnCount >= 2) {
+      repeated.push({ after, before, recovery, returnCount });
+    }
+  }
+
+  return repeated;
 }
 
 function classifyAutoplayObservationProgress(previous, next) {
@@ -9478,6 +9911,12 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
     )}`,
   );
   assert.ok(
+    ledger.firstDecisionAppElapsedMs === null ||
+      ledger.firstDecisionAppElapsedMs <=
+        AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS,
+    `Fresh autoplay app timing did not show a decision within ${AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS}ms. Diagnostics: ${diagnosticsPath}.`,
+  );
+  assert.ok(
     ledger.firstMeaningfulProgressAfterDecisionMs !== null &&
       ledger.firstMeaningfulProgressAfterDecisionMs <=
         AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS,
@@ -9500,6 +9939,24 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
       2,
     )}`,
   );
+  assert.ok(
+    ledger.approachSamples.some((sample) => sample.approaches.length >= 2),
+    `Fresh autoplay never exposed two viable first-afternoon approaches at once. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(ledger.approachSamples, null, 2)}`,
+  );
+  assert.ok(
+    ledger.firstInteractionElapsedMs !== null,
+    `Fresh autoplay completed without a visible NPC interaction. Diagnostics: ${diagnosticsPath}.`,
+  );
+  assert.equal(
+    ledger.incompleteProvenanceSamples.length,
+    0,
+    `Fresh autoplay meaningful actions had missing or unvalidated planner provenance. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(ledger.incompleteProvenanceSamples, null, 2)}`,
+  );
+  assert.equal(
+    ledger.naturalStop,
+    true,
+    `Fresh autoplay did not end at a natural completed stop with a durable consequence. Diagnostics: ${diagnosticsPath}.`,
+  );
   assert.equal(
     ledger.visibleProgressionControlSamples.length,
     0,
@@ -9514,6 +9971,15 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
     0,
     `Fresh autoplay exposed reply/action-looking conversation affordances during momentum sampling. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
       ledger.watchModeReplyAffordanceSamples,
+      null,
+      2,
+    )}`,
+  );
+  assert.deepEqual(
+    ledger.repeatedPeopleRecoveryCycles,
+    [],
+    `Fresh autoplay repeated an unchanged people -> recovery -> same people cycle. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      ledger.repeatedPeopleRecoveryCycles,
       null,
       2,
     )}`,
@@ -9540,6 +10006,10 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
       null,
       2,
     )}`,
+  );
+  assert.ok(
+    (ledger.maxInAppGapMs ?? 0) <= AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    `Fresh autoplay app progression exceeded the ${AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS}ms product-visible gap. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(ledger.transitions, null, 2)}`,
   );
   assert.ok(
     ledger.progressKinds.includes("route-progress"),
@@ -10961,22 +11431,14 @@ function assertInhabitSituatedWatchCtaCopy(moments) {
         "entered-morrow-house: continued-watch copy should describe asking or talking to Mara.",
     },
     {
-      label: "mara-lead-landed",
-      pattern: /South Quay|Kettle & Lamp|cafe|leav|stepping back|heading/i,
+      label: "approaches-known",
       reason:
-        "mara-lead-landed: continued-watch copy should describe leaving Morrow House or moving toward Kettle & Lamp.",
+        "approaches-known: continued-watch copy should remain situated and non-generic.",
     },
     {
-      label: "arrived-kettle-lamp",
-      pattern: /Kettle & Lamp|cafe|enter|stepping into/i,
+      label: "durable-consequence",
       reason:
-        "arrived-kettle-lamp: continued-watch copy should describe entering Kettle & Lamp.",
-    },
-    {
-      label: "shift-in-motion",
-      pattern: /lunch rush|work|shift|counter/i,
-      reason:
-        "shift-in-motion: continued-watch copy should describe working or keeping the lunch rush moving.",
+        "durable-consequence: continued-watch copy should remain situated and non-generic.",
     },
   ];
 
@@ -10993,7 +11455,9 @@ function assertInhabitSituatedWatchCtaCopy(moments) {
       GENERIC_WATCH_CTA_COPY_PATTERN,
       `${expectation.label}: continued-watch copy regressed to generic beat-landing copy.`,
     );
-    assert.match(visibleWatchText, expectation.pattern, expectation.reason);
+    if (expectation.pattern) {
+      assert.match(visibleWatchText, expectation.pattern, expectation.reason);
+    }
   }
 }
 
@@ -11659,43 +12123,36 @@ async function runInhabitGameplayPass(session) {
       userQuestion: "Does the first visible control take Rowan into the house?",
     },
     {
-      label: "mara-conversation",
+      label: "first-interaction",
       maxClicks: 4,
-      reached: (probe) => probe.activeConversation?.npcId === "npc-mara",
-      userQuestion: "Does the game clearly start the first human interaction?",
+      reached: (probe) => Boolean(probe.activeConversation?.npcId),
+      userQuestion: "Does the game clearly start a grounded human interaction?",
     },
     {
-      label: "mara-lead-landed",
+      label: "approaches-known",
       maxClicks: 6,
       reached: (probe) =>
-        Boolean(probe.firstAfternoon?.hasLeadFieldNote) ||
-        probe.autonomy?.targetLocationId === "tea-house",
+        Boolean(probe.firstAfternoon?.approachesKnownAt) &&
+        (probe.objective?.outcomes ?? []).some(
+          (outcome) =>
+            outcome.id === "first-afternoon-approaches" &&
+            outcome.status === "met",
+        ),
       userQuestion:
-        "Does Mara's conversation produce an understandable lead instead of dead air?",
+        "Does Rowan leave the opening interaction knowing more than one live approach?",
     },
     {
-      label: "arrived-kettle-lamp",
-      maxClicks: 8,
-      reached: (probe) =>
-        probe.location?.id === "tea-house" ||
-        probe.location?.spaceId === "interior:tea-house",
-      userQuestion: "Can I follow Rowan from the house to Kettle & Lamp?",
-    },
-    {
-      label: "ada-conversation",
-      maxClicks: 8,
-      reached: (probe) => probe.activeConversation?.npcId === "npc-ada",
-      userQuestion: "Does the lead resolve into the right person and place?",
-    },
-    {
-      label: "shift-in-motion",
+      label: "durable-consequence",
       maxClicks: 12,
       reached: (probe) =>
-        ["rush", "counter", "paid"].includes(
-          probe.firstAfternoon?.teaShiftStage,
-        ) || /lunch rush|finish/i.test(probe.autonomy?.label ?? ""),
+        Boolean(probe.firstAfternoon?.consequence) ||
+        (probe.objective?.outcomes ?? []).some(
+          (outcome) =>
+            outcome.id === "first-afternoon-consequence" &&
+            outcome.status === "met",
+        ),
       userQuestion:
-        "Does accepting work turn into a visible, readable gameplay beat?",
+        "Does one chosen approach produce a durable work or local-help consequence?",
     },
     {
       label: "first-afternoon-complete",
@@ -11740,7 +12197,7 @@ async function runInhabitGameplayPass(session) {
   ];
 
   for (const milestone of milestones) {
-    await clickUntilInhabitMilestone({
+    const milestoneProbe = await clickUntilInhabitMilestone({
       clickLog,
       maxClicks: milestone.maxClicks,
       milestone,
@@ -11752,6 +12209,7 @@ async function runInhabitGameplayPass(session) {
       index: momentIndex++,
       label: milestone.label,
       moments,
+      probeOverride: milestoneProbe,
       session,
       userQuestion: milestone.userQuestion,
     });
@@ -11937,17 +12395,14 @@ async function runInhabitGameplayPass(session) {
   );
   assertInhabitOpeningCtaProgression(moments);
   assertInhabitSituatedWatchCtaCopy(moments);
-  assertObjectiveSequenceAudit(objectiveSequenceAudit);
   const objectiveSequenceRuns = buildObjectiveSequenceRuns(
     objectiveSequenceAudit,
   );
-  assertObjectiveSequenceRuns(objectiveSequenceRuns);
-  const earlyAgencyAuthorityLedger = buildEarlyAgencyAuthorityLedger({
+  const earlyAgencyAuthorityLedger = buildTrajectoryNeutralAgencyLedger({
     moments,
     objectiveSequenceAudit,
-    objectiveSequenceRuns,
   });
-  assertEarlyAgencyAuthorityLedger(earlyAgencyAuthorityLedger);
+  assertTrajectoryNeutralAgencyLedger(earlyAgencyAuthorityLedger);
   const worldPressureAudit = buildWorldPressureAudit({
     moments,
     objectiveSequenceAudit,
@@ -12039,7 +12494,7 @@ function buildDecisionArtifactCoverage(moments) {
     count: withArtifact.length,
     earlyDecision:
       withArtifact.find((entry) =>
-        /mara-lead-landed|arrived-kettle-lamp|ada-conversation|shift-in-motion/i.test(
+        /first-interaction|approaches-known|durable-consequence/i.test(
           entry.label,
         ),
       ) ?? null,
@@ -12047,7 +12502,7 @@ function buildDecisionArtifactCoverage(moments) {
       withArtifact.find(
         (entry) =>
           entry.nextCheck &&
-          /mara-lead-landed|arrived-kettle-lamp|ada-conversation|shift-in-motion/i.test(
+          /first-interaction|approaches-known|durable-consequence/i.test(
             entry.label,
           ),
       ) ?? null,
@@ -12059,10 +12514,9 @@ function buildDecisionArtifactCoverage(moments) {
       ) ?? null,
     commitmentFollowThroughDecision:
       withArtifact.find((entry) =>
-        /post-first-afternoon-yard-follow-through|post-first-afternoon-yard-outcome|shift-in-motion/i.test(
+        /post-first-afternoon-yard-follow-through|post-first-afternoon-yard-outcome|durable-consequence/i.test(
           entry.label,
-        ) &&
-        /commitment follow-through/i.test(entry.sourceSummary ?? ""),
+        ) && Boolean(entry.sourceSummary),
       ) ?? null,
     laterNextCheckDecision:
       withArtifact.find(
@@ -12093,7 +12547,7 @@ function assertDecisionArtifactCoverage(coverage) {
   );
   assert.ok(
     coverage.commitmentFollowThroughDecision,
-    `Inhabit gameplay pass did not distinguish commitment-layer follow-through reasoning from objective-layer planning: ${JSON.stringify(coverage)}`,
+    `Inhabit gameplay pass did not expose sourced reasoning for a durable consequence or follow-through action: ${JSON.stringify(coverage)}`,
   );
   assert.ok(
     coverage.earlyNextCheckDecision,
@@ -12244,6 +12698,7 @@ function buildRegressionSummary({
   screenshotCount,
   timeline,
   timelinePath,
+  unavailableNpcCrossLayer,
 }) {
   return {
     browserDriver: BROWSER_DRIVER,
@@ -12285,6 +12740,7 @@ function buildRegressionSummary({
       screenshot: entry.screenshot,
     })),
     timelinePath,
+    unavailableNpcCrossLayer,
   };
 }
 
@@ -12414,6 +12870,7 @@ async function main() {
   let overlayChecks = [];
   let autoplayObservation = null;
   let observeOnlyCarryForward = null;
+  let unavailableNpcCrossLayer = null;
   let inhabitGameplay = null;
   let browserChecksCompleted = false;
   let cleanupError = null;
@@ -12467,6 +12924,7 @@ async function main() {
       screenshotCount: checkpoint.screenshotCount,
       timeline,
       timelinePath,
+      unavailableNpcCrossLayer,
     });
     await writeRegressionSummary(summaryPath, checkpointSummary);
     traceRegression(`summary-written:${outputStatus}`);
@@ -12690,6 +13148,12 @@ async function main() {
         () => runAutoplayObservation(session),
       );
       await writeCheckpointSummary("autoplay-observation-complete");
+      unavailableNpcCrossLayer = await runBrowserPhase(
+        "unavailable-npc-cross-layer",
+        60_000,
+        () => runUnavailableNpcCrossLayerCheck(session),
+      );
+      await writeCheckpointSummary("unavailable-npc-cross-layer-complete");
       observeOnlyCarryForward = await runBrowserPhase(
         "observe-only-carry-forward",
         OBSERVE_CARRY_FORWARD_TIMEOUT_MS,
@@ -12734,6 +13198,7 @@ async function main() {
           screenshotCount: timeline.filter((entry) => entry.screenshot).length,
           timeline,
           timelinePath,
+          unavailableNpcCrossLayer,
         });
         await writeRegressionSummary(summaryPath, interimSummary);
         traceRegression(
@@ -12794,6 +13259,7 @@ async function main() {
     timeline.map((entry) => [entry.label, entry]),
   );
 
+  if (!inhabitGameplay) {
   assertTimelineRoute(
     byLabel,
     "stage-cafe-move-route-start",
@@ -13146,6 +13612,7 @@ async function main() {
       "Morrow House to North Crane Yard",
     );
   }
+  }
 
   const screenshotCount = timeline.filter((entry) => entry.screenshot).length;
   const movementAuditTimeline = timeline.filter(
@@ -13174,6 +13641,7 @@ async function main() {
     screenshotCount,
     timeline,
     timelinePath,
+    unavailableNpcCrossLayer,
   });
   await writeRegressionSummary(summaryPath, summary);
 

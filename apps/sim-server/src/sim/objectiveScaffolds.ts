@@ -398,25 +398,13 @@ export interface ObjectiveRouteScaffoldRoute {
 
 export interface FirstAfternoonRouteState {
   atHome: boolean;
-  hasActiveTeaJob: boolean;
-  hasFinishedTeaShift: boolean;
-  hasLeadFieldNote: boolean;
+  approachCount: number;
+  approachesKnown: boolean;
+  consequenceAchieved: boolean;
+  consequenceLabel?: string;
   hasRoomTerms: boolean;
-  hasSettledPlan: boolean;
-  hasStartedTeaShift: boolean;
-  hasTakenTeaShift: boolean;
-  hasTalkedToAda: boolean;
   hasTalkedToMara: boolean;
   homeLocationId?: string;
-  teaJobAccepted: boolean;
-  teaJobCompleted: boolean;
-  teaJobDiscovered: boolean;
-  teaJobId?: string;
-  teaJobMissed: boolean;
-  teaLeadViable: boolean;
-  teaShiftStage?: NonNullable<
-    NonNullable<StreetGameState["firstAfternoon"]>["teaShiftStage"]
-  >;
   wrappedFirstAfternoon: boolean;
 }
 
@@ -825,7 +813,7 @@ export interface FirstAfternoonObjectiveChoiceCopy
 export interface FirstAfternoonCompletionCopy {
   alreadyCompletedFeedText: string;
   invalidLocationFeedText: string;
-  missingShiftFeedText: string;
+  missingConsequenceFeedText: string;
 }
 
 export interface FirstAfternoonFieldNoteCopy {
@@ -842,10 +830,11 @@ export interface FirstAfternoonLeadFieldNoteCopy
 }
 
 export interface FirstAfternoonFieldNoteInput {
-  adaAnswered: boolean;
-  askedAt?: string;
-  teaShiftPay: number;
-  teaShiftTitle: string;
+  consequenceEvidence: string;
+  consequenceKind: NonNullable<
+    NonNullable<StreetGameState["firstAfternoon"]>["consequence"]
+  >["kind"];
+  consequenceLabel: string;
 }
 
 export interface FirstAfternoonLeadFieldNoteInput {
@@ -951,8 +940,13 @@ const GENERIC_PLANNING_DESIRED_OUTCOME_POLICIES: GenericPlanningDesiredOutcomePo
       id: "shelter-stability",
       label: "Keep tonight's room and improve Rowan's standing at Morrow House.",
       priority: 9,
-      status: ({ world }) =>
-        (world.player.reputation.morrow_house ?? 0) >= 2 ? "met" : "open",
+      status: ({ objective, world }) =>
+        objective.routeKey === "first-afternoon" &&
+        firstAfternoonRoomTermsKnown(world)
+          ? "met"
+          : (world.player.reputation.morrow_house ?? 0) >= 2
+            ? "met"
+            : "open",
       evidence: ({ world }) =>
         `Morrow House standing ${world.player.reputation.morrow_house ?? 0}`,
       focusMatches: ["settle"],
@@ -972,7 +966,14 @@ const GENERIC_PLANNING_DESIRED_OUTCOME_POLICIES: GenericPlanningDesiredOutcomePo
       id: "social-anchors",
       label: "Build enough local ties that Rowan is not only passing through.",
       priority: 5,
-      status: ({ trustedPeople }) => (trustedPeople >= 2 ? "met" : "open"),
+      status: ({ objective, trustedPeople, world }) =>
+        objective.routeKey === "first-afternoon" &&
+        (Boolean(world.firstAfternoon?.approachesKnownAt) ||
+          firstAfternoonLiveApproaches(world).length >= 2)
+          ? "met"
+          : trustedPeople >= 2
+            ? "met"
+            : "open",
       evidence: ({ knownPeople }) => `${knownPeople} known people`,
       focusMatches: ["settle"],
       textMatches: /room|stay|bed|home|foothold/,
@@ -1550,6 +1551,40 @@ const OBJECTIVE_ROUTE_NOTEBOOK_RECOVERY_PLANS = {
 
 const OBJECTIVE_ROUTE_NOTEBOOK_STALE_ENTRY_FALLBACK =
   "Ask the first useful question.";
+
+function textGroundsFirstAfternoonApproaches(
+  text: string | undefined,
+): boolean {
+  const normalized = (text ?? "").toLowerCase();
+  return Boolean(
+    textGroundsMaraAdaLead(normalized) &&
+      /\bpump\b|\bleak(?:ing)?\b|\bmorrow yard\b/.test(normalized),
+  );
+}
+
+function resolutionPointsToFirstAfternoonApproaches(resolution: {
+  decision?: string;
+  memoryText?: string;
+  objectiveText?: string;
+  summary?: string;
+}): boolean {
+  const text = [
+    resolution.decision,
+    resolution.memoryText,
+    resolution.objectiveText,
+    resolution.summary,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return Boolean(
+    /\bada\b|\bkettle\b|\btea[- ]?house\b/.test(text) &&
+      /\bpump\b|\bleak(?:ing)?\b|\bmorrow yard\b/.test(text) &&
+      /\bcompare\b|\bapproach(?:es)?\b|\bchoice\b|\bcurrent\b|\blive\b/.test(
+        text,
+      ),
+  );
+}
 
 function textGroundsMaraAdaLead(text: string | undefined): boolean {
   const normalized = (text ?? "").toLowerCase();
@@ -2969,150 +3004,29 @@ const FIRST_AFTERNOON_OUTCOME_TEMPLATES: FirstAfternoonRouteOutcomeTemplate[] =
         hasRoomTerms ? undefined : homeLocationId,
     },
     {
-      id: "first-afternoon-choose-move",
-      label: "Useful first move chosen",
+      id: "first-afternoon-approaches",
+      label: "Multiple live approaches known",
       urgency: 7,
-      actionId: ({ hasTalkedToMara, hasSettledPlan, teaLeadViable }) =>
-        hasTalkedToMara && !hasSettledPlan && teaLeadViable
-          ? "reflect:first-afternoon-plan"
-          : undefined,
-      targetLocationId: ({
-        hasTalkedToMara,
-        hasSettledPlan,
-        homeLocationId,
-        teaLeadViable,
-      }) =>
-        hasTalkedToMara && !hasSettledPlan && teaLeadViable
-          ? homeLocationId
-          : undefined,
     },
     {
-      id: "first-afternoon-ada-lead",
-      label: "Ask Ada directly",
+      id: "first-afternoon-consequence",
+      label: "One consequential foothold achieved",
       urgency: 6,
-      npcId: ({
-        hasFinishedTeaShift,
-        hasSettledPlan,
-        hasTakenTeaShift,
-        hasTalkedToAda,
-        teaLeadViable,
-      }) =>
-        hasSettledPlan &&
-        !hasTalkedToAda &&
-        !hasTakenTeaShift &&
-        !hasFinishedTeaShift &&
-        teaLeadViable
-          ? "npc-ada"
-          : undefined,
-      targetLocationId: ({
-        hasFinishedTeaShift,
-        hasSettledPlan,
-        hasTakenTeaShift,
-        hasTalkedToAda,
-        teaLeadViable,
-      }) =>
-        hasSettledPlan &&
-        !hasTalkedToAda &&
-        !hasTakenTeaShift &&
-        !hasFinishedTeaShift &&
-        teaLeadViable
-          ? "tea-house"
-          : undefined,
-    },
-    {
-      id: "first-afternoon-record-lead",
-      label: "Ada lead recorded as evidence",
-      urgency: 5,
-      targetLocationId: ({ hasLeadFieldNote, hasTalkedToAda }) =>
-        hasTalkedToAda && !hasLeadFieldNote ? "tea-house" : undefined,
-    },
-    {
-      id: "first-afternoon-take-shift",
-      label: "Cup-and-counter shift accepted",
-      urgency: 4,
-      actionId: ({
-        hasLeadFieldNote,
-        hasTakenTeaShift,
-        teaJobDiscovered,
-        teaJobId,
-        teaLeadViable,
-      }) =>
-        hasLeadFieldNote &&
-        teaJobId &&
-        !hasTakenTeaShift &&
-        teaLeadViable &&
-        teaJobDiscovered
-          ? `accept:${teaJobId}`
-          : undefined,
-      targetLocationId: ({
-        hasLeadFieldNote,
-        hasTakenTeaShift,
-        teaLeadViable,
-      }) =>
-        hasLeadFieldNote && !hasTakenTeaShift && teaLeadViable
-          ? "tea-house"
-          : undefined,
-    },
-    {
-      id: "first-afternoon-start-shift",
-      label: "Lunch rush started",
-      urgency: 3,
-      actionId: ({
-        hasStartedTeaShift,
-        teaJobAccepted,
-        teaJobId,
-        teaJobMissed,
-      }) =>
-        teaJobId && teaJobAccepted && !hasStartedTeaShift && !teaJobMissed
-          ? `work:${teaJobId}`
-          : undefined,
-      targetLocationId: ({
-        hasStartedTeaShift,
-        teaJobAccepted,
-        teaJobId,
-        teaJobMissed,
-      }) =>
-        teaJobId && teaJobAccepted && !hasStartedTeaShift && !teaJobMissed
-          ? "tea-house"
-          : undefined,
-    },
-    {
-      id: "first-afternoon-finish-shift",
-      label: "Shift finished and paid",
-      urgency: 2,
-      actionId: ({
-        hasFinishedTeaShift,
-        hasStartedTeaShift,
-        teaJobId,
-        teaJobMissed,
-      }) =>
-        teaJobId && hasStartedTeaShift && !hasFinishedTeaShift && !teaJobMissed
-          ? `work:${teaJobId}`
-          : undefined,
-      targetLocationId: ({
-        hasFinishedTeaShift,
-        hasStartedTeaShift,
-        teaJobId,
-        teaJobMissed,
-      }) =>
-        teaJobId && hasStartedTeaShift && !hasFinishedTeaShift && !teaJobMissed
-          ? "tea-house"
-          : undefined,
     },
     {
       id: "first-afternoon-take-stock",
       label: "First afternoon taken stock",
-      urgency: 1,
-      actionId: ({ atHome, hasFinishedTeaShift, wrappedFirstAfternoon }) =>
-        atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
+      urgency: 5,
+      actionId: ({ atHome, consequenceAchieved, wrappedFirstAfternoon }) =>
+        atHome && consequenceAchieved && !wrappedFirstAfternoon
           ? "reflect:first-afternoon"
           : undefined,
       targetLocationId: ({
-        hasFinishedTeaShift,
+        consequenceAchieved,
         homeLocationId,
         wrappedFirstAfternoon,
       }) =>
-        hasFinishedTeaShift && !wrappedFirstAfternoon
+        consequenceAchieved && !wrappedFirstAfternoon
           ? homeLocationId
           : undefined,
     },
@@ -3133,151 +3047,36 @@ const FIRST_AFTERNOON_STEP_TEMPLATES: FirstAfternoonRouteStepTemplate[] = [
     targetLocationId: ({ homeLocationId }) => homeLocationId,
   },
   {
-    id: "first-afternoon-choose-move",
-    title: "Choose the first useful move.",
-    detail: ({ hasSettledPlan }) =>
-      hasSettledPlan
-        ? "Rowan chose Ada over drifting or resting."
-        : "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.",
-    progress: ({ hasSettledPlan }) =>
-      hasSettledPlan ? "Ada chosen" : "Weigh the options",
-    done: ({ hasSettledPlan }) => hasSettledPlan,
-    actionId: ({ hasTalkedToMara, hasSettledPlan, teaLeadViable }) =>
-      hasTalkedToMara && !hasSettledPlan && teaLeadViable
-        ? "reflect:first-afternoon-plan"
-        : undefined,
-    targetLocationId: ({
-      hasTalkedToMara,
-      hasSettledPlan,
-      homeLocationId,
-      teaLeadViable,
-    }) =>
-      hasTalkedToMara && !hasSettledPlan && teaLeadViable
-        ? homeLocationId
-        : undefined,
+    id: "first-afternoon-approaches",
+    title: "Learn more than one live way forward.",
+    detail: ({ approachCount, approachesKnown }) =>
+      approachesKnown
+        ? `Rowan can name ${approachCount} current approaches and let the present situation decide between them.`
+        : "Ask what paid work and useful local trouble are actually live before choosing.",
+    progress: ({ approachCount, approachesKnown }) =>
+      approachesKnown ? `${approachCount} approaches known` : `${approachCount}/2 approaches`,
+    done: ({ approachesKnown }) => approachesKnown,
   },
   {
-    id: "first-afternoon-ada-lead",
-    title: "Ask Ada if Kettle & Lamp needs help today.",
-    detail: ({ hasTalkedToAda }) =>
-      hasTalkedToAda
-        ? "Ada made the tea-house lead concrete."
-        : "Ask Ada directly if there is work Rowan can do today.",
-    progress: ({ hasTalkedToAda }) =>
-      hasTalkedToAda ? "Ada asked" : "Find Ada",
-    done: ({ hasFinishedTeaShift, hasTakenTeaShift, hasTalkedToAda }) =>
-      hasTalkedToAda || hasTakenTeaShift || hasFinishedTeaShift,
-    npcId: ({ teaLeadViable }) => (teaLeadViable ? "npc-ada" : undefined),
-    targetLocationId: ({ teaLeadViable }) =>
-      teaLeadViable ? "tea-house" : undefined,
-  },
-  {
-    id: "first-afternoon-record-lead",
-    title: "Record what Ada confirmed.",
-    detail: ({ hasLeadFieldNote }) =>
-      hasLeadFieldNote
-        ? "Rowan turned Mara's lead into a field note with evidence."
-        : "Write down what Ada said, where it happened, and what choice it opened.",
-    progress: ({ hasLeadFieldNote }) =>
-      hasLeadFieldNote ? "Lead grounded" : "Needs field note",
-    done: ({ hasLeadFieldNote }) => hasLeadFieldNote,
-    targetLocationId: ({ hasLeadFieldNote, hasTalkedToAda, teaLeadViable }) =>
-      hasTalkedToAda || hasLeadFieldNote || teaLeadViable
-        ? "tea-house"
-        : undefined,
-  },
-  {
-    id: "first-afternoon-take-shift",
-    title: "Take the cup-and-counter shift.",
-    detail: ({ hasTakenTeaShift }) =>
-      hasTakenTeaShift
-        ? "Rowan has the shift."
-        : "Say yes to the cup-and-counter shift.",
-    progress: ({ hasTakenTeaShift, teaJobDiscovered }) =>
-      hasTakenTeaShift
-        ? "Shift taken"
-        : teaJobDiscovered
-          ? "Offer ready"
-          : "Need the offer",
-    done: ({ hasFinishedTeaShift, hasTakenTeaShift }) =>
-      hasTakenTeaShift || hasFinishedTeaShift,
-    actionId: ({
-      hasActiveTeaJob,
-      teaJobAccepted,
-      teaJobCompleted,
-      teaJobDiscovered,
-      teaJobId,
-      teaLeadViable,
-    }) =>
-      teaJobId && !teaJobCompleted && teaLeadViable
-        ? teaJobAccepted || hasActiveTeaJob
-          ? `work:${teaJobId}`
-          : teaJobDiscovered
-            ? `accept:${teaJobId}`
-            : undefined
-        : undefined,
-    targetLocationId: ({ teaLeadViable }) =>
-      teaLeadViable ? "tea-house" : undefined,
-  },
-  {
-    id: "first-afternoon-start-shift",
-    title: "Get through the lunch rush.",
-    detail: ({ hasStartedTeaShift }) =>
-      hasStartedTeaShift
-        ? "Rowan has started keeping the room moving."
-        : "Start with cups, tables, and the counter when lunch fills in.",
-    progress: ({ hasStartedTeaShift }) =>
-      hasStartedTeaShift ? "Rush handled" : "Shift ahead",
-    done: ({ hasStartedTeaShift }) => hasStartedTeaShift,
-    actionId: ({ teaJobAccepted, teaJobCompleted, teaJobId, teaJobMissed }) =>
-      teaJobId && teaJobAccepted && !teaJobCompleted && !teaJobMissed
-        ? `work:${teaJobId}`
-        : undefined,
-    targetLocationId: ({
-      teaJobAccepted,
-      teaJobCompleted,
-      teaJobId,
-      teaJobMissed,
-    }) =>
-      teaJobId && teaJobAccepted && !teaJobCompleted && !teaJobMissed
-        ? "tea-house"
-        : undefined,
-  },
-  {
-    id: "first-afternoon-finish-shift",
-    title: "Finish the shift and get paid.",
-    detail: ({ hasFinishedTeaShift, teaShiftStage }) =>
-      hasFinishedTeaShift
-        ? "Rowan worked the shift and got paid."
-        : teaShiftStage === "counter"
-          ? "Finish the last counter pass and collect the pay."
-          : "Keep the shift steady until Ada can pay Rowan.",
-    progress: ({ hasFinishedTeaShift }) =>
-      hasFinishedTeaShift ? "Paid" : "Still ahead",
-    done: ({ hasFinishedTeaShift }) => hasFinishedTeaShift,
-    actionId: ({ teaJobCompleted, teaJobId, teaJobMissed }) =>
-      teaJobId && !teaJobCompleted && !teaJobMissed
-        ? `work:${teaJobId}`
-        : undefined,
-    targetLocationId: ({
-      hasStartedTeaShift,
-      teaJobCompleted,
-      teaJobId,
-      teaJobMissed,
-    }) =>
-      teaJobId && hasStartedTeaShift && !teaJobCompleted && !teaJobMissed
-        ? "tea-house"
-        : undefined,
+    id: "first-afternoon-consequence",
+    title: "Turn one approach into a consequential foothold.",
+    detail: ({ consequenceAchieved, consequenceLabel }) =>
+      consequenceAchieved
+        ? `${consequenceLabel ?? "A useful choice"} changed Rowan's standing in South Quay.`
+        : "Follow through on live tea work, yard work, or a grounded local problem; the current state decides which path is strongest.",
+    progress: ({ consequenceAchieved, consequenceLabel }) =>
+      consequenceAchieved ? consequenceLabel ?? "Foothold achieved" : "Choose and follow through",
+    done: ({ consequenceAchieved }) => consequenceAchieved,
   },
   {
     id: "first-afternoon-take-stock",
     title: "Head back to Morrow House and take stock.",
-    detail: ({ atHome, hasFinishedTeaShift, wrappedFirstAfternoon }) =>
+    detail: ({ atHome, consequenceAchieved, consequenceLabel, wrappedFirstAfternoon }) =>
       wrappedFirstAfternoon
-        ? "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead."
-        : atHome && hasFinishedTeaShift
-          ? "Stop for a minute and count what changed today."
-          : "Go back to Morrow House before ending the first afternoon.",
+        ? `Tonight's bed still holds, and ${consequenceLabel ?? "one useful consequence"} gave Rowan a real foothold.`
+        : atHome && consequenceAchieved
+          ? "Stop for a minute and record what actually changed today."
+          : "Achieve one real consequence, then go back to Morrow House before ending the first afternoon.",
     progress: ({ atHome, wrappedFirstAfternoon }) =>
       wrappedFirstAfternoon
         ? "First afternoon complete"
@@ -3285,8 +3084,8 @@ const FIRST_AFTERNOON_STEP_TEMPLATES: FirstAfternoonRouteStepTemplate[] = [
           ? "Ready to take stock"
           : "Head home",
     done: ({ wrappedFirstAfternoon }) => wrappedFirstAfternoon,
-    actionId: ({ atHome, hasFinishedTeaShift, wrappedFirstAfternoon }) =>
-      atHome && hasFinishedTeaShift && !wrappedFirstAfternoon
+    actionId: ({ atHome, consequenceAchieved, wrappedFirstAfternoon }) =>
+      atHome && consequenceAchieved && !wrappedFirstAfternoon
         ? "reflect:first-afternoon"
         : undefined,
     targetLocationId: ({ homeLocationId }) => homeLocationId,
@@ -3482,7 +3281,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     },
     completionIdleCopy: {
       detail:
-        "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.",
+        "Good stopping point: tonight's bed still holds, and Rowan has one durable foothold from the approach he actually followed through on.",
       label: "First afternoon complete",
       when: ({ objective, world }) =>
         objective.routeKey === "first-afternoon" &&
@@ -3490,24 +3289,24 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     },
     completionRationale: {
       rationale:
-        "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.",
+        "First afternoon complete: Rowan understands the room, compared live approaches, achieved one durable consequence, and recorded what changed.",
       when: ({ objective, world }) =>
         objective.routeKey === "first-afternoon" &&
         Boolean(world.firstAfternoon?.completedAt),
     },
     completionSummaryTail: {
-      text: " The first afternoon is complete: room to return to, paid shift, and a real foothold.",
+      text: " The first afternoon is complete: room understood, live approaches compared, and one real foothold achieved.",
       when: ({ objective, world }) =>
         objective.routeKey === "first-afternoon" &&
         Boolean(world.firstAfternoon?.completedAt),
     },
     completionOutcome: {
       feedText:
-        "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
+        "Rowan takes stock at Morrow House: tonight's bed still holds, one current approach changed his standing, and the route he took came from what was live rather than an old instruction list.",
       memoryText:
-        "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
+        "You finished the first afternoon with a room to return to and one durable foothold earned through actual follow-through.",
       playerThought:
-        "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.",
+        "Tonight's bed still holds. I learned what was live, chose one approach from the current block, and changed something people can remember. That is enough for a first afternoon.",
     },
     objectiveStatePolicies: [
       {
@@ -3556,26 +3355,25 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         alreadyCompletedFeedText: "The first afternoon is already settled.",
         invalidLocationFeedText:
           "Bring Rowan back to Morrow House before calling the first afternoon done.",
-        missingShiftFeedText:
-          "There is still no paid shift to count. Rowan needs one real follow-through first.",
+        missingConsequenceFeedText:
+          "There is still no durable consequence to count. Rowan needs to complete live work or solve a grounded local problem first.",
       },
       completionFieldNote: ({
-        adaAnswered,
-        askedAt,
-        teaShiftPay,
-        teaShiftTitle,
+        consequenceEvidence,
+        consequenceKind,
+        consequenceLabel,
       }) => {
-        const normalizedTitle = teaShiftTitle.toLowerCase();
+        const nextByKind =
+          consequenceKind === "tea-work"
+            ? "Let the tea-house standing compete with the yard, the pump, and whatever is still live tomorrow."
+            : consequenceKind === "yard-work"
+              ? "Let the yard standing compete with house needs and other live work instead of assuming the same route repeats."
+              : "Carry the local trust from solving the problem into the next paid, social, or house-facing opening.";
         return {
-          evidence: adaAnswered
-            ? `Asked Ada at Kettle & Lamp at ${askedAt ?? "late morning"}; she offered ${normalizedTitle} for $${teaShiftPay}.`
-            : `Worked ${normalizedTitle} at Kettle & Lamp and got paid $${teaShiftPay}.`,
-          learned:
-            "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
-          memory:
-            "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
-          next:
-            "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+          evidence: consequenceEvidence,
+          learned: `${consequenceLabel} became Rowan's first durable foothold in South Quay.`,
+          memory: `People can now remember that Rowan followed through on ${consequenceLabel.toLowerCase()}.`,
+          next: nextByKind,
         };
       },
       leadFieldNote: ({ askedAt, teaShiftPay, teaShiftTitle }) => ({
@@ -3593,13 +3391,13 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       }),
       planSettlement: {
         currentThought:
-          "Mara gave me live choices: chase Ada's lunch work, deal with the pump, rest, or make myself useful here. Ada is the best first bet before the noon window closes.",
+          "Mara gave me more than one live approach: Ada's lunch work and the leaking pump are both real. The current legal choices can decide which deserves the first follow-through.",
         feedText:
-          "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
+          "Rowan records more than one live approach without settling the afternoon to a single route.",
         invalidLocationFeedText:
           "Step inside Morrow House before settling that plan.",
         memoryText:
-          "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
+          "When the first afternoon opened up, Rowan kept Ada's work and the house's local trouble as competing live approaches.",
       },
       pumpChoice: {
         currentThought:
@@ -3616,7 +3414,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         },
       },
     },
-    deterministicOpeningNpcIds: ["npc-mara", "npc-ada"],
+    deterministicOpeningNpcIds: ["npc-mara", "npc-ada", "npc-jo", "npc-tomas"],
     deterministicOpeningRouteKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
     semanticHints: [
       { locationId: ({ world }) => world.player.homeLocationId },
@@ -3624,16 +3422,13 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         locationId: "tea-house",
         npcId: "npc-ada",
         when: ({ objective, world }) =>
-          objective.routeKey === "mara-ada-lead" ||
-          Boolean(
-            world.firstAfternoon?.planSettledAt &&
-            firstAfternoonAdaLeadViable(world),
-          ),
+          objective.routeKey === "mara-ada-lead" &&
+          firstAfternoonAdaLeadViable(world),
       },
       {
         locationId: ({ world }) => world.player.homeLocationId,
         when: ({ world }) =>
-          Boolean(jobById(world, "job-tea-shift")?.completed),
+          Boolean(firstAfternoonConsequence(world)),
       },
     ],
     moveIntents: [
@@ -3644,19 +3439,17 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         rationale:
           "Mara's lead points to Ada at Kettle & Lamp; Rowan needs to ask her directly before lunch fills the room.",
         when: ({ objective, world }) =>
-          objective.routeKey === "mara-ada-lead" ||
-          (objective.routeKey === "first-afternoon" &&
-            Boolean(world.firstAfternoon?.planSettledAt) &&
-            firstAfternoonAdaLeadViable(world) &&
-            countPlayerConversationsWithNpc(world, "npc-ada") === 0),
+          objective.routeKey === "mara-ada-lead" &&
+          firstAfternoonAdaLeadViable(world) &&
+          countPlayerConversationsWithNpc(world, "npc-ada") === 0,
       },
       {
         label: "Return to Morrow House to take stock",
         locationId: ({ world }) => world.player.homeLocationId,
         rationale:
-          "The shift paid, and Morrow House is the right place to let the day land.",
+          "One durable consequence landed, and Morrow House is the right place to record what actually changed.",
         when: ({ world }) =>
-          Boolean(jobById(world, "job-tea-shift")?.completed) &&
+          Boolean(firstAfternoonConsequence(world)) &&
           !world.firstAfternoon?.completedAt,
       },
     ],
@@ -3670,10 +3463,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       {
         matches: (outcomeLabel) =>
           outcomeLabel.includes("first afternoon taken stock"),
-        rationale: ({ world }) =>
-          world.player.energy < 28
-            ? "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
-            : "The shift paid, and Morrow House is the right place to let the day land",
+        rationale:
+          "One durable consequence landed, and Morrow House is the right place to record what actually changed",
       },
       {
         matches: (outcomeLabel) =>
@@ -3700,10 +3491,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       {
         matches: (normalizedRationale) =>
           normalizedRationale.includes("first afternoon taken stock"),
-        rationale: ({ world }) =>
-          world.player.energy < 28
-            ? "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land"
-            : "the shift paid, and Morrow House is the right place to let the day land",
+        rationale:
+          "one durable consequence landed, and Morrow House is the right place to record what actually changed",
       },
       {
         matches: (normalizedRationale, { world }) =>
@@ -3749,22 +3538,13 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         npcId: "npc-mara",
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
         thought:
-          "Mara gave me three ways to spend the afternoon: drift, rest, or ask Ada. Ada turns the room into something earned.",
+          "Mara made two current approaches concrete: Ada's lunch work and the leaking pump. Neither one settles the plan by itself.",
       },
       {
         npcId: "npc-ada",
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
         thought:
           "Ada made the work concrete. If I can stay steady through lunch, tonight feels less temporary.",
-      },
-    ],
-    conversationTopicSuppressions: [
-      {
-        npcId: "npc-mara",
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-        topic: "pump",
-        when: ({ playerAskedTopic, world }) =>
-          !world.firstAfternoon?.planSettledAt && !playerAskedTopic,
       },
     ],
     conversationFallbacks: [
@@ -3824,9 +3604,9 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         ],
         npcId: "npc-mara",
         replyLines: [
-          "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.",
-          "Start with Ada at Kettle & Lamp. If lunch still needs hands, that gives you coin and a reason to be seen.",
-          "Make Kettle & Lamp your next stop. Ask Ada directly about lunch work, then bring what you learn back here.",
+          "Ada at Kettle & Lamp may still need lunch hands, and the pump in Morrow Yard is already leaking. Both are real; check the current choices and follow through on one.",
+          "Kettle & Lamp has possible lunch work, while the yard pump is making the house harder to live in. Those are two live approaches, not one settled route.",
+          "Ask Ada if paid work matters most, or inspect the leaking pump if useful local standing matters more. Let what is legal now decide the first move.",
         ],
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
         when: ({ world }) => {
@@ -4151,45 +3931,40 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     conversationGroundingPolicies: [
       {
         fallbackReason:
-          "Live Mara reply did not ground the Ada lead after Rowan's follow-up.",
+          "Live Mara reply did not ground multiple first-afternoon approaches after Rowan's follow-up.",
         fallbackReply: {
-          followupThought: "Ada is the first useful bet.",
+          followupThought: "Ada's work and the pump are both current approaches.",
           reply:
-            "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.",
+            "Morrow House can hold you tonight if you help keep it easy to live in. Ada at Kettle & Lamp may need lunch hands, and the pump in Morrow Yard is leaking now. Both are live approaches; choose from what the block actually allows.",
         },
         followupPlayerText:
-          "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?",
-        id: "mara-ada-lead-grounding",
+          "Just to be clear, are Ada's Kettle & Lamp lunch work and the leaking Morrow Yard pump both live ways I could make this afternoon count?",
+        id: "mara-first-afternoon-approaches-grounding",
         npcId: "npc-mara",
-        playerTextGroundsEvidence: textGroundsMaraAdaLead,
+        playerTextGroundsEvidence: textGroundsFirstAfternoonApproaches,
         promptGroundedPlayerLines: [
-          "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.",
-          "- A short direct confirmation is acceptable here, but it must clearly affirm that exact lead instead of drifting back to room rules.",
-          "- Good shape for this follow-up: Yes, that's the one. Ask her before lunch fills the counter. Or: Exactly. She'll need steady hands before lunch.",
+          "- Rowan's line names both Ada/Kettle & Lamp lunch work and the leaking Morrow Yard pump. Confirm both plainly.",
+          "- Do not select one approach for Rowan. Explain that both are current possibilities and the legal current state should decide.",
         ],
         promptRequiredLines: [
-          "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.",
-          "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.",
+          "- Required for this Mara reply: visibly ground both Ada/Kettle & Lamp work and the leaking Morrow Yard pump.",
+          "- Present these as competing live approaches, not a command to follow Ada.",
         ],
         resolutionFallback: {
           decision:
-            "ask Mara one clearer question before treating Ada's lead as real.",
+            "compare Ada's live lunch work with the leaking pump and choose from the simulator-legal current actions.",
           memoryKind: "self",
           memoryText:
-            "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.",
+            "Mara made both Ada's work and the pump concrete without choosing the route for Rowan.",
           summary:
-            "Mara has not yet made the Kettle & Lamp lead visible in the conversation.",
+            "Mara exposed multiple live first-afternoon approaches without settling the plan.",
         },
-        responseAffirmsEvidence: textAffirmsMaraAdaLead,
-        responseGroundsEvidence: textGroundsMaraAdaLead,
-        resolutionPointsToEvidence: resolutionPointsToMaraAdaLead,
+        responseAffirmsEvidence: textGroundsFirstAfternoonApproaches,
+        responseGroundsEvidence: textGroundsFirstAfternoonApproaches,
+        resolutionPointsToEvidence:
+          resolutionPointsToFirstAfternoonApproaches,
         routeKeys: ["first-afternoon"],
-        when: ({ playerText, world }) =>
-          !world.firstAfternoon?.leadFieldNote &&
-          !world.firstAfternoon?.planSettledAt &&
-          !/\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(
-            playerText.toLowerCase(),
-          ),
+        when: ({ world }) => !world.firstAfternoon?.approachesKnownAt,
       },
       {
         fallbackReason:
@@ -4240,12 +4015,6 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     ],
     actionRationales: [
       {
-        actionId: "reflect:first-afternoon-plan",
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-        rationale:
-          "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.",
-      },
-      {
         npcId: "npc-mara",
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
         rationale:
@@ -4261,58 +4030,6 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     ],
     availableActions: [
       {
-        id: "reflect:first-afternoon-plan",
-        label: "Choose Ada's Kettle & Lamp lead",
-        description:
-          "Commit to leaving Morrow House and following Mara's lead to Ada at Kettle & Lamp.",
-        kind: "reflect",
-        emphasis: "high",
-        targetLocationId: ({ world }) => world.player.homeLocationId,
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-        when: ({ world }) =>
-          world.player.currentLocationId === world.player.homeLocationId &&
-          !world.firstAfternoon?.planSettledAt &&
-          countPlayerConversationsWithNpc(world, "npc-mara") > 0 &&
-          firstAfternoonAdaLeadViable(world),
-      },
-      {
-        id: "reflect:first-afternoon-pump",
-        label: "Check the Morrow Yard pump",
-        description:
-          "Treat the leaking pump as the first proof that Rowan notices what the house needs.",
-        kind: "reflect",
-        emphasis: "medium",
-        targetLocationId: ({ world }) => world.player.homeLocationId,
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-        when: ({ world }) =>
-          world.player.currentLocationId === world.player.homeLocationId &&
-          !world.firstAfternoon?.planSettledAt &&
-          countPlayerConversationsWithNpc(world, "npc-mara") > 0 &&
-          firstAfternoonAdaLeadViable(world) &&
-          problemById(world, "problem-pump")?.status === "active",
-      },
-      {
-        id: "reflect:first-afternoon-compare",
-        label: "Compare other live leads",
-        description:
-          "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.",
-        kind: "reflect",
-        emphasis: "low",
-        targetLocationId: "tea-house",
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-        when: ({ world }) => {
-          const teaJob = jobById(world, "job-tea-shift");
-          return Boolean(
-            world.player.currentLocationId === "tea-house" &&
-            world.firstAfternoon?.leadFieldNote &&
-            teaJob?.discovered &&
-            !teaJob.accepted &&
-            !teaJob.completed &&
-            !teaJob.missed,
-          );
-        },
-      },
-      {
         id: "reflect:first-afternoon",
         label: "Take stock",
         description: "Count what changed today before chasing another errand.",
@@ -4323,7 +4040,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) =>
           world.player.currentLocationId === world.player.homeLocationId &&
           !world.firstAfternoon?.completedAt &&
-          Boolean(jobById(world, "job-tea-shift")?.completed),
+          Boolean(firstAfternoonConsequence(world)),
       },
     ],
     actionTargetLocations: [
@@ -4332,30 +4049,15 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         locationId: ({ world }) => world.player.homeLocationId,
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
       },
-      {
-        actionId: "reflect:first-afternoon-plan",
-        locationId: ({ world }) => world.player.homeLocationId,
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-      },
-      {
-        actionId: "reflect:first-afternoon-pump",
-        locationId: ({ world }) => world.player.homeLocationId,
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-      },
-      {
-        actionId: "reflect:first-afternoon-compare",
-        locationId: "tea-house",
-        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
-      },
     ],
     homeReturnMoveReasons: [
       {
         priority: 20,
         reason: ({ homeName }) =>
-          `${homeName} is where Rowan can take stock after the paid shift, keep tonight's room safe, and decide what the pump or next work window requires.`,
+          `${homeName} is where Rowan can take stock after a durable consequence and record what actually changed.`,
         when: (_input, { objective, world }) =>
           objective.routeKey === "first-afternoon" &&
-          Boolean(jobById(world, "job-tea-shift")?.completed),
+          Boolean(firstAfternoonConsequence(world)),
       },
     ],
     playerThoughts: [
@@ -5298,48 +5000,24 @@ function buildFirstAfternoonRoute(
   source: ObjectiveSource,
 ): ObjectiveRouteScaffoldRoute {
   const home = findLocation(world, world.player.homeLocationId);
-  const teaJob = jobById(world, "job-tea-shift");
-  const teaLeadViable = firstAfternoonRouteAdaLeadViable(world, teaJob);
   const hasTalkedToMara =
     countPlayerConversationsWithNpc(world, "npc-mara") > 0;
-  const hasSettledPlan = Boolean(world.firstAfternoon?.planSettledAt);
-  const hasTalkedToAda = countPlayerConversationsWithNpc(world, "npc-ada") > 0;
-  const hasLeadFieldNote = Boolean(world.firstAfternoon?.leadFieldNote);
-  const hasRoomTerms = hasTalkedToMara || hasSettledPlan || hasLeadFieldNote;
-  const hasTakenTeaShift = Boolean(
-    teaJob?.accepted ||
-      teaJob?.completed ||
-      world.player.activeJobId === "job-tea-shift",
-  );
-  const hasFinishedTeaShift = Boolean(teaJob?.completed);
-  const teaShiftStage = world.firstAfternoon?.teaShiftStage;
-  const hasStartedTeaShift = Boolean(
-    teaShiftStage === "rush" ||
-      teaShiftStage === "counter" ||
-      teaShiftStage === "paid" ||
-      hasFinishedTeaShift,
-  );
+  const approaches = firstAfternoonLiveApproaches(world);
+  const approachesKnown =
+    Boolean(world.firstAfternoon?.approachesKnownAt) || approaches.length >= 2;
+  const consequence = firstAfternoonConsequence(world);
+  const hasRoomTerms = firstAfternoonRoomTermsKnown(world);
   const atHome = world.player.currentLocationId === world.player.homeLocationId;
   const wrappedFirstAfternoon = Boolean(world.firstAfternoon?.completedAt);
   const routeScaffold = objectiveRouteFirstAfternoonRouteScaffold({
     atHome,
-    hasActiveTeaJob: world.player.activeJobId === "job-tea-shift",
-    hasFinishedTeaShift,
-    hasLeadFieldNote,
+    approachCount: approachesKnown ? Math.max(2, approaches.length) : approaches.length,
+    approachesKnown,
+    consequenceAchieved: Boolean(consequence),
+    consequenceLabel: consequence?.label,
     hasRoomTerms,
-    hasSettledPlan,
-    hasStartedTeaShift,
-    hasTakenTeaShift,
-    hasTalkedToAda,
     hasTalkedToMara,
     homeLocationId: home?.id,
-    teaJobAccepted: Boolean(teaJob?.accepted),
-    teaJobCompleted: Boolean(teaJob?.completed),
-    teaJobDiscovered: Boolean(teaJob?.discovered),
-    teaJobId: teaJob?.id,
-    teaJobMissed: Boolean(teaJob?.missed),
-    teaLeadViable,
-    teaShiftStage,
     wrappedFirstAfternoon,
   });
 
@@ -5351,6 +5029,60 @@ function buildFirstAfternoonRoute(
     outcomes: routeScaffold.outcomes,
     steps: routeScaffold.steps.map(makeObjectiveRouteStep),
   };
+}
+
+function firstAfternoonLiveApproaches(world: StreetGameState) {
+  const approaches: string[] = [];
+  const teaJob = jobById(world, "job-tea-shift");
+  const yardJob = jobById(world, "job-yard-shift");
+  const pump = problemById(world, "problem-pump");
+  const cart = problemById(world, "problem-cart");
+
+  if (teaJob?.discovered && jobWindowOpen(world, teaJob)) {
+    approaches.push(teaJob.id);
+  }
+  if (yardJob?.discovered && jobWindowOpen(world, yardJob)) {
+    approaches.push(yardJob.id);
+  }
+  if (pump?.discovered && pump.status === "active") {
+    approaches.push(pump.id);
+  }
+  if (cart?.discovered && cart.status === "active") {
+    approaches.push(cart.id);
+  }
+
+  return approaches;
+}
+
+function firstAfternoonConsequence(world: StreetGameState) {
+  const teaJob = jobById(world, "job-tea-shift");
+  if (teaJob?.completed) {
+    return {
+      evidence: `${teaJob.title} completed for $${teaJob.pay}.`,
+      id: teaJob.id,
+      label: "Kettle & Lamp work completed",
+    };
+  }
+
+  const yardJob = jobById(world, "job-yard-shift");
+  if (yardJob?.completed) {
+    return {
+      evidence: `${yardJob.title} completed for $${yardJob.pay}.`,
+      id: yardJob.id,
+      label: "North Crane Yard work completed",
+    };
+  }
+
+  const solvedProblem = world.problems.find(
+    (problem) => problem.discovered && problem.status === "solved",
+  );
+  return solvedProblem
+    ? {
+        evidence: `${solvedProblem.title} solved after Rowan grounded the local problem.`,
+        id: solvedProblem.id,
+        label: `${solvedProblem.title} solved`,
+      }
+    : undefined;
 }
 
 function firstAfternoonRouteAdaLeadViable(
@@ -5640,18 +5372,35 @@ export function objectiveRouteScaffoldOutcomeEvaluation(input: {
             ? "The current objective is explicitly to verify Mara's Ada lead."
             : undefined,
       });
-    case "first-afternoon-choose-move":
+    case "first-afternoon-approaches": {
+      const approaches = firstAfternoonLiveApproaches(world);
+      const approachesKnown =
+        Boolean(world.firstAfternoon?.approachesKnownAt) ||
+        approaches.length >= 2;
       return objectiveRouteOutcomeEvaluation(
-        Boolean(world.firstAfternoon?.planSettledAt),
+        approachesKnown,
         {
-          blockers: [
-            teaLeadViable
-              ? "Rowan has not chosen the useful first move yet."
-              : "Ada's lunch window has slipped; Rowan needs a current live alternative.",
-          ],
-          evidence: world.firstAfternoon?.planSettledAt,
+          blockers: ["Rowan does not yet know two materially live approaches."],
+          evidence:
+            approaches.length > 0
+              ? approachesKnown && approaches.length < 2
+                ? `Multiple approaches were grounded before Rowan committed; ${approaches.join(", ")} remains live now.`
+                : `${approaches.length} live approach${approaches.length === 1 ? "" : "es"}: ${approaches.join(", ")}.`
+              : approachesKnown
+                ? "Multiple approaches were grounded before Rowan committed to the consequence."
+              : undefined,
         },
       );
+    }
+    case "first-afternoon-consequence": {
+      const consequence = firstAfternoonConsequence(world);
+      return objectiveRouteOutcomeEvaluation(Boolean(consequence), {
+        blockers: [
+          "Rowan has not yet completed live tea work, yard work, or a grounded local problem.",
+        ],
+        evidence: consequence?.evidence,
+      });
+    }
     case "mara-ada-walk-route":
       return objectiveRouteOutcomeEvaluation(
         world.player.currentLocationId === "tea-house" ||
@@ -6850,9 +6599,9 @@ export function objectiveRouteScriptedReply(
 
       return {
         reply:
-          "Ada runs the Kettle & Lamp room hard before noon. If you can stay calm, take plates, and not make her repeat herself, ask her directly. Do it before the rush fills the room.",
+          "Ada runs Kettle & Lamp hard before noon and may still need lunch hands. The Morrow Yard pump is leaking too, so paid work and useful local help are both live approaches; choose from what is actually available now.",
         followupThought:
-          "Ada at Kettle & Lamp is a live paid lead, but only if Rowan moves before lunch.",
+          "Mara exposed Ada's work and the leaking pump without choosing Rowan's route for him.",
       };
     }
   }
@@ -7367,6 +7116,7 @@ function firstAfternoonRoomTermsKnown(world: StreetGameState) {
   return (
     countPlayerConversationsWithNpc(world, "npc-mara") > 0 ||
     Boolean(
+      world.firstAfternoon?.approachesKnownAt ||
       world.firstAfternoon?.planSettledAt ||
       world.firstAfternoon?.leadFieldNote,
     )

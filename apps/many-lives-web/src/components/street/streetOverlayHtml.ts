@@ -179,12 +179,16 @@ export function buildRowanStoryCardHtml(
     >
       <div class="ml-kicker">${escapeHtml(kicker)}</div>
       <div class="ml-rowan-story-card-title">${escapeHtml(card.title)}</div>
-      ${card.decisionArtifact ? buildVisibleDecisionArtifactHtml(card.decisionArtifact) : ""}
-      <div class="ml-rowan-story-card-copy">${escapeHtml(
-        buildNarrativePreview(card.detail, primary ? 176 : 152),
-      )}</div>
+      ${primary && card.decisionArtifact ? buildVisibleDecisionArtifactHtml(card.decisionArtifact) : ""}
       ${
-        primary && card.reason
+        !primary || !card.decisionArtifact
+          ? `<div class="ml-rowan-story-card-copy">${escapeHtml(
+              buildNarrativePreview(card.detail, primary ? 176 : 152),
+            )}</div>`
+          : ""
+      }
+      ${
+        primary && card.reason && !card.decisionArtifact
           ? `<div class="ml-rowan-story-card-reason">
               <span>Why now</span>
               ${escapeHtml(buildNarrativePreview(card.reason, 156))}
@@ -192,7 +196,7 @@ export function buildRowanStoryCardHtml(
           : ""
       }
       ${
-        primary && card.signals?.length
+        primary && card.signals?.length && !card.decisionArtifact
           ? `<div class="ml-rowan-signal-row">
               ${card.signals
                 .slice(0, 3)
@@ -228,69 +232,78 @@ export function buildVisibleDecisionArtifactHtml(
         <strong>${escapeHtml(buildNarrativePreview(artifact.sourceSummary, 36))}</strong>
       </div>
       <div class="ml-decision-grid">
-        <div class="ml-decision-line">
+        <div class="ml-decision-line" data-decision-field="aim">
           <span>Aim</span>
           <p>${escapeHtml(buildNarrativePreview(artifact.objective, 112))}</p>
         </div>
-        <div class="ml-decision-line">
+        <div class="ml-decision-line" data-decision-field="choice">
           <span>Choice</span>
           <p>${escapeHtml(buildNarrativePreview(artifact.selectedAction, 84))}</p>
         </div>
       </div>
       ${
         artifact.nextCheck
-          ? `<div class="ml-decision-next-check">
+          ? `<div class="ml-decision-next-check" data-decision-field="next-check">
               <span>Next check</span>
               ${escapeHtml(buildNarrativePreview(artifact.nextCheck, 118))}
             </div>`
           : ""
       }
-      ${
-        constraints.length
-          ? `<div class="ml-decision-chip-row" aria-label="Relevant constraints">
-              <strong>Signals</strong>
-              ${constraints
-                .map(
-                  (constraint) =>
-                    `<span>${escapeHtml(buildNarrativePreview(constraint, 62))}</span>`,
-                )
-                .join("")}
-            </div>`
-          : ""
-      }
-      <div class="ml-decision-rationale">
+      <div class="ml-decision-rationale" data-decision-field="rationale">
         <span>Why this</span>
         ${escapeHtml(buildNarrativePreview(artifact.rationale, 132))}
       </div>
       ${
-        considered.length
-          ? `<div class="ml-decision-options">
-              <span>Options</span>
-              ${considered
-                .map(
-                  (option) =>
-                    `<em>${escapeHtml(buildNarrativePreview(option, 58))}</em>`,
-                )
-                .join("")}
-            </div>`
+        constraints.length || considered.length || passedOver.length
+          ? `<details class="ml-decision-details" data-decision-details="true">
+              <summary>Evidence and alternatives</summary>
+              <div class="ml-decision-details-body">
+                ${
+                  constraints.length
+                    ? `<div class="ml-decision-chip-row" aria-label="Relevant constraints">
+                        <strong>Signals</strong>
+                        ${constraints
+                          .map(
+                            (constraint) =>
+                              `<span>${escapeHtml(buildNarrativePreview(constraint, 62))}</span>`,
+                          )
+                          .join("")}
+                      </div>`
+                    : ""
+                }
+                ${
+                  considered.length
+                    ? `<div class="ml-decision-options">
+                        <span>Options</span>
+                        ${considered
+                          .map(
+                            (option) =>
+                              `<em>${escapeHtml(buildNarrativePreview(option, 58))}</em>`,
+                          )
+                          .join("")}
+                      </div>`
+                    : ""
+                }
+                ${
+                  passedOver.length
+                    ? `<div class="ml-decision-passed-over">
+                        <span>Not now</span>
+                        ${passedOver
+                          .map(
+                            (option) =>
+                              `<em>${escapeHtml(buildNarrativePreview(option, 64))}</em>`,
+                          )
+                          .join("")}
+                      </div>`
+                    : ""
+                }
+                <div class="ml-decision-backing">${escapeHtml(
+                  buildNarrativePreview(artifact.backingSummary, 96),
+                )}</div>
+              </div>
+            </details>`
           : ""
       }
-      ${
-        passedOver.length
-          ? `<div class="ml-decision-passed-over">
-              <span>Not now</span>
-              ${passedOver
-                .map(
-                  (option) =>
-                    `<em>${escapeHtml(buildNarrativePreview(option, 64))}</em>`,
-                )
-                .join("")}
-            </div>`
-          : ""
-      }
-      <div class="ml-decision-backing">${escapeHtml(
-        buildNarrativePreview(artifact.backingSummary, 96),
-      )}</div>
     </div>
   `;
 }

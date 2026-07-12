@@ -23,7 +23,6 @@ import {
   toFirstPersonText,
 } from "@/components/street/streetFormatting";
 import {
-  buildCompactVisibleDecisionArtifactHtml,
   buildFirstAfternoonFieldNoteHtml,
   buildJournalTabHtml,
   buildLoadingHtml,
@@ -170,6 +169,7 @@ import {
 } from "@/lib/street/rowanPlayback";
 import {
   CAMERA_USER_ZOOM_DEFAULT,
+  getCompactOverlayLayoutMetrics,
   getOverlayLayoutMetrics,
   getRuntimeRenderScale,
   getScaledViewportSize,
@@ -703,13 +703,8 @@ type RuntimeObjects = {
   npcMarkers: Map<string, NpcMarkerObjects>;
   overlayDom: HTMLDivElement;
   overlayLayer: PhaserType.GameObjects.Graphics;
-  playerBeacon: PhaserType.GameObjects.Arc;
-  playerBeaconTail: PhaserType.GameObjects.Rectangle;
   playerContainer: PhaserType.GameObjects.Container;
   playerAppearance: CharacterAppearance;
-  playerName: PhaserType.GameObjects.Text;
-  playerPulse: PhaserType.GameObjects.Arc;
-  playerReticle: PhaserType.GameObjects.Ellipse;
   playerRig: CharacterRig;
   playerTitle: PhaserType.GameObjects.Text;
   scene: PhaserType.Scene;
@@ -945,7 +940,6 @@ type RuntimeState = {
   ui: UiState;
   visualEventCues: VisualEventCue[];
   waypointAppliedNonce: number;
-  waypointPlacedAt: number;
   waypointTarget: Point | null;
 };
 
@@ -1282,6 +1276,15 @@ export function PhaserStreetGameApp() {
       const nextGame = gameIdToOpen
         ? await loadStreetGame(gameIdToOpen)
         : await createStreetGame();
+      setOptimisticPlayerPosition(null);
+      setOptimisticPlayerLocationId(null);
+      setOptimisticPlayerConversationLocationId(null);
+      setOptimisticPlayerMoveDurationMs(null);
+      setRowanPlayback(createEmptyRowanPlaybackState());
+      publishWaypoint(null);
+      if (!applyGameUpdate(nextGame, requestId)) {
+        return;
+      }
       rememberStreetGameId(nextGame.id);
       if (
         forceFreshGame ||
@@ -1301,13 +1304,6 @@ export function PhaserStreetGameApp() {
         urlCleanupGameIdRef.current = nextGame.id;
         hideGameIdFromCurrentUrl();
       }
-      setOptimisticPlayerPosition(null);
-      setOptimisticPlayerLocationId(null);
-      setOptimisticPlayerConversationLocationId(null);
-      setOptimisticPlayerMoveDurationMs(null);
-      setRowanPlayback(createEmptyRowanPlaybackState());
-      publishWaypoint(null);
-      applyGameUpdate(nextGame, requestId);
     } catch (loadError) {
       if (storedGameId && isMissingStreetGameError(loadError)) {
         forgetStoredStreetGameId(storedGameId);
@@ -1870,7 +1866,6 @@ async function createRuntime(options: {
     },
     visualEventCues: [],
     waypointAppliedNonce: initialSnapshot.waypointNonce,
-    waypointPlacedAt: runtimeNow,
     waypointTarget: initialSnapshot.waypointTarget ?? null,
   };
   const nativeCameraPanFallback = bindNativeCameraPanFallback(
@@ -1904,11 +1899,7 @@ async function createRuntime(options: {
     },
 
     create(this: PhaserType.Scene) {
-      const objects = createRuntimeObjects(
-        this,
-        runtimeState.snapshot,
-        overlayDom,
-      );
+      const objects = createRuntimeObjects(this, overlayDom);
       runtimeState.objects = objects;
       const openRowanNotebookFromScene = () => {
         runtimeState.ui.activeTab = "mind";
@@ -2860,7 +2851,6 @@ function bindNativeCameraPanFallback(
 
 function createRuntimeObjects(
   scene: PhaserType.Scene,
-  snapshot: StreetAppSnapshot,
   overlayDom: HTMLDivElement,
 ): RuntimeObjects {
   const terrainLayer = scene.add.graphics().setDepth(10);
@@ -2871,55 +2861,26 @@ function createRuntimeObjects(
   const agencyIntentText = createMapAgencyLabel(scene, "intent").setDepth(86);
   const agencyTargetText = createMapAgencyLabel(scene, "target").setDepth(84);
 
-  const playerPulse = scene.add.circle(0, 0, 34, 0x8dd0cd, 0.16);
-  const playerReticle = scene.add
-    .ellipse(0, 16, 52, 28, 0xf1d09f, 0.14)
-    .setStrokeStyle(2.2, 0xf1d09f, 0.5);
   const playerAppearance = playerCharacterAppearance();
   const playerRig = createCharacterAvatar(scene, playerAppearance);
   playerRig.avatar.setScale(1.06);
-  const playerBeacon = scene.add
-    .circle(0, -72, 5.2, 0xffefc8, 0.98)
-    .setStrokeStyle(2.2, 0xf0cf8c, 0.64);
-  const playerBeaconTail = scene.add.rectangle(0, -64, 2.4, 10, 0xf0cf8c, 0.84);
 
   const playerTitle = scene.add
-    .text(0, -60, "YOU", {
+    .text(0, -47, "YOU", {
       align: "center",
       color: "#f6deb0",
       fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
       fontSize: "11px",
       fontStyle: "700",
-      letterSpacing: 3,
+      letterSpacing: 2,
     })
     .setBackgroundColor("rgba(31, 25, 17, 0.96)")
     .setOrigin(0.5, 0.5);
   playerTitle.setPadding(8, 4, 8, 4);
   playerTitle.setStroke("#0a1116", 2);
 
-  const playerName = scene.add
-    .text(0, -41, snapshot.game?.player.name ?? "Rowan", {
-      align: "center",
-      color: "#fffaf0",
-      fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
-      fontSize: "15px",
-      fontStyle: "700",
-    })
-    .setBackgroundColor("rgba(7, 13, 18, 0.95)")
-    .setOrigin(0.5, 0.5);
-  playerName.setPadding(10, 5, 10, 5);
-  playerName.setStroke("#091015", 2);
-
   const playerContainer = scene.add
-    .container(0, 0, [
-      playerPulse,
-      playerReticle,
-      playerRig.avatar,
-      playerBeaconTail,
-      playerBeacon,
-      playerTitle,
-      playerName,
-    ])
+    .container(0, 0, [playerRig.avatar, playerTitle])
     .setDepth(60);
   playerContainer.setScale(1.08);
 
@@ -2933,13 +2894,8 @@ function createRuntimeObjects(
     npcMarkers: new Map(),
     overlayDom,
     overlayLayer,
-    playerBeacon,
-    playerBeaconTail,
     playerAppearance,
     playerContainer,
-    playerName,
-    playerPulse,
-    playerReticle,
     playerRig,
     playerTitle,
     scene,
@@ -3918,6 +3874,7 @@ function renderDynamicScene(
     objects.overlayLayer.clear();
     hideMapAgencyObjects(objects);
     syncBrowserMapAgencyProbe(objects.overlayDom, null);
+    syncBrowserVisualHierarchyProbe(objects.overlayDom, runtimeState, null);
     objects.playerContainer.setVisible(false);
     for (const marker of objects.npcMarkers.values()) {
       marker.container.setVisible(false);
@@ -3937,7 +3894,7 @@ function renderDynamicScene(
     runtimeState.waypointTarget &&
     distanceBetween(playerTile, runtimeState.waypointTarget) <= 0.08
   ) {
-    setRuntimeWaypointTarget(runtimeState, null, now);
+    setRuntimeWaypointTarget(runtimeState, null);
   }
   const playerPixel = samplePlayerWorld(runtimeState, playerTile, now);
   const activeConversationNpc = getSelectedNpc(runtimeState) ?? undefined;
@@ -3945,16 +3902,6 @@ function renderDynamicScene(
   const nearbyInteriorNpc = runtimeState.indices.activeSpace
     ? nearestAnimatedNpcWithin(animatedNpcs, playerPixel, CELL * 1.35)
     : null;
-  const tightInteriorConversationNpc =
-    runtimeState.indices.activeSpace &&
-    activeConversationNpc &&
-    nearbyInteriorNpc?.npc.id === activeConversationNpc.id
-      ? nearbyInteriorNpc
-      : null;
-  const suppressPlayerTitleForTightInteriorConversation = Boolean(
-    tightInteriorConversationNpc &&
-      distanceBetween(tightInteriorConversationNpc, playerPixel) <= CELL * 1.65,
-  );
   const playerLabelOffsetX = nearbyInteriorNpc
     ? nearbyInteriorNpc.x <= playerPixel.x
       ? 40
@@ -3966,33 +3913,10 @@ function renderDynamicScene(
   );
 
   objects.playerContainer.setPosition(playerPixel.x, playerPixel.y);
-  objects.playerName
-    .setText(runtimeState.snapshot.game?.player.name ?? "Rowan")
-    .setX(playerLabelOffsetX)
-    .setVisible(!usingAuthoredVisualScene && !runtimeState.indices.activeSpace);
   objects.playerTitle.setX(playerLabelOffsetX);
-  objects.playerBeacon
-    .setVisible(true)
-    .setScale(1 + Math.sin(now / 220) * (usingAuthoredVisualScene ? 0.1 : 0.08))
-    .setAlpha(usingAuthoredVisualScene ? 0.96 : 0.9);
-  objects.playerBeaconTail
-    .setVisible(true)
-    .setAlpha(
-      usingAuthoredVisualScene
-        ? 0.88 + Math.sin(now / 240) * 0.08
-        : 0.78 + Math.sin(now / 240) * 0.06,
-    );
   objects.playerTitle
-    .setVisible(!suppressPlayerTitleForTightInteriorConversation)
+    .setVisible(true)
     .setAlpha(usingAuthoredVisualScene ? 0.96 : 0.84);
-  objects.playerPulse
-    .setVisible(!usingAuthoredVisualScene)
-    .setScale(1 + Math.sin(now / 220) * 0.08)
-    .setAlpha(runtimeState.snapshot.busyLabel ? 0.24 : 0.16);
-  objects.playerReticle
-    .setVisible(!usingAuthoredVisualScene)
-    .setScale(1 + Math.sin(now / 260) * 0.04, 1 + Math.sin(now / 260) * 0.03)
-    .setAlpha(activeConversationNpc ? 0.56 : 0.42);
   poseCharacterRig(objects.playerRig, {
     facing: playerAnimation.facing,
     now,
@@ -4758,23 +4682,19 @@ function syncMapAgencyObjects(
   ) {
     hideMapAgencyObjects(objects);
     syncBrowserMapAgencyProbe(objects.overlayDom, null);
+    syncBrowserVisualHierarchyProbe(objects.overlayDom, runtimeState, null);
     return;
   }
 
   if (!cue) {
     hideMapAgencyObjects(objects);
     syncBrowserMapAgencyProbe(objects.overlayDom, null);
+    syncBrowserVisualHierarchyProbe(objects.overlayDom, runtimeState, null);
     return;
   }
 
   const world = getWorldBounds(runtimeState.snapshot);
   const labelSafeRect = getMapAgencyLabelSafeRect(objects, runtimeState, world);
-  const playerLabelVisible = pointNearVisualRect(
-    playerPixel,
-    labelSafeRect,
-    CELL * 1.2,
-  );
-  const intentCopy = buildMapAgencyIntentLabelCopy(cue, playerPixel);
   const closeInteractionSuppressed = Boolean(
     runtimeState.indices.activeSpace &&
       cue.tone === "conversation" &&
@@ -4782,34 +4702,7 @@ function syncMapAgencyObjects(
       cue.targetWorld &&
       distanceBetween(playerPixel, cue.targetWorld) <= CELL * 1.65,
   );
-  const intentHalfWidth = estimateMapAgencyLabelHalfWidth(intentCopy, "intent");
-  const intentPosition = clampMapAgencyLabelPosition(
-    {
-      x: playerPixel.x,
-      y:
-        playerPixel.y -
-        (runtimeState.indices.visualScene ? CELL * 1.88 : CELL * 1.56),
-    },
-    world,
-    intentHalfWidth,
-    54,
-    labelSafeRect,
-  );
-  const labelPulse = 0.92 + Math.sin(now / 560) * 0.035;
-  const showIntentLabel = playerLabelVisible && !closeInteractionSuppressed;
-
-  if (showIntentLabel) {
-    setMapAgencyLabel(objects.agencyIntentText, intentCopy, intentPosition, {
-      alpha: labelPulse,
-      background:
-        cue.tone === "conversation"
-          ? "rgba(5, 20, 23, 0.86)"
-          : "rgba(7, 13, 18, 0.84)",
-      color: "#fffaf0",
-    });
-  } else {
-    objects.agencyIntentText.setVisible(false).setAlpha(0);
-  }
+  objects.agencyIntentText.setVisible(false).setAlpha(0);
 
   let targetCopy: string | null = cue.targetLabel;
   let targetLabelWorldPoint: Point | null = null;
@@ -4899,9 +4792,9 @@ function syncMapAgencyObjects(
     cue,
     {
       closeInteractionSuppressed,
-      intentWorldPoint: showIntentLabel ? roundBrowserPoint(intentPosition) : null,
-      intentText: intentCopy,
-      intentVisible: showIntentLabel,
+      intentWorldPoint: null,
+      intentText: null,
+      intentVisible: false,
       targetHiddenReason,
       targetInSafeRect,
       targetLabelClampDistance,
@@ -4913,61 +4806,9 @@ function syncMapAgencyObjects(
     },
     runtimeState,
   );
-}
-
-function buildMapAgencyIntentLabelCopy(cue: MapAgencyCue, playerPixel: Point) {
-  if (
-    cue.targetWorld &&
-    cue.targetLocationId &&
-    !cue.targetIsNpc &&
-    distanceBetween(playerPixel, cue.targetWorld) > CELL * 1.8
-  ) {
-    return buildDistantMapAgencyIntentCopy(cue);
-  }
-
-  return cue.targetWorld || cue.targetLabel
-    ? cue.intent
-    : cue.detail
-      ? `${cue.intent}\n${cue.detail}`
-      : cue.intent;
-}
-
-function buildDistantMapAgencyIntentCopy(cue: MapAgencyCue) {
-  const grounded = groundedMapAgencyRouteCopy(`${cue.intent} ${cue.detail}`);
-  if (grounded) {
-    return grounded;
-  }
-
-  return "Following the current obligation";
-}
-
-function groundedMapAgencyRouteCopy(text: string) {
-  const normalized = text.toLowerCase();
-  if (/\bmara\b|\bada\b/.test(normalized)) {
-    return "Following Mara's Ada lead";
-  }
-
-  if (/\blunch\b/.test(normalized)) {
-    return "Protecting the lunch window";
-  }
-
-  if (/\bpaid\b|\bshift\b|\bwork window\b/.test(normalized)) {
-    return "Letting the paid shift land";
-  }
-
-  if (/\broom terms\b|\brent\b/.test(normalized)) {
-    return "Checking the room terms";
-  }
-
-  if (/\benergy\b|\brest\b/.test(normalized)) {
-    return "Taking care of energy";
-  }
-
-  if (/\blead\b|\bclue\b|\bquestion\b/.test(normalized)) {
-    return "Following the live lead";
-  }
-
-  return null;
+  syncBrowserVisualHierarchyProbe(objects.overlayDom, runtimeState, cue, {
+    targetLabelVisible: Boolean(showTargetLabel),
+  });
 }
 
 function setMapAgencyLabel(
@@ -4987,15 +4828,6 @@ function setMapAgencyLabel(
     .setPosition(Math.round(point.x), Math.round(point.y))
     .setVisible(true)
     .setAlpha(clamp(options.alpha, 0, 1));
-}
-
-function pointNearVisualRect(point: Point, rect: VisualRect, margin: number) {
-  return !(
-    point.x < rect.x - margin ||
-    point.y < rect.y - margin ||
-    point.x > rect.x + rect.width + margin ||
-    point.y > rect.y + rect.height + margin
-  );
 }
 
 function pointInsideVisualRect(point: Point, rect: VisualRect) {
@@ -6252,6 +6084,7 @@ function buildScheduledNpcVisualCues(
     (animatedNpcs ?? []).map((npc) => [npc.npc.id, npc] as const),
   );
   const cues = game.npcs
+    .filter((npc) => isNpcVisuallyPresentAtCurrentTime(game, npc))
     .map((npc) =>
       buildScheduledNpcVisualCueForNpc({
         animatedNpc: animatedNpcById.get(npc.id) ?? null,
@@ -6779,11 +6612,46 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   );
   const nearbyNpcs = game.npcs.filter(
     (npc) =>
-      scenePersonIds.has(npc.id) ||
-      talkableNpcIds.has(npc.id) ||
-      (Boolean(currentLocationId) && npc.currentLocationId === currentLocationId),
+      isNpcVisuallyPresentAtCurrentTime(game, npc) &&
+      (scenePersonIds.has(npc.id) ||
+        talkableNpcIds.has(npc.id) ||
+        (Boolean(currentLocationId) &&
+          npc.currentLocationId === currentLocationId)),
   );
   const nearbyNpcIds = new Set(nearbyNpcs.map((npc) => npc.id));
+  const npcPresenceProbeJson = JSON.stringify({
+    nearbyNpcIds: [...nearbyNpcIds],
+    scheduleSemantics: {
+      fullDayWindowActive: isHourWithinNpcScheduleWindow(12, {
+        fromHour: 8,
+        locationId: "probe",
+        toHour: 8,
+      }),
+      halfOpenEndExcluded: !isHourWithinNpcScheduleWindow(18, {
+        fromHour: 9,
+        locationId: "probe",
+        toHour: 18,
+      }),
+      overnightAfterMidnightActive: isHourWithinNpcScheduleWindow(1, {
+        fromHour: 22,
+        locationId: "probe",
+        toHour: 2,
+      }),
+      overnightBeforeMidnightActive: isHourWithinNpcScheduleWindow(23, {
+        fromHour: 22,
+        locationId: "probe",
+        toHour: 2,
+      }),
+      overnightEndExcluded: !isHourWithinNpcScheduleWindow(2, {
+        fromHour: 22,
+        locationId: "probe",
+        toHour: 2,
+      }),
+    },
+    visuallyPresentNpcIds: game.npcs
+      .filter((npc) => isNpcVisuallyPresentAtCurrentTime(game, npc))
+      .map((npc) => npc.id),
+  }).replace(/</g, "\\u003c");
   const rosterNpcs = game.npcs
     .filter((npc) => !nearbyNpcIds.has(npc.id))
     .slice(0, 5);
@@ -7389,23 +7257,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       </button>
     `
     : "";
-  const compactRailWhyNowHtml =
-    railViewport !== "desktop" && railExpanded && rowanRail.now.reason
-      ? `<div class="ml-rowan-story-card-reason ml-rail-head-reason">
-          <span>Why now</span>
-          ${escapeHtml(buildNarrativePreview(rowanRail.now.reason, 148))}
-        </div>`
-      : "";
-  const rowanDecisionArtifact =
-    rowanRail.now.decisionArtifact ?? rowanRail.next?.decisionArtifact ?? null;
-  const compactRailDecisionArtifactHtml =
-    railExpanded &&
-    rowanDecisionArtifact &&
-    (railViewport !== "desktop" || rowanRail.useConversationTranscript)
-      ? buildCompactVisibleDecisionArtifactHtml(rowanDecisionArtifact)
-      : "";
-  const compactOpeningWatchStatus =
-    firstAfternoonOpening && watchModeProgressionControlsSuppressed;
   const browserProbeJson = buildStreetBrowserProbeJson({
     activeConversation: railActiveConversation,
     conversationNpcName: railConversationNpc?.name,
@@ -7425,29 +7276,16 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
   const todoCounterLabel =
     game.player.objective?.progress?.label ??
     `${objectivePlanItems.length} open tasks`;
-  const compactRailCollapsedHeight = showPrimaryContinue
-    ? railViewport === "phone"
-      ? 218
-      : 158
-    : compactOpeningWatchStatus
-      ? railViewport === "phone"
-        ? 176
-        : 204
-    : railViewport === "phone"
-      ? 176
-      : 112;
-  const compactRailExpandedHeight =
-    railViewport === "phone" && firstAfternoonOpening
-      ? Math.max(400, Math.min(Math.round(height * 0.58), height - 168))
-      : railViewport === "phone"
-      ? Math.max(320, Math.min(Math.round(height * 0.58), height - 152))
-      : Math.max(340, Math.min(Math.round(height * 0.56), height - 160));
-  const compactRailWidth =
-    railViewport === "phone"
-      ? Math.max(width - overlayInset * 2, 280)
-      : Math.min(Math.max(width * 0.4, 320), 360);
-  const compactRailBottomOffset =
-    railViewport === "phone" ? (firstAfternoonOpening ? 28 : 148) : 168;
+  const compactOverlayMetrics = getCompactOverlayLayoutMetrics(
+    snapshot.viewport,
+    { hasPrimaryAction: showPrimaryContinue },
+  );
+  const {
+    railBottomOffset: compactRailBottomOffset,
+    railCollapsedHeight: compactRailCollapsedHeight,
+    railExpandedHeight: compactRailExpandedHeight,
+    railWidth: compactRailWidth,
+  } = compactOverlayMetrics;
   return `
     ${buildStreetOverlayStyle({
       compactRailBottomOffset,
@@ -7550,8 +7388,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
               </div>
               <div class="ml-rail-peek-label">${escapeHtml(railPeekLabel)}</div>
               <div class="ml-rail-thought">${escapeHtml(railThought)}</div>
-              ${compactRailWhyNowHtml}
-              ${compactRailDecisionArtifactHtml}
               ${compactPrimaryActionHtml}
             </div>
             ${
@@ -7578,8 +7414,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             data-rail-root="rowan"
           >
             <div class="ml-command-rail-body">
-              ${firstAfternoonFieldNoteHtml}
               ${buildRowanStoryCardHtml("Now", rowanRail.now, true)}
+              ${firstAfternoonFieldNoteHtml}
               ${
                 showPrimaryContinue
                   ? `
@@ -7784,6 +7620,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
               }
               <script id="ml-browser-probe" type="application/json">${browserProbeJson}</script>
               <script id="ml-browser-map-agency-probe" type="application/json">null</script>
+              <script id="ml-browser-visual-hierarchy-probe" type="application/json">null</script>
+              <script id="ml-browser-npc-presence-probe" type="application/json">${npcPresenceProbeJson}</script>
               <script id="ml-browser-camera-probe" type="application/json">{}</script>
             </div>
           </div>
@@ -8280,6 +8118,47 @@ function syncBrowserMapAgencyProbe(
   ).replace(/</g, "\\u003c");
 }
 
+function syncBrowserVisualHierarchyProbe(
+  root: HTMLElement,
+  runtimeState: RuntimeState,
+  cue: MapAgencyCue | null,
+  options: { targetLabelVisible?: boolean } = {},
+) {
+  const probe = root.querySelector<HTMLScriptElement>(
+    "#ml-browser-visual-hierarchy-probe",
+  );
+  if (!probe) {
+    return;
+  }
+
+  const hasTarget = Boolean(cue?.targetWorld);
+  const hasRoute = hasTarget
+    ? Boolean(
+        cue?.targetWorld &&
+          runtimeState.cameraProjection?.playerWorldPoint &&
+          distanceBetween(
+            runtimeState.cameraProjection.playerWorldPoint,
+            cue.targetWorld,
+          ) >
+            CELL * 1.05,
+      )
+    : isRuntimePlayerMotionActive(runtimeState, getRuntimeNow());
+
+  probe.textContent = JSON.stringify({
+    contextualCues:
+      hasTarget || hasRoute
+        ? [hasTarget ? "route-target" : "active-route"]
+        : [],
+    hasRoute,
+    hasTarget,
+    intentLabelVisible: false,
+    persistentIdentityTreatments: runtimeState.objects?.playerTitle.visible
+      ? ["you-label"]
+      : [],
+    targetLabelVisible: options.targetLabelVisible ?? false,
+  }).replace(/</g, "\\u003c");
+}
+
 function syncBrowserCameraProbe(
   root: HTMLElement,
   runtimeState: RuntimeState,
@@ -8588,30 +8467,6 @@ function getWorldBounds(snapshot: StreetAppSnapshot) {
   });
 }
 
-function getRuntimeLocationHighlightRect(
-  indices: RuntimeIndices,
-  locationId: string,
-): VisualRect | null {
-  const visualAnchors = indices.visualScene?.locationAnchors[locationId];
-  if (visualAnchors) {
-    return visualAnchors.highlight;
-  }
-
-  const footprint = indices.footprintByLocationId.get(locationId);
-  if (!footprint) {
-    return null;
-  }
-
-  const { x, y } = mapTileToWorldOrigin(footprint.x, footprint.y);
-  return {
-    height: footprint.height * CELL,
-    radius: 26,
-    width: footprint.width * CELL,
-    x,
-    y,
-  };
-}
-
 function getRuntimeViewportSize(runtimeState: RuntimeState): ViewportSize {
   return getScaledViewportSize(
     runtimeState.snapshot.viewport,
@@ -8776,9 +8631,7 @@ function createStaticPlayerMotion(
 function setRuntimeWaypointTarget(
   runtimeState: RuntimeState,
   target: Point | null,
-  placedAt = getRuntimeNow(),
 ) {
-  runtimeState.waypointPlacedAt = placedAt;
   runtimeState.waypointTarget = target ? { x: target.x, y: target.y } : null;
 }
 
@@ -8928,12 +8781,9 @@ function resolvePlayerMotionRouteTarget(
     runtimeState.snapshot.optimisticPlayerLocationId ??
     game.player.currentLocationId ??
     null;
-  const conversationLocationId =
-    runtimeState.snapshot.optimisticPlayerConversationLocationId ??
-    game.activeConversation?.locationId;
   const authoredTargetWorldPoint =
     resolveAuthoredLocationWorldPoint({
-      conversationLocationId,
+      conversationLocationId: null,
       indices: runtimeState.indices,
       locationId: targetLocationId,
       point: nextPoint,
@@ -8948,17 +8798,13 @@ function resolvePlayerMotionRouteTarget(
     },
   );
   const tile = walkableTarget?.tile ?? nextPoint;
-  const worldPoint =
-    resolveAuthoredLocationWorldPoint({
-      conversationLocationId,
-      indices: runtimeState.indices,
-      locationId: targetLocationId,
-      point: tile,
-    }) ?? projectRuntimeTileCenter(runtimeState.indices, tile.x, tile.y);
 
   return {
     tile,
-    worldPoint,
+    // Keep the authoritative destination anchor resolved from nextPoint. The
+    // snapped routing tile can select a neighboring authored approach; using
+    // that tile to resolve the anchor again creates a visible final-position hop.
+    worldPoint: authoredTargetWorldPoint,
   };
 }
 
@@ -9146,7 +8992,9 @@ function computeAnimatedNpcs(
   const animationBeat = now / 1000;
   const activeSpaceId = getActiveSpaceId(game);
   const visibleNpcs = game.npcs.filter(
-    (npc) => getNpcActiveSpaceId(game, npc) === activeSpaceId,
+    (npc) =>
+      isNpcVisuallyPresentAtCurrentTime(game, npc) &&
+      getNpcActiveSpaceId(game, npc) === activeSpaceId,
   );
   const rawNpcs = visibleNpcs.map((npc, index) =>
     runtimeState.indices.activeSpace
@@ -10339,56 +10187,6 @@ function drawAmbientPedestrian(
   );
 }
 
-function drawPlayerPresenceMarker(
-  layer: PhaserType.GameObjects.Graphics,
-  playerPixel: Point,
-  now: number,
-  options: {
-    authoredScene?: boolean;
-  } = {},
-) {
-  const authoredScene = options.authoredScene ?? false;
-  const playerPulse = 0.68 + Math.sin(now / 240) * 0.12;
-  const glowBoost = authoredScene ? 1.18 : 1;
-  const markerLift = authoredScene ? 0.96 : 0.84;
-  const markerY = playerPixel.y - CELL * markerLift - Math.sin(now / 200) * 2.8;
-
-  layer.fillStyle(0x8dd0cd, (0.08 + playerPulse * 0.04) * glowBoost);
-  layer.fillCircle(
-    playerPixel.x,
-    playerPixel.y,
-    CELL * (1.2 + (authoredScene ? 0.1 : 0)),
-  );
-  layer.fillStyle(0xe8d7ad, (0.06 + playerPulse * 0.03) * glowBoost);
-  layer.fillCircle(
-    playerPixel.x,
-    playerPixel.y,
-    CELL * (0.96 + (authoredScene ? 0.08 : 0)),
-  );
-  layer.lineStyle(2.2, 0x9bded7, (0.28 + playerPulse * 0.12) * glowBoost);
-  layer.strokeCircle(
-    playerPixel.x,
-    playerPixel.y,
-    CELL * (1.56 + (authoredScene ? 0.08 : 0)),
-  );
-  layer.lineStyle(2.1, 0xf0cf8c, (0.42 + playerPulse * 0.12) * glowBoost);
-  layer.strokeEllipse(
-    playerPixel.x,
-    playerPixel.y + CELL * 0.42,
-    CELL * (1.72 + (authoredScene ? 0.16 : 0)),
-    CELL * (0.94 + (authoredScene ? 0.08 : 0)),
-  );
-  layer.lineStyle(2.2, 0xf0cf8c, (0.34 + playerPulse * 0.12) * glowBoost);
-  layer.lineBetween(
-    playerPixel.x,
-    markerY + 8,
-    playerPixel.x,
-    playerPixel.y - CELL * 0.16,
-  );
-  layer.fillStyle(0xffefc8, 0.96);
-  layer.fillCircle(playerPixel.x, markerY, authoredScene ? 5.8 : 5.2);
-}
-
 function drawMapAgencyOverlay(
   layer: PhaserType.GameObjects.Graphics,
   runtimeState: RuntimeState,
@@ -10789,15 +10587,8 @@ function drawDynamicOverlay(
   if (runtimeState.indices.visualScene) {
     drawAnimatedCitySurface(layer, runtimeState.indices, now);
     drawAnimatedSkyWeather(layer, runtimeState.indices.visualScene, now);
-    drawPlayerRouteBreadcrumb(layer, runtimeState, now);
-    if (runtimeState.waypointTarget) {
-      drawWaypointBeacon(
-        layer,
-        runtimeState.indices,
-        runtimeState.waypointTarget,
-        now,
-        runtimeState.waypointPlacedAt,
-      );
+    if (!mapAgencyCue?.targetWorld) {
+      drawPlayerRouteBreadcrumb(layer, runtimeState, now);
     }
     drawMapAgencyOverlay(
       layer,
@@ -10808,20 +10599,9 @@ function drawDynamicOverlay(
       now,
     );
     drawScheduledNpcVisualCues(layer, runtimeState, now);
-    drawPlayerPresenceMarker(layer, playerPixel, now, {
-      authoredScene: true,
-    });
     return;
   }
 
-  const currentFootprint = game.player.currentLocationId
-    ? getRuntimeLocationHighlightRect(
-        runtimeState.indices,
-        game.player.currentLocationId,
-      )
-    : undefined;
-  const selectedNpc = getSelectedNpc(runtimeState);
-  const pulse = 0.55 + Math.sin(now / 320) * 0.12;
   const activeInteriorSpace = Boolean(runtimeState.indices.activeSpace);
   const activePlayerMotion = isRuntimePlayerMotionActive(runtimeState, now);
 
@@ -10829,16 +10609,8 @@ function drawDynamicOverlay(
   if (runtimeState.indices.activeSpace) {
     drawTeaHouseShiftState(layer, runtimeState.indices.activeSpace, game);
   }
-  drawPlayerRouteBreadcrumb(layer, runtimeState, now);
-
-  if (runtimeState.waypointTarget && (!activeInteriorSpace || activePlayerMotion)) {
-    drawWaypointBeacon(
-      layer,
-      runtimeState.indices,
-      runtimeState.waypointTarget,
-      now,
-      runtimeState.waypointPlacedAt,
-    );
+  if (!mapAgencyCue?.targetWorld) {
+    drawPlayerRouteBreadcrumb(layer, runtimeState, now);
   }
 
   if (!activeInteriorSpace || activePlayerMotion) {
@@ -10853,41 +10625,6 @@ function drawDynamicOverlay(
   }
 
   drawScheduledNpcVisualCues(layer, runtimeState, now);
-
-  if (!activeInteriorSpace && currentFootprint) {
-    drawFootprintHalo(layer, currentFootprint, 0xa9d7d4, 0.08, 0.48);
-  }
-
-  drawPlayerPresenceMarker(layer, playerPixel, now);
-
-  if (!activeInteriorSpace && selectedNpc) {
-    const selectedMarker = runtimeState.objects?.npcMarkers.get(selectedNpc.id);
-    if (selectedMarker) {
-      const personality = npcPersonalityProfile(selectedNpc);
-      const ringColor = blendColor(
-        selectedMarker.appearance.accent,
-        0xfff2cf,
-        0.22,
-      );
-      const ringRadius = CELL * (0.78 + pulse * 0.08);
-      layer.fillStyle(ringColor, 0.06 * pulse);
-      layer.fillCircle(
-        selectedMarker.container.x,
-        selectedMarker.container.y - 2,
-        CELL * 0.72,
-      );
-      layer.lineStyle(
-        2.5,
-        ringColor,
-        0.34 + personality.motion.idleWave * 0.02,
-      );
-      layer.strokeCircle(
-        selectedMarker.container.x,
-        selectedMarker.container.y - 2,
-        ringRadius,
-      );
-    }
-  }
 }
 
 function drawPlayerRouteBreadcrumb(
@@ -10990,39 +10727,6 @@ function drawInteriorPlayerRouteLane(
   layer.strokeCircle(target.x, target.y, CELL * 0.15);
 }
 
-function drawWaypointBeacon(
-  layer: PhaserType.GameObjects.Graphics,
-  indices: RuntimeIndices,
-  target: Point,
-  now: number,
-  placedAt: number,
-) {
-  const worldPoint = projectRuntimeTileCenter(indices, target.x, target.y);
-  const age = Math.max(now - placedAt, 0);
-  const bob = Math.sin(now / 180) * 3.2;
-  const pulse = 0.68 + (Math.sin(now / 210) + 1) * 0.16;
-  const settle = clamp(age / 260, 0, 1);
-  const outerRadius = CELL * (0.42 + pulse * 0.1);
-  const innerRadius = CELL * (0.18 + pulse * 0.03);
-  const markerY = worldPoint.y - CELL * (0.78 + (1 - settle) * 0.16) - bob;
-
-  layer.fillStyle(0xf3dcaa, 0.08 * pulse);
-  layer.fillCircle(worldPoint.x, worldPoint.y, outerRadius);
-  layer.lineStyle(2.4, 0xf0cf8c, 0.4 + pulse * 0.12);
-  layer.strokeCircle(worldPoint.x, worldPoint.y, outerRadius);
-  layer.lineStyle(1.8, 0xffefc8, 0.72);
-  layer.strokeCircle(worldPoint.x, worldPoint.y, innerRadius);
-  layer.lineStyle(2, 0xf0cf8c, 0.36 + pulse * 0.12);
-  layer.lineBetween(
-    worldPoint.x,
-    markerY + 8,
-    worldPoint.x,
-    worldPoint.y - CELL * 0.12,
-  );
-  layer.fillStyle(0xffefc8, 0.94);
-  layer.fillCircle(worldPoint.x, markerY, 4.8);
-}
-
 function drawAnimatedCitySurface(
   layer: PhaserType.GameObjects.Graphics,
   indices: RuntimeIndices,
@@ -11069,24 +10773,6 @@ function drawAnimatedCitySurface(
       layer.fillRoundedRect(worldX + 7, worldY + 7, CELL - 14, 2.6, 1);
     }
   }
-}
-
-function drawFootprintHalo(
-  layer: PhaserType.GameObjects.Graphics,
-  footprint: VisualRect,
-  color: number,
-  fillAlpha: number,
-  strokeAlpha: number,
-) {
-  const { x: worldX, y: worldY } = footprint;
-  const width = footprint.width;
-  const height = footprint.height;
-  const radius = footprint.radius ?? 26;
-
-  layer.fillStyle(color, fillAlpha);
-  layer.fillRoundedRect(worldX, worldY, width, height, radius);
-  layer.lineStyle(3, color, strokeAlpha);
-  layer.strokeRoundedRect(worldX, worldY, width, height, radius);
 }
 
 function pickDefaultSelectedNpcId(game: StreetGameState | null) {
@@ -11198,10 +10884,62 @@ function nextScheduledLocation(
 
 function currentScheduledStop(npc: NpcState, currentHour: number) {
   return (
-    npc.schedule.find(
-      (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+    npc.schedule.find((entry) =>
+      isHourWithinNpcScheduleWindow(currentHour, entry),
     ) ?? null
   );
+}
+
+function isNpcVisuallyPresentAtCurrentTime(
+  game: StreetGameState,
+  npc: NpcState,
+) {
+  if (npc.schedule.length === 0) {
+    return true;
+  }
+
+  const currentHour =
+    positiveModulo(game.clock.totalMinutes, 24 * 60) / 60;
+  return npc.schedule.some((entry) =>
+    isHourWithinNpcScheduleWindow(currentHour, entry),
+  );
+}
+
+function isHourWithinNpcScheduleWindow(
+  currentHour: number,
+  entry: NpcState["schedule"][number],
+) {
+  if (
+    !Number.isFinite(currentHour) ||
+    !Number.isFinite(entry.fromHour) ||
+    !Number.isFinite(entry.toHour)
+  ) {
+    return false;
+  }
+
+  const minutesPerDay = 24 * 60;
+  const fromMinute = Math.round(entry.fromHour * 60);
+  const toMinute = Math.round(entry.toHour * 60);
+  if (
+    fromMinute < 0 ||
+    fromMinute >= minutesPerDay ||
+    toMinute < 0 ||
+    toMinute > minutesPerDay
+  ) {
+    return false;
+  }
+
+  const currentMinute = positiveModulo(
+    Math.round(currentHour * 60),
+    minutesPerDay,
+  );
+  if (fromMinute === toMinute) {
+    return true;
+  }
+  if (toMinute > fromMinute) {
+    return currentMinute >= fromMinute && currentMinute < toMinute;
+  }
+  return currentMinute >= fromMinute || currentMinute < toMinute;
 }
 
 function nextScheduledStop(npc: NpcState, currentHour: number) {
@@ -11209,8 +10947,8 @@ function nextScheduledStop(npc: NpcState, currentHour: number) {
     return undefined;
   }
 
-  const stopIndex = npc.schedule.findIndex(
-    (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
+  const stopIndex = npc.schedule.findIndex((entry) =>
+    isHourWithinNpcScheduleWindow(currentHour, entry),
   );
   const resolvedIndex = stopIndex >= 0 ? stopIndex : npc.schedule.length - 1;
 
@@ -11314,6 +11052,9 @@ function steerAroundOccupant(
 }
 
 function samplePlayerTile(motion: PlayerMotionState, now: number) {
+  if (isPlayerMotionSettled(motion, now)) {
+    return motion.to;
+  }
   const progress = clamp((now - motion.startedAt) / motion.durationMs, 0, 1);
   return samplePathPoint(motion.path, easeInOutCubic(progress));
 }
@@ -11435,6 +11176,24 @@ function resolveAuthoredLocationWorldPoint({
   }
 
   const location = indices.locationsById.get(locationId);
+  if (
+    location?.entryX === point.x &&
+    location.entryY === point.y &&
+    anchors.door &&
+    anchors.playerApproaches?.length
+  ) {
+    const entryApproach = anchors.playerApproaches.reduce((nearest, candidate) =>
+      distanceBetween(candidate, anchors.door) <
+      distanceBetween(nearest, anchors.door)
+        ? candidate
+        : nearest,
+    );
+    return snapAuthoredLocationWorldPoint(
+      indices,
+      locationId,
+      entryApproach,
+    );
+  }
   if (!location || candidatePoints.length === 1) {
     return snapAuthoredLocationWorldPoint(
       indices,

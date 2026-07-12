@@ -646,6 +646,21 @@ export function buildStreetOverlayStyle({
         line-height: 1.36;
         color: rgba(141, 208, 205, 0.68);
       }
+      .ml-decision-details {
+        margin-top: 9px;
+        border-top: 1px solid rgba(138, 151, 161, 0.12);
+        padding-top: 8px;
+      }
+      .ml-decision-details summary {
+        cursor: pointer;
+        font-size: 10px;
+        line-height: 1.3;
+        font-weight: 700;
+        color: rgba(201, 220, 224, 0.78);
+      }
+      .ml-decision-details-body {
+        padding-top: 2px;
+      }
       .ml-planner-trace {
         margin-top: 11px;
         border-radius: 14px;
@@ -2515,11 +2530,13 @@ export function buildStreetOverlayStyle({
         );
         width: min(var(--ml-compact-rail-width), calc(100% - var(--ml-inset) * 2));
         max-width: calc(100% - var(--ml-inset) * 2);
+        height: var(--ml-compact-rail-expanded-height);
         max-height: var(--ml-compact-rail-expanded-height);
         display: flex;
         z-index: 4;
       }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-right-stack {
+        height: var(--ml-compact-rail-collapsed-height);
         max-height: var(--ml-compact-rail-collapsed-height);
       }
       .ml-root.is-collapsible-rail.is-phone-rail .ml-right-stack {
@@ -2537,12 +2554,30 @@ export function buildStreetOverlayStyle({
       .ml-root.is-collapsible-rail.is-phone-rail .ml-time-chip.is-metric:last-child {
         display: none;
       }
+      .ml-root.is-collapsible-rail.is-phone-rail .ml-time-pill {
+        width: calc(100% - var(--ml-inset) * 2);
+        flex-wrap: nowrap;
+        overflow: hidden;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail .ml-time-chip {
+        position: relative;
+        z-index: 1;
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
       .ml-root.is-collapsible-rail .ml-rail-shell {
         width: 100%;
+        height: 100%;
         max-height: var(--ml-compact-rail-expanded-height);
       }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-rail-shell {
         max-height: var(--ml-compact-rail-collapsed-height);
+      }
+      .ml-root.is-collapsible-rail.is-rail-expanded .ml-rail-head {
+        padding-bottom: 10px;
+      }
+      .ml-root.is-rail-expanded .ml-rail-thought {
+        display: none;
       }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-command-rail {
         flex: 0 0 0;

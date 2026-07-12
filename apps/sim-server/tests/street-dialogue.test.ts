@@ -15,15 +15,15 @@ import { seedStreetGame } from "../src/street-sim/seedGame.js";
 import { enterMorrowHouse } from "./street-test-helpers.js";
 
 const MARA_ADA_GROUNDING_FOLLOWUP =
-  "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
+  "Just to be clear, are Ada's Kettle & Lamp lunch work and the leaking Morrow Yard pump both live ways I could make this afternoon count?";
 const MARA_ADA_GROUNDED_FALLBACK_REPLY =
-  "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.";
+  "Morrow House can hold you tonight if you help keep it easy to live in. Ada at Kettle & Lamp may need lunch hands, and the pump in Morrow Yard is leaking now. Both are live approaches; choose from what the block actually allows.";
 const MARA_ADA_REQUIRED_PROMPT_LINE =
-  "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.";
+  "- Required for this Mara reply: visibly ground both Ada/Kettle & Lamp work and the leaking Morrow Yard pump.";
 const MARA_ADA_PROMPT_OVERRIDE_LINE =
-  "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.";
+  "- Present these as competing live approaches, not a command to follow Ada.";
 const MARA_ADA_GROUNDED_PROMPT_LINE =
-  "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.";
+  "- Rowan's line names both Ada/Kettle & Lamp lunch work and the leaking Morrow Yard pump. Confirm both plainly.";
 const JO_MONEY_WORK_FOLLOWUP_THOUGHTS = [
   "He can take his time.",
   "The wrench is simple enough.",
@@ -311,7 +311,7 @@ describe("street dialogue fallback", () => {
     expect(JO_MONEY_WORK_FOLLOWUP_THOUGHTS).toContain(reply.followupThought);
   });
 
-  it("requires live Mara first-afternoon replies to ground the Ada work lead", () => {
+  it("requires live Mara first-afternoon replies to ground competing approaches", () => {
     const world = seedStreetGame("game-mara-live-grounding-prompt");
 
     const prompt = buildGenerateStreetReplyPrompt({
@@ -325,22 +325,23 @@ describe("street dialogue fallback", () => {
     expect(prompt).toContain(MARA_ADA_PROMPT_OVERRIDE_LINE);
     expect(prompt).toContain("Ada");
     expect(prompt).toContain("Kettle & Lamp");
+    expect(prompt).toContain("Morrow Yard pump");
     expect(prompt).toMatch(/lunch work|shift|counter|pay/i);
   });
 
-  it("tells live Mara to plainly confirm Rowan's grounded Ada follow-up", () => {
+  it("tells live Mara to confirm both grounded approaches without choosing", () => {
     const world = seedStreetGame("game-mara-live-followup-grounding-prompt");
 
     const prompt = buildGenerateStreetReplyPrompt({
       game: world,
       npcId: "npc-mara",
       playerText:
-        "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?",
+        MARA_ADA_GROUNDING_FOLLOWUP,
     });
 
     expect(prompt).toContain(MARA_ADA_GROUNDED_PROMPT_LINE);
-    expect(prompt).toContain("clearly affirm that exact lead");
-    expect(prompt).toContain("Exactly. She'll need steady hands before lunch.");
+    expect(prompt).toContain("Do not select one approach for Rowan");
+    expect(prompt).toContain("legal current state should decide");
   });
 
   it("does not add Mara/Ada grounding prompt lines outside the scaffold policy match", () => {
@@ -369,12 +370,6 @@ describe("street dialogue fallback", () => {
         label: "non-first-afternoon objective",
         npcId: "npc-mara",
         playerText: broadQuestion,
-      },
-      {
-        label: "pump-specific question",
-        npcId: "npc-mara",
-        playerText:
-          "Before work, should I focus on the pump leak and find a wrench for the repair?",
       },
     ];
 
@@ -420,7 +415,7 @@ describe("street dialogue fallback", () => {
     expect(
       objectiveRouteTextAffirmsConversationPolicy(
         policy,
-        "Exactly. She'll need steady hands before lunch.",
+        "Ada at Kettle & Lamp has live lunch work, and the leaking Morrow Yard pump is also live. Rowan can choose from the current legal options.",
       ),
     ).toBe(true);
 
@@ -449,6 +444,6 @@ describe("street dialogue fallback", () => {
         MARA_ADA_GROUNDED_FALLBACK_REPLY,
       ),
     ).toBe(true);
-    expect(nextWorld.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(nextWorld.firstAfternoon?.approachesKnownAt).toBeDefined();
   });
 });

@@ -1,4 +1,9 @@
 import type { StreetGameState } from "./types";
+import {
+  assertSouthQuayVisualContract,
+  SouthQuayVisualContractError,
+  type SouthQuayVisualContract,
+} from "./southQuayVisualContract";
 import { SOUTH_QUAY_V2_DOCUMENT } from "./visual-scene-documents/southQuayV2Document";
 
 export type VisualSceneId = "south-quay-v1" | "south-quay-v2";
@@ -265,6 +270,7 @@ export type VisualScene = {
   surfaceDraft?: VisualSceneSurfaceDraft;
   terrainDraft?: VisualSceneTerrainDraft;
   waterRegions: VisualSceneWaterRegion[];
+  visualContract?: SouthQuayVisualContract;
   width: number;
   height: number;
 };
@@ -283,6 +289,20 @@ export type VisualSceneValidationWarning = {
     | "missing-required-landmark";
   message: string;
 };
+
+export class VisualSceneAuthoringError extends Error {
+  readonly warnings: VisualSceneValidationWarning[];
+
+  constructor(sceneId: string, warnings: VisualSceneValidationWarning[]) {
+    super(
+      `Visual scene ${sceneId} has authoring warnings: ${warnings
+        .map((warning) => `${warning.code}: ${warning.message}`)
+        .join("; ")}`,
+    );
+    this.name = "VisualSceneAuthoringError";
+    this.warnings = warnings;
+  }
+}
 
 function getVisualSceneRuntimeOverrideStorageKey(sceneId: string) {
   return `many-lives.visual-scene-runtime.${sceneId}`;
@@ -598,16 +618,46 @@ function assertSceneDocumentShape(scene: VisualSceneDocument) {
     throw new Error("Scene document is missing an id.");
   }
 
-  if (
-    !Array.isArray(scene.landmarks) ||
-    !Array.isArray(scene.surfaceZones) ||
-    !Array.isArray(scene.skyLayers)
-  ) {
+  const requiredArrays = [
+    scene.fringeZones,
+    scene.labels,
+    scene.landmarkModules,
+    scene.landmarks,
+    scene.propClusters,
+    scene.props,
+    scene.skyLayers,
+    scene.surfaceZones,
+    scene.waterRegions,
+  ];
+  if (requiredArrays.some((value) => !Array.isArray(value))) {
     throw new Error("Scene document is missing required scene arrays.");
   }
 
-  if (!scene.layers || !scene.projection || !scene.referencePlate) {
+  if (
+    !isPlainRecord(scene.layers) ||
+    !isPlainRecord(scene.locationAnchors) ||
+    !isPlainRecord(scene.npcAnchors) ||
+    !isPlainRecord(scene.projection) ||
+    !isPlainRecord(scene.referencePlate)
+  ) {
     throw new Error("Scene document is missing runtime metadata.");
+  }
+
+  if (
+    !Number.isFinite(scene.width) ||
+    !Number.isFinite(scene.height) ||
+    scene.width <= 0 ||
+    scene.height <= 0
+  ) {
+    throw new Error("Scene document has invalid world dimensions.");
+  }
+
+  if (scene.id === "south-quay-v2") {
+    assertSouthQuayVisualContract(scene);
+    const warnings = collectVisualSceneWarnings(scene);
+    if (warnings.length > 0) {
+      throw new VisualSceneAuthoringError(scene.id, warnings);
+    }
   }
 }
 
@@ -783,7 +833,14 @@ export function parseVisualSceneDocument(
   fallbackScene?: VisualSceneDocument,
 ) {
   const parsed = JSON.parse(rawText);
-  const scene = fallbackScene ? mergeSceneDocument(fallbackScene, parsed) : (parsed as VisualSceneDocument);
+  const scene = fallbackScene
+    ? mergeSceneDocument(fallbackScene, parsed)
+    : (parsed as VisualSceneDocument);
+  if (fallbackScene && scene.id !== fallbackScene.id) {
+    throw new Error(
+      `Imported scene id ${scene.id} does not match ${fallbackScene.id}.`,
+    );
+  }
   assertSceneDocumentShape(scene);
   return scene;
 }
@@ -793,7 +850,24 @@ export function getVisualSceneDocument(sceneId?: string | null) {
     return null;
   }
 
-  return VISUAL_SCENES[sceneId as VisualSceneId] ?? null;
+  const scene = VISUAL_SCENES[sceneId as VisualSceneId] ?? null;
+  if (scene) {
+    assertSceneDocumentShape(scene);
+  }
+  return scene;
+}
+
+function visualSceneOverrideDiagnostics(error: unknown) {
+  if (error instanceof SouthQuayVisualContractError) {
+    return error.diagnostics;
+  }
+  if (error instanceof VisualSceneAuthoringError) {
+    return error.warnings;
+  }
+  if (error instanceof Error) {
+    return [{ code: "invalid-scene-document", message: error.message }];
+  }
+  return [{ code: "invalid-scene-document", message: String(error) }];
 }
 
 function getRuntimeVisualSceneOverride(sceneId?: string | null) {
@@ -811,7 +885,11 @@ function getRuntimeVisualSceneOverride(sceneId?: string | null) {
 
   try {
     return parseVisualSceneDocument(raw, fallbackScene ?? undefined);
-  } catch {
+  } catch (error) {
+    console.warn(
+      `[many-lives][visual-scene] Rejected runtime override for ${sceneId}; using the validated authored scene.`,
+      visualSceneOverrideDiagnostics(error),
+    );
     return null;
   }
 }
@@ -830,6 +908,16 @@ export function getVisualSceneRuntimeRevision(sceneId?: string | null) {
 
 export function saveVisualSceneRuntimeOverride(scene: VisualSceneDocument) {
   if (typeof window === "undefined") {
+    return false;
+  }
+
+  try {
+    assertSceneDocumentShape(scene);
+  } catch (error) {
+    console.error(
+      `[many-lives][visual-scene] Refused to save invalid runtime override for ${scene.id}.`,
+      visualSceneOverrideDiagnostics(error),
+    );
     return false;
   }
 
@@ -1016,10 +1104,18 @@ export function collectVisualSceneWarnings(
 
   for (const { id, point } of anchorPoints) {
     const collidesWithCluster = scene.propClusters.some((cluster) =>
-      pointInsideRect(point, expandRect(cluster.rect, 10)),
+      cluster.points && cluster.points.length > 0
+        ? cluster.points.some(
+            (clusterPoint) =>
+              Math.hypot(point.x - clusterPoint.x, point.y - clusterPoint.y) <
+              30,
+          )
+        : pointInsideRect(point, expandRect(cluster.rect, 10)),
     );
     const collidesWithProp = scene.props.some(
-      (prop) => Math.hypot(point.x - prop.x, point.y - prop.y) < getPropSafetyRadius(prop),
+      (prop) =>
+        Math.hypot(point.x - prop.x, point.y - prop.y) <
+        getPropSafetyRadius(prop),
     );
 
     if (collidesWithCluster || collidesWithProp) {
@@ -1072,7 +1168,9 @@ function interpolateAnchors(anchors: number[], value: number) {
 }
 
 export function getVisualScene(sceneId?: string | null) {
-  return getRuntimeVisualSceneOverride(sceneId) ?? getVisualSceneDocument(sceneId);
+  return (
+    getRuntimeVisualSceneOverride(sceneId) ?? getVisualSceneDocument(sceneId)
+  );
 }
 
 export function projectVisualScenePoint(scene: VisualScene, point: VisualPoint) {

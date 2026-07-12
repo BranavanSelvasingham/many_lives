@@ -1,8 +1,150 @@
 import type { VisualSceneDocument } from "../visualScenes";
+import {
+  SOUTH_QUAY_VISUAL_CONTRACT_REVISION,
+  SOUTH_QUAY_VISUAL_CONTRACT_SOURCE,
+} from "../southQuayVisualContract";
 
 const SOUTH_QUAY_V2_DOCUMENT = {
   "backgroundColor": "#111d23",
-  "fringeZones": [],
+  "visualContract": {
+    "source": SOUTH_QUAY_VISUAL_CONTRACT_SOURCE,
+    "revision": SOUTH_QUAY_VISUAL_CONTRACT_REVISION,
+    "schemaVersion": 1,
+    "landmarkIntents": [
+      {
+        "locationId": "tea-house",
+        "name": "Kettle & Lamp",
+        "role": "eatery",
+        "assetIntents": [
+          "eatery_frontage",
+          "terrace_table",
+          "menu_board",
+          "planter_box"
+        ],
+        "requiredModuleKinds": [
+          "awning",
+          "entry",
+          "sign",
+          "terrace_rail",
+          "window_row"
+        ],
+        "requiredClusterKinds": ["cafe_terrace"],
+        "routeEndpoint": "frontage"
+      },
+      {
+        "locationId": "boarding-house",
+        "name": "Morrow House",
+        "role": "boarding_house",
+        "assetIntents": ["boarding_frontage"],
+        "requiredModuleKinds": ["entry", "stoop", "window_row"],
+        "requiredClusterKinds": [],
+        "routeEndpoint": "door"
+      },
+      {
+        "locationId": "repair-stall",
+        "name": "Mercer Repairs",
+        "role": "workshop",
+        "assetIntents": ["workshop_frontage", "workshop_stock"],
+        "requiredModuleKinds": ["service_bay", "shutters", "sign"],
+        "requiredClusterKinds": ["workshop_stock"],
+        "routeEndpoint": "frontage"
+      },
+      {
+        "locationId": "market-square",
+        "name": "Quay Square",
+        "role": "civic_square",
+        "assetIntents": ["square_paving", "cast_iron_lamp", "planter_box"],
+        "requiredModuleKinds": [],
+        "requiredClusterKinds": ["square_bench_pair", "square_planter_pair"],
+        "routeEndpoint": "frontage"
+      },
+      {
+        "locationId": "freight-yard",
+        "name": "North Crane Yard",
+        "role": "freight_yard",
+        "assetIntents": ["freight_yard_frontage"],
+        "requiredModuleKinds": ["service_bay", "shutters", "sign"],
+        "requiredClusterKinds": [],
+        "routeEndpoint": "door"
+      },
+      {
+        "locationId": "moss-pier",
+        "name": "Pilgrim Slip",
+        "role": "harbor_slip",
+        "assetIntents": ["dock_edge", "quay_paving", "harbor_mooring", "row_boat"],
+        "requiredModuleKinds": [],
+        "requiredClusterKinds": ["harbor_mooring"],
+        "routeEndpoint": "frontage"
+      },
+      {
+        "locationId": "courtyard",
+        "name": "Morrow Yard",
+        "role": "service_yard",
+        "assetIntents": ["domestic_service_yard"],
+        "requiredModuleKinds": [],
+        "requiredClusterKinds": ["yard_service"],
+        "routeEndpoint": "frontage"
+      }
+    ],
+    "surfaceIntents": [
+      { "zoneId": "surface-harbor-water", "kind": "deep_water" },
+      { "zoneId": "surface-north-promenade", "kind": "north_promenade" },
+      { "zoneId": "surface-main-street", "kind": "main_street" },
+      { "zoneId": "surface-west-lane", "kind": "west_lane" },
+      { "zoneId": "surface-service-lane", "kind": "service_lane" },
+      { "zoneId": "surface-square-border", "kind": "square_border" },
+      { "zoneId": "surface-square-center", "kind": "square_center" },
+      { "zoneId": "surface-morrow-yard", "kind": "courtyard_ground" },
+      { "zoneId": "surface-pilgrim-dock", "kind": "dock_apron" },
+      { "zoneId": "surface-pilgrim-quay-wall", "kind": "quay_wall" }
+    ],
+    "fringeIntents": [
+      { "zoneId": "fringe-north-west-town", "edge": "north", "kind": "neighbor_facade" },
+      { "zoneId": "fringe-north-east-town", "edge": "north", "kind": "neighbor_facade" },
+      { "zoneId": "fringe-west-neighbors", "edge": "west", "kind": "neighbor_facade" },
+      { "zoneId": "fringe-west-side-street", "edge": "west", "kind": "side_street" },
+      { "zoneId": "fringe-east-channel", "edge": "east", "kind": "quay_continuation" },
+      { "zoneId": "fringe-south-harbor", "edge": "south", "kind": "quay_continuation" }
+    ]
+  },
+  "fringeZones": [
+    {
+      "id": "fringe-north-west-town",
+      "edge": "north",
+      "kind": "neighbor_facade",
+      "rect": { "x": 0, "y": 0, "width": 700, "height": 108, "radius": 0 }
+    },
+    {
+      "id": "fringe-north-east-town",
+      "edge": "north",
+      "kind": "neighbor_facade",
+      "rect": { "x": 700, "y": 0, "width": 1072, "height": 108, "radius": 0 }
+    },
+    {
+      "id": "fringe-west-neighbors",
+      "edge": "west",
+      "kind": "neighbor_facade",
+      "rect": { "x": 0, "y": 108, "width": 96, "height": 612, "radius": 0 }
+    },
+    {
+      "id": "fringe-west-side-street",
+      "edge": "west",
+      "kind": "side_street",
+      "rect": { "x": 0, "y": 720, "width": 112, "height": 500, "radius": 0 }
+    },
+    {
+      "id": "fringe-east-channel",
+      "edge": "east",
+      "kind": "quay_continuation",
+      "rect": { "x": 1772, "y": 0, "width": 100, "height": 1320, "radius": 0 }
+    },
+    {
+      "id": "fringe-south-harbor",
+      "edge": "south",
+      "kind": "quay_continuation",
+      "rect": { "x": 0, "y": 1220, "width": 1872, "height": 100, "radius": 0 }
+    }
+  ],
   "id": "south-quay-v2",
   "labels": [],
   "landmarkModules": [
@@ -320,6 +462,86 @@ const SOUTH_QUAY_V2_DOCUMENT = {
         "radius": 8
       },
       "variant": "yard-band"
+    },
+    {
+      "id": "repair-stall-roof-cap-1",
+      "kind": "roof_cap",
+      "locationId": "repair-stall",
+      "rect": {
+        "x": 1178,
+        "y": 688,
+        "width": 292,
+        "height": 34,
+        "radius": 14
+      },
+      "variant": "iron"
+    },
+    {
+      "id": "repair-stall-wall-band-2",
+      "kind": "wall_band",
+      "locationId": "repair-stall",
+      "rect": {
+        "x": 1176,
+        "y": 722,
+        "width": 296,
+        "height": 92,
+        "radius": 16
+      },
+      "variant": "workshop-stone"
+    },
+    {
+      "count": 3,
+      "id": "repair-stall-shutters-3",
+      "kind": "shutters",
+      "locationId": "repair-stall",
+      "rect": {
+        "x": 1206,
+        "y": 738,
+        "width": 236,
+        "height": 34,
+        "radius": 8
+      },
+      "variant": "workshop"
+    },
+    {
+      "id": "repair-stall-service-bay-4",
+      "kind": "service_bay",
+      "locationId": "repair-stall",
+      "rect": {
+        "x": 1194,
+        "y": 786,
+        "width": 260,
+        "height": 110,
+        "radius": 14
+      },
+      "variant": "workshop"
+    },
+    {
+      "id": "repair-stall-sign-5",
+      "kind": "sign",
+      "locationId": "repair-stall",
+      "rect": {
+        "x": 1222,
+        "y": 694,
+        "width": 204,
+        "height": 34,
+        "radius": 10
+      },
+      "text": "MERCER REPAIRS",
+      "variant": "workshop"
+    },
+    {
+      "id": "repair-stall-trim-6",
+      "kind": "trim",
+      "locationId": "repair-stall",
+      "rect": {
+        "x": 1178,
+        "y": 824,
+        "width": 292,
+        "height": 18,
+        "radius": 8
+      },
+      "variant": "industrial-band"
     }
   ],
   "landmarks": [
@@ -912,6 +1134,37 @@ const SOUTH_QUAY_V2_DOCUMENT = {
         "height": 78,
         "radius": 14
       }
+    },
+    {
+      "id": "repair-stall-workshop-stock",
+      "kind": "workshop_stock",
+      "locationId": "repair-stall",
+      "points": [
+        { "x": 1208, "y": 902 },
+        { "x": 1440, "y": 900 }
+      ],
+      "rect": {
+        "x": 1184,
+        "y": 868,
+        "width": 280,
+        "height": 76,
+        "radius": 12
+      }
+    },
+    {
+      "id": "courtyard-morrow-yard-service",
+      "kind": "yard_service",
+      "locationId": "courtyard",
+      "points": [
+        { "x": 226, "y": 948 }
+      ],
+      "rect": {
+        "x": 172,
+        "y": 884,
+        "width": 300,
+        "height": 180,
+        "radius": 18
+      }
     }
   ],
   "props": [
@@ -960,7 +1213,68 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "weather": "mist"
     }
   ],
-  "surfaceZones": [],
+  "surfaceZones": [
+    {
+      "id": "surface-harbor-water",
+      "kind": "deep_water",
+      "emphasis": "medium",
+      "rect": { "x": 690, "y": 1094, "width": 1114, "height": 226, "radius": 0 }
+    },
+    {
+      "id": "surface-north-promenade",
+      "kind": "north_promenade",
+      "emphasis": "medium",
+      "rect": { "x": 402, "y": 576, "width": 770, "height": 104, "radius": 24 }
+    },
+    {
+      "id": "surface-main-street",
+      "kind": "main_street",
+      "emphasis": "high",
+      "rect": { "x": 390, "y": 606, "width": 790, "height": 118, "radius": 26 }
+    },
+    {
+      "id": "surface-west-lane",
+      "kind": "west_lane",
+      "emphasis": "medium",
+      "rect": { "x": 106, "y": 596, "width": 330, "height": 326, "radius": 22 }
+    },
+    {
+      "id": "surface-service-lane",
+      "kind": "service_lane",
+      "emphasis": "medium",
+      "rect": { "x": 500, "y": 924, "width": 968, "height": 112, "radius": 22 }
+    },
+    {
+      "id": "surface-square-border",
+      "kind": "square_border",
+      "emphasis": "high",
+      "rect": { "x": 634, "y": 556, "width": 442, "height": 364, "radius": 30 }
+    },
+    {
+      "id": "surface-square-center",
+      "kind": "square_center",
+      "emphasis": "high",
+      "rect": { "x": 668, "y": 364, "width": 300, "height": 180, "radius": 30 }
+    },
+    {
+      "id": "surface-morrow-yard",
+      "kind": "courtyard_ground",
+      "emphasis": "high",
+      "rect": { "x": 146, "y": 858, "width": 360, "height": 246, "radius": 26 }
+    },
+    {
+      "id": "surface-pilgrim-dock",
+      "kind": "dock_apron",
+      "emphasis": "high",
+      "rect": { "x": 688, "y": 1060, "width": 450, "height": 180, "radius": 16 }
+    },
+    {
+      "id": "surface-pilgrim-quay-wall",
+      "kind": "quay_wall",
+      "emphasis": "high",
+      "rect": { "x": 1008, "y": 1038, "width": 684, "height": 36, "radius": 10 }
+    }
+  ],
   "waterRegions": [
     {
       "baseColor": 2911110,

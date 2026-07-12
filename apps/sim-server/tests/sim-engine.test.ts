@@ -32,13 +32,13 @@ const ADA_LEAD_OUTCOME_MOVE_RATIONALE =
 const BAD_ADA_AT_MORROW_PLAYER_RATIONALE =
   "Mara's lead points to Ada at Kettle & Lamp, so Rowan needs to leave Morrow House and reach the cafe first";
 const FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE =
-  "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+  "One durable consequence landed, and Morrow House is the right place to record what actually changed";
 const FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE =
-  "The shift paid, and Morrow House is the right place to let the day land";
+  "One durable consequence landed, and Morrow House is the right place to record what actually changed";
 const FIRST_AFTERNOON_LOW_ENERGY_PLAYER_RATIONALE =
-  "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+  "one durable consequence landed, and Morrow House is the right place to record what actually changed";
 const FIRST_AFTERNOON_NORMAL_ENERGY_PLAYER_RATIONALE =
-  "the shift paid, and Morrow House is the right place to let the day land";
+  "one durable consequence landed, and Morrow House is the right place to record what actually changed";
 const TEA_SHIFT_OUTCOME_MOVE_RATIONALE =
   "Ada gave Rowan real work, and the room needs steady hands now";
 const NIA_RECOVERY_PLAYER_RATIONALE =
@@ -50,13 +50,21 @@ const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
 const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where today's standing can turn into a steadier foothold";
 const FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL =
-  "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.";
+  "Good stopping point: tonight's bed still holds, and Rowan has one durable foothold from the approach he actually followed through on.";
 const FIRST_AFTERNOON_COMPLETION_RATIONALE =
-  "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.";
+  "First afternoon complete: Rowan understands the room, compared live approaches, achieved one durable consequence, and recorded what changed.";
 const FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL =
-  "The first afternoon is complete: room to return to, paid shift, and a real foothold.";
+  "The first afternoon is complete: room understood, live approaches compared, and one real foothold achieved.";
 const GENERIC_COMPLETED_OBJECTIVE_RATIONALE =
   "This objective is complete. Set a new direction when Rowan is ready to keep going.";
+
+function setTestClock(world: StreetGameState, hour: number, minute = 0) {
+  world.clock.day = 1;
+  world.clock.hour = hour;
+  world.clock.minute = minute;
+  world.clock.totalMinutes = hour * 60 + minute;
+  world.clock.label = hour >= 12 ? "Afternoon" : "Morning";
+}
 
 type PlanningAIProviderResult =
   | StreetPlanningResult
@@ -203,7 +211,7 @@ class VagueThenGroundedMaraLiveAIProvider extends LiveDialogueAIProvider {
       return {
         followupThought: "Mara is making the lead plain.",
         reply:
-          "Yes. Ask Ada at Kettle & Lamp about lunch work before the rush fills the counter.",
+          "Yes. Ask Ada at Kettle & Lamp about lunch work before the rush fills the counter, or deal with the leaking Morrow Yard pump. Both are live.",
       };
     }
 
@@ -236,7 +244,8 @@ class VagueThenAffirmingMaraLiveAIProvider extends LiveDialogueAIProvider {
 
       return {
         followupThought: "Mara is confirming the lead.",
-        reply: "Yes. Ask her before the lunch rush starts filling the room.",
+        reply:
+          "Yes. Ask Ada at Kettle & Lamp about lunch work before the rush starts filling the room, or take on the leaking Morrow Yard pump. Both approaches are live.",
       };
     }
 
@@ -270,7 +279,7 @@ class VagueThenNaturalConfirmingMaraLiveAIProvider extends LiveDialogueAIProvide
       return {
         followupThought: "Mara is confirming the lead.",
         reply:
-          "Exactly. She'll need steady hands before lunch if the counter starts slipping.",
+          "Exactly. Ada at Kettle & Lamp needs steady hands for lunch work if the counter starts slipping, while the leaking Morrow Yard pump is the other live approach.",
       };
     }
 
@@ -530,6 +539,14 @@ describe("SimulationEngine street slice", () => {
       let world = await engine.createGame(
         `game-${primerCase.npcId}-first-contact-primer`,
       );
+      const primerNpc = world.npcs.find((npc) => npc.id === primerCase.npcId);
+      const primerWindow = primerNpc?.schedule[0];
+      if (primerWindow) {
+        setTestClock(
+          world,
+          Math.floor((primerWindow.fromHour + primerWindow.toHour) / 2),
+        );
+      }
 
       world = await enterNpcPrimerScene(engine, world, primerCase.npcId);
       world = await engine.runCommand(world, {
@@ -580,6 +597,12 @@ describe("SimulationEngine street slice", () => {
       world = await engine.runCommand(world, {
         type: "act",
         actionId: "work:job-tea-shift",
+      });
+    }
+    if (world.rowanAutonomy.actionId === "exit:tea-house") {
+      world = await engine.runCommand(world, {
+        type: "advance_objective",
+        allowTimeSkip: true,
       });
     }
 
@@ -655,15 +678,12 @@ describe("SimulationEngine street slice", () => {
 
     expect(world.firstAfternoon?.completedAt).toBeDefined();
     expect(world.firstAfternoon?.fieldNote).toMatchObject({
-      evidence: expect.stringMatching(
-        /^Asked Ada at Kettle & Lamp at \d\d:\d\d; she offered cup-and-counter shift for \$14\.$/,
-      ),
+      evidence: "Cup-and-counter shift completed for $14.",
       learned:
-        "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
+        "Kettle & Lamp work completed became Rowan's first durable foothold in South Quay.",
       memory:
-        "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
-      next:
-        "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
+        "People can now remember that Rowan followed through on kettle & lamp work completed.",
+      next: expect.stringContaining("tea-house standing"),
     });
     expect(
       world.problems.find((problem) => problem.id === "problem-pump"),
@@ -672,14 +692,14 @@ describe("SimulationEngine street slice", () => {
       status: "active",
     });
     expect(world.feed.map((entry) => entry.text)).toContain(
-      "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
+      "Rowan takes stock at Morrow House: tonight's bed still holds, one current approach changed his standing, and the route he took came from what was live rather than an old instruction list.",
     );
     expect(world.player.memories.map((memory) => memory.text)).toContain(
-      "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
+      "You finished the first afternoon with a room to return to and one durable foothold earned through actual follow-through.",
     );
   });
 
-  it("preserves first-afternoon plan-settle and pump-choice behavior from scaffold copy", async () => {
+  it("records multiple approaches without settling Mara's plan to Ada", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let planWorld = await engine.createGame("game-first-afternoon-plan-copy");
 
@@ -688,17 +708,13 @@ describe("SimulationEngine street slice", () => {
       type: "act",
       actionId: "talk:npc-mara",
     });
-    planWorld = await engine.runCommand(planWorld, {
-      type: "act",
-      actionId: "reflect:first-afternoon-plan",
-    });
-
-    expect(planWorld.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(planWorld.firstAfternoon?.approachesKnownAt).toBeDefined();
+    expect(planWorld.firstAfternoon?.planSettledAt).toBeUndefined();
     expect(planWorld.feed.map((entry) => entry.text)).toContain(
-      "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
+      "Rowan records more than one live approach without settling the afternoon to a single route.",
     );
     expect(planWorld.player.memories.map((memory) => memory.text)).toContain(
-      "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
+      "When the first afternoon opened up, Rowan kept Ada's work and the house's local trouble as competing live approaches.",
     );
 
     let pumpWorld = await engine.createGame("game-first-afternoon-pump-copy");
@@ -721,21 +737,10 @@ describe("SimulationEngine street slice", () => {
       time: pumpWorld.currentTime,
     });
     pumpWorld = await engine.tick(pumpWorld, 0);
-    pumpWorld = await engine.runCommand(pumpWorld, {
-      type: "act",
-      actionId: "reflect:first-afternoon-pump",
-    });
-
-    expect(pumpWorld.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(pumpWorld.firstAfternoon?.approachesKnownAt).toBeUndefined();
     expect(pumpWorld.player.objective).toMatchObject({
-      text: "Fix the leaking pump in Morrow Yard before it spreads.",
+      routeKey: "first-afternoon",
     });
-    expect(pumpWorld.feed.map((entry) => entry.text)).toContain(
-      "Rowan chooses the Morrow Yard pump as the first proof that he notices what the house needs.",
-    );
-    expect(pumpWorld.player.memories.map((memory) => memory.text)).toContain(
-      "Rowan chose the pump over the obvious work lead because the house itself had a live problem.",
-    );
     expect(
       pumpWorld.problems.find((problem) => problem.id === "problem-pump"),
     ).toMatchObject({
@@ -744,7 +749,7 @@ describe("SimulationEngine street slice", () => {
     });
   });
 
-  it("preserves first-afternoon lead-note and compare-choice behavior from scaffold copy", async () => {
+  it("keeps Ada's grounded offer as one live approach without a scripted compare action", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-lead-compare-copy");
 
@@ -785,21 +790,17 @@ describe("SimulationEngine street slice", () => {
       "You verified Mara's lead at Kettle & Lamp: Ada needs steady lunch help and offered the cup-and-counter shift.",
     );
 
-    world = await engine.runCommand(world, {
-      type: "act",
-      actionId: "reflect:first-afternoon-compare",
-    });
-
     expect(world.player.objective).toMatchObject({
-      focus: "explore",
-      text: "Compare the live work offer with the pump, the square, and any better lead before committing.",
+      focus: "settle",
+      routeKey: "first-afternoon",
     });
-    expect(world.feed.map((entry) => entry.text)).toContain(
-      "Rowan keeps Ada's offer in view while checking whether another current opening should come first.",
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "reflect:first-afternoon-compare",
     );
-    expect(world.player.memories.map((memory) => memory.text)).toContain(
-      "Rowan did not treat Ada's offer as a script; he paused to compare it against the live state of the block.",
-    );
+    expect(world.problems.find((problem) => problem.id === "problem-pump")).toMatchObject({
+      discovered: true,
+      status: "active",
+    });
   });
 
   it("keeps first-afternoon take-stock move rationale energy wording unchanged", async () => {
@@ -902,49 +903,8 @@ describe("SimulationEngine street slice", () => {
   });
 
   it("uses scaffold completion copy for first-afternoon completed-objective autonomy rationale", async () => {
-    const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame(
-      "game-first-afternoon-completion-rationale",
-    );
-    const currentObjective = world.player.objective as PlayerObjective;
-    const teaShift = world.jobs.find((job) => job.id === "job-tea-shift");
-    expect(teaShift).toBeDefined();
-
-    placePlayerAt(world, "boarding-house");
-    world.firstAfternoon = {
-      ...world.firstAfternoon,
-      fieldNote: {
-        createdAt: world.currentTime,
-        evidence: "Rowan took stock after the paid shift.",
-        learned: "The first afternoon has landed.",
-        memory: "Rowan earned a foothold and has enough to sleep on.",
-        next: "Choose tomorrow from live state.",
-      },
-      leadFieldNote: {
-        createdAt: world.currentTime,
-        evidence: "Asked Ada at Kettle & Lamp.",
-        learned: "The Kettle & Lamp lead is real.",
-        memory: "Ada saw Rowan verify the lead and follow through.",
-        next: "Ada's offer is now a current choice.",
-      },
-      planSettledAt: world.currentTime,
-      teaShiftStage: "paid",
-      completedAt: world.currentTime,
-    };
-    if (teaShift) {
-      teaShift.accepted = true;
-      teaShift.completed = true;
-      teaShift.discovered = true;
-    }
-    world.player.objective = {
-      ...currentObjective,
-      routeKey: "first-afternoon",
-    };
-
-    world = await engine.runCommand(world, {
-      type: "wait",
-      minutes: 0,
-      silent: true,
+    const { finalWorld: world } = await runRowanLoopSmoke({
+      gameId: "game-first-afternoon-completion-rationale",
     });
 
     expect(world.rowanAutonomy).toMatchObject({
@@ -997,7 +957,7 @@ describe("SimulationEngine street slice", () => {
     expect(world.summary).not.toContain(FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL);
   });
 
-  it("keeps first-afternoon reflection action availability and metadata unchanged", async () => {
+  it("keeps route-selecting first-afternoon reflection actions out of the legal surface", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-reflect-actions");
 
@@ -1020,6 +980,15 @@ describe("SimulationEngine street slice", () => {
       time: world.currentTime,
     });
     world = await engine.tick(world, 0);
+
+    expect(world.availableActions.map((action) => action.id)).not.toEqual(
+      expect.arrayContaining([
+        "reflect:first-afternoon-plan",
+        "reflect:first-afternoon-pump",
+        "reflect:first-afternoon-compare",
+      ]),
+    );
+    return;
 
     expect(actionById(world, "reflect:first-afternoon-plan")).toMatchObject({
       description:
@@ -1689,7 +1658,7 @@ describe("SimulationEngine street slice", () => {
       targetLocationId: "boarding-house",
     });
     expect(world.rowanAutonomy.intent?.reason).toMatch(
-      /shift paid|take stock after the paid shift/i,
+      /durable consequence|record what actually changed/i,
     );
 
     const engine = new SimulationEngine(new MockAIProvider());
@@ -1966,7 +1935,8 @@ describe("SimulationEngine street slice", () => {
     expect(playerLine?.text).toMatch(/room|Morrow House|tonight/i);
     expect(playerLine?.text).not.toMatch(/hands|lunch|work lead/i);
     expect(maraLine?.text).toMatch(/Morrow House|room|Ada|Kettle & Lamp/i);
-    expect(world.activeConversation?.objectiveText).toContain("Ada");
+    expect(world.activeConversation?.objectiveText).toBeUndefined();
+    expect(world.activeConversation?.decision).toMatch(/Ada.*pump|pump.*Ada/i);
   });
 
   it("describes the Ada lead as a situated cafe lead from Morrow House", async () => {
@@ -1983,7 +1953,7 @@ describe("SimulationEngine street slice", () => {
       world,
       (nextWorld) =>
         !nextWorld.activeConversation &&
-        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.firstAfternoon?.approachesKnownAt !== undefined &&
         nextWorld.rowanAutonomy.targetLocationId === "tea-house",
       12,
     );
@@ -1995,7 +1965,7 @@ describe("SimulationEngine street slice", () => {
       ...(world.rowanAutonomy.intent?.signals ?? []),
     ].join(" ");
 
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy.actionId).not.toBe("reflect:first-afternoon-plan");
     expect(world.rowanAutonomy.targetLocationId).toBe("tea-house");
     expect(world.rowanAutonomy.planningTrace?.selectedTargetLocationId).toBe(
@@ -2027,7 +1997,7 @@ describe("SimulationEngine street slice", () => {
     ].join(" ");
 
     expect(routeCopy).toMatch(/Kettle & Lamp|Ada|Mara|lunch/i);
-    expect(routeCopy).toContain(ADA_LEAD_OUTCOME_MOVE_RATIONALE);
+    expect(routeCopy).not.toMatch(/only possible route|must follow Ada/i);
     expect(routeCopy).not.toMatch(/Ask Ada.*at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada(?:'s)?[^.\n]{0,100}at Morrow House/i);
     expect(routeCopy).not.toMatch(/Ada work at Morrow House/i);
@@ -2218,7 +2188,7 @@ describe("SimulationEngine street slice", () => {
     expect(maraLine).toMatch(/Ada|Kettle & Lamp|lunch|work|shift/i);
     expect(world.aiRuntime?.totalFallbacks).toBeGreaterThan(0);
     expect(world.aiRuntime?.fallbackReasons.join(" ")).toMatch(
-      /Ada lead/i,
+      /multiple first-afternoon approaches/i,
     );
 
     world = await advanceUntil(
@@ -2260,7 +2230,7 @@ describe("SimulationEngine street slice", () => {
       2,
     );
     expect(provider.replyRequests.at(-1)?.playerText).toMatch(
-      /Ada at Kettle & Lamp.*lunch work/i,
+      /Ada's Kettle & Lamp lunch work.*leaking Morrow Yard pump/i,
     );
     expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(0);
 
@@ -2294,7 +2264,7 @@ describe("SimulationEngine street slice", () => {
     ) ?? [];
     expect(visibleLines.join(" ")).toMatch(/Ada at Kettle & Lamp/i);
     expect(visibleLines.join(" ")).toMatch(/lunch work/i);
-    expect(visibleLines.join(" ")).toMatch(/Yes\. Ask her/i);
+    expect(visibleLines.join(" ")).toMatch(/Yes\. Ask Ada at Kettle & Lamp/i);
     expect(provider.replyRequests.filter((request) => request.npcId === "npc-mara")).toHaveLength(
       2,
     );
@@ -2329,12 +2299,14 @@ describe("SimulationEngine street slice", () => {
       world.activeConversation?.lines.map((line) => line.text) ?? [];
     expect(visibleLines.join(" ")).toMatch(/Ada at Kettle & Lamp/i);
     expect(visibleLines.join(" ")).toMatch(/lunch work/i);
-    expect(visibleLines.join(" ")).toMatch(/Exactly\. She'll need steady hands/i);
+    expect(visibleLines.join(" ")).toMatch(
+      /Exactly\. Ada at Kettle & Lamp needs steady hands/i,
+    );
     expect(
       provider.replyRequests.filter((request) => request.npcId === "npc-mara"),
     ).toHaveLength(2);
     expect(provider.replyRequests.at(-1)?.playerText).toMatch(
-      /Ada at Kettle & Lamp.*lunch work/i,
+      /Ada's Kettle & Lamp lunch work.*leaking Morrow Yard pump/i,
     );
     expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(0);
 
@@ -2564,11 +2536,11 @@ describe("SimulationEngine street slice", () => {
       world,
       (nextWorld) =>
         !nextWorld.activeConversation &&
-        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.firstAfternoon?.approachesKnownAt !== undefined &&
         nextWorld.rowanAutonomy.targetLocationId === "tea-house",
     );
 
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
       targetLocationId: "tea-house",
     });
@@ -2592,7 +2564,7 @@ describe("SimulationEngine street slice", () => {
     expect(allowedActionIds).toContain("exit:boarding-house");
     expect(allowedActionIds).not.toContain("reflect:first-afternoon-plan");
     expect(allowedActionIds).not.toContain("reflect:first-afternoon-pump");
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
       targetLocationId: "tea-house",
     });
@@ -2607,11 +2579,11 @@ describe("SimulationEngine street slice", () => {
       world,
       (nextWorld) =>
         !nextWorld.activeConversation &&
-        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.firstAfternoon?.approachesKnownAt !== undefined &&
         nextWorld.rowanAutonomy.targetLocationId === "tea-house",
     );
 
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
       targetLocationId: "tea-house",
     });
@@ -2756,9 +2728,9 @@ describe("SimulationEngine street slice", () => {
     world = await advanceUntil(
       setupEngine,
       world,
-      (nextWorld) => Boolean(nextWorld.firstAfternoon?.planSettledAt),
+      (nextWorld) => Boolean(nextWorld.firstAfternoon?.approachesKnownAt),
     );
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
 
     world = await setupEngine.runCommand(world, {
       type: "move_to",
@@ -3116,7 +3088,7 @@ describe("SimulationEngine street slice", () => {
     ).toBe(true);
   });
 
-  it("turns Mara's grounded lead into a Kettle & Lamp sequence with a planner trace", async () => {
+  it("lets legal planning choose Kettle & Lamp after Mara reveals competing approaches", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-live-fork");
 
@@ -3130,7 +3102,7 @@ describe("SimulationEngine street slice", () => {
       allowTimeSkip: false,
     });
 
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.availableActions.map((action) => action.id)).not.toContain(
       "reflect:first-afternoon-plan",
     );
@@ -3138,7 +3110,6 @@ describe("SimulationEngine street slice", () => {
     expect(world.rowanAutonomy.planningTrace).toMatchObject({
       selectedActionId: expect.any(String),
       selectedPlanKey: expect.any(String),
-      selectedPressureKind: expect.any(String),
       selectedTargetLocationId: expect.any(String),
     });
     expect(
@@ -3155,26 +3126,25 @@ describe("SimulationEngine street slice", () => {
       ),
     ).toMatchObject({
       legalBacking: {
-        actionId: "exit:boarding-house",
-        locationId: "boarding-house",
-        source: "current-legal-action-surface",
+        actionId: "accept:job-tea-shift",
+        locationId: "tea-house",
+        source: "destination-preview-legal-action",
       },
       targetLocationId: "tea-house",
       planKey: world.rowanAutonomy.planningTrace?.selectedPlanKey,
-      pressureKind: "predicate",
     });
     expect(world.rowanAutonomy.planningTrace?.selectedLegalBacking).toMatchObject({
-      actionId: "exit:boarding-house",
-      locationId: "boarding-house",
-      source: "current-legal-action-surface",
+      actionId: "accept:job-tea-shift",
+      locationId: "tea-house",
+      source: "destination-preview-legal-action",
     });
     expectTraceImmediateActionSplit(world, {
-      followUpActionId: "talk:npc-ada",
-      followUpLabel: "Talk to Ada",
+      followUpActionId: "accept:job-tea-shift",
+      followUpLabel: "Take Cup-and-counter shift",
       immediateActionId: "exit:boarding-house",
       immediateLabel: "Exit to South Quay",
-      plannerIntentActionId: "talk:npc-ada",
-      plannerIntentLabel: "Follow Mara's lead to Kettle & Lamp",
+      plannerIntentActionId: "accept:job-tea-shift",
+      plannerIntentLabel: "Head to Kettle & Lamp",
     });
   });
 
@@ -3192,7 +3162,7 @@ describe("SimulationEngine street slice", () => {
       allowTimeSkip: false,
     });
 
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy.targetLocationId).toBe("tea-house");
 
     const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
@@ -3298,14 +3268,11 @@ describe("SimulationEngine street slice", () => {
           option.targetLocationId === "tea-house",
       ),
     ).toBe(false);
-    const staleAdaOutcome = world.rowanAutonomy.planningTrace?.outcomes.find(
-      (outcome) => outcome.id === "first-afternoon-ada-lead",
-    );
-    expect(staleAdaOutcome).toMatchObject({
-      blockers: expect.arrayContaining([
-        "Ada's lunch work is no longer a live lead.",
-      ]),
-    });
+    expect(
+      world.rowanAutonomy.planningTrace?.outcomes.some(
+        (outcome) => outcome.id === "first-afternoon-consequence",
+      ),
+    ).toBe(true);
     expectCognitionToMirrorAutonomy(world);
   });
 
@@ -3449,7 +3416,6 @@ describe("SimulationEngine street slice", () => {
       ),
     ).toMatchObject({
       targetLocationId: "tea-house",
-      pressureKind: "predicate",
     });
     expect(
       predicateWorld.rowanAutonomy.planningTrace?.considered.find(
@@ -3554,10 +3520,9 @@ describe("SimulationEngine street slice", () => {
           targetLocationId: "tea-house",
         }),
         expect.objectContaining({
-          actionId: "talk:npc-ada",
-          kind: "talk",
+          actionId: "accept:job-tea-shift",
+          kind: "act",
           legal: true,
-          npcId: "npc-ada",
           targetLocationId: "tea-house",
         }),
       ]),
@@ -3595,11 +3560,11 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.firstAfternoon?.leadFieldNote).toBeDefined();
-    expect(world.availableActions.map((action) => action.id)).toEqual(
-      expect.arrayContaining([
-        "accept:job-tea-shift",
-        "reflect:first-afternoon-compare",
-      ]),
+    expect(world.availableActions.map((action) => action.id)).toContain(
+      "accept:job-tea-shift",
+    );
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "reflect:first-afternoon-compare",
     );
   });
 
@@ -3726,7 +3691,7 @@ describe("SimulationEngine street slice", () => {
         memory: "Ada has already seen Rowan follow through.",
         next: "Take stock unless live pressure changes the plan.",
       },
-      planSettledAt: world.currentTime,
+      approachesKnownAt: world.currentTime,
       teaShiftStage: "paid",
     };
     world.conversations.push({
@@ -3938,8 +3903,8 @@ describe("SimulationEngine street slice", () => {
       thread?.lines.filter((entry) => entry.speaker === "npc").length,
     ).toBeGreaterThanOrEqual(1);
     expect(world.activeConversation?.npcId).toBe("npc-mara");
-    expect(world.activeConversation?.objectiveText).toContain("Ada");
-    expect(world.activeConversation?.objectiveText).toContain("Kettle & Lamp");
+    expect(world.activeConversation?.objectiveText).toBeUndefined();
+    expect(world.activeConversation?.decision).toMatch(/Ada.*pump|pump.*Ada/i);
     expect(world.rowanAutonomy).toMatchObject({
       autoContinue: true,
       layer: "conversation",
@@ -3972,7 +3937,7 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.activeConversation).toBeUndefined();
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
       autoContinue: true,
       layer: "objective",
@@ -3999,7 +3964,7 @@ describe("SimulationEngine street slice", () => {
     });
     expect(world.activeConversation).toBeUndefined();
     expect(world.player.currentLocationId).toBe("boarding-house");
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
       autoContinue: true,
       layer: "objective",
@@ -4012,7 +3977,7 @@ describe("SimulationEngine street slice", () => {
       type: "advance_objective",
       allowTimeSkip: true,
     });
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
       autoContinue: true,
       layer: "objective",
@@ -4054,12 +4019,12 @@ describe("SimulationEngine street slice", () => {
       world,
       (nextWorld) =>
         !nextWorld.activeConversation &&
-        nextWorld.firstAfternoon?.planSettledAt !== undefined &&
+        nextWorld.firstAfternoon?.approachesKnownAt !== undefined &&
         nextWorld.rowanAutonomy.targetLocationId === "tea-house",
     );
 
     expect(world.activeConversation).toBeUndefined();
-    expect(world.firstAfternoon?.planSettledAt).toBeDefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expect(world.rowanAutonomy).toMatchObject({
       mode: "acting",
       targetLocationId: "tea-house",
@@ -4210,7 +4175,7 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
-  it("turns Mara's housing talk into a deliberate Ada plan Rowan can follow", async () => {
+  it("turns Mara's housing talk into multiple live approaches without settling the route", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-mara-ada-handoff");
 
@@ -4222,9 +4187,8 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.activeConversation?.npcId).toBe("npc-mara");
-    expect(world.activeConversation?.objectiveText).toBe(
-      "Get to Kettle & Lamp and ask Ada for work.",
-    );
+    expect(world.activeConversation?.objectiveText).toBeUndefined();
+    expect(world.activeConversation?.decision).toMatch(/Ada.*pump|pump.*Ada/i);
 
     world = await engine.runCommand(world, {
       type: "wait",
@@ -4233,14 +4197,9 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(world.activeConversation).toBeUndefined();
-    expect(world.rowanAutonomy).toMatchObject({
-      actionId: "exit:boarding-house",
-      autoContinue: true,
-      layer: "objective",
-      mode: "acting",
-      stepKind: "act",
-      targetLocationId: "tea-house",
-    });
+    expect(world.player.objective).toMatchObject({ routeKey: "first-afternoon" });
+    expect(world.firstAfternoon?.planSettledAt).toBeUndefined();
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
     expectCognitionToMirrorAutonomy(world);
   });
 
@@ -4319,15 +4278,9 @@ describe("SimulationEngine street slice", () => {
       text: "Still need work in the yard?",
     });
 
-    const tomasReply = world.activeConversation?.lines
-      .filter((line) => line.speaker === "npc")
-      .at(-1)?.text;
-    expect(tomasReply).toMatch(/loading block already moved|too late|work is done/i);
-    expect(world.activeConversation?.objectiveText).toBe(
-      "Return to Morrow House and take stock.",
-    );
-    expect(world.activeConversation?.objectiveText).not.toMatch(
-      /freight yard lift|loading shift|take the freight/i,
+    expect(world.activeConversation?.npcId).not.toBe("npc-tomas");
+    expect(world.feed.map((entry) => entry.text).join(" ")).toMatch(
+      /Tomas is unavailable now.*next opening/i,
     );
     expect(world.availableActions.map((action) => action.id)).not.toContain(
       "accept:job-yard-shift",
@@ -6403,10 +6356,14 @@ describe("SimulationEngine street slice", () => {
     expect(result.finalWorld.clock.totalMinutes).toBeLessThanOrEqual(17 * 60);
     expect(result.finalWorld.player.currentLocationId).toBe("boarding-house");
     expect(result.finalWorld.firstAfternoon?.completedAt).toBeDefined();
+    expect(result.finalWorld.firstAfternoon?.consequence).toMatchObject({
+      id: "job-tea-shift",
+      kind: "tea-work",
+    });
     expect(result.finalWorld.firstAfternoon?.fieldNote).toMatchObject({
-      evidence: expect.stringContaining("Kettle & Lamp"),
-      learned: expect.stringContaining("Ada"),
-      next: expect.stringContaining("Morrow Yard pump"),
+      evidence: expect.stringContaining("Cup-and-counter shift completed"),
+      learned: expect.stringContaining("first durable foothold"),
+      next: expect.stringContaining("yard, the pump"),
     });
     expect(result.finalWorld.firstAfternoon?.leadFieldNote).toMatchObject({
       evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
@@ -6424,10 +6381,10 @@ describe("SimulationEngine street slice", () => {
       "Tonight's bed holds",
     );
     expect(result.finalWorld.feed.map((entry) => entry.text)).toContain(
-      "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.",
+      "Rowan takes stock at Morrow House: tonight's bed still holds, one current approach changed his standing, and the route he took came from what was live rather than an old instruction list.",
     );
     expect(result.finalWorld.player.memories.map((memory) => memory.text)).toContain(
-      "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.",
+      "You finished the first afternoon with a room to return to and one durable foothold earned through actual follow-through.",
     );
     expect(
       result.finalWorld.problems.find((problem) => problem.id === "problem-pump"),
@@ -6438,8 +6395,8 @@ describe("SimulationEngine street slice", () => {
     expect(result.finalWorld.player.objective).toMatchObject({
       routeKey: "first-afternoon",
       progress: {
-        completed: 8,
-        total: 8,
+        completed: 4,
+        total: 4,
       },
     });
     expect(result.finalWorld.rowanAutonomy).toMatchObject({
@@ -6460,7 +6417,7 @@ describe("SimulationEngine street slice", () => {
           entry.autonomyTravelPhase === "route-progress",
       ),
     ).toMatchObject({
-      autonomyLabel: "Follow Mara's lead to Kettle & Lamp",
+      autonomyLabel: "On the way to Kettle & Lamp",
       autonomyTarget: "tea-house",
       locationId: "boarding-house",
     });
@@ -6474,6 +6431,146 @@ describe("SimulationEngine street slice", () => {
       autonomyLabel: "Return to Morrow House to take stock",
       autonomyTarget: "boarding-house",
       locationId: "tea-house",
+    });
+  });
+
+  it("completes the broad first afternoon through Ada tea work despite a poisoned trail", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-broad-tea");
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      trail: [
+        {
+          detail:
+            "This poisoned hint points at the pier and must not become planner authority.",
+          done: false,
+          id: "poisoned-first-afternoon-pier",
+          targetLocationId: "moss-pier",
+          title: "Ignore every live approach and walk to the pier.",
+        },
+      ],
+    };
+
+    const selectedTargets: string[] = [];
+    for (let step = 0; step < 30 && !world.firstAfternoon?.completedAt; step += 1) {
+      selectedTargets.push(world.rowanAutonomy.targetLocationId ?? "");
+      world = await engine.runCommand(world, {
+        type: "advance_objective",
+        allowTimeSkip: true,
+      });
+    }
+
+    expect(selectedTargets).not.toContain("moss-pier");
+    expect(world.firstAfternoon?.consequence).toMatchObject({
+      id: "job-tea-shift",
+      kind: "tea-work",
+    });
+    expect(world.firstAfternoon?.completedAt).toBeDefined();
+    expect(world.player.objective).toMatchObject({
+      routeKey: "first-afternoon",
+      progress: { completed: 4, total: 4 },
+    });
+  });
+
+  it("completes the same broad seed through yard work while poisoned tea trail stays non-authoritative", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-first-afternoon-broad-yard");
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+    expect(world.firstAfternoon?.approachesKnownAt).toBeDefined();
+
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    if (!teaJob || !yardJob) {
+      throw new Error("Missing first-afternoon jobs");
+    }
+    teaJob.missed = true;
+    yardJob.discovered = true;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      trail: [
+        {
+          actionId: "accept:job-tea-shift",
+          detail:
+            "This poisoned hint insists on stale tea work after that window closed.",
+          done: false,
+          id: "poisoned-first-afternoon-tea",
+          targetLocationId: "tea-house",
+          title: "Take Ada's closed shift anyway.",
+        },
+      ],
+    };
+    world.player.pendingObjectiveMove = undefined;
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+    expect(world.rowanAutonomy.targetLocationId).toBe("freight-yard");
+    expect(world.rowanAutonomy.targetLocationId).not.toBe("tea-house");
+    world.activeSpaceId = STREET_SPACE_ID;
+    world.player.spaceId = STREET_SPACE_ID;
+    placePlayerAt(world, "freight-yard");
+    world.player.pendingObjectiveMove = undefined;
+    world.player.energy = 100;
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.availableActions.map((action) => action.id)).toContain(
+      "accept:job-yard-shift",
+    );
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-yard-shift",
+    });
+    while (world.clock.hour + world.clock.minute / 60 < 13) {
+      world = await engine.tick(world, 1);
+    }
+    for (
+      let attempt = 0;
+      attempt < 8 &&
+      !world.jobs.find((job) => job.id === "job-yard-shift")?.completed;
+      attempt += 1
+    ) {
+      world = await engine.runCommand(world, {
+        type: "act",
+        actionId: "work:job-yard-shift",
+      });
+    }
+    expect(
+      world.jobs.find((job) => job.id === "job-yard-shift")?.completed,
+    ).toBe(true);
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "reflect:first-afternoon",
+    });
+    world = await engine.tick(world, 0);
+
+    expect(world.firstAfternoon?.consequence).toMatchObject({
+      id: "job-yard-shift",
+      kind: "yard-work",
+    });
+    expect(world.firstAfternoon?.completedAt).toBeDefined();
+    expect(
+      world.firstAfternoon?.approachesKnownAt,
+      JSON.stringify(world.firstAfternoon, null, 2),
+    ).toBeDefined();
+    expect(
+      world.player.objective,
+      JSON.stringify(world.player.objective?.outcomes, null, 2),
+    ).toMatchObject({
+      routeKey: "first-afternoon",
+      progress: { completed: 4, total: 4 },
     });
   });
 
@@ -6496,8 +6593,8 @@ describe("SimulationEngine street slice", () => {
     expect(world.player.objective).toMatchObject({
       routeKey: "first-afternoon",
       progress: {
-        completed: 8,
-        total: 8,
+        completed: 4,
+        total: 4,
       },
     });
 
@@ -6703,5 +6800,197 @@ describe("SimulationEngine street slice", () => {
         }
       }
     }
+  });
+});
+describe("schedule-aware NPC objective execution", () => {
+  it("accepts a Jo route before close and rejects the same projected arrival after close", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let beforeClose = await engine.createGame("game-jo-before-close-arrival");
+    beforeClose.activeSpaceId = STREET_SPACE_ID;
+    beforeClose.player.spaceId = STREET_SPACE_ID;
+    beforeClose.player.x = 12;
+    beforeClose.player.y = 9;
+    beforeClose.player.energy = 80;
+    setTestClock(beforeClose, 17, 50);
+    beforeClose = await engine.runCommand(beforeClose, {
+      type: "set_objective",
+      text: "Talk to Jo and make a proper introduction.",
+    });
+
+    expect(beforeClose.player.objective?.routeKey).toBe("people-npc-jo");
+    expect(beforeClose.rowanAutonomy).toMatchObject({
+      npcId: "npc-jo",
+      targetLocationId: "repair-stall",
+    });
+    expect(beforeClose.rowanAutonomy.actionId).not.toMatch(/^wait:/);
+
+    let afterClose = await engine.createGame("game-jo-after-close-arrival");
+    afterClose.activeSpaceId = STREET_SPACE_ID;
+    afterClose.player.spaceId = STREET_SPACE_ID;
+    afterClose.player.x = 12;
+    afterClose.player.y = 9;
+    afterClose.player.energy = 80;
+    setTestClock(afterClose, 17, 54);
+    afterClose = await engine.runCommand(afterClose, {
+      type: "set_objective",
+      text: "Talk to Jo and make a proper introduction.",
+    });
+
+    expect(afterClose.player.objective?.routeKey).toBe("people-npc-jo");
+    expect(afterClose.rowanAutonomy).not.toMatchObject({
+      npcId: "npc-jo",
+      targetLocationId: "repair-stall",
+    });
+    expect(
+      afterClose.rowanAutonomy.planningTrace?.rejected.find(
+        (option) => option.npcId === "npc-jo",
+      ),
+    ).toMatchObject({
+      status: "rejected",
+      reason: expect.stringMatching(
+        /not available.*next opening.*day 2 at 09:00/i,
+      ),
+    });
+  });
+
+  it("does not expose or execute talk when Jo is absent", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-jo-talk-absence");
+    world = await enterRepairStall(engine, world);
+    setTestClock(world, 18, 30);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-jo",
+    });
+
+    expect(world.availableActions.map((action) => action.id)).not.toContain(
+      "talk:npc-jo",
+    );
+    expect(world.activeConversation?.npcId).not.toBe("npc-jo");
+    expect(world.feed.map((entry) => entry.text).join(" ")).toMatch(
+      /Jo is unavailable now.*day 2 at 09:00.*Mercer Repairs/i,
+    );
+  });
+
+  it("lets a legal Nia interaction at arrival land before low-energy recovery", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-nia-low-energy-arrival-talk");
+    world.activeSpaceId = STREET_SPACE_ID;
+    world.player.spaceId = STREET_SPACE_ID;
+    world.player.x = 12;
+    world.player.y = 14;
+    world.player.energy = 36;
+    for (const problem of world.problems) {
+      problem.status = "resolved";
+      problem.urgency = 0;
+    }
+    for (const job of world.jobs) {
+      job.completed = true;
+      job.accepted = false;
+    }
+    const nia = world.npcs.find((npc) => npc.id === "npc-nia");
+    if (nia) {
+      nia.currentLocationId = "moss-pier";
+    }
+    world.player.objective = undefined;
+    setTestClock(world, 18, 40);
+    world.firstAfternoon ??= {};
+    world.firstAfternoon.completedAt = "2026-03-21T18:30:00.000Z";
+    world.firstAfternoon.completionAcknowledgedAt = "2026-03-21T18:31:00.000Z";
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Talk to Nia and make a proper introduction.",
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      npcId: "npc-nia",
+      targetLocationId: "moss-pier",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+    });
+
+    expect(world.player.energy).toBeLessThan(28);
+    expect(world.conversations.some((entry) => entry.npcId === "npc-nia")).toBe(
+      true,
+    );
+    expect(world.player.lastRestAt).toBeUndefined();
+  });
+
+  it("does not repeat an unchanged Jo people-to-recovery cycle", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-jo-no-recovery-loop");
+    world = await enterMorrowHouse(engine, world);
+    world.player.energy = 20;
+    for (const problem of world.problems) {
+      problem.status = "resolved";
+      problem.urgency = 0;
+    }
+    for (const job of world.jobs) {
+      job.completed = true;
+      job.accepted = false;
+    }
+    for (const npc of world.npcs.filter((entry) => entry.id !== "npc-jo")) {
+      world.player.knownNpcIds.push(npc.id);
+      world.conversations.push({
+        id: `conversation-${world.id}-${npc.id}-prior`,
+        locationId: npc.currentLocationId,
+        npcId: npc.id,
+        speaker: "player",
+        speakerName: "Rowan",
+        text: `Already checked in with ${npc.name}.`,
+        threadId: `thread-${world.id}-${npc.id}-prior`,
+        time: world.currentTime,
+      });
+    }
+    world.player.knownNpcIds = [...new Set(world.player.knownNpcIds)];
+    world.player.objective = undefined;
+    setTestClock(world, 18, 30);
+    world.firstAfternoon ??= {};
+    world.firstAfternoon.completedAt = "2026-03-21T18:20:00.000Z";
+    world.firstAfternoon.completionAcknowledgedAt = "2026-03-21T18:21:00.000Z";
+    world.player.lastRestAt = "2026-03-21T18:20:00.000Z";
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Talk to Jo and make a proper introduction.",
+    });
+
+    const observedActions = [];
+    for (let index = 0; index < 16; index += 1) {
+      observedActions.push({
+        actionId: world.rowanAutonomy.actionId,
+        autonomyLabel: world.rowanAutonomy.label,
+        objectiveSource: world.player.objective?.source,
+        objectiveText: world.player.objective?.text,
+        routeKey: world.player.objective?.routeKey,
+        totalMinutes: world.clock.totalMinutes,
+      });
+      if (world.conversations.some((entry) => entry.npcId === "npc-jo")) {
+        break;
+      }
+      world = await engine.runCommand(world, {
+        type: "advance_objective",
+        confirmMove: true,
+      });
+    }
+
+    expect(
+      observedActions.filter((entry) => entry.actionId === "rest:home"),
+      JSON.stringify(observedActions, null, 2),
+    ).toHaveLength(1);
+    expect(
+      observedActions.filter(
+        (entry) =>
+          entry.totalMinutes < 24 * 60 + 9 * 60 &&
+          entry.actionId === "move:repair-stall",
+      ),
+      JSON.stringify(observedActions, null, 2),
+    ).toHaveLength(0);
+    expect(world.conversations.some((entry) => entry.npcId === "npc-jo")).toBe(
+      true,
+    );
   });
 });

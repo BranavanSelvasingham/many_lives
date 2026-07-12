@@ -281,17 +281,13 @@ describe("objectiveState classification", () => {
       routeKey: "first-afternoon",
       progress: {
         completed: 0,
-        total: 8,
+        total: 4,
       },
     });
     expect(objective?.outcomes.map((outcome) => outcome.id)).toEqual([
       "first-afternoon-room",
-      "first-afternoon-choose-move",
-      "first-afternoon-ada-lead",
-      "first-afternoon-record-lead",
-      "first-afternoon-take-shift",
-      "first-afternoon-start-shift",
-      "first-afternoon-finish-shift",
+      "first-afternoon-approaches",
+      "first-afternoon-consequence",
       "first-afternoon-take-stock",
     ]);
     expect(
@@ -462,39 +458,19 @@ describe("objectiveState classification", () => {
         urgency: 8,
       },
       {
-        id: "first-afternoon-choose-move",
-        label: "Useful first move chosen",
+        id: "first-afternoon-approaches",
+        label: "Multiple live approaches known",
         urgency: 7,
       },
       {
-        id: "first-afternoon-ada-lead",
-        label: "Ask Ada directly",
+        id: "first-afternoon-consequence",
+        label: "One consequential foothold achieved",
         urgency: 6,
-      },
-      {
-        id: "first-afternoon-record-lead",
-        label: "Ada lead recorded as evidence",
-        urgency: 5,
-      },
-      {
-        id: "first-afternoon-take-shift",
-        label: "Cup-and-counter shift accepted",
-        urgency: 4,
-      },
-      {
-        id: "first-afternoon-start-shift",
-        label: "Lunch rush started",
-        urgency: 3,
-      },
-      {
-        id: "first-afternoon-finish-shift",
-        label: "Shift finished and paid",
-        urgency: 2,
       },
       {
         id: "first-afternoon-take-stock",
         label: "First afternoon taken stock",
-        urgency: 1,
+        urgency: 5,
       },
     ]);
     expect(
@@ -505,28 +481,12 @@ describe("objectiveState classification", () => {
         title: "Ask Mara how to keep tonight's room.",
       },
       {
-        id: "first-afternoon-choose-move",
-        title: "Choose the first useful move.",
+        id: "first-afternoon-approaches",
+        title: "Learn more than one live way forward.",
       },
       {
-        id: "first-afternoon-ada-lead",
-        title: "Ask Ada if Kettle & Lamp needs help today.",
-      },
-      {
-        id: "first-afternoon-record-lead",
-        title: "Record what Ada confirmed.",
-      },
-      {
-        id: "first-afternoon-take-shift",
-        title: "Take the cup-and-counter shift.",
-      },
-      {
-        id: "first-afternoon-start-shift",
-        title: "Get through the lunch rush.",
-      },
-      {
-        id: "first-afternoon-finish-shift",
-        title: "Finish the shift and get paid.",
+        id: "first-afternoon-consequence",
+        title: "Turn one approach into a consequential foothold.",
       },
       {
         id: "first-afternoon-take-stock",
@@ -535,85 +495,70 @@ describe("objectiveState classification", () => {
     ]);
 
     expect(objectiveByState.afterMara?.outcomes[1]).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
       status: "blocked",
-      targetLocationId: "boarding-house",
     });
     expect(objectiveByState.afterMara?.trail[1]).toMatchObject({
-      actionId: "reflect:first-afternoon-plan",
       detail:
-        "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.",
-      progress: "Weigh the options",
-      targetLocationId: "boarding-house",
+        "Ask what paid work and useful local trouble are actually live before choosing.",
+      progress: "0/2 approaches",
     });
 
-    expect(objectiveByState.afterPlan?.outcomes[2]).toMatchObject({
-      npcId: "npc-ada",
+    expect(objectiveByState.afterPlan?.outcomes[1]).toMatchObject({
       status: "blocked",
-      targetLocationId: "tea-house",
     });
     expect(objectiveByState.afterPlan?.trail[1]).toMatchObject({
-      detail: "Rowan chose Ada over drifting or resting.",
-      done: true,
-      progress: "Ada chosen",
+      done: false,
+      progress: "0/2 approaches",
     });
 
-    expect(objectiveByState.afterAda?.outcomes[4]).toMatchObject({
-      actionId: "accept:job-tea-shift",
+    expect(objectiveByState.afterAda?.outcomes[1]).toMatchObject({
       status: "blocked",
-      targetLocationId: "tea-house",
     });
-    expect(objectiveByState.afterAda?.trail[3]).toMatchObject({
-      detail: "Rowan turned Mara's lead into a field note with evidence.",
-      done: true,
-      progress: "Lead grounded",
+    expect(objectiveByState.afterAda?.trail[1]).toMatchObject({
+      done: false,
+      progress: "1/2 approaches",
     });
 
-    expect(objectiveByState.afterAccepted?.outcomes[5]).toMatchObject({
-      actionId: "work:job-tea-shift",
+    expect(objectiveByState.afterAccepted?.outcomes[2]).toMatchObject({
       status: "blocked",
-      targetLocationId: "tea-house",
     });
-    expect(objectiveByState.afterStarted?.outcomes[6]).toMatchObject({
-      actionId: "work:job-tea-shift",
+    expect(objectiveByState.afterStarted?.outcomes[2]).toMatchObject({
       status: "blocked",
-      targetLocationId: "tea-house",
     });
-    expect(objectiveByState.afterStarted?.trail[5]).toMatchObject({
-      detail: "Rowan has started keeping the room moving.",
-      done: true,
-      progress: "Rush handled",
+    expect(objectiveByState.afterStarted?.trail[2]).toMatchObject({
+      done: false,
+      progress: "Choose and follow through",
     });
 
-    expect(objectiveByState.afterPaid?.outcomes[7]).toMatchObject({
+    expect(objectiveByState.afterPaid?.outcomes[2]).toMatchObject({
+      evidence: "Cup-and-counter shift completed for $14.",
+      status: "met",
+    });
+    expect(objectiveByState.afterPaid?.outcomes[3]).toMatchObject({
       status: "blocked",
       targetLocationId: "boarding-house",
     });
-    expect(objectiveByState.afterPaid?.trail[7]).toMatchObject({
-      detail: "Go back to Morrow House before ending the first afternoon.",
+    expect(objectiveByState.afterPaid?.trail[3]).toMatchObject({
+      detail:
+        "Achieve one real consequence, then go back to Morrow House before ending the first afternoon.",
       progress: "Head home",
       targetLocationId: "boarding-house",
     });
 
     expect(objectiveByState.afterStock?.progress).toMatchObject({
-      completed: 8,
-      total: 8,
+      completed: 3,
+      total: 4,
     });
-    expect(
-      objectiveByState.afterStock?.outcomes.every(
-        (outcome) => outcome.status === "met",
-      ),
-    ).toBe(true);
-    expect(objectiveByState.afterStock?.trail[7]).toMatchObject({
+    expect(objectiveByState.afterStock?.trail[3]).toMatchObject({
       detail:
-        "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead.",
+        "Tonight's bed still holds, and Kettle & Lamp work completed gave Rowan a real foothold.",
       done: true,
       progress: "First afternoon complete",
       targetLocationId: "boarding-house",
     });
   });
 
-  it("preserves first-afternoon shift and take-stock predicate evidence and failures", () => {
+  it("preserves broad consequence and take-stock predicate evidence", () => {
     const setupLeadAndTeaJob = (world: StreetGameState) => {
       addConversationWith(world, "npc-mara");
       addConversationWith(world, "npc-ada");
@@ -637,15 +582,11 @@ describe("objectiveState classification", () => {
     acceptedTeaJob.accepted = true;
     const acceptedObjective = firstAfternoonObjective(accepted);
     expect(
-      objectiveOutcome(acceptedObjective, "first-afternoon-take-shift"),
+      objectiveOutcome(acceptedObjective, "first-afternoon-consequence"),
     ).toMatchObject({
-      evidence: "Shift accepted.",
-      status: "met",
-    });
-    expect(
-      objectiveOutcome(acceptedObjective, "first-afternoon-start-shift"),
-    ).toMatchObject({
-      blockers: ["The lunch rush has not started for Rowan yet."],
+      blockers: [
+        "Rowan has not yet completed live tea work, yard work, or a grounded local problem.",
+      ],
       status: "blocked",
     });
 
@@ -659,10 +600,9 @@ describe("objectiveState classification", () => {
     };
     const startedObjective = firstAfternoonObjective(started);
     expect(
-      objectiveOutcome(startedObjective, "first-afternoon-start-shift"),
+      objectiveOutcome(startedObjective, "first-afternoon-consequence"),
     ).toMatchObject({
-      evidence: "rush",
-      status: "met",
+      status: "blocked",
     });
 
     const completed = seedStreetGame(
@@ -677,9 +617,9 @@ describe("objectiveState classification", () => {
     };
     const completedObjective = firstAfternoonObjective(completed);
     expect(
-      objectiveOutcome(completedObjective, "first-afternoon-finish-shift"),
+      objectiveOutcome(completedObjective, "first-afternoon-consequence"),
     ).toMatchObject({
-      evidence: "Ada paid Rowan for the shift.",
+      evidence: "Cup-and-counter shift completed for $14.",
       status: "met",
     });
     expect(
@@ -717,21 +657,51 @@ describe("objectiveState classification", () => {
       status: "met",
     });
 
+    const yard = seedStreetGame("objective-first-afternoon-yard-completed");
+    const yardJob = yard.jobs.find((job) => job.id === "job-yard-shift");
+    if (!yardJob) {
+      throw new Error("Missing yard shift job");
+    }
+    yardJob.discovered = true;
+    yardJob.completed = true;
+    expect(
+      objectiveOutcome(
+        firstAfternoonObjective(yard),
+        "first-afternoon-consequence",
+      ),
+    ).toMatchObject({
+      evidence: "Freight yard lift completed for $24.",
+      status: "met",
+    });
+
+    const helped = seedStreetGame("objective-first-afternoon-problem-solved");
+    const pump = helped.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    if (!pump) {
+      throw new Error("Missing pump problem");
+    }
+    pump.discovered = true;
+    pump.status = "solved";
+    expect(
+      objectiveOutcome(
+        firstAfternoonObjective(helped),
+        "first-afternoon-consequence",
+      ),
+    ).toMatchObject({
+      evidence:
+        "Leaking hand pump solved after Rowan grounded the local problem.",
+      status: "met",
+    });
+
     const missed = seedStreetGame("objective-first-afternoon-shift-missed");
     const missedTeaJob = setupLeadAndTeaJob(missed);
     missedTeaJob.missed = true;
     const missedObjective = firstAfternoonObjective(missed);
     expect(
-      objectiveOutcome(missedObjective, "first-afternoon-take-shift"),
+      objectiveOutcome(missedObjective, "first-afternoon-consequence"),
     ).toMatchObject({
-      blockers: ["The cup-and-counter shift window has slipped."],
-      status: "failed",
-    });
-    expect(
-      objectiveOutcome(missedObjective, "first-afternoon-finish-shift"),
-    ).toMatchObject({
-      blockers: ["The cup-and-counter shift was missed."],
-      status: "failed",
+      status: "blocked",
     });
   });
 
@@ -3965,5 +3935,101 @@ describe("objectiveState classification", () => {
       }
       expect(objective?.trail).toMatchObject(scenario.expectedTrail);
     }
+  });
+});
+
+describe("schedule-aware people objectives", () => {
+  it("excludes Jo when Rowan would arrive after the repair-stall window", () => {
+    const world = seedStreetGame("objective-people-jo-unavailable");
+    setClock(world, 17, 45);
+    for (const npcId of ["npc-mara", "npc-ada", "npc-tomas", "npc-nia"]) {
+      addConversationWith(world, npcId);
+    }
+
+    const objective = buildPlayerObjectiveState(world, {
+      focus: "people",
+      source: "dynamic",
+      text: "Meet another useful person in South Quay.",
+    });
+
+    expect(objective?.routeKey).toBe("people-locals");
+    expect(
+      objective?.outcomes.some((outcome) => outcome.npcId === "npc-jo"),
+    ).toBe(false);
+  });
+
+  it("retargets a generic people objective from unavailable Jo to feasible Nia", () => {
+    const world = seedStreetGame("objective-people-retarget-nia");
+    setClock(world, 17, 45);
+    for (const npcId of ["npc-mara", "npc-ada", "npc-tomas"]) {
+      addConversationWith(world, npcId);
+    }
+    const nia = world.npcs.find((npc) => npc.id === "npc-nia");
+    if (nia) {
+      nia.currentLocationId = "moss-pier";
+    }
+
+    const objective = buildPlayerObjectiveState(world, {
+      focus: "people",
+      source: "dynamic",
+      text: "Meet someone new who could become a friend.",
+    });
+
+    expect(objective?.routeKey).toBe("people-npc-nia");
+    expect(objective?.outcomes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          npcId: "npc-nia",
+          targetLocationId: "moss-pier",
+        }),
+      ]),
+    );
+    expect(
+      objective?.outcomes.some((outcome) => outcome.npcId === "npc-jo"),
+    ).toBe(false);
+  });
+
+  it("retains an explicit Jo target and exposes the next opening", () => {
+    const world = seedStreetGame("objective-people-explicit-jo");
+    setClock(world, 18, 30);
+
+    const objective = buildPlayerObjectiveState(world, {
+      focus: "people",
+      source: "manual",
+      text: "Talk to Jo and make a proper introduction.",
+    });
+
+    expect(objective?.routeKey).toBe("people-npc-jo");
+    expect(objectiveOutcome(objective, "people-talk")).toMatchObject({
+      npcId: "npc-jo",
+      status: "blocked",
+      targetLocationId: "repair-stall",
+    });
+    expect(
+      objectiveOutcome(objective, "people-talk").blockers?.join(" "),
+    ).toMatch(/Jo.*projected arrival.*day 2 at 09:00.*Mercer Repairs/i);
+  });
+
+  it("does not let an unrelated conversation silently replace an explicit Jo target", () => {
+    const world = seedStreetGame("objective-people-explicit-jo-retained");
+    setClock(world, 18, 30);
+    world.player.objective = buildPlayerObjectiveState(world, {
+      focus: "people",
+      source: "manual",
+      text: "Talk to Jo and make a proper introduction.",
+    });
+
+    const refreshed = buildPlayerObjectiveState(world, {
+      focus: "people",
+      previous: world.player.objective,
+      source: "conversation",
+      text: "Talk to Ada next.",
+    });
+
+    expect(refreshed).toMatchObject({
+      routeKey: "people-npc-jo",
+      source: "manual",
+      text: "Talk to Jo and make a proper introduction.",
+    });
   });
 });

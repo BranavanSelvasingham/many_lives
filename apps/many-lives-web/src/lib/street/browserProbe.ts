@@ -291,6 +291,15 @@ function planningTraceProbePayload(game: StreetGameState) {
           targetLocationId: trace.plannerIntent.targetLocationId ?? null,
         }
       : null,
+    providerAttempt: trace.providerAttempt
+      ? {
+          model: trace.providerAttempt.model,
+          outcome: trace.providerAttempt.outcome,
+          provider: trace.providerAttempt.provider,
+          reasonCode: trace.providerAttempt.reasonCode ?? null,
+          task: trace.providerAttempt.task,
+        }
+      : null,
     rejected: trace.rejected.map(optionPayload),
     selectedActionId: trace.selectedActionId ?? null,
     selectedLabel: trace.selectedLabel ?? null,
@@ -322,31 +331,103 @@ function planningTraceProbePayload(game: StreetGameState) {
           validationStatus: trace.selectedRecommendation.validationStatus,
         }
       : null,
+    sourceLabel:
+      trace.selectedRecommendation?.sourceKind === "live-llm"
+        ? "live"
+        : trace.selectedRecommendation?.sourceKind ===
+            "deterministic-fallback"
+          ? "deterministic fallback"
+          : "deterministic",
     selectedTargetLocationId: trace.selectedTargetLocationId ?? null,
+  };
+}
+
+function resolveDailyNpcSchedule(
+  schedule: StreetGameState["npcs"][number]["schedule"],
+  totalMinutes: number,
+) {
+  const minutesPerDay = 24 * 60;
+  const now = Math.max(0, Math.round(totalMinutes));
+  const dayIndex = Math.floor(now / minutesPerDay);
+  const occurrences = [] as Array<{
+    endTotalMinutes: number;
+    startTotalMinutes: number;
+    stop: (typeof schedule)[number];
+  }>;
+
+  for (let day = Math.max(0, dayIndex - 1); day <= dayIndex + 2; day += 1) {
+    for (const stop of schedule) {
+      const fromMinute = Math.round(stop.fromHour * 60);
+      const toMinute = Math.round(stop.toHour * 60);
+      if (
+        !Number.isFinite(fromMinute) ||
+        !Number.isFinite(toMinute) ||
+        fromMinute < 0 ||
+        fromMinute >= minutesPerDay ||
+        toMinute < 0 ||
+        toMinute > minutesPerDay
+      ) {
+        continue;
+      }
+
+      const startTotalMinutes = day * minutesPerDay + fromMinute;
+      const durationMinutes =
+        toMinute === fromMinute
+          ? minutesPerDay
+          : toMinute > fromMinute
+            ? toMinute - fromMinute
+            : minutesPerDay - fromMinute + toMinute;
+      occurrences.push({
+        endTotalMinutes: startTotalMinutes + durationMinutes,
+        startTotalMinutes,
+        stop,
+      });
+    }
+  }
+
+  occurrences.sort(
+    (left, right) => left.startTotalMinutes - right.startTotalMinutes,
+  );
+  const active = occurrences.find(
+    (occurrence) =>
+      now >= occurrence.startTotalMinutes && now < occurrence.endTotalMinutes,
+  );
+  return {
+    active,
+    nextOpening: occurrences.find(
+      (occurrence) => occurrence.startTotalMinutes > now,
+    ),
+    status: occurrences.length === 0
+      ? "unscheduled"
+      : active
+        ? "active"
+        : "unavailable",
   };
 }
 
 function worldPressureProbePayload(game: StreetGameState) {
   const currentTotalMinutes = game.clock.totalMinutes;
   const npcSchedules = (game.npcs ?? []).map((npc) => {
-    const currentHour = game.clock.hour + game.clock.minute / 60;
-    const currentSchedule =
-      npc.schedule.find(
-        (entry) => currentHour >= entry.fromHour && currentHour < entry.toHour,
-      ) ?? null;
-    const nextSchedule =
-      npc.schedule
-        .filter((entry) => entry.fromHour > currentHour)
-        .sort((left, right) => left.fromHour - right.fromHour)[0] ?? null;
+    const schedule = resolveDailyNpcSchedule(
+      npc.schedule,
+      currentTotalMinutes,
+    );
     return {
+      activeWindowEndsAtMinutes: schedule.active?.endTotalMinutes ?? null,
+      availability: schedule.status,
       currentLocationId: npc.currentLocationId,
       currentConcern: npc.currentConcern,
-      currentScheduleLocationId: currentSchedule?.locationId ?? null,
+      currentScheduleLocationId: schedule.active?.stop.locationId ?? null,
       id: npc.id,
       mood: npc.mood,
-      nextScheduleLocationId: nextSchedule?.locationId ?? null,
-      nextScheduleStartsInMinutes: nextSchedule
-        ? Math.max(0, Math.round((nextSchedule.fromHour - currentHour) * 60))
+      nextOpeningAtMinutes: schedule.nextOpening?.startTotalMinutes ?? null,
+      nextScheduleLocationId:
+        schedule.nextOpening?.stop.locationId ?? null,
+      nextScheduleStartsInMinutes: schedule.nextOpening
+        ? Math.max(
+            0,
+            schedule.nextOpening.startTotalMinutes - currentTotalMinutes,
+          )
         : null,
     };
   });
@@ -502,8 +583,8 @@ function openingActionCompletionEvidence({
   if (game.activeConversation?.npcId === "npc-mara") {
     evidence.push("mara-conversation-active");
   }
-  if (game.firstAfternoon?.planSettledAt) {
-    evidence.push("first-afternoon-plan-settled");
+  if (game.firstAfternoon?.approachesKnownAt) {
+    evidence.push("first-afternoon-approaches-known");
   }
   if (game.firstAfternoon?.leadFieldNote) {
     evidence.push("first-afternoon-lead-recorded");
@@ -514,25 +595,20 @@ function openingActionCompletionEvidence({
   if (game.firstAfternoon?.completedAt) {
     evidence.push("first-afternoon-completed");
   }
-  if (game.activeConversation?.npcId === "npc-ada") {
-    evidence.push("ada-conversation-active");
+  if (game.firstAfternoon?.consequence) {
+    evidence.push(
+      `first-afternoon-consequence-${game.firstAfternoon.consequence.kind}`,
+    );
   }
-  if (game.player.currentLocationId === "tea-house") {
-    evidence.push("rowan-at-tea-house");
-  }
-  if (
-    game.rowanAutonomy.targetLocationId === "tea-house" ||
-    game.rowanAutonomy.actionId === "move:tea-house" ||
-    game.rowanAutonomy.actionId === "enter:tea-house" ||
-    game.rowanAutonomy.npcId === "npc-ada"
-  ) {
-    evidence.push("kettle-lamp-next-action");
+  if (game.activeConversation) {
+    evidence.push("interaction-active");
   }
   if (
-    routeGeometry?.targetLocationId === "tea-house" &&
+    snapshot.rowanWatchModeEnabled &&
+    routeGeometry?.targetLocationId &&
     (snapshot.optimisticPlayerPosition || snapshot.movement?.playerRoute?.active)
   ) {
-    evidence.push("route-progress-to-tea-house");
+    evidence.push("route-progress");
   }
 
   return Array.from(new Set(evidence));
@@ -541,13 +617,11 @@ function openingActionCompletionEvidence({
 function openingActionSupersededByAutoplayProgress(evidence: string[]) {
   return evidence.some((entry) =>
     [
-      "first-afternoon-plan-settled",
+      "first-afternoon-approaches-known",
       "first-afternoon-lead-recorded",
       "first-afternoon-completed",
-      "ada-conversation-active",
-      "rowan-at-tea-house",
-      "kettle-lamp-next-action",
-      "route-progress-to-tea-house",
+      "interaction-active",
+      "route-progress",
     ].includes(entry) || entry.startsWith("first-afternoon-tea-shift-"),
   );
 }
@@ -561,8 +635,8 @@ function openingActionStillRelevant(game: StreetGameState) {
     );
 
   return Boolean(
-    !game.firstAfternoon?.completionAcknowledgedAt &&
-      !game.firstAfternoon?.planSettledAt &&
+      !game.firstAfternoon?.completionAcknowledgedAt &&
+      !game.firstAfternoon?.approachesKnownAt &&
       !game.firstAfternoon?.leadFieldNote &&
       !game.firstAfternoon?.teaShiftStage &&
       !game.firstAfternoon?.completedAt &&
@@ -663,10 +737,12 @@ function openingActionCarryForwardProbePayload({
       )?.name ?? null,
     currentSpaceId,
     firstAfternoon: {
+      approachesKnownAt: game.firstAfternoon?.approachesKnownAt ?? null,
       completedAt: game.firstAfternoon?.completedAt ?? null,
       completionAcknowledgedAt:
         game.firstAfternoon?.completionAcknowledgedAt ?? null,
       hasLeadFieldNote: Boolean(game.firstAfternoon?.leadFieldNote),
+      consequence: game.firstAfternoon?.consequence ?? null,
       planSettledAt: game.firstAfternoon?.planSettledAt ?? null,
       teaShiftStage: game.firstAfternoon?.teaShiftStage ?? null,
     },
@@ -788,14 +864,20 @@ export function buildStreetBrowserProbeJson({
       label: game.clock.label,
       totalMinutes: game.clock.totalMinutes,
     },
+    timing: {
+      appMonotonicMs:
+        typeof performance === "undefined" ? null : performance.now(),
+    },
     gameId: game.id,
     visualEventCues: snapshot.visualEventCues ?? [],
     firstAfternoon: {
+      approachesKnownAt: game.firstAfternoon?.approachesKnownAt ?? null,
       completedAt: game.firstAfternoon?.completedAt ?? null,
       completionAcknowledgedAt:
         game.firstAfternoon?.completionAcknowledgedAt ?? null,
       hasFieldNote: Boolean(game.firstAfternoon?.fieldNote),
       hasLeadFieldNote: Boolean(game.firstAfternoon?.leadFieldNote),
+      consequence: game.firstAfternoon?.consequence ?? null,
       planSettledAt: game.firstAfternoon?.planSettledAt ?? null,
       teaShiftStage: game.firstAfternoon?.teaShiftStage ?? null,
     },
@@ -817,6 +899,24 @@ export function buildStreetBrowserProbeJson({
       spaceId: game.activeSpaceId ?? game.player.spaceId ?? null,
       x: game.player.x,
       y: game.player.y,
+    },
+    scene: {
+      locationId: game.currentScene.locationId ?? null,
+      people: game.currentScene.people.map((person) => ({
+        id: person.id,
+        known: person.known,
+        name: person.name,
+        role: person.role,
+      })),
+      visibleScheduledNpcMarkers: (
+        snapshot.movement?.scheduledNpcMarkerSamples ?? []
+      )
+        .filter((marker) => marker.visible)
+        .map((marker) => ({
+          currentLocationId: marker.currentLocationId,
+          markerSource: marker.markerSource,
+          npcId: marker.npcId,
+        })),
     },
     player: {
       energy: game.player.energy,

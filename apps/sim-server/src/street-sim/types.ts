@@ -238,6 +238,7 @@ export interface ConversationThreadState {
   decision?: string;
   objectiveKey?: string;
   objectiveText?: string;
+  planningTrace?: RowanPlanningTrace;
   summary?: string;
   lines: ConversationEntry[];
 }
@@ -251,6 +252,7 @@ export interface ActiveConversationState {
   decision?: string;
   objectiveKey?: string;
   objectiveText?: string;
+  planningTrace?: RowanPlanningTrace;
   lines: ConversationEntry[];
 }
 
@@ -321,8 +323,16 @@ export interface PlayerObjective {
 }
 
 export interface FirstAfternoonState {
+  approachesKnownAt?: string;
   completedAt?: string;
   completionAcknowledgedAt?: string;
+  consequence?: {
+    achievedAt: string;
+    evidence: string;
+    id: string;
+    kind: "local-problem" | "tea-work" | "yard-work";
+    label: string;
+  };
   leadFieldNote?: {
     createdAt: string;
     evidence: string;
@@ -598,8 +608,32 @@ export type RowanPlanningTraceLegalBackingSource =
   | "simulator-validated-wait";
 
 export type RowanPlanningTraceRecommendationSourceKind =
+  | "deterministic-fallback"
   | "deterministic-planner"
   | "live-llm";
+
+export type RowanProviderAttemptOutcome =
+  | "accepted"
+  | "fallback"
+  | "skipped"
+  | "rejected";
+
+export type RowanProviderAttemptReasonCode =
+  | "accepted-live-recommendation"
+  | "invalid-selection"
+  | "low-confidence"
+  | "no-runtime-delta"
+  | "policy-fallback"
+  | "provider-fallback"
+  | "provider-skipped";
+
+export interface RowanProviderAttemptProvenance {
+  model: string;
+  outcome: RowanProviderAttemptOutcome;
+  provider: string;
+  reasonCode?: RowanProviderAttemptReasonCode;
+  task: AIRuntimeTask;
+}
 
 export type RowanPlanningTraceValidationStatus =
   | "conversation-resolution"
@@ -688,6 +722,7 @@ export interface RowanPlanningTrace {
   nextSteps: RowanPlanningTraceStep[];
   outcomes: RowanPlanningTraceOutcome[];
   plannerIntent?: RowanPlanningTracePlannerIntent;
+  providerAttempt?: RowanProviderAttemptProvenance;
   rejected: RowanPlanningTraceOption[];
   selectedActionId?: string;
   selectedLabel?: string;

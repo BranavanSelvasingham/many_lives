@@ -5,6 +5,10 @@ import {
   getNormalizedSkyLayerRect,
   getSkyLayerPhaseOffset,
 } from "@/lib/street/skyLayers";
+import {
+  getSouthQuayLandmarkIntent,
+  type SouthQuaySemanticLandmarkRole,
+} from "@/lib/street/southQuayVisualContract";
 import type {
   VisualRect,
   VisualScene,
@@ -31,8 +35,8 @@ export function renderAuthoredVisualScene(
   visualScene: VisualScene,
 ) {
   if (visualScene.id === "south-quay-v2") {
-    drawFringeZones(objects.terrainLayer, visualScene);
     drawSurfaceZones(objects.terrainLayer, visualScene);
+    drawFringeZones(objects.terrainLayer, visualScene);
     drawV2LandmarkGroundArt(objects.terrainLayer, visualScene);
     drawHarborEdge(objects.terrainLayer, visualScene);
     drawV2LandmarkStructureArt(objects, visualScene);
@@ -66,6 +70,20 @@ export function renderAuthoredVisualScene(
       .setDepth(12);
     objects.assetTerrainNodes.push(plate);
   }
+}
+
+function getV2LandmarkByRole(
+  visualScene: VisualScene,
+  role: SouthQuaySemanticLandmarkRole,
+) {
+  const intent = visualScene.visualContract?.landmarkIntents.find(
+    (candidate) => candidate.role === role,
+  );
+  return intent
+    ? visualScene.landmarks.find(
+        (landmark) => landmark.locationId === intent.locationId,
+      )
+    : undefined;
 }
 
 function addLandmarkTextNode(
@@ -427,9 +445,7 @@ function drawV2SquareMaterialDepth(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const square = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "market-square",
-  );
+  const square = getV2LandmarkByRole(visualScene, "civic_square");
   if (!square) {
     return;
   }
@@ -462,9 +478,7 @@ function drawV2QuayMaterialDepth(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const pier = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "moss-pier",
-  );
+  const pier = getV2LandmarkByRole(visualScene, "harbor_slip");
   const water = visualScene.waterRegions.find(
     (region) => region.tag === "water_surface",
   );
@@ -503,21 +517,11 @@ function drawV2MacroCompositionPass(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const square = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "market-square",
-  );
-  const cafe = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "tea-house",
-  );
-  const boardingHouse = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "boarding-house",
-  );
-  const freightYard = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "freight-yard",
-  );
-  const pier = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "moss-pier",
-  );
+  const square = getV2LandmarkByRole(visualScene, "civic_square");
+  const cafe = getV2LandmarkByRole(visualScene, "eatery");
+  const boardingHouse = getV2LandmarkByRole(visualScene, "boarding_house");
+  const freightYard = getV2LandmarkByRole(visualScene, "freight_yard");
+  const pier = getV2LandmarkByRole(visualScene, "harbor_slip");
 
   if (boardingHouse && cafe) {
     const y = Math.max(
@@ -597,21 +601,11 @@ function drawV2ComposedPavingPass(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const square = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "market-square",
-  );
-  const boardingHouse = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "boarding-house",
-  );
-  const cafe = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "tea-house",
-  );
-  const freightYard = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "freight-yard",
-  );
-  const pier = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "moss-pier",
-  );
+  const square = getV2LandmarkByRole(visualScene, "civic_square");
+  const boardingHouse = getV2LandmarkByRole(visualScene, "boarding_house");
+  const cafe = getV2LandmarkByRole(visualScene, "eatery");
+  const freightYard = getV2LandmarkByRole(visualScene, "freight_yard");
+  const pier = getV2LandmarkByRole(visualScene, "harbor_slip");
 
   const pavingBands: VisualRect[] = [];
   if (boardingHouse && cafe) {
@@ -702,9 +696,7 @@ function drawV2SquareGroundAccents(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const square = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "market-square",
-  );
+  const square = getV2LandmarkByRole(visualScene, "civic_square");
   if (!square) {
     return;
   }
@@ -744,12 +736,8 @@ function drawV2DockGroundWear(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const yard = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "freight-yard",
-  );
-  const pier = visualScene.landmarks.find(
-    (landmark) => landmark.locationId === "moss-pier",
-  );
+  const yard = getV2LandmarkByRole(visualScene, "freight_yard");
+  const pier = getV2LandmarkByRole(visualScene, "harbor_slip");
 
   if (yard) {
     const { rect } = yard;
@@ -784,37 +772,37 @@ function drawV2LandmarkStructureArt(
 ) {
   const layer = objects.structureLayer;
   for (const landmark of visualScene.landmarks) {
-    if (
-      landmark.locationId === "market-square" ||
-      landmark.style === "square"
-    ) {
+    const intent = getSouthQuayLandmarkIntent(visualScene, landmark.locationId);
+    const role = intent?.role ?? null;
+
+    if (role === "civic_square") {
       drawQuaySquareHeroArt(layer, landmark.rect);
       continue;
     }
 
-    if (landmark.style === "courtyard") {
+    if (role === "service_yard") {
       continue;
     }
 
-    if (landmark.style === "cafe") {
+    if (role === "eatery") {
       drawTeaHouseHeroArt(layer, landmark.rect);
       continue;
     }
 
-    if (landmark.style === "boarding-house") {
+    if (role === "boarding_house") {
       drawBoardingHouseHeroArt(layer, landmark.rect);
       addLandmarkTextNode(objects, {
         color: "#f4ead2",
         fontFamily: "Georgia, serif",
         fontSize: 14,
-        text: "MORROW HOUSE",
+        text: intent?.name.toUpperCase() ?? "MORROW HOUSE",
         x: landmark.rect.x + landmark.rect.width / 2,
         y: landmark.rect.y + 27,
       });
       continue;
     }
 
-    drawV2GenericLandmarkArt(layer, landmark);
+    drawV2GenericLandmarkArt(layer, landmark, role);
   }
 }
 
@@ -1144,6 +1132,7 @@ function drawQuaySquareHeroArt(
 function drawV2GenericLandmarkArt(
   layer: PhaserType.GameObjects.Graphics,
   landmark: VisualScene["landmarks"][number],
+  role: SouthQuaySemanticLandmarkRole | null,
 ) {
   const roofFill =
     landmark.style === "workshop"
@@ -1175,8 +1164,8 @@ function drawV2GenericLandmarkArt(
           : 0xa99c7d;
   const roofHeight = Math.max(28, Math.min(56, landmark.rect.height * 0.24));
   const lowerBandHeight = Math.max(40, landmark.rect.height * 0.22);
-  const isDockyard = landmark.locationId === "freight-yard";
-  const isRepairStall = landmark.locationId === "repair-stall";
+  const isDockyard = role === "freight_yard";
+  const isRepairStall = role === "workshop";
   const dockyardCargoWidth = isDockyard
     ? Math.max(78, landmark.rect.width * 0.28)
     : 0;
@@ -2665,8 +2654,8 @@ function drawQuayContinuationZone(
   rect: VisualRect,
   edge: "east" | "north" | "south" | "west",
 ) {
-  void edge;
-  layer.fillStyle(0x1f2a2f, 1);
+  const isVertical = edge === "east" || edge === "west";
+  layer.fillStyle(0x245c77, 1);
   layer.fillRoundedRect(
     rect.x,
     rect.y,
@@ -2674,15 +2663,39 @@ function drawQuayContinuationZone(
     rect.height,
     rect.radius ?? 12,
   );
-  layer.fillStyle(0x6a655a, 0.55);
-  layer.fillRect(rect.x, rect.y, rect.width, 16);
-  layer.fillStyle(0x23566f, 1);
+  layer.fillStyle(0x183f53, 0.42);
+
+  if (isVertical) {
+    const wallX = edge === "east" ? rect.x : rect.x + rect.width - 18;
+    layer.fillRect(wallX, rect.y, 18, rect.height);
+    layer.fillStyle(0xb5a47f, 0.46);
+    layer.fillRect(
+      edge === "east" ? wallX : wallX + 12,
+      rect.y,
+      6,
+      rect.height,
+    );
+    layer.lineStyle(1.4, 0xc8edf4, 0.16);
+    for (let y = rect.y + 30; y < rect.y + rect.height - 20; y += 62) {
+      layer.lineBetween(rect.x + 30, y, rect.x + rect.width - 16, y + 7);
+    }
+    return;
+  }
+
   layer.fillRect(
     rect.x,
-    rect.y + Math.max(rect.height - 82, 0),
+    rect.y + rect.height * 0.38,
     rect.width,
-    82,
+    rect.height * 0.62,
   );
+  layer.fillStyle(0x7b715e, 0.86);
+  layer.fillRect(rect.x, rect.y, rect.width, 18);
+  layer.fillStyle(0xe1cfa5, 0.28);
+  layer.fillRect(rect.x, rect.y + 3, rect.width, 5);
+  layer.lineStyle(1.5, 0xd7f4f8, 0.18);
+  for (let x = rect.x + 26; x < rect.x + rect.width - 20; x += 92) {
+    layer.lineBetween(x, rect.y + 42, x + 46, rect.y + 48);
+  }
 }
 
 function drawHarborEdge(
@@ -3333,26 +3346,17 @@ function drawPropClusters(
   }
 }
 
-function getV2Landmark(
-  visualScene: VisualScene,
-  locationId: VisualScene["landmarks"][number]["locationId"],
-) {
-  return visualScene.landmarks.find(
-    (landmark) => landmark.locationId === locationId,
-  );
-}
-
 function drawV2ProceduralPropClusters(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const cafe = getV2Landmark(visualScene, "tea-house");
-  const boardingHouse = getV2Landmark(visualScene, "boarding-house");
-  const repairStall = getV2Landmark(visualScene, "repair-stall");
-  const square = getV2Landmark(visualScene, "market-square");
-  const freightYard = getV2Landmark(visualScene, "freight-yard");
-  const pier = getV2Landmark(visualScene, "moss-pier");
-  const courtyard = getV2Landmark(visualScene, "courtyard");
+  const cafe = getV2LandmarkByRole(visualScene, "eatery");
+  const boardingHouse = getV2LandmarkByRole(visualScene, "boarding_house");
+  const repairStall = getV2LandmarkByRole(visualScene, "workshop");
+  const square = getV2LandmarkByRole(visualScene, "civic_square");
+  const freightYard = getV2LandmarkByRole(visualScene, "freight_yard");
+  const pier = getV2LandmarkByRole(visualScene, "harbor_slip");
+  const courtyard = getV2LandmarkByRole(visualScene, "service_yard");
 
   if (cafe) {
     drawV2CafePersonality(layer, cafe.rect);

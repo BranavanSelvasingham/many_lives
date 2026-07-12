@@ -7,6 +7,7 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
+import { inflateSync } from "node:zlib";
 
 import {
   closeChildProcess,
@@ -83,6 +84,8 @@ const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|starting|weighing|continuing|carrying the conversation)/i;
 
 let activeWebBase = DEFAULT_WEB_BASE;
+const screenshotCaptureRetries = [];
+const screenshotPixelDiagnostics = [];
 
 const VIEWPORTS = [
   { height: 720, name: "desktop", width: 1280 },
@@ -118,6 +121,13 @@ const INTERIOR_CAMERA_VIEWPORT = {
   name: "interior-camera",
   width: 810,
 };
+const requestedViewportName = process.env.MANY_LIVES_VISUAL_VIEWPORT ?? null;
+const ACTIVE_VIEWPORTS = requestedViewportName
+  ? VIEWPORTS.filter((viewport) => viewport.name === requestedViewportName)
+  : VIEWPORTS;
+if (requestedViewportName && ACTIVE_VIEWPORTS.length === 0) {
+  throw new Error(`Unknown MANY_LIVES_VISUAL_VIEWPORT ${requestedViewportName}.`);
+}
 const INTERIOR_CAMERA_MIN_PAN_DELTA = 20;
 
 function hasWatchModeProgressText(bodyText) {
@@ -487,12 +497,18 @@ class CdpSession {
       const canvas = document.querySelector("canvas");
       const compactPrimaryAction = document.querySelector(".ml-compact-primary-action");
       const dock = document.querySelector(".ml-dock-panel");
+      const dockRoot = document.querySelector(".ml-dock");
       const rail = document.querySelector(".ml-rail-shell");
+      const commandRail = document.querySelector(".ml-command-rail");
       const rightStack = document.querySelector(".ml-right-stack");
       const root = document.querySelector(".ml-root");
       const timePill = document.querySelector(".ml-time-pill");
       const whyNow = document.querySelector(".ml-rowan-story-card-reason");
-      const decisionArtifact = document.querySelector("[data-visible-decision-artifact='true']");
+      const decisionArtifacts = Array.from(
+        document.querySelectorAll("[data-visible-decision-artifact='true']"),
+      );
+      const decisionArtifact = decisionArtifacts[0] ?? null;
+      const decisionDetails = document.querySelector("[data-decision-details='true']");
       const text = document.body.innerText || "";
       const isVisibleEnabled = (element) => {
         if (!element) {
@@ -506,6 +522,8 @@ class CdpSession {
           rect.height > 0 &&
           style.visibility !== "hidden" &&
           style.display !== "none" &&
+          style.contentVisibility !== "hidden" &&
+          Number.parseFloat(style.opacity || "1") > 0.01 &&
           !element.disabled
         );
       };
@@ -557,11 +575,271 @@ class CdpSession {
       const compactPrimaryActionRect =
         compactPrimaryAction?.getBoundingClientRect();
       const dockRect = dock?.getBoundingClientRect();
+      const dockRootRect = dockRoot?.getBoundingClientRect();
       const railRect = rail?.getBoundingClientRect();
       const rightStackRect = rightStack?.getBoundingClientRect();
       const timePillRect = timePill?.getBoundingClientRect();
       const whyNowRect = whyNow?.getBoundingClientRect();
       const decisionArtifactRect = decisionArtifact?.getBoundingClientRect();
+      const rectData = (rect) => rect ? {
+        bottom: Math.round(rect.bottom),
+        height: Math.round(rect.height),
+        left: Math.round(rect.left),
+        right: Math.round(rect.right),
+        top: Math.round(rect.top),
+        width: Math.round(rect.width),
+        x: Math.round(rect.x),
+        y: Math.round(rect.y)
+      } : null;
+      const visibleRectFor = (element) => {
+        if (!element) {
+          return null;
+        }
+        const source = element.getBoundingClientRect();
+        let visible = {
+          bottom: Math.min(source.bottom, window.innerHeight),
+          left: Math.max(source.left, 0),
+          right: Math.min(source.right, window.innerWidth),
+          top: Math.max(source.top, 0),
+        };
+        for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+          const style = window.getComputedStyle(ancestor);
+          const clipsX = /auto|clip|hidden|scroll/.test(style.overflowX);
+          const clipsY = /auto|clip|hidden|scroll/.test(style.overflowY);
+          if (!clipsX && !clipsY) {
+            continue;
+          }
+          const rect = ancestor.getBoundingClientRect();
+          if (clipsX) {
+            visible.left = Math.max(visible.left, rect.left);
+            visible.right = Math.min(visible.right, rect.right);
+          }
+          if (clipsY) {
+            visible.top = Math.max(visible.top, rect.top);
+            visible.bottom = Math.min(visible.bottom, rect.bottom);
+          }
+        }
+        if (visible.right <= visible.left || visible.bottom <= visible.top) {
+          return null;
+        }
+        return {
+          ...visible,
+          height: visible.bottom - visible.top,
+          width: visible.right - visible.left,
+          x: visible.left,
+          y: visible.top,
+        };
+      };
+      const computedVisualStyle = (element) => {
+        if (!element) {
+          return null;
+        }
+        const style = window.getComputedStyle(element);
+        return {
+          color: style.color,
+          contentVisibility: style.contentVisibility,
+          display: style.display,
+          opacity: Number.parseFloat(style.opacity || "1"),
+          rect: rectData(element.getBoundingClientRect()),
+          transform: style.transform,
+          visibility: style.visibility,
+        };
+      };
+      const visibleTimeChipElements = Array.from(
+        timePill?.querySelectorAll(".ml-time-chip") ?? [],
+      )
+        .filter(isVisibleEnabled);
+      const visibleTimeChips = visibleTimeChipElements.map(
+        (chip) => chip.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+      );
+      const visibleTimeChipStyles = visibleTimeChipElements.map((chip) => ({
+        ...computedVisualStyle(chip),
+        text: chip.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+      }));
+      const visibleTimeGlyphStyles = visibleTimeChipElements.flatMap(
+        (chip, chipIndex) => {
+          const chipText =
+            chip.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+          const walker = document.createTreeWalker(
+            chip,
+            NodeFilter.SHOW_TEXT,
+          );
+          const runs = [];
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const text = node.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+            const parent = node.parentElement ?? chip;
+            if (!text || !isVisibleEnabled(parent)) {
+              continue;
+            }
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const rect = range.getBoundingClientRect();
+            range.detach();
+            if (rect.width <= 0 || rect.height <= 0) {
+              continue;
+            }
+            const style = window.getComputedStyle(parent);
+            runs.push({
+              chipIndex,
+              chipText,
+              color: style.color,
+              fontSize: style.fontSize,
+              fontWeight: style.fontWeight,
+              opacity: Number.parseFloat(style.opacity || "1"),
+              rect: rectData(rect),
+              text,
+              visibility: style.visibility,
+            });
+          }
+          return runs;
+        },
+      );
+      const visibleUiTextRegions = Array.from(
+        document.querySelectorAll([
+          ".ml-right-stack .ml-rail-name",
+          ".ml-right-stack .ml-rail-status",
+          ".ml-right-stack .ml-rail-peek-label",
+          ".ml-right-stack .ml-rail-thought",
+          ".ml-command-rail [data-decision-field]",
+          ".ml-dock .ml-dock-button",
+          ".ml-dock .ml-dock-copy",
+        ].join(",")),
+      )
+        .filter(isVisibleEnabled)
+        .flatMap((element) => {
+          const elementVisibleRect = visibleRectFor(element);
+          if (!elementVisibleRect) {
+            return [];
+          }
+          const surface = element.closest(".ml-right-stack") ? "rail" : "dock";
+          const walker = document.createTreeWalker(
+            element,
+            NodeFilter.SHOW_TEXT,
+          );
+          const runs = [];
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const text = node.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+            const parent = node.parentElement ?? element;
+            if (!text || !isVisibleEnabled(parent)) {
+              continue;
+            }
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const source = range.getBoundingClientRect();
+            range.detach();
+            const visible = {
+              bottom: Math.min(source.bottom, elementVisibleRect.bottom),
+              left: Math.max(source.left, elementVisibleRect.left),
+              right: Math.min(source.right, elementVisibleRect.right),
+              top: Math.max(source.top, elementVisibleRect.top),
+            };
+            if (visible.right <= visible.left || visible.bottom <= visible.top) {
+              continue;
+            }
+            const style = window.getComputedStyle(parent);
+            runs.push({
+              color: style.color,
+              contentVisibility: style.contentVisibility,
+              display: style.display,
+              fontSize: style.fontSize,
+              fontWeight: style.fontWeight,
+              opacity: Number.parseFloat(style.opacity || "1"),
+              rect: rectData({
+                ...visible,
+                height: visible.bottom - visible.top,
+                width: visible.right - visible.left,
+                x: visible.left,
+                y: visible.top,
+              }),
+              surface,
+              text,
+              transform: style.transform,
+              visibility: style.visibility,
+            });
+          }
+          return runs;
+        });
+      const decisionFieldCounts = Object.fromEntries(
+        ["aim", "choice", "rationale", "next-check"].map((field) => [
+          field,
+          document.querySelectorAll(
+            "[data-rail-root='rowan'] [data-decision-field='" + field + "']",
+          ).length,
+        ]),
+      );
+      const visualHierarchy = (() => {
+        const probe = document.querySelector("#ml-browser-visual-hierarchy-probe");
+        try {
+          return probe?.textContent ? JSON.parse(probe.textContent) : null;
+        } catch {
+          return null;
+        }
+      })();
+      const npcPresence = (() => {
+        const probe = document.querySelector("#ml-browser-npc-presence-probe");
+        try {
+          return probe?.textContent ? JSON.parse(probe.textContent) : null;
+        } catch {
+          return null;
+        }
+      })();
+      const cameraProbe = (() => {
+        const probe = document.querySelector("#ml-browser-camera-probe");
+        try {
+          return probe?.textContent ? JSON.parse(probe.textContent) : null;
+        } catch {
+          return null;
+        }
+      })();
+      const mapVisibleFraction = (() => {
+        const scene = cameraProbe?.sceneViewportCss;
+        if (!scene || scene.width <= 0 || scene.height <= 0) {
+          return null;
+        }
+        const mapRect = {
+          bottom: scene.y + scene.height,
+          left: scene.x,
+          right: scene.x + scene.width,
+          top: scene.y,
+        };
+        const blockers = [rightStackRect, dockRootRect]
+          .filter(Boolean)
+          .map((rect) => ({
+            bottom: Math.min(rect.bottom, mapRect.bottom),
+            left: Math.max(rect.left, mapRect.left),
+            right: Math.min(rect.right, mapRect.right),
+            top: Math.max(rect.top, mapRect.top),
+          }))
+          .filter((rect) => rect.right > rect.left && rect.bottom > rect.top);
+        const xs = [...new Set([
+          mapRect.left,
+          mapRect.right,
+          ...blockers.flatMap((rect) => [rect.left, rect.right]),
+        ])].sort((a, b) => a - b);
+        const ys = [...new Set([
+          mapRect.top,
+          mapRect.bottom,
+          ...blockers.flatMap((rect) => [rect.top, rect.bottom]),
+        ])].sort((a, b) => a - b);
+        let blockedArea = 0;
+        for (let xIndex = 0; xIndex < xs.length - 1; xIndex += 1) {
+          for (let yIndex = 0; yIndex < ys.length - 1; yIndex += 1) {
+            const left = xs[xIndex];
+            const right = xs[xIndex + 1];
+            const top = ys[yIndex];
+            const bottom = ys[yIndex + 1];
+            const centerX = (left + right) / 2;
+            const centerY = (top + bottom) / 2;
+            if (blockers.some((rect) =>
+              centerX >= rect.left && centerX <= rect.right &&
+              centerY >= rect.top && centerY <= rect.bottom
+            )) {
+              blockedArea += (right - left) * (bottom - top);
+            }
+          }
+        }
+        return Number((1 - blockedArea / (scene.width * scene.height)).toFixed(4));
+      })();
       const whyNowVisible = Boolean(
         whyNowRect &&
           railRect &&
@@ -613,6 +891,12 @@ class CdpSession {
           x: Math.round(dockRect.x),
           y: Math.round(dockRect.y)
         } : null,
+        dockRoot: rectData(dockRootRect),
+        commandRail: commandRail ? {
+          clientHeight: commandRail.clientHeight,
+          overflowY: window.getComputedStyle(commandRail).overflowY,
+          scrollHeight: commandRail.scrollHeight
+        } : null,
         decisionArtifact: decisionArtifactRect ? {
           height: Math.round(decisionArtifactRect.height),
           source: decisionArtifact.getAttribute("data-decision-source"),
@@ -622,6 +906,9 @@ class CdpSession {
           x: Math.round(decisionArtifactRect.x),
           y: Math.round(decisionArtifactRect.y)
         } : null,
+        decisionArtifactCount: decisionArtifacts.length,
+        decisionDetailsOpen: decisionDetails?.open ?? null,
+        decisionFieldCounts,
         hasFrameworkOverlay:
           text.includes("Unhandled Runtime Error") ||
           text.includes("Application error") ||
@@ -640,6 +927,8 @@ class CdpSession {
           y: Math.round(rightStackRect.y)
         } : null,
         rootClass: root?.className ?? "",
+        mapVisibleFraction,
+        npcPresence,
         timePill: timePillRect ? {
           bottom: Math.round(timePillRect.bottom),
           height: Math.round(timePillRect.height),
@@ -647,6 +936,12 @@ class CdpSession {
           x: Math.round(timePillRect.x),
           y: Math.round(timePillRect.y)
         } : null,
+        timePillComputedStyle: computedVisualStyle(timePill),
+        visibleTimeChips,
+        visibleTimeChipStyles,
+        visibleTimeGlyphStyles,
+        visibleUiTextRegions,
+        visualHierarchy,
         title: document.title,
         url: location.href,
         watchModeReplyAffordances,
@@ -841,6 +1136,20 @@ class CdpSession {
   }
 
   async captureScreenshot(targetPath) {
+    await this.evaluate(`new Promise((resolve) => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const pill = document.querySelector(".ml-time-pill");
+          pill?.getBoundingClientRect();
+          for (const chip of pill?.querySelectorAll(".ml-time-chip") ?? []) {
+            chip.getBoundingClientRect();
+            window.getComputedStyle(chip).opacity;
+          }
+          resolve(true);
+        });
+      });
+    })`);
+    await this.send("Page.getLayoutMetrics");
     const response = await this.send("Page.captureScreenshot", {
       captureBeyondViewport: false,
       format: "png",
@@ -1127,6 +1436,464 @@ function assertPngScreenshot(buffer, viewport) {
   );
 }
 
+function assertHudScreenshotPixels(
+  buffer,
+  page,
+  viewport,
+  label,
+  image = decodePngPixels(buffer),
+) {
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  assert.ok(
+    page.visibleTimeGlyphStyles?.length >= 5,
+    `${label}: missing tight HUD glyph geometry for pixel validation.`,
+  );
+
+  const runDiagnostics = page.visibleTimeGlyphStyles.map((run) => {
+    const rect = run.rect;
+    assert.ok(rect, `${label}: HUD text run ${run.text} has no glyph rectangle.`);
+    const left = clamp(Math.floor(rect.left * scaleX), 0, image.width);
+    const right = clamp(Math.ceil(rect.right * scaleX), left, image.width);
+    const top = clamp(Math.floor(rect.top * scaleY), 0, image.height);
+    const bottom = clamp(Math.ceil(rect.bottom * scaleY), top, image.height);
+    let brightPixels = 0;
+    let sampledPixels = 0;
+    const nonSpaceCharacters = run.text.replace(/\s+/g, "").length;
+    const horizontalBinCount = clamp(
+      Math.ceil(nonSpaceCharacters / 2),
+      2,
+      8,
+    );
+    const horizontalBins = new Uint16Array(horizontalBinCount);
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const offset = (y * image.width + x) * image.channels;
+        const red = image.pixels[offset];
+        const green = image.pixels[offset + 1] ?? red;
+        const blue = image.pixels[offset + 2] ?? red;
+        const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        if (luminance >= 90) {
+          brightPixels += 1;
+          const relativeX = right > left ? (x - left) / (right - left) : 0;
+          horizontalBins[
+            clamp(Math.floor(relativeX * horizontalBinCount), 0, horizontalBinCount - 1)
+          ] += 1;
+        }
+        sampledPixels += 1;
+      }
+    }
+    const minimumBrightPixels = Math.max(
+      5 * nonSpaceCharacters * scaleX * scaleY,
+      sampledPixels * 0.035,
+    );
+    const minimumPixelsPerActiveBin = Math.max(2, Math.floor(2 * scaleX * scaleY));
+    const activeHorizontalBins = [...horizontalBins].filter(
+      (count) => count >= minimumPixelsPerActiveBin,
+    ).length;
+    const minimumActiveHorizontalBins = Math.ceil(horizontalBinCount * 0.75);
+    assert.ok(
+      brightPixels >= minimumBrightPixels,
+      `${label}: HUD text run "${run.text}" in chip "${run.chipText}" is visually blank or incomplete (${brightPixels} bright glyph pixels, expected >= ${minimumBrightPixels.toFixed(1)}).`,
+    );
+    assert.ok(
+      activeHorizontalBins >= minimumActiveHorizontalBins,
+      `${label}: HUD text run "${run.text}" in chip "${run.chipText}" is only partially painted (${activeHorizontalBins}/${horizontalBinCount} active horizontal glyph bins, expected >= ${minimumActiveHorizontalBins}).`,
+    );
+    return {
+      activeHorizontalBins,
+      brightPixels,
+      chipIndex: run.chipIndex,
+      chipText: run.chipText,
+      horizontalBinCount,
+      minimumActiveHorizontalBins,
+      minimumBrightPixels: Number(minimumBrightPixels.toFixed(1)),
+      rect,
+      text: run.text,
+    };
+  });
+
+  return page.visibleTimeChipStyles.map((chip, chipIndex) => ({
+    chipIndex,
+    text: chip.text,
+    runs: runDiagnostics.filter((run) => run.chipIndex === chipIndex),
+  }));
+}
+
+function assertVisibleUiTextPixels(
+  buffer,
+  page,
+  viewport,
+  label,
+  image = decodePngPixels(buffer),
+) {
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  const regions = page.visibleUiTextRegions ?? [];
+  assert.ok(
+    regions.length >= 5,
+    `${label}: expected tight visible rail/dock text runs for screenshot validation.`,
+  );
+  const surfaces = new Set(regions.map((region) => region.surface));
+  assert.ok(
+    surfaces.has("rail") && surfaces.has("dock"),
+    `${label}: screenshot validation requires both rail and dock glyph runs; found ${JSON.stringify([...surfaces])}.`,
+  );
+
+  const diagnostics = [];
+  for (const region of regions) {
+    const rect = region.rect;
+    assert.ok(rect, `${label}: UI text region ${region.text} has no rectangle.`);
+    const left = clamp(Math.floor(rect.left * scaleX), 0, image.width);
+    const right = clamp(Math.ceil(rect.right * scaleX), left, image.width);
+    const top = clamp(Math.floor(rect.top * scaleY), 0, image.height);
+    const bottom = clamp(Math.ceil(rect.bottom * scaleY), top, image.height);
+    let brightPixels = 0;
+    let sampledPixels = 0;
+    const nonSpaceCharacters = region.text.replace(/\s+/g, "").length;
+    const horizontalBinCount = clamp(
+      Math.ceil(nonSpaceCharacters / 3),
+      2,
+      8,
+    );
+    const horizontalBins = new Uint16Array(horizontalBinCount);
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const pixelOffset = (y * image.width + x) * image.channels;
+        const red = image.pixels[pixelOffset];
+        const green = image.pixels[pixelOffset + 1] ?? red;
+        const blue = image.pixels[pixelOffset + 2] ?? red;
+        const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        if (luminance >= 70) {
+          brightPixels += 1;
+          const relativeX = right > left ? (x - left) / (right - left) : 0;
+          horizontalBins[
+            clamp(Math.floor(relativeX * horizontalBinCount), 0, horizontalBinCount - 1)
+          ] += 1;
+        }
+        sampledPixels += 1;
+      }
+    }
+    const minimumBrightPixels = Math.max(
+      4 * Math.max(scaleX, scaleY),
+      2 * nonSpaceCharacters * scaleX * scaleY,
+      sampledPixels * 0.012,
+    );
+    const minimumPixelsPerActiveBin = Math.max(
+      2,
+      Math.floor(2 * scaleX * scaleY),
+    );
+    const activeHorizontalBins = [...horizontalBins].filter(
+      (count) => count >= minimumPixelsPerActiveBin,
+    ).length;
+    const minimumActiveHorizontalBins = Math.ceil(horizontalBinCount * 0.6);
+    assert.ok(
+      brightPixels >= minimumBrightPixels,
+      `${label}: visible rail/dock text region "${region.text.slice(0, 48)}" is blank in the screenshot (${brightPixels} bright pixels, expected >= ${minimumBrightPixels.toFixed(1)}).`,
+    );
+    assert.ok(
+      activeHorizontalBins >= minimumActiveHorizontalBins,
+      `${label}: visible rail/dock text run "${region.text.slice(0, 48)}" is only partially painted (${activeHorizontalBins}/${horizontalBinCount} active horizontal glyph bins, expected >= ${minimumActiveHorizontalBins}).`,
+    );
+    diagnostics.push({
+      activeHorizontalBins,
+      brightPixels,
+      horizontalBinCount,
+      minimumActiveHorizontalBins,
+      minimumBrightPixels: Number(minimumBrightPixels.toFixed(1)),
+      rect,
+      surface: region.surface,
+      text: region.text,
+    });
+  }
+  return diagnostics;
+}
+
+function assertNoLargeNearBlackDropout(
+  buffer,
+  viewport,
+  label,
+  image = decodePngPixels(buffer),
+) {
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  const width = viewport.width;
+  const height = viewport.height;
+  const nearBlack = new Uint8Array(width * height);
+  const visited = new Uint8Array(width * height);
+  const queue = new Int32Array(width * height);
+
+  for (let y = 0; y < height; y += 1) {
+    const sourceY = clamp(Math.floor((y + 0.5) * scaleY), 0, image.height - 1);
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = clamp(Math.floor((x + 0.5) * scaleX), 0, image.width - 1);
+      const pixelOffset = (sourceY * image.width + sourceX) * image.channels;
+      const red = image.pixels[pixelOffset];
+      const green = image.pixels[pixelOffset + 1] ?? red;
+      const blue = image.pixels[pixelOffset + 2] ?? red;
+      nearBlack[y * width + x] = Math.max(red, green, blue) <= 6 ? 1 : 0;
+    }
+  }
+
+  let largest = { area: 0, bottom: 0, left: 0, right: 0, top: 0 };
+  for (let index = 0; index < nearBlack.length; index += 1) {
+    if (!nearBlack[index] || visited[index]) {
+      continue;
+    }
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = index;
+    visited[index] = 1;
+    let area = 0;
+    let left = width;
+    let right = 0;
+    let top = height;
+    let bottom = 0;
+    while (head < tail) {
+      const current = queue[head++];
+      const x = current % width;
+      const y = Math.floor(current / width);
+      area += 1;
+      left = Math.min(left, x);
+      right = Math.max(right, x + 1);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y + 1);
+      const neighbors = [
+        x > 0 ? current - 1 : -1,
+        x + 1 < width ? current + 1 : -1,
+        y > 0 ? current - width : -1,
+        y + 1 < height ? current + width : -1,
+      ];
+      for (const neighbor of neighbors) {
+        if (
+          neighbor >= 0 &&
+          nearBlack[neighbor] &&
+          !visited[neighbor]
+        ) {
+          visited[neighbor] = 1;
+          queue[tail++] = neighbor;
+        }
+      }
+    }
+    if (area > largest.area) {
+      largest = { area, bottom, left, right, top };
+    }
+  }
+
+  const componentWidth = largest.right - largest.left;
+  const componentHeight = largest.bottom - largest.top;
+  const maximumArea = Math.max(1_600, width * height * 0.006);
+  assert.ok(
+    largest.area < maximumArea || componentWidth < 24 || componentHeight < 16,
+    `${label}: screenshot contains a large connected near-black dropout: ${JSON.stringify({
+      ...largest,
+      componentHeight,
+      componentWidth,
+      maximumArea: Number(maximumArea.toFixed(1)),
+    })}.`,
+  );
+  return largest;
+}
+
+function assertScreenshotVisualIntegrity(buffer, page, viewport, label) {
+  assertPngScreenshot(buffer, viewport);
+  const image = decodePngPixels(buffer);
+  const hudChipDiagnostics = assertHudScreenshotPixels(
+    buffer,
+    page,
+    viewport,
+    label,
+    image,
+  );
+  const uiTextDiagnostics = assertVisibleUiTextPixels(
+    buffer,
+    page,
+    viewport,
+    label,
+    image,
+  );
+  const largestNearBlackComponent = assertNoLargeNearBlackDropout(
+    buffer,
+    viewport,
+    label,
+    image,
+  );
+  return { hudChipDiagnostics, largestNearBlackComponent, uiTextDiagnostics };
+}
+
+async function captureValidatedScreenshot({
+  expectedHudText,
+  label,
+  page,
+  session,
+  targetPath,
+  viewport,
+}) {
+  let currentPage = page;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await session.captureScreenshot(targetPath);
+    const screenshot = await readFile(targetPath);
+    try {
+      const pixelDiagnostics = assertScreenshotVisualIntegrity(
+        screenshot,
+        currentPage,
+        viewport,
+        label,
+      );
+      screenshotPixelDiagnostics.push({
+        hudChips: pixelDiagnostics.hudChipDiagnostics,
+        label,
+        targetPath,
+        uiTextRuns: pixelDiagnostics.uiTextDiagnostics,
+      });
+      return {
+        largestNearBlackComponent:
+          pixelDiagnostics.largestNearBlackComponent,
+        page: currentPage,
+        retryCount: attempt - 1,
+        screenshot,
+      };
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 3) {
+        break;
+      }
+
+      const diagnosticPage = await session.inspectPage();
+      assertOverlayGeometry(
+        diagnosticPage,
+        viewport,
+        `${label} retry diagnostics`,
+        expectedHudText,
+      );
+      const camera = await session.readCameraProbe();
+      assert.ok(
+        camera && !camera.dragging && cameraProbeInRange(camera),
+        `${label}: screenshot failed while live camera diagnostics were unhealthy; refusing to retry.`,
+      );
+      const reason = error instanceof Error ? error.message : String(error);
+      screenshotCaptureRetries.push({
+        attempt,
+        camera: {
+          activeSpaceId: camera.activeSpaceId,
+          scroll: camera.scroll,
+          zoom: camera.zoom,
+        },
+        label,
+        reason,
+        targetPath,
+      });
+      process.stdout.write(
+        `[many-lives] Retrying incomplete screenshot paint for ${label} after healthy live diagnostics: ${reason}\n`,
+      );
+      currentPage = diagnosticPage;
+      await sleep(180);
+    }
+  }
+
+  throw new Error(
+    `${label}: could not capture a complete visual frame after 3 attempts. Last failure: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
+function decodePngPixels(buffer) {
+  const signature = buffer.subarray(0, 8).toString("hex");
+  assert.equal(signature, "89504e470d0a1a0a", "HUD pixel source is not a PNG.");
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = -1;
+  let interlace = -1;
+  const compressedChunks = [];
+
+  while (offset + 12 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    assert.ok(dataEnd + 4 <= buffer.length, `Malformed PNG ${type} chunk.`);
+    if (type === "IHDR") {
+      width = buffer.readUInt32BE(dataStart);
+      height = buffer.readUInt32BE(dataStart + 4);
+      bitDepth = buffer[dataStart + 8];
+      colorType = buffer[dataStart + 9];
+      interlace = buffer[dataStart + 12];
+    } else if (type === "IDAT") {
+      compressedChunks.push(buffer.subarray(dataStart, dataEnd));
+    } else if (type === "IEND") {
+      break;
+    }
+    offset = dataEnd + 4;
+  }
+
+  assert.equal(bitDepth, 8, `Unsupported PNG bit depth ${bitDepth}.`);
+  assert.equal(interlace, 0, "Interlaced PNGs are not supported by the HUD check.");
+  const channelsByColorType = new Map([
+    [0, 1],
+    [2, 3],
+    [4, 2],
+    [6, 4],
+  ]);
+  const channels = channelsByColorType.get(colorType);
+  assert.ok(channels, `Unsupported PNG color type ${colorType}.`);
+  const inflated = inflateSync(Buffer.concat(compressedChunks));
+  const stride = width * channels;
+  const expectedLength = height * (stride + 1);
+  assert.equal(
+    inflated.length,
+    expectedLength,
+    `Unexpected PNG scanline length ${inflated.length}; expected ${expectedLength}.`,
+  );
+  const pixels = Buffer.alloc(height * stride);
+
+  for (let y = 0; y < height; y += 1) {
+    const sourceRow = y * (stride + 1);
+    const filter = inflated[sourceRow];
+    const targetRow = y * stride;
+    for (let x = 0; x < stride; x += 1) {
+      const raw = inflated[sourceRow + 1 + x];
+      const left = x >= channels ? pixels[targetRow + x - channels] : 0;
+      const up = y > 0 ? pixels[targetRow - stride + x] : 0;
+      const upLeft =
+        y > 0 && x >= channels
+          ? pixels[targetRow - stride + x - channels]
+          : 0;
+      const predictor =
+        filter === 0
+          ? 0
+          : filter === 1
+            ? left
+            : filter === 2
+              ? up
+              : filter === 3
+                ? Math.floor((left + up) / 2)
+                : filter === 4
+                  ? paethPredictor(left, up, upLeft)
+                  : null;
+      assert.notEqual(predictor, null, `Unsupported PNG filter ${filter}.`);
+      pixels[targetRow + x] = (raw + predictor) & 0xff;
+    }
+  }
+
+  return { channels, height, pixels, width };
+}
+
+function paethPredictor(left, up, upLeft) {
+  const estimate = left + up - upLeft;
+  const leftDistance = Math.abs(estimate - left);
+  const upDistance = Math.abs(estimate - up);
+  const upLeftDistance = Math.abs(estimate - upLeft);
+  if (leftDistance <= upDistance && leftDistance <= upLeftDistance) {
+    return left;
+  }
+  return upDistance <= upLeftDistance ? up : upLeft;
+}
+
 async function assertAmbientScaleGuard() {
   const source = await readFile(STREET_APP_PATH, "utf8");
   const routesMatch = source.match(/const AMBIENT_CITY_ROUTES:[\s\S]*?];/);
@@ -1380,6 +2147,36 @@ async function assertCameraPanContractGuard() {
     "Selected NPC focus must stay actor-attached instead of drawing a full location footprint halo.",
   );
   assert.ok(
+    !streetSource.includes("playerReticle") &&
+      !streetSource.includes("playerBeacon") &&
+      !streetSource.includes("drawPlayerPresenceMarker") &&
+      !streetSource.includes("drawWaypointBeacon"),
+    "Rowan must not regain stacked reticle, beacon, halo, or waypoint treatments.",
+  );
+  assert.ok(
+    streetSource.includes("persistentIdentityTreatments") &&
+      streetSource.includes("contextualCues") &&
+      smokeSource.includes("assertBoundedVisualHierarchy") &&
+      smokeSource.includes("assertOverlayGeometry"),
+    "Visual smoke must count Rowan cues and assert overlay geometry at runtime.",
+  );
+  assert.ok(
+    streetSource.includes("function isNpcVisuallyPresentAtCurrentTime") &&
+      streetSource.includes("function isHourWithinNpcScheduleWindow") &&
+      streetSource.includes("isNpcVisuallyPresentAtCurrentTime(game, npc)"),
+    "Phaser actor and nearby presence must remain schedule-authoritative.",
+  );
+  assert.ok(
+    smokeSource.includes("assertHudScreenshotPixels") &&
+      smokeSource.includes("visibleTimeGlyphStyles") &&
+      smokeSource.includes("activeHorizontalBins") &&
+      smokeSource.includes("screenshotPixelDiagnostics") &&
+      smokeSource.includes("assertNoLargeNearBlackDropout") &&
+      smokeSource.includes("captureValidatedScreenshot") &&
+      smokeSource.includes("runAfterHoursNpcAvailabilityCheck"),
+    "Visual smoke must glyph-check HUD paint, retain per-capture diagnostics, reject black dropouts, and verify after-hours NPC absence.",
+  );
+  assert.ok(
     streetSource.includes("target-outside-safe-rect") &&
       streetSource.includes("label-would-clamp-away-from-target") &&
       streetSource.includes("pointInsideVisualRect(cue.targetWorld, labelSafeRect)"),
@@ -1587,6 +2384,59 @@ function assertScheduledNpcVisualCues(browserProbe, viewportName) {
     ),
     `${viewportName}: scheduled NPC cue evidence must use player-facing labels, got ${JSON.stringify(cues)}.`,
   );
+}
+
+function assertNpcVisualPresenceMatchesAvailability(
+  browserProbe,
+  page,
+  label,
+) {
+  const schedules = browserProbe?.worldPressure?.npcSchedules ?? [];
+  const presence = page?.npcPresence;
+  assert.ok(presence, `${label}: missing NPC visual-presence probe.`);
+  assert.deepEqual(
+    presence.scheduleSemantics,
+    {
+      fullDayWindowActive: true,
+      halfOpenEndExcluded: true,
+      overnightAfterMidnightActive: true,
+      overnightBeforeMidnightActive: true,
+      overnightEndExcluded: true,
+    },
+    `${label}: Phaser NPC presence helper no longer matches half-open/overnight schedule semantics.`,
+  );
+  const visuallyPresent = new Set(presence.visuallyPresentNpcIds ?? []);
+  const nearby = new Set(presence.nearbyNpcIds ?? []);
+  const visibleMarkerNpcIds = new Set(
+    (browserProbe?.movement?.scheduledNpcMarkerSamples ?? [])
+      .filter((sample) => sample.visible)
+      .map((sample) => sample.npcId),
+  );
+
+  for (const schedule of schedules) {
+    if (schedule.availability === "unavailable") {
+      assert.ok(
+        !visuallyPresent.has(schedule.id),
+        `${label}: unavailable NPC ${schedule.id} remains visually present from stale location ${schedule.currentLocationId}.`,
+      );
+      assert.ok(
+        !nearby.has(schedule.id),
+        `${label}: unavailable NPC ${schedule.id} remains in the nearby list.`,
+      );
+      assert.ok(
+        !visibleMarkerNpcIds.has(schedule.id),
+        `${label}: unavailable NPC ${schedule.id} still has a visible Phaser/schedule marker.`,
+      );
+    }
+  }
+
+  for (const npcId of visibleMarkerNpcIds) {
+    const schedule = schedules.find((entry) => entry.id === npcId);
+    assert.ok(
+      !schedule || schedule.availability !== "unavailable",
+      `${label}: visible marker ${npcId} contradicts browser-probe availability ${schedule?.availability}.`,
+    );
+  }
 }
 
 function assertOpeningPlayerLocationGeometry(browserProbe, viewportName) {
@@ -2390,6 +3240,220 @@ function assertNoWatchModeReplyAffordances(page, label) {
   );
 }
 
+function assertBoundedVisualHierarchy(
+  page,
+  label,
+  { requireContextualCue = false } = {},
+) {
+  const hierarchy = page.visualHierarchy;
+  assert.ok(hierarchy, `${label}: missing visual hierarchy probe.`);
+  assert.ok(
+    hierarchy.persistentIdentityTreatments.length <= 1,
+    `${label}: Rowan has more than one persistent identity treatment: ${JSON.stringify(hierarchy)}.`,
+  );
+  assert.ok(
+    hierarchy.contextualCues.length <= 1,
+    `${label}: Rowan has more than one contextual route/target cue: ${JSON.stringify(hierarchy)}.`,
+  );
+  assert.deepEqual(
+    hierarchy.persistentIdentityTreatments,
+    ["you-label"],
+    `${label}: Rowan's persistent identity should be the single actor-attached YOU label.`,
+  );
+  assert.equal(
+    hierarchy.intentLabelVisible,
+    false,
+    `${label}: the old player intent label is still visible beside the route/target cue.`,
+  );
+  if (requireContextualCue) {
+    assert.ok(
+      hierarchy.hasTarget || hierarchy.hasRoute,
+      `${label}: bounded hierarchy lost both the current target and active route.`,
+    );
+  }
+}
+
+function assertDecisionHierarchy(page, label, artifactPayload) {
+  assert.equal(
+    page.decisionArtifactCount,
+    1,
+    `${label}: aim/choice/rationale summary is repeated in ${page.decisionArtifactCount} decision artifacts.`,
+  );
+  for (const field of ["aim", "choice", "rationale"]) {
+    assert.equal(
+      page.decisionFieldCounts[field],
+      1,
+      `${label}: decision field ${field} must appear exactly once.`,
+    );
+  }
+  assert.equal(
+    page.decisionFieldCounts["next-check"],
+    artifactPayload?.nextCheck ? 1 : 0,
+    `${label}: next check must appear once when supplied and nowhere else.`,
+  );
+  const hasDeeperEvidence = Boolean(
+    artifactPayload?.constraints?.length ||
+      artifactPayload?.considered?.length ||
+      artifactPayload?.passedOver?.length,
+  );
+  assert.equal(
+    page.decisionDetailsOpen,
+    hasDeeperEvidence ? false : null,
+    `${label}: evidence/options should remain available on demand, not expanded by default.`,
+  );
+}
+
+function assertOverlayGeometry(page, viewport, label, expectedHudText) {
+  const viewportBottom = viewport.height;
+  const viewportRight = viewport.width;
+  const rectBottom = (rect) => rect?.bottom ?? rect?.y + rect?.height;
+  const rectRight = (rect) => rect?.right ?? rect?.x + rect?.width;
+  const insideViewport = (rect) =>
+    rect &&
+    rect.x >= -1 &&
+    rect.y >= -1 &&
+    rectRight(rect) <= viewportRight + 1 &&
+    rectBottom(rect) <= viewportBottom + 1;
+
+  assert.ok(page.timePill, `${label}: top HUD is missing.`);
+  assert.ok(
+    page.timePillComputedStyle,
+    `${label}: top HUD computed style is missing.`,
+  );
+  assert.notEqual(
+    page.timePillComputedStyle.display,
+    "none",
+    `${label}: top HUD computed display is none.`,
+  );
+  assert.equal(
+    page.timePillComputedStyle.visibility,
+    "visible",
+    `${label}: top HUD computed visibility is ${page.timePillComputedStyle.visibility}.`,
+  );
+  assert.notEqual(
+    page.timePillComputedStyle.contentVisibility,
+    "hidden",
+    `${label}: top HUD content visibility is hidden.`,
+  );
+  assert.ok(
+    page.timePillComputedStyle.opacity >= 0.99,
+    `${label}: top HUD computed opacity is ${page.timePillComputedStyle.opacity}.`,
+  );
+  assert.ok(
+    insideViewport(page.timePill),
+    `${label}: top HUD is clipped outside ${viewport.width}x${viewport.height}: ${JSON.stringify(page.timePill)}.`,
+  );
+  assert.ok(
+    page.visibleTimeChips.length >= 3,
+    `${label}: top HUD lost visible day/time/resource content: ${JSON.stringify(page.visibleTimeChips)}.`,
+  );
+  assert.equal(
+    page.visibleTimeChipStyles.length,
+    page.visibleTimeChips.length,
+    `${label}: HUD chip style probe diverged from visible text.`,
+  );
+  assert.ok(
+    page.visibleTimeGlyphStyles.length >= page.visibleTimeChips.length + 1,
+    `${label}: HUD glyph probe did not expose each visible text run: ${JSON.stringify(page.visibleTimeGlyphStyles)}.`,
+  );
+  for (const chip of page.visibleTimeChipStyles) {
+    assert.notEqual(
+      chip.display,
+      "none",
+      `${label}: HUD chip "${chip.text}" computed display is none.`,
+    );
+    assert.equal(
+      chip.visibility,
+      "visible",
+      `${label}: HUD chip "${chip.text}" computed visibility is ${chip.visibility}.`,
+    );
+    assert.notEqual(
+      chip.contentVisibility,
+      "hidden",
+      `${label}: HUD chip "${chip.text}" content visibility is hidden.`,
+    );
+    assert.ok(
+      chip.opacity >= 0.99,
+      `${label}: HUD chip "${chip.text}" computed opacity is ${chip.opacity}.`,
+    );
+    assert.ok(
+      chip.rect.left >= page.timePill.x - 1 &&
+        chip.rect.right <= page.timePill.x + page.timePill.width + 1 &&
+        chip.rect.top >= page.timePill.y - 1 &&
+        chip.rect.bottom <= page.timePill.bottom + 1,
+      `${label}: HUD chip "${chip.text}" is clipped outside the pill: ${JSON.stringify(chip.rect)}.`,
+    );
+  }
+  for (const run of page.visibleTimeGlyphStyles) {
+    assert.equal(
+      run.visibility,
+      "visible",
+      `${label}: HUD text run "${run.text}" computed visibility is ${run.visibility}.`,
+    );
+    assert.ok(
+      run.opacity >= 0.99,
+      `${label}: HUD text run "${run.text}" computed opacity is ${run.opacity}.`,
+    );
+    assert.ok(
+      run.rect.left >= page.timePill.x - 1 &&
+        run.rect.right <= page.timePill.x + page.timePill.width + 1 &&
+        run.rect.top >= page.timePill.y - 1 &&
+        run.rect.bottom <= page.timePill.bottom + 1,
+      `${label}: HUD text run "${run.text}" is clipped outside the pill: ${JSON.stringify(run.rect)}.`,
+    );
+  }
+  if (expectedHudText) {
+    assert.deepEqual(
+      page.visibleTimeChips,
+      expectedHudText,
+      `${label}: HUD contents changed or disappeared after overlay/camera interaction.`,
+    );
+  }
+
+  assert.ok(insideViewport(page.rightStack), `${label}: rail is clipped.`);
+  assert.ok(insideViewport(page.dockRoot), `${label}: dock is clipped.`);
+  const rail = page.rightStack;
+  const dock = page.dockRoot;
+  const overlapsX = rail.x < rectRight(dock) && rectRight(rail) > dock.x;
+  const overlapsY = rail.y < rectBottom(dock) && rectBottom(rail) > dock.y;
+  const clearance = overlapsX
+    ? Math.max(dock.y - rectBottom(rail), rail.y - rectBottom(dock))
+    : overlapsY
+      ? Math.max(dock.x - rectRight(rail), rail.x - rectRight(dock))
+      : Math.max(
+          dock.y - rectBottom(rail),
+          rail.y - rectBottom(dock),
+          dock.x - rectRight(rail),
+          rail.x - rectRight(dock),
+        );
+  assert.ok(
+    clearance >= 8,
+    `${label}: rail-to-dock clearance is ${clearance}px; expected at least 8px. Rail ${JSON.stringify(rail)}, dock ${JSON.stringify(dock)}.`,
+  );
+
+  if (viewport.width <= 960) {
+    const minimumMapVisibleFraction = viewport.width <= 560 ? 0.45 : 0.5;
+    assert.ok(
+      page.mapVisibleFraction >= minimumMapVisibleFraction,
+      `${label}: only ${page.mapVisibleFraction} of the map remains visible; expected at least ${minimumMapVisibleFraction}.`,
+    );
+  }
+}
+
+function assertExpandedRailScroll(page, label) {
+  assert.ok(page.commandRail, `${label}: expanded rail has no internal scroller.`);
+  assert.match(
+    page.commandRail.overflowY,
+    /auto|scroll/,
+    `${label}: expanded rail overflow is ${page.commandRail.overflowY}, not internally scrollable.`,
+  );
+  assert.ok(
+    page.commandRail.clientHeight > 0 &&
+      page.commandRail.scrollHeight >= page.commandRail.clientHeight,
+    `${label}: expanded rail scroller has invalid dimensions ${JSON.stringify(page.commandRail)}.`,
+  );
+}
+
 function cameraScrollDistance(first, second) {
   return Math.hypot(
     (second?.scroll?.x ?? 0) - (first?.scroll?.x ?? 0),
@@ -2596,9 +3660,14 @@ async function runFreshAutoplayStartCheck(session) {
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "fresh-autoplay-started.png");
-  await session.captureScreenshot(screenshotPath);
-  const screenshot = await readFile(screenshotPath);
-  assertPngScreenshot(screenshot, viewport);
+  await captureValidatedScreenshot({
+    expectedHudText: page.visibleTimeChips,
+    label: "fresh autoplay",
+    page,
+    session,
+    targetPath: screenshotPath,
+    viewport,
+  });
 
   return {
     advanced: {
@@ -2639,11 +3708,27 @@ async function runFreshAutoplayStartCheck(session) {
 async function runFreshAutoplayOptOutCheck(session) {
   const viewport = VIEWPORTS[0];
   const url = `${activeWebBase}/?new=1&autoplay=0&autoplayOptOut=${Date.now()}`;
+  const previousGameId = (await session.readBrowserProbe())?.gameId ?? null;
   await session.setViewport(viewport);
   await session.navigate(url);
   await session.waitForAppReady();
 
-  const openingProbe = await session.readBrowserProbe();
+  const openingProbe = await waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      if (
+        !probe?.gameId ||
+        probe.gameId === previousGameId ||
+        probe.watchMode?.enabled !== false ||
+        probe.openingActionCarryForward?.requiredVisibleInput !== true
+      ) {
+        return null;
+      }
+      return probe;
+    },
+    AUTOPLAY_START_TIMEOUT_MS,
+    "Timed out waiting for a distinct fresh manual opening after autoplay opt-out.",
+  );
   assert.equal(
     openingProbe.watchMode?.enabled,
     false,
@@ -2727,14 +3812,39 @@ async function runResponsiveDecisionArtifactCheck(session) {
     advancedProbe.rail?.visibleDecisionArtifact ??
       advancedProbe.autonomy?.visibleDecisionArtifact,
   );
+  assertDecisionHierarchy(
+    page,
+    `${viewport.name} responsive decision hierarchy`,
+    advancedProbe.rail?.visibleDecisionArtifact ??
+      advancedProbe.autonomy?.visibleDecisionArtifact,
+  );
+  assertOverlayGeometry(
+    page,
+    viewport,
+    `${viewport.name} responsive decision expanded`,
+    page.visibleTimeChips,
+  );
+  assertExpandedRailScroll(
+    page,
+    `${viewport.name} responsive decision expanded`,
+  );
+  assertBoundedVisualHierarchy(
+    page,
+    `${viewport.name} responsive decision expanded`,
+  );
 
   const screenshotPath = path.join(
     OUTPUT_DIR,
     `${viewport.name}-decision-artifact.png`,
   );
-  await session.captureScreenshot(screenshotPath);
-  const screenshot = await readFile(screenshotPath);
-  assertPngScreenshot(screenshot, viewport);
+  await captureValidatedScreenshot({
+    expectedHudText: page.visibleTimeChips,
+    label: `${viewport.name} responsive decision`,
+    page,
+    session,
+    targetPath: screenshotPath,
+    viewport,
+  });
 
   return {
     advanced: {
@@ -2838,11 +3948,19 @@ async function runViewportCheck(session, viewport) {
     false,
     `${viewport.name}: framework error overlay detected.`,
   );
+  const expectedHudText = page.visibleTimeChips;
+  assertOverlayGeometry(page, viewport, `${viewport.name} collapsed`, expectedHudText);
+  assertBoundedVisualHierarchy(page, `${viewport.name} collapsed`);
 
   const screenshotPath = path.join(OUTPUT_DIR, `${viewport.name}.png`);
-  await session.captureScreenshot(screenshotPath);
-  const screenshot = await readFile(screenshotPath);
-  assertPngScreenshot(screenshot, viewport);
+  await captureValidatedScreenshot({
+    expectedHudText,
+    label: `${viewport.name} initial`,
+    page,
+    session,
+    targetPath: screenshotPath,
+    viewport,
+  });
 
   const mapAgency = await session.waitForMapAgencyProbe(viewport);
   assert.ok(mapAgency?.intent, `${viewport.name}: missing in-map agency cue.`);
@@ -2852,8 +3970,16 @@ async function runViewportCheck(session, viewport) {
   );
   assertMorrowMapAgencyTargetCorrelation(mapAgency, viewport.name);
   assertKettleMapAgencyTargetCorrelation(mapAgency, viewport.name);
+  assertBoundedVisualHierarchy(page, `${viewport.name} map agency`, {
+    requireContextualCue: true,
+  });
   const browserProbe = await session.readBrowserProbe();
   assert.ok(browserProbe, `${viewport.name}: missing browser probe.`);
+  assertNpcVisualPresenceMatchesAvailability(
+    browserProbe,
+    page,
+    viewport.name,
+  );
   assertFirstRouteEventCues(browserProbe, viewport.name);
   assertOpeningPlayerLocationGeometry(browserProbe, viewport.name);
   assertOpeningActionCarryForward(browserProbe, viewport.name, ["queued"]);
@@ -2873,9 +3999,9 @@ async function runViewportCheck(session, viewport) {
     `${viewport.name}: autonomy reason is still generic: ${browserProbe.autonomy.intent.reason}`,
   );
   const railShowsWhyNow =
-    /why now/i.test(page.bodyText) ||
+    /why (?:now|this)/i.test(page.bodyText) ||
     (await session.evaluate(
-      `(/why now/i).test(document.body.innerText || "")`,
+      `(/why (?:now|this)/i).test(document.body.innerText || "")`,
     ));
   assert.ok(
     railShowsWhyNow,
@@ -2901,6 +4027,11 @@ async function runViewportCheck(session, viewport) {
         browserProbe.rail.visibleDecisionArtifact,
       );
     }
+    assertDecisionHierarchy(
+      page,
+      `${viewport.name} rail hierarchy`,
+      browserProbe.rail.visibleDecisionArtifact,
+    );
   }
 
   let expandedRailScreenshotPath = null;
@@ -2921,15 +4052,23 @@ async function runViewportCheck(session, viewport) {
         Math.max(collapsedRailHeight + 80, minimumExpandedHeight),
       `${viewport.name}: expanded rail is still too short (${expandedPage.rail?.height}px from ${collapsedRailHeight}px).`,
     );
-    assert.equal(
-      expandedPage.whyNowVisible,
-      true,
-      `${viewport.name}: expanded rail does not visibly reveal the Why Now context.`,
+    assertOverlayGeometry(
+      expandedPage,
+      viewport,
+      `${viewport.name} expanded`,
+      expectedHudText,
     );
+    assertExpandedRailScroll(expandedPage, `${viewport.name} expanded`);
+    assertBoundedVisualHierarchy(expandedPage, `${viewport.name} expanded`);
     if (browserProbe.rail?.visibleDecisionArtifact) {
       assertVisibleDecisionArtifactDom(
         expandedPage.decisionArtifact,
         `${viewport.name} expanded rail`,
+        browserProbe.rail.visibleDecisionArtifact,
+      );
+      assertDecisionHierarchy(
+        expandedPage,
+        `${viewport.name} expanded rail hierarchy`,
         browserProbe.rail.visibleDecisionArtifact,
       );
       expandedDecisionArtifact = expandedPage.decisionArtifact;
@@ -2938,9 +4077,14 @@ async function runViewportCheck(session, viewport) {
       OUTPUT_DIR,
       `${viewport.name}-rail-expanded.png`,
     );
-    await session.captureScreenshot(expandedRailScreenshotPath);
-    const expandedRailScreenshot = await readFile(expandedRailScreenshotPath);
-    assertPngScreenshot(expandedRailScreenshot, viewport);
+    await captureValidatedScreenshot({
+      expectedHudText,
+      label: `${viewport.name} expanded`,
+      page: expandedPage,
+      session,
+      targetPath: expandedRailScreenshotPath,
+      viewport,
+    });
     await session.clickSelector(".ml-rail-toggle");
     await sleep(80);
     await session.closeFocusPanelIfOpen();
@@ -3003,13 +4147,26 @@ async function runViewportCheck(session, viewport) {
     false,
     `${viewport.name}: camera still reports dragging after mouse/touch release.`,
   );
+  const pageAfterPan = await session.inspectPage();
+  assertOverlayGeometry(
+    pageAfterPan,
+    viewport,
+    `${viewport.name} after pan`,
+    expectedHudText,
+  );
+  assertBoundedVisualHierarchy(pageAfterPan, `${viewport.name} after pan`);
   const panScreenshotPath = path.join(
     OUTPUT_DIR,
     `${viewport.name}-after-pan.png`,
   );
-  await session.captureScreenshot(panScreenshotPath);
-  const panScreenshot = await readFile(panScreenshotPath);
-  assertPngScreenshot(panScreenshot, viewport);
+  await captureValidatedScreenshot({
+    expectedHudText,
+    label: `${viewport.name} after pan`,
+    page: pageAfterPan,
+    session,
+    targetPath: panScreenshotPath,
+    viewport,
+  });
 
   let compactWheelPan = null;
   if (viewport.width <= 960) {
@@ -3097,9 +4254,22 @@ async function runViewportCheck(session, viewport) {
     OUTPUT_DIR,
     `${viewport.name}-after-pan-west.png`,
   );
-  await session.captureScreenshot(westPanScreenshotPath);
-  const westPanScreenshot = await readFile(westPanScreenshotPath);
-  assertPngScreenshot(westPanScreenshot, viewport);
+  const westPanPage = await session.inspectPage();
+  assertOverlayGeometry(
+    westPanPage,
+    viewport,
+    `${viewport.name} west pan`,
+    expectedHudText,
+  );
+  assertBoundedVisualHierarchy(westPanPage, `${viewport.name} west pan`);
+  await captureValidatedScreenshot({
+    expectedHudText,
+    label: `${viewport.name} west pan`,
+    page: westPanPage,
+    session,
+    targetPath: westPanScreenshotPath,
+    viewport,
+  });
 
   let northEdge = null;
   let eastEdge = null;
@@ -3152,9 +4322,22 @@ async function runViewportCheck(session, viewport) {
       OUTPUT_DIR,
       `${viewport.name}-after-pan-north.png`,
     );
-    await session.captureScreenshot(northPanScreenshotPath);
-    const northPanScreenshot = await readFile(northPanScreenshotPath);
-    assertPngScreenshot(northPanScreenshot, viewport);
+    const northPanPage = await session.inspectPage();
+    assertOverlayGeometry(
+      northPanPage,
+      viewport,
+      `${viewport.name} north pan`,
+      expectedHudText,
+    );
+    assertBoundedVisualHierarchy(northPanPage, `${viewport.name} north pan`);
+    await captureValidatedScreenshot({
+      expectedHudText,
+      label: `${viewport.name} north pan`,
+      page: northPanPage,
+      session,
+      targetPath: northPanScreenshotPath,
+      viewport,
+    });
 
     eastEdge = await settleCameraAtEdge(session, "east", northEdge);
     assertSameCameraSpace(
@@ -3187,9 +4370,22 @@ async function runViewportCheck(session, viewport) {
       OUTPUT_DIR,
       `${viewport.name}-after-pan-east.png`,
     );
-    await session.captureScreenshot(eastPanScreenshotPath);
-    const eastPanScreenshot = await readFile(eastPanScreenshotPath);
-    assertPngScreenshot(eastPanScreenshot, viewport);
+    const eastPanPage = await session.inspectPage();
+    assertOverlayGeometry(
+      eastPanPage,
+      viewport,
+      `${viewport.name} east pan`,
+      expectedHudText,
+    );
+    assertBoundedVisualHierarchy(eastPanPage, `${viewport.name} east pan`);
+    await captureValidatedScreenshot({
+      expectedHudText,
+      label: `${viewport.name} east pan`,
+      page: eastPanPage,
+      session,
+      targetPath: eastPanScreenshotPath,
+      viewport,
+    });
 
     southEdge = await settleCameraAtEdge(session, "south", eastEdge);
     assertSameCameraSpace(
@@ -3221,9 +4417,22 @@ async function runViewportCheck(session, viewport) {
       OUTPUT_DIR,
       `${viewport.name}-after-pan-south.png`,
     );
-    await session.captureScreenshot(southPanScreenshotPath);
-    const southPanScreenshot = await readFile(southPanScreenshotPath);
-    assertPngScreenshot(southPanScreenshot, viewport);
+    const southPanPage = await session.inspectPage();
+    assertOverlayGeometry(
+      southPanPage,
+      viewport,
+      `${viewport.name} south pan`,
+      expectedHudText,
+    );
+    assertBoundedVisualHierarchy(southPanPage, `${viewport.name} south pan`);
+    await captureValidatedScreenshot({
+      expectedHudText,
+      label: `${viewport.name} south pan`,
+      page: southPanPage,
+      session,
+      targetPath: southPanScreenshotPath,
+      viewport,
+    });
   }
 
   return {
@@ -3524,6 +4733,101 @@ async function createInteriorCameraGame() {
   return gameId;
 }
 
+async function runAfterHoursNpcAvailabilityCheck(session) {
+  const viewport = VIEWPORTS[0];
+  const gameId = await createSmokeGame(
+    activeWebBase,
+    "After-hours NPC availability check",
+  );
+  const initialState = await fetchJson(
+    `${activeWebBase}/sim/game/${gameId}/state`,
+  );
+  const initialTotalMinutes = initialState?.game?.clock?.totalMinutes;
+  assert.ok(
+    Number.isFinite(initialTotalMinutes),
+    "After-hours NPC check could not read the initial game clock.",
+  );
+  const currentDayStart =
+    Math.floor(initialTotalMinutes / (24 * 60)) * 24 * 60;
+  const sameDayBoundary = currentDayStart + 18 * 60;
+  const targetTotalMinutes =
+    initialTotalMinutes <= sameDayBoundary
+      ? sameDayBoundary
+      : sameDayBoundary + 24 * 60;
+  let waited = initialState;
+  let waitAttempts = 0;
+  while (
+    waited?.game?.clock?.totalMinutes < targetTotalMinutes &&
+    waitAttempts < 24
+  ) {
+    const waitMinutes =
+      targetTotalMinutes - waited.game.clock.totalMinutes;
+    waited = await fetchJson(
+      `${activeWebBase}/sim/game/${gameId}/command`,
+      {
+        body: JSON.stringify({
+          minutes: waitMinutes,
+          silent: true,
+          type: "wait",
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      },
+    );
+    waitAttempts += 1;
+  }
+  assert.equal(
+    waited?.game?.clock?.totalMinutes,
+    targetTotalMinutes,
+    "After-hours NPC check did not reach Jo's half-open 18:00 boundary.",
+  );
+  await session.setViewport(viewport);
+  await session.navigate(
+    `${activeWebBase}/?freezeAutoplay=1&readyCheck=after-hours-npc-${Date.now()}&gameId=${gameId}`,
+  );
+  await session.waitForAppReady();
+  await sleep(500);
+  const browserProbe = await session.readBrowserProbe();
+  const page = await session.inspectPage();
+  const joSchedule = browserProbe?.worldPressure?.npcSchedules?.find(
+    (npc) => npc.id === "npc-jo",
+  );
+  assert.equal(
+    joSchedule?.availability,
+    "unavailable",
+    `After-hours NPC check expected Jo unavailable at 18:00: ${JSON.stringify(joSchedule)}.`,
+  );
+  assert.equal(
+    joSchedule?.currentLocationId,
+    "repair-stall",
+    "After-hours NPC check no longer exercises the stale last-known Mercer location.",
+  );
+  assertNpcVisualPresenceMatchesAvailability(
+    browserProbe,
+    page,
+    "after-hours NPC availability",
+  );
+  const screenshotPath = path.join(
+    OUTPUT_DIR,
+    "after-hours-npc-availability.png",
+  );
+  await captureValidatedScreenshot({
+    expectedHudText: page.visibleTimeChips,
+    label: "after-hours NPC availability",
+    page,
+    session,
+    targetPath: screenshotPath,
+    viewport,
+  });
+
+  return {
+    gameId,
+    joSchedule,
+    npcPresence: page.npcPresence,
+    screenshotPath,
+  };
+}
+
 async function waitForInteriorCameraProbe(session) {
   return waitFor(
     async () => {
@@ -3584,9 +4888,15 @@ async function runInteriorCameraCheck(session) {
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "interior-camera.png");
-  await session.captureScreenshot(screenshotPath);
-  const screenshot = await readFile(screenshotPath);
-  assertPngScreenshot(screenshot, INTERIOR_CAMERA_VIEWPORT);
+  const interiorPage = await session.inspectPage();
+  await captureValidatedScreenshot({
+    expectedHudText: interiorPage.visibleTimeChips,
+    label: "interior camera",
+    page: interiorPage,
+    session,
+    targetPath: screenshotPath,
+    viewport: INTERIOR_CAMERA_VIEWPORT,
+  });
 
   const interiorSettleOptions = { attempts: 8, settleMs: 90 };
   const eastEdge = await settleCameraAtEdge(
@@ -3675,6 +4985,7 @@ async function main() {
   const devtoolsPort = await findFreePort();
   const session = await launchBrowser(devtoolsPort);
   const results = [];
+  let afterHoursNpcAvailability = null;
   let freshAutoplayStart = null;
   let freshAutoplayOptOut = null;
   let interiorCamera = null;
@@ -3694,7 +5005,7 @@ async function main() {
     responsiveDecisionArtifact =
       await runResponsiveDecisionArtifactCheck(session);
     process.stdout.write("[many-lives] Finished responsive decision callback.\n");
-    for (const viewport of VIEWPORTS) {
+    for (const viewport of ACTIVE_VIEWPORTS) {
       process.stdout.write(`[many-lives] Checking ${viewport.name} viewport...\n`);
       results.push({
         viewport,
@@ -3702,6 +5013,10 @@ async function main() {
       });
       process.stdout.write(`[many-lives] Finished ${viewport.name} viewport.\n`);
     }
+    process.stdout.write("[many-lives] Checking after-hours NPC availability...\n");
+    afterHoursNpcAvailability =
+      await runAfterHoursNpcAvailabilityCheck(session);
+    process.stdout.write("[many-lives] Finished after-hours NPC availability.\n");
     process.stdout.write("[many-lives] Checking stored-run prompt behavior...\n");
     storedGameChoice = await runStoredGameChoiceCheck(session);
     process.stdout.write("[many-lives] Finished stored-run prompt behavior.\n");
@@ -3723,12 +5038,15 @@ async function main() {
       summaryPath,
       `${JSON.stringify(
         {
+          afterHoursNpcAvailability,
           freshAutoplayStart,
           freshAutoplayOptOut,
           outputDir: OUTPUT_DIR,
           interiorCamera,
           responsiveDecisionArtifact,
           results,
+          screenshotCaptureRetries,
+          screenshotPixelDiagnostics,
           storedGameChoice,
           webBase: activeWebBase,
         },

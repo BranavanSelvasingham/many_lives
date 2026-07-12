@@ -96,7 +96,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
       activeJobId: undefined,
       objective: {
         id: "objective-settle-seed",
-        text: "Make Rowan's first afternoon count: understand the room, earn a little money, and end with a real foothold.",
+        text: "Make Rowan's first afternoon count: understand the room, learn multiple live approaches, achieve one consequential foothold through work or useful local help, then take stock.",
         createdAt: SCENARIO_START,
         updatedAt: SCENARIO_START,
         focus: "settle",
@@ -125,7 +125,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
         },
       ],
       currentThought:
-        "Tonight's bed is real, but it is not much of a life yet. Start with Mara, then turn one useful thing into a foothold.",
+        "Tonight's bed is real, but it is not much of a life yet. Start with Mara, learn what is actually live, then choose one useful foothold from the current block.",
     },
     npcs: buildNpcs(),
     jobs: buildJobs(),
@@ -860,7 +860,6 @@ function buildJobs(): JobState[] {
       accepted: false,
       completed: false,
       missed: false,
-      unlockedBy: "job-tea-shift",
     },
   ];
 }

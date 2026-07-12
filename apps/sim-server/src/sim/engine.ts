@@ -7,6 +7,10 @@ import type {
 import { buildDeterministicStreetThoughts } from "../ai/streetThoughts.js";
 import { syncCityEvents } from "../street-sim/cityEvents.js";
 import {
+  formatScheduleMinute,
+  resolveNpcSchedule,
+} from "../street-sim/npcSchedule.js";
+import {
   activeProblemInspectAction,
   activeProblemSolveAction,
 } from "../street-sim/problemActionRules.js";
@@ -122,6 +126,7 @@ import type {
   RowanPlanningTrace,
   RowanPlanningTraceLegalBacking,
   RowanPlanningTraceOption,
+  RowanProviderAttemptProvenance,
   RowanPlanningTraceSelectedRecommendation,
   RowanPlanningTraceStep,
   SceneNote,
@@ -139,6 +144,7 @@ export const STEP_MINUTES = 30;
 
 const MINUTES_PER_MOVEMENT_TILE = 1.5;
 const MIN_PLAYER_MOVEMENT_ENERGY = 12;
+const RECOVERY_ENERGY_THRESHOLD = 35;
 const MIN_STREET_PLANNER_CONFIDENCE = 0.55;
 const JOB_WINDOW_PRESSURE_MINUTES = 45;
 
@@ -164,6 +170,7 @@ type AcceptedStreetPlannerRecommendation = {
   provider: string;
   rationale: string;
   sourceKind: "live-llm";
+  providerAttempt?: RowanProviderAttemptProvenance;
 };
 
 type ObjectivePlanningPressureKind =
@@ -209,6 +216,7 @@ type ConversationResolution = {
 type ConversationLoopOptions = {
   addFallbackFeed?: boolean;
   maxAutonomousFollowups?: number;
+  planningTrace?: RowanPlanningTrace;
   surfaceNpcRepliesInFeed?: boolean;
 };
 
@@ -400,6 +408,98 @@ function recordAIRuntimePolicyFallback(
   world.aiRuntime.totalFallbacks += 1;
 }
 
+type AIRuntimeTaskCounterSnapshot = Record<
+  AIRuntimeTask,
+  { fallbacks: number; skips: number; successes: number }
+>;
+
+function snapshotAIRuntimeTaskCounters(
+  world: StreetGameState,
+): AIRuntimeTaskCounterSnapshot | undefined {
+  if (!world.aiRuntime) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    AI_RUNTIME_TASKS.map((task) => {
+      const summary = world.aiRuntime?.tasks[task];
+      return [
+        task,
+        {
+          fallbacks: summary?.fallbacks ?? 0,
+          skips: summary?.skips ?? 0,
+          successes: summary?.successes ?? 0,
+        },
+      ];
+    }),
+  ) as AIRuntimeTaskCounterSnapshot;
+}
+
+function providerAttemptFromTaskDelta(
+  world: StreetGameState,
+  before: AIRuntimeTaskCounterSnapshot | undefined,
+  task: AIRuntimeTask,
+): RowanProviderAttemptProvenance | undefined {
+  const runtime = world.aiRuntime;
+  const previous = before?.[task];
+  const current = runtime?.tasks[task];
+  if (!runtime || !previous || !current) {
+    return undefined;
+  }
+
+  if (current.successes > previous.successes) {
+    return {
+      model: runtime.model,
+      outcome: "accepted",
+      provider: runtime.provider,
+      reasonCode: "accepted-live-recommendation",
+      task,
+    };
+  }
+
+  if (current.fallbacks > previous.fallbacks) {
+    return {
+      model: runtime.model,
+      outcome: "fallback",
+      provider: runtime.provider,
+      reasonCode: current.lastFallbackReason?.includes("scaffold-required")
+        ? "policy-fallback"
+        : "provider-fallback",
+      task,
+    };
+  }
+
+  if (current.skips > previous.skips) {
+    return {
+      model: runtime.model,
+      outcome: "skipped",
+      provider: runtime.provider,
+      reasonCode: "provider-skipped",
+      task,
+    };
+  }
+
+  return undefined;
+}
+
+function latestConversationProviderAttempt(
+  world: StreetGameState,
+  before: AIRuntimeTaskCounterSnapshot | undefined,
+) {
+  for (const task of [
+    "interpretStreetConversation",
+    "generateStreetReply",
+    "generateStreetAutonomousLine",
+  ] as const) {
+    const attempt = providerAttemptFromTaskDelta(world, before, task);
+    if (attempt) {
+      return attempt;
+    }
+  }
+
+  return undefined;
+}
+
 async function refreshWorld(
   world: StreetGameState,
   aiProvider: AIProvider,
@@ -416,6 +516,7 @@ async function refreshWorld(
   updatePlayerLocation(world);
   resolvePassiveState(world);
   syncCityEvents(world);
+  recordFirstAfternoonApproachesKnown(world);
   world.player.objective = buildPlayerObjectiveState(world, {
     previous: world.player.objective,
   });
@@ -433,6 +534,27 @@ async function refreshWorld(
   trimMemories(world);
   trimConversations(world);
   return world;
+}
+
+function recordFirstAfternoonApproachesKnown(world: StreetGameState): void {
+  world.firstAfternoon ??= {};
+  if (
+    world.firstAfternoon.approachesKnownAt ||
+    world.firstAfternoon.completedAt
+  ) {
+    return;
+  }
+
+  const liveJobs = ["job-tea-shift", "job-yard-shift"].filter((jobId) => {
+    const job = jobById(world, jobId);
+    return Boolean(job?.discovered && jobWindowOpen(world, job));
+  });
+  const liveProblems = world.problems.filter(
+    (problem) => problem.discovered && problem.status === "active",
+  );
+  if (liveJobs.length + liveProblems.length >= 2) {
+    world.firstAfternoon.approachesKnownAt = world.currentTime;
+  }
 }
 
 function advanceWorld(
@@ -737,6 +859,7 @@ async function performAction(
   world: StreetGameState,
   actionId: string,
   aiProvider?: AIProvider,
+  planningTrace?: RowanPlanningTrace,
 ): Promise<void> {
   const validation = validateActionForExecution(world, actionId);
   if (!validation.ok) {
@@ -757,7 +880,7 @@ async function performAction(
     }
   }
 
-  await performActionUnchecked(world, actionId, aiProvider);
+  await performActionUnchecked(world, actionId, aiProvider, planningTrace);
 }
 
 function validateActionForExecution(
@@ -857,6 +980,22 @@ function unavailableActionReason(
 }
 
 function unavailableNpcActionReason(world: StreetGameState, npc: NpcState) {
+  const availability = resolveNpcSchedule(
+    npc.schedule,
+    world.clock.totalMinutes,
+  );
+  if (!availability.active) {
+    const nextOpening = availability.nextOpening;
+    if (!nextOpening) {
+      return `${npc.name} is not scheduled to be available.`;
+    }
+
+    const locationName =
+      findLocation(world, nextOpening.stop.locationId)?.name ??
+      nextOpening.stop.locationId;
+    return `${npc.name} is unavailable now. The next opening is ${formatScheduleMinute(nextOpening.startTotalMinutes)} at ${locationName}.`;
+  }
+
   const playerLocation = currentLocation(world);
   const npcLocation = findLocation(world, npc.currentLocationId);
   const playerSpace = activeSpace(world);
@@ -944,13 +1083,14 @@ async function performActionUnchecked(
   world: StreetGameState,
   actionId: string,
   aiProvider?: AIProvider,
+  planningTrace?: RowanPlanningTrace,
 ): Promise<void> {
   const [kind, targetId] = actionId.split(":");
 
   switch (kind) {
     case "talk":
       if (targetId && aiProvider) {
-        await talkToNpc(world, targetId, aiProvider);
+        await talkToNpc(world, targetId, aiProvider, planningTrace);
       }
       break;
     case "accept":
@@ -1190,6 +1330,7 @@ async function advanceObjective(
           step.speech,
           step.objective,
           aiProvider,
+          step.planningTrace,
         );
         return "deterministic" as const;
       }
@@ -1382,8 +1523,146 @@ function resolveConversationLoopStep(
     label: `With ${npc?.name ?? "someone nearby"}`,
     layer: "conversation",
     npcId: world.activeConversation.npcId,
+    planningTrace: world.activeConversation.planningTrace,
     targetLocationId: world.activeConversation.locationId,
   };
+}
+
+function buildConversationPlanningTrace(input: {
+  conversationCanContinue: boolean;
+  hasResolution: boolean;
+  inherited?: RowanPlanningTrace;
+  locationId: string;
+  npc: NpcState;
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string };
+  providerAttempt?: RowanProviderAttemptProvenance;
+  resolution: ConversationResolution;
+  world: StreetGameState;
+}): RowanPlanningTrace {
+  const actionKind = input.hasResolution || !input.conversationCanContinue
+    ? "close"
+    : "followup";
+  const actionId = `conversation:${actionKind}:${input.npc.id}`;
+  const label =
+    actionKind === "followup"
+      ? `Ask ${input.npc.name} one grounded follow-up`
+      : `Close with ${input.npc.name} and act on what changed`;
+  const rationale =
+    actionKind === "followup"
+      ? `The conversation still has one practical uncertainty tied to ${input.objective.text}`
+      : input.resolution.decision ??
+        input.resolution.objectiveText ??
+        `The exchange with ${input.npc.name} has reached a natural stopping point.`;
+  const legalBacking: RowanPlanningTraceLegalBacking = {
+    actionId,
+    locationId: input.locationId,
+    source: "conversation-resolution",
+  };
+  const selectedOption: RowanPlanningTraceOption = {
+    actionId,
+    label,
+    legalBacking,
+    planKey: actionId,
+    pressureId: `conversation:${input.npc.id}`,
+    pressureKind: "conversation",
+    pressureLabel: input.objective.text,
+    provenance: "legal-action",
+    rationale,
+    score: 100,
+    status: "selected",
+    targetLocationId: input.locationId,
+    npcId: input.npc.id,
+  };
+  const selectedStep: RowanPlanningTraceStep = {
+    actionId,
+    kind: actionKind === "followup" ? "talk" : "reflect",
+    label,
+    legal: true,
+    legalBacking,
+    npcId: input.npc.id,
+    rationale,
+    targetLocationId: input.locationId,
+    validation:
+      "The simulator grounded this conversation action in the active local exchange.",
+  };
+  const sourceKind = input.providerAttempt
+    ? input.providerAttempt.outcome === "accepted"
+      ? "live-llm"
+      : "deterministic-fallback"
+    : "deterministic-planner";
+  const inheritedAlternatives = (input.inherited?.considered ?? [])
+    .filter((option) => option.status === "rejected")
+    .slice(0, 3);
+  const nextSteps = [
+    selectedStep,
+    ...(input.inherited?.intendedFollowUp?.legal &&
+    input.inherited.intendedFollowUp.actionId !== actionId
+      ? [input.inherited.intendedFollowUp]
+      : []),
+  ];
+
+  return {
+    blockers:
+      input.inherited?.blockers ??
+      input.world.player.objective?.outcomes.flatMap(
+        (outcome) => outcome.blockers ?? [],
+      ) ??
+      [],
+    considered: [selectedOption, ...inheritedAlternatives],
+    immediateAction: selectedStep,
+    intendedFollowUp: nextSteps[1],
+    nextSteps,
+    outcomes:
+      input.inherited?.outcomes ?? objectivePlanningTraceOutcomes(input.world),
+    plannerIntent: {
+      actionId,
+      label,
+      npcId: input.npc.id,
+      planKey: actionId,
+      pressureId: `conversation:${input.npc.id}`,
+      pressureKind: "conversation",
+      pressureLabel: input.objective.text,
+      rationale,
+      targetLocationId: input.locationId,
+    },
+    providerAttempt: input.providerAttempt,
+    rejected: input.inherited?.rejected ?? [],
+    selectedActionId: actionId,
+    selectedLabel: label,
+    selectedLegalBacking: legalBacking,
+    selectedPlanKey: actionId,
+    selectedPressureId: `conversation:${input.npc.id}`,
+    selectedPressureKind: "conversation",
+    selectedPressureLabel: input.objective.text,
+    selectedRecommendation: {
+      accepted: true,
+      advisory: sourceKind === "live-llm",
+      legalBackingSource: "conversation-resolution",
+      model: input.providerAttempt?.model,
+      provider: input.providerAttempt?.provider,
+      rationale,
+      sourceKind,
+      validationSource: "conversation-resolution",
+      validationStatus: "conversation-resolution",
+    },
+    selectedTargetLocationId: input.locationId,
+  };
+}
+
+function persistActiveConversationPlanningTrace(
+  world: StreetGameState,
+  planningTrace: RowanPlanningTrace,
+) {
+  const activeConversation = world.activeConversation;
+  if (!activeConversation) {
+    return;
+  }
+
+  activeConversation.planningTrace = planningTrace;
+  const thread = world.conversationThreads[activeConversation.npcId];
+  if (thread) {
+    thread.planningTrace = planningTrace;
+  }
 }
 
 function resolvePendingMoveLoopStep(
@@ -1490,21 +1769,33 @@ function resolveCommittedJobLoopStep(
     };
   }
 
+  if (world.player.energy < 28) {
+    return committedJobRecoveryLoopStep(world, committedJob);
+  }
+
   if (world.player.currentLocationId !== committedJob.locationId) {
-    const actionId = `move:${committedJob.locationId}`;
-    const label = `Get to ${location?.name ?? "the job site"}`;
+    const currentSpace = activeSpace(world);
+    const exitActionId =
+      currentSpace.kind === "interior" && currentSpace.locationId
+        ? `exit:${currentSpace.locationId}`
+        : undefined;
+    const actionId = exitActionId ?? `move:${committedJob.locationId}`;
+    const kind = exitActionId ? "act" : "move";
+    const label = exitActionId
+      ? autonomyLabelForAction(world, exitActionId)
+      : `Get to ${location?.name ?? "the job site"}`;
     return {
       actionId,
       autoContinue: true,
       detail: `The shift matters more than wandering right now, so Rowan is routing himself to ${location?.name ?? "the job site"}.`,
       key: `job-travel:${committedJob.id}:${world.player.currentLocationId ?? "none"}:${committedJob.locationId}`,
-      kind: "move",
+      kind,
       label,
       layer: "commitment",
       planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
         actionId,
         detail: `The accepted shift is at ${location?.name ?? "the job site"}, so Rowan is taking the validated route there before the work window slips.`,
-        kind: "move",
+        kind,
         label,
         targetLocationId: committedJob.locationId,
         validation: "The destination exists and the simulator will route the move.",
@@ -1587,35 +1878,63 @@ function resolveCommittedJobLoopStep(
     };
   }
 
-  if (
-    world.player.energy < 28 &&
-    world.player.currentLocationId !== world.player.homeLocationId
-  ) {
-    const home = findLocation(world, world.player.homeLocationId);
-    const actionId = `move:${world.player.homeLocationId}`;
-    const label = `Reset at ${home?.name ?? "Morrow House"}`;
-    return {
-      actionId,
-      autoContinue: true,
-      detail:
-        "Rowan needs a quick reset at Morrow House before he burns the shift on tired legs.",
-      key: `job-rest:${committedJob.id}:${world.player.currentLocationId ?? "none"}:${world.player.homeLocationId}`,
-      kind: "move",
-      label,
-      layer: "commitment",
-      planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
-        actionId,
-        detail: `Rowan is too tired to work ${committedJob.title} reliably, so he is routing to ${home?.name ?? "Morrow House"} before checking the commitment again.`,
-        kind: "move",
-        label,
-        targetLocationId: world.player.homeLocationId,
-        validation: "Low energy makes rest the safe follow-through move before more work.",
-      }),
-      targetLocationId: world.player.homeLocationId,
-    };
-  }
-
   return undefined;
+}
+
+function committedJobRecoveryLoopStep(
+  world: StreetGameState,
+  committedJob: JobState,
+): RowanLoopStep {
+  const homeLocationId = world.player.homeLocationId;
+  const home = findLocation(world, homeLocationId);
+  const atHome = world.player.currentLocationId === homeLocationId;
+  const currentSpace = activeSpace(world);
+  const exitActionId =
+    !atHome && currentSpace.kind === "interior" && currentSpace.locationId
+      ? `exit:${currentSpace.locationId}`
+      : undefined;
+  const enterActionId =
+    atHome && !isPlayerInActionSpace(world, homeLocationId)
+      ? `enter:${homeLocationId}`
+      : undefined;
+  const actionId =
+    exitActionId ??
+    enterActionId ??
+    (atHome ? "rest:home" : `move:${homeLocationId}`);
+  const kind: RowanAutonomyStepKind =
+    exitActionId || enterActionId
+      ? "act"
+      : atHome
+        ? "wait"
+        : "move";
+  const label = exitActionId || enterActionId
+    ? autonomyLabelForAction(world, actionId)
+    : atHome
+      ? `Recover at ${home?.name ?? "Morrow House"}`
+      : `Reset at ${home?.name ?? "Morrow House"}`;
+  const detail = atHome
+    ? `Rowan is too tired to work ${committedJob.title} reliably, so recovery has to land before he checks the commitment again.`
+    : `Rowan is too tired to work ${committedJob.title} reliably, so he is routing to ${home?.name ?? "Morrow House"} before checking the commitment again.`;
+
+  return {
+    actionId,
+    autoContinue: true,
+    detail,
+    key: `job-rest:${committedJob.id}:${world.player.currentLocationId ?? "none"}:${activeSpaceId(world)}:${actionId}`,
+    kind,
+    label,
+    layer: "commitment",
+    planningTrace: buildCommittedJobPlanningTrace(world, committedJob, {
+      actionId,
+      detail,
+      kind,
+      label,
+      targetLocationId: homeLocationId,
+      validation:
+        "Low energy makes home recovery the safe legal follow-through before more work.",
+    }),
+    targetLocationId: homeLocationId,
+  };
 }
 
 function buildCommittedJobPlanningTrace(
@@ -1984,14 +2303,47 @@ async function resolveAiPlannedObjectiveLoopStep(
   const allowedActions = dedupePlannerActions(
     choices.map((choice) => choice.plannerAction),
   );
+  const runtimeBefore = snapshotAIRuntimeTaskCounters(world);
   const planned = await aiProvider.planStreetNextAction({
     allowedActions: structuredClone(allowedActions),
     desiredOutcomes: buildStreetPlanningOutcomes(world, objective),
     game: world,
     objective,
   });
+  const providerAttempt = providerAttemptFromTaskDelta(
+    world,
+    runtimeBefore,
+    "planStreetNextAction",
+  );
   const choice = selectPlannerChoice(planned, choices);
   if (!choice || !planned) {
+    if (deterministicLoopStep.planningTrace && providerAttempt) {
+      const reasonCode =
+        providerAttempt.outcome === "accepted"
+          ? planned && planned.confidence < MIN_STREET_PLANNER_CONFIDENCE
+            ? "low-confidence"
+            : "invalid-selection"
+          : providerAttempt.reasonCode;
+      deterministicLoopStep.planningTrace.providerAttempt = {
+        ...providerAttempt,
+        outcome:
+          providerAttempt.outcome === "accepted"
+            ? "rejected"
+            : providerAttempt.outcome,
+        reasonCode,
+      };
+      deterministicLoopStep.planningTrace.selectedRecommendation = {
+        ...deterministicLoopStep.planningTrace.selectedRecommendation,
+        accepted: true,
+        advisory: false,
+        model: providerAttempt.model,
+        provider: providerAttempt.provider,
+        sourceKind: "deterministic-fallback",
+        validationStatus:
+          deterministicLoopStep.planningTrace.selectedRecommendation
+            ?.validationStatus ?? "unvalidated",
+      };
+    }
     return undefined;
   }
 
@@ -2003,6 +2355,7 @@ async function resolveAiPlannedObjectiveLoopStep(
       confidence: planned.confidence,
       model: aiProvider.model,
       provider: aiProvider.name,
+      providerAttempt,
       rationale: planned.rationale,
       sourceKind: "live-llm",
     }),
@@ -2483,13 +2836,17 @@ async function executeRowanMoveLoopStep(
   );
   movePlayer(world, targetLocation.entryX, targetLocation.entryY);
   syncNpcInnerState(world);
-  if (loopStep.npcId && loopStep.speech) {
+  const arrivalNpc = loopStep.npcId
+    ? npcById(world, loopStep.npcId)
+    : undefined;
+  if (arrivalNpc && loopStep.speech && isNpcInActiveScene(world, arrivalNpc)) {
     await conductAutonomousConversation(
       world,
-      loopStep.npcId,
+      arrivalNpc.id,
       loopStep.speech,
       objective,
       aiProvider,
+      loopStep.planningTrace,
     );
     return;
   }
@@ -2526,7 +2883,12 @@ async function executeRowanActionLoopStep(
     }
 
     if (loopStep.actionId?.startsWith("resume:")) {
-      await performAction(world, loopStep.actionId, aiProvider);
+      await performAction(
+        world,
+        loopStep.actionId,
+        aiProvider,
+        loopStep.planningTrace,
+      );
     }
 
     return advanceObjective(world, aiProvider, options);
@@ -2541,7 +2903,12 @@ async function executeRowanActionLoopStep(
     return;
   }
 
-  await performAction(world, loopStep.actionId, aiProvider);
+  await performAction(
+    world,
+    loopStep.actionId,
+    aiProvider,
+    loopStep.planningTrace,
+  );
 }
 
 async function executeRowanReflectLoopStep(
@@ -2676,11 +3043,7 @@ function pendingObjectiveMoveStillViable(
     return false;
   }
 
-  const actionReferences = [
-    ...pendingObjectiveMoveActionReferences(pendingMove),
-    ...legacyPendingObjectiveMoveActionReferences(world, pendingMove),
-  ];
-
+  const actionReferences = pendingObjectiveMoveActionReferences(pendingMove);
   if (
     actionReferences.some(
       (reference) =>
@@ -2689,6 +3052,23 @@ function pendingObjectiveMoveStillViable(
           pendingMove,
           reference,
         ),
+    )
+  ) {
+    return false;
+  }
+
+  const legacyReferences = legacyPendingObjectiveMoveActionReferences(
+    world,
+    pendingMove,
+  );
+  if (
+    legacyReferences.length > 0 &&
+    !legacyReferences.some((reference) =>
+      pendingObjectiveMoveActionReferenceStillLive(
+        world,
+        pendingMove,
+        reference,
+      ),
     )
   ) {
     return false;
@@ -2710,6 +3090,12 @@ function pendingObjectiveMoveActionReferences(
   ) => {
     const resolvedActionId = actionId ?? (npcId ? `talk:${npcId}` : undefined);
     if (!resolvedActionId || resolvedActionId.startsWith("move:")) {
+      return;
+    }
+    if (
+      targetLocationId &&
+      targetLocationId !== pendingMove.targetLocationId
+    ) {
       return;
     }
 
@@ -2897,7 +3283,9 @@ function pendingObjectiveMoveActionReferenceStillLive(
     return false;
   }
 
-  const preview = previewWorldAtLocation(world, targetLocationId);
+  const preview = previewWorldAtLocation(world, targetLocationId, {
+    projectArrival: reference.actionId.startsWith("talk:"),
+  });
   return buildAvailableActions(preview).some(
     (action) => action.id === reference.actionId && !action.disabled,
   );
@@ -2936,7 +3324,11 @@ function pendingObjectiveMoveEntityStillLive(
     }
     case "talk": {
       const npc = npcById(world, targetId);
-      return Boolean(npc && npc.currentLocationId === targetLocationId);
+      return Boolean(
+        npc &&
+          npc.currentLocationId === targetLocationId &&
+          npcAvailableAtProjectedLocation(world, npc, targetLocationId),
+      );
     }
     default:
       return true;
@@ -3017,7 +3409,8 @@ function reconcileActiveConversation(world: StreetGameState) {
 
   if (
     !world.player.currentLocationId ||
-    npc.currentLocationId !== world.player.currentLocationId
+    npc.currentLocationId !== world.player.currentLocationId ||
+    !npcAvailableNow(world, npc)
   ) {
     clearActiveConversation(world);
     return;
@@ -3174,6 +3567,9 @@ async function runConversationLoop(
   options: ConversationLoopOptions = {},
 ) {
   const maxAutonomousFollowups = options.maxAutonomousFollowups ?? 0;
+  const inheritedPlanningTrace =
+    options.planningTrace ?? world.activeConversation?.planningTrace;
+  const runtimeBefore = snapshotAIRuntimeTaskCounters(world);
   let remainingAutonomousFollowups = maxAutonomousFollowups;
   let trustOpened = false;
   let closingReply = "";
@@ -3271,6 +3667,28 @@ async function runConversationLoop(
     clearActiveConversation(world);
   }
 
+  if (world.activeConversation) {
+    persistActiveConversationPlanningTrace(
+      world,
+      buildConversationPlanningTrace({
+        conversationCanContinue,
+        hasResolution: Boolean(
+          resolution.decision || resolution.objectiveText,
+        ),
+        inherited: inheritedPlanningTrace,
+        locationId: location.id,
+        npc,
+        objective,
+        providerAttempt: latestConversationProviderAttempt(
+          world,
+          runtimeBefore,
+        ),
+        resolution,
+        world,
+      }),
+    );
+  }
+
   return {
     conversationCanContinue,
     resolution,
@@ -3330,6 +3748,7 @@ async function talkToNpc(
   world: StreetGameState,
   npcId: string,
   aiProvider: AIProvider,
+  planningTrace?: RowanPlanningTrace,
 ): Promise<void> {
   const target = resolveConversationTarget(world, npcId);
   if (!target) {
@@ -3352,6 +3771,7 @@ async function talkToNpc(
     opener,
     objective,
     aiProvider,
+    planningTrace,
   );
 }
 
@@ -3391,6 +3811,7 @@ async function conductAutonomousConversation(
   opener: string,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   aiProvider: AIProvider,
+  planningTrace?: RowanPlanningTrace,
 ): Promise<void> {
   const npc = world.npcs.find((entry) => entry.id === npcId);
   if (!npc) {
@@ -3429,6 +3850,7 @@ async function conductAutonomousConversation(
     {
       addFallbackFeed: true,
       maxAutonomousFollowups: 1,
+      planningTrace,
     },
   );
 }
@@ -3637,7 +4059,7 @@ function applyConversationResolution(
   );
   if (
     groundingPolicy &&
-    !world.firstAfternoon?.planSettledAt &&
+    !world.firstAfternoon?.approachesKnownAt &&
     objectiveRouteConversationHasVisibleEvidence(
       world,
       groundingPolicy,
@@ -4481,6 +4903,7 @@ function buildObjectivePlanningTrace(
     world,
     selectedActionId,
   );
+  const unavailableNpcRejected = unavailableNpcObjectiveTraceOptions(world);
 
   return {
     blockers: objectivePlanningBlockers(world),
@@ -4490,7 +4913,9 @@ function buildObjectivePlanningTrace(
     nextSteps,
     outcomes: objectivePlanningTraceOutcomes(world),
     plannerIntent,
+    providerAttempt: acceptedRecommendation?.providerAttempt,
     rejected: dedupePlanningTraceOptions([
+      ...unavailableNpcRejected,
       ...staleActionRejected,
       ...rejected,
     ]).slice(0, 5),
@@ -4686,6 +5111,49 @@ function staleObjectiveActionTraceOptions(
   return [...predicateOptions, ...trailOptions];
 }
 
+function unavailableNpcObjectiveTraceOptions(
+  world: StreetGameState,
+): RowanPlanningTraceOption[] {
+  return (world.player.objective?.outcomes ?? [])
+    .filter(
+      (outcome) =>
+        outcome.npcId &&
+        outcome.status !== "met" &&
+        outcome.status !== "failed" &&
+        objectiveNpcOutcomeTemporallyBlocked(world, outcome),
+    )
+    .map((outcome) => {
+      const npc = npcById(world, outcome.npcId!);
+      const availability = npc
+        ? resolveNpcSchedule(npc.schedule, world.clock.totalMinutes)
+        : undefined;
+      const nextOpening = availability?.nextOpening;
+      const targetLocationId =
+        outcome.targetLocationId ??
+        nextOpening?.stop.locationId ??
+        npc?.currentLocationId;
+      const nextOpeningReason = nextOpening
+        ? `The next opening is ${formatScheduleMinute(nextOpening.startTotalMinutes)} at ${findLocation(world, nextOpening.stop.locationId)?.name ?? nextOpening.stop.locationId}.`
+        : "No later scheduled opening is available.";
+
+      return {
+        actionId: `talk:${outcome.npcId}`,
+        label: outcome.label,
+        matchedOutcomeId: outcome.id,
+        npcId: outcome.npcId,
+        planKey: `schedule-unavailable|${outcome.id}|${outcome.npcId}|${targetLocationId ?? "no-location"}`,
+        provenance: "stale-predicate" as const,
+        rationale:
+          outcome.blockers?.join(" ") ??
+          `${npc?.name ?? "The target"} is unavailable at the projected arrival.`,
+        reason: `Rejected because ${npc?.name ?? "the target"} is not available now or at projected arrival. ${nextOpeningReason}`,
+        score: 0,
+        status: "rejected" as const,
+        targetLocationId,
+      };
+    });
+}
+
 function objectivePredicateActionIsLegal(
   world: StreetGameState,
   actionId: string,
@@ -4701,7 +5169,9 @@ function objectivePredicateActionIsLegal(
     return false;
   }
 
-  const preview = previewWorldAtLocation(world, targetLocationId);
+  const preview = previewWorldAtLocation(world, targetLocationId, {
+    projectArrival: actionId.startsWith("talk:"),
+  });
   return buildAvailableActions(preview).some(
     (action) =>
       action.id === actionId &&
@@ -4806,7 +5276,9 @@ function buildProjectedDestinationFollowUpTraceSteps(
     return [];
   }
 
-  const preview = previewWorldAtLocation(world, selected.targetLocationId);
+  const preview = previewWorldAtLocation(world, selected.targetLocationId, {
+    projectArrival: Boolean(selected.npcId),
+  });
 
   if (selected.npcId) {
     const npc = npcById(preview, selected.npcId);
@@ -5046,7 +5518,9 @@ function traceLegalActionStepAtLocation(
   rationale: string,
   overrides: Partial<RowanPlanningTraceStep> = {},
 ): RowanPlanningTraceStep | undefined {
-  const preview = previewWorldAtLocation(world, locationId);
+  const preview = previewWorldAtLocation(world, locationId, {
+    projectArrival: actionId.startsWith("talk:"),
+  });
   const action = buildAvailableActions(preview).find(
     (candidate) => candidate.id === actionId,
   );
@@ -5278,7 +5752,9 @@ function legalActionBackingAtLocation(
   actionId: string,
   source: RowanPlanningTraceLegalBacking["source"],
 ): RowanPlanningTraceLegalBacking | undefined {
-  const preview = previewWorldAtLocation(world, locationId);
+  const preview = previewWorldAtLocation(world, locationId, {
+    projectArrival: actionId.startsWith("talk:"),
+  });
   const action = buildAvailableActions(preview).find(
     (candidate) =>
       candidate.id === actionId &&
@@ -5411,7 +5887,9 @@ function buildObjectiveAgentPlanCandidates(
   const candidates: ObjectivePlan[] = [];
 
   for (const location of objectiveCandidateLocations(world, objective)) {
-    const preview = previewWorldAtLocation(world, location.id);
+    const preview = previewWorldAtLocation(world, location.id, {
+      projectArrival: true,
+    });
     const actions = buildAvailableActions(preview);
 
     for (const action of actions) {
@@ -5495,6 +5973,7 @@ function buildObjectiveAgentPlanCandidates(
     world,
     objective,
     desiredOutcomes,
+    candidates,
   )) {
     if (options.includeLowScoringActions || waitPlan.score > 0) {
       candidates.push(waitPlan);
@@ -5608,6 +6087,7 @@ function openObjectivePredicateOutcomes(
           hasLegacyTrailOutcomeAuthority(outcome) ||
           outcome.status === "met" ||
           outcome.status === "failed" ||
+          objectiveNpcOutcomeTemporallyBlocked(world, outcome) ||
           !(outcome.targetLocationId || outcome.npcId || outcome.actionId)
         ) {
           return false;
@@ -5626,6 +6106,44 @@ function hasLegacyTrailOutcomeAuthority(outcome: ObjectiveOutcomeState) {
 
 function hasOpenObjectivePredicateAuthority(world: StreetGameState) {
   return openObjectivePredicateOutcomes(world).length > 0;
+}
+
+function objectiveNpcOutcomeTemporallyBlocked(
+  world: StreetGameState,
+  outcome: ObjectiveOutcomeState,
+) {
+  if (!outcome.npcId) {
+    return false;
+  }
+
+  const npc = npcById(world, outcome.npcId);
+  const targetLocationId = outcome.targetLocationId ?? npc?.currentLocationId;
+  return Boolean(
+    npc &&
+      targetLocationId &&
+      !npcAvailableAtProjectedLocation(world, npc, targetLocationId),
+  );
+}
+
+function hasLegalObjectiveNpcInteractionAtCurrentLocation(
+  world: StreetGameState,
+) {
+  const currentLocationId = world.player.currentLocationId;
+  if (!currentLocationId) {
+    return false;
+  }
+
+  return (world.player.objective?.outcomes ?? []).some((outcome) => {
+    const npc = outcome.npcId ? npcById(world, outcome.npcId) : undefined;
+    return Boolean(
+      npc &&
+        outcome.status !== "met" &&
+        outcome.status !== "failed" &&
+        (outcome.targetLocationId ?? npc.currentLocationId) ===
+          currentLocationId &&
+        npcAvailableNow(world, npc),
+    );
+  });
 }
 
 function scoreOpenPredicateAuthorityForPlan(
@@ -5729,6 +6247,18 @@ function shouldSuppressObjectivePlanCandidate(
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   plan: ObjectivePlan,
 ) {
+  if (
+    plan.waitUntilMinutes === undefined &&
+    !planTargetsUrgentLivePressure(world, plan) &&
+    (world.player.objective?.outcomes ?? []).some(
+      (outcome) =>
+        objectiveNpcOutcomeTemporallyBlocked(world, outcome) &&
+        outcome.targetLocationId === plan.targetLocationId,
+    )
+  ) {
+    return true;
+  }
+
   const pressure = dominantObjectivePlanningPressure(world, objective);
   return Boolean(
     pressure &&
@@ -5786,6 +6316,7 @@ function buildObjectivePlanningPressures(
   if (
     world.player.energy < 28 &&
     world.player.homeLocationId &&
+    !hasLegalObjectiveNpcInteractionAtCurrentLocation(world) &&
     !hasFinalCurrentObjectivePredicateAction(world) &&
     !finalPredicateRoutePending
   ) {
@@ -6384,7 +6915,11 @@ function objectiveMoveIntentForLocation(
 
   const buildNpcIntent = (npcId: string, rationale: string) => {
     const npc = npcById(world, npcId);
-    if (!npc || npc.currentLocationId !== location.id) {
+    if (
+      !npc ||
+      npc.currentLocationId !== location.id ||
+      !npcAvailableAtProjectedLocation(world, npc, location.id)
+    ) {
       return undefined;
     }
 
@@ -6444,14 +6979,20 @@ function objectivePredicateMoveIntentForLocation(
       continue;
     }
 
-    const preview = previewWorldAtLocation(world, location.id);
+    const preview = previewWorldAtLocation(world, location.id, {
+      projectArrival: Boolean(outcome.npcId),
+    });
     const actionLegal =
       outcome.actionId &&
       buildAvailableActions(preview).some(
         (action) => action.id === outcome.actionId && !action.disabled,
       );
 
-    if (outcome.npcId && npc?.currentLocationId === location.id) {
+    if (
+      outcome.npcId &&
+      npc?.currentLocationId === location.id &&
+      npcAvailableAtProjectedLocation(world, npc, location.id)
+    ) {
       return {
         npcId: outcome.npcId,
         rationale: objectiveRouteMoveRationaleForOutcome(
@@ -7003,10 +7544,52 @@ function buildObjectiveWaitPlans(
   world: StreetGameState,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   desiredOutcomes: StreetPlanningObjectiveOutcome[],
+  existingPlans: ObjectivePlan[],
 ): ObjectivePlan[] {
   const plans: ObjectivePlan[] = [];
   const currentTotal = world.clock.totalMinutes;
   const activeJob = activeJobForIntent(world);
+
+  const hasUsefulCurrentAction = existingPlans.some(
+    (plan) =>
+      plan.score > 0 &&
+      plan.targetLocationId === world.player.currentLocationId &&
+      objectivePlanIsUsefulCurrentAlternative(world, plan),
+  );
+  if (!hasUsefulCurrentAction) {
+    for (const outcome of world.player.objective?.outcomes ?? []) {
+      if (
+        !outcome.npcId ||
+        outcome.status === "met" ||
+        outcome.status === "failed" ||
+        !objectiveNpcOutcomeTemporallyBlocked(world, outcome)
+      ) {
+        continue;
+      }
+
+      const npc = npcById(world, outcome.npcId);
+      const availability = npc
+        ? resolveNpcSchedule(npc.schedule, currentTotal)
+        : undefined;
+      const nextOpening = availability?.nextOpening;
+      if (!npc || !nextOpening) {
+        continue;
+      }
+
+      const locationName =
+        findLocation(world, nextOpening.stop.locationId)?.name ??
+        nextOpening.stop.locationId;
+      const plan: ObjectivePlan = {
+        actionId: `wait:${nextOpening.startTotalMinutes}`,
+        rationale: `${npc.name} is unavailable, and no more useful current action is open. Wait until ${formatScheduleMinute(nextOpening.startTotalMinutes)} for ${npc.name}'s next opening at ${locationName}.`,
+        score: 180,
+        targetLocationId: world.player.currentLocationId,
+        waitUntilMinutes: nextOpening.startTotalMinutes,
+      };
+      plan.score += scorePlanForDesiredOutcomes(world, plan, desiredOutcomes);
+      plans.push(plan);
+    }
+  }
 
   if (activeJob) {
     const startTotal = totalMinutesForDayHour(world.clock.day, activeJob.startHour);
@@ -7052,6 +7635,32 @@ function buildObjectiveWaitPlans(
   }
 
   return plans;
+}
+
+function objectivePlanIsUsefulCurrentAlternative(
+  world: StreetGameState,
+  plan: ObjectivePlan,
+) {
+  if (plan.npcId) {
+    return countPlayerConversationsWithNpc(world, plan.npcId) === 0;
+  }
+
+  if (!plan.actionId) {
+    return false;
+  }
+
+  if (
+    plan.actionId.startsWith("enter:") ||
+    plan.actionId.startsWith("exit:")
+  ) {
+    return false;
+  }
+
+  if (plan.actionId === "rest:home") {
+    return world.player.energy < RECOVERY_ENERGY_THRESHOLD;
+  }
+
+  return true;
 }
 
 function dedupeObjectivePlans(plans: ObjectivePlan[]) {
@@ -7202,11 +7811,29 @@ function latestConversationLineOrder(lines: { id: string }[]) {
   return match ? Number(match[1]) : 0;
 }
 
-function previewWorldAtLocation(world: StreetGameState, locationId: string) {
+function previewWorldAtLocation(
+  world: StreetGameState,
+  locationId: string,
+  options: { projectArrival?: boolean } = {},
+) {
   const preview = cloneWorld(world);
   const location = findLocation(preview, locationId);
   if (!location) {
     return preview;
+  }
+
+  const projectedArrivalMinutes = options.projectArrival
+    ? world.clock.totalMinutes +
+      projectedTravelMinutesToLocation(world, locationId)
+    : preview.clock.totalMinutes;
+  if (
+    options.projectArrival &&
+    projectedArrivalMinutes > preview.clock.totalMinutes
+  ) {
+    preview.clock.totalMinutes = projectedArrivalMinutes;
+    updateClock(preview.clock);
+    preview.currentTime = isoFor(preview.clock.totalMinutes);
+    updateNpcLocations(preview);
   }
 
   const spaceId = activeLocationActionSpaceId(preview, location.id);
@@ -8353,11 +8980,11 @@ function settleFirstAfternoonPlan(world: StreetGameState): void {
   }
 
   world.firstAfternoon ??= {};
-  if (world.firstAfternoon.planSettledAt) {
+  if (world.firstAfternoon.approachesKnownAt) {
     return;
   }
 
-  world.firstAfternoon.planSettledAt = world.currentTime;
+  world.firstAfternoon.approachesKnownAt = world.currentTime;
   world.player.currentThought = copy.currentThought;
   addFeed(world, "memory", copy.feedText);
   rememberIfNew(world, "self", copy.memoryText);
@@ -8415,9 +9042,9 @@ function completeFirstAfternoon(world: StreetGameState): void {
     return;
   }
 
-  const teaShift = jobById(world, "job-tea-shift");
-  if (!teaShift?.completed) {
-    addFeed(world, "info", copy.missingShiftFeedText);
+  const consequence = currentFirstAfternoonConsequence(world);
+  if (!consequence) {
+    addFeed(world, "info", copy.missingConsequenceFeedText);
     return;
   }
 
@@ -8428,10 +9055,8 @@ function completeFirstAfternoon(world: StreetGameState): void {
   }
 
   world.firstAfternoon.completedAt = world.currentTime;
-  world.firstAfternoon.fieldNote = buildFirstAfternoonFieldNote(
-    world,
-    teaShift,
-  );
+  world.firstAfternoon.consequence = consequence;
+  world.firstAfternoon.fieldNote = buildFirstAfternoonFieldNote(consequence);
   discoverProblem(world, "problem-pump");
   const completionOutcome = objectiveRouteFirstAfternoonCompletionOutcome();
   world.player.currentThought = completionOutcome.playerThought;
@@ -8440,31 +9065,56 @@ function completeFirstAfternoon(world: StreetGameState): void {
 }
 
 function buildFirstAfternoonFieldNote(
-  world: StreetGameState,
-  teaShift: JobState,
+  consequence: NonNullable<
+    NonNullable<StreetGameState["firstAfternoon"]>["consequence"]
+  >,
 ) {
-  const adaQuestion = world.conversations.find(
-    (entry) =>
-      entry.npcId === "npc-ada" &&
-      entry.speaker === "player" &&
-      /lunch|work|hands/i.test(entry.text),
-  );
-  const adaAnswer = world.conversations.find(
-    (entry) => entry.npcId === "npc-ada" && entry.speaker === "npc",
-  );
-  const askedAt = adaQuestion?.time
-    ? formatClockAt(world, totalMinutesForIso(adaQuestion.time))
-    : undefined;
   const copy = objectiveRouteFirstAfternoonCompletionFieldNote({
-    adaAnswered: Boolean(adaAnswer),
-    askedAt,
-    teaShiftPay: teaShift.pay,
-    teaShiftTitle: teaShift.title,
+    consequenceEvidence: consequence.evidence,
+    consequenceKind: consequence.kind,
+    consequenceLabel: consequence.label,
   });
 
   return {
-    createdAt: world.currentTime,
+    createdAt: consequence.achievedAt,
     ...copy,
+  };
+}
+
+function currentFirstAfternoonConsequence(
+  world: StreetGameState,
+): NonNullable<
+  NonNullable<StreetGameState["firstAfternoon"]>["consequence"]
+> | undefined {
+  const completedJob = ["job-tea-shift", "job-yard-shift"]
+    .map((jobId) => jobById(world, jobId))
+    .find((job) => job?.completed);
+  if (completedJob) {
+    return {
+      achievedAt: completedJob.consequenceAppliedAt ?? world.currentTime,
+      evidence: `${completedJob.title} completed for $${completedJob.pay}.`,
+      id: completedJob.id,
+      kind: completedJob.id === "job-tea-shift" ? "tea-work" : "yard-work",
+      label:
+        completedJob.id === "job-tea-shift"
+          ? "Kettle & Lamp work completed"
+          : "North Crane Yard work completed",
+    };
+  }
+
+  const solvedProblem = world.problems.find(
+    (problem) => problem.discovered && problem.status === "solved",
+  );
+  if (!solvedProblem) {
+    return undefined;
+  }
+
+  return {
+    achievedAt: solvedProblem.resolvedAt ?? world.currentTime,
+    evidence: `${solvedProblem.title} solved after Rowan grounded the local problem.`,
+    id: solvedProblem.id,
+    kind: "local-problem",
+    label: `${solvedProblem.title} solved`,
   };
 }
 
@@ -8776,11 +9426,10 @@ function resolveProblemEscalation(
 
 function updateNpcLocations(world: StreetGameState): void {
   for (const npc of world.npcs) {
-    const hour = currentHour(world);
-    const stop =
-      npc.schedule.find(
-        (entry) => hour >= entry.fromHour && hour < entry.toHour,
-      ) ?? npc.schedule[npc.schedule.length - 1];
+    const stop = resolveNpcSchedule(
+      npc.schedule,
+      world.clock.totalMinutes,
+    ).active?.stop;
 
     if (stop) {
       const pressureLocationId = pressureLocationForNpc(
@@ -9470,10 +10119,76 @@ function npcSpaceId(npc: NpcState) {
   return npc.currentSpaceId ?? defaultSpaceIdForLocation(npc.currentLocationId);
 }
 
+function npcAvailableNow(world: StreetGameState, npc: NpcState) {
+  return Boolean(
+    resolveNpcSchedule(npc.schedule, world.clock.totalMinutes).active,
+  );
+}
+
+function npcAvailableAtProjectedLocation(
+  world: StreetGameState,
+  npc: NpcState,
+  locationId: string,
+) {
+  const arrivalTotalMinutes =
+    world.clock.totalMinutes + projectedTravelMinutesToLocation(world, locationId);
+  const arrivalSchedule = resolveNpcSchedule(
+    npc.schedule,
+    arrivalTotalMinutes,
+  );
+  if (!arrivalSchedule.active) {
+    return false;
+  }
+
+  if (arrivalSchedule.active.stop.locationId === locationId) {
+    return true;
+  }
+
+  const currentSchedule = resolveNpcSchedule(
+    npc.schedule,
+    world.clock.totalMinutes,
+  );
+  return Boolean(
+    currentSchedule.active &&
+      currentSchedule.active.stopIndex === arrivalSchedule.active.stopIndex &&
+      npc.currentLocationId === locationId,
+  );
+}
+
+function projectedTravelMinutesToLocation(
+  world: StreetGameState,
+  locationId: string,
+) {
+  const target = findLocation(world, locationId);
+  if (!target) {
+    return 0;
+  }
+
+  const current = currentLocation(world);
+  const space = activeSpace(world);
+  const origin =
+    space.kind === "interior" && current
+      ? { x: current.entryX, y: current.entryY }
+      : world.player;
+  const distance =
+    Math.abs(origin.x - target.entryX) + Math.abs(origin.y - target.entryY);
+  const interiorEntryMinutes =
+    activeLocationActionSpaceId(world, locationId) !== STREET_SPACE_ID &&
+    activeSpaceId(world) !== activeLocationActionSpaceId(world, locationId)
+      ? 1
+      : 0;
+  return Math.max(
+    0,
+    (distance > 0 ? movementMinutesForDistance(distance, "street") : 0) +
+      interiorEntryMinutes,
+  );
+}
+
 function isNpcInActiveScene(world: StreetGameState, npc: NpcState) {
   const location = currentLocation(world);
   return (
     Boolean(location) &&
+    npcAvailableNow(world, npc) &&
     npc.currentLocationId === location?.id &&
     npcSpaceId(npc) === activeSpaceId(world)
   );
@@ -9901,6 +10616,22 @@ function deriveConversationResolution(
 
   switch (npc.id) {
     case "npc-mara":
+      if (
+        objective.routeKey === "first-afternoon" &&
+        teaJob?.discovered &&
+        pumpProblem?.discovered
+      ) {
+        return {
+          decision:
+            "compare Ada's live lunch work with the leaking pump and choose from the simulator-legal current actions.",
+          memoryKind: "self",
+          memoryText:
+            "Mara made both Ada's work and the Morrow Yard pump concrete without choosing Rowan's route for him.",
+          summary:
+            "Mara exposed multiple live first-afternoon approaches without settling the plan.",
+        };
+      }
+
       if (
         discussedPump &&
         pumpProblem?.discovered &&
@@ -10341,6 +11072,8 @@ function trimConversations(world: StreetGameState) {
         decision: thread.decision ?? world.activeConversation.decision,
         objectiveText:
           thread.objectiveText ?? world.activeConversation.objectiveText,
+        planningTrace:
+          thread.planningTrace ?? world.activeConversation.planningTrace,
         lines: thread.lines.slice(-6),
       };
     }

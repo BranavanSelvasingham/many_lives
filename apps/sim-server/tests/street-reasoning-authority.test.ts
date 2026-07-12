@@ -46,9 +46,9 @@ import type {
 } from "../src/street-sim/types.js";
 
 const FIRST_AFTERNOON_PLAN_RATIONALE =
-  "Leave Morrow House, reach Kettle & Lamp, then ask Ada before lunch gets busy.";
+  "Rowan records more than one live approach without settling the afternoon to a single route.";
 const FIRST_AFTERNOON_DIALOGUE_FALLBACK =
-  "Go to Kettle & Lamp before lunch and ask Ada if she still needs help. It is close, honest, and useful today.";
+  "Morrow House can hold you tonight if you help keep it easy to live in. Ada at Kettle & Lamp may need lunch hands, and the pump in Morrow Yard is leaking now. Both are live approaches; choose from what the block actually allows.";
 const FIRST_AFTERNOON_CLOSED_WORK_WINDOW_DIALOGUE_COPY = [
   "Ada's lunch window has already moved on. If you still need coin today, try Tomas at North Crane before the yard closes.",
   "Pay when you say you will, be kind in the shared spaces, and stop chasing Ada's lunch window. If coin still matters today, ask Tomas at North Crane.",
@@ -226,19 +226,17 @@ const JO_MONEY_WORK_DIALOGUE_CHOICE_KEYS = [
   "jo-money-work-followup",
 ];
 const MARA_ADA_GROUNDING_FOLLOWUP =
-  "Just to be clear, should I ask Ada at Kettle & Lamp about lunch work before the rush?";
+  "Just to be clear, are Ada's Kettle & Lamp lunch work and the leaking Morrow Yard pump both live ways I could make this afternoon count?";
 const MARA_ADA_GROUNDED_FALLBACK_REPLY =
-  "Morrow House can hold you tonight, but a foothold needs work. Ask Ada at Kettle & Lamp before lunch; she may need steady hands for the cup-and-counter shift.";
+  "Morrow House can hold you tonight if you help keep it easy to live in. Ada at Kettle & Lamp may need lunch hands, and the pump in Morrow Yard is leaking now. Both are live approaches; choose from what the block actually allows.";
 const MARA_ADA_GROUNDING_FALLBACK_MEMORY =
-  "Mara's answer was not specific enough yet to turn Ada into a grounded work lead.";
-const MARA_ADA_GROUNDING_FALLBACK_SUMMARY =
-  "Mara has not yet made the Kettle & Lamp lead visible in the conversation.";
+  "Mara made both Ada's work and the pump concrete without choosing the route for Rowan.";
 const MARA_ADA_REQUIRED_PROMPT_LINE =
-  "- Required for this Mara reply: visibly ground the work lead by naming Ada, Kettle & Lamp, and lunch work, shift, hands, counter, or pay.";
+  "- Required for this Mara reply: visibly ground both Ada/Kettle & Lamp work and the leaking Morrow Yard pump.";
 const MARA_ADA_PROMPT_OVERRIDE_LINE =
-  "- This requirement overrides the general route-command caution; the player must see the Ada/Kettle & Lamp/lunch-work evidence before the sim can treat the lead as real.";
+  "- Present these as competing live approaches, not a command to follow Ada.";
 const MARA_ADA_GROUNDED_PROMPT_LINE =
-  "- Rowan's line already names the exact Ada/Kettle & Lamp/lunch-work lead. Answer plainly whether Mara confirms it.";
+  "- Rowan's line names both Ada/Kettle & Lamp lunch work and the leaking Morrow Yard pump. Confirm both plainly.";
 const NPC_FIRST_CONTACT_PRIMER_COPY = [
   "Mara gives you a measured look, like she's deciding whether you're here for a bed, for work, or just to stop feeling new.",
   "Mara weighs newcomers by whether they settle in, pull their weight, or disappear.",
@@ -373,57 +371,34 @@ const FIRST_AFTERNOON_COMPLETION_MEMORY =
   "After the first afternoon was recorded, Rowan treated the next move as a fresh choice from live work, rest, and local trouble instead of replaying the old route.";
 const FIRST_AFTERNOON_COMPLETION_IDLE_LABEL = "First afternoon complete";
 const FIRST_AFTERNOON_COMPLETION_IDLE_DETAIL =
-  "Good stopping point: tonight's bed still holds, $14 is in Rowan's pocket, Ada knows he can keep up, and tomorrow has a real lead.";
+  "Good stopping point: tonight's bed still holds, and Rowan has one durable foothold from the approach he actually followed through on.";
 const FIRST_AFTERNOON_COMPLETION_RATIONALE =
-  "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.";
+  "First afternoon complete: Rowan understands the room, compared live approaches, achieved one durable consequence, and recorded what changed.";
 const FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL =
-  "The first afternoon is complete: room to return to, paid shift, and a real foothold.";
+  "The first afternoon is complete: room understood, live approaches compared, and one real foothold achieved.";
 const FIRST_AFTERNOON_COMPLETED_OBJECTIVE_BANNER_RATIONALE =
   "This is a natural stopping point: the objective is complete and Rowan has enough from today to sleep on.";
 const FIRST_AFTERNOON_COMPLETION_PLAYER_THOUGHT =
   "Tonight's bed holds. I earned real money, and tomorrow has a lead.";
 const FIRST_AFTERNOON_COMPLETION_OUTCOME_PLAYER_THOUGHT =
-  "Tonight's bed still holds. I earned real money, Ada knows I can keep up, and the pump in Morrow Yard is not just background noise anymore. That is enough for a first afternoon.";
+  "Tonight's bed still holds. I learned what was live, chose one approach from the current block, and changed something people can remember. That is enough for a first afternoon.";
 const FIRST_AFTERNOON_COMPLETION_OUTCOME_FEED =
-  "Rowan takes stock at Morrow House: tonight's bed still holds, $14 is in his pocket, Ada has seen him keep up, and the Morrow Yard pump is now a real local problem instead of background noise.";
+  "Rowan takes stock at Morrow House: tonight's bed still holds, one current approach changed his standing, and the route he took came from what was live rather than an old instruction list.";
 const FIRST_AFTERNOON_COMPLETION_OUTCOME_MEMORY =
-  "You finished the first afternoon with a room to return to, paid work, and a small foothold in South Quay. Taking stock also made the Morrow Yard pump impossible to ignore.";
-const FIRST_AFTERNOON_PLAN_ACTION_DESCRIPTION =
-  "Commit to leaving Morrow House and following Mara's lead to Ada at Kettle & Lamp.";
-const FIRST_AFTERNOON_PUMP_ACTION_DESCRIPTION =
-  "Treat the leaking pump as the first proof that Rowan notices what the house needs.";
-const FIRST_AFTERNOON_COMPARE_ACTION_DESCRIPTION =
-  "Keep Ada's offer in view while checking the pump, the square, or another lead before committing.";
+  "You finished the first afternoon with a room to return to and one durable foothold earned through actual follow-through.";
 const FIRST_AFTERNOON_COMPLETION_ACTION_DESCRIPTION =
   "Count what changed today before chasing another errand.";
 const FIRST_AFTERNOON_PLAN_AND_FIELD_NOTE_COPY = [
-  "Mara gave me live choices: chase Ada's lunch work, deal with the pump, rest, or make myself useful here. Ada is the best first bet before the noon window closes.",
-  "Rowan weighs the first move against the live state of the block and chooses Ada before the lunch window closes.",
-  "Step inside Morrow House before settling that plan.",
-  "When the first afternoon opened up, Rowan treated Ada's lunch work as the best first move, not the only possible route.",
-  "The pump is not glamorous, but solving house trouble is one way to make tonight's bed feel less borrowed.",
-  "Rowan chooses the Morrow Yard pump as the first proof that he notices what the house needs.",
-  "Step inside Morrow House before weighing that lead.",
-  "Rowan chose the pump over the obvious work lead because the house itself had a live problem.",
-  "Fix the leaking pump in Morrow Yard before it spreads.",
-  "Ada's shift is real, but it sits beside the pump, the house, and whatever else is moving through the square.",
-  "Rowan keeps Ada's offer in view while checking whether another current opening should come first.",
-  "Step inside Kettle & Lamp before comparing Ada's offer.",
-  "Compare the live work offer with the pump, the square, and any better lead before committing.",
-  "Rowan did not treat Ada's offer as a script; he paused to compare it against the live state of the block.",
+  "Mara gave me more than one live approach: Ada's lunch work and the leaking pump are both real. The current legal choices can decide which deserves the first follow-through.",
+  "Rowan records more than one live approach without settling the afternoon to a single route.",
+  "When the first afternoon opened up, Rowan kept Ada's work and the house's local trouble as competing live approaches.",
   "Bring Rowan back to Morrow House before calling the first afternoon done.",
-  "There is still no paid shift to count. Rowan needs one real follow-through first.",
+  "There is still no durable consequence to count. Rowan needs to complete live work or solve a grounded local problem first.",
   "The first afternoon is already settled.",
-  "Asked Ada at Kettle & Lamp at",
-  "Worked ${normalizedTitle} at Kettle & Lamp and got paid",
-  "Ada needed steady lunch help, and Rowan could keep Kettle & Lamp moving when the room filled up.",
-  "Ada remembers Rowan asked directly, stayed through the rush, and took his pay without making the room harder.",
-  "Rest on the first foothold, then choose between the yard work window and the Morrow Yard pump before the city moves on without Rowan.",
-  "Mara's Kettle & Lamp lead is real: Ada needs steady lunch help today.",
-  "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
-  "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
-  "Rowan records the lead as grounded knowledge: Ada at Kettle & Lamp has real lunch work on the table.",
-  "You verified Mara's lead at Kettle & Lamp: Ada needs steady lunch help and offered the cup-and-counter shift.",
+  "became Rowan's first durable foothold in South Quay.",
+  "People can now remember that Rowan followed through on",
+  "Let the tea-house standing compete with the yard, the pump, and whatever is still live tomorrow.",
+  "Let the yard standing compete with house needs and other live work instead of assuming the same route repeats.",
 ];
 const WEB_FIRST_AFTERNOON_FALLBACK_COPY = [
   "Rowan is stepping inside Morrow House to ask Mara.",
@@ -441,12 +416,12 @@ const WEB_FIRST_AFTERNOON_FALLBACK_COPY = [
 ];
 const PLAYBACK_NIA_BLOCK_POLICY_ID =
   "nia-block-lead-hides-morrow-standing";
-const FIRST_AFTERNOON_ROUTE_OUTCOME_LABEL = "Useful first move chosen";
-const FIRST_AFTERNOON_ROUTE_STEP_TITLE = "Choose the first useful move.";
+const FIRST_AFTERNOON_ROUTE_OUTCOME_LABEL = "Multiple live approaches known";
+const FIRST_AFTERNOON_ROUTE_STEP_TITLE = "Learn more than one live way forward.";
 const FIRST_AFTERNOON_ROUTE_STEP_DETAIL =
-  "Rowan could wander, rest, or ask Ada. Ada is the useful first bet.";
+  "Follow through on live tea work, yard work, or a grounded local problem; the current state decides which path is strongest.";
 const FIRST_AFTERNOON_ROUTE_COMPLETION_DETAIL =
-  "Tonight's bed still holds, $14 is in Rowan's pocket, Ada has seen him keep up, and tomorrow has a real lead.";
+  "Stop for a minute and record what actually changed today.";
 const MARA_ADA_ROUTE_OUTCOME_LABEL = "Ada verification intent formed";
 const MARA_ADA_ROUTE_STEP_TITLE = "Form the plan to verify it directly.";
 const MARA_ADA_ROUTE_STEP_DETAIL =
@@ -511,13 +486,13 @@ const BAD_ADA_AT_MORROW_PLAYER_RATIONALE =
 const ADA_AT_MORROW_ACTION_REASON =
   "Mara's lead points to Ada at Kettle & Lamp, so Rowan has to reach the cafe before asking.";
 const FIRST_AFTERNOON_LOW_ENERGY_OUTCOME_MOVE_RATIONALE =
-  "The shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+  "One durable consequence landed, and Morrow House is the right place to record what actually changed";
 const FIRST_AFTERNOON_NORMAL_ENERGY_OUTCOME_MOVE_RATIONALE =
-  "The shift paid, and Morrow House is the right place to let the day land";
+  "One durable consequence landed, and Morrow House is the right place to record what actually changed";
 const FIRST_AFTERNOON_LOW_ENERGY_PLAYER_RATIONALE =
-  "the shift paid, and Rowan is tired enough that Morrow House is the right place to let the day land";
+  "one durable consequence landed, and Morrow House is the right place to record what actually changed";
 const FIRST_AFTERNOON_NORMAL_ENERGY_PLAYER_RATIONALE =
-  "the shift paid, and Morrow House is the right place to let the day land";
+  "one durable consequence landed, and Morrow House is the right place to record what actually changed";
 const TEA_SHIFT_OUTCOME_MOVE_RATIONALE =
   "Ada gave Rowan real work, and the room needs steady hands now";
 const NIA_RECOVERY_PLAYER_RATIONALE =
@@ -531,7 +506,7 @@ const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
 const HOME_RETURN_MOVE_REASON_COPY = [
   "recover enough to move cleanly, keep tonight's room safe, and let Ada's field-note standing land before choosing the yard work, pump, or another current opening.",
   "recover enough to move cleanly before taking another commitment.",
-  "take stock after the paid shift, keep tonight's room safe, and decide what the pump or next work window requires.",
+  "is where Rowan can take stock after a durable consequence and record what actually changed.",
   "keep tonight's room safe and turn today's standing into a steadier foothold.",
 ];
 const CURRENT_OPENING_MOVE_REASON_COPY = [
@@ -1063,9 +1038,6 @@ describe("street reasoning authority", () => {
     );
 
     for (const actionCopy of [
-      FIRST_AFTERNOON_PLAN_ACTION_DESCRIPTION,
-      FIRST_AFTERNOON_PUMP_ACTION_DESCRIPTION,
-      FIRST_AFTERNOON_COMPARE_ACTION_DESCRIPTION,
       FIRST_AFTERNOON_COMPLETION_ACTION_DESCRIPTION,
     ]) {
       expect(scaffoldSource).toContain(actionCopy);
@@ -1679,7 +1651,6 @@ describe("street reasoning authority", () => {
       MARA_ADA_GROUNDING_FOLLOWUP,
       MARA_ADA_GROUNDED_FALLBACK_REPLY,
       MARA_ADA_GROUNDING_FALLBACK_MEMORY,
-      MARA_ADA_GROUNDING_FALLBACK_SUMMARY,
       MARA_ADA_REQUIRED_PROMPT_LINE,
       MARA_ADA_PROMPT_OVERRIDE_LINE,
       MARA_ADA_GROUNDED_PROMPT_LINE,
@@ -1690,7 +1661,9 @@ describe("street reasoning authority", () => {
     }
 
     expect(scaffoldSource).toContain("conversationGroundingPolicies");
-    expect(scaffoldSource).toContain("mara-ada-lead-grounding");
+    expect(scaffoldSource).toContain(
+      "mara-first-afternoon-approaches-grounding",
+    );
     expect(engineSource).toContain("objectiveRouteConversationGroundingPolicy");
     expect(promptSource).toContain(
       "objectiveRouteConversationPromptGroundingLines",
@@ -2640,21 +2613,16 @@ describe("street reasoning authority", () => {
     expect(scaffoldSource).toContain("FIRST_AFTERNOON_STEP_TEMPLATES");
     for (const outcomeCase of [
       "first-afternoon-room",
-      "first-afternoon-choose-move",
-      "first-afternoon-ada-lead",
-      "first-afternoon-record-lead",
-      "first-afternoon-take-shift",
-      "first-afternoon-start-shift",
-      "first-afternoon-finish-shift",
+      "first-afternoon-approaches",
+      "first-afternoon-consequence",
       "first-afternoon-take-stock",
     ]) {
       expect(scaffoldSource).toContain(`"${outcomeCase}"`);
       expect(objectiveStateSource).not.toContain(`case "${outcomeCase}"`);
     }
     for (const predicateCopy of [
-      "Ada's lunch window has slipped; Rowan needs a current live alternative.",
-      "The cup-and-counter shift window has slipped.",
-      "Ada paid Rowan for the shift.",
+      "Rowan does not yet know two materially live approaches.",
+      "Rowan has not yet completed live tea work, yard work, or a grounded local problem.",
       "Rowan is not back at Morrow House yet.",
     ]) {
       expect(scaffoldSource).toContain(predicateCopy);

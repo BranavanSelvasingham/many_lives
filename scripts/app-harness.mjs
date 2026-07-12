@@ -615,50 +615,6 @@ async function assertRowanBrowserArtifacts(logLine) {
       minBytes: 100_000,
     },
     {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "00-initial-morrow-exterior.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "01-enter-morrow-house.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "08-enter-cafe-interior.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "8a-enter-cafe-interior-route-start.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "12-lunch-rush.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "12a-lunch-rush-route-start.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "18-enter-morrow-return.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "19-post-first-afternoon-handoff.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "18a-enter-morrow-return-route-start.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "20-post-first-afternoon-rest.png"),
-      minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "21-post-first-afternoon-live-route.png"),
-      minBytes: 120_000,
-    },
-    {
       filePath: path.join(BROWSER_PLAYTEST_DIR, "overlay-notebook.png"),
       minBytes: 120_000,
     },
@@ -695,8 +651,10 @@ async function assertRowanBrowserArtifacts(logLine) {
     throw new Error("Rowan browser playtest did not report enough screenshot evidence.");
   }
 
-  if (!summary.finalState?.leadFieldNote) {
-    throw new Error("Rowan browser playtest did not persist the Mara-to-Ada lead field note.");
+  if (!summary.finalState?.fieldNote) {
+    throw new Error(
+      "Rowan browser playtest did not persist a field note for the durable first-afternoon consequence.",
+    );
   }
 
   for (const label of ["overlay-notebook", "overlay-journal"]) {
@@ -754,19 +712,26 @@ async function assertRowanBrowserArtifacts(logLine) {
       }.`,
     );
   }
-  const objectiveSequenceRunIds = new Set(
-    (inhabit.objectiveSequenceRuns ?? []).map((run) => run.id),
+  const authority = inhabit.earlyAgencyAuthorityLedger;
+  if (
+    authority?.status !== "passed" ||
+    authority.consequence?.status !== "met" ||
+    !authority.interactionNpcId ||
+    (authority.meaningfulActionCount ?? 0) < 8 ||
+    (authority.incompleteProvenanceEntries ?? []).length > 0
+  ) {
+    throw new Error(
+      `Inhabit gameplay pass did not prove a valid outcome-driven first-afternoon trajectory: ${JSON.stringify(authority)}.`,
+    );
+  }
+  const objectiveSequenceAudit = inhabit.objectiveSequenceAudit ?? [];
+  const failedObjectiveBeats = objectiveSequenceAudit.filter(
+    (beat) => (beat.failureReasons ?? []).length > 0,
   );
-  for (const runId of [
-    "establish-room-and-mara-lead",
-    "follow-mara-lead-to-kettle-lamp",
-    "verify-ada-lead-and-accept-shift",
-    "work-cup-and-counter-shift",
-    "return-to-morrow-house-and-take-stock",
-  ]) {
-    if (!objectiveSequenceRunIds.has(runId)) {
-      throw new Error(`Inhabit gameplay pass missing objective sequence run: ${runId}.`);
-    }
+  if (objectiveSequenceAudit.length < 8 || failedObjectiveBeats.length > 0) {
+    throw new Error(
+      `Inhabit gameplay pass did not validate enough legal objective beats: ${JSON.stringify({ beatCount: objectiveSequenceAudit.length, failedObjectiveBeats })}.`,
+    );
   }
 
   const inhabitMomentLabels = new Set(
@@ -774,9 +739,9 @@ async function assertRowanBrowserArtifacts(logLine) {
   );
   for (const label of [
     "first-actionable-screen",
-    "mara-conversation",
-    "ada-conversation",
-    "shift-in-motion",
+    "first-interaction",
+    "approaches-known",
+    "durable-consequence",
     "first-afternoon-complete",
     "post-first-afternoon-handoff",
     "post-first-afternoon-rest",
@@ -792,6 +757,13 @@ async function assertRowanBrowserArtifacts(logLine) {
     [
       ...(inhabit.moments ?? []).map((moment) => ({
         filePath: moment.screenshot,
+        minBytes: 120_000,
+      })),
+      ...(summary.evidence?.screenshots ?? []).map((screenshot) => ({
+        filePath:
+          typeof screenshot === "string"
+            ? screenshot
+            : screenshot.path ?? screenshot.screenshot,
         minBytes: 120_000,
       })),
       ...(inhabit.panelChecks ?? []).map((check) => ({

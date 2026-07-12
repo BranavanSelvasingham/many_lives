@@ -3,9 +3,10 @@ export const CAMERA_USER_ZOOM_MAX = 1.16;
 export const CAMERA_USER_ZOOM_MIN = 0.76;
 
 const COMPACT_LAYOUT_MAX_WIDTH = 960;
-const COMPACT_SCENE_TOP_SAFE_HEIGHT_MAX = 96;
-const COMPACT_SCENE_TOP_SAFE_HEIGHT_MIN = 72;
+const COMPACT_SCENE_TOP_SAFE_HEIGHT_MAX = 104;
+const COMPACT_SCENE_TOP_SAFE_HEIGHT_MIN = 80;
 const PHONE_RAIL_MAX_WIDTH = 560;
+const OVERLAY_CLEARANCE = 8;
 const COMPACT_PORTRAIT_COVER_ZOOM_BOOST = 1.18;
 const MAX_RUNTIME_RENDER_SCALE = 6;
 const RUNTIME_RENDER_CLARITY_BOOST = 1.35;
@@ -29,6 +30,13 @@ export type OverlayLayoutMetrics = {
   railMaxHeight: number;
   railWidth: number;
   sceneGap: number;
+};
+
+export type CompactOverlayLayoutMetrics = {
+  railBottomOffset: number;
+  railCollapsedHeight: number;
+  railExpandedHeight: number;
+  railWidth: number;
 };
 
 export function getOverlayLayoutMetrics(
@@ -96,6 +104,53 @@ export function isCompactPortraitViewport(viewport: ViewportSize) {
   return isCompactViewport(viewport) && viewport.height > viewport.width;
 }
 
+export function getCompactOverlayLayoutMetrics(
+  viewport: ViewportSize,
+  options: {
+    hasPrimaryAction: boolean;
+  },
+): CompactOverlayLayoutMetrics {
+  const { height, width } = viewport;
+  const { overlayInset } = getOverlayLayoutMetrics(viewport);
+  const phone = isPhoneRailViewport(viewport);
+  const dockHeightBudget = phone ? 56 : 92;
+  const railBottomOffset = dockHeightBudget + OVERLAY_CLEARANCE;
+  const railCollapsedHeight = options.hasPrimaryAction
+    ? phone
+      ? 190
+      : 150
+    : phone
+      ? 144
+      : 116;
+  const maximumExpandedHeight = Math.max(
+    railCollapsedHeight,
+    height -
+      getCompactSceneTopSafeHeight(viewport) -
+      overlayInset -
+      railBottomOffset -
+      OVERLAY_CLEARANCE,
+  );
+  const desiredExpandedHeight = phone
+    ? width <= 430
+      ? clamp(height * 0.43, 360, 370)
+      : clamp(height * 0.44, 360, 400)
+    : clamp(height * 0.54, 340, 560);
+  const railExpandedHeight = Math.min(
+    desiredExpandedHeight,
+    maximumExpandedHeight,
+  );
+  const railWidth = phone
+    ? Math.max(width - overlayInset * 2, 280)
+    : clamp(width * 0.4, 320, 380);
+
+  return {
+    railBottomOffset,
+    railCollapsedHeight,
+    railExpandedHeight,
+    railWidth,
+  };
+}
+
 export function getSceneViewport(
   viewport: ViewportSize,
   _world: { height: number; width: number },
@@ -136,7 +191,7 @@ export function getSceneViewport(
 
 export function getCompactSceneTopSafeHeight(viewport: ViewportSize) {
   return clamp(
-    viewport.height * 0.075,
+    viewport.height * 0.085,
     COMPACT_SCENE_TOP_SAFE_HEIGHT_MIN,
     COMPACT_SCENE_TOP_SAFE_HEIGHT_MAX,
   );

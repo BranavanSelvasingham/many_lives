@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_OPENAI_TIMEOUT_MS,
+  OPENAI_PLANNER_TOTAL_BUDGET_MS,
   OpenAIProvider,
 } from "../src/ai/openaiProvider.js";
 import type { StreetPlanningRequest } from "../src/ai/provider.js";
@@ -12,11 +13,16 @@ import { seedStreetGame } from "../src/street-sim/seedGame.js";
 
 describe("OpenAIProvider street fallback", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  it("keeps the default live timeout long enough for first-run browser calls", () => {
-    expect(DEFAULT_OPENAI_TIMEOUT_MS).toBeGreaterThanOrEqual(20_000);
+  it("keeps dialogue timeout separate from the bounded planner budget", () => {
+    expect(DEFAULT_OPENAI_TIMEOUT_MS).toBe(25_000);
+    expect(OPENAI_PLANNER_TOTAL_BUDGET_MS).toBe(6_000);
+    expect(OPENAI_PLANNER_TOTAL_BUDGET_MS).toBeLessThan(
+      DEFAULT_OPENAI_TIMEOUT_MS,
+    );
   });
 
   it("falls back quickly when a live street reply times out", async () => {
@@ -256,34 +262,198 @@ describe("OpenAIProvider street fallback", () => {
     });
   });
 
-  it("returns null when the planner times out", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        (_url: string | URL | Request, init?: RequestInit) =>
-          new Promise<Response>((_resolve, reject) => {
-            init?.signal?.addEventListener("abort", () => {
-              reject(new DOMException("Request timed out", "AbortError"));
-            });
-          }),
-      ),
+  it("aborts a stalled planner at the total budget and records one fallback", async () => {
+    vi.useFakeTimers();
+    const onCall = vi.fn();
+    let lateResolve: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          lateResolve = resolve;
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Request aborted", "AbortError")),
+            { once: true },
+          );
+        }),
     );
+    vi.stubGlobal("fetch", fetchMock);
 
     const provider = new OpenAIProvider({
       apiKey: "test-key",
-      timeoutMs: 5,
+      onCall,
+      timeoutMs: DEFAULT_OPENAI_TIMEOUT_MS,
     });
+    const planningRequest = buildPlanningRequest();
     const startedAt = Date.now();
-    const result = await provider.planStreetNextAction(buildPlanningRequest());
+    const resultPromise = provider.planStreetNextAction(planningRequest);
+
+    await vi.advanceTimersByTimeAsync(OPENAI_PLANNER_TOTAL_BUDGET_MS - 1);
+    expect(provider.getCallLog()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    const result = await resultPromise;
 
     expect(result).toBeNull();
-    expect(provider.getCallLog()).toMatchObject([
+    expect(Date.now() - startedAt).toBe(OPENAI_PLANNER_TOTAL_BUDGET_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const signal = fetchMock.mock.calls[0]?.[1]?.signal;
+    expect(signal?.aborted).toBe(true);
+    expect(provider.getCallLog()).toEqual([
       {
+        durationMs: OPENAI_PLANNER_TOTAL_BUDGET_MS,
+        error:
+          "OpenAIPlannerBudgetError: OpenAI planner exceeded its 6000ms total latency budget",
+        gameId: planningRequest.game.id,
+        model: "gpt-5-nano",
         status: "fallback",
         task: "planStreetNextAction",
       },
     ]);
-    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(onCall).toHaveBeenCalledTimes(1);
+    expect(planningRequest.game.aiRuntime).toMatchObject({
+      fallbackReasons: [
+        "OpenAIPlannerBudgetError: OpenAI planner exceeded its 6000ms total latency budget",
+      ],
+      tasks: {
+        planStreetNextAction: {
+          fallbacks: 1,
+          lastStatus: "fallback",
+          successes: 0,
+        },
+      },
+      totalFallbacks: 1,
+      totalSuccesses: 0,
+    });
+
+    const runtimeAfterFallback = JSON.stringify(planningRequest.game.aiRuntime);
+    lateResolve?.(
+      plannerResponse({
+        confidence: 0.99,
+        rationale: "This completion arrived after the planner budget expired.",
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(provider.getCallLog()).toHaveLength(1);
+    expect(onCall).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(planningRequest.game.aiRuntime)).toBe(
+      runtimeAfterFallback,
+    );
+  });
+
+  it("bounds retry and aborts the second attempt when a 503 is followed by a stall", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    let lateResolve: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.signal) {
+          signals.push(init.signal);
+        }
+        if (signals.length === 1) {
+          return Promise.resolve(
+            new Response("temporary provider outage", { status: 503 }),
+          );
+        }
+        return new Promise<Response>((resolve, reject) => {
+          lateResolve = resolve;
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Request aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      retryCount: 2,
+      retryDelayMs: 250,
+      timeoutMs: DEFAULT_OPENAI_TIMEOUT_MS,
+    });
+    const planningRequest = buildPlanningRequest();
+    const startedAt = Date.now();
+    const resultPromise = provider.planStreetNextAction(planningRequest);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(OPENAI_PLANNER_TOTAL_BUDGET_MS - 250);
+    await expect(resultPromise).resolves.toBeNull();
+
+    expect(Date.now() - startedAt).toBe(OPENAI_PLANNER_TOTAL_BUDGET_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(signals).toHaveLength(2);
+    expect(signals[0]?.aborted).toBe(false);
+    expect(signals[1]?.aborted).toBe(true);
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        durationMs: OPENAI_PLANNER_TOTAL_BUDGET_MS,
+        error: expect.stringMatching(/total latency budget/),
+        status: "fallback",
+        task: "planStreetNextAction",
+      },
+    ]);
+    expect(provider.getCallLog()).toHaveLength(1);
+    expect(planningRequest.game.aiRuntime?.totalFallbacks).toBe(1);
+
+    const runtimeAfterFallback = JSON.stringify(planningRequest.game.aiRuntime);
+    lateResolve?.(plannerResponse());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(provider.getCallLog()).toHaveLength(1);
+    expect(JSON.stringify(planningRequest.game.aiRuntime)).toBe(
+      runtimeAfterFallback,
+    );
+  });
+
+  it("continues to use the longer request timeout for dialogue", async () => {
+    vi.useFakeTimers();
+    const game = seedStreetGame("game-openai-dialogue-budget-separation");
+    const input = {
+      game,
+      npcId: "npc-mara",
+      playerText: "What should I know before I head out?",
+    };
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Request timed out", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      retryCount: 1,
+      timeoutMs: DEFAULT_OPENAI_TIMEOUT_MS,
+    });
+    const startedAt = Date.now();
+    const resultPromise = provider.generateStreetReply(input);
+
+    await vi.advanceTimersByTimeAsync(OPENAI_PLANNER_TOTAL_BUDGET_MS);
+    expect(provider.getCallLog()).toEqual([]);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(
+      DEFAULT_OPENAI_TIMEOUT_MS - OPENAI_PLANNER_TOTAL_BUDGET_MS,
+    );
+
+    await expect(resultPromise).resolves.toEqual(
+      buildDeterministicStreetReply(input),
+    );
+    expect(Date.now() - startedAt).toBe(DEFAULT_OPENAI_TIMEOUT_MS);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        status: "fallback",
+        task: "generateStreetReply",
+      },
+    ]);
   });
 
   it("returns null when planner output is malformed or not allowed", async () => {
@@ -453,4 +623,23 @@ function buildAmbiguousPlanningRequest(): StreetPlanningRequest {
       },
     ],
   };
+}
+
+function plannerResponse(
+  overrides: Partial<{
+    actionId: string;
+    confidence: number;
+    planKey: string;
+    rationale: string;
+  }> = {},
+): Response {
+  return Response.json({
+    output_text: JSON.stringify({
+      actionId: "talk:npc-mara",
+      confidence: 0.84,
+      planKey: "plan:talk-mara",
+      rationale: "Mara can clarify the room before Rowan goes farther.",
+      ...overrides,
+    }),
+  });
 }

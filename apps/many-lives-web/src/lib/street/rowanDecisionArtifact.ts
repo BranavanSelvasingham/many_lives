@@ -120,13 +120,15 @@ export function buildRowanVisibleDecisionArtifactFromState({
   const rationaleBase = compactDecisionText(
     selectedFollowUpLabel
       ? `${selectedFollowUpLabel}: ${
+          liveRecommendationRationale(planningTrace) ??
           selectedOption?.rationale ??
           selectedStep?.rationale ??
           (completedObjective ? autonomyDetail : autonomyReason) ??
           (completedObjective ? autonomyReason : autonomyDetail) ??
           activeConversationDecision
         }`
-      : selectedOption?.rationale ??
+      : liveRecommendationRationale(planningTrace) ??
+          selectedOption?.rationale ??
           selectedStep?.rationale ??
           (completedObjective ? autonomyDetail : autonomyReason) ??
           (completedObjective ? autonomyReason : autonomyDetail) ??
@@ -601,12 +603,23 @@ function sourceSummaryForDecisionArtifact(
   activeConversationDecision: string | undefined,
   travelPhase?: StreetGameState["rowanAutonomy"]["travelPhase"],
 ) {
+  const sourceKind = planningTrace?.selectedRecommendation?.sourceKind;
   if (travelPhase === "route-progress") {
-    return "Validated route progress";
+    if (sourceKind === "live-llm") {
+      return "Live planner route progress, simulator-validated";
+    }
+    if (sourceKind === "deterministic-fallback") {
+      return "Deterministic fallback route progress, simulator-validated";
+    }
+    return "Deterministic route progress, simulator-validated";
   }
 
-  if (planningTrace?.selectedRecommendation?.sourceKind === "live-llm") {
+  if (sourceKind === "live-llm") {
     return "Live planner recommendation, checked before acting";
+  }
+
+  if (sourceKind === "deterministic-fallback") {
+    return "Deterministic fallback, checked before acting";
   }
 
   if (planningTrace?.selectedPressureKind === "commitment") {
@@ -614,7 +627,7 @@ function sourceSummaryForDecisionArtifact(
   }
 
   if (planningTrace) {
-    return "Planner recommendation, checked before acting";
+    return "Deterministic planner recommendation, checked before acting";
   }
 
   if (activeConversationDecision) {
@@ -622,6 +635,12 @@ function sourceSummaryForDecisionArtifact(
   }
 
   return "Rowan's current intent";
+}
+
+function liveRecommendationRationale(trace: PlanningTrace | undefined) {
+  return trace?.selectedRecommendation?.sourceKind === "live-llm"
+    ? trace.selectedRecommendation.rationale
+    : undefined;
 }
 
 function uniqueCompact(values: Array<string | null | undefined>, limit: number, max: number) {

@@ -6,9 +6,14 @@ import type {
   ObjectiveSource,
   ObjectiveTrailItem,
   JobState,
+  NpcState,
   PlayerObjective,
   StreetGameState,
 } from "../street-sim/types.js";
+import {
+  formatScheduleMinute,
+  resolveNpcSchedule,
+} from "../street-sim/npcSchedule.js";
 import {
   objectiveRouteCartProblemRouteScaffold,
   objectiveRouteCommittedJobRouteScaffold,
@@ -73,6 +78,13 @@ interface ObjectiveOutcomeEvaluation {
 const OBJECTIVE_TRAIL_LIMIT = 10;
 const JOB_WINDOW_PRESSURE_MINUTES = 45;
 const RECOVERY_ENERGY_THRESHOLD = 35;
+const PROJECTED_STREET_MINUTES_PER_TILE = 1.5;
+
+interface PeopleTarget {
+  arrivalTotalMinutes: number;
+  locationId: string;
+  npc: NpcState;
+}
 
 function problemClosedByWorld(
   problem: ReturnType<typeof problemById>,
@@ -114,6 +126,25 @@ export function buildPlayerObjectiveState(
           world,
         })
       : undefined;
+
+  if (
+    previous?.source === "manual" &&
+    previous.focus === "people" &&
+    explicitSource === "conversation" &&
+    explicitText &&
+    npcMentionedInText(world, previous.text)
+  ) {
+    const previousRoute = buildRouteForObjectiveText(
+      world,
+      previous.text,
+      previous.focus,
+      previous.source,
+      previous,
+    );
+    if (!routeCompleted(world, previous.text, previousRoute)) {
+      return composeObjective(world, previous.text, previousRoute, previous);
+    }
+  }
 
   if (
     previous &&
@@ -579,12 +610,19 @@ function evaluateObjectiveOutcome(
       });
     case "people-talk": {
       const targetNpcId = definition.npcId;
+      const targetNpc = targetNpcId ? npcById(world, targetNpcId) : undefined;
+      const availabilityBlocker = targetNpc
+        ? unavailableNpcObjectiveBlocker(world, targetNpc)
+        : undefined;
       return outcomeEvaluation(
         targetNpcId
           ? countPlayerConversationsWithNpc(world, targetNpcId) > 0
           : familiarNpcCount(world) > 0,
         {
-          blockers: ["Rowan has not started that local relationship yet."],
+          blockers: [
+            availabilityBlocker ??
+              "Rowan has not started that local relationship yet.",
+          ],
         },
       );
     }
@@ -752,6 +790,17 @@ function shouldInterruptCurrentObjective(
   previous: PlayerObjective,
 ) {
   if (previous.source === "manual") {
+    const namedPeopleTarget =
+      previous.focus === "people"
+        ? npcMentionedInText(world, previous.text)
+        : undefined;
+    const feasibleNamedTarget = namedPeopleTarget
+      ? feasiblePeopleTarget(world, namedPeopleTarget)
+      : undefined;
+    if (feasibleNamedTarget?.locationId === world.player.currentLocationId) {
+      return false;
+    }
+
     const scores = scoreObjectiveFocus(world);
     const restScore = scoreForFocus(scores, "rest");
     return !hasRecentRest(world) && world.player.energy < 35 && restScore >= 35;
@@ -996,8 +1045,8 @@ function buildSettleRoute(
     leadJobMissed: Boolean(settleLeadJob?.missed),
     settleLeadLocationId,
     settleLeadNpcId,
-    settlePeopleTargetId: settlePeopleTarget?.id,
-    settlePeopleTargetLocationId: settlePeopleTarget?.currentLocationId,
+    settlePeopleTargetId: settlePeopleTarget?.npc.id,
+    settlePeopleTargetLocationId: settlePeopleTarget?.locationId,
   });
 
   return {
@@ -1235,30 +1284,30 @@ function buildPeopleRoute(
   source: ObjectiveSource,
   textHint = "",
 ): ObjectiveRoute {
-  const target = choosePeopleTarget(world, textHint);
+  const target = choosePeopleTarget(world, source, textHint);
   const familiarPeople = familiarNpcCount(world);
   const trustedPeople = trustedNpcCount(world);
   const secondConnectionTarget =
-    trustedPeople < 2 ? nextUntalkedNpc(world, target?.id) : undefined;
+    trustedPeople < 2 ? nextUntalkedNpc(world, target?.npc.id) : undefined;
   const targetConversationCount = target
-    ? countPlayerConversationsWithNpc(world, target.id)
+    ? countPlayerConversationsWithNpc(world, target.npc.id)
     : familiarPeople > 0
       ? 1
       : 0;
   const scaffold = objectiveRoutePeopleRouteScaffold({
     familiarPeople,
     friendObjective: normalizedIncludes(textHint, "friend"),
-    secondConnectionTargetId: secondConnectionTarget?.id,
-    secondConnectionTargetLocationId: secondConnectionTarget?.currentLocationId,
+    secondConnectionTargetId: secondConnectionTarget?.npc.id,
+    secondConnectionTargetLocationId: secondConnectionTarget?.locationId,
     targetConversationCount,
-    targetId: target?.id,
-    targetLocationId: target?.currentLocationId,
-    targetName: target?.name,
+    targetId: target?.npc.id,
+    targetLocationId: target?.locationId,
+    targetName: target?.npc.name,
     trustedPeople,
   });
 
   return {
-    key: `people-${target?.id ?? "locals"}`,
+    key: `people-${target?.npc.id ?? "locals"}`,
     focus: "people",
     source,
     outcomes: scaffold.outcomes,
@@ -1504,12 +1553,17 @@ function liveAlternateWorkJobHasPressure(
   );
 }
 
-function choosePeopleTarget(world: StreetGameState, textHint = "") {
-  return (
-    npcMentionedInText(world, textHint) ??
-    nextUntalkedNpc(world) ??
-    world.npcs[0]
-  );
+function choosePeopleTarget(
+  world: StreetGameState,
+  source: ObjectiveSource,
+  textHint = "",
+) {
+  const namedTarget = npcMentionedInText(world, textHint);
+  if (namedTarget && source !== "dynamic") {
+    return retainedPeopleTarget(world, namedTarget);
+  }
+
+  return nextUntalkedNpc(world);
 }
 
 function chooseExploreTargetLocation(world: StreetGameState, textHint = "") {
@@ -1590,22 +1644,120 @@ function locationMentionedInText(world: StreetGameState, textHint = "") {
   );
 }
 
-function nextUntalkedNpc(world: StreetGameState, currentNpcId?: string) {
+function nextUntalkedNpc(
+  world: StreetGameState,
+  currentNpcId?: string,
+): PeopleTarget | undefined {
   return world.npcs
     .filter(
       (npc) =>
         npc.id !== currentNpcId &&
         countPlayerConversationsWithNpc(world, npc.id) === 0,
     )
+    .map((npc) => feasiblePeopleTarget(world, npc))
+    .filter((target): target is PeopleTarget => Boolean(target))
     .sort((left, right) => {
-      const leftDistance = distanceToLocation(world, left.currentLocationId);
-      const rightDistance = distanceToLocation(world, right.currentLocationId);
-      if (leftDistance !== rightDistance) {
-        return leftDistance - rightDistance;
+      if (left.arrivalTotalMinutes !== right.arrivalTotalMinutes) {
+        return left.arrivalTotalMinutes - right.arrivalTotalMinutes;
       }
 
-      return Number(right.known) - Number(left.known);
+      return Number(right.npc.known) - Number(left.npc.known);
     })[0];
+}
+
+function retainedPeopleTarget(
+  world: StreetGameState,
+  npc: NpcState,
+): PeopleTarget {
+  const feasible = feasiblePeopleTarget(world, npc);
+  if (feasible) {
+    return feasible;
+  }
+
+  const schedule = resolveNpcSchedule(npc.schedule, world.clock.totalMinutes);
+  return {
+    arrivalTotalMinutes:
+      schedule.nextOpening?.startTotalMinutes ?? Number.MAX_SAFE_INTEGER,
+    locationId:
+      schedule.nextOpening?.stop.locationId ?? npc.currentLocationId,
+    npc,
+  };
+}
+
+function feasiblePeopleTarget(
+  world: StreetGameState,
+  npc: NpcState,
+): PeopleTarget | undefined {
+  const now = world.clock.totalMinutes;
+  const currentSchedule = resolveNpcSchedule(npc.schedule, now);
+  const candidateLocationIds = new Set([
+    npc.currentLocationId,
+    ...npc.schedule.map((stop) => stop.locationId),
+  ]);
+
+  return [...candidateLocationIds]
+    .map((locationId) => {
+      const arrivalTotalMinutes =
+        now + projectedMinutesToNpcLocation(world, npc, locationId);
+      const arrivalSchedule = resolveNpcSchedule(
+        npc.schedule,
+        arrivalTotalMinutes,
+      );
+      const followsCurrentPressureLocation = Boolean(
+        currentSchedule.active &&
+          currentSchedule.active.stop.locationId !== npc.currentLocationId &&
+          locationId === npc.currentLocationId &&
+          arrivalSchedule.active?.stopIndex === currentSchedule.active.stopIndex,
+      );
+      if (
+        !arrivalSchedule.active ||
+        (arrivalSchedule.active.stop.locationId !== locationId &&
+          !followsCurrentPressureLocation)
+      ) {
+        return undefined;
+      }
+
+      return { arrivalTotalMinutes, locationId, npc };
+    })
+    .filter((target): target is PeopleTarget => Boolean(target))
+    .sort(
+      (left, right) => left.arrivalTotalMinutes - right.arrivalTotalMinutes,
+    )[0];
+}
+
+function projectedMinutesToNpcLocation(
+  world: StreetGameState,
+  npc: NpcState,
+  locationId: string,
+) {
+  const distance = distanceToLocation(world, locationId);
+  const stop = npc.schedule.find((entry) => entry.locationId === locationId);
+  const interiorEntryMinutes = stop?.spaceId?.startsWith("interior:") ? 1 : 0;
+  return Math.max(
+    0,
+    Math.ceil(distance * PROJECTED_STREET_MINUTES_PER_TILE) +
+      interiorEntryMinutes,
+  );
+}
+
+function unavailableNpcObjectiveBlocker(
+  world: StreetGameState,
+  npc: NpcState,
+) {
+  if (feasiblePeopleTarget(world, npc)) {
+    return undefined;
+  }
+
+  const resolution = resolveNpcSchedule(npc.schedule, world.clock.totalMinutes);
+  const nextOpening = resolution.nextOpening;
+  if (!nextOpening) {
+    return `${npc.name} has no scheduled opening Rowan can use.`;
+  }
+
+  const locationName =
+    findLocation(world, nextOpening.stop.locationId)?.name ??
+    nextOpening.stop.locationId;
+  return `${npc.name} will not be available by the projected arrival. The next opening is ${formatScheduleMinute(nextOpening.startTotalMinutes)} at ${locationName}.`;
 }
 
 function nextUnknownLocation(world: StreetGameState) {
