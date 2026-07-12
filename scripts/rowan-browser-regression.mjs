@@ -1724,6 +1724,7 @@ class CdpSession {
 
   async waitForGame(game) {
     const startedAt = Date.now();
+    let lastMismatch = null;
     let lastProbe = null;
 
     while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
@@ -1738,7 +1739,19 @@ class CdpSession {
         ) {
           return probe;
         }
-      } catch {}
+        if (browserProbeMatchesGameCoreSnapshot(probe, game)) {
+          try {
+            assertBrowserProbeMatchesGame("browser-settle", game, probe, {
+              allowPendingPlayback: true,
+            });
+          } catch (error) {
+            lastMismatch =
+              error instanceof Error ? error.message : String(error);
+          }
+        }
+      } catch (error) {
+        lastMismatch = error instanceof Error ? error.message : String(error);
+      }
 
       await sleep(PROBE_POLL_INTERVAL_MS);
     }
@@ -1748,7 +1761,7 @@ class CdpSession {
         compactBrowserProbeForWait(lastProbe),
         null,
         2,
-      )}`,
+      )}${lastMismatch ? ` Last mismatch: ${lastMismatch}` : ""}`,
     );
   }
 
