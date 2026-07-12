@@ -677,7 +677,12 @@ async function writeProcessExitDiagnostics(status) {
   );
 }
 
-async function waitFor(condition, timeoutMs, errorMessage) {
+async function waitFor(
+  condition,
+  timeoutMs,
+  errorMessage,
+  pollIntervalMs = PROBE_POLL_INTERVAL_MS,
+) {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
@@ -685,7 +690,7 @@ async function waitFor(condition, timeoutMs, errorMessage) {
     if (result) {
       return result;
     }
-    await sleep(PROBE_POLL_INTERVAL_MS);
+    await sleep(pollIntervalMs);
   }
 
   throw new Error(errorMessage);
@@ -2119,6 +2124,7 @@ async function launchBrowserSession(url) {
     [
       "--headless=new",
       "--no-sandbox",
+      "--disable-gpu",
       "--disable-dev-shm-usage",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
@@ -9069,6 +9075,7 @@ async function runAutoplayObservation(session) {
       },
       AUTOPLAY_OBSERVATION_TIMEOUT_MS,
       "Autoplay did not reach first-afternoon completion without manual advance clicks.",
+      AUTOPLAY_PACING_SAMPLE_INTERVAL_MS,
     );
     completedProbe = completion.probe;
     dom =
