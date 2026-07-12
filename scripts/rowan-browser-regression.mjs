@@ -13587,6 +13587,16 @@ async function main() {
   };
 
   try {
+    if (session !== null) {
+      autoplayObservation = await runBrowserPhase(
+        "autoplay-observation",
+        AUTOPLAY_OBSERVATION_TIMEOUT_MS,
+        () => runAutoplayObservation(session),
+      );
+      await writeCheckpointSummary("autoplay-observation-complete");
+      await recycleBrowserSession("scripted-timeline");
+    }
+
     const steps = buildRegressionSteps(gameRef);
     traceRegression(`steps:${steps.map((step) => step.label).join(",")}`);
 
@@ -13769,13 +13779,6 @@ async function main() {
         () => runOverlayPanelChecks(session),
       );
       await writeCheckpointSummary("overlay-checks-complete");
-      await recycleBrowserSession("autoplay-observation");
-      autoplayObservation = await runBrowserPhase(
-        "autoplay-observation",
-        AUTOPLAY_OBSERVATION_TIMEOUT_MS,
-        () => runAutoplayObservation(session),
-      );
-      await writeCheckpointSummary("autoplay-observation-complete");
       unavailableNpcCrossLayer = await runBrowserPhase(
         "unavailable-npc-cross-layer",
         60_000,
