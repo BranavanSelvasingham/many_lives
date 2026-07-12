@@ -2582,6 +2582,16 @@ export function buildStreetOverlayStyle({
       .ml-root.is-collapsible-rail.is-rail-expanded .ml-rail-peek-label {
         display: none;
       }
+      .ml-root.is-phone-rail.is-rail-expanded .ml-rail-head .ml-kicker {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 10px;
+        letter-spacing: 0.1em;
+      }
+      .ml-root.is-phone-rail.is-rail-expanded .ml-rail-status {
+        display: none;
+      }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-command-rail {
         flex: 0 0 0;
         max-height: 0;
