@@ -7,6 +7,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 function findChromeBin() {
   const candidates = [
@@ -1749,8 +1750,13 @@ class CdpSession {
           lastProbe = probe;
         }
 
+        const matchingGame = matchingGameSnapshotForProbe(
+          probe,
+          previousGame,
+          nextGame,
+        );
         if (
-          browserProbeMatchesGameSnapshot(probe, previousGame) &&
+          matchingGame &&
           probe.movement?.playerRoute?.active === true &&
           probe.movement?.playerRoute?.worldPath?.length >= 2
         ) {
@@ -1789,10 +1795,12 @@ class CdpSession {
           lastProbe = probe;
         }
         const route = probe?.movement?.playerRoute;
-        if (
-          browserProbeMatchesGameSnapshot(probe, previousGame) &&
-          route?.active === true
-        ) {
+        const matchingGame = matchingGameSnapshotForProbe(
+          probe,
+          previousGame,
+          nextGame,
+        );
+        if (matchingGame && route?.active === true) {
           const bestProgress =
             bestRouteProbe?.movement?.playerRoute?.progress ?? -1;
           if (route.progress >= bestProgress) {
@@ -3395,6 +3403,8 @@ function browserProbeMatchesGameSnapshot(probe, game) {
     return false;
   }
 
+  const expectedPlanningTrace = planningTraceProbeFromGame(game);
+
   return (
     probe.gameId === game.id &&
     probe.clock?.iso === game.currentTime &&
@@ -3408,7 +3418,26 @@ function browserProbeMatchesGameSnapshot(probe, game) {
     (probe.autonomy?.targetLocationId ?? null) ===
       normalizeNullable(game.rowanAutonomy.targetLocationId) &&
     (probe.activeConversation?.npcId ?? null) ===
-      (game.activeConversation?.npcId ?? null)
+      (game.activeConversation?.npcId ?? null) &&
+    isDeepStrictEqual(probe.cityEvents ?? [], activeCityEvents(game)) &&
+    isDeepStrictEqual(
+      probe.independentNpcActions ?? [],
+      independentNpcActionsFromGame(game),
+    ) &&
+    isDeepStrictEqual(probe.objective, objectiveProbeFromGame(game)) &&
+    (!expectedPlanningTrace ||
+      isDeepStrictEqual(
+        probe.autonomy?.planningTrace,
+        expectedPlanningTrace,
+      )) &&
+    isDeepStrictEqual(probe.worldPressure, worldPressureFromGame(game)) &&
+    isDeepStrictEqual(probe.aiRuntime ?? null, aiRuntimeProbeFromGame(game))
+  );
+}
+
+function matchingGameSnapshotForProbe(probe, ...games) {
+  return (
+    games.find((game) => browserProbeMatchesGameSnapshot(probe, game)) ?? null
   );
 }
 
@@ -13008,9 +13037,18 @@ async function main() {
           previousGame,
           game,
         );
+        const routeStartGame = matchingGameSnapshotForProbe(
+          routeStartProbe,
+          previousGame,
+          game,
+        );
+        assert.ok(
+          routeStartGame,
+          `${step.label}: route start did not match its departure or arrival snapshot.`,
+        );
         const routeStartLabel = `${step.label}-route-start`;
         const routeStartCapture = await captureBrowserMovementState({
-          game: previousGame,
+          game: routeStartGame,
           index: `${index}a`,
           label: routeStartLabel,
           probe: routeStartProbe,
@@ -13020,7 +13058,7 @@ async function main() {
           buildTimelineEntry({
             camera: routeStartCapture.camera,
             dom: routeStartCapture.dom,
-            game: previousGame,
+            game: routeStartGame,
             label: routeStartLabel,
             mapAgency: routeStartCapture.mapAgency,
             probe: routeStartCapture.probe,
@@ -13040,9 +13078,18 @@ async function main() {
           0.35,
           { fallbackProbe: routeStartProbe },
         );
+        const routeMidGame = matchingGameSnapshotForProbe(
+          routeMidProbe,
+          previousGame,
+          game,
+        );
+        assert.ok(
+          routeMidGame,
+          `${step.label}: route midpoint did not match its departure or arrival snapshot.`,
+        );
         const routeMidLabel = `${step.label}-route-mid`;
         const routeMidCapture = await captureBrowserMovementState({
-          game: previousGame,
+          game: routeMidGame,
           index: `${index}b`,
           label: routeMidLabel,
           probe: routeMidProbe,
@@ -13052,7 +13099,7 @@ async function main() {
           buildTimelineEntry({
             camera: routeMidCapture.camera,
             dom: routeMidCapture.dom,
-            game: previousGame,
+            game: routeMidGame,
             label: routeMidLabel,
             mapAgency: routeMidCapture.mapAgency,
             probe: routeMidCapture.probe,
@@ -13073,9 +13120,18 @@ async function main() {
             0.82,
             { fallbackProbe: routeMidProbe },
           );
+          const routeCloseGame = matchingGameSnapshotForProbe(
+            routeCloseProbe,
+            previousGame,
+            game,
+          );
+          assert.ok(
+            routeCloseGame,
+            `${step.label}: route close did not match its departure or arrival snapshot.`,
+          );
           const routeCloseLabel = `${step.label}-route-close`;
           const routeCloseCapture = await captureBrowserMovementState({
-            game: previousGame,
+            game: routeCloseGame,
             index: `${index}c`,
             label: routeCloseLabel,
             probe: routeCloseProbe,
@@ -13085,7 +13141,7 @@ async function main() {
             buildTimelineEntry({
               camera: routeCloseCapture.camera,
               dom: routeCloseCapture.dom,
-              game: previousGame,
+              game: routeCloseGame,
               label: routeCloseLabel,
               mapAgency: routeCloseCapture.mapAgency,
               probe: routeCloseCapture.probe,
