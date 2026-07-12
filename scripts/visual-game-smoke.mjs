@@ -89,6 +89,8 @@ const screenshotPixelDiagnostics = [];
 
 const VIEWPORTS = [
   { height: 720, name: "desktop", width: 1280 },
+  { height: 844, name: "mobile", width: 390 },
+  { height: 900, name: "phone-boundary", width: 560 },
   { height: 900, name: "compact-boundary", width: 960 },
   { height: 1024, name: "tablet-portrait", width: 768 },
   { height: 998, name: "codex-compact", width: 662 },
@@ -111,8 +113,6 @@ const VIEWPORTS = [
     name: "codex-retina-tall",
     width: 669,
   },
-  { height: 900, name: "phone-boundary", width: 560 },
-  { height: 844, name: "mobile", width: 390 },
 ];
 const INTERIOR_CAMERA_VIEWPORT = {
   deviceScaleFactor: 2,
