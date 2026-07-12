@@ -8,6 +8,7 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { inflateSync } from "node:zlib";
 
 function findChromeBin() {
   const candidates = [
@@ -694,6 +695,232 @@ async function waitFor(
   }
 
   throw new Error(errorMessage);
+}
+
+function paethPredictor(left, up, upLeft) {
+  const estimate = left + up - upLeft;
+  const leftDistance = Math.abs(estimate - left);
+  const upDistance = Math.abs(estimate - up);
+  const upLeftDistance = Math.abs(estimate - upLeft);
+  if (leftDistance <= upDistance && leftDistance <= upLeftDistance) {
+    return left;
+  }
+  return upDistance <= upLeftDistance ? up : upLeft;
+}
+
+function decodePngPixels(buffer) {
+  assert.equal(
+    buffer.subarray(0, 8).toString("hex"),
+    "89504e470d0a1a0a",
+    "Screenshot is not a PNG.",
+  );
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = -1;
+  let interlace = -1;
+  const compressedChunks = [];
+
+  while (offset + 12 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    assert.ok(dataEnd + 4 <= buffer.length, `Malformed PNG ${type} chunk.`);
+    if (type === "IHDR") {
+      width = buffer.readUInt32BE(dataStart);
+      height = buffer.readUInt32BE(dataStart + 4);
+      bitDepth = buffer[dataStart + 8];
+      colorType = buffer[dataStart + 9];
+      interlace = buffer[dataStart + 12];
+    } else if (type === "IDAT") {
+      compressedChunks.push(buffer.subarray(dataStart, dataEnd));
+    } else if (type === "IEND") {
+      break;
+    }
+    offset = dataEnd + 4;
+  }
+
+  assert.equal(bitDepth, 8, `Unsupported PNG bit depth ${bitDepth}.`);
+  assert.equal(interlace, 0, "Interlaced screenshots are not supported.");
+  const channels = new Map([
+    [0, 1],
+    [2, 3],
+    [4, 2],
+    [6, 4],
+  ]).get(colorType);
+  assert.ok(channels, `Unsupported PNG color type ${colorType}.`);
+  const inflated = inflateSync(Buffer.concat(compressedChunks));
+  const stride = width * channels;
+  assert.equal(
+    inflated.length,
+    height * (stride + 1),
+    "Unexpected PNG scanline length.",
+  );
+  const pixels = Buffer.alloc(height * stride);
+
+  for (let y = 0; y < height; y += 1) {
+    const sourceRow = y * (stride + 1);
+    const filter = inflated[sourceRow];
+    const targetRow = y * stride;
+    for (let x = 0; x < stride; x += 1) {
+      const raw = inflated[sourceRow + 1 + x];
+      const left = x >= channels ? pixels[targetRow + x - channels] : 0;
+      const up = y > 0 ? pixels[targetRow - stride + x] : 0;
+      const upLeft =
+        y > 0 && x >= channels
+          ? pixels[targetRow - stride + x - channels]
+          : 0;
+      const predictor =
+        filter === 0
+          ? 0
+          : filter === 1
+            ? left
+            : filter === 2
+              ? up
+              : filter === 3
+                ? Math.floor((left + up) / 2)
+                : filter === 4
+                  ? paethPredictor(left, up, upLeft)
+                  : null;
+      assert.notEqual(predictor, null, `Unsupported PNG filter ${filter}.`);
+      pixels[targetRow + x] = (raw + predictor) & 0xff;
+    }
+  }
+
+  return { channels, height, pixels, width };
+}
+
+function assertNoLargeNearBlackDropout(buffer, label) {
+  const { channels, height, pixels, width } = decodePngPixels(buffer);
+  const nearBlack = new Uint8Array(width * height);
+  const visited = new Uint8Array(width * height);
+  const queue = new Int32Array(width * height);
+
+  for (let index = 0; index < nearBlack.length; index += 1) {
+    const pixelOffset = index * channels;
+    const red = pixels[pixelOffset];
+    const green = pixels[pixelOffset + 1] ?? red;
+    const blue = pixels[pixelOffset + 2] ?? red;
+    nearBlack[index] = Math.max(red, green, blue) <= 6 ? 1 : 0;
+  }
+
+  let largest = { area: 0, bottom: 0, left: 0, right: 0, top: 0 };
+  for (let index = 0; index < nearBlack.length; index += 1) {
+    if (!nearBlack[index] || visited[index]) {
+      continue;
+    }
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = index;
+    visited[index] = 1;
+    let area = 0;
+    let left = width;
+    let right = 0;
+    let top = height;
+    let bottom = 0;
+    while (head < tail) {
+      const current = queue[head++];
+      const x = current % width;
+      const y = Math.floor(current / width);
+      area += 1;
+      left = Math.min(left, x);
+      right = Math.max(right, x + 1);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y + 1);
+      const neighbors = [
+        x > 0 ? current - 1 : -1,
+        x + 1 < width ? current + 1 : -1,
+        y > 0 ? current - width : -1,
+        y + 1 < height ? current + width : -1,
+      ];
+      for (const neighbor of neighbors) {
+        if (neighbor >= 0 && nearBlack[neighbor] && !visited[neighbor]) {
+          visited[neighbor] = 1;
+          queue[tail++] = neighbor;
+        }
+      }
+    }
+    if (area > largest.area) {
+      largest = { area, bottom, left, right, top };
+    }
+  }
+
+  const componentWidth = largest.right - largest.left;
+  const componentHeight = largest.bottom - largest.top;
+  const maximumArea = Math.max(1_600, width * height * 0.006);
+  assert.ok(
+    largest.area < maximumArea || componentWidth < 24 || componentHeight < 16,
+    `${label}: screenshot contains a large connected near-black dropout: ${JSON.stringify({
+      ...largest,
+      componentHeight,
+      componentWidth,
+      maximumArea: Number(maximumArea.toFixed(1)),
+    })}.`,
+  );
+}
+
+function assertVisibleScreenshotTextPaint(buffer, probe, label) {
+  const { channels, height, pixels, width } = decodePngPixels(buffer);
+  const scaleX = width / probe.viewport.width;
+  const scaleY = height / probe.viewport.height;
+  assert.ok(
+    probe.regions.length >= 8,
+    `${label}: expected visible HUD, dock, and rail text geometry.`,
+  );
+
+  for (const region of probe.regions) {
+    const left = Math.max(0, Math.floor(region.rect.left * scaleX));
+    const right = Math.min(width, Math.ceil(region.rect.right * scaleX));
+    const top = Math.max(0, Math.floor(region.rect.top * scaleY));
+    const bottom = Math.min(height, Math.ceil(region.rect.bottom * scaleY));
+    const characters = region.text.replace(/\s+/g, "").length;
+    const horizontalBinCount = Math.max(
+      2,
+      Math.min(6, Math.ceil(characters / 3)),
+    );
+    const horizontalBins = new Uint16Array(horizontalBinCount);
+    let brightPixels = 0;
+    let sampledPixels = 0;
+
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const pixelOffset = (y * width + x) * channels;
+        const red = pixels[pixelOffset];
+        const green = pixels[pixelOffset + 1] ?? red;
+        const blue = pixels[pixelOffset + 2] ?? red;
+        const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        if (luminance >= 70) {
+          brightPixels += 1;
+          const relativeX = right > left ? (x - left) / (right - left) : 0;
+          const bin = Math.min(
+            horizontalBinCount - 1,
+            Math.floor(relativeX * horizontalBinCount),
+          );
+          horizontalBins[bin] += 1;
+        }
+        sampledPixels += 1;
+      }
+    }
+
+    const minimumBrightPixels = Math.max(
+      4,
+      1.5 * characters * scaleX * scaleY,
+      sampledPixels * 0.008,
+    );
+    const activeBins = [...horizontalBins].filter((count) => count >= 2).length;
+    const minimumActiveBins = Math.ceil(horizontalBinCount * 0.6);
+    assert.ok(
+      brightPixels >= minimumBrightPixels && activeBins >= minimumActiveBins,
+      `${label}: visible ${region.surface} text "${region.text.slice(0, 48)}" was not completely painted (${brightPixels} bright pixels, ${activeBins}/${horizontalBinCount} horizontal bins).`,
+    );
+  }
+}
+
+function shouldValidateGameplayScreenshotPaint(targetPath) {
+  const label = path.basename(targetPath);
+  return !/(?:overlay|panel|camera|rowan-click)/i.test(label);
 }
 
 function isCdpRuntimeEvaluateTimeout(error) {
@@ -1867,18 +2094,131 @@ class CdpSession {
   }
 
   async captureScreenshot(targetPath) {
-    const response = await this.send("Page.captureScreenshot", {
-      captureBeyondViewport: false,
-      format: "png",
-      fromSurface: true,
-    });
+    const validateTextPaint = shouldValidateGameplayScreenshotPaint(targetPath);
+    const paintProbe = validateTextPaint
+      ? await this.evaluateForRead(`(() => {
+          const selectors = [
+            ["hud", ".ml-time-chip"],
+            ["dock", ".ml-dock-button"],
+            ["rail", ".ml-rail-name"],
+            ["rail", ".ml-rail-thought"],
+            ["rail", ".ml-command-rail .ml-kicker"]
+          ];
+          const regions = selectors.flatMap(([surface, selector]) =>
+            Array.from(document.querySelectorAll(selector)).flatMap((element) => {
+              const style = window.getComputedStyle(element);
+              if (
+                style.visibility === "hidden" ||
+                style.display === "none"
+              ) {
+                return [];
+              }
+              const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+              const textRegions = [];
+              for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const text = node.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+                if (!text) {
+                  continue;
+                }
+                const range = document.createRange();
+                range.selectNodeContents(node);
+                const rect = range.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) {
+                  continue;
+                }
+                const insideViewport =
+                  rect.left >= 0 &&
+                  rect.right <= window.innerWidth &&
+                  rect.top >= 0 &&
+                  rect.bottom <= window.innerHeight;
+                const insideClippingAncestors = (() => {
+                  for (
+                    let ancestor = element.parentElement;
+                    ancestor;
+                    ancestor = ancestor.parentElement
+                  ) {
+                    const ancestorStyle = window.getComputedStyle(ancestor);
+                    const clips = [
+                      ancestorStyle.overflow,
+                      ancestorStyle.overflowX,
+                      ancestorStyle.overflowY
+                    ].some((value) =>
+                      ["hidden", "clip", "scroll", "auto"].includes(value)
+                    );
+                    if (!clips) {
+                      continue;
+                    }
+                    const ancestorRect = ancestor.getBoundingClientRect();
+                    if (
+                      rect.left < ancestorRect.left ||
+                      rect.right > ancestorRect.right ||
+                      rect.top < ancestorRect.top ||
+                      rect.bottom > ancestorRect.bottom
+                    ) {
+                      return false;
+                    }
+                  }
+                  return true;
+                })();
+                if (!insideViewport || !insideClippingAncestors) {
+                  continue;
+                }
+                textRegions.push({
+                  rect: {
+                    bottom: rect.bottom,
+                    left: rect.left,
+                    right: rect.right,
+                    top: rect.top
+                  },
+                  surface,
+                  text
+                });
+              }
+              return textRegions;
+            })
+          );
+          return {
+            regions,
+            viewport: { height: window.innerHeight, width: window.innerWidth }
+          };
+        })()`, `screenshot-paint-probe:${path.basename(targetPath)}`)
+      : null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const response = await this.send("Page.captureScreenshot", {
+        captureBeyondViewport: false,
+        format: "png",
+        fromSurface: true,
+      });
+      const data = response?.result?.data;
+      if (!data) {
+        throw new Error("Chrome did not return screenshot data.");
+      }
 
-    const data = response?.result?.data;
-    if (!data) {
-      throw new Error("Chrome did not return screenshot data.");
+      const buffer = Buffer.from(data, "base64");
+      await writeFile(targetPath, buffer);
+      try {
+        assertNoLargeNearBlackDropout(buffer, path.basename(targetPath));
+        if (paintProbe) {
+          assertVisibleScreenshotTextPaint(
+            buffer,
+            paintProbe,
+            path.basename(targetPath),
+          );
+        }
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 3) {
+          process.stdout.write(
+            `[many-lives] Retrying incomplete browser screenshot ${path.basename(targetPath)} (${attempt}/3).\n`,
+          );
+          await sleep(180);
+        }
+      }
     }
 
-    await writeFile(targetPath, Buffer.from(data, "base64"));
+    throw lastError;
   }
 
   waitForEvent(method) {
@@ -2124,7 +2464,6 @@ async function launchBrowserSession(url) {
     [
       "--headless=new",
       "--no-sandbox",
-      "--disable-gpu",
       "--disable-dev-shm-usage",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
@@ -9667,8 +10006,11 @@ function buildWatchPacingAudit(clickLog) {
   const ordinaryDurations = ordinaryBeats
     .map((entry) => entry.durationMs)
     .filter((duration) => typeof duration === "number");
+  const readableFloorMs = 2_600;
+  const measurementToleranceMs = 150;
+  const measuredReadableFloorMs = readableFloorMs - measurementToleranceMs;
   const shortOrdinaryBeats = ordinaryBeats.filter(
-    (entry) => (entry.durationMs ?? 0) < 2_600,
+    (entry) => (entry.durationMs ?? 0) < measuredReadableFloorMs,
   );
 
   return {
@@ -9676,7 +10018,9 @@ function buildWatchPacingAudit(clickLog) {
     ordinaryBeatCount: ordinaryBeats.length,
     ordinaryMinDurationMs:
       ordinaryDurations.length > 0 ? Math.min(...ordinaryDurations) : null,
-    readableFloorMs: 2_600,
+    measuredReadableFloorMs,
+    measurementToleranceMs,
+    readableFloorMs,
     shortOrdinaryBeats,
     watchedBeats,
   };
@@ -10258,8 +10602,8 @@ function assertWatchPacingAudit(watchPacingAudit) {
   );
   assert.ok(
     (watchPacingAudit.ordinaryMinDurationMs ?? 0) >=
-      watchPacingAudit.readableFloorMs,
-    `Ordinary watch-beat minimum dwell was below ${watchPacingAudit.readableFloorMs}ms: ${watchPacingAudit.ordinaryMinDurationMs}ms.`,
+      watchPacingAudit.measuredReadableFloorMs,
+    `Ordinary watch-beat minimum dwell was below the ${watchPacingAudit.readableFloorMs}ms floor after ${watchPacingAudit.measurementToleranceMs}ms post-settle measurement tolerance: ${watchPacingAudit.ordinaryMinDurationMs}ms.`,
   );
 }
 

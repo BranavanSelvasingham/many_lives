@@ -240,8 +240,8 @@ const CAMERA_WHEEL_PAN_MAX_DELTA = 150;
 const CAMERA_WHEEL_PAN_SENSITIVITY = 0.92;
 const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 320;
 const PLAYER_MAX_MOVE_DURATION_MS = 5200;
-const WATCH_PLAYER_MOVE_MS_PER_TILE = 620;
-const WATCH_PLAYER_MAX_MOVE_DURATION_MS = 8600;
+const WATCH_PLAYER_MOVE_MS_PER_TILE = 300;
+const WATCH_PLAYER_MAX_MOVE_DURATION_MS = 5200;
 const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
@@ -1400,6 +1400,7 @@ export function PhaserStreetGameApp() {
 
       try {
         await callback();
+        return true;
       } catch (runError) {
         setError(
           formatStreetRuntimeError(
@@ -1407,6 +1408,7 @@ export function PhaserStreetGameApp() {
             "Something in the district failed to update.",
           ),
         );
+        return false;
       } finally {
         setBusyLabel(null);
       }
@@ -1451,7 +1453,7 @@ export function PhaserStreetGameApp() {
   ) => {
     const activeGame = gameRef.current;
     if (!activeGame || busyLabelRef.current) {
-      return;
+      return false;
     }
 
     const rowanAutonomy =
@@ -1598,8 +1600,11 @@ export function PhaserStreetGameApp() {
         return;
       }
 
-      lastObjectiveAutoContinueKeyRef.current = autoContinueKey;
-      void handleAdvanceObjective();
+      void handleAdvanceObjective().then((advanced) => {
+        if (advanced) {
+          lastObjectiveAutoContinueKeyRef.current = autoContinueKey;
+        }
+      });
     }, autoContinueDelayMsForBeat(game));
 
     return () => {
