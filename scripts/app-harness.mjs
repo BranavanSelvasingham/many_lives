@@ -151,6 +151,20 @@ function buildSteps() {
       ]),
     );
 
+    if (!SKIP_BROWSER_PLAYTEST) {
+      allSteps.push(
+        commandStep("inhabit gameplay browser regression", "corepack", [
+          "pnpm",
+          "playtest:inhabit:browser",
+        ], {
+          MANY_LIVES_BROWSER_PLAYTEST_DIR: BROWSER_PLAYTEST_DIR,
+        }, {
+          completionProbe: readRowanBrowserCompletion,
+        }),
+        inlineStep("inhabit gameplay artifact check", assertRowanBrowserArtifacts),
+      );
+    }
+
     if (!SKIP_VISUAL) {
       allSteps.push(
         commandStep("visual game smoke", "corepack", ["pnpm", "visual:game"], {
@@ -184,19 +198,6 @@ function buildSteps() {
       );
     }
 
-    if (!SKIP_BROWSER_PLAYTEST) {
-      allSteps.push(
-        commandStep("inhabit gameplay browser regression", "corepack", [
-          "pnpm",
-          "playtest:inhabit:browser",
-        ], {
-          MANY_LIVES_BROWSER_PLAYTEST_DIR: BROWSER_PLAYTEST_DIR,
-        }, {
-          completionProbe: readRowanBrowserCompletion,
-        }),
-        inlineStep("inhabit gameplay artifact check", assertRowanBrowserArtifacts),
-      );
-    }
   }
 
   if (LIVE_URL) {
