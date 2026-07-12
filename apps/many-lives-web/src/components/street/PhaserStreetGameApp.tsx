@@ -3273,20 +3273,50 @@ function renderInteriorSpace(
   const { structureDetailLayer, structureLayer, terrainLayer } = objects;
   const palette = interiorSpacePalette(space);
 
+  const roomOrigin = mapTileToWorldOrigin(0, 0);
+  terrainLayer.fillStyle(palette.wall, 1);
+  terrainLayer.fillRect(
+    roomOrigin.x,
+    roomOrigin.y,
+    space.width * CELL,
+    space.height * CELL,
+  );
+
+  const walkableTiles = new Uint8Array(space.width * space.height);
   for (const tile of space.tiles) {
-    const origin = mapTileToWorldOrigin(tile.x, tile.y);
-    if (tile.walkable) {
-      const alternate = (tile.x + tile.y) % 2 === 0;
+    if (
+      tile.walkable &&
+      tile.x >= 0 &&
+      tile.x < space.width &&
+      tile.y >= 0 &&
+      tile.y < space.height
+    ) {
+      walkableTiles[tile.y * space.width + tile.x] = 1;
+    }
+  }
+
+  for (let y = 0; y < space.height; y += 1) {
+    let runStart = -1;
+    for (let x = 0; x <= space.width; x += 1) {
+      const walkable =
+        x < space.width && walkableTiles[y * space.width + x] === 1;
+      if (walkable && runStart === -1) {
+        runStart = x;
+      }
+      if (walkable || runStart === -1) {
+        continue;
+      }
+
+      const origin = mapTileToWorldOrigin(runStart, y);
+      const width = (x - runStart) * CELL;
       terrainLayer.fillStyle(
-        alternate ? palette.floorAlternate : palette.floor,
+        y % 2 === 0 ? palette.floorAlternate : palette.floor,
         1,
       );
-      terrainLayer.fillRect(origin.x, origin.y, CELL, CELL);
+      terrainLayer.fillRect(origin.x, origin.y, width, CELL);
       terrainLayer.fillStyle(palette.floorHighlight, palette.floorHighlightAlpha);
-      terrainLayer.fillRect(origin.x + 2, origin.y + 2, CELL - 4, 1.5);
-    } else {
-      terrainLayer.fillStyle(palette.wall, 1);
-      terrainLayer.fillRect(origin.x, origin.y, CELL, CELL);
+      terrainLayer.fillRect(origin.x + 2, origin.y + 2, width - 4, 1.5);
+      runStart = -1;
     }
   }
 
@@ -3310,7 +3340,6 @@ function renderInteriorSpace(
       5,
     );
   }
-
 }
 
 function interiorSpacePalette(space: SpaceDefinition) {
