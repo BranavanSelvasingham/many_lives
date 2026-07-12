@@ -219,7 +219,10 @@ export function alignRowanPlaybackWithGame(
 export function isBlockingRowanPlayback(
   state: RowanPlaybackState | null | undefined,
 ) {
-  return Boolean(state?.activeBeat || state?.queuedBeats.length);
+  return Boolean(
+    state?.activeBeat?.blocking ||
+      state?.queuedBeats.some((beat) => beat.blocking),
+  );
 }
 
 export function isBlockingRowanPlaybackForGame(
@@ -339,7 +342,7 @@ export function deriveRowanPlaybackBeats(
       "the current destination";
     const enteringInterior = nextGame.activeSpaceId?.startsWith("interior:");
     beats.push({
-      blocking: true,
+      blocking: false,
       detail: enteringInterior
         ? `Rowan entered ${locationName}.`
         : `Rowan stepped back out to ${nextGame.districtName}.`,
@@ -362,7 +365,7 @@ export function deriveRowanPlaybackBeats(
       locationNameForId(nextGame, nextGame.player.currentLocationId) ??
       "the current destination";
     beats.push({
-      blocking: true,
+      blocking: false,
       detail: `Rowan reached ${locationName}.`,
       durationMs: ROWAN_PLAYBACK_TIMING_MS.arrivalSettle,
       key: `arrive:${nextGame.currentTime}:${nextGame.player.currentLocationId ?? "street"}`,

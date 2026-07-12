@@ -92,6 +92,7 @@ describe("Rowan playback helpers", () => {
     expect(beats).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          blocking: false,
           kind: "arrive",
           title: "Entered Morrow House",
         }),
@@ -637,6 +638,25 @@ describe("Rowan playback helpers", () => {
     playback = completeActiveRowanPlaybackBeat(playback);
 
     expect(playback.lastCompletedBeat?.title).toBe("Thread landed with Mara");
+    expect(isBlockingRowanPlayback(playback)).toBe(false);
+  });
+
+  it("keeps arrival context visible without blocking the next autonomous beat", () => {
+    const arrivalBeat: RowanPlaybackBeat = {
+      blocking: false,
+      detail: "Rowan entered Kettle & Lamp.",
+      durationMs: 420,
+      key: "space:test:street:tea-house",
+      kind: "arrive",
+      locationId: "tea-house",
+      title: "Entered Kettle & Lamp",
+      tone: "info",
+    };
+    const playback = startNextRowanPlaybackBeat(
+      appendRowanPlaybackBeats(createEmptyRowanPlaybackState(), [arrivalBeat]),
+    );
+
+    expect(playback.activeBeat).toBe(arrivalBeat);
     expect(isBlockingRowanPlayback(playback)).toBe(false);
   });
 
