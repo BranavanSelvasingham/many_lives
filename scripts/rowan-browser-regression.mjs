@@ -913,7 +913,7 @@ function assertVisibleScreenshotTextPaint(buffer, probe, label) {
     const minimumActiveBins = Math.ceil(horizontalBinCount * 0.6);
     assert.ok(
       brightPixels >= minimumBrightPixels && activeBins >= minimumActiveBins,
-      `${label}: visible ${region.surface} text "${region.text.slice(0, 48)}" was not completely painted (${brightPixels} bright pixels, ${activeBins}/${horizontalBinCount} horizontal bins).`,
+      `${label}: visible ${region.surface} text "${region.text.slice(0, 48)}" was not completely painted (${brightPixels} bright pixels, ${activeBins}/${horizontalBinCount} horizontal bins) at ${JSON.stringify(region.rect)}.`,
     );
   }
 }
@@ -2095,8 +2095,8 @@ class CdpSession {
 
   async captureScreenshot(targetPath) {
     const validateTextPaint = shouldValidateGameplayScreenshotPaint(targetPath);
-    const paintProbe = validateTextPaint
-      ? await this.evaluateForRead(`(() => {
+    const readPaintProbe = validateTextPaint
+      ? () => this.evaluateForRead(`(() => {
           const selectors = [
             ["hud", ".ml-time-chip"],
             ["dock", ".ml-dock-button"],
@@ -2182,9 +2182,10 @@ class CdpSession {
             viewport: { height: window.innerHeight, width: window.innerWidth }
           };
         })()`, `screenshot-paint-probe:${path.basename(targetPath)}`)
-      : null;
+      : async () => null;
     let lastError = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const paintProbeBefore = await readPaintProbe();
       const response = await this.send("Page.captureScreenshot", {
         captureBeyondViewport: false,
         format: "png",
@@ -2197,12 +2198,18 @@ class CdpSession {
 
       const buffer = Buffer.from(data, "base64");
       await writeFile(targetPath, buffer);
+      const paintProbeAfter = await readPaintProbe();
       try {
         assertNoLargeNearBlackDropout(buffer, path.basename(targetPath));
-        if (paintProbe) {
+        if (paintProbeBefore && paintProbeAfter) {
+          assert.deepEqual(
+            paintProbeAfter,
+            paintProbeBefore,
+            `${path.basename(targetPath)}: visible text geometry changed during screenshot capture.`,
+          );
           assertVisibleScreenshotTextPaint(
             buffer,
-            paintProbe,
+            paintProbeAfter,
             path.basename(targetPath),
           );
         }
