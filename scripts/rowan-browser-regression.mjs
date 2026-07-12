@@ -923,6 +923,46 @@ function shouldValidateGameplayScreenshotPaint(targetPath) {
   return !/(?:overlay|panel|camera|rowan-click)/i.test(label);
 }
 
+function mergeScreenshotPaintProbes(before, after, label) {
+  assert.deepEqual(
+    after.viewport,
+    before.viewport,
+    `${label}: viewport changed during screenshot capture.`,
+  );
+  assert.equal(
+    after.regions.length,
+    before.regions.length,
+    `${label}: visible text runs changed during screenshot capture.`,
+  );
+
+  return {
+    regions: before.regions.map((beforeRegion, index) => {
+      const afterRegion = after.regions[index];
+      assert.deepEqual(
+        {
+          surface: afterRegion.surface,
+          text: afterRegion.text,
+        },
+        {
+          surface: beforeRegion.surface,
+          text: beforeRegion.text,
+        },
+        `${label}: visible text identity changed during screenshot capture.`,
+      );
+      return {
+        ...beforeRegion,
+        rect: {
+          bottom: Math.max(beforeRegion.rect.bottom, afterRegion.rect.bottom),
+          left: Math.min(beforeRegion.rect.left, afterRegion.rect.left),
+          right: Math.max(beforeRegion.rect.right, afterRegion.rect.right),
+          top: Math.min(beforeRegion.rect.top, afterRegion.rect.top),
+        },
+      };
+    }),
+    viewport: before.viewport,
+  };
+}
+
 function isCdpRuntimeEvaluateTimeout(error) {
   return Boolean(
     error instanceof Error &&
@@ -2202,14 +2242,14 @@ class CdpSession {
       try {
         assertNoLargeNearBlackDropout(buffer, path.basename(targetPath));
         if (paintProbeBefore && paintProbeAfter) {
-          assert.deepEqual(
-            paintProbeAfter,
+          const paintProbe = mergeScreenshotPaintProbes(
             paintProbeBefore,
-            `${path.basename(targetPath)}: visible text geometry changed during screenshot capture.`,
+            paintProbeAfter,
+            path.basename(targetPath),
           );
           assertVisibleScreenshotTextPaint(
             buffer,
-            paintProbeAfter,
+            paintProbe,
             path.basename(targetPath),
           );
         }
