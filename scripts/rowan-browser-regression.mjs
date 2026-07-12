@@ -1723,22 +1723,32 @@ class CdpSession {
   }
 
   async waitForGame(game) {
-    return waitFor(
-      async () => {
-        try {
-          const probe = await this.readBrowserProbe();
-          if (
-            browserProbeMatchesGameSnapshot(probe, game) ||
-            browserProbeMatchesProgressiveSnapshot(probe, game)
-          ) {
-            return probe;
-          }
-        } catch {}
+    const startedAt = Date.now();
+    let lastProbe = null;
 
-        return null;
-      },
-      SIM_WAIT_TIMEOUT_MS,
-      `Timed out waiting for browser session to catch up to ${game.currentTime} / ${game.rowanAutonomy.label}.`,
+    while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
+      try {
+        const probe = await this.readBrowserProbe();
+        if (probe) {
+          lastProbe = probe;
+        }
+        if (
+          browserProbeMatchesGameSnapshot(probe, game) ||
+          browserProbeMatchesProgressiveSnapshot(probe, game)
+        ) {
+          return probe;
+        }
+      } catch {}
+
+      await sleep(PROBE_POLL_INTERVAL_MS);
+    }
+
+    throw new Error(
+      `Timed out waiting for browser session to catch up to ${game.currentTime} / ${game.rowanAutonomy.label}. Last probe: ${JSON.stringify(
+        compactBrowserProbeForWait(lastProbe),
+        null,
+        2,
+      )}`,
     );
   }
 
@@ -2098,6 +2108,9 @@ async function launchBrowserSession(url) {
       "--no-sandbox",
       "--disable-gpu",
       "--disable-dev-shm-usage",
+      "--disable-background-timer-throttling",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-renderer-backgrounding",
       "--no-first-run",
       "--no-default-browser-check",
       "--hide-scrollbars",
