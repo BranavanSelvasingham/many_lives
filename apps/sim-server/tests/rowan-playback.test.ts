@@ -8,6 +8,7 @@ import {
   deriveRowanPlaybackBeats,
   isBlockingRowanPlayback,
   isBlockingRowanPlaybackForGame,
+  remainingAutoplayDelayMs,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
@@ -688,6 +689,12 @@ describe("Rowan playback helpers", () => {
       true,
     );
     expect(isBlockingRowanPlayback(settled)).toBe(false);
+  });
+
+  it("keeps an autoplay dwell on a fixed deadline across playback updates", () => {
+    expect(remainingAutoplayDelayMs(3_400, 1_000, 1_420)).toBe(2_980);
+    expect(remainingAutoplayDelayMs(3_400, 1_000, 4_500)).toBe(0);
+    expect(remainingAutoplayDelayMs(3_400, null, 4_500)).toBe(3_400);
   });
 
   it("drops playback beats that no longer match Rowan's current location", async () => {

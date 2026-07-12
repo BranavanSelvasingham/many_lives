@@ -162,6 +162,7 @@ import {
   estimateLiveConversationBeatMs,
   isBlockingRowanPlaybackForGame,
   isFirstAfternoonOpening,
+  remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
@@ -1008,6 +1009,10 @@ export function PhaserStreetGameApp() {
   const gameRef = useRef<StreetGameState | null>(null);
   const optimisticPlayerRef = useRef<Point | null>(null);
   const objectiveAutoContinueTimerRef = useRef<number | null>(null);
+  const autoContinueBeatStartedRef = useRef<{
+    key: string;
+    startedAtMs: number;
+  } | null>(null);
   const pendingVisualGameUpdateRef = useRef<PendingVisualGameUpdate | null>(
     null,
   );
@@ -1101,6 +1106,16 @@ export function PhaserStreetGameApp() {
     window.clearTimeout(pending.timerId);
     pendingVisualGameUpdateRef.current = null;
   }, []);
+
+  const markAutoContinueBeatStarted = useCallback(
+    (nextGame: StreetGameState) => {
+      const key = buildWatchModeAdvanceKey(nextGame);
+      autoContinueBeatStartedRef.current = key
+        ? { key, startedAtMs: performance.now() }
+        : null;
+    },
+    [],
+  );
 
   const applyGameUpdate = useCallback(
     (nextGame: StreetGameState, requestId?: number) => {
@@ -1197,6 +1212,7 @@ export function PhaserStreetGameApp() {
             }
 
             pendingVisualGameUpdateRef.current = null;
+            markAutoContinueBeatStarted(nextGame);
             gameRef.current = nextGame;
             startTransition(() => {
               setGame(nextGame);
@@ -1215,6 +1231,7 @@ export function PhaserStreetGameApp() {
         return true;
       }
 
+      markAutoContinueBeatStarted(nextGame);
       gameRef.current = nextGame;
       startTransition(() => {
         setGame(nextGame);
@@ -1230,6 +1247,7 @@ export function PhaserStreetGameApp() {
     },
     [
       clearPendingVisualGameUpdate,
+      markAutoContinueBeatStarted,
       publishWaypoint,
       rowanWatchModeEnabled,
     ],
@@ -1262,6 +1280,7 @@ export function PhaserStreetGameApp() {
       setStoredGamePromptId(storedGameId);
       setGame(null);
       gameRef.current = null;
+      autoContinueBeatStartedRef.current = null;
       setRowanPlayback(createEmptyRowanPlaybackState());
       publishWaypoint(null);
       return;
@@ -1568,6 +1587,13 @@ export function PhaserStreetGameApp() {
       return;
     }
 
+    const beatStarted = autoContinueBeatStartedRef.current;
+    const delayMs = remainingAutoplayDelayMs(
+      autoContinueDelayMsForBeat(game),
+      beatStarted?.key === autoContinueKey ? beatStarted.startedAtMs : null,
+      performance.now(),
+    );
+
     objectiveAutoContinueTimerRef.current = window.setTimeout(() => {
       const activeGame = gameRef.current;
       const activeAutonomy = activeGame?.rowanAutonomy;
@@ -1609,7 +1635,7 @@ export function PhaserStreetGameApp() {
           lastObjectiveAutoContinueKeyRef.current = autoContinueKey;
         }
       });
-    }, autoContinueDelayMsForBeat(game));
+    }, delayMs);
 
     return () => {
       if (objectiveAutoContinueTimerRef.current) {

@@ -254,6 +254,18 @@ export function settleCompletedMovePlayback(
     : { ...settled, queuedBeats };
 }
 
+export function remainingAutoplayDelayMs(
+  delayMs: number,
+  startedAtMs: number | null | undefined,
+  nowMs: number,
+) {
+  if (startedAtMs === null || startedAtMs === undefined) {
+    return delayMs;
+  }
+
+  return Math.max(0, delayMs - Math.max(0, nowMs - startedAtMs));
+}
+
 export function estimateLiveConversationBeatMs(game: StreetGameState): number {
   if (!game.activeConversation?.lines.length) {
     return 0;
