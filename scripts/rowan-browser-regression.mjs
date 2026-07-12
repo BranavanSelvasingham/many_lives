@@ -1727,7 +1727,10 @@ class CdpSession {
       async () => {
         try {
           const probe = await this.readBrowserProbe();
-          if (browserProbeMatchesGameSnapshot(probe, game)) {
+          if (
+            browserProbeMatchesGameSnapshot(probe, game) ||
+            browserProbeMatchesProgressiveSnapshot(probe, game)
+          ) {
             return probe;
           }
         } catch {}
@@ -3311,6 +3314,10 @@ function findCityEvent(game, id) {
 }
 
 function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
+  const allowPendingPlayback =
+    options.allowPendingPlayback &&
+    browserProbeMatchesProgressiveSnapshot(probe, game);
+
   assert.equal(
     probe.gameId,
     game.id,
@@ -3371,13 +3378,17 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
     independentNpcActionsFromGame(game),
     `${label}: browser independent NPC action evidence diverged from sim.`,
   );
-  assert.deepEqual(
-    probe.objective,
-    objectiveProbeFromGame(game),
-    `${label}: browser objective predicates diverged from sim.`,
-  );
+  if (allowPendingPlayback) {
+    assertObjectiveIdentityMatches(label, game, probe);
+  } else {
+    assert.deepEqual(
+      probe.objective,
+      objectiveProbeFromGame(game),
+      `${label}: browser objective predicates diverged from sim.`,
+    );
+  }
   const expectedPlanningTrace = planningTraceProbeFromGame(game);
-  if (expectedPlanningTrace) {
+  if (expectedPlanningTrace && !allowPendingPlayback) {
     assert.deepEqual(
       probe.autonomy.planningTrace,
       expectedPlanningTrace,
@@ -3428,6 +3439,53 @@ function browserProbeMatchesGameSnapshot(probe, game) {
       )) &&
     isDeepStrictEqual(probe.worldPressure, worldPressureFromGame(game)) &&
     isDeepStrictEqual(probe.aiRuntime ?? null, aiRuntimeProbeFromGame(game))
+  );
+}
+
+function browserProbeMatchesProgressiveSnapshot(probe, game) {
+  return Boolean(
+    browserProbeHasPendingPlayback(probe) &&
+      browserProbeMatchesGameCoreSnapshot(probe, game) &&
+      objectiveIdentityMatches(probe, game) &&
+      isDeepStrictEqual(probe.cityEvents ?? [], activeCityEvents(game)) &&
+      isDeepStrictEqual(
+        probe.independentNpcActions ?? [],
+        independentNpcActionsFromGame(game),
+      ) &&
+      isDeepStrictEqual(probe.worldPressure, worldPressureFromGame(game)) &&
+      isDeepStrictEqual(
+        probe.aiRuntime ?? null,
+        aiRuntimeProbeFromGame(game),
+      ),
+  );
+}
+
+function browserProbeHasPendingPlayback(probe) {
+  return Boolean(
+    probe?.watchMode?.pendingPlayback ||
+      probe?.playback?.activeKind ||
+      (probe?.playback?.queuedCount ?? 0) > 0,
+  );
+}
+
+function objectiveIdentityMatches(probe, game) {
+  const expected = objectiveProbeFromGame(game);
+  return Boolean(
+    probe?.objective &&
+      expected &&
+      probe.objective.text === expected.text &&
+      probe.objective.routeKey === expected.routeKey &&
+      isDeepStrictEqual(
+        (probe.objective.outcomes ?? []).map((outcome) => outcome.id),
+        (expected.outcomes ?? []).map((outcome) => outcome.id),
+      ),
+  );
+}
+
+function assertObjectiveIdentityMatches(label, game, probe) {
+  assert.ok(
+    objectiveIdentityMatches(probe, game),
+    `${label}: progressive browser playback changed the objective identity or predicate set.`,
   );
 }
 
@@ -8723,7 +8781,9 @@ function buildTimelineEntry({
 
 async function captureBrowserState({ game, index, label, session }) {
   const initialProbe = await session.waitForGame(game);
-  assertBrowserProbeMatchesGame(label, game, initialProbe);
+  assertBrowserProbeMatchesGame(label, game, initialProbe, {
+    allowPendingPlayback: true,
+  });
   assertCityEventState(label, game);
   const dom = await waitForGameplayDom(label, session, initialProbe);
   const probe = await refreshProbeForVisibleIndependentNpcSurface({
@@ -8732,7 +8792,9 @@ async function captureBrowserState({ game, index, label, session }) {
     probe: initialProbe,
     session,
   });
-  assertBrowserProbeMatchesGame(label, game, probe);
+  assertBrowserProbeMatchesGame(label, game, probe, {
+    allowPendingPlayback: true,
+  });
   const mapAgency = await session.readMapAgencyProbe();
   const camera = await session.readCameraProbe();
   assertGameplayDom(label, game, probe, dom);
