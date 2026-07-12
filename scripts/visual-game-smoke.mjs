@@ -8,6 +8,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
 
+import {
+  closeChildProcess,
+  waitForChildProcessReady,
+} from "./visual-game-smoke-startup.mjs";
+
 const DEFAULT_WEB_BASE =
   process.env.MANY_LIVES_WEB_BASE_URL ?? "http://127.0.0.1:3001";
 const OUTPUT_DIR =
@@ -206,22 +211,9 @@ async function findFreePort() {
   return address.port;
 }
 
-async function closeChildProcess(child) {
-  if (!child || child.exitCode !== null) {
-    return;
-  }
-
-  child.kill("SIGTERM");
-  await Promise.race([once(child, "close").catch(() => undefined), sleep(1_500)]);
-
-  if (child.exitCode === null) {
-    child.kill("SIGKILL");
-    await once(child, "close").catch(() => undefined);
-  }
-}
-
 async function startWebServer(baseUrl) {
   const port = Number(new URL(baseUrl).port);
+  const logPath = path.join(OUTPUT_DIR, "web-server.log");
   const child = spawn(
     "corepack",
     [
@@ -237,6 +229,7 @@ async function startWebServer(baseUrl) {
     ],
     {
       cwd: ROOT,
+      detached: process.platform !== "win32",
       env: {
         ...process.env,
         MANY_LIVES_ALLOW_IN_PROCESS_SIM_FALLBACK: "1",
@@ -244,30 +237,24 @@ async function startWebServer(baseUrl) {
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
+  child.manyLivesKillGroup = process.platform !== "win32";
 
-  let logs = "";
-  const appendLogs = (chunk) => {
-    logs += chunk.toString();
-    if (logs.length > 12_000) {
-      logs = logs.slice(-12_000);
-    }
-  };
-  child.stdout?.on("data", appendLogs);
-  child.stderr?.on("data", appendLogs);
+  process.stdout.write(
+    `[many-lives] Starting local web app at ${baseUrl}. Child log: ${logPath}\n`,
+  );
 
   try {
-    await waitFor(
-      async () => {
-        try {
-          await readWebHealth(baseUrl);
-          return true;
-        } catch {
-          return false;
-        }
+    await waitForChildProcessReady({
+      baseUrl,
+      checkReady: async () => {
+        await readWebHealth(baseUrl);
+        return true;
       },
-      WEB_START_TIMEOUT_MS,
-      `Timed out waiting for local web app at ${baseUrl}.\n${logs}`,
-    );
+      child,
+      logPath,
+      pollIntervalMs: POLL_INTERVAL_MS,
+      timeoutMs: WEB_START_TIMEOUT_MS,
+    });
   } catch (error) {
     await closeChildProcess(child);
     throw error;

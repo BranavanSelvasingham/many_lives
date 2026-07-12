@@ -120,6 +120,7 @@ function buildSteps() {
     commandStep("repo node tests", "node", [
       "--test",
       "scripts/run-sim-dev.test.mjs",
+      "scripts/visual-game-smoke-startup.test.mjs",
       "scripts/visual-scene-anchor-regression.test.mjs",
     ]),
     commandStep("web sim fallback test", "corepack", [
