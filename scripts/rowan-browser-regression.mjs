@@ -10334,10 +10334,10 @@ function assertLateNotebookMatchesCurrentPressure(label, notebook, probe) {
       /^Head to North Crane Yard\b/i,
       `${label}: yard-work Notebook plan should name Tomas/freight-window obligation, not just a route command.`,
     );
-    assert.match(
-      notebook?.plan ?? notebookText,
-      /Tomas|freight window/i,
-      `${label}: yard-work Notebook plan should name Tomas or the freight-window obligation, got ${JSON.stringify(notebook)}.`,
+    assert.equal(
+      yardNotebookPlanNamesCommitment(notebook?.plan),
+      true,
+      `${label}: yard-work Notebook plan should name Tomas, the freight window, or the accepted freight job, got ${JSON.stringify(notebook)}.`,
     );
     return;
   }
@@ -10367,6 +10367,10 @@ function assertLateNotebookMatchesCurrentPressure(label, notebook, probe) {
     /field note|rest|recover|yard|pump|work|Nia|block|live pressure|current/i,
     `${label}: late Notebook should explain the current post-first-afternoon pressure, got ${JSON.stringify(notebook)}.`,
   );
+}
+
+function yardNotebookPlanNamesCommitment(plan) {
+  return /Tomas|freight(?:\s|-)?window|freight yard lift/i.test(plan ?? "");
 }
 
 function compactNotebookText(notebook) {
@@ -13272,6 +13276,26 @@ function assertPostFirstAfternoonTrajectoryNeutralGuard() {
   }
 }
 
+function assertYardNotebookCommitmentGuard() {
+  assert.equal(
+    yardNotebookPlanNamesCommitment("Take Freight yard lift"),
+    true,
+    "An accepted named freight job must remain valid yard-work Notebook evidence.",
+  );
+  assert.equal(
+    yardNotebookPlanNamesCommitment(
+      "Ask Tomas before the North Crane Yard freight window closes.",
+    ),
+    true,
+    "A person- and deadline-grounded yard plan must remain valid Notebook evidence.",
+  );
+  assert.equal(
+    yardNotebookPlanNamesCommitment("Head to North Crane Yard"),
+    false,
+    "A route-only yard plan must not satisfy the Notebook commitment evidence gate.",
+  );
+}
+
 function assertInhabitPlayerDom(
   label,
   dom,
@@ -15382,6 +15406,7 @@ async function main() {
   assertActiveRouteTargetAuthorityRegression();
   assertProgressAwareStagedWorkWaitRegression();
   assertPostFirstAfternoonTrajectoryNeutralGuard();
+  assertYardNotebookCommitmentGuard();
   assertWatchPacingTransitionSignatureGuard();
   assertAutoplayProgressGapGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
