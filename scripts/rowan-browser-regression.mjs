@@ -2483,6 +2483,12 @@ class CdpSession {
       ) {
         this.recordPageError({
           method: message.method,
+          stack: (message.params?.stackTrace?.callFrames ?? [])
+            .slice(0, 12)
+            .map(
+              (frame) =>
+                `${frame.functionName || "(anonymous)"}@${frame.url}:${frame.lineNumber + 1}:${frame.columnNumber + 1}`,
+            ),
           text: (message.params?.args ?? [])
             .map((argument) => {
               if (typeof argument.value === "string") {
@@ -2580,7 +2586,10 @@ class CdpSession {
   }
 
   recordPageError(error) {
-    this.pageErrors.push(error);
+    this.pageErrors.push({
+      recordedAt: new Date().toISOString(),
+      ...error,
+    });
     if (this.pageErrors.length > 40) {
       this.pageErrors.splice(0, this.pageErrors.length - 40);
     }
@@ -11206,7 +11215,7 @@ async function runOverlayPanelChecks(session) {
   return checks;
 }
 
-function playerProbeSignature(probe) {
+function playerGameProgressSignature(probe) {
   return JSON.stringify({
     activeConversation: probe.activeConversation
       ? {
@@ -11224,9 +11233,49 @@ function playerProbeSignature(probe) {
     clock: probe.clock?.iso ?? null,
     firstAfternoon: probe.firstAfternoon ?? null,
     location: probe.location ?? null,
+  });
+}
+
+function playerProbeSignature(probe) {
+  return JSON.stringify({
+    gameProgress: playerGameProgressSignature(probe),
     playback: probe.playback ?? null,
     visualPlayer: probe.visualPlayer ?? null,
   });
+}
+
+function assertWatchPacingTransitionSignatureGuard() {
+  const gameProbe = {
+    activeConversation: null,
+    autonomy: {
+      key: "return-home",
+      label: "Return to Morrow House to take stock",
+      mode: "acting",
+      stepKind: "move",
+      targetLocationId: "boarding-house",
+    },
+    clock: { iso: "2026-03-21T15:03:00.000Z" },
+    firstAfternoon: { completedAt: null },
+    location: { id: "tea-house", spaceId: "street:south-quay" },
+    playback: { activeKind: "move", queuedCount: 0 },
+    visualPlayer: { isMovingToServerState: true, waypointNonce: 4 },
+  };
+  const visuallySettledProbe = {
+    ...gameProbe,
+    playback: { activeKind: null, queuedCount: 0 },
+    visualPlayer: { isMovingToServerState: false, waypointNonce: 5 },
+  };
+
+  assert.equal(
+    playerGameProgressSignature(visuallySettledProbe),
+    playerGameProgressSignature(gameProbe),
+    "Visual route settlement must not count as autonomous game progress.",
+  );
+  assert.notEqual(
+    playerProbeSignature(visuallySettledProbe),
+    playerProbeSignature(gameProbe),
+    "The full browser signature must still detect visual route settlement.",
+  );
 }
 
 function inhabitCameraDelta(before, after) {
@@ -12073,6 +12122,12 @@ function compactPostFirstAfternoonMoment(moment) {
     player: moment.player ?? null,
     screenshot: moment.screenshot ?? null,
     selected,
+    visibleDecisionArtifact: compactVisibleDecisionArtifact(
+      moment.visibleDecisionArtifact ??
+        moment.autonomy?.visibleDecisionArtifact ??
+        moment.rail?.visibleDecisionArtifact ??
+        null,
+    ),
     yardOutcome: postFirstAfternoonYardOutcomeEvidence(moment),
   };
 }
@@ -12396,43 +12451,45 @@ function buildPostFirstAfternoonLivePressureEvidence({
     moments.map((moment) => [moment.label, moment]),
   );
   const handoff = byLabel["post-first-afternoon-handoff"] ?? null;
-  const rest = byLabel["post-first-afternoon-rest"] ?? null;
+  const recoveryReady = byLabel["post-first-afternoon-rest"] ?? null;
   const liveRoute = byLabel["post-first-afternoon-live-route"] ?? null;
   const followThrough =
     byLabel["post-first-afternoon-yard-follow-through"] ?? null;
   const yardOutcome =
     byLabel["post-first-afternoon-yard-outcome"] ?? null;
   const handoffSummary = compactPostFirstAfternoonMoment(handoff);
-  const restSummary = compactPostFirstAfternoonMoment(rest);
+  const recoveryReadySummary =
+    compactPostFirstAfternoonMoment(recoveryReady);
   const liveRouteSummary = compactPostFirstAfternoonMoment(liveRoute);
   const followThroughSummary = compactPostFirstAfternoonMoment(followThrough);
   const yardOutcomeSummary = compactPostFirstAfternoonMoment(yardOutcome);
   const handoffLivePressureOptions = livePressurePlannerOptions(handoff);
-  const restLivePressureOptions = livePressurePlannerOptions(rest);
+  const recoveryReadyLivePressureOptions =
+    livePressurePlannerOptions(recoveryReady);
   const liveRoutePressureOptions = livePressurePlannerOptions(liveRoute);
   const followThroughPressureOptions =
     livePressurePlannerOptions(followThrough);
 
   return {
     assertionSemantics:
-      "Player-POV zero-click follow-through from first-afternoon completion acknowledgement, through rest, into the next dynamic current-state route/action.",
+      "Player-POV zero-click follow-through from first-afternoon completion acknowledgement, through state-derived recovery readiness, into the next dynamic current-state route/action.",
     directSimCommandsUsed: false,
     handoff: handoffSummary,
     livePressure: {
       atHandoff: postFirstAfternoonLivePressureFacts(handoff),
-      afterRest: postFirstAfternoonLivePressureFacts(rest),
+      afterRest: postFirstAfternoonLivePressureFacts(recoveryReady),
       atFollowThrough: postFirstAfternoonLivePressureFacts(followThrough),
       atLiveRoute: postFirstAfternoonLivePressureFacts(liveRoute),
       atYardOutcome: postFirstAfternoonLivePressureFacts(yardOutcome),
       plannerOptionsAtFollowThrough: followThroughPressureOptions,
       plannerOptionsAtHandoff: handoffLivePressureOptions,
-      plannerOptionsAfterRest: restLivePressureOptions,
+      plannerOptionsAfterRest: recoveryReadyLivePressureOptions,
       plannerOptionsAtLiveRoute: liveRoutePressureOptions,
     },
     followThrough: followThroughSummary,
     liveRoute: liveRouteSummary,
     notebookFreshness: {
-      afterRest: restSummary?.notebook ?? null,
+      afterRest: recoveryReadySummary?.notebook ?? null,
       atFollowThrough: followThroughSummary?.notebook ?? null,
       atHandoff: handoffSummary?.notebook ?? null,
       atLiveRoute: liveRouteSummary?.notebook ?? null,
@@ -12460,12 +12517,12 @@ function buildPostFirstAfternoonLivePressureEvidence({
         sequenceRunId: entry.sequenceRunId ?? null,
       })),
     rest: {
-      ...restSummary,
-      restHourEnergy: restHourEnergyFromMoment(rest),
+      ...recoveryReadySummary,
+      restHourEnergy: restHourEnergyFromMoment(recoveryReady),
     },
     staleRouteEvidence: {
       atHandoff: staleRoutePlannerOptions(handoff),
-      afterRest: staleRoutePlannerOptions(rest),
+      afterRest: staleRoutePlannerOptions(recoveryReady),
       atLiveRoute: staleRoutePlannerOptions(liveRoute),
     },
     status: "passed",
@@ -12513,6 +12570,85 @@ function assertPostFirstAfternoonNotebookSummary(summary) {
   });
 }
 
+function assertPostFirstAfternoonHandoffSelection(handoff) {
+  assert.ok(
+    handoff?.firstAfternoon?.completionAcknowledgedAt,
+    "Post-first-afternoon handoff must acknowledge the completed field-note beat.",
+  );
+  assert.equal(
+    handoff.objective?.source,
+    "dynamic",
+    "Post-first-afternoon handoff must come from a dynamic current-state objective.",
+  );
+  assert.notEqual(
+    handoff.objective?.routeKey,
+    "first-afternoon",
+    "Post-first-afternoon handoff must leave completed first-afternoon authority.",
+  );
+  assert.ok(
+    handoff.selected?.actionId,
+    "Post-first-afternoon handoff must expose a selected action.",
+  );
+  assert.equal(
+    handoff.selected?.legalBacking?.source,
+    "current-legal-action-surface",
+    "Post-first-afternoon handoff must expose simulator legal-action backing.",
+  );
+  assert.ok(
+    handoff.selected?.pressureId ||
+      handoff.selected?.pressureKind ||
+      handoff.selected?.matchedOutcomeId,
+    "Post-first-afternoon handoff must expose current pressure or predicate authority.",
+  );
+  assert.ok(
+    handoff.selected?.provenance,
+    "Post-first-afternoon handoff must expose selected-action provenance.",
+  );
+  assert.ok(
+    !SCAFFOLD_ONLY_TRACE_PROVENANCES.has(handoff.selected.provenance),
+    `Post-first-afternoon handoff selected scaffold-only authority: ${handoff.selected.provenance}.`,
+  );
+  assert.ok(
+    handoff.visibleDecisionArtifact,
+    "Post-first-afternoon handoff must preserve a visible decision artifact.",
+  );
+
+  const energy = restHourEnergyFromMoment(handoff) ?? 0;
+  if (handoff.selected.actionId === "rest:home") {
+    assert.ok(
+      energy < POST_FIRST_AFTERNOON_RECOVERY_ENERGY,
+      `Post-first-afternoon rest may be selected only while recovery is still needed: ${energy} energy.`,
+    );
+    assert.equal(
+      handoff.selected.targetLocationId,
+      "boarding-house",
+      "Low-energy post-first-afternoon rest must target Morrow House.",
+    );
+    assert.equal(
+      handoff.selected.pressureKind,
+      "predicate",
+      "Low-energy post-first-afternoon rest must be backed by a desired-state predicate.",
+    );
+    assert.equal(
+      handoff.selected.matchedOutcomeId,
+      "rest-hour",
+      "Low-energy post-first-afternoon rest must match the rest-hour outcome.",
+    );
+    assert.equal(
+      handoff.selected.provenance,
+      "objective-predicate",
+      "Low-energy post-first-afternoon rest must use objective-predicate authority.",
+    );
+    return "low-energy-rest";
+  }
+
+  assert.ok(
+    energy >= POST_FIRST_AFTERNOON_RECOVERY_ENERGY,
+    `Direct post-first-afternoon live-pressure action requires recovery-ready energy: ${energy}.`,
+  );
+  return "already-recovered-direct-live";
+}
+
 function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   assert.ok(
     evidence?.handoff,
@@ -12520,7 +12656,7 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   );
   assert.ok(
     evidence?.rest,
-    "Post-first-afternoon follow-through evidence is missing the rest moment.",
+    "Post-first-afternoon follow-through evidence is missing the recovery-ready moment.",
   );
   assert.ok(
     evidence?.liveRoute,
@@ -12549,7 +12685,11 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
     `Post-first-afternoon follow-through did not include enough watch-mode beats: ${evidence.zeroClick?.watchedAutoContinueCount}.`,
   );
 
-  for (const summary of [evidence.handoff, evidence.rest, evidence.liveRoute]) {
+  for (const summary of [
+    evidence.handoff,
+    evidence.rest,
+    evidence.liveRoute,
+  ]) {
     assert.notEqual(
       summary.objective?.routeKey,
       "first-afternoon",
@@ -12558,40 +12698,7 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
     assertPostFirstAfternoonNotebookSummary(summary);
   }
 
-  assert.equal(
-    evidence.handoff.selected?.actionId,
-    "rest:home",
-    "Post-first-afternoon handoff must select the legal home-rest action.",
-  );
-  assert.equal(
-    evidence.handoff.selected?.targetLocationId,
-    "boarding-house",
-    "Post-first-afternoon rest handoff should target Morrow House.",
-  );
-  assert.equal(
-    evidence.handoff.selected?.legalBacking?.source,
-    "current-legal-action-surface",
-    "Post-first-afternoon rest handoff must expose current legal-action backing.",
-  );
-  assert.equal(
-    evidence.handoff.selected?.pressureKind,
-    "predicate",
-    "Post-first-afternoon rest handoff must be backed by a desired-state predicate.",
-  );
-  assert.equal(
-    evidence.handoff.selected?.matchedOutcomeId,
-    "rest-hour",
-    "Post-first-afternoon rest handoff must match the rest-hour outcome.",
-  );
-  assert.equal(
-    evidence.handoff.selected?.provenance,
-    "objective-predicate",
-    "Post-first-afternoon rest handoff must be objective-predicate authority.",
-  );
-  assert.ok(
-    evidence.handoff.firstAfternoon?.completionAcknowledgedAt,
-    "Post-first-afternoon handoff must acknowledge the completed field-note beat.",
-  );
+  assertPostFirstAfternoonHandoffSelection(evidence.handoff);
 
   const livePressureBeforeLiveRoute = [
     ...(evidence.livePressure?.plannerOptionsAtHandoff ?? []),
@@ -12599,7 +12706,7 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   ];
   assert.ok(
     livePressureBeforeLiveRoute.length > 0,
-    "Post-first-afternoon handoff/rest evidence did not expose current job or problem pressure.",
+    "Post-first-afternoon handoff/recovery-ready evidence did not expose current job or problem pressure.",
   );
   const unexplainedLivePressure = livePressureBeforeLiveRoute.filter(
     (option) => option.status !== "selected" && !option.reason,
@@ -12635,62 +12742,83 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   );
 
   assert.ok(
-    (evidence.rest.restHourEnergy ?? 0) >= POST_FIRST_AFTERNOON_RECOVERY_ENERGY,
-    `Post-first-afternoon rest evidence did not show rest advancing Rowan's recovery state: ${evidence.rest.restHourEnergy}.`,
+    (evidence.rest.restHourEnergy ?? 0) >=
+      POST_FIRST_AFTERNOON_RECOVERY_ENERGY,
+    `Post-first-afternoon recovery-ready evidence has insufficient energy for a live commitment: ${evidence.rest.restHourEnergy}.`,
+  );
+  assert.equal(
+    evidence.rest.objective?.source,
+    "dynamic",
+    "Post-first-afternoon recovery-ready evidence must keep a dynamic current-state objective.",
   );
   assert.notEqual(
     evidence.rest.objective?.routeKey,
     "rest-home",
-    "Post-first-afternoon rest evidence must leave rest-home once Rowan has recovered enough energy.",
+    "Post-first-afternoon recovery-ready evidence must leave rest-home authority.",
   );
   assert.notEqual(
     evidence.rest.selected?.actionId,
     "rest:home",
-    "Post-first-afternoon rest evidence must not select another rest:home after Rowan has recovered enough energy.",
+    "Post-first-afternoon recovery-ready evidence must select a non-rest live-pressure action.",
   );
   assert.ok(
     evidence.rest.selected?.legalBacking?.source,
-    "Post-first-afternoon rest follow-through must expose legal backing for the next non-rest action.",
+    "Post-first-afternoon recovery-ready evidence must expose legal backing for its non-rest action.",
   );
-  const liveRouteProgressedBeyondRest =
+  assert.ok(
+    evidence.rest.selected?.pressureId ||
+      evidence.rest.selected?.matchedOutcomeId ||
+      evidence.rest.selected?.pressureKind,
+    "Post-first-afternoon recovery-ready evidence must expose current pressure or predicate authority.",
+  );
+  assert.ok(
+    evidence.rest.selected?.provenance &&
+      !SCAFFOLD_ONLY_TRACE_PROVENANCES.has(
+        evidence.rest.selected.provenance,
+      ),
+    `Post-first-afternoon recovery-ready evidence selected missing or scaffold-only provenance: ${evidence.rest.selected?.provenance}.`,
+  );
+  const liveRouteProgressedBeyondRecoveryReady =
     (evidence.liveRoute.clock?.totalMinutes ?? 0) >
       (evidence.rest.clock?.totalMinutes ?? 0) ||
-    evidence.liveRoute.location?.spaceId !== evidence.rest.location?.spaceId ||
+    evidence.liveRoute.location?.spaceId !==
+      evidence.rest.location?.spaceId ||
     evidence.liveRoute.location?.id !== evidence.rest.location?.id ||
-    evidence.liveRoute.selected?.actionId !== evidence.rest.selected?.actionId;
+    evidence.liveRoute.selected?.actionId !==
+      evidence.rest.selected?.actionId;
   assert.ok(
-    liveRouteProgressedBeyondRest,
-    "Post-first-afternoon live-route evidence must progress beyond the first non-rest post-recovery selection.",
+    liveRouteProgressedBeyondRecoveryReady,
+    "Post-first-afternoon live-route evidence must progress beyond the recovery-ready selection.",
   );
   assert.equal(
     evidence.liveRoute.objective?.source,
     "dynamic",
-    "Post-rest live route must come from a dynamic current-state objective.",
+    "Post-first-afternoon live route must come from a dynamic current-state objective.",
   );
   assert.notEqual(
     evidence.liveRoute.objective?.routeKey,
     "rest-home",
-    "Post-rest live route must leave the rest objective once recovery opens the next route.",
+    "Post-first-afternoon live route must stay beyond rest authority once recovery opens a live route.",
   );
   assert.ok(
     evidence.liveRoute.selected?.actionId,
-    "Post-rest live route must expose the next selected action.",
+    "Post-first-afternoon live route must expose the next selected action.",
   );
   assert.ok(
     evidence.liveRoute.selected?.legalBacking?.source,
-    "Post-rest live route must expose an explicit legal backing source.",
+    "Post-first-afternoon live route must expose an explicit legal backing source.",
   );
   assert.ok(
     evidence.liveRoute.selected?.pressureId ||
       evidence.liveRoute.selected?.matchedOutcomeId ||
       evidence.liveRoute.selected?.pressureKind,
-    "Post-rest live route must expose current-state predicate or live-pressure authority.",
+    "Post-first-afternoon live route must expose current-state predicate or live-pressure authority.",
   );
   assert.ok(
     !SCAFFOLD_ONLY_TRACE_PROVENANCES.has(
       evidence.liveRoute.selected?.provenance,
     ),
-    `Post-rest live route selected stale route authority: ${evidence.liveRoute.selected?.provenance}.`,
+    `Post-first-afternoon live route selected stale route authority: ${evidence.liveRoute.selected?.provenance}.`,
   );
 
   const liveRouteTarget = evidence.liveRoute.selected?.targetLocationId ?? null;
@@ -12806,6 +12934,182 @@ function assertPostFirstAfternoonLivePressureEvidence(evidence) {
   }
 }
 
+function buildPostFirstAfternoonHandoffGuardFixture({ restSelected }) {
+  const actionId = restSelected ? "rest:home" : "exit:boarding-house";
+  const routeKey = restSelected ? "rest-home" : "work-yard";
+  const targetLocationId = restSelected
+    ? "boarding-house"
+    : "freight-yard";
+  const pressureKind = restSelected ? "predicate" : "job";
+  const pressureId = restSelected ? null : "job-yard-shift";
+  const matchedOutcomeId = restSelected ? "rest-hour" : "yard-shift";
+  const provenance = restSelected ? "objective-predicate" : "world-pressure";
+  const legalBacking = {
+    actionId,
+    locationId: "boarding-house",
+    source: "current-legal-action-surface",
+  };
+  const selectedOption = {
+    actionId,
+    legalBacking,
+    matchedOutcomeId,
+    planKey: `${routeKey}:${actionId}`,
+    pressureId,
+    pressureKind,
+    provenance,
+    status: "selected",
+    targetLocationId,
+  };
+
+  return {
+    autonomy: {
+      actionId,
+      label: restSelected ? "Recover at Morrow House" : "Head for yard work",
+      planningTrace: {
+        considered: [selectedOption],
+        selectedActionId: actionId,
+        selectedLegalBacking: legalBacking,
+        selectedMatchedOutcomeId: matchedOutcomeId,
+        selectedPlanKey: selectedOption.planKey,
+        selectedPressureId: pressureId,
+        selectedPressureKind: pressureKind,
+        selectedTargetLocationId: targetLocationId,
+      },
+      targetLocationId,
+      visibleDecisionArtifact: {
+        backingSummary: "Validated against the current legal action surface.",
+        considered: ["Current yard work", "Morrow Yard pump pressure"],
+        constraints: [restSelected ? "12 energy" : "68 energy"],
+        nextCheck: "Check the live commitment after this action.",
+        objective: restSelected ? "Recover before committing" : "Take live work",
+        passedOver: [],
+        rationale: restSelected
+          ? "Low energy makes recovery the legal predicate-backed priority."
+          : "Current energy supports acting on live yard pressure now.",
+        selectedAction: actionId,
+        sourceSummary: restSelected
+          ? "Dynamic recovery predicate"
+          : "Dynamic yard-job pressure",
+      },
+    },
+    firstAfternoon: {
+      completedAt: "2026-03-21T15:24:00.000Z",
+      completionAcknowledgedAt: "2026-03-21T15:24:08.000Z",
+    },
+    objective: {
+      focus: restSelected ? "rest" : "work",
+      outcomes: restSelected
+        ? [
+            {
+              evidence: "Rowan currently has 12 energy.",
+              id: "rest-hour",
+              status: "unmet",
+            },
+          ]
+        : [
+            {
+              id: "yard-shift",
+              status: "unmet",
+            },
+          ],
+      progress: { completed: 0, total: 1 },
+      routeKey,
+      source: "dynamic",
+      text: restSelected
+        ? "Recover at Morrow House before the next commitment."
+        : "Use the open yard shift while the window is live.",
+    },
+    player: { energy: restSelected ? 12 : 68 },
+  };
+}
+
+function assertPostFirstAfternoonTrajectoryNeutralGuard() {
+  const lowEnergyRest = buildPostFirstAfternoonHandoffGuardFixture({
+    restSelected: true,
+  });
+  const recoveredDirectLive = buildPostFirstAfternoonHandoffGuardFixture({
+    restSelected: false,
+  });
+
+  assert.equal(
+    isPostFirstAfternoonHandoffPendingProbe(lowEnergyRest),
+    true,
+    "Low-energy predicate-backed rest must qualify as a post-afternoon reorientation dwell.",
+  );
+  assert.equal(
+    isPostFirstAfternoonHandoffPendingProbe(recoveredDirectLive),
+    true,
+    "Already-recovered direct live pressure must qualify as a post-afternoon reorientation dwell.",
+  );
+  assert.equal(
+    assertPostFirstAfternoonHandoffSelection(
+      compactPostFirstAfternoonMoment(lowEnergyRest),
+    ),
+    "low-energy-rest",
+    "The deterministic low-energy branch must retain exact legal rest semantics.",
+  );
+  assert.equal(
+    assertPostFirstAfternoonHandoffSelection(
+      compactPostFirstAfternoonMoment(recoveredDirectLive),
+    ),
+    "already-recovered-direct-live",
+    "The deterministic recovered branch must accept an immediate legal non-rest action.",
+  );
+  assert.equal(
+    postFirstAfternoonRestAdvancedProbe(lowEnergyRest),
+    false,
+    "Low-energy rest must not be recovery-ready before the selected rest action lands.",
+  );
+  assert.equal(
+    postFirstAfternoonRestAdvancedProbe(recoveredDirectLive),
+    true,
+    "Already-recovered direct live pressure must satisfy the existing recovery-ready milestone without forced rest.",
+  );
+
+  const invalidProbes = [
+    {
+      ...recoveredDirectLive,
+      objective: {
+        ...recoveredDirectLive.objective,
+        progress: { completed: 1, total: 1 },
+      },
+    },
+    {
+      ...recoveredDirectLive,
+      objective: {
+        ...recoveredDirectLive.objective,
+        routeKey: "first-afternoon",
+      },
+    },
+    {
+      ...recoveredDirectLive,
+      objective: {
+        ...recoveredDirectLive.objective,
+        progress: null,
+      },
+    },
+    {
+      ...recoveredDirectLive,
+      autonomy: {
+        ...recoveredDirectLive.autonomy,
+        planningTrace: {
+          ...recoveredDirectLive.autonomy.planningTrace,
+          considered: recoveredDirectLive.autonomy.planningTrace.considered.map(
+            (option) => ({ ...option, provenance: "route-scaffold" }),
+          ),
+        },
+      },
+    },
+  ];
+  for (const probe of invalidProbes) {
+    assert.equal(
+      isPostFirstAfternoonHandoffPendingProbe(probe),
+      false,
+      "Completed, stale, incomplete, or scaffold-only state must not qualify as a post-afternoon reorientation dwell.",
+    );
+  }
+}
+
 function assertInhabitPlayerDom(
   label,
   dom,
@@ -12910,11 +13214,18 @@ async function waitForInhabitSettled(session, label) {
   );
 }
 
-async function waitForInhabitTransition(session, beforeSignature, label) {
+async function waitForInhabitTransition(
+  session,
+  beforeProgressSignature,
+  label,
+) {
   return waitFor(
     async () => {
       const probe = await session.readBrowserProbe(`${label}:browser-probe`);
-      if (!probe || playerProbeSignature(probe) === beforeSignature) {
+      if (
+        !probe ||
+        playerGameProgressSignature(probe) === beforeProgressSignature
+      ) {
         return null;
       }
       if (probe.visualPlayer?.isMovingToServerState) {
@@ -12942,14 +13253,29 @@ function isFirstAfternoonCompletionPendingProbe(probe) {
 }
 
 function isPostFirstAfternoonHandoffPendingProbe(probe) {
+  const progressCompleted = probe?.objective?.progress?.completed;
+  const progressTotal = probe?.objective?.progress?.total;
+  const selected = selectedPlanningEvidence(probe);
   return Boolean(
     probe?.firstAfternoon?.completionAcknowledgedAt &&
       probe?.objective?.source === "dynamic" &&
-      probe?.objective?.routeKey === "rest-home" &&
-      probe?.autonomy?.actionId === "rest:home" &&
-      !probe?.player?.lastRestAt &&
-      (probe?.objective?.progress?.completed ?? 0) <
-        (probe?.objective?.progress?.total ?? 0),
+      probe?.objective?.routeKey &&
+      probe.objective.routeKey !== "first-afternoon" &&
+      !/first afternoon complete/i.test(probe?.autonomy?.label ?? "") &&
+      Number.isFinite(progressCompleted) &&
+      Number.isFinite(progressTotal) &&
+      progressTotal > 0 &&
+      progressCompleted >= 0 &&
+      progressCompleted < progressTotal &&
+      Boolean(selected.actionId) &&
+      selected.legalBacking?.source === "current-legal-action-surface" &&
+      Boolean(
+        selected.pressureId ||
+          selected.pressureKind ||
+          selected.matchedOutcomeId,
+      ) &&
+      Boolean(selected.provenance) &&
+      !SCAFFOLD_ONLY_TRACE_PROVENANCES.has(selected.provenance),
   );
 }
 
@@ -13771,7 +14097,7 @@ async function clickUntilInhabitMilestone({
       break;
     }
 
-    const beforeSignature = playerProbeSignature(probe);
+    const beforeProgressSignature = playerGameProgressSignature(probe);
     const completionAutoContinue =
       isFirstAfternoonCompletionPendingProbe(probe);
     const handoffReorientation =
@@ -13822,7 +14148,9 @@ async function clickUntilInhabitMilestone({
         sequenceRunId: objectiveSequenceGroupIdForEntry(auditEntry),
         text: completionAutoContinue
           ? "Watched autoplay dwell on the completion field note, then open the next live objective."
-          : "Watched autoplay carry the beat.",
+          : handoffReorientation
+            ? "Watched autoplay dwell on the first state-derived post-afternoon objective before acting."
+            : "Watched autoplay carry the beat.",
       };
       clickLog.push(logEntry);
       const startedAt = Date.now();
@@ -13833,7 +14161,8 @@ async function clickUntilInhabitMilestone({
         );
         logEntry.readabilityCheckpointMs = Date.now() - startedAt;
         logEntry.readabilityStateStable =
-          playerProbeSignature(readabilityProbe) === beforeSignature;
+          playerGameProgressSignature(readabilityProbe) ===
+          beforeProgressSignature;
         logEntry.readabilityObjectiveRouteKey =
           readabilityProbe?.objective?.routeKey ?? null;
         assert.equal(
@@ -13864,7 +14193,7 @@ async function clickUntilInhabitMilestone({
       }
       const transitionedProbe = await waitForInhabitTransition(
         session,
-        beforeSignature,
+        beforeProgressSignature,
         `${milestone.label}-watch-${attempt + 1}`,
       );
       logEntry.durationMs = Date.now() - startedAt;
@@ -14288,7 +14617,6 @@ async function runInhabitGameplayPass(session) {
   const handoffDwell = clickLog.find(
     (entry) =>
       entry.kind === "watched-auto-continue" &&
-      entry.milestone === "post-first-afternoon-rest" &&
       entry.handoffReorientation,
   );
   assert.ok(
@@ -14304,10 +14632,15 @@ async function runInhabitGameplayPass(session) {
     true,
     "Post-first-afternoon objective changed before the browser readability checkpoint.",
   );
+  assert.ok(
+    handoffDwell.beforeObjectiveRouteKey &&
+      handoffDwell.beforeObjectiveRouteKey !== "first-afternoon",
+    `Post-first-afternoon readability check did not capture a fresh dynamic route: ${handoffDwell.beforeObjectiveRouteKey}.`,
+  );
   assert.equal(
+    handoffDwell.readabilityObjectiveRouteKey,
     handoffDwell.beforeObjectiveRouteKey,
-    "rest-home",
-    "Post-first-afternoon readability check did not hold the captured handoff objective.",
+    "Post-first-afternoon readability checkpoint did not hold the captured dynamic route stable.",
   );
   assert.ok(
     clickLog.length >= 10,
@@ -14887,6 +15220,8 @@ async function main() {
   assertUnavailableApproachAdviceAuthorityRegression();
   assertActiveRouteTargetAuthorityRegression();
   assertProgressAwareStagedWorkWaitRegression();
+  assertPostFirstAfternoonTrajectoryNeutralGuard();
+  assertWatchPacingTransitionSignatureGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
     process.stdout.write(
       "[many-lives] Simulator wait deterministic guard passed.\n",

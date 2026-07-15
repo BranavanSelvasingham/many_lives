@@ -1019,7 +1019,7 @@ export function PhaserStreetGameApp() {
   const [rowanPlayback, setRowanPlayback] = useState<RowanPlaybackState>(
     createEmptyRowanPlaybackState(),
   );
-  const [autoContinueBeatTiming, setAutoContinueBeatTiming] =
+  const [autoContinueBeatTiming, setAutoContinueBeatTimingState] =
     useState<AutoContinueBeatTiming | null>(null);
   const [sceneOverrideVersion, setSceneOverrideVersion] = useState(0);
   const [optimisticPlayerPosition, setOptimisticPlayerPosition] =
@@ -1038,6 +1038,8 @@ export function PhaserStreetGameApp() {
   const optimisticPlayerRef = useRef<Point | null>(null);
   const objectiveAutoContinueTimerRef = useRef<number | null>(null);
   const autoContinueBeatStartedRef =
+    useRef<AutoContinueBeatTiming | null>(null);
+  const autoContinueBeatTimingRef =
     useRef<AutoContinueBeatTiming | null>(null);
   const pendingVisualGameUpdateRef = useRef<PendingVisualGameUpdate | null>(
     null,
@@ -1099,6 +1101,23 @@ export function PhaserStreetGameApp() {
     setWaypointNonce((current) => current + 1);
   }, []);
 
+  const publishAutoContinueBeatTiming = useCallback(
+    (next: AutoContinueBeatTiming | null) => {
+      const current = autoContinueBeatTimingRef.current;
+      if (
+        current?.key === next?.key &&
+        current?.startedAtMs === next?.startedAtMs &&
+        current?.intendedDelayMs === next?.intendedDelayMs
+      ) {
+        return;
+      }
+
+      autoContinueBeatTimingRef.current = next;
+      setAutoContinueBeatTimingState(next);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (!game) {
       routeFinderRef.current = null;
@@ -1133,6 +1152,15 @@ export function PhaserStreetGameApp() {
     pendingVisualGameUpdateRef.current = null;
   }, []);
 
+  const clearOptimisticPlayerMove = useCallback(() => {
+    optimisticPlayerRef.current = null;
+    setOptimisticPlayerPosition(null);
+    setOptimisticPlayerLocationId(null);
+    setOptimisticPlayerConversationLocationId(null);
+    setOptimisticPlayerMoveDurationMs(null);
+    publishWaypoint(null);
+  }, [publishWaypoint]);
+
   const applyGameUpdate = useCallback(
     (nextGame: StreetGameState, requestId?: number) => {
       if (
@@ -1160,18 +1188,15 @@ export function PhaserStreetGameApp() {
       if (
         previousGame &&
         previousGame.id === nextGame.id &&
-        buildGameSyncKey(previousGame) === nextSyncKey
+        buildGameSyncKey(previousGame) === nextSyncKey &&
+        !optimisticPlayerRef.current
       ) {
         return true;
       }
 
       if (pendingVisualGameUpdate) {
         clearPendingVisualGameUpdate();
-        setOptimisticPlayerPosition(null);
-        setOptimisticPlayerLocationId(null);
-        setOptimisticPlayerConversationLocationId(null);
-        setOptimisticPlayerMoveDurationMs(null);
-        publishWaypoint(null);
+        clearOptimisticPlayerMove();
       }
 
       const nextPlaybackBeats =
@@ -1205,6 +1230,7 @@ export function PhaserStreetGameApp() {
           beat.kind === "move" ? { ...beat, durationMs: transitionMs } : beat,
         );
 
+        optimisticPlayerRef.current = visualTarget;
         setOptimisticPlayerPosition(visualTarget);
         setOptimisticPlayerLocationId(nextGame.player.currentLocationId ?? null);
         setOptimisticPlayerConversationLocationId(
@@ -1228,14 +1254,9 @@ export function PhaserStreetGameApp() {
             }
 
             pendingVisualGameUpdateRef.current = null;
-            gameRef.current = nextGame;
+            setGame(nextGame);
+            clearOptimisticPlayerMove();
             startTransition(() => {
-              setGame(nextGame);
-              setOptimisticPlayerPosition(null);
-              setOptimisticPlayerLocationId(null);
-              setOptimisticPlayerConversationLocationId(null);
-              setOptimisticPlayerMoveDurationMs(null);
-              publishWaypoint(null);
               setRowanPlayback((current) =>
                 settleCompletedMovePlayback(current, nextGame),
               );
@@ -1246,9 +1267,11 @@ export function PhaserStreetGameApp() {
         return true;
       }
 
-      gameRef.current = nextGame;
+      setGame(nextGame);
+      if (!pendingVisualGameUpdate && optimisticPlayerRef.current) {
+        clearOptimisticPlayerMove();
+      }
       startTransition(() => {
-        setGame(nextGame);
         setRowanPlayback((current) =>
           appendRowanPlaybackBeats(
             alignRowanPlaybackWithGame(current, nextGame),
@@ -1260,6 +1283,7 @@ export function PhaserStreetGameApp() {
       return true;
     },
     [
+      clearOptimisticPlayerMove,
       clearPendingVisualGameUpdate,
       publishWaypoint,
       rowanWatchModeEnabled,
@@ -1292,9 +1316,8 @@ export function PhaserStreetGameApp() {
       setBusyLabel(null);
       setStoredGamePromptId(storedGameId);
       setGame(null);
-      gameRef.current = null;
       autoContinueBeatStartedRef.current = null;
-      setAutoContinueBeatTiming(null);
+      publishAutoContinueBeatTiming(null);
       setRowanPlayback(createEmptyRowanPlaybackState());
       publishWaypoint(null);
       return;
@@ -1313,12 +1336,9 @@ export function PhaserStreetGameApp() {
       const nextGame = gameIdToOpen
         ? await loadStreetGame(gameIdToOpen)
         : await createStreetGame();
-      setOptimisticPlayerPosition(null);
-      setOptimisticPlayerLocationId(null);
-      setOptimisticPlayerConversationLocationId(null);
-      setOptimisticPlayerMoveDurationMs(null);
+      clearPendingVisualGameUpdate();
+      clearOptimisticPlayerMove();
       setRowanPlayback(createEmptyRowanPlaybackState());
-      publishWaypoint(null);
       if (!applyGameUpdate(nextGame, requestId)) {
         return;
       }
@@ -1360,9 +1380,12 @@ export function PhaserStreetGameApp() {
   }, [
     applyGameUpdate,
     boundGameObserverEnabled,
+    clearOptimisticPlayerMove,
+    clearPendingVisualGameUpdate,
     forceFreshGame,
     nextRequestId,
     publishWaypoint,
+    publishAutoContinueBeatTiming,
     requestedGameId,
     rowanAutoplayEnabled,
   ]);
@@ -1570,9 +1593,7 @@ export function PhaserStreetGameApp() {
     const autoContinueKey = buildWatchModeAdvanceKey(game);
     if (autoContinueBeatStartedRef.current?.key !== autoContinueKey) {
       autoContinueBeatStartedRef.current = null;
-      setAutoContinueBeatTiming((current) =>
-        current?.key === autoContinueKey ? current : null,
-      );
+      publishAutoContinueBeatTiming(null);
     }
     if (
       lastObjectiveAutoContinueKeyRef.current &&
@@ -1620,13 +1641,7 @@ export function PhaserStreetGameApp() {
       beatTiming = { ...beatTiming, intendedDelayMs };
       autoContinueBeatStartedRef.current = beatTiming;
     }
-    setAutoContinueBeatTiming((current) =>
-      current?.key === beatTiming.key &&
-      current.startedAtMs === beatTiming.startedAtMs &&
-      current.intendedDelayMs === beatTiming.intendedDelayMs
-        ? current
-        : beatTiming,
-    );
+    publishAutoContinueBeatTiming(beatTiming);
     const delayMs = remainingAutoplayDelayMs(
       intendedDelayMs,
       beatTiming.startedAtMs,
@@ -1694,6 +1709,7 @@ export function PhaserStreetGameApp() {
     game?.rowanAutonomy?.mode,
     handleAdvanceObjective,
     optimisticPlayerPosition,
+    publishAutoContinueBeatTiming,
     rowanPlayback,
     rowanAutoplayFrozen,
     rowanWatchModeEnabled,

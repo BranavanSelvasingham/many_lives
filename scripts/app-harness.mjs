@@ -119,6 +119,7 @@ function buildSteps() {
     ]),
     commandStep("repo node tests", "node", [
       "--test",
+      "scripts/client-visual-reconciliation.test.mjs",
       "scripts/run-sim-dev.test.mjs",
       "scripts/visual-game-smoke-startup.test.mjs",
       "scripts/visual-scene-anchor-regression.test.mjs",
