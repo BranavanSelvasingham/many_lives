@@ -3508,6 +3508,11 @@ function sanitizeConversationResolutionForVisibleEvidence(
   resolution: ConversationResolution,
   closingReply: string,
 ): ConversationResolution {
+  const currentStateResolution = sanitizeConversationResolutionForCurrentState(
+    world,
+    npc,
+    resolution,
+  );
   const groundingPolicy = objectiveRouteConversationGroundingPolicy(
     world,
     objective,
@@ -3519,7 +3524,7 @@ function sanitizeConversationResolutionForVisibleEvidence(
     !groundingPolicy ||
     !objectiveRouteConversationResolutionPointsToPolicy(
       groundingPolicy,
-      resolution,
+      currentStateResolution,
     ) ||
     objectiveRouteConversationHasVisibleEvidence(
       world,
@@ -3527,7 +3532,7 @@ function sanitizeConversationResolutionForVisibleEvidence(
       closingReply,
     )
   ) {
-    return resolution;
+    return currentStateResolution;
   }
 
   recordAIRuntimePolicyFallback(
@@ -3868,6 +3873,204 @@ function buildObjectiveScriptedReply(
   );
 }
 
+function conversationTextReusesUnavailableApproach(
+  world: StreetGameState,
+  text: string | undefined,
+) {
+  if (!text) {
+    return false;
+  }
+
+  const normalized = text.replace(/\s+/g, " ").trim().toLowerCase();
+  const presentsAsCurrent =
+    /\b(?:ask|available|choose|could use|deal with|fix|go|head|help|inspect|live|may still|needs?|offer|still open|take|try|work)\b/.test(
+      normalized,
+    );
+  if (!presentsAsCurrent) {
+    return false;
+  }
+
+  const teaJob = jobById(world, "job-tea-shift");
+  const teaApproachUnavailable = Boolean(
+    teaJob && !jobWindowOpen(world, teaJob),
+  );
+  const mentionsTeaWork =
+    /\b(?:ada|cup-and-counter|lunch (?:hands|rush|shift|work)|tea(?:-house)? shift)\b/.test(
+      normalized,
+    );
+  const acknowledgesTeaClosure =
+    /\b(?:ada|kettle\s*&?\s*lamp|cup-and-counter|lunch|shift)\b[^.!?;]{0,72}\b(?:already|cannot|can't|closed|complete|completed|done|finished|gone|missed|moved on|no longer|old|over|settled)\b/.test(
+      normalized,
+    );
+  const prescribesTeaApproach =
+    /\b(?:ask|choose|go|head|take|try|work)\b[^.!?;]{0,32}\b(?:ada|kettle\s*&?\s*lamp|cup-and-counter|lunch|shift)\b/.test(
+      normalized,
+    );
+  const rejectsTeaApproach =
+    /\b(?:do not|don't|leave|stop)\b[^.!?;]{0,72}\b(?:ada|kettle\s*&?\s*lamp|cup-and-counter|lunch|shift)\b/.test(
+      normalized,
+    );
+
+  const pumpProblem = problemById(world, "problem-pump");
+  const pumpApproachUnavailable = Boolean(
+    pumpProblem && pumpProblem.status !== "active",
+  );
+  const mentionsPumpApproach =
+    /\b(?:leaking pump|morrow yard pump|pump|wrench)\b/.test(normalized);
+  const acknowledgesPumpClosure =
+    /\b(?:pump|morrow yard)\b[^.!?;]{0,72}\b(?:already|contained|fixed|resolved|settled|solved|stopped)\b/.test(
+      normalized,
+    );
+  const prescribesPumpApproach =
+    /\b(?:choose|deal with|fix|go|head|help|inspect|take|try)\b[^.!?;]{0,32}\b(?:pump|morrow yard|wrench)\b/.test(
+      normalized,
+    );
+  const rejectsPumpApproach =
+    /\b(?:do not|don't|leave|stop)\b[^.!?;]{0,72}\b(?:pump|morrow yard|wrench)\b/.test(
+      normalized,
+    );
+
+  return Boolean(
+    (teaApproachUnavailable &&
+      ((mentionsTeaWork && !acknowledgesTeaClosure) ||
+        (prescribesTeaApproach && !rejectsTeaApproach))) ||
+      (pumpApproachUnavailable &&
+        mentionsPumpApproach &&
+        (!acknowledgesPumpClosure ||
+          (prescribesPumpApproach && !rejectsPumpApproach))),
+  );
+}
+
+function buildCurrentStateConversationAdvice(
+  world: StreetGameState,
+  npc: NpcState,
+) {
+  const teaJob = jobById(world, "job-tea-shift");
+  const yardJob = jobById(world, "job-yard-shift");
+  const pumpProblem = problemById(world, "problem-pump");
+  const teaWorkDecision =
+    npc.id === "npc-ada" ? "the open lunch work" : "Ada's open lunch work";
+  const closedTeaShiftDecision =
+    npc.id === "npc-ada" ? "the closed lunch shift" : "Ada's closed lunch shift";
+  const completedTeaShiftDecision =
+    npc.id === "npc-ada"
+      ? "the completed lunch shift"
+      : "Ada's completed lunch shift";
+  const teaWorkReply =
+    npc.id === "npc-ada" ? "My lunch work" : "Ada's lunch work";
+  const teaShiftReply =
+    npc.id === "npc-ada" ? "My lunch shift" : "Ada's lunch shift";
+  const yardOpeningDecision =
+    npc.id === "npc-tomas"
+      ? "the current yard opening"
+      : "Tomas's current yard opening";
+  const yardWorkReply =
+    npc.id === "npc-tomas" ? "My yard work" : "Tomas's yard work";
+  const teaOpen = Boolean(teaJob?.discovered && jobWindowOpen(world, teaJob));
+  const yardOpen = Boolean(yardJob?.discovered && jobWindowOpen(world, yardJob));
+  const pumpOpen = Boolean(
+    pumpProblem?.discovered && pumpProblem.status === "active",
+  );
+  const otherProblem = world.problems.find(
+    (problem) =>
+      problem.id !== "problem-pump" &&
+      problem.discovered &&
+      problem.status === "active",
+  );
+
+  if (teaOpen && pumpOpen) {
+    return {
+      decision: `compare ${teaWorkDecision} with the active Morrow Yard pump using the current legal actions.`,
+      followupThought: "Both approaches are current.",
+      memoryText: `${npc.name} kept Rowan's choice on the work and local trouble that were still live.`,
+      reply: `${teaWorkReply} and the Morrow Yard pump are both still live. Check what Rowan can legally do now before choosing.`,
+      summary: `${npc.name} described only the approaches that remained live.`,
+    };
+  }
+
+  if (teaOpen) {
+    return {
+      decision: `leave the settled pump closed and use ${teaWorkDecision}.`,
+      followupThought: "Ada's work is the live option.",
+      memoryText:
+        "Rowan left the settled pump alone and kept the still-open lunch work in view.",
+      reply: `The pump is already contained. ${teaWorkReply} is the live opening while the window is still open.`,
+      summary: `${npc.name} kept the advice on the still-open lunch work.`,
+    };
+  }
+
+  if (pumpOpen) {
+    return {
+      decision: `leave ${closedTeaShiftDecision} alone and use the active Morrow Yard pump as the current approach.`,
+      followupThought: "The pump is the live option.",
+      memoryText:
+        "Rowan stopped treating Ada's closed shift as current and kept the active pump in view.",
+      reply: `${teaShiftReply} is no longer open. The Morrow Yard pump is still live if Rowan wants a useful local step.`,
+      summary: `${npc.name} redirected Rowan from closed work to the active pump.`,
+    };
+  }
+
+  if (yardOpen) {
+    return {
+      decision: `leave ${completedTeaShiftDecision} and the settled pump closed, then check ${yardOpeningDecision}.`,
+      followupThought: "The yard is the live opening.",
+      memoryText:
+        "Rowan left completed work and settled trouble behind and reoriented to the open yard window.",
+      reply: `${teaShiftReply} is already finished, and the pump is settled. ${yardWorkReply} is the live opening now.`,
+      summary: `${npc.name} redirected Rowan to the remaining live work window.`,
+    };
+  }
+
+  if (otherProblem) {
+    return {
+      decision: `leave the old lunch and pump approaches closed and reorient to ${otherProblem.title.toLowerCase()}.`,
+      followupThought: "A different problem is current.",
+      memoryText:
+        "Rowan left completed work and settled trouble behind and reoriented to a current local problem.",
+      reply: `Ada's lunch shift and the pump are already settled. ${otherProblem.title} is the local problem that is still moving.`,
+      summary: `${npc.name} redirected Rowan to current local trouble.`,
+    };
+  }
+
+  return {
+    decision: `leave ${completedTeaShiftDecision} and the settled pump closed, rest, and read the next opening from fresh state.`,
+    followupThought: "Those old approaches are finished.",
+    memoryText:
+      "Rowan stopped reopening completed work and settled trouble when neither was a current option.",
+    reply: `${teaShiftReply} is already finished, and the pump is already settled. Leave both closed and take the next move from what is actually open.`,
+    summary: `${npc.name} closed the stale approaches instead of reusing them.`,
+  };
+}
+
+function sanitizeConversationResolutionForCurrentState(
+  world: StreetGameState,
+  npc: NpcState,
+  resolution: ConversationResolution,
+) {
+  const reusesUnavailableApproach = [
+    resolution.decision,
+    resolution.memoryText,
+    resolution.objectiveText,
+    resolution.summary,
+  ].some((text) => conversationTextReusesUnavailableApproach(world, text));
+  if (!reusesUnavailableApproach) {
+    return resolution;
+  }
+
+  recordAIRuntimePolicyFallback(
+    world,
+    "interpretStreetConversation",
+    "Conversation interpretation reused a completed or closed approach.",
+  );
+  const advice = buildCurrentStateConversationAdvice(world, npc);
+  return {
+    decision: advice.decision,
+    memoryKind: "self" as const,
+    memoryText: advice.memoryText,
+    summary: advice.summary,
+  };
+}
+
 async function performConversationTurn(
   world: StreetGameState,
   npc: NpcState,
@@ -3965,6 +4168,18 @@ async function performConversationTurn(
         groundingPolicy.fallbackReason,
       );
     }
+  }
+  if (conversationTextReusesUnavailableApproach(world, reply.reply)) {
+    const advice = buildCurrentStateConversationAdvice(world, npc);
+    reply = {
+      followupThought: advice.followupThought,
+      reply: advice.reply,
+    };
+    recordAIRuntimePolicyFallback(
+      world,
+      "generateStreetReply",
+      "Conversation reply reused a completed or closed approach.",
+    );
   }
   const replyTopics = detectConversationTopics(reply.reply);
   const topics = new Set<string>([
@@ -10600,9 +10815,13 @@ function deriveConversationResolution(
     objective.focus === "work" ||
     discussedTopics.has("work") ||
     discussedTopics.has("yard");
-  const teaWindowClosed = jobWindowClosed(world, teaJob);
+  const teaApproachUnavailable = Boolean(
+    teaJob && !jobWindowOpen(world, teaJob),
+  );
   const yardWindowOpen = jobWindowOpen(world, yardJob);
-  const yardWindowClosed = jobWindowClosed(world, yardJob);
+  const yardApproachUnavailable = Boolean(
+    yardJob && !jobWindowOpen(world, yardJob),
+  );
 
   if (socialLoopObjective && nextNpc) {
     return buildSocialNextNpcConversationResolution({
@@ -10619,7 +10838,9 @@ function deriveConversationResolution(
       if (
         objective.routeKey === "first-afternoon" &&
         teaJob?.discovered &&
-        pumpProblem?.discovered
+        jobWindowOpen(world, teaJob) &&
+        pumpProblem?.discovered &&
+        pumpProblem.status === "active"
       ) {
         return {
           decision:
@@ -10666,7 +10887,7 @@ function deriveConversationResolution(
         });
       }
 
-      if (discussedWork && teaWindowClosed && yardWindowOpen) {
+      if (discussedWork && teaApproachUnavailable && yardWindowOpen) {
         return buildNpcConversationResolution(
           "mara-closed-lunch-yard-redirect",
           {
@@ -10675,14 +10896,18 @@ function deriveConversationResolution(
         );
       }
 
-      if (discussedWork && teaWindowClosed && yardWindowClosed) {
+      if (
+        discussedWork &&
+        teaApproachUnavailable &&
+        yardApproachUnavailable
+      ) {
         return buildNpcConversationResolution("mara-closed-work-windows", {
           shouldSharpenObjective,
         });
       }
       break;
     case "npc-ada":
-      if (discussedWork && teaWindowClosed && yardWindowOpen) {
+      if (discussedWork && teaApproachUnavailable && yardWindowOpen) {
         return buildNpcConversationResolution(
           "ada-closed-lunch-yard-redirect",
           {
@@ -10691,7 +10916,11 @@ function deriveConversationResolution(
         );
       }
 
-      if (discussedWork && teaWindowClosed && yardWindowClosed) {
+      if (
+        discussedWork &&
+        teaApproachUnavailable &&
+        yardApproachUnavailable
+      ) {
         return buildNpcConversationResolution("ada-closed-work-windows", {
           shouldSharpenObjective,
         });
@@ -10745,7 +10974,7 @@ function deriveConversationResolution(
       }
       break;
     case "npc-tomas":
-      if (discussedWork && yardWindowClosed) {
+      if (discussedWork && yardApproachUnavailable) {
         return buildNpcConversationResolution("tomas-closed-yard-window", {
           shouldSharpenObjective,
         });
@@ -10774,7 +11003,11 @@ function deriveConversationResolution(
       break;
   }
 
-  if (discussedWork && teaWindowClosed && yardWindowClosed) {
+  if (
+    discussedWork &&
+    teaApproachUnavailable &&
+    yardApproachUnavailable
+  ) {
     return buildGenericClosedWorkWindowConversationResolution({
       npcName: npc.name,
       shouldSharpenObjective,

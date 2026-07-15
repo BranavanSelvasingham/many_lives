@@ -1958,6 +1958,10 @@ async function assertWatchModeFeelGuard() {
     streetSource,
     "FIRST_AFTERNOON_COMPLETION_DWELL_MS",
   );
+  const handoffDelay = readNumericConst(
+    streetSource,
+    "POST_FIRST_AFTERNOON_HANDOFF_DWELL_MS",
+  );
   const renderFpsLimit = readNumericConst(
     streetSource,
     "RUNTIME_RENDER_FPS_LIMIT",
@@ -1977,8 +1981,12 @@ async function assertWatchModeFeelGuard() {
     );
   }
   assert.ok(
-    completionDelay >= 3_400 && completionDelay <= 4_500,
+    completionDelay >= 7_500 && completionDelay <= 9_500,
     `First-afternoon completion dwell should remain readable but bounded: ${completionDelay}ms.`,
+  );
+  assert.ok(
+    handoffDelay >= 7_500 && handoffDelay <= 9_500,
+    `Post-first-afternoon objective handoff should remain readable but bounded: ${handoffDelay}ms.`,
   );
   assert.ok(
     renderFpsLimit >= 24 && renderFpsLimit <= 40,

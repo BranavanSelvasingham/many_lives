@@ -156,6 +156,8 @@ const KETTLE_SIDE_WORLD_MIN_X = 900;
 const MAP_AGENCY_TARGET_LABEL_MAX_OFFSET = 120;
 const OUTDOOR_ROUTE_ARRIVAL_CONTINUITY_MAX_DISTANCE = 8;
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
+const FIRST_AFTERNOON_READABILITY_CHECKPOINT_MS = 5_500;
+const FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS = 7_000;
 const INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES = 10;
 const ROUTE_PHASE_ORDER = {
   start: 0,
@@ -4772,6 +4774,101 @@ async function refreshProbeForVisibleIndependentNpcSurface({
   );
 }
 
+function unavailableApproachAdviceFailures(probe, text) {
+  const normalized = String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+
+  const failures = [];
+  const jobWindows = probe?.worldPressure?.jobWindows ?? [];
+  const teaJob = jobWindows.find((job) => job.id === "job-tea-shift");
+  const teaUnavailable = Boolean(
+    teaJob &&
+      (teaJob.completed ||
+        teaJob.missed ||
+        (!teaJob.inWindow && teaJob.startsInMinutes === null)),
+  );
+  const mentionsTeaWork =
+    /\b(?:ada|cup-and-counter|lunch (?:hands|rush|shift|work)|tea(?:-house)? shift)\b/.test(
+      normalized,
+    );
+  const teaClosure =
+    /\b(?:ada|kettle\s*&?\s*lamp|cup-and-counter|lunch|shift)\b[^.!?;]{0,72}\b(?:already|cannot|can't|closed|complete|completed|done|finished|gone|missed|moved on|no longer|old|over|settled)\b/.test(
+      normalized,
+    );
+  const prescribesTea =
+    /\b(?:ask|choose|go|head|take|try|work)\b[^.!?;]{0,32}\b(?:ada|kettle\s*&?\s*lamp|cup-and-counter|lunch|shift)\b/.test(
+      normalized,
+    );
+  const rejectsTea =
+    /\b(?:do not|don't|leave|stop)\b[^.!?;]{0,72}\b(?:ada|kettle\s*&?\s*lamp|cup-and-counter|lunch|shift)\b/.test(
+      normalized,
+    );
+  if (
+    teaUnavailable &&
+    ((mentionsTeaWork && !teaClosure) || (prescribesTea && !rejectsTea))
+  ) {
+    failures.push("completed-or-closed-tea-work-presented-as-current");
+  }
+
+  const pump = (probe?.worldPressure?.problems ?? []).find(
+    (problem) => problem.id === "problem-pump",
+  );
+  const pumpUnavailable = Boolean(pump && pump.status !== "active");
+  const mentionsPump = /\b(?:leaking pump|morrow yard pump|pump|wrench)\b/.test(
+    normalized,
+  );
+  const pumpClosure =
+    /\b(?:pump|morrow yard)\b[^.!?;]{0,72}\b(?:already|contained|fixed|resolved|settled|solved|stopped)\b/.test(
+      normalized,
+    );
+  const prescribesPump =
+    /\b(?:choose|deal with|fix|go|head|help|inspect|take|try)\b[^.!?;]{0,32}\b(?:pump|morrow yard|wrench)\b/.test(
+      normalized,
+    );
+  const rejectsPump =
+    /\b(?:do not|don't|leave|stop)\b[^.!?;]{0,72}\b(?:pump|morrow yard|wrench)\b/.test(
+      normalized,
+    );
+  if (
+    pumpUnavailable &&
+    mentionsPump &&
+    (!pumpClosure || (prescribesPump && !rejectsPump))
+  ) {
+    failures.push("resolved-pump-presented-as-current");
+  }
+
+  return failures;
+}
+
+function assertNoUnavailableApproachAdvice(label, probe, dom) {
+  const currentAdviceText = [
+    dom?.conversationText,
+    probe?.rail?.now,
+    probe?.rail?.next,
+    probe?.rail?.thought,
+    probe?.autonomy?.label,
+    probe?.autonomy?.detail,
+    probe?.autonomy?.intent?.reason,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const failures = unavailableApproachAdviceFailures(probe, currentAdviceText);
+  assert.deepEqual(
+    failures,
+    [],
+    `${label}: visible advice reused a completed or closed approach: ${JSON.stringify(
+      { failures, currentAdviceText },
+      null,
+      2,
+    )}`,
+  );
+}
+
 function assertGameplayDom(label, game, probe, dom) {
   assert.ok(dom, `${label}: expected a browser DOM snapshot.`);
   assert.equal(
@@ -4854,6 +4951,7 @@ function assertGameplayDom(label, game, probe, dom) {
   }
 
   assertPlayerFacingObjectiveSequenceCoherence(label, probe, dom);
+  assertNoUnavailableApproachAdvice(label, probe, dom);
   assertNoVisibleWatchModeProgressionControls(label, probe, dom);
   assertRailReadability(label, game, probe, dom);
 
@@ -11308,10 +11406,14 @@ function buildPostFirstAfternoonLivePressureEvidence({
       )
       .map((entry) => ({
         beforeAutonomyLabel: entry.beforeAutonomyLabel ?? null,
+        beforeObjectiveRouteKey: entry.beforeObjectiveRouteKey ?? null,
         completionAutoContinue: Boolean(entry.completionAutoContinue),
         durationMs: entry.durationMs ?? null,
+        handoffReorientation: Boolean(entry.handoffReorientation),
         kind: entry.kind,
         milestone: entry.milestone,
+        readabilityCheckpointMs: entry.readabilityCheckpointMs ?? null,
+        readabilityStateStable: entry.readabilityStateStable ?? null,
         sequenceRunId: entry.sequenceRunId ?? null,
       })),
     rest: {
@@ -11714,6 +11816,7 @@ function assertInhabitPlayerDom(
       probe.autonomy.visibleDecisionArtifact,
     );
   }
+  assertNoUnavailableApproachAdvice(label, probe, dom);
   assertNoVisibleWatchModeProgressionControls(label, probe, dom);
 
   const complete = /first afternoon complete/i.test(dom.bodyText);
@@ -11783,6 +11886,18 @@ function isFirstAfternoonCompletionPendingProbe(probe) {
     probe?.firstAfternoon?.completedAt &&
     !probe?.firstAfternoon?.completionAcknowledgedAt &&
     /first afternoon complete/i.test(probe?.autonomy?.label ?? ""),
+  );
+}
+
+function isPostFirstAfternoonHandoffPendingProbe(probe) {
+  return Boolean(
+    probe?.firstAfternoon?.completionAcknowledgedAt &&
+      probe?.objective?.source === "dynamic" &&
+      probe?.objective?.routeKey === "rest-home" &&
+      probe?.autonomy?.actionId === "rest:home" &&
+      !probe?.player?.lastRestAt &&
+      (probe?.objective?.progress?.completed ?? 0) <
+        (probe?.objective?.progress?.total ?? 0),
   );
 }
 
@@ -12607,6 +12722,8 @@ async function clickUntilInhabitMilestone({
     const beforeSignature = playerProbeSignature(probe);
     const completionAutoContinue =
       isFirstAfternoonCompletionPendingProbe(probe);
+    const handoffReorientation =
+      isPostFirstAfternoonHandoffPendingProbe(probe);
     if (
       probe.watchMode?.enabled &&
       !probe.watchMode?.frozen &&
@@ -12636,7 +12753,10 @@ async function clickUntilInhabitMilestone({
         beforeAutonomyLabel: probe.autonomy?.label ?? null,
         beforeClock: probe.clock,
         beforeLocation: probe.location,
+        beforeObjectiveRouteKey: probe.objective?.routeKey ?? null,
+        beforeObjectiveText: probe.objective?.text ?? null,
         completionAutoContinue,
+        handoffReorientation,
         objectiveSequenceAuditIndex: objectiveSequenceAudit.length - 1,
         kind: "watched-auto-continue",
         milestone: milestone.label,
@@ -12647,6 +12767,42 @@ async function clickUntilInhabitMilestone({
       };
       clickLog.push(logEntry);
       const startedAt = Date.now();
+      if (completionAutoContinue || handoffReorientation) {
+        await sleep(FIRST_AFTERNOON_READABILITY_CHECKPOINT_MS);
+        const readabilityProbe = await session.readBrowserProbe(
+          `${milestone.label}-readability-checkpoint-${attempt + 1}`,
+        );
+        logEntry.readabilityCheckpointMs = Date.now() - startedAt;
+        logEntry.readabilityStateStable =
+          playerProbeSignature(readabilityProbe) === beforeSignature;
+        logEntry.readabilityObjectiveRouteKey =
+          readabilityProbe?.objective?.routeKey ?? null;
+        assert.equal(
+          logEntry.readabilityStateStable,
+          true,
+          `${milestone.label}: ${
+            completionAutoContinue
+              ? "first-afternoon completion"
+              : "post-first-afternoon reorientation"
+          } changed before a human-readable checkpoint: ${JSON.stringify(
+            {
+              before: {
+                autonomy: probe.autonomy,
+                clock: probe.clock,
+                objective: probe.objective,
+              },
+              checkpoint: {
+                autonomy: readabilityProbe?.autonomy,
+                clock: readabilityProbe?.clock,
+                objective: readabilityProbe?.objective,
+              },
+              checkpointMs: logEntry.readabilityCheckpointMs,
+            },
+            null,
+            2,
+          )}`,
+        );
+      }
       const transitionedProbe = await waitForInhabitTransition(
         session,
         beforeSignature,
@@ -12655,6 +12811,8 @@ async function clickUntilInhabitMilestone({
       logEntry.durationMs = Date.now() - startedAt;
       const beforeAppMonotonicMs = probe.timing?.appMonotonicMs;
       const afterAppMonotonicMs = transitionedProbe.timing?.appMonotonicMs;
+      logEntry.beforeAppMonotonicMs = beforeAppMonotonicMs ?? null;
+      logEntry.afterAppMonotonicMs = afterAppMonotonicMs ?? null;
       logEntry.appDurationMs =
         typeof beforeAppMonotonicMs === "number" &&
         typeof afterAppMonotonicMs === "number"
@@ -13048,8 +13206,38 @@ async function runInhabitGameplayPass(session) {
     "Observe/autoplay did not auto-acknowledge the first-afternoon completion field note as a watched beat.",
   );
   assert.ok(
-    (completionDwell.durationMs ?? 0) >= 3000,
+    (completionDwell.durationMs ?? 0) >=
+      FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS,
     `First-afternoon completion auto-acknowledgement was too fast to read: ${completionDwell.durationMs ?? 0}ms.`,
+  );
+  assert.equal(
+    completionDwell.readabilityStateStable,
+    true,
+    "First-afternoon completion did not remain stable through the browser readability checkpoint.",
+  );
+  const handoffDwell = clickLog.find(
+    (entry) =>
+      entry.kind === "watched-auto-continue" &&
+      entry.milestone === "post-first-afternoon-rest" &&
+      entry.handoffReorientation,
+  );
+  assert.ok(
+    handoffDwell,
+    "Observe/autoplay did not expose the first state-derived post-afternoon objective as a dedicated reorientation beat.",
+  );
+  assert.ok(
+    (handoffDwell.durationMs ?? 0) >= FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS,
+    `Post-first-afternoon objective advanced too quickly to understand: ${handoffDwell.durationMs ?? 0}ms.`,
+  );
+  assert.equal(
+    handoffDwell.readabilityStateStable,
+    true,
+    "Post-first-afternoon objective changed before the browser readability checkpoint.",
+  );
+  assert.equal(
+    handoffDwell.beforeObjectiveRouteKey,
+    "rest-home",
+    "Post-first-afternoon readability check did not hold the captured handoff objective.",
   );
   assert.ok(
     clickLog.length >= 10,

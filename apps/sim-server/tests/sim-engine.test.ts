@@ -142,6 +142,36 @@ class LiveDialogueAIProvider extends MockAIProvider {
   }
 }
 
+class StaleClosedApproachLiveAIProvider extends LiveDialogueAIProvider {
+  readonly interpretationRequests: StreetConversationInterpretationRequest[] = [];
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    this.replyRequests.push(input);
+    return {
+      followupThought: "Mara is reusing the old choices.",
+      reply:
+        "Choose Ada's already-completed lunch shift or fix the already-resolved Morrow Yard pump. Both are still live.",
+    };
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ) {
+    this.interpretationRequests.push(input);
+    return {
+      decision:
+        "compare Ada's completed lunch work with the resolved pump and choose one now.",
+      memoryKind: "self" as const,
+      memoryText:
+        "Mara told Rowan to reuse Ada's completed shift or the resolved pump.",
+      objectiveText:
+        "Choose Ada's completed lunch shift or fix the resolved pump.",
+      summary:
+        "Mara presented the completed shift and resolved pump as live choices.",
+    };
+  }
+}
+
 class ThinAdaLiveAIProvider extends LiveDialogueAIProvider {
   override async generateStreetReply(input: StreetDialogueRequest) {
     if (input.npcId === "npc-ada") {
@@ -6800,6 +6830,175 @@ describe("SimulationEngine street slice", () => {
         }
       }
     }
+  });
+
+  it("keeps late Mara advice off completed work and resolved trouble", async () => {
+    for (const [providerLabel, provider] of [
+      ["deterministic", new MockAIProvider()],
+      ["live-generated", new StaleClosedApproachLiveAIProvider()],
+    ] as const) {
+      const engine = new SimulationEngine(provider);
+      let world = await engine.createGame(
+        `game-late-mara-current-advice-${providerLabel}`,
+      );
+      world = await enterMorrowHouse(engine, world);
+
+      const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+      const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+      const pumpProblem = world.problems.find(
+        (problem) => problem.id === "problem-pump",
+      );
+      expect(teaJob).toBeDefined();
+      expect(yardJob).toBeDefined();
+      expect(pumpProblem).toBeDefined();
+      if (!teaJob || !yardJob || !pumpProblem) {
+        throw new Error("Missing seeded post-first-afternoon approaches");
+      }
+
+      teaJob.accepted = false;
+      teaJob.completed = true;
+      teaJob.discovered = true;
+      teaJob.missed = false;
+      yardJob.accepted = false;
+      yardJob.completed = true;
+      yardJob.discovered = true;
+      yardJob.missed = false;
+      pumpProblem.discovered = true;
+      pumpProblem.resolvedAt = "2026-03-22T18:10:00.000Z";
+      pumpProblem.resolvedByNpcId = "npc-mara";
+      pumpProblem.status = "resolved";
+      pumpProblem.urgency = 0;
+      world.clock.day = 2;
+      world.clock.hour = 20;
+      world.clock.minute = 38;
+      world.clock.totalMinutes = 24 * 60 + 20 * 60 + 38;
+      world.clock.label = "Evening";
+      world.currentTime = "2026-03-22T20:38:00.000Z";
+      world.firstAfternoon ??= {};
+      world.firstAfternoon.approachesKnownAt ??=
+        "2026-03-21T11:08:00.000Z";
+      world.firstAfternoon.completedAt = "2026-03-21T16:24:00.000Z";
+      world.firstAfternoon.completionAcknowledgedAt =
+        "2026-03-21T16:24:00.000Z";
+
+      world = await engine.runCommand(world, {
+        type: "speak",
+        npcId: "npc-mara",
+        text: "What is actually live now: Ada's lunch shift or the pump?",
+      });
+
+      const npcAdvice = world.conversations
+        .filter(
+          (entry) => entry.npcId === "npc-mara" && entry.speaker === "npc",
+        )
+        .map((entry) => entry.text)
+        .join(" ");
+      const resolutionAdvice = [
+        world.activeConversation?.decision,
+        world.activeConversation?.objectiveText,
+        world.conversationThreads["npc-mara"]?.decision,
+        world.conversationThreads["npc-mara"]?.objectiveText,
+        world.conversationThreads["npc-mara"]?.summary,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const visibleAdvice = `${npcAdvice} ${resolutionAdvice}`;
+
+      expect(npcAdvice).toMatch(
+        /finished|closed|gone|settled|contained|moved on/i,
+      );
+      expect(visibleAdvice).not.toMatch(
+        /both (?:are )?(?:still )?live|choose Ada|take Ada|fix the (?:already-)?resolved|live lunch work.*(?:leaking|resolved) pump/i,
+      );
+      expect(world.player.objective?.text).not.toMatch(
+        /completed lunch shift|resolved pump/i,
+      );
+
+      if (providerLabel === "live-generated") {
+        expect(world.aiRuntime?.fallbackReasons).toEqual(
+          expect.arrayContaining([
+            "Conversation reply reused a completed or closed approach.",
+            "Conversation interpretation reused a completed or closed approach.",
+          ]),
+        );
+      }
+    }
+  });
+
+  it("keeps stale live-provider fallbacks coherent when Ada is speaking", async () => {
+    const provider = new StaleClosedApproachLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-ada-current-advice-speaker");
+    world = await enterTeaHouse(engine, world);
+
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    const pumpProblem = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    expect(teaJob).toBeDefined();
+    expect(yardJob).toBeDefined();
+    expect(pumpProblem).toBeDefined();
+    if (!teaJob || !yardJob || !pumpProblem) {
+      throw new Error("Missing seeded approaches for Ada speaker fallback");
+    }
+
+    teaJob.accepted = false;
+    teaJob.completed = true;
+    teaJob.discovered = true;
+    teaJob.missed = false;
+    yardJob.accepted = false;
+    yardJob.completed = true;
+    yardJob.discovered = true;
+    yardJob.missed = false;
+    pumpProblem.discovered = true;
+    pumpProblem.resolvedAt = world.currentTime;
+    pumpProblem.resolvedByNpcId = "npc-mara";
+    pumpProblem.status = "resolved";
+    pumpProblem.urgency = 0;
+    world.firstAfternoon ??= {};
+    world.firstAfternoon.completedAt = world.currentTime;
+    world.firstAfternoon.completionAcknowledgedAt = world.currentTime;
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "Is my completed lunch shift or the resolved pump still live?",
+    });
+
+    const adaReply = world.conversations
+      .filter((entry) => entry.npcId === "npc-ada" && entry.speaker === "npc")
+      .at(-1)?.text;
+    const savedResolution = [
+      world.activeConversation?.decision,
+      world.activeConversation?.objectiveText,
+      world.conversationThreads["npc-ada"]?.decision,
+      world.conversationThreads["npc-ada"]?.objectiveText,
+      world.conversationThreads["npc-ada"]?.summary,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    expect(adaReply).toMatch(/my lunch shift is already finished/i);
+    expect(adaReply).toMatch(/pump is already settled/i);
+    expect(adaReply).not.toMatch(/\bMara\b|Ada's lunch shift/i);
+    expect(savedResolution).toMatch(
+      /leave the completed lunch shift and the settled pump closed/i,
+    );
+    expect(savedResolution).toMatch(/Ada closed the stale approaches/i);
+    expect(savedResolution).not.toMatch(/\bMara\b|Ada's lunch shift/i);
+    expect(world.player.memories.map((entry) => entry.text)).toContain(
+      "Rowan stopped reopening completed work and settled trouble when neither was a current option.",
+    );
+    expect(`${adaReply} ${savedResolution}`).not.toMatch(
+      /both (?:are )?(?:still )?live|choose Ada|fix the (?:already-)?resolved/i,
+    );
+    expect(world.aiRuntime?.fallbackReasons).toEqual(
+      expect.arrayContaining([
+        "Conversation reply reused a completed or closed approach.",
+        "Conversation interpretation reused a completed or closed approach.",
+      ]),
+    );
   });
 });
 describe("schedule-aware NPC objective execution", () => {

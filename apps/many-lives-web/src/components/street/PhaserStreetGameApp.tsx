@@ -251,7 +251,8 @@ const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
 const AUTOPLAY_CONVERSATION_AUTOSTART_DELAY_MS = 1800;
 const AUTOPLAY_OPENING_AUTOSTART_DELAY_MS = 600;
-const FIRST_AFTERNOON_COMPLETION_DWELL_MS = 3600;
+const FIRST_AFTERNOON_COMPLETION_DWELL_MS = 8000;
+const POST_FIRST_AFTERNOON_HANDOFF_DWELL_MS = 8000;
 const AUTONOMY_BEAT_DELAY_MS = {
   acting: 3400,
   conversation: 3800,
@@ -274,6 +275,10 @@ function autoContinueDelayMsForBeat(game: StreetGameState) {
 
   if (isFirstAfternoonCompletionAcknowledgementPending(game)) {
     return FIRST_AFTERNOON_COMPLETION_DWELL_MS;
+  }
+
+  if (isPostFirstAfternoonHandoffReorientation(game)) {
+    return POST_FIRST_AFTERNOON_HANDOFF_DWELL_MS;
   }
 
   const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
@@ -325,6 +330,19 @@ function isFirstAfternoonCompletionAcknowledgementPending(
     game.firstAfternoon?.completedAt &&
       !game.firstAfternoon?.completionAcknowledgedAt &&
       /first afternoon complete/i.test(game.rowanAutonomy?.label ?? ""),
+  );
+}
+
+function isPostFirstAfternoonHandoffReorientation(game: StreetGameState) {
+  const acknowledgementAt = game.firstAfternoon?.completionAcknowledgedAt;
+  const objective = game.player.objective;
+  return Boolean(
+    acknowledgementAt &&
+      objective &&
+      objective.source === "dynamic" &&
+      objective.routeKey !== "first-afternoon" &&
+      objective.updatedAt === acknowledgementAt &&
+      objective.progress.completed < objective.progress.total,
   );
 }
 

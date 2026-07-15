@@ -3539,6 +3539,9 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
         thought:
           "Mara made two current approaches concrete: Ada's lunch work and the leaking pump. Neither one settles the plan by itself.",
+        when: ({ world }) =>
+          jobWindowOpen(world, jobById(world, "job-tea-shift")) &&
+          problemById(world, "problem-pump")?.status === "active",
       },
       {
         npcId: "npc-ada",
@@ -3548,6 +3551,46 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
       },
     ],
     conversationFallbacks: [
+      {
+        choiceKey: "mara-first-afternoon-pump-only",
+        followupChoiceKey: "mara-first-afternoon-pump-only-followup",
+        followupThoughts: [
+          "The lunch lead is closed.",
+          "The pump is the live approach now.",
+          "Current trouble outranks an old offer.",
+        ],
+        npcId: "npc-mara",
+        replyLines: [
+          "Ada's lunch work is no longer open. The Morrow Yard pump is still live if Rowan wants to make the house easier tonight.",
+          "Kettle & Lamp already moved past lunch, but the yard pump still needs attention.",
+          "Do not reopen Ada's old shift. The pump is the current problem Rowan can still affect.",
+        ],
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) =>
+          jobApproachUnavailable(
+            world,
+            jobById(world, "job-tea-shift"),
+          ) && problemById(world, "problem-pump")?.status === "active",
+      },
+      {
+        choiceKey: "mara-first-afternoon-tea-only",
+        followupChoiceKey: "mara-first-afternoon-tea-only-followup",
+        followupThoughts: [
+          "Ada's work is the live approach.",
+          "The pump is already settled.",
+          "Only the current opening should shape the next move.",
+        ],
+        npcId: "npc-mara",
+        replyLines: [
+          "The pump is already contained. Ada's lunch work is the live opening if Rowan still wants paid work.",
+          "Morrow Yard is settled for now. Kettle & Lamp is the current approach while lunch is still open.",
+          "Do not reopen the pump. Ada's shift is the part of the day that is still available.",
+        ],
+        routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
+        when: ({ world }) =>
+          jobWindowOpen(world, jobById(world, "job-tea-shift")) &&
+          problemById(world, "problem-pump")?.status !== "active",
+      },
       {
         choiceKey: "mara-first-afternoon-tea-closed-yard-open",
         followupChoiceKey: "mara-first-afternoon-work-closed-followup",
@@ -3567,7 +3610,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
           return (
-            jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob)
+            jobApproachUnavailable(world, teaJob) &&
+            jobWindowOpen(world, yardJob)
           );
         },
       },
@@ -3590,7 +3634,8 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
           return (
-            jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob)
+            jobApproachUnavailable(world, teaJob) &&
+            !jobWindowOpen(world, yardJob)
           );
         },
       },
@@ -3611,7 +3656,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         routeKeys: [...FIRST_AFTERNOON_ROUTE_KEYS],
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
-          return !jobWindowClosed(world, teaJob);
+          return (
+            jobWindowOpen(world, teaJob) &&
+            problemById(world, "problem-pump")?.status === "active"
+          );
         },
       },
     ],
@@ -3633,7 +3681,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         ],
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
-          return !jobWindowClosed(world, teaJob);
+          return jobWindowOpen(world, teaJob);
         },
       },
       {
@@ -3654,7 +3702,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+          return (
+            jobApproachUnavailable(world, teaJob) &&
+            jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -3675,7 +3726,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+          return (
+            jobApproachUnavailable(world, teaJob) &&
+            !jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -3695,7 +3749,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         ],
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
-          return !jobWindowClosed(world, teaJob);
+          return jobWindowOpen(world, teaJob);
         },
       },
       {
@@ -3716,7 +3770,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+          return (
+            jobApproachUnavailable(world, teaJob) &&
+            jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -3737,7 +3794,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+          return (
+            jobApproachUnavailable(world, teaJob) &&
+            !jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -3761,7 +3821,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
             !teaJob?.accepted &&
               !teaJob?.completed &&
               !teaJob?.missed &&
-              !jobWindowClosed(world, teaJob),
+              jobWindowOpen(world, teaJob),
           );
         },
       },
@@ -3783,7 +3843,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && jobWindowOpen(world, yardJob);
+          return (
+            jobApproachUnavailable(world, teaJob) &&
+            jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -3804,7 +3867,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         when: ({ world }) => {
           const teaJob = jobById(world, "job-tea-shift");
           const yardJob = jobById(world, "job-yard-shift");
-          return jobWindowClosed(world, teaJob) && !jobWindowOpen(world, yardJob);
+          return (
+            jobApproachUnavailable(world, teaJob) &&
+            !jobWindowOpen(world, yardJob)
+          );
         },
       },
       {
@@ -3964,7 +4030,10 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         resolutionPointsToEvidence:
           resolutionPointsToFirstAfternoonApproaches,
         routeKeys: ["first-afternoon"],
-        when: ({ world }) => !world.firstAfternoon?.approachesKnownAt,
+        when: ({ world }) =>
+          !world.firstAfternoon?.approachesKnownAt &&
+          jobWindowOpen(world, jobById(world, "job-tea-shift")) &&
+          problemById(world, "problem-pump")?.status === "active",
       },
       {
         fallbackReason:
@@ -6555,29 +6624,37 @@ export function objectiveRouteScriptedReply(
     countPlayerConversationsWithNpc(world, npc.id) <= 1;
   const teaJob = jobById(world, "job-tea-shift");
   const yardJob = jobById(world, "job-yard-shift");
-  const teaWindowClosed = jobWindowClosed(world, teaJob);
+  const pumpApproachOpen =
+    problemById(world, "problem-pump")?.status === "active";
+  const teaApproachUnavailable = jobApproachUnavailable(world, teaJob);
   const yardWindowOpen = jobWindowOpen(world, yardJob);
 
   if (npc.id === "npc-mara" && firstPlayerLineWithNpc) {
     if (
       /\broom\b|\btonight\b|\bmorrow house\b|\bstay\b|\bbed\b/.test(normalized)
     ) {
-      if (teaWindowClosed) {
+      if (teaApproachUnavailable) {
         return {
-          reply: yardWindowOpen
-            ? "Tonight's bed is still yours if you keep the house easy to live in, but Ada's lunch window already moved on. If you still need coin today, ask Tomas at North Crane before the yard closes."
-            : "Tonight's bed is still yours if you keep the house easy to live in, but today's easy paid windows have closed. Come back to Morrow House and take stock instead of chasing stale work.",
-          followupThought: yardWindowOpen
-            ? "Mara closed the stale lunch lead and pointed Rowan at the live yard window."
-            : "Mara did not pretend the work windows waited for Rowan.",
+          reply: pumpApproachOpen
+            ? "Tonight's bed is still yours if you keep the house easy to live in. Ada's lunch window moved on, but the Morrow Yard pump is still live."
+            : yardWindowOpen
+              ? "Tonight's bed is still yours if you keep the house easy to live in, but Ada's lunch window already moved on. If you still need coin today, ask Tomas at North Crane before the yard closes."
+              : "Tonight's bed is still yours if you keep the house easy to live in, but today's easy paid windows have closed. Come back to Morrow House and take stock instead of chasing stale work.",
+          followupThought: pumpApproachOpen
+            ? "Mara closed the stale lunch lead and kept the live pump in view."
+            : yardWindowOpen
+              ? "Mara closed the stale lunch lead and pointed Rowan at the live yard window."
+              : "Mara did not pretend the work windows waited for Rowan.",
         };
       }
 
       return {
-        reply:
-          "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before lunch.",
-        followupThought:
-          "Mara made the room conditional: keep the house easy to live in, notice the pump, and find real coin.",
+        reply: pumpApproachOpen
+          ? "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before lunch."
+          : "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and ask Ada at Kettle & Lamp while her lunch work is still open.",
+        followupThought: pumpApproachOpen
+          ? "Mara made the room conditional: keep the house easy to live in, notice the pump, and find real coin."
+          : "Mara kept Rowan on the lunch work that is actually open.",
       };
     }
 
@@ -6586,7 +6663,7 @@ export function objectiveRouteScriptedReply(
         normalized,
       )
     ) {
-      if (teaWindowClosed) {
+      if (teaApproachUnavailable) {
         return {
           reply: yardWindowOpen
             ? "Ada's lunch rush has already gone. Do not walk there because my morning lead is stale. Tomas still has yard work open if you want coin today."
@@ -6598,10 +6675,12 @@ export function objectiveRouteScriptedReply(
       }
 
       return {
-        reply:
-          "Ada runs Kettle & Lamp hard before noon and may still need lunch hands. The Morrow Yard pump is leaking too, so paid work and useful local help are both live approaches; choose from what is actually available now.",
-        followupThought:
-          "Mara exposed Ada's work and the leaking pump without choosing Rowan's route for him.",
+        reply: pumpApproachOpen
+          ? "Ada runs Kettle & Lamp hard before noon and may still need lunch hands. The Morrow Yard pump is leaking too, so paid work and useful local help are both live approaches; choose from what is actually available now."
+          : "Ada runs Kettle & Lamp hard before noon and may still need lunch hands. The pump is already settled, so her work is the live approach now.",
+        followupThought: pumpApproachOpen
+          ? "Mara exposed Ada's work and the leaking pump without choosing Rowan's route for him."
+          : "Mara kept Rowan on Ada's current work instead of reopening the pump.",
       };
     }
   }
@@ -6612,7 +6691,7 @@ export function objectiveRouteScriptedReply(
         normalized,
       )
     ) {
-      if (teaWindowClosed) {
+      if (teaApproachUnavailable) {
         return {
           reply: yardWindowOpen
             ? "Lunch already moved on. I cannot pay you for a rush that finished without you, but Tomas may still need hands at North Crane before the yard closes."
@@ -7065,6 +7144,13 @@ function jobWindowOpen(world: StreetGameState, job: JobState | undefined) {
     !job.missed &&
     jobWindowMinutesRemaining(world, job) > 0,
   );
+}
+
+function jobApproachUnavailable(
+  world: StreetGameState,
+  job: JobState | undefined,
+) {
+  return Boolean(job && !jobWindowOpen(world, job));
 }
 
 function firstAfternoonAdaLeadViable(world: StreetGameState) {
