@@ -11385,6 +11385,27 @@ function buildWatchPacingAudit(clickLog) {
   };
 }
 
+function assertReadableFirstAfternoonDwell(entry, label) {
+  assert.equal(
+    typeof entry.autoContinueIntendedDelayMs,
+    "number",
+    `${label} did not expose its configured autoplay dwell.`,
+  );
+  assert.ok(
+    entry.autoContinueIntendedDelayMs >= FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS,
+    `${label} configured autoplay dwell was too short: ${entry.autoContinueIntendedDelayMs}ms.`,
+  );
+  assert.equal(
+    typeof entry.fullAppDurationMs,
+    "number",
+    `${label} did not expose a full app-visible dwell measurement.`,
+  );
+  assert.ok(
+    entry.fullAppDurationMs >= FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS,
+    `${label} was too fast to read: ${entry.fullAppDurationMs}ms app-visible dwell (${entry.durationMs ?? 0}ms observed after the harness attached).`,
+  );
+}
+
 function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
   const visibleDecisionArtifact =
     probe?.autonomy?.visibleDecisionArtifact ??
@@ -12509,9 +12530,12 @@ function buildPostFirstAfternoonLivePressureEvidence({
         beforeObjectiveRouteKey: entry.beforeObjectiveRouteKey ?? null,
         completionAutoContinue: Boolean(entry.completionAutoContinue),
         durationMs: entry.durationMs ?? null,
+        fullAppDurationMs: entry.fullAppDurationMs ?? null,
         handoffReorientation: Boolean(entry.handoffReorientation),
         kind: entry.kind,
         milestone: entry.milestone,
+        autoContinueIntendedDelayMs:
+          entry.autoContinueIntendedDelayMs ?? null,
         readabilityCheckpointMs: entry.readabilityCheckpointMs ?? null,
         readabilityStateStable: entry.readabilityStateStable ?? null,
         sequenceRunId: entry.sequenceRunId ?? null,
@@ -14604,10 +14628,9 @@ async function runInhabitGameplayPass(session) {
     completionDwell,
     "Observe/autoplay did not auto-acknowledge the first-afternoon completion field note as a watched beat.",
   );
-  assert.ok(
-    (completionDwell.durationMs ?? 0) >=
-      FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS,
-    `First-afternoon completion auto-acknowledgement was too fast to read: ${completionDwell.durationMs ?? 0}ms.`,
+  assertReadableFirstAfternoonDwell(
+    completionDwell,
+    "First-afternoon completion auto-acknowledgement",
   );
   assert.equal(
     completionDwell.readabilityStateStable,
@@ -14623,9 +14646,9 @@ async function runInhabitGameplayPass(session) {
     handoffDwell,
     "Observe/autoplay did not expose the first state-derived post-afternoon objective as a dedicated reorientation beat.",
   );
-  assert.ok(
-    (handoffDwell.durationMs ?? 0) >= FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS,
-    `Post-first-afternoon objective advanced too quickly to understand: ${handoffDwell.durationMs ?? 0}ms.`,
+  assertReadableFirstAfternoonDwell(
+    handoffDwell,
+    "Post-first-afternoon objective reorientation",
   );
   assert.equal(
     handoffDwell.readabilityStateStable,
