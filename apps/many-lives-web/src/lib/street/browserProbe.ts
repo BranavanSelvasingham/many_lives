@@ -814,6 +814,7 @@ export function buildStreetBrowserProbeJson({
   );
   const visibleDecisionArtifact = buildRowanVisibleDecisionArtifact(game);
   const payload = {
+    busyLabel: snapshot.busyLabel ?? null,
     activeConversation: activeConversation
       ? {
           lines: activeConversation.lines.length,
@@ -978,6 +979,7 @@ export function buildStreetBrowserProbeJson({
     playback: {
       activeKind: snapshot.rowanPlayback?.activeBeat?.kind ?? null,
       activeTitle: snapshot.rowanPlayback?.activeBeat?.title ?? null,
+      activeKey: snapshot.rowanPlayback?.activeBeat?.key ?? null,
       justHappened: snapshot.rowanPlayback?.lastCompletedBeat?.title ?? null,
       queuedCount: snapshot.rowanPlayback?.queuedBeats.length ?? 0,
     },

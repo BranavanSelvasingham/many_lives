@@ -11278,6 +11278,74 @@ function assertWatchPacingTransitionSignatureGuard() {
   );
 }
 
+function assertAutoplayProgressGapGuard() {
+  const samples = [
+    {
+      appMonotonicMs: 1_000,
+      autonomy: { label: "Choose a route" },
+      elapsedMs: 1_000,
+    },
+    {
+      appMonotonicMs: 6_000,
+      autonomy: { label: "Choose a route" },
+      elapsedMs: 7_000,
+    },
+    {
+      appMonotonicMs: 15_000,
+      autonomy: { label: "On the way" },
+      elapsedMs: 17_000,
+    },
+  ];
+  const gaps = buildAutoplayObservationProgressGaps(samples, [
+    {
+      progressKinds: ["decision-artifact"],
+      toElapsedMs: 7_000,
+    },
+    {
+      progressKinds: ["route-progress"],
+      toElapsedMs: 17_000,
+    },
+  ]);
+
+  assert.deepEqual(
+    gaps.map((gap) => ({
+      appDurationMs: gap.appDurationMs,
+      durationMs: gap.durationMs,
+    })),
+    [{ appDurationMs: 14_000, durationMs: 16_000 }],
+    "Autoplay pacing must accumulate non-progress transitions and keep observer latency out of the product-visible clock.",
+  );
+  assert.ok(
+    gaps[0].appDurationMs <= AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "An app-visible gap inside the pacing budget must pass even when observer latency crosses the budget.",
+  );
+  assert.ok(
+    gaps[0].durationMs > AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "The observer fixture must exercise latency beyond the product-visible pacing budget.",
+  );
+
+  const overBudgetGaps = buildAutoplayObservationProgressGaps(
+    [
+      { appMonotonicMs: 0, autonomy: { label: "Choose" }, elapsedMs: 0 },
+      {
+        appMonotonicMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS + 1,
+        autonomy: { label: "Move" },
+        elapsedMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS - 1,
+      },
+    ],
+    [
+      {
+        progressKinds: ["route-progress"],
+        toElapsedMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS - 1,
+      },
+    ],
+  );
+  assert.ok(
+    overBudgetGaps[0].appDurationMs > AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "An over-budget app-visible gap must remain a product pacing failure even when observer time is shorter.",
+  );
+}
+
 function inhabitCameraDelta(before, after) {
   return {
     x:
@@ -11412,6 +11480,17 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
     probe?.rail?.visibleDecisionArtifact ??
     null;
   return {
+    activity: {
+      autoContinue: probe?.timing?.autoContinue
+        ? {
+            elapsedMs: probe.timing.autoContinue.elapsedMs ?? null,
+            intendedDelayMs:
+              probe.timing.autoContinue.intendedDelayMs ?? null,
+            key: probe.timing.autoContinue.key ?? null,
+          }
+        : null,
+      busyLabel: probe?.busyLabel ?? null,
+    },
     appMonotonicMs: probe?.timing?.appMonotonicMs ?? null,
     activeConversation: probe?.activeConversation
       ? {
@@ -11464,6 +11543,13 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
       text: compactObjectiveSequenceText(probe?.objective?.text ?? "", 140),
     },
     planningTrace: probe?.autonomy?.planningTrace ?? null,
+    playback: {
+      activeKey: probe?.playback?.activeKey ?? null,
+      activeKind: probe?.playback?.activeKind ?? null,
+      activeTitle: probe?.playback?.activeTitle ?? null,
+      justHappened: probe?.playback?.justHappened ?? null,
+      queuedCount: probe?.playback?.queuedCount ?? 0,
+    },
     progressControls: dom?.visibleProgressionControls ?? [],
     replyAffordances: dom?.watchModeReplyAffordances ?? [],
     visibleDecisionArtifact: compactVisibleDecisionArtifact(
@@ -11477,11 +11563,22 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
 function autoplayObservationSignature(sample) {
   return JSON.stringify({
     activeConversation: sample.activeConversation,
+    activity: {
+      autoContinue: sample.activity?.autoContinue
+        ? {
+            intendedDelayMs:
+              sample.activity.autoContinue.intendedDelayMs ?? null,
+            key: sample.activity.autoContinue.key ?? null,
+          }
+        : null,
+      busyLabel: sample.activity?.busyLabel ?? null,
+    },
     autonomy: sample.autonomy,
     firstAfternoon: sample.firstAfternoon,
     location: sample.location,
     movement: sample.movement,
     objective: sample.objective,
+    playback: sample.playback,
     visibleDecisionArtifact: sample.visibleDecisionArtifact,
     worldPressure: sample.worldPressure,
   });
@@ -11547,11 +11644,13 @@ function buildAutoplayObservationPacingLedger(samples) {
       nonDecisionTransitions.flatMap((transition) => transition.progressKinds),
     ),
   ];
-  const idleGapMs = nonDecisionTransitions.map(
-    (transition) => transition.durationMs,
+  const progressGaps = buildAutoplayObservationProgressGaps(
+    normalizedSamples,
+    transitions,
   );
-  const appIdleGapMs = nonDecisionTransitions
-    .map((transition) => transition.appDurationMs)
+  const idleGapMs = progressGaps.map((gap) => gap.durationMs);
+  const appIdleGapMs = progressGaps
+    .map((gap) => gap.appDurationMs)
     .filter((duration) => typeof duration === "number");
   const firstAppMonotonicMs = normalizedSamples.find(
     (sample) => typeof sample.appMonotonicMs === "number",
@@ -11598,6 +11697,7 @@ function buildAutoplayObservationPacingLedger(samples) {
     ),
     meaningfulBeatCount: nonDecisionTransitions.length,
     progressKinds,
+    progressGaps,
     repeatedPeopleRecoveryCycles:
       findRepeatedPeopleRecoveryCycles(normalizedSamples),
     samples: normalizedSamples,
@@ -11609,6 +11709,47 @@ function buildAutoplayObservationPacingLedger(samples) {
       (sample) => (sample.replyAffordances?.length ?? 0) > 0,
     ),
   };
+}
+
+function buildAutoplayObservationProgressGaps(samples, transitions) {
+  if ((samples?.length ?? 0) === 0) {
+    return [];
+  }
+
+  const gaps = [];
+  let previousProgressSample = samples[0];
+  for (let index = 0; index < transitions.length; index += 1) {
+    const transition = transitions[index];
+    if (!transition.progressKinds.some((kind) => kind !== "decision-artifact")) {
+      continue;
+    }
+
+    const nextSample = samples[index + 1];
+    const appDurationMs =
+      typeof previousProgressSample.appMonotonicMs === "number" &&
+      typeof nextSample?.appMonotonicMs === "number"
+        ? Math.max(
+            0,
+            nextSample.appMonotonicMs - previousProgressSample.appMonotonicMs,
+          )
+        : null;
+    gaps.push({
+      appDurationMs,
+      durationMs: Math.max(
+        0,
+        (nextSample?.elapsedMs ?? transition.toElapsedMs) -
+          previousProgressSample.elapsedMs,
+      ),
+      fromAutonomyLabel: previousProgressSample.autonomy?.label ?? null,
+      fromElapsedMs: previousProgressSample.elapsedMs,
+      progressKinds: transition.progressKinds,
+      toAutonomyLabel: nextSample?.autonomy?.label ?? null,
+      toElapsedMs: nextSample?.elapsedMs ?? transition.toElapsedMs,
+    });
+    previousProgressSample = nextSample;
+  }
+
+  return gaps;
 }
 
 function viableFirstAfternoonApproaches(sample) {
@@ -11750,6 +11891,13 @@ function classifyAutoplayObservationProgress(previous, next) {
       next.visibleDecisionArtifact?.objective
   ) {
     progressKinds.push("decision-artifact");
+  }
+  if (
+    previous.playback?.activeKey !== next.playback?.activeKey ||
+    previous.playback?.activeTitle !== next.playback?.activeTitle ||
+    previous.playback?.justHappened !== next.playback?.justHappened
+  ) {
+    progressKinds.push("playback-progress");
   }
   if (
     previous.location?.id !== next.location?.id ||
@@ -11909,19 +12057,9 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
     )}`,
   );
   assert.ok(
-    (ledger.maxIdleGapMs ?? 0) <= AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
-    `Fresh autoplay sat too long without a meaningful progress beat. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
-      {
-        maxIdleGapMs: ledger.maxIdleGapMs,
-        transitions: ledger.transitions,
-      },
-      null,
-      2,
-    )}`,
-  );
-  assert.ok(
-    (ledger.maxInAppGapMs ?? 0) <= AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
-    `Fresh autoplay app progression exceeded the ${AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS}ms product-visible gap. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(ledger.transitions, null, 2)}`,
+    typeof ledger.maxInAppGapMs === "number" &&
+      ledger.maxInAppGapMs <= AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    `Fresh autoplay app progression exceeded the ${AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS}ms product-visible gap. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(ledger.progressGaps, null, 2)}`,
   );
   assert.ok(
     ledger.progressKinds.includes("route-progress"),
@@ -15245,6 +15383,7 @@ async function main() {
   assertProgressAwareStagedWorkWaitRegression();
   assertPostFirstAfternoonTrajectoryNeutralGuard();
   assertWatchPacingTransitionSignatureGuard();
+  assertAutoplayProgressGapGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
     process.stdout.write(
       "[many-lives] Simulator wait deterministic guard passed.\n",

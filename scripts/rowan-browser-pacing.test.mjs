@@ -15,6 +15,17 @@ const assertionEnd = source.indexOf(
   assertionStart,
 );
 const assertionSource = source.slice(assertionStart, assertionEnd);
+const pacingAssertionStart = source.indexOf(
+  "function assertAutoplayObservationPacingLedger(",
+);
+const pacingAssertionEnd = source.indexOf(
+  "\nfunction ",
+  pacingAssertionStart + 1,
+);
+const pacingAssertionSource = source.slice(
+  pacingAssertionStart,
+  pacingAssertionEnd,
+);
 
 test("first-afternoon readability uses full app-visible dwell", () => {
   assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
@@ -39,4 +50,19 @@ test("completion and handoff both use the full-dwell assertion", () => {
     source,
     /assertReadableFirstAfternoonDwell\(\s*handoffDwell,/,
   );
+});
+
+test("autoplay pacing uses cumulative app-visible progress gaps", () => {
+  assert.ok(
+    pacingAssertionStart >= 0 && pacingAssertionEnd > pacingAssertionStart,
+  );
+  assert.match(source, /buildAutoplayObservationProgressGaps\(/);
+  assert.match(source, /previousProgressSample/);
+  assert.match(pacingAssertionSource, /ledger\.maxInAppGapMs/);
+  assert.match(
+    pacingAssertionSource,
+    /typeof ledger\.maxInAppGapMs === "number"/,
+  );
+  assert.doesNotMatch(pacingAssertionSource, /ledger\.maxIdleGapMs/);
+  assert.match(source, /progressKinds\.push\("playback-progress"\)/);
 });
