@@ -65,6 +65,7 @@ const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
   minY: 550,
 };
 const OPENING_AUTOPLAY_PROGRESS_EVIDENCE = new Set([
+  "first-afternoon-approaches-known",
   "first-afternoon-plan-settled",
   "first-afternoon-lead-recorded",
   "first-afternoon-completed",
@@ -2520,11 +2521,6 @@ function assertOpeningActionCarryForward(
     "enter:boarding-house",
     `${label}: opening carry-forward should select Enter Morrow House: ${JSON.stringify(carryForward)}.`,
   );
-  assert.equal(
-    carryForward.targetLocationId,
-    "boarding-house",
-    `${label}: opening carry-forward should target Morrow House: ${JSON.stringify(carryForward)}.`,
-  );
   assert.ok(
     expectedStatuses.includes(carryForward.status),
     `${label}: opening carry-forward has the wrong status: ${JSON.stringify(carryForward)}.`,
@@ -2539,7 +2535,14 @@ function assertOpeningActionCarryForward(
     false,
     `${label}: watch-mode opening carry-forward should not require visible input: ${JSON.stringify(carryForward)}.`,
   );
-  if (carryForward.progressedBeyondOpening) {
+  const superseded =
+    carryForward.phase === "superseded_by_autoplay_progress";
+  assert.equal(
+    Boolean(carryForward.progressedBeyondOpening),
+    superseded,
+    `${label}: opening carry-forward phase disagrees with its progress state: ${JSON.stringify(carryForward)}.`,
+  );
+  if (superseded) {
     assert.equal(
       carryForward.status,
       "completed",
@@ -2549,6 +2552,13 @@ function assertOpeningActionCarryForward(
       openingActionProgressEvidence(carryForward).length > 0,
       `${label}: superseded opening carry-forward is missing concrete first-run progress evidence: ${JSON.stringify(carryForward)}.`,
     );
+    assertValidOpeningAutoplaySupersession(carryForward, label);
+  } else {
+    assert.equal(
+      carryForward.targetLocationId,
+      "boarding-house",
+      `${label}: active opening carry-forward should target Morrow House: ${JSON.stringify(carryForward)}.`,
+    );
   }
   if (carryForward.status !== "completed") {
     assert.equal(
@@ -2557,6 +2567,135 @@ function assertOpeningActionCarryForward(
       `${label}: queued opening action should keep Rowan near the Morrow House door: ${JSON.stringify(carryForward)}.`,
     );
   }
+}
+
+function assertValidOpeningAutoplaySupersession(carryForward, label) {
+  const supersededBy = carryForward.supersededBy;
+  assert.ok(
+    supersededBy,
+    `${label}: superseded opening carry-forward is missing the current autoplay action: ${JSON.stringify(carryForward)}.`,
+  );
+  assert.equal(
+    supersededBy.locationId,
+    carryForward.currentLocationId,
+    `${label}: superseding autoplay progress should identify Rowan's current location: ${JSON.stringify(carryForward)}.`,
+  );
+  assert.ok(
+    typeof supersededBy.mode === "string" && supersededBy.mode.length > 0,
+    `${label}: superseding autoplay progress is missing its mode: ${JSON.stringify(carryForward)}.`,
+  );
+
+  const actionId =
+    typeof supersededBy.actionId === "string" && supersededBy.actionId.length > 0
+      ? supersededBy.actionId
+      : null;
+  const activeConversationNpcId =
+    typeof supersededBy.activeConversationNpcId === "string" &&
+    supersededBy.activeConversationNpcId.length > 0
+      ? supersededBy.activeConversationNpcId
+      : null;
+  assert.ok(
+    actionId || activeConversationNpcId,
+    `${label}: superseding autoplay progress is missing a current action or conversation: ${JSON.stringify(carryForward)}.`,
+  );
+  assert.notEqual(
+    actionId,
+    "enter:boarding-house",
+    `${label}: superseding autoplay progress still reports the opening action: ${JSON.stringify(carryForward)}.`,
+  );
+  if (actionId) {
+    assert.ok(
+      typeof supersededBy.label === "string" && supersededBy.label.length > 0,
+      `${label}: superseding autoplay action is missing its visible label: ${JSON.stringify(carryForward)}.`,
+    );
+  }
+
+  if (supersededBy.targetLocationId) {
+    assert.equal(
+      carryForward.targetLocationId,
+      supersededBy.targetLocationId,
+      `${label}: superseded opening carry-forward should expose the current autoplay target: ${JSON.stringify(carryForward)}.`,
+    );
+  }
+  if (supersededBy.mode === "moving" || actionId?.startsWith("move:")) {
+    assert.ok(
+      supersededBy.targetLocationId,
+      `${label}: superseding movement is missing its target location: ${JSON.stringify(carryForward)}.`,
+    );
+  }
+}
+
+function assertOpeningActionCarryForwardContractGuard() {
+  const progressedProbe = {
+    openingActionCarryForward: {
+      completionEvidence: ["first-afternoon-approaches-known"],
+      currentLocationId: "boarding-house",
+      phase: "superseded_by_autoplay_progress",
+      progressedBeyondOpening: true,
+      requiredVisibleInput: false,
+      selectedActionId: "enter:boarding-house",
+      status: "completed",
+      supersededBy: {
+        activeConversationNpcId: null,
+        actionId: "move:tea-house",
+        label: "Head to Kettle & Lamp",
+        locationId: "boarding-house",
+        mode: "moving",
+        targetLocationId: "tea-house",
+      },
+      targetLocationId: "tea-house",
+      watchMode: { autoplayEnabled: true, enabled: true, frozen: false },
+    },
+  };
+  assert.doesNotThrow(() =>
+    assertOpeningActionCarryForward(
+      progressedProbe,
+      "opening carry-forward progressed-state regression",
+    ),
+  );
+
+  const mutateCarryForward = (changes) => ({
+    openingActionCarryForward: {
+      ...progressedProbe.openingActionCarryForward,
+      ...changes,
+    },
+  });
+  assert.throws(
+    () =>
+      assertOpeningActionCarryForward(
+        mutateCarryForward({ selectedActionId: "move:tea-house" }),
+        "opening carry-forward unselected-opening regression",
+      ),
+    /should select Enter Morrow House/,
+  );
+  assert.throws(
+    () =>
+      assertOpeningActionCarryForward(
+        mutateCarryForward({ requiredVisibleInput: true }),
+        "opening carry-forward visible-input regression",
+      ),
+    /should not require visible input/,
+  );
+  assert.throws(
+    () =>
+      assertOpeningActionCarryForward(
+        mutateCarryForward({ supersededBy: null }),
+        "opening carry-forward missing-supersession regression",
+      ),
+    /missing the current autoplay action/,
+  );
+  assert.throws(
+    () =>
+      assertOpeningActionCarryForward(
+        mutateCarryForward({
+          phase: "opening_in_progress",
+          progressedBeyondOpening: false,
+          status: "in_progress",
+        }),
+        "opening carry-forward active-target regression",
+      ),
+    /active opening carry-forward should target Morrow House/,
+  );
 }
 
 function openingActionProgressEvidence(carryForward) {
@@ -4993,6 +5132,7 @@ async function runInteriorCameraCheck(session) {
 
 async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
+  assertOpeningActionCarryForwardContractGuard();
   await assertAmbientScaleGuard();
   await assertWatchModeFeelGuard();
   await assertCameraPanContractGuard();
