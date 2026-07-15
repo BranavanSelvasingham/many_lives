@@ -2660,6 +2660,27 @@ function assertOpeningActionCarryForwardContractGuard() {
     ),
   );
 
+  assert.doesNotThrow(() =>
+    assertOpeningActionCarryForward(
+      {
+        openingActionCarryForward: {
+          completionEvidence: ["route-progress"],
+          currentLocationId: "boarding-house",
+          geometry: { nearActionLocation: true },
+          phase: "opening_in_progress",
+          progressedBeyondOpening: false,
+          requiredVisibleInput: false,
+          selectedActionId: "enter:boarding-house",
+          status: "in_progress",
+          supersededBy: null,
+          targetLocationId: "boarding-house",
+          watchMode: { autoplayEnabled: true, enabled: true, frozen: false },
+        },
+      },
+      "opening route progress regression",
+    ),
+  );
+
   const mutateCarryForward = (changes) => ({
     openingActionCarryForward: {
       ...progressedProbe.openingActionCarryForward,

@@ -620,15 +620,32 @@ function openingActionCompletionEvidence({
   return Array.from(new Set(evidence));
 }
 
-function openingActionSupersededByAutoplayProgress(evidence: string[]) {
-  return evidence.some((entry) =>
-    [
-      "first-afternoon-approaches-known",
-      "first-afternoon-lead-recorded",
-      "first-afternoon-completed",
-      "interaction-active",
-      "route-progress",
-    ].includes(entry) || entry.startsWith("first-afternoon-tea-shift-"),
+function openingActionSupersededByAutoplayProgress({
+  actionId,
+  evidence,
+  targetLocationId,
+}: {
+  actionId: string | null;
+  evidence: string[];
+  targetLocationId: string | null;
+}) {
+  const routeProgressedPastOpening =
+    evidence.includes("route-progress") &&
+    !(
+      actionId === "enter:boarding-house" &&
+      targetLocationId === "boarding-house"
+    );
+  return (
+    routeProgressedPastOpening ||
+    evidence.some(
+      (entry) =>
+        [
+          "first-afternoon-approaches-known",
+          "first-afternoon-lead-recorded",
+          "first-afternoon-completed",
+          "interaction-active",
+        ].includes(entry) || entry.startsWith("first-afternoon-tea-shift-"),
+    )
   );
 }
 
@@ -669,8 +686,14 @@ function openingActionCarryForwardProbePayload({
     game,
     snapshot,
   });
-  const progressedBeyondOpening =
-    openingActionSupersededByAutoplayProgress(completionEvidence);
+  const progressedBeyondOpening = openingActionSupersededByAutoplayProgress({
+    actionId: game.rowanAutonomy.actionId ?? null,
+    evidence: completionEvidence,
+    targetLocationId:
+      geometry?.targetLocationId ??
+      game.rowanAutonomy.targetLocationId ??
+      null,
+  });
   const completed =
     completionEvidence.includes("entered-morrow-house") ||
     completionEvidence.includes("mara-conversation-active") ||
