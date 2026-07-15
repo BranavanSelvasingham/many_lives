@@ -11470,6 +11470,17 @@ function assertReadableFirstAfternoonDwell(entry, label) {
   );
 }
 
+function remainingFirstAfternoonReadabilityCheckpointMs(elapsedMs) {
+  const observedElapsedMs =
+    typeof elapsedMs === "number" && Number.isFinite(elapsedMs)
+      ? Math.max(0, elapsedMs)
+      : 0;
+  return Math.max(
+    0,
+    FIRST_AFTERNOON_READABILITY_CHECKPOINT_MS - observedElapsedMs,
+  );
+}
+
 function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
   const visibleDecisionArtifact =
     probe?.autonomy?.visibleDecisionArtifact ??
@@ -14359,11 +14370,20 @@ async function clickUntilInhabitMilestone({
       clickLog.push(logEntry);
       const startedAt = Date.now();
       if (completionAutoContinue || handoffReorientation) {
-        await sleep(FIRST_AFTERNOON_READABILITY_CHECKPOINT_MS);
+        logEntry.readabilityWaitMs =
+          remainingFirstAfternoonReadabilityCheckpointMs(
+            logEntry.autoContinueElapsedAtProbeMs,
+          );
+        await sleep(logEntry.readabilityWaitMs);
         const readabilityProbe = await session.readBrowserProbe(
           `${milestone.label}-readability-checkpoint-${attempt + 1}`,
         );
         logEntry.readabilityCheckpointMs = Date.now() - startedAt;
+        logEntry.readabilityCheckpointFromBeatStartMs =
+          typeof logEntry.autoContinueElapsedAtProbeMs === "number"
+            ? logEntry.autoContinueElapsedAtProbeMs +
+              logEntry.readabilityCheckpointMs
+            : logEntry.readabilityCheckpointMs;
         logEntry.readabilityStateStable =
           playerGameProgressSignature(readabilityProbe) ===
           beforeProgressSignature;

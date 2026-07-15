@@ -52,6 +52,25 @@ test("completion and handoff both use the full-dwell assertion", () => {
   );
 });
 
+test("readability checkpoint accounts for app time before the observer attaches", () => {
+  const helperStart = source.indexOf(
+    "function remainingFirstAfternoonReadabilityCheckpointMs(",
+  );
+  const helperEnd = source.indexOf("\nfunction ", helperStart + 1);
+  const helperSource = source.slice(helperStart, helperEnd);
+
+  assert.ok(helperStart >= 0 && helperEnd > helperStart);
+  assert.match(
+    helperSource,
+    /FIRST_AFTERNOON_READABILITY_CHECKPOINT_MS - observedElapsedMs/,
+  );
+  assert.match(
+    source,
+    /readabilityWaitMs\s*=\s*\n\s*remainingFirstAfternoonReadabilityCheckpointMs\(/,
+  );
+  assert.match(source, /await sleep\(logEntry\.readabilityWaitMs\)/);
+});
+
 test("autoplay pacing uses cumulative app-visible progress gaps", () => {
   assert.ok(
     pacingAssertionStart >= 0 && pacingAssertionEnd > pacingAssertionStart,
