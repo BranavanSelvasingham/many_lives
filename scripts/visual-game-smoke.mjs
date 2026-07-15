@@ -31,6 +31,10 @@ const APP_READY_TIMEOUT_MS = Number(
 const AUTOPLAY_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_AUTOPLAY_START_TIMEOUT_MS ?? "20000",
 );
+const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = 8_000;
+const RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT = 3;
+const RUN_RESPONSIVE_DECISION_GUARD_ONLY =
+  process.env.MANY_LIVES_VISUAL_DECISION_GUARD_ONLY === "1";
 const CDP_COMMAND_TIMEOUT_MS = 20_000;
 const POLL_INTERVAL_MS = 250;
 const ROOT = process.cwd();
@@ -896,6 +900,7 @@ class CdpSession {
         commandRail: commandRail ? {
           clientHeight: commandRail.clientHeight,
           overflowY: window.getComputedStyle(commandRail).overflowY,
+          scrollTop: commandRail.scrollTop,
           scrollHeight: commandRail.scrollHeight
         } : null,
         decisionArtifact: decisionArtifactRect ? {
@@ -3261,10 +3266,131 @@ async function captureDecisionArtifactMismatch(session, label, mismatch) {
   return { diagnosticsPath, screenshotPath };
 }
 
+function compactDecisionArtifactReadabilityGeometry(page) {
+  return {
+    commandRail: page?.commandRail ?? null,
+    decisionArtifact: page?.decisionArtifact
+      ? {
+          height: page.decisionArtifact.height,
+          visible: page.decisionArtifact.visible,
+          width: page.decisionArtifact.width,
+          x: page.decisionArtifact.x,
+          y: page.decisionArtifact.y,
+        }
+      : null,
+    rail: page?.rail ?? null,
+    railState: page?.railState ?? null,
+    rightStack: page?.rightStack ?? null,
+  };
+}
+
+function createDecisionArtifactReadabilityState() {
+  return {
+    geometry: null,
+    signature: null,
+    stableSamples: 0,
+  };
+}
+
+function recordDecisionArtifactReadabilitySample(state, page) {
+  const geometry = compactDecisionArtifactReadabilityGeometry(page);
+  const readable =
+    page?.railState === "expanded" && page?.decisionArtifact?.visible === true;
+  if (!readable) {
+    return {
+      geometry,
+      signature: null,
+      stableSamples: 0,
+    };
+  }
+
+  const signature = JSON.stringify(geometry);
+  return {
+    geometry,
+    signature,
+    stableSamples: state.signature === signature ? state.stableSamples + 1 : 1,
+  };
+}
+
+function decisionArtifactReadabilityStable(
+  state,
+  requiredSamples = RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
+) {
+  return state.stableSamples >= requiredSamples;
+}
+
+function assertDecisionArtifactReadabilityWaitRegression() {
+  const readablePage = {
+    commandRail: {
+      clientHeight: 418,
+      overflowY: "auto",
+      scrollHeight: 694,
+      scrollTop: 0,
+    },
+    decisionArtifact: {
+      height: 228,
+      visible: true,
+      width: 344,
+      x: 588,
+      y: 254,
+    },
+    rail: { height: 538, width: 376, x: 576, y: 94 },
+    railState: "expanded",
+    rightStack: { height: 538, width: 376, x: 576, y: 94 },
+  };
+  const unreadablePage = {
+    ...readablePage,
+    decisionArtifact: {
+      ...readablePage.decisionArtifact,
+      visible: false,
+      y: 640,
+    },
+  };
+
+  let settling = createDecisionArtifactReadabilityState();
+  settling = recordDecisionArtifactReadabilitySample(settling, unreadablePage);
+  assert.equal(
+    settling.stableSamples,
+    0,
+    "Transiently clipped decision geometry must not count as readable.",
+  );
+  for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
+    settling = recordDecisionArtifactReadabilitySample(settling, readablePage);
+  }
+  assert.equal(
+    decisionArtifactReadabilityStable(settling),
+    true,
+    "A naturally settled expanded rail should become stably readable.",
+  );
+
+  let clipped = createDecisionArtifactReadabilityState();
+  for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT + 1; sample += 1) {
+    clipped = recordDecisionArtifactReadabilitySample(clipped, unreadablePage);
+  }
+  assert.equal(
+    decisionArtifactReadabilityStable(clipped),
+    false,
+    "A permanently clipped decision artifact must never satisfy readability.",
+  );
+
+  const shiftedPage = {
+    ...readablePage,
+    decisionArtifact: { ...readablePage.decisionArtifact, y: 260 },
+  };
+  const shifted = recordDecisionArtifactReadabilitySample(settling, shiftedPage);
+  assert.equal(
+    shifted.stableSamples,
+    1,
+    "Changing rail geometry must restart the stable-readability sample count.",
+  );
+}
+
 async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
   const timeoutMs = options.timeoutMs ?? AUTOPLAY_START_TIMEOUT_MS;
+  const requiredStableSamples = options.stableSamples ?? 1;
   const startedAt = Date.now();
   let lastMismatch = null;
+  let readabilityState = createDecisionArtifactReadabilityState();
 
   while (Date.now() - startedAt < timeoutMs) {
     const probe = await session.readBrowserProbe();
@@ -3274,11 +3400,16 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
       typeof options.accept === "function" ? options.accept({ page, probe }) : true;
 
     if (!accepted) {
+      readabilityState = createDecisionArtifactReadabilityState();
       lastMismatch = {
         bodyText: page.bodyText,
+        commandRail: page.commandRail,
         decisionArtifactDom: page.decisionArtifact,
         error: "Page/probe state did not satisfy the caller's readiness predicate.",
         probe: compactDecisionArtifactProbeDiagnostic(probe),
+        rail: page.rail,
+        railState: page.railState,
+        rightStack: page.rightStack,
         selectedPayload: compactDecisionArtifactDiagnostic(payload),
         url: page.url,
       };
@@ -3289,13 +3420,43 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
     try {
       assert.ok(payload, `${label}: missing visible decision artifact payload.`);
       assertVisibleDecisionArtifactDom(page.decisionArtifact, label, payload);
-      return { page, payload, probe };
-    } catch (error) {
+      readabilityState = recordDecisionArtifactReadabilitySample(
+        readabilityState,
+        page,
+      );
+      if (
+        decisionArtifactReadabilityStable(
+          readabilityState,
+          requiredStableSamples,
+        )
+      ) {
+        return { page, payload, probe, readabilityState };
+      }
       lastMismatch = {
         bodyText: page.bodyText,
+        commandRail: page.commandRail,
+        decisionArtifactDom: page.decisionArtifact,
+        error: `Decision artifact is readable but stable for only ${readabilityState.stableSamples}/${requiredStableSamples} required samples.`,
+        probe: compactDecisionArtifactProbeDiagnostic(probe),
+        rail: page.rail,
+        railState: page.railState,
+        readabilityGeometry: readabilityState.geometry,
+        rightStack: page.rightStack,
+        selectedPayload: compactDecisionArtifactDiagnostic(payload),
+        url: page.url,
+      };
+      await sleep(POLL_INTERVAL_MS);
+    } catch (error) {
+      readabilityState = createDecisionArtifactReadabilityState();
+      lastMismatch = {
+        bodyText: page.bodyText,
+        commandRail: page.commandRail,
         decisionArtifactDom: page.decisionArtifact,
         error: error instanceof Error ? error.message : String(error),
         probe: compactDecisionArtifactProbeDiagnostic(probe),
+        rail: page.rail,
+        railState: page.railState,
+        rightStack: page.rightStack,
         selectedPayload: compactDecisionArtifactDiagnostic(payload),
         url: page.url,
       };
@@ -3950,12 +4111,21 @@ async function runResponsiveDecisionArtifactCheck(session) {
     advancedProbe.autonomy?.planningTrace,
   );
 
-  let page = await session.inspectPage();
-  if (page.railState !== "expanded") {
+  const initialPage = await session.inspectPage();
+  if (initialPage.railState !== "expanded") {
     await session.clickSelector(".ml-rail-toggle");
-    await sleep(160);
-    page = await session.inspectPage();
   }
+  const readableRail = await waitForVisibleDecisionArtifactDom(
+    session,
+    `${viewport.name} responsive decision rail`,
+    {
+      accept: ({ page }) => page.railState === "expanded",
+      stableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
+      timeoutMs: RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS,
+    },
+  );
+  const page = readableRail.page;
+  const readablePayload = readableRail.payload;
   assert.equal(
     page.railState,
     "expanded",
@@ -3964,14 +4134,12 @@ async function runResponsiveDecisionArtifactCheck(session) {
   assertVisibleDecisionArtifactDom(
     page.decisionArtifact,
     `${viewport.name} responsive decision rail`,
-    advancedProbe.rail?.visibleDecisionArtifact ??
-      advancedProbe.autonomy?.visibleDecisionArtifact,
+    readablePayload,
   );
   assertDecisionHierarchy(
     page,
     `${viewport.name} responsive decision hierarchy`,
-    advancedProbe.rail?.visibleDecisionArtifact ??
-      advancedProbe.autonomy?.visibleDecisionArtifact,
+    readablePayload,
   );
   assertOverlayGeometry(
     page,
@@ -5133,6 +5301,13 @@ async function runInteriorCameraCheck(session) {
 async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
   assertOpeningActionCarryForwardContractGuard();
+  assertDecisionArtifactReadabilityWaitRegression();
+  if (RUN_RESPONSIVE_DECISION_GUARD_ONLY) {
+    process.stdout.write(
+      "[many-lives] Responsive decision readability guard passed.\n",
+    );
+    return;
+  }
   await assertAmbientScaleGuard();
   await assertWatchModeFeelGuard();
   await assertCameraPanContractGuard();
