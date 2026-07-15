@@ -641,6 +641,7 @@ type PlayerMotionState = {
   routeDiagnostics?: VisualRouteDiagnostics;
   spaceId?: string | null;
   startedAt: number;
+  targetLocationId: string | null;
   targetTile?: Point;
   to: Point;
   worldPath?: Point[];
@@ -5899,8 +5900,9 @@ function buildBrowserMovementDiagnostics(
             ),
             reachesDestination: diagnostics.reachesDestination,
             sampledPointsLegal: diagnostics.sampledPointsLegal,
-            spaceId: runtimeState.indices.activeSpaceId,
+            spaceId: motion.spaceId ?? runtimeState.indices.activeSpaceId,
             target: roundBrowserPoint(motion.targetTile ?? motion.to),
+            targetLocationId: motion.targetLocationId,
             tilePath: motion.path.map(roundBrowserPoint),
             visualObstaclesClear: diagnostics.visualObstaclesClear,
             worldPath: routeWorldPath.map(roundBrowserPoint),
@@ -8744,6 +8746,7 @@ function createInitialPlayerMotion(
         point,
         startedAt,
         getActiveSpaceId(snapshot.game),
+        snapshot.game.player.currentLocationId ?? null,
       );
     }
 
@@ -8762,12 +8765,14 @@ function createStaticPlayerMotion(
   point: Point,
   startedAt = getRuntimeNow(),
   spaceId?: string | null,
+  targetLocationId: string | null = null,
 ): PlayerMotionState {
   return {
     durationMs: 1,
     path: [point],
     spaceId,
     startedAt,
+    targetLocationId,
     targetTile: point,
     to: point,
   };
@@ -8827,7 +8832,12 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
           nextPoint,
           now,
         )
-      : createStaticPlayerMotion(nextPoint, now, nextSpaceId);
+      : createStaticPlayerMotion(
+          nextPoint,
+          now,
+          nextSpaceId,
+          game.player.currentLocationId ?? null,
+        );
 
     runtimeState.playerEntranceGameId = game.id;
     return;
@@ -8838,6 +8848,7 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
       nextPoint,
       now,
       nextSpaceId,
+      game.player.currentLocationId ?? null,
     );
     setRuntimeWaypointTarget(runtimeState, null);
     return;
@@ -8901,6 +8912,7 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
     routeDiagnostics: visualRoute.diagnostics,
     spaceId: nextSpaceId,
     startedAt: now,
+    targetLocationId: routeTarget.locationId,
     targetTile: routeTarget.tile,
     to: nextPoint,
     worldPath:
@@ -8915,22 +8927,24 @@ function resolvePlayerMotionRouteTarget(
   game: StreetGameState,
   nextPoint: Point,
 ) {
+  const locationId =
+    runtimeState.snapshot.optimisticPlayerConversationLocationId ??
+    runtimeState.snapshot.optimisticPlayerLocationId ??
+    game.player.currentLocationId ??
+    null;
   if (runtimeState.indices.activeSpace || !runtimeState.indices.visualScene) {
     return {
+      locationId,
       tile: nextPoint,
       worldPoint: undefined,
     };
   }
 
-  const targetLocationId =
-    runtimeState.snapshot.optimisticPlayerLocationId ??
-    game.player.currentLocationId ??
-    null;
   const authoredTargetWorldPoint =
     resolveAuthoredLocationWorldPoint({
       conversationLocationId: null,
       indices: runtimeState.indices,
-      locationId: targetLocationId,
+      locationId,
       point: nextPoint,
     }) ?? playerTileToWorld(nextPoint, runtimeState.indices, game);
   const walkableTarget = findNearestWalkablePointByWorldHint(
@@ -8938,13 +8952,14 @@ function resolvePlayerMotionRouteTarget(
     authoredTargetWorldPoint,
     {
       preferredKinds: PUBLIC_TRAVEL_TILE_KINDS,
-      preferredLocationId: targetLocationId ?? undefined,
+      preferredLocationId: locationId ?? undefined,
       worldDistanceScale: 46,
     },
   );
   const tile = walkableTarget?.tile ?? nextPoint;
 
   return {
+    locationId,
     tile,
     // Keep the authoritative destination anchor resolved from nextPoint. The
     // snapped routing tile can select a neighboring authored approach; using
@@ -8962,7 +8977,12 @@ function createPlayerEntranceMotion(
   const entrancePath = buildPlayerEntrancePath(game, findRoute, target);
 
   if (entrancePath.length <= 1) {
-    return createStaticPlayerMotion(target, startedAt, getActiveSpaceId(game));
+    return createStaticPlayerMotion(
+      target,
+      startedAt,
+      getActiveSpaceId(game),
+      game.player.currentLocationId ?? null,
+    );
   }
 
   const introStepMs = clamp(
@@ -8980,6 +9000,7 @@ function createPlayerEntranceMotion(
     path: entrancePath,
     spaceId: getActiveSpaceId(game),
     startedAt,
+    targetLocationId: game.player.currentLocationId ?? null,
     targetTile: target,
     to: target,
   };

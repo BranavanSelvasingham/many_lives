@@ -136,6 +136,7 @@ export type StreetBrowserMovementDiagnostics = {
       x: number;
       y: number;
     };
+    targetLocationId: string | null;
     tilePath: Array<{
       x: number;
       y: number;

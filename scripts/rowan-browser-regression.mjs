@@ -4846,27 +4846,198 @@ function unavailableApproachAdviceFailures(probe, text) {
   return failures;
 }
 
+const CURRENT_ADVICE_PLAYBACK_KINDS = new Set([
+  "action_start",
+  "move",
+  "objective_shift",
+  "thread_line",
+  "thread_open",
+]);
+
+function currentApproachAdviceAuthorities(probe, dom) {
+  const authorities = [];
+  const add = (source, text) => {
+    const normalized = String(text ?? "").replace(/\s+/g, " ").trim();
+    if (normalized) {
+      authorities.push({ source, text: normalized });
+    }
+  };
+  const autonomy = probe?.autonomy;
+  const objective = probe?.objective;
+  const decisionArtifact =
+    autonomy?.visibleDecisionArtifact ??
+    probe?.rail?.visibleDecisionArtifact ??
+    null;
+
+  add("autonomy.label", autonomy?.label);
+  add("autonomy.detail", autonomy?.detail);
+  add("autonomy.intent.reason", autonomy?.intent?.reason);
+  add("objective.text", objective?.text);
+  for (const outcome of objective?.outcomes ?? []) {
+    if (outcome.status !== "met") {
+      add(`objective.outcome.${outcome.id}`, outcome.label);
+    }
+  }
+  for (const hint of objective?.trailHints ?? []) {
+    if (!hint.done) {
+      add(`objective.trail.${hint.id}`, hint.title);
+    }
+  }
+
+  add("decision.selectedAction", decisionArtifact?.selectedAction);
+  add("decision.objective", decisionArtifact?.objective);
+  add("decision.rationale", decisionArtifact?.rationale);
+  add("decision.nextCheck", decisionArtifact?.nextCheck);
+  add("rail.next", probe?.rail?.next);
+
+  const activePlaybackKind = probe?.playback?.activeKind ?? null;
+  if (
+    !activePlaybackKind ||
+    CURRENT_ADVICE_PLAYBACK_KINDS.has(activePlaybackKind)
+  ) {
+    add("rail.now", probe?.rail?.now);
+    add("rail.thought", probe?.rail?.thought);
+  }
+
+  if (
+    probe?.activeConversation ||
+    probe?.rail?.useConversationTranscript
+  ) {
+    add("conversation.current", dom?.conversationText);
+  }
+
+  return authorities;
+}
+
+function unavailableApproachAdviceFailureDetails(probe, authorities) {
+  return authorities.flatMap((authority) =>
+    unavailableApproachAdviceFailures(probe, authority.text).map((reason) => ({
+      reason,
+      source: authority.source,
+      text: authority.text,
+    })),
+  );
+}
+
 function assertNoUnavailableApproachAdvice(label, probe, dom) {
-  const currentAdviceText = [
-    dom?.conversationText,
-    probe?.rail?.now,
-    probe?.rail?.next,
-    probe?.rail?.thought,
-    probe?.autonomy?.label,
-    probe?.autonomy?.detail,
-    probe?.autonomy?.intent?.reason,
-  ]
-    .filter(Boolean)
-    .join(" ");
-  const failures = unavailableApproachAdviceFailures(probe, currentAdviceText);
+  const authorities = currentApproachAdviceAuthorities(probe, dom);
+  const failures = unavailableApproachAdviceFailureDetails(
+    probe,
+    authorities,
+  );
   assert.deepEqual(
     failures,
     [],
     `${label}: visible advice reused a completed or closed approach: ${JSON.stringify(
-      { failures, currentAdviceText },
+      { authorities, failures },
       null,
       2,
     )}`,
+  );
+}
+
+function assertUnavailableApproachAdviceAuthorityRegression() {
+  const completedTeaJob = {
+    completed: true,
+    id: "job-tea-shift",
+    inWindow: false,
+    missed: false,
+    startsInMinutes: null,
+  };
+  const historicalCompletionProbe = {
+    activeConversation: null,
+    autonomy: {
+      detail: "Return to Morrow House to take stock.",
+      intent: {
+        reason:
+          "One durable consequence landed, and Morrow House is the right place to record what changed.",
+      },
+      label: "Exit to South Quay",
+      visibleDecisionArtifact: {
+        nextCheck: "First afternoon taken stock: Rowan is not home yet.",
+        objective: "Return to Morrow House",
+        rationale: "Return to Morrow House to take stock.",
+        selectedAction: "Exit to South Quay",
+      },
+    },
+    objective: {
+      outcomes: [
+        {
+          id: "first-afternoon-consequence",
+          label: "Cup-and-counter shift completed for $14",
+          status: "met",
+        },
+        {
+          id: "first-afternoon-take-stock",
+          label: "First afternoon taken stock",
+          status: "blocked",
+        },
+      ],
+      text: "Return to Morrow House and take stock.",
+      trailHints: [
+        {
+          done: true,
+          id: "tea-shift",
+          title: "Complete the Cup-and-counter shift.",
+        },
+        {
+          done: false,
+          id: "take-stock",
+          title: "Head back to Morrow House and take stock.",
+        },
+      ],
+    },
+    playback: {
+      activeKind: "action_complete",
+      activeTitle: "Cup-and-counter shift complete",
+    },
+    rail: {
+      next: "Exit to South Quay",
+      now: "Cup-and-counter shift complete",
+      thought:
+        "Rowan made it through Kettle & Lamp and came away with +$14.",
+      useConversationTranscript: false,
+    },
+    worldPressure: { jobWindows: [completedTeaJob], problems: [] },
+  };
+  const historicalAuthorities = currentApproachAdviceAuthorities(
+    historicalCompletionProbe,
+    {},
+  );
+  assert.deepEqual(
+    unavailableApproachAdviceFailureDetails(
+      historicalCompletionProbe,
+      historicalAuthorities,
+    ),
+    [],
+    "Completed tea work may remain visible as outcome/history while the current recommendation points home.",
+  );
+  assert.ok(
+    historicalAuthorities.every(
+      (authority) =>
+        authority.source !== "rail.now" && authority.source !== "rail.thought",
+    ),
+    "Action-complete playback must not be classified as current advice.",
+  );
+
+  const staleCurrentProbe = {
+    ...historicalCompletionProbe,
+    autonomy: {
+      ...historicalCompletionProbe.autonomy,
+      label: "Take the Cup-and-counter shift",
+    },
+  };
+  assert.ok(
+    unavailableApproachAdviceFailureDetails(
+      staleCurrentProbe,
+      currentApproachAdviceAuthorities(staleCurrentProbe, {}),
+    ).some(
+      (failure) =>
+        failure.reason ===
+          "completed-or-closed-tea-work-presented-as-current" &&
+        failure.source === "autonomy.label",
+    ),
+    "Completed tea work must still fail when current autonomy genuinely recommends it.",
   );
 }
 
@@ -7820,6 +7991,12 @@ function collectPlayerRouteContinuityGaps(entry) {
   if (!entry.endpointStable) {
     gaps.push("route-endpoint-drift");
   }
+  if (!entry.targetLocationKnown) {
+    gaps.push("route-target-location-missing");
+  }
+  if (!entry.targetLocationStable) {
+    gaps.push("route-target-location-changed");
+  }
   if (!entry.targetLocationAgreement) {
     gaps.push("target-location-arrival-mismatch");
   }
@@ -7873,8 +8050,9 @@ function buildPlayerRouteContinuityLedger(timeline, options = {}) {
       progress: route.progress,
       routeTarget: route.target ?? null,
       spaceId: route.spaceId ?? null,
+      autonomyTargetLocationId: entry.autonomy?.targetLocationId ?? null,
       targetLabelDistance,
-      targetLocationId: entry.autonomy?.targetLocationId ?? null,
+      targetLocationId: route.targetLocationId ?? null,
       tilePathLength: route.tilePath.length,
       timelineIndex,
       worldPathLength: route.worldPath.length,
@@ -7909,10 +8087,19 @@ function buildPlayerRouteContinuityLedger(timeline, options = {}) {
       const routeSpaceIds = [
         ...new Set(rawPhases.map((phase) => phase.spaceId ?? null)),
       ];
-      const targetLocationIds = rawPhases
-        .map((phase) => phase.targetLocationId)
-        .filter(Boolean);
-      const targetLocationId = targetLocationIds.at(-1) ?? null;
+      const targetLocationKnown = rawPhases.every(
+        (phase) => Boolean(phase.targetLocationId),
+      );
+      const targetLocationIds = [
+        ...new Set(
+          rawPhases
+            .map((phase) => phase.targetLocationId)
+            .filter(Boolean),
+        ),
+      ];
+      const targetLocationId = targetLocationIds[0] ?? null;
+      const targetLocationStable =
+        targetLocationKnown && targetLocationIds.length === 1;
       const sameSpace = routeSpaceIds.length <= 1;
       const spaceMatchesProbe = rawPhases.every((phase) => {
         const phaseEntry = byLabel.get(phase.label);
@@ -7982,8 +8169,8 @@ function buildPlayerRouteContinuityLedger(timeline, options = {}) {
                 : "failed",
       };
       const targetLocationAgreement =
-        !targetLocationId ||
-        !arrivalEntry?.location?.id ||
+        targetLocationStable &&
+        Boolean(arrivalEntry?.location?.id) &&
         arrivalEntry.location.id === targetLocationId;
       const entry = {
         allLegal,
@@ -7999,6 +8186,8 @@ function buildPlayerRouteContinuityLedger(timeline, options = {}) {
         targetLabelAttached,
         targetLocationAgreement,
         targetLocationId,
+        targetLocationKnown,
+        targetLocationStable,
       };
 
       return {
@@ -8063,6 +8252,118 @@ function buildPlayerRouteContinuityLedger(timeline, options = {}) {
   };
 }
 
+function buildActiveRouteTargetAuthorityFixture({
+  rewriteRouteTarget = false,
+} = {}) {
+  const endpoint = { x: 316, y: 276 };
+  const phases = [
+    {
+      autonomyTargetLocationId: "boarding-house",
+      phase: "start",
+      progress: 0.1,
+    },
+    { autonomyTargetLocationId: "tea-house", phase: "mid", progress: 0.5 },
+    {
+      autonomyTargetLocationId: "tea-house",
+      phase: "close",
+      progress: 0.9,
+    },
+  ];
+  const timeline = phases.map((phase, index) => ({
+    autonomy: { targetLocationId: phase.autonomyTargetLocationId },
+    label: `mara-live-thread-route-${phase.phase}`,
+    location: {
+      id: "boarding-house",
+      spaceId: "interior:boarding-house",
+    },
+    movement: {
+      activeSpaceId: "interior:boarding-house",
+      playerRoute: {
+        active: true,
+        diagnostics: { visualObstaclesClear: true },
+        legal: true,
+        progress: phase.progress,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "interior:boarding-house",
+        target: { x: 5, y: 5 },
+        targetLocationId:
+          rewriteRouteTarget && index > 0 ? "tea-house" : "boarding-house",
+        tilePath: [
+          { x: 6, y: 8 },
+          { x: 5, y: 5 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 356, y: 396 },
+          endpoint,
+        ],
+      },
+    },
+  }));
+
+  timeline.push({
+    label: "mara-live-thread",
+    location: {
+      id: "boarding-house",
+      spaceId: "interior:boarding-house",
+    },
+    movement: {
+      playerLocationGeometry: { playerWorldPoint: endpoint },
+    },
+  });
+  return timeline;
+}
+
+function assertActiveRouteTargetAuthorityRegression() {
+  const preservedLedger = buildPlayerRouteContinuityLedger(
+    buildActiveRouteTargetAuthorityFixture(),
+  );
+  const preserved = preservedLedger.entries.find(
+    (entry) => entry.baseLabel === "mara-live-thread",
+  );
+  assert.ok(
+    preserved,
+    "Expected active-route target authority fixture coverage.",
+  );
+  assert.deepEqual(
+    preserved.gaps,
+    [],
+    "A newer autonomy target must not rewrite the active visual route target.",
+  );
+  assert.deepEqual(
+    preserved.phases.map((phase) => phase.targetLocationId),
+    ["boarding-house", "boarding-house", "boarding-house"],
+    "The active Mara route must retain Morrow House target identity through playback.",
+  );
+  assert.ok(
+    preserved.phases.some(
+      (phase) => phase.autonomyTargetLocationId === "tea-house",
+    ),
+    "The fixture must prove planning can advance to Kettle & Lamp during the active Mara route.",
+  );
+
+  const rewrittenLedger = buildPlayerRouteContinuityLedger(
+    buildActiveRouteTargetAuthorityFixture({ rewriteRouteTarget: true }),
+  );
+  assert.ok(
+    rewrittenLedger.gaps.some(
+      (gap) =>
+        gap.baseLabel === "mara-live-thread" &&
+        gap.reason === "route-target-location-changed",
+    ),
+    "Route continuity must fail when active route target identity changes mid-playback.",
+  );
+  assert.ok(
+    rewrittenLedger.gaps.some(
+      (gap) =>
+        gap.baseLabel === "mara-live-thread" &&
+        gap.reason === "target-location-arrival-mismatch",
+    ),
+    "Route continuity must retain strict target-to-arrival agreement.",
+  );
+}
+
 function buildMovementAuditSummary(timeline, options = {}) {
   const playerRoutes = timeline
     .filter((entry) => entry.movement?.playerRoute?.active)
@@ -8078,6 +8379,7 @@ function buildMovementAuditSummary(timeline, options = {}) {
         snappedEnd: Boolean(route.diagnostics?.snappedEnd),
         snappedStart: Boolean(route.diagnostics?.snappedStart),
         target: route.target,
+        targetLocationId: route.targetLocationId ?? null,
         tilePathLength: route.tilePath.length,
         visualObstaclesClear: Boolean(
           route.visualObstaclesClear ?? route.diagnostics?.visualObstaclesClear,
@@ -13882,6 +14184,8 @@ function buildRegressionSteps(gameRef) {
 }
 
 async function main() {
+  assertUnavailableApproachAdviceAuthorityRegression();
+  assertActiveRouteTargetAuthorityRegression();
   await mkdir(OUTPUT_DIR, { recursive: true });
   const { webServer } = await ensureStack();
 
