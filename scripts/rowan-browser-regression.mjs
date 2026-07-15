@@ -65,6 +65,10 @@ const FIXED_DEVTOOLS_PORT = process.env.MANY_LIVES_BROWSER_DEVTOOLS_PORT
 const CDP_WAIT_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_CDP_WAIT_TIMEOUT_MS ?? "30000",
 );
+const CHROME_START_ATTEMPTS = Number(
+  process.env.MANY_LIVES_BROWSER_START_ATTEMPTS ?? "2",
+);
+const CHROME_START_RETRY_DELAY_MS = 1_000;
 const CHILD_PROCESS_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_CHILD_PROCESS_TIMEOUT_MS ?? "120000",
 );
@@ -2625,7 +2629,37 @@ class CdpSession {
 }
 
 async function launchBrowserSession(url) {
-  const userDataDir = path.join(OUTPUT_DIR, "chrome-session");
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= CHROME_START_ATTEMPTS; attempt += 1) {
+    try {
+      return await launchBrowserSessionAttempt(url, attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= CHROME_START_ATTEMPTS) {
+        break;
+      }
+
+      process.stderr.write(
+        `[many-lives] Chrome DevTools startup attempt ${attempt}/${CHROME_START_ATTEMPTS} failed; retrying with a fresh profile.\n`,
+      );
+      await sleep(CHROME_START_RETRY_DELAY_MS);
+    }
+  }
+
+  throw (
+    lastError ??
+    new Error(
+      `Chrome DevTools did not start after ${CHROME_START_ATTEMPTS} attempts.`,
+    )
+  );
+}
+
+async function launchBrowserSessionAttempt(url, attempt) {
+  const userDataDir = path.join(
+    OUTPUT_DIR,
+    attempt === 1 ? "chrome-session" : `chrome-session-retry-${attempt}`,
+  );
   const devtoolsPort = FIXED_DEVTOOLS_PORT ?? (await reserveAvailablePort());
   const browser = spawn(
     CHROME_BIN,
@@ -2663,11 +2697,18 @@ async function launchBrowserSession(url) {
 
   let browserStderr = "";
   let browserStartError = null;
+  let browserExit = null;
   browser.once("error", (error) => {
     browserStartError = error;
   });
+  browser.once("exit", (code, signal) => {
+    browserExit = { code, signal };
+  });
   browser.stderr?.on("data", (chunk) => {
     browserStderr += chunk.toString();
+    if (browserStderr.length > 12_000) {
+      browserStderr = browserStderr.slice(-12_000);
+    }
   });
 
   let pageWsUrl;
@@ -2689,11 +2730,36 @@ async function launchBrowserSession(url) {
         }
       },
       CDP_WAIT_TIMEOUT_MS,
-      `Timed out waiting for Chrome DevTools on port ${devtoolsPort}. ${browserStderr}`,
+      `Timed out waiting for Chrome DevTools on port ${devtoolsPort}.`,
     );
   } catch (error) {
     await closeChildProcess(browser);
-    throw error;
+    const diagnostic = {
+      attempt,
+      attempts: CHROME_START_ATTEMPTS,
+      chromeBin: CHROME_BIN,
+      devtoolsPort,
+      exit: browserExit,
+      spawnError: browserStartError
+        ? {
+            code: browserStartError.code ?? null,
+            message: browserStartError.message,
+            name: browserStartError.name,
+          }
+        : null,
+      stderr: browserStderr.trim() || null,
+    };
+    await writeFile(
+      path.join(OUTPUT_DIR, `chrome-startup-attempt-${attempt}.json`),
+      `${JSON.stringify(diagnostic, null, 2)}\n`,
+      "utf8",
+    ).catch(() => {});
+    throw new Error(
+      `Chrome DevTools startup attempt ${attempt}/${CHROME_START_ATTEMPTS} failed: ${
+        error instanceof Error ? error.message : String(error)
+      } Diagnostic: ${JSON.stringify(diagnostic)}`,
+      { cause: error },
+    );
   }
 
   const session = new CdpSession({

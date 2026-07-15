@@ -85,3 +85,15 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
   assert.doesNotMatch(pacingAssertionSource, /ledger\.maxIdleGapMs/);
   assert.match(source, /progressKinds\.push\("playback-progress"\)/);
 });
+
+test("Chrome startup retries once and records actionable diagnostics", () => {
+  assert.match(source, /const CHROME_START_ATTEMPTS = Number\(/);
+  assert.match(
+    source,
+    /for \(let attempt = 1; attempt <= CHROME_START_ATTEMPTS; attempt \+= 1\)/,
+  );
+  assert.match(source, /chrome-session-retry-\$\{attempt\}/);
+  assert.match(source, /chrome-startup-attempt-\$\{attempt\}\.json/);
+  assert.match(source, /browser\.once\("exit", \(code, signal\) =>/);
+  assert.match(source, /stderr: browserStderr\.trim\(\) \|\| null/);
+});
