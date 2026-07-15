@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.11",
-  build: "7c7d7e3",
-  source: "Main release",
+  version: "0.1.12",
+  build: "8c0014a",
+  source: "Scheduled review resolution",
   features: [
     {
-      title: "A more living first afternoon",
+      title: "A readable first stopping point",
       body:
-        "Rowan now chooses from current legal options while schedules, commitments, and neighborhood pressures keep changing around him.",
+        "The first-afternoon completion and the next objective now remain visible long enough to understand before watch mode continues.",
     },
     {
-      title: "Brisk, honest watch mode",
+      title: "Advice stays current",
       body:
-        "The opening reaches visible decisions and consequences faster, without repeated advances, required viewer clicks, or overstated AI provenance.",
+        "Conversations no longer present completed work or resolved neighborhood trouble as live choices.",
     },
     {
-      title: "Clearer South Quay",
+      title: "Stronger pacing regression coverage",
       body:
-        "Landmarks, routes, responsive rails, and event cues now read more consistently across desktop, tablet, and phone layouts.",
+        "Browser checks now verify readable chapter handoffs, zero-click continuity, and state-correct visible advice.",
     },
   ],
 };
