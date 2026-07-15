@@ -934,6 +934,7 @@ class CdpSession {
         } : null,
         rootClass: root?.className ?? "",
         mapVisibleFraction,
+        sceneViewportCss: cameraProbe?.sceneViewportCss ?? null,
         npcPresence,
         timePill: timePillRect ? {
           bottom: Math.round(timePillRect.bottom),
@@ -3278,9 +3279,13 @@ function compactDecisionArtifactReadabilityGeometry(page) {
           y: page.decisionArtifact.y,
         }
       : null,
+    dockRoot: page?.dockRoot ?? null,
+    mapVisibleFraction: page?.mapVisibleFraction ?? null,
     rail: page?.rail ?? null,
     railState: page?.railState ?? null,
     rightStack: page?.rightStack ?? null,
+    sceneViewportCss: page?.sceneViewportCss ?? null,
+    timePill: page?.timePill ?? null,
   };
 }
 
@@ -3319,6 +3324,31 @@ function decisionArtifactReadabilityStable(
   return state.stableSamples >= requiredSamples;
 }
 
+function evaluateDecisionArtifactReadabilitySample(
+  state,
+  page,
+  assertSettledPage,
+) {
+  const nextState = recordDecisionArtifactReadabilitySample(state, page);
+  if (nextState.stableSamples === 0 || typeof assertSettledPage !== "function") {
+    return { error: null, state: nextState };
+  }
+
+  try {
+    assertSettledPage(page);
+    return { error: null, state: nextState };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error : new Error(String(error)),
+      state: {
+        geometry: nextState.geometry,
+        signature: null,
+        stableSamples: 0,
+      },
+    };
+  }
+}
+
 function assertDecisionArtifactReadabilityWaitRegression() {
   const readablePage = {
     commandRail: {
@@ -3334,9 +3364,31 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       x: 588,
       y: 254,
     },
+    dockRoot: {
+      bottom: 970,
+      height: 72,
+      left: 12,
+      right: 650,
+      top: 898,
+      width: 638,
+      x: 12,
+      y: 898,
+    },
+    mapVisibleFraction: 0.62,
     rail: { height: 538, width: 376, x: 576, y: 94 },
     railState: "expanded",
     rightStack: { height: 538, width: 376, x: 576, y: 94 },
+    sceneViewportCss: { height: 998, width: 662, x: 0, y: 0 },
+    timePill: {
+      bottom: 74,
+      height: 58,
+      left: 16,
+      right: 486,
+      top: 16,
+      width: 470,
+      x: 16,
+      y: 16,
+    },
   };
   const unreadablePage = {
     ...readablePage,
@@ -3383,6 +3435,69 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     1,
     "Changing rail geometry must restart the stable-readability sample count.",
   );
+
+  const compactViewport = { height: 998, width: 662 };
+  const evaluateSettledSample = (state, page) =>
+    evaluateDecisionArtifactReadabilitySample(
+      state,
+      page,
+      (settledPage) =>
+        assertMapVisibilityGeometry(
+          settledPage,
+          compactViewport,
+          "responsive decision guard",
+        ),
+    );
+  const missingMapPage = {
+    ...readablePage,
+    mapVisibleFraction: null,
+    sceneViewportCss: null,
+  };
+  const clippedMapPage = {
+    ...readablePage,
+    mapVisibleFraction: 0.49,
+  };
+
+  let coherent = createDecisionArtifactReadabilityState();
+  for (const invalidPage of [missingMapPage, clippedMapPage]) {
+    for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
+      const evaluated = evaluateSettledSample(coherent, invalidPage);
+      coherent = evaluated.state;
+      assert.ok(
+        evaluated.error,
+        "Absent or clipped map geometry must reject the settled readability sample.",
+      );
+    }
+    assert.equal(
+      decisionArtifactReadabilityStable(coherent),
+      false,
+      "Permanently absent or clipped map geometry must never satisfy settled readability.",
+    );
+  }
+
+  for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT - 1; sample += 1) {
+    const evaluated = evaluateSettledSample(coherent, readablePage);
+    assert.equal(evaluated.error, null);
+    coherent = evaluated.state;
+  }
+  assert.equal(
+    decisionArtifactReadabilityStable(coherent),
+    false,
+    "Fewer than the required coherent samples must not satisfy settled readability.",
+  );
+  const interrupted = evaluateSettledSample(coherent, missingMapPage);
+  assert.ok(interrupted.error);
+  coherent = interrupted.state;
+  for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
+    const evaluated = evaluateSettledSample(coherent, readablePage);
+    assert.equal(evaluated.error, null);
+    coherent = evaluated.state;
+  }
+  assert.equal(
+    decisionArtifactReadabilityStable(coherent),
+    true,
+    "Decision readability and valid map geometry should pass only after a coherent stable sequence.",
+  );
 }
 
 async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
@@ -3409,6 +3524,8 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
         probe: compactDecisionArtifactProbeDiagnostic(probe),
         rail: page.rail,
         railState: page.railState,
+        readabilityGeometry:
+          compactDecisionArtifactReadabilityGeometry(page),
         rightStack: page.rightStack,
         selectedPayload: compactDecisionArtifactDiagnostic(payload),
         url: page.url,
@@ -3420,10 +3537,17 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
     try {
       assert.ok(payload, `${label}: missing visible decision artifact payload.`);
       assertVisibleDecisionArtifactDom(page.decisionArtifact, label, payload);
-      readabilityState = recordDecisionArtifactReadabilitySample(
+      const evaluatedSample = evaluateDecisionArtifactReadabilitySample(
         readabilityState,
         page,
+        typeof options.assertSettledPage === "function"
+          ? () => options.assertSettledPage({ page, payload, probe })
+          : null,
       );
+      readabilityState = evaluatedSample.state;
+      if (evaluatedSample.error) {
+        throw evaluatedSample.error;
+      }
       if (
         decisionArtifactReadabilityStable(
           readabilityState,
@@ -3456,6 +3580,8 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
         probe: compactDecisionArtifactProbeDiagnostic(probe),
         rail: page.rail,
         railState: page.railState,
+        readabilityGeometry:
+          compactDecisionArtifactReadabilityGeometry(page),
         rightStack: page.rightStack,
         selectedPayload: compactDecisionArtifactDiagnostic(payload),
         url: page.url,
@@ -3747,13 +3873,20 @@ function assertOverlayGeometry(page, viewport, label, expectedHudText) {
     `${label}: rail-to-dock clearance is ${clearance}px; expected at least 8px. Rail ${JSON.stringify(rail)}, dock ${JSON.stringify(dock)}.`,
   );
 
-  if (viewport.width <= 960) {
-    const minimumMapVisibleFraction = viewport.width <= 560 ? 0.45 : 0.5;
-    assert.ok(
-      page.mapVisibleFraction >= minimumMapVisibleFraction,
-      `${label}: only ${page.mapVisibleFraction} of the map remains visible; expected at least ${minimumMapVisibleFraction}.`,
-    );
+  assertMapVisibilityGeometry(page, viewport, label);
+}
+
+function assertMapVisibilityGeometry(page, viewport, label) {
+  if (viewport.width > 960) {
+    return;
   }
+
+  const minimumMapVisibleFraction = viewport.width <= 560 ? 0.45 : 0.5;
+  assert.ok(
+    Number.isFinite(page.mapVisibleFraction) &&
+      page.mapVisibleFraction >= minimumMapVisibleFraction,
+    `${label}: only ${page.mapVisibleFraction} of the map remains visible; expected at least ${minimumMapVisibleFraction}. Scene viewport: ${JSON.stringify(page.sceneViewportCss)}.`,
+  );
 }
 
 function assertExpandedRailScroll(page, label) {
@@ -4120,6 +4253,27 @@ async function runResponsiveDecisionArtifactCheck(session) {
     `${viewport.name} responsive decision rail`,
     {
       accept: ({ page }) => page.railState === "expanded",
+      assertSettledPage: ({ page, payload }) => {
+        assertDecisionHierarchy(
+          page,
+          `${viewport.name} responsive decision hierarchy`,
+          payload,
+        );
+        assertOverlayGeometry(
+          page,
+          viewport,
+          `${viewport.name} responsive decision expanded`,
+          page.visibleTimeChips,
+        );
+        assertExpandedRailScroll(
+          page,
+          `${viewport.name} responsive decision expanded`,
+        );
+        assertBoundedVisualHierarchy(
+          page,
+          `${viewport.name} responsive decision expanded`,
+        );
+      },
       stableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
       timeoutMs: RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS,
     },
@@ -4180,6 +4334,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
       watchMode: advancedProbe.watchMode,
     },
     expandedDecisionArtifact: page.decisionArtifact,
+    expandedGeometry: compactDecisionArtifactReadabilityGeometry(page),
     opening: {
       autonomy: openingProbe.autonomy,
       clock: openingProbe.clock,
