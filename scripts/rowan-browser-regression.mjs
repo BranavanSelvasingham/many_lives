@@ -5431,16 +5431,11 @@ async function waitForGameplayDom(label, session, probe) {
 }
 
 async function refreshProbeForVisibleIndependentNpcSurface({
-  dom,
   label,
   probe,
   session,
 }) {
-  if (
-    label !== "independent-npc-resolution" ||
-    probe.independentNpcSurface ||
-    (probe.independentNpcActions ?? []).length === 0
-  ) {
+  if (!shouldRefreshVisibleIndependentNpcSurface({ label, probe })) {
     return probe;
   }
 
@@ -5448,16 +5443,6 @@ async function refreshProbeForVisibleIndependentNpcSurface({
     /city beat|steadied|contained|closed|load out/i.test(
       candidateDom?.bodyText ?? "",
     );
-  const playbackPending = Boolean(
-    probe.watchMode?.pendingPlayback ||
-      probe.playback?.activeKind ||
-      (probe.playback?.queuedCount ?? 0) > 0,
-  );
-
-  if (!playbackPending && !domShowsIndependentSurface(dom)) {
-    return probe;
-  }
-
   return waitFor(
     async () => {
       const refreshedProbe = await session.readBrowserProbe();
@@ -5481,6 +5466,14 @@ async function refreshProbeForVisibleIndependentNpcSurface({
     },
     5_000,
     `${label}: visible independent NPC city beat did not reach the browser probe before capture.`,
+  );
+}
+
+function shouldRefreshVisibleIndependentNpcSurface({ label, probe }) {
+  return Boolean(
+    label === "independent-npc-resolution" &&
+      !probe.independentNpcSurface &&
+      (probe.independentNpcActions ?? []).length > 0,
   );
 }
 
@@ -10492,7 +10485,6 @@ async function captureBrowserState({ game, index, label, session }) {
   assertCityEventState(label, game);
   const dom = await waitForGameplayDom(label, session, initialProbe);
   const probe = await refreshProbeForVisibleIndependentNpcSurface({
-    dom,
     label,
     probe: initialProbe,
     session,
@@ -13296,6 +13288,32 @@ function assertYardNotebookCommitmentGuard() {
   );
 }
 
+function assertIndependentNpcSurfaceRefreshGuard() {
+  assert.equal(
+    shouldRefreshVisibleIndependentNpcSurface({
+      label: "independent-npc-resolution",
+      probe: {
+        independentNpcActions: [{ subjectId: "job-yard-shift" }],
+        independentNpcSurface: null,
+        playback: { activeKind: null, queuedCount: 0 },
+      },
+    }),
+    true,
+    "A settled browser probe with a new independent action must still wait for its player-facing rail beat.",
+  );
+  assert.equal(
+    shouldRefreshVisibleIndependentNpcSurface({
+      label: "independent-npc-resolution",
+      probe: {
+        independentNpcActions: [{ subjectId: "job-yard-shift" }],
+        independentNpcSurface: { title: "Tomas closed the yard load" },
+      },
+    }),
+    false,
+    "A captured independent-action rail beat must not trigger a redundant refresh wait.",
+  );
+}
+
 function assertInhabitPlayerDom(
   label,
   dom,
@@ -15407,6 +15425,7 @@ async function main() {
   assertProgressAwareStagedWorkWaitRegression();
   assertPostFirstAfternoonTrajectoryNeutralGuard();
   assertYardNotebookCommitmentGuard();
+  assertIndependentNpcSurfaceRefreshGuard();
   assertWatchPacingTransitionSignatureGuard();
   assertAutoplayProgressGapGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
