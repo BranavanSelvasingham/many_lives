@@ -118,6 +118,7 @@ const CDP_READ_RETRY_DELAY_MS = Number(
 const SIM_WAIT_TIMEOUT_MS = 15_000;
 const SIM_WORK_PLAYBACK_EXTRA_WAIT_MS = 15_000;
 const SIM_WORK_PLAYBACK_STALL_GRACE_MS = 5_000;
+const SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS = 2_000;
 const SIM_WORK_PLAYBACK_PROGRESS_EPSILON = 0.002;
 const RUN_SIM_WAIT_GUARD_ONLY =
   process.env.MANY_LIVES_BROWSER_SIM_WAIT_GUARD_ONLY === "1";
@@ -4054,52 +4055,53 @@ function createStagedWorkPlaybackWaitProgress() {
     lastProgressElapsedMs: null,
     routeIdentity: null,
     sampleCount: 0,
+    visualActiveFirstSampleElapsedMs: null,
+    visualActiveIdentity: null,
+    visualActiveLastSampleElapsedMs: null,
+    visualActiveNow: false,
+    visualActiveSampleCount: 0,
   };
 }
 
-function stagedWorkPlaybackCatchUpSample(probe, game) {
+function stagedWorkPlaybackCatchUpIdentity(probe, game) {
   const actionId = game?.rowanAutonomy?.actionId ?? null;
   const expectedLocationId = game?.player?.currentLocationId ?? null;
   const expectedSpaceId = game?.activeSpaceId ?? game?.player?.spaceId ?? null;
-  const route = probe?.movement?.playerRoute;
-  const target = route?.target;
   const visualPlayer = probe?.visualPlayer;
   const playerStillAtPriorPosition =
     probe?.location?.x !== game?.player?.x ||
     probe?.location?.y !== game?.player?.y;
+  const probeTimeMs = Date.parse(probe?.clock?.iso ?? "");
+  const targetTimeMs = Date.parse(game?.currentTime ?? "");
 
   if (
     !actionId?.startsWith("work:") ||
     probe?.gameId !== game?.id ||
-    probe?.clock?.iso === game?.currentTime ||
+    !Number.isFinite(probeTimeMs) ||
+    !Number.isFinite(targetTimeMs) ||
+    probeTimeMs >= targetTimeMs ||
     probe?.autonomy?.actionId !== actionId ||
+    probe?.autonomy?.stepKind !== game?.rowanAutonomy?.stepKind ||
+    (probe?.autonomy?.targetLocationId ?? null) !==
+      normalizeNullable(game?.rowanAutonomy?.targetLocationId) ||
+    (probe?.activeConversation?.npcId ?? null) !==
+      (game?.activeConversation?.npcId ?? null) ||
     probe?.location?.id !== expectedLocationId ||
     probe?.location?.spaceId !== expectedSpaceId ||
     !playerStillAtPriorPosition ||
     visualPlayer?.isMovingToServerState !== true ||
     visualPlayer.targetX !== game?.player?.x ||
     visualPlayer.targetY !== game?.player?.y ||
-    route?.active !== true ||
-    route.legal !== true ||
-    route.reachesDestination !== true ||
-    route.sampledPointsLegal !== true ||
-    route.visualObstaclesClear !== true ||
-    route.spaceId !== expectedSpaceId ||
-    route.targetLocationId !== expectedLocationId ||
-    target?.x !== game?.player?.x ||
-    target?.y !== game?.player?.y ||
-    typeof route.progress !== "number" ||
-    !Number.isFinite(route.progress) ||
-    route.progress < 0 ||
-    route.progress > 1 ||
     !objectiveIdentityMatches(probe, game)
   ) {
     return null;
   }
 
   return {
-    progress: route.progress,
-    routeIdentity: JSON.stringify({
+    actionId,
+    expectedLocationId,
+    expectedSpaceId,
+    identity: JSON.stringify({
       actionId,
       clock: game.currentTime,
       gameId: game.id,
@@ -4114,43 +4116,131 @@ function stagedWorkPlaybackCatchUpSample(probe, game) {
   };
 }
 
+function stagedWorkPlaybackCatchUpSample(probe, game) {
+  const catchUpIdentity = stagedWorkPlaybackCatchUpIdentity(probe, game);
+  const route = probe?.movement?.playerRoute;
+  const target = route?.target;
+
+  if (
+    !catchUpIdentity ||
+    route?.active !== true ||
+    route.legal !== true ||
+    route.reachesDestination !== true ||
+    route.sampledPointsLegal !== true ||
+    route.visualObstaclesClear !== true ||
+    route.spaceId !== catchUpIdentity.expectedSpaceId ||
+    route.targetLocationId !== catchUpIdentity.expectedLocationId ||
+    target?.x !== game?.player?.x ||
+    target?.y !== game?.player?.y ||
+    typeof route.progress !== "number" ||
+    !Number.isFinite(route.progress) ||
+    route.progress < 0 ||
+    route.progress > 1
+  ) {
+    return null;
+  }
+
+  return {
+    progress: route.progress,
+    routeIdentity: catchUpIdentity.identity,
+  };
+}
+
+function stagedWorkVisualActiveCatchUpSample(probe, game) {
+  const catchUpIdentity = stagedWorkPlaybackCatchUpIdentity(probe, game);
+  if (!catchUpIdentity || probe?.movement?.playerRoute != null) {
+    return null;
+  }
+
+  return {
+    visualActiveIdentity: catchUpIdentity.identity,
+  };
+}
+
 function recordStagedWorkPlaybackWaitProgress({
   elapsedMs,
   game,
   playbackProgress,
   probe,
 }) {
-  const sample = stagedWorkPlaybackCatchUpSample(probe, game);
-  if (!sample) {
-    return playbackProgress;
-  }
+  const routeSample = stagedWorkPlaybackCatchUpSample(probe, game);
 
-  if (sample.routeIdentity !== playbackProgress.routeIdentity) {
+  if (routeSample?.routeIdentity !== undefined) {
+    if (routeSample.routeIdentity !== playbackProgress.routeIdentity) {
+      return {
+        ...playbackProgress,
+        advanceCount: 0,
+        bestProgress: routeSample.progress,
+        firstSampleElapsedMs: elapsedMs,
+        lastProgressElapsedMs: null,
+        routeIdentity: routeSample.routeIdentity,
+        sampleCount: 1,
+        visualActiveNow: false,
+      };
+    }
+
+    const advanced =
+      routeSample.progress >=
+      (playbackProgress.bestProgress ?? routeSample.progress) +
+        SIM_WORK_PLAYBACK_PROGRESS_EPSILON;
     return {
-      advanceCount: 0,
-      bestProgress: sample.progress,
-      firstSampleElapsedMs: elapsedMs,
-      lastProgressElapsedMs: null,
-      routeIdentity: sample.routeIdentity,
-      sampleCount: 1,
+      ...playbackProgress,
+      advanceCount: playbackProgress.advanceCount + (advanced ? 1 : 0),
+      bestProgress: advanced
+        ? routeSample.progress
+        : playbackProgress.bestProgress,
+      lastProgressElapsedMs: advanced
+        ? elapsedMs
+        : playbackProgress.lastProgressElapsedMs,
+      sampleCount: playbackProgress.sampleCount + 1,
+      visualActiveNow: false,
     };
   }
 
-  const advanced =
-    sample.progress >=
-    (playbackProgress.bestProgress ?? sample.progress) +
-      SIM_WORK_PLAYBACK_PROGRESS_EPSILON;
+  const visualActiveSample = stagedWorkVisualActiveCatchUpSample(probe, game);
+  if (!visualActiveSample) {
+    return probe && playbackProgress.visualActiveNow
+      ? { ...playbackProgress, visualActiveNow: false }
+      : playbackProgress;
+  }
+
+  const newIdentity =
+    visualActiveSample.visualActiveIdentity !==
+    playbackProgress.visualActiveIdentity;
   return {
     ...playbackProgress,
-    advanceCount: playbackProgress.advanceCount + (advanced ? 1 : 0),
-    bestProgress: advanced
-      ? sample.progress
-      : playbackProgress.bestProgress,
-    lastProgressElapsedMs: advanced
+    visualActiveFirstSampleElapsedMs: newIdentity
       ? elapsedMs
-      : playbackProgress.lastProgressElapsedMs,
-    sampleCount: playbackProgress.sampleCount + 1,
+      : playbackProgress.visualActiveFirstSampleElapsedMs,
+    visualActiveIdentity: visualActiveSample.visualActiveIdentity,
+    visualActiveLastSampleElapsedMs: elapsedMs,
+    visualActiveNow: true,
+    visualActiveSampleCount: newIdentity
+      ? 1
+      : playbackProgress.visualActiveSampleCount + 1,
   };
+}
+
+function stagedWorkPlaybackWaitExtensionKind({ elapsedMs, playbackProgress }) {
+  const routeProgressRecentlyObserved = Boolean(
+    playbackProgress.advanceCount > 0 &&
+      playbackProgress.lastProgressElapsedMs !== null &&
+      elapsedMs >= playbackProgress.lastProgressElapsedMs &&
+      elapsedMs - playbackProgress.lastProgressElapsedMs <=
+        SIM_WORK_PLAYBACK_STALL_GRACE_MS,
+  );
+  if (routeProgressRecentlyObserved) {
+    return "route-progress";
+  }
+
+  const visualCatchUpRecentlyActive = Boolean(
+    playbackProgress.visualActiveNow &&
+      playbackProgress.visualActiveLastSampleElapsedMs !== null &&
+      elapsedMs >= playbackProgress.visualActiveLastSampleElapsedMs &&
+      elapsedMs - playbackProgress.visualActiveLastSampleElapsedMs <=
+        SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS,
+  );
+  return visualCatchUpRecentlyActive ? "visual-active" : null;
 }
 
 function shouldContinueGameWait({ elapsedMs, playbackProgress }) {
@@ -4162,10 +4252,10 @@ function shouldContinueGameWait({ elapsedMs, playbackProgress }) {
     SIM_WAIT_TIMEOUT_MS + SIM_WORK_PLAYBACK_EXTRA_WAIT_MS;
   return Boolean(
     elapsedMs < hardDeadlineMs &&
-      playbackProgress.advanceCount > 0 &&
-      playbackProgress.lastProgressElapsedMs !== null &&
-      elapsedMs - playbackProgress.lastProgressElapsedMs <=
-        SIM_WORK_PLAYBACK_STALL_GRACE_MS,
+      stagedWorkPlaybackWaitExtensionKind({
+        elapsedMs,
+        playbackProgress,
+      }) !== null,
   );
 }
 
@@ -4173,13 +4263,24 @@ function compactStagedWorkPlaybackWaitProgress(
   playbackProgress,
   elapsedMs,
 ) {
+  const activeExtensionKind = stagedWorkPlaybackWaitExtensionKind({
+    elapsedMs,
+    playbackProgress,
+  });
   return {
     ...playbackProgress,
+    activeExtensionKind,
     elapsedMs,
     extendedBeyondBaseDeadline:
-      elapsedMs > SIM_WAIT_TIMEOUT_MS && playbackProgress.advanceCount > 0,
+      elapsedMs > SIM_WAIT_TIMEOUT_MS &&
+      (playbackProgress.advanceCount > 0 ||
+        playbackProgress.visualActiveSampleCount > 0),
+    extensionEligibleWithinHardDeadline:
+      elapsedMs < SIM_WAIT_TIMEOUT_MS + SIM_WORK_PLAYBACK_EXTRA_WAIT_MS &&
+      activeExtensionKind !== null,
     hardDeadlineMs: SIM_WAIT_TIMEOUT_MS + SIM_WORK_PLAYBACK_EXTRA_WAIT_MS,
     stallGraceMs: SIM_WORK_PLAYBACK_STALL_GRACE_MS,
+    visualActiveGraceMs: SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS,
   };
 }
 
@@ -4203,8 +4304,12 @@ function buildStagedWorkPlaybackWaitFixture(progress = 0.24) {
   };
   const game = {
     activeSpaceId: "interior:tea-house",
+    cityEvents: [],
+    clock: { day: 1, totalMinutes: 12 * 60 + 46 },
     currentTime: "2026-03-21T12:46:00.000Z",
     id: "game-staged-work-wait",
+    jobs: [],
+    npcs: [],
     player: {
       currentLocationId: "tea-house",
       objective,
@@ -4212,15 +4317,20 @@ function buildStagedWorkPlaybackWaitFixture(progress = 0.24) {
       x: 7,
       y: 5,
     },
+    problems: [],
     rowanAutonomy: {
       actionId: "work:job-tea-shift",
       label: "Finish the cup-and-counter shift",
+      stepKind: "work",
+      targetLocationId: "tea-house",
     },
   };
   const probe = {
     autonomy: {
       actionId: "work:job-tea-shift",
       label: "Keep the lunch rush moving",
+      stepKind: "work",
+      targetLocationId: "tea-house",
     },
     clock: { iso: "2026-03-21T12:21:00.000Z" },
     gameId: game.id,
@@ -4324,6 +4434,233 @@ function assertProgressAwareStagedWorkWaitRegression() {
     false,
     "A work route that stops progressing must fail after the settle grace.",
   );
+  assert.equal(
+    compactStagedWorkPlaybackWaitProgress(
+      progressing,
+      SIM_WAIT_TIMEOUT_MS,
+    ).activeExtensionKind,
+    "route-progress",
+    "Route-progress extension authority should be explicit in diagnostics.",
+  );
+
+  const noRouteProbe = {
+    ...advancedProbe,
+    movement: { playerRoute: null },
+    watchMode: { pendingPlayback: true },
+  };
+  let visualActive = createStagedWorkPlaybackWaitProgress();
+  visualActive = recordStagedWorkPlaybackWaitProgress({
+    elapsedMs: SIM_WAIT_TIMEOUT_MS - 500,
+    game,
+    playbackProgress: visualActive,
+    probe: noRouteProbe,
+  });
+  assert.equal(
+    visualActive.sampleCount,
+    0,
+    "A route-free visual catch-up must not fabricate route progress.",
+  );
+  assert.equal(
+    visualActive.visualActiveSampleCount,
+    1,
+    "A valid route-free visual catch-up should record active evidence.",
+  );
+  assert.equal(
+    shouldContinueGameWait({
+      elapsedMs: SIM_WAIT_TIMEOUT_MS,
+      playbackProgress: visualActive,
+    }),
+    true,
+    "An active same-work visual catch-up should receive bounded catch-up time without a route.",
+  );
+  assert.equal(
+    shouldContinueGameWait({
+      elapsedMs:
+        SIM_WAIT_TIMEOUT_MS - 500 +
+        SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS,
+      playbackProgress: visualActive,
+    }),
+    true,
+    "A recent visual-active sample should retain only its short observation grace.",
+  );
+  assert.equal(
+    shouldContinueGameWait({
+      elapsedMs:
+        SIM_WAIT_TIMEOUT_MS - 499 +
+        SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS,
+      playbackProgress: visualActive,
+    }),
+    false,
+    "Visual-active catch-up must fail when active evidence goes stale.",
+  );
+  const visualDiagnostics = compactStagedWorkPlaybackWaitProgress(
+    visualActive,
+    SIM_WAIT_TIMEOUT_MS,
+  );
+  assert.equal(
+    visualDiagnostics.activeExtensionKind,
+    "visual-active",
+    "Visual-active extension authority should be distinct in diagnostics.",
+  );
+  assert.equal(
+    visualDiagnostics.extensionEligibleWithinHardDeadline,
+    true,
+    "Visual-active diagnostics should report bounded extension eligibility.",
+  );
+
+  assert.equal(
+    browserProbeMatchesGameCoreSnapshot(noRouteProbe, game),
+    false,
+    "Visual-active evidence must not make a stale core snapshot authoritative.",
+  );
+  assert.equal(
+    browserProbeMatchesProgressiveSnapshot(noRouteProbe, game),
+    false,
+    "Visual-active evidence must not accept stale state as progressive target state.",
+  );
+  const exactTargetProbe = {
+    ...noRouteProbe,
+    aiRuntime: null,
+    autonomy: {
+      ...noRouteProbe.autonomy,
+      label: game.rowanAutonomy.label,
+    },
+    cityEvents: [],
+    clock: { iso: game.currentTime },
+    independentNpcActions: [],
+    location: {
+      id: game.player.currentLocationId,
+      spaceId: game.activeSpaceId,
+      x: game.player.x,
+      y: game.player.y,
+    },
+    visualPlayer: {
+      isMovingToServerState: false,
+      targetX: game.player.x,
+      targetY: game.player.y,
+    },
+    worldPressure: worldPressureFromGame(game),
+  };
+  assert.equal(
+    browserProbeMatchesGameSnapshot(exactTargetProbe, game),
+    true,
+    "The exact target snapshot must still be required before the wait succeeds.",
+  );
+
+  const invalidVisualCatchUps = [
+    [
+      "inactive",
+      game,
+      {
+        ...noRouteProbe,
+        visualPlayer: {
+          ...noRouteProbe.visualPlayer,
+          isMovingToServerState: false,
+        },
+      },
+    ],
+    [
+      "target-time state",
+      game,
+      { ...noRouteProbe, clock: { iso: game.currentTime } },
+    ],
+    [
+      "non-work action",
+      {
+        ...game,
+        rowanAutonomy: {
+          ...game.rowanAutonomy,
+          actionId: "wait:short",
+        },
+      },
+      {
+        ...noRouteProbe,
+        autonomy: { ...noRouteProbe.autonomy, actionId: "wait:short" },
+      },
+    ],
+    ["wrong game", game, { ...noRouteProbe, gameId: "game-other" }],
+    [
+      "wrong action",
+      game,
+      {
+        ...noRouteProbe,
+        autonomy: { ...noRouteProbe.autonomy, actionId: "work:job-yard-shift" },
+      },
+    ],
+    [
+      "wrong objective",
+      game,
+      {
+        ...noRouteProbe,
+        objective: { ...noRouteProbe.objective, routeKey: "other-objective" },
+      },
+    ],
+    [
+      "wrong location",
+      game,
+      {
+        ...noRouteProbe,
+        location: { ...noRouteProbe.location, id: "freight-yard" },
+      },
+    ],
+    [
+      "wrong space",
+      game,
+      {
+        ...noRouteProbe,
+        location: { ...noRouteProbe.location, spaceId: "exterior" },
+      },
+    ],
+    [
+      "wrong target",
+      game,
+      {
+        ...noRouteProbe,
+        visualPlayer: { ...noRouteProbe.visualPlayer, targetX: 8 },
+      },
+    ],
+    [
+      "present inactive route",
+      game,
+      { ...noRouteProbe, movement: { playerRoute: { active: false } } },
+    ],
+  ];
+  for (const [label, candidateGame, candidateProbe] of invalidVisualCatchUps) {
+    assert.equal(
+      stagedWorkVisualActiveCatchUpSample(candidateProbe, candidateGame),
+      null,
+      `A ${label} visual state must not qualify for route-free catch-up.`,
+    );
+    const invalidProgress = recordStagedWorkPlaybackWaitProgress({
+      elapsedMs: SIM_WAIT_TIMEOUT_MS - 1,
+      game: candidateGame,
+      playbackProgress: createStagedWorkPlaybackWaitProgress(),
+      probe: candidateProbe,
+    });
+    assert.equal(
+      shouldContinueGameWait({
+        elapsedMs: SIM_WAIT_TIMEOUT_MS,
+        playbackProgress: invalidProgress,
+      }),
+      false,
+      `A ${label} visual state must not earn extra wait time.`,
+    );
+  }
+
+  const inactiveAfterActive = recordStagedWorkPlaybackWaitProgress({
+    elapsedMs: SIM_WAIT_TIMEOUT_MS,
+    game,
+    playbackProgress: visualActive,
+    probe: invalidVisualCatchUps[0][2],
+  });
+  assert.equal(
+    shouldContinueGameWait({
+      elapsedMs: SIM_WAIT_TIMEOUT_MS,
+      playbackProgress: inactiveAfterActive,
+    }),
+    false,
+    "An observed inactive visual state must revoke active catch-up authority.",
+  );
 
   const wrongTargetProbe = {
     ...advancedProbe,
@@ -4354,6 +4691,21 @@ function assertProgressAwareStagedWorkWaitRegression() {
     }),
     false,
     "Continuous work-route progress must still stop at the hard catch-up cap.",
+  );
+  const visualActiveAtHardCap = recordStagedWorkPlaybackWaitProgress({
+    elapsedMs:
+      SIM_WAIT_TIMEOUT_MS + SIM_WORK_PLAYBACK_EXTRA_WAIT_MS - 1,
+    game,
+    playbackProgress: visualActive,
+    probe: noRouteProbe,
+  });
+  assert.equal(
+    shouldContinueGameWait({
+      elapsedMs: SIM_WAIT_TIMEOUT_MS + SIM_WORK_PLAYBACK_EXTRA_WAIT_MS,
+      playbackProgress: visualActiveAtHardCap,
+    }),
+    false,
+    "Continuous visual-active catch-up must still stop at the hard catch-up cap.",
   );
 }
 
@@ -4412,6 +4764,7 @@ function compactBrowserProbeForWait(probe) {
   return {
     autonomy: probe.autonomy
       ? {
+          actionId: probe.autonomy.actionId ?? null,
           label: probe.autonomy.label ?? null,
           stepKind: probe.autonomy.stepKind ?? null,
           targetLocationId: probe.autonomy.targetLocationId ?? null,
@@ -4433,16 +4786,30 @@ function compactBrowserProbeForWait(probe) {
             ? {
                 active: probe.movement.playerRoute.active ?? null,
                 progress: probe.movement.playerRoute.progress ?? null,
+                legal: probe.movement.playerRoute.legal ?? null,
+                reachesDestination:
+                  probe.movement.playerRoute.reachesDestination ?? null,
                 targetLocationId:
                   probe.movement.playerRoute.targetLocationId ?? null,
               }
             : null,
         }
       : null,
+    objective: probe.objective
+      ? {
+          outcomeIds: (probe.objective.outcomes ?? []).map(
+            (outcome) => outcome.id,
+          ),
+          routeKey: probe.objective.routeKey ?? null,
+          text: probe.objective.text ?? null,
+        }
+      : null,
     visualPlayer: probe.visualPlayer
       ? {
           isMovingToServerState:
             probe.visualPlayer.isMovingToServerState ?? null,
+          targetX: probe.visualPlayer.targetX ?? null,
+          targetY: probe.visualPlayer.targetY ?? null,
         }
       : null,
   };
