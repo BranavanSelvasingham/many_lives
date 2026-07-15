@@ -504,7 +504,10 @@ const MORROW_STANDING_LOW_ENERGY_PLAYER_RATIONALE =
 const MORROW_STANDING_NORMAL_ENERGY_PLAYER_RATIONALE =
   "Morrow House is where today's standing can turn into a steadier foothold";
 const HOME_RETURN_MOVE_REASON_COPY = [
-  "recover enough to move cleanly, keep tonight's room safe, and let Ada's field-note standing land before choosing the yard work, pump, or another current opening.",
+  "recover, keep tonight's room safe, and",
+  "use the recorded field note to decide",
+  "take stock before deciding",
+  "what still needs attention.",
   "recover enough to move cleanly before taking another commitment.",
   "is where Rowan can take stock after a durable consequence and record what actually changed.",
   "keep tonight's room safe and turn today's standing into a steadier foothold.",
@@ -536,7 +539,7 @@ const AUTONOMOUS_OPENING_AND_FOLLOWUP_COPY = [
   "What can wait until I've got my legs back under me?",
 ];
 const ROWAN_NOTEBOOK_FIELD_NOTE_UNCERTAINTY =
-  "Which current opening deserves Rowan's recovered hour: North Crane Yard work, the Morrow Yard pump, or another lead?";
+  "What still deserves Rowan's attention after he recovers?";
 const ROWAN_NOTEBOOK_JO_TOOLS_UNCERTAINTY =
   "Which local problem is worth spending scarce money on?";
 const ROWAN_NOTEBOOK_NIA_UNCERTAINTY =
@@ -546,7 +549,7 @@ const ROWAN_NOTEBOOK_PUMP_UNCERTAINTY =
 const ROWAN_NOTEBOOK_NIA_RECOVERY_PLAN =
   "Recover before following Nia's block-jam lead.";
 const ROWAN_NOTEBOOK_RECOVERY_PLAN =
-  "Rest at Morrow House long enough to recover, then choose the yard work, pump, or current opening that still matters.";
+  "Rest at Morrow House long enough to recover, then weigh only what is still live.";
 const ROWAN_NOTEBOOK_PUMP_PLAN =
   "Handle the Morrow Yard pump before the house has to absorb it without Rowan.";
 const ROWAN_NOTEBOOK_YARD_PLAN =

@@ -1512,8 +1512,7 @@ const OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_NARRATIVES: Record<
     clue:
       "Evidence: Ada's field note says Rowan asked directly, stayed through lunch, and left Kettle & Lamp with pay and a clearer obligation.",
     confidence: "Confirmed by Ada's field note and the paid tea shift.",
-    uncertainty:
-      "Which current opening deserves Rowan's recovered hour: North Crane Yard work, the Morrow Yard pump, or another lead?",
+    uncertainty: "What still deserves Rowan's attention after he recovers?",
   },
   "belief-jo-tools": {
     clue:
@@ -1546,7 +1545,7 @@ const OBJECTIVE_ROUTE_NOTEBOOK_BELIEF_NARRATIVES: Record<
 const OBJECTIVE_ROUTE_NOTEBOOK_RECOVERY_PLANS = {
   "nia-block": "Recover before following Nia's block-jam lead.",
   "post-afternoon":
-    "Rest at Morrow House long enough to recover, then choose the yard work, pump, or current opening that still matters.",
+    "Rest at Morrow House long enough to recover, then weigh only what is still live.",
 } satisfies Record<ObjectiveRouteNotebookRecoveryPlanKind, string>;
 
 const OBJECTIVE_ROUTE_NOTEBOOK_STALE_ENTRY_FALLBACK =
@@ -4555,10 +4554,16 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
     homeReturnMoveReasons: [
       {
         priority: 30,
-        reason: ({ homeName }, { world }) =>
-          world.firstAfternoon?.completedAt
-            ? `${homeName} is where Rowan can recover enough to move cleanly, keep tonight's room safe, and let Ada's field-note standing land before choosing the yard work, pump, or another current opening.`
-            : `${homeName} is where Rowan can recover enough to move cleanly before taking another commitment.`,
+        reason: ({ homeName }, { world }) => {
+          if (!world.firstAfternoon?.completedAt) {
+            return `${homeName} is where Rowan can recover enough to move cleanly before taking another commitment.`;
+          }
+
+          const decide = world.firstAfternoon.fieldNote
+            ? "use the recorded field note to decide"
+            : "take stock before deciding";
+          return `${homeName} is where Rowan can recover, keep tonight's room safe, and ${decide} what still needs attention.`;
+        },
         when: (input, context) => recoveryHomeReturnReasonApplies(input, context),
       },
     ],

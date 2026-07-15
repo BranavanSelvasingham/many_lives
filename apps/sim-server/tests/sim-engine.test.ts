@@ -1515,7 +1515,7 @@ describe("SimulationEngine street slice", () => {
     });
   });
 
-  it("grounds post-first-afternoon recovery returns to Morrow House", async () => {
+  it("keeps post-first-afternoon recovery advice off closed approaches", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame(
       "game-post-first-afternoon-recovery-return-copy",
@@ -1547,11 +1547,31 @@ describe("SimulationEngine street slice", () => {
     world.player.energy = 18;
     world.player.reputation.morrow_house = 2;
     const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
-    if (teaJob) {
-      teaJob.accepted = true;
-      teaJob.completed = true;
-      teaJob.discovered = true;
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    expect(teaJob).toBeDefined();
+    expect(yardJob).toBeDefined();
+    expect(pump).toBeDefined();
+    if (!teaJob || !yardJob || !pump) {
+      throw new Error("Missing seeded recovery approaches");
     }
+    teaJob.accepted = false;
+    teaJob.completed = true;
+    teaJob.discovered = true;
+    teaJob.missed = false;
+    yardJob.accepted = false;
+    yardJob.completed = true;
+    yardJob.discovered = true;
+    yardJob.missed = false;
+    pump.discovered = true;
+    pump.resolvedAt = "Day 1, 16:18";
+    pump.resolvedByNpcId = "npc-mara";
+    pump.status = "resolved";
+    pump.urgency = 0;
+    expect(world.firstAfternoon.fieldNote).toBeDefined();
+    expect(teaJob).toMatchObject({ completed: true, missed: false });
+    expect(yardJob).toMatchObject({ completed: true, missed: false });
+    expect(pump).toMatchObject({ status: "resolved", urgency: 0 });
 
     world = await engine.runCommand(world, {
       type: "set_objective",
@@ -1598,9 +1618,15 @@ describe("SimulationEngine street slice", () => {
       mode: "moving",
       targetLocationId: "boarding-house",
     });
-    expect(world.rowanAutonomy.intent?.reason).toMatch(
-      /recover enough to move cleanly|keep tonight's room safe|field-note standing/i,
+    expect(world.rowanAutonomy.intent?.reason).toBe(
+      "Morrow House is where Rowan can recover, keep tonight's room safe, and use the recorded field note to decide what still needs attention.",
     );
+    expect(
+      [
+        world.rowanAutonomy.detail,
+        world.rowanAutonomy.intent?.reason,
+      ].join(" "),
+    ).not.toMatch(/Ada|Kettle|tea|cup-and-counter|yard|pump/i);
     expect(
       [
         world.rowanAutonomy.label,

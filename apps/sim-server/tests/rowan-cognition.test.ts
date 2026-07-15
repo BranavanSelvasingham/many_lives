@@ -253,10 +253,10 @@ describe("Rowan cognition Notebook authority", () => {
       actionId: "enter:boarding-house",
       autoContinue: true,
       detail:
-        "Morrow House is the closest place Rowan can recover before choosing the yard work, pump, or another current opening.",
+        "Morrow House is the closest place Rowan can recover before deciding what still needs attention.",
       intent: {
         reason:
-          "Morrow House is the closest place Rowan can recover before choosing the yard work, pump, or another current opening.",
+          "Morrow House is the closest place Rowan can recover before deciding what still needs attention.",
         signals: ["Goal: Recover enough to move cleanly again."],
       },
       key: "objective:rest:return-home",
@@ -274,10 +274,10 @@ describe("Rowan cognition Notebook authority", () => {
     expect(notebook.clue).toMatch(/Asked Ada|Kettle & Lamp|cup-and-counter/i);
     expect(notebook.confidence).toMatch(/Confirmed|field note|paid tea shift/i);
     expect(notebook.plan).toBe(
-      "Rest at Morrow House long enough to recover, then choose the yard work, pump, or current opening that still matters.",
+      "Rest at Morrow House long enough to recover, then weigh only what is still live.",
     );
     expect(notebook.uncertainty).toBe(
-      "Which current opening deserves Rowan's recovered hour: North Crane Yard work, the Morrow Yard pump, or another lead?",
+      "What still deserves Rowan's attention after he recovers?",
     );
     expectNoStaleOpeningNotebookAuthority(notebook);
     expect(notebook.authority.beliefId).toBe(
