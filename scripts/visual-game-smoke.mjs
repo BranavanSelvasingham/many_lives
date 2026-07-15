@@ -2806,6 +2806,70 @@ function assertKettleMapAgencyTargetCorrelation(mapAgency, label) {
   return true;
 }
 
+function hasGroundedNearMorrowEntryAgency(mapAgency, browserProbe) {
+  const target = mapAgency?.target;
+  const carryForward = browserProbe?.openingActionCarryForward;
+  return Boolean(
+    mapAgency?.currentLocation?.id === "boarding-house" &&
+      browserProbe?.location?.id === "boarding-house" &&
+      target?.locationId === "boarding-house" &&
+      target?.actionId === "enter:boarding-house" &&
+      (target.source === "autonomy" || target.source === "pending-move") &&
+      pointInsideBounds(target, OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS) &&
+      mapAgency.labels?.targetHiddenReason === "player-near-target" &&
+      mapAgency.labels?.targetVisible === false &&
+      carryForward?.selectedActionId === "enter:boarding-house" &&
+      /Enter Morrow House|stepping inside Morrow House/i.test(
+        [mapAgency.intent, mapAgency.detail].filter(Boolean).join(" "),
+      ),
+  );
+}
+
+function assertGroundedNearMorrowEntryAgencyGuard() {
+  const mapAgency = {
+    currentLocation: { id: "boarding-house" },
+    detail: "Rowan is stepping inside Morrow House to ask Mara.",
+    intent: "Enter Morrow House",
+    labels: {
+      targetHiddenReason: "player-near-target",
+      targetVisible: false,
+    },
+    target: {
+      actionId: "enter:boarding-house",
+      locationId: "boarding-house",
+      source: "autonomy",
+      x: 222,
+      y: 584,
+    },
+  };
+  const browserProbe = {
+    location: { id: "boarding-house" },
+    openingActionCarryForward: {
+      selectedActionId: "enter:boarding-house",
+    },
+  };
+
+  assert.equal(
+    hasGroundedNearMorrowEntryAgency(mapAgency, browserProbe),
+    true,
+    "A near-door Morrow entry transition should remain valid map agency when its redundant target label is suppressed.",
+  );
+  assert.equal(
+    hasGroundedNearMorrowEntryAgency(
+      {
+        ...mapAgency,
+        labels: {
+          ...mapAgency.labels,
+          targetHiddenReason: "missing-target",
+        },
+      },
+      browserProbe,
+    ),
+    false,
+    "Missing-target suppression must not satisfy the near-door Morrow entry contract.",
+  );
+}
+
 function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = null) {
   assert.ok(artifact, `${label}: missing visible decision artifact payload.`);
   assert.ok(
@@ -4006,8 +4070,13 @@ async function runFreshAutoplayStartCheck(session) {
       openingMapAgency,
       "fresh autoplay opening progressed",
     );
+    const mapShowsGroundedMorrowEntry = hasGroundedNearMorrowEntryAgency(
+      openingMapAgency,
+      openingProbe,
+    );
     assert.ok(
       mapShowsKettle ||
+        mapShowsGroundedMorrowEntry ||
         Boolean(openingProbe.activeConversation?.npcId) ||
         openingProbe.location?.id === "tea-house",
       `fresh autoplay opening already progressed, but map agency did not show the next first-run target: ${JSON.stringify(
@@ -5456,6 +5525,7 @@ async function runInteriorCameraCheck(session) {
 async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
   assertOpeningActionCarryForwardContractGuard();
+  assertGroundedNearMorrowEntryAgencyGuard();
   assertDecisionArtifactReadabilityWaitRegression();
   if (RUN_RESPONSIVE_DECISION_GUARD_ONLY) {
     process.stdout.write(
