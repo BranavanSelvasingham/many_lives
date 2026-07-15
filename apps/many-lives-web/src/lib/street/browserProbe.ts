@@ -148,6 +148,11 @@ export type StreetBrowserMovementDiagnostics = {
 };
 
 export type StreetBrowserProbeSnapshot = {
+  autoContinueBeatTiming?: {
+    intendedDelayMs: number;
+    key: string;
+    startedAtMs: number;
+  } | null;
   busyLabel?: string | null;
   movement?: StreetBrowserMovementDiagnostics;
   optimisticPlayerPosition?: {
@@ -801,6 +806,8 @@ export function buildStreetBrowserProbeJson({
   rowanRail,
   snapshot,
 }: BuildStreetBrowserProbeJsonOptions) {
+  const appMonotonicMs =
+    typeof performance === "undefined" ? null : performance.now();
   const currentLocation = game.locations.find(
     (location) => location.id === game.player.currentLocationId,
   );
@@ -865,8 +872,23 @@ export function buildStreetBrowserProbeJson({
       totalMinutes: game.clock.totalMinutes,
     },
     timing: {
-      appMonotonicMs:
-        typeof performance === "undefined" ? null : performance.now(),
+      appMonotonicMs,
+      autoContinue: snapshot.autoContinueBeatTiming
+        ? {
+            elapsedMs:
+              appMonotonicMs === null
+                ? null
+                : Math.max(
+                    0,
+                    appMonotonicMs -
+                      snapshot.autoContinueBeatTiming.startedAtMs,
+                  ),
+            intendedDelayMs:
+              snapshot.autoContinueBeatTiming.intendedDelayMs,
+            key: snapshot.autoContinueBeatTiming.key,
+            startedAtMs: snapshot.autoContinueBeatTiming.startedAtMs,
+          }
+        : null,
     },
     gameId: game.id,
     visualEventCues: snapshot.visualEventCues ?? [],

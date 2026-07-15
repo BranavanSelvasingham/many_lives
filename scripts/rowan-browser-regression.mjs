@@ -155,6 +155,7 @@ const MORROW_SIDE_WORLD_MAX_X = 700;
 const KETTLE_SIDE_WORLD_MIN_X = 900;
 const MAP_AGENCY_TARGET_LABEL_MAX_OFFSET = 120;
 const OUTDOOR_ROUTE_ARRIVAL_CONTINUITY_MAX_DISTANCE = 8;
+const INHABIT_CAMERA_MEANINGFUL_PAN_RANGE_PX = 24;
 const POST_FIRST_AFTERNOON_RECOVERY_ENERGY = 35;
 const FIRST_AFTERNOON_READABILITY_CHECKPOINT_MS = 5_500;
 const FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS = 7_000;
@@ -10261,7 +10262,10 @@ function inhabitCameraHasMeaningfulPanRange(probe) {
     return true;
   }
 
-  return range.x >= 8 || range.y >= 8;
+  return (
+    range.x >= INHABIT_CAMERA_MEANINGFUL_PAN_RANGE_PX ||
+    range.y >= INHABIT_CAMERA_MEANINGFUL_PAN_RANGE_PX
+  );
 }
 
 function buildWatchPacingAudit(clickLog) {
@@ -10269,9 +10273,15 @@ function buildWatchPacingAudit(clickLog) {
     .filter((entry) => entry.kind === "watched-auto-continue")
     .map((entry) => ({
       appDurationMs: entry.appDurationMs ?? null,
+      autoContinueElapsedAtProbeMs:
+        entry.autoContinueElapsedAtProbeMs ?? null,
+      autoContinueIntendedDelayMs:
+        entry.autoContinueIntendedDelayMs ?? null,
+      autoContinueKey: entry.autoContinueKey ?? null,
       beforeAutonomyLabel: entry.beforeAutonomyLabel ?? null,
       completionAutoContinue: Boolean(entry.completionAutoContinue),
       durationMs: entry.durationMs ?? null,
+      fullAppDurationMs: entry.fullAppDurationMs ?? null,
       milestone: entry.milestone,
       sequenceRunId: entry.sequenceRunId ?? null,
     }));
@@ -10285,18 +10295,35 @@ function buildWatchPacingAudit(clickLog) {
       !entry.completionAutoContinue && !openingFirstActionBeats.includes(entry),
   );
   const ordinaryDurations = ordinaryBeats
-    .map((entry) => entry.durationMs)
+    .map((entry) => entry.fullAppDurationMs)
+    .filter((duration) => typeof duration === "number");
+  const ordinaryIntendedDelays = ordinaryBeats
+    .map((entry) => entry.autoContinueIntendedDelayMs)
     .filter((duration) => typeof duration === "number");
   const readableFloorMs = 2_600;
   const measurementToleranceMs = 150;
   const measuredReadableFloorMs = readableFloorMs - measurementToleranceMs;
+  const missingOrdinaryTimingBeats = ordinaryBeats.filter(
+    (entry) =>
+      typeof entry.fullAppDurationMs !== "number" ||
+      typeof entry.autoContinueIntendedDelayMs !== "number",
+  );
   const shortOrdinaryBeats = ordinaryBeats.filter(
-    (entry) => (entry.durationMs ?? 0) < measuredReadableFloorMs,
+    (entry) =>
+      (typeof entry.fullAppDurationMs === "number" &&
+        entry.fullAppDurationMs < measuredReadableFloorMs) ||
+      (typeof entry.autoContinueIntendedDelayMs === "number" &&
+        entry.autoContinueIntendedDelayMs < measuredReadableFloorMs),
   );
 
   return {
+    missingOrdinaryTimingBeats,
     openingFirstActionBeats,
     ordinaryBeatCount: ordinaryBeats.length,
+    ordinaryMinIntendedDelayMs:
+      ordinaryIntendedDelays.length > 0
+        ? Math.min(...ordinaryIntendedDelays)
+        : null,
     ordinaryMinDurationMs:
       ordinaryDurations.length > 0 ? Math.min(...ordinaryDurations) : null,
     measuredReadableFloorMs,
@@ -10874,6 +10901,15 @@ function assertWatchPacingAudit(watchPacingAudit) {
     `Expected enough ordinary watch beats to judge pacing: ${watchPacingAudit.ordinaryBeatCount}.`,
   );
   assert.equal(
+    watchPacingAudit.missingOrdinaryTimingBeats.length,
+    0,
+    `Ordinary watch beats did not expose complete autoplay timing: ${JSON.stringify(
+      watchPacingAudit.missingOrdinaryTimingBeats,
+      null,
+      2,
+    )}`,
+  );
+  assert.equal(
     watchPacingAudit.shortOrdinaryBeats.length,
     0,
     `Ordinary watch beats advanced too quickly: ${JSON.stringify(
@@ -10885,7 +10921,12 @@ function assertWatchPacingAudit(watchPacingAudit) {
   assert.ok(
     (watchPacingAudit.ordinaryMinDurationMs ?? 0) >=
       watchPacingAudit.measuredReadableFloorMs,
-    `Ordinary watch-beat minimum dwell was below the ${watchPacingAudit.readableFloorMs}ms floor after ${watchPacingAudit.measurementToleranceMs}ms post-settle measurement tolerance: ${watchPacingAudit.ordinaryMinDurationMs}ms.`,
+    `Ordinary watch-beat minimum full dwell was below the ${watchPacingAudit.readableFloorMs}ms floor after ${watchPacingAudit.measurementToleranceMs}ms measurement tolerance: ${watchPacingAudit.ordinaryMinDurationMs}ms.`,
+  );
+  assert.ok(
+    (watchPacingAudit.ordinaryMinIntendedDelayMs ?? 0) >=
+      watchPacingAudit.measuredReadableFloorMs,
+    `Ordinary watch-beat minimum intended delay was below the ${watchPacingAudit.readableFloorMs}ms floor after ${watchPacingAudit.measurementToleranceMs}ms measurement tolerance: ${watchPacingAudit.ordinaryMinIntendedDelayMs}ms.`,
   );
 }
 
@@ -11851,6 +11892,15 @@ async function waitForInhabitSettled(session, label) {
       ) {
         return null;
       }
+      if (
+        probe.watchMode?.enabled &&
+        !probe.watchMode?.frozen &&
+        (probe.autonomy?.autoContinue ||
+          isFirstAfternoonCompletionPendingProbe(probe)) &&
+        !probe.timing?.autoContinue
+      ) {
+        return null;
+      }
       return probe;
     },
     75_000,
@@ -12750,6 +12800,13 @@ async function clickUntilInhabitMilestone({
         )}`,
       );
       const logEntry = {
+        autoContinueElapsedAtProbeMs:
+          probe.timing?.autoContinue?.elapsedMs ?? null,
+        autoContinueIntendedDelayMs:
+          probe.timing?.autoContinue?.intendedDelayMs ?? null,
+        autoContinueKey: probe.timing?.autoContinue?.key ?? null,
+        autoContinueStartedAtMs:
+          probe.timing?.autoContinue?.startedAtMs ?? null,
         beforeAutonomyLabel: probe.autonomy?.label ?? null,
         beforeClock: probe.clock,
         beforeLocation: probe.location,
@@ -12818,6 +12875,17 @@ async function clickUntilInhabitMilestone({
         typeof afterAppMonotonicMs === "number"
           ? Math.max(0, afterAppMonotonicMs - beforeAppMonotonicMs)
           : null;
+      logEntry.fullAppDurationMs =
+        typeof logEntry.autoContinueStartedAtMs === "number" &&
+        typeof afterAppMonotonicMs === "number"
+          ? Math.max(
+              0,
+              afterAppMonotonicMs - logEntry.autoContinueStartedAtMs,
+            )
+          : typeof logEntry.autoContinueElapsedAtProbeMs === "number" &&
+              typeof logEntry.appDurationMs === "number"
+            ? logEntry.autoContinueElapsedAtProbeMs + logEntry.appDurationMs
+            : null;
       await closeInhabitSupportPanel(session);
       continue;
     }

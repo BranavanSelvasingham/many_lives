@@ -570,6 +570,7 @@ function formatStreetRuntimeError(error: unknown, fallback: string) {
 
 type StreetAppSnapshot = {
   animatePlayerEntrance: boolean;
+  autoContinueBeatTiming: AutoContinueBeatTiming | null;
   busyLabel: string | null;
   error: string | null;
   game: StreetGameState | null;
@@ -588,6 +589,12 @@ type StreetAppSnapshot = {
   waypointTarget?: Point;
   visualSceneRefreshNonce: number;
   viewport: ViewportSize;
+};
+
+type AutoContinueBeatTiming = {
+  intendedDelayMs: number;
+  key: string;
+  startedAtMs: number;
 };
 
 type AdvanceObjectiveOptions = {
@@ -1011,6 +1018,8 @@ export function PhaserStreetGameApp() {
   const [rowanPlayback, setRowanPlayback] = useState<RowanPlaybackState>(
     createEmptyRowanPlaybackState(),
   );
+  const [autoContinueBeatTiming, setAutoContinueBeatTiming] =
+    useState<AutoContinueBeatTiming | null>(null);
   const [sceneOverrideVersion, setSceneOverrideVersion] = useState(0);
   const [optimisticPlayerPosition, setOptimisticPlayerPosition] =
     useState<Point | null>(null);
@@ -1027,10 +1036,8 @@ export function PhaserStreetGameApp() {
   const gameRef = useRef<StreetGameState | null>(null);
   const optimisticPlayerRef = useRef<Point | null>(null);
   const objectiveAutoContinueTimerRef = useRef<number | null>(null);
-  const autoContinueBeatStartedRef = useRef<{
-    key: string;
-    startedAtMs: number;
-  } | null>(null);
+  const autoContinueBeatStartedRef =
+    useRef<AutoContinueBeatTiming | null>(null);
   const pendingVisualGameUpdateRef = useRef<PendingVisualGameUpdate | null>(
     null,
   );
@@ -1286,6 +1293,7 @@ export function PhaserStreetGameApp() {
       setGame(null);
       gameRef.current = null;
       autoContinueBeatStartedRef.current = null;
+      setAutoContinueBeatTiming(null);
       setRowanPlayback(createEmptyRowanPlaybackState());
       publishWaypoint(null);
       return;
@@ -1559,8 +1567,11 @@ export function PhaserStreetGameApp() {
       ? isFirstAfternoonCompletionAcknowledgementPending(game)
       : false;
     const autoContinueKey = buildWatchModeAdvanceKey(game);
-    if (!autoContinueKey) {
+    if (autoContinueBeatStartedRef.current?.key !== autoContinueKey) {
       autoContinueBeatStartedRef.current = null;
+      setAutoContinueBeatTiming((current) =>
+        current?.key === autoContinueKey ? current : null,
+      );
     }
     if (
       lastObjectiveAutoContinueKeyRef.current &&
@@ -1595,14 +1606,29 @@ export function PhaserStreetGameApp() {
       return;
     }
 
-    let beatStarted = autoContinueBeatStartedRef.current;
-    if (beatStarted?.key !== autoContinueKey) {
-      beatStarted = { key: autoContinueKey, startedAtMs: performance.now() };
-      autoContinueBeatStartedRef.current = beatStarted;
+    const intendedDelayMs = autoContinueDelayMsForBeat(game);
+    let beatTiming = autoContinueBeatStartedRef.current;
+    if (beatTiming?.key !== autoContinueKey) {
+      beatTiming = {
+        intendedDelayMs,
+        key: autoContinueKey,
+        startedAtMs: performance.now(),
+      };
+      autoContinueBeatStartedRef.current = beatTiming;
+    } else if (beatTiming.intendedDelayMs !== intendedDelayMs) {
+      beatTiming = { ...beatTiming, intendedDelayMs };
+      autoContinueBeatStartedRef.current = beatTiming;
     }
+    setAutoContinueBeatTiming((current) =>
+      current?.key === beatTiming.key &&
+      current.startedAtMs === beatTiming.startedAtMs &&
+      current.intendedDelayMs === beatTiming.intendedDelayMs
+        ? current
+        : beatTiming,
+    );
     const delayMs = remainingAutoplayDelayMs(
-      autoContinueDelayMsForBeat(game),
-      beatStarted?.key === autoContinueKey ? beatStarted.startedAtMs : null,
+      intendedDelayMs,
+      beatTiming.startedAtMs,
       performance.now(),
     );
 
@@ -1702,6 +1728,10 @@ export function PhaserStreetGameApp() {
 
   const snapshot = useMemo<StreetAppSnapshot>(
     () => ({
+      autoContinueBeatTiming:
+        autoContinueBeatTiming?.key === buildWatchModeAdvanceKey(game)
+          ? autoContinueBeatTiming
+          : null,
       busyLabel,
       error,
       game,
@@ -1723,6 +1753,7 @@ export function PhaserStreetGameApp() {
       viewport,
     }),
     [
+      autoContinueBeatTiming,
       busyLabel,
       error,
       game,
@@ -4120,6 +4151,23 @@ function installStreetProbeAccessor(root: HTMLDivElement) {
     if (!payload) {
       return payload;
     }
+
+    const appMonotonicMs = performance.now();
+    const timing =
+      payload.timing && typeof payload.timing === "object"
+        ? (payload.timing as Record<string, unknown>)
+        : {};
+    timing.appMonotonicMs = appMonotonicMs;
+    if (timing.autoContinue && typeof timing.autoContinue === "object") {
+      const autoContinue = timing.autoContinue as Record<string, unknown>;
+      if (typeof autoContinue.startedAtMs === "number") {
+        autoContinue.elapsedMs = Math.max(
+          0,
+          appMonotonicMs - autoContinue.startedAtMs,
+        );
+      }
+    }
+    payload.timing = timing;
 
     const mapAgencyScript = root.querySelector<HTMLScriptElement>(
       "#ml-browser-map-agency-probe",
