@@ -7864,11 +7864,17 @@ function buildIndependentNpcActionEvidence(moments, worldPressureAudit = null) {
     if (surfacedByKey.has(key)) {
       continue;
     }
+    const firstObservedAction = actionsByKey.get(key);
     surfacedByKey.set(key, {
       ...surfaced,
       surfaceDelayMinutes: minutesBetweenIso(
         independentNpcActionOccurredAt(surfaced),
         moment.clock?.iso,
+      ),
+      surfacedAtFirstObservedMoment: Boolean(
+        firstObservedAction &&
+          firstObservedAction.firstObservedLabel === moment.label &&
+          firstObservedAction.firstObservedClock?.iso === moment.clock?.iso
       ),
       firstSurfacedClock: moment.clock ?? null,
       firstSurfacedLabel: moment.label ?? null,
@@ -7913,6 +7919,17 @@ function minutesBetweenIso(fromIso, toIso) {
   }
 
   return Math.round((toTime - fromTime) / 60_000);
+}
+
+function independentNpcSurfaceIsTimely(action) {
+  return Boolean(
+    isIndependentLocalAction(action) &&
+      action.surfaceDelayMinutes !== null &&
+      action.surfaceDelayMinutes >= 0 &&
+      (action.surfaceDelayMinutes <=
+        INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES ||
+        action.surfacedAtFirstObservedMoment === true),
+  );
 }
 
 function assertIndependentNpcActionEvidence(evidence) {
@@ -7969,15 +7986,8 @@ function assertIndependentNpcActionEvidence(evidence) {
     )}`,
   );
   assert.ok(
-    evidence.surfacedActions.some(
-      (action) =>
-        isIndependentLocalAction(action) &&
-        action.surfaceDelayMinutes !== null &&
-        action.surfaceDelayMinutes >= 0 &&
-        action.surfaceDelayMinutes <=
-          INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES,
-    ),
-    `Independent local rail beats must surface within ${INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES} sim minutes of their action timestamp. Evidence: ${JSON.stringify(
+    evidence.surfacedActions.some(independentNpcSurfaceIsTimely),
+    `Independent local rail beats must surface within ${INDEPENDENT_NPC_SURFACE_MAX_DELAY_MINUTES} sim minutes of their action timestamp or at the first observable moment after a sim-time jump. Evidence: ${JSON.stringify(
       evidence,
       null,
       2,
@@ -13322,6 +13332,48 @@ function assertIndependentNpcSurfaceRefreshGuard() {
     }),
     false,
     "A captured independent-action rail beat must not trigger a redundant refresh wait.",
+  );
+  const jumpedAction = {
+    actionKind: "problem_resolution",
+    actorNpcId: "npc-mara",
+    afterStatus: "resolved",
+    beforeStatus: "active",
+    locationId: "courtyard",
+    occurredAt: "2026-03-21T17:33:00.000Z",
+    playerFacingSummary: "Mara contained the leaking hand pump.",
+    problemId: "problem-pump",
+    problemTitle: "Leaking hand pump",
+    resolverName: "Mara",
+    resolverNpcId: "npc-mara",
+    subjectId: "problem-pump",
+  };
+  const jumpedEvidence = buildIndependentNpcActionEvidence([
+    {
+      clock: { iso: "2026-03-21T18:23:00.000Z" },
+      independentNpcActions: [jumpedAction],
+      independentNpcSurface: jumpedAction,
+      label: "independent-npc-resolution",
+      screenshot: "independent-npc-resolution.png",
+    },
+  ]);
+  assert.equal(
+    jumpedEvidence.surfacedActions[0]?.surfacedAtFirstObservedMoment,
+    true,
+    "Independent-action evidence must record a rail beat shown at its first observable moment.",
+  );
+  assert.equal(
+    independentNpcSurfaceIsTimely(jumpedEvidence.surfacedActions[0]),
+    true,
+    "An independent action created during a sim-time jump may surface at the first browser-observable moment after that jump.",
+  );
+  assert.equal(
+    independentNpcSurfaceIsTimely({
+      ...jumpedAction,
+      surfaceDelayMinutes: 50,
+      surfacedAtFirstObservedMoment: false,
+    }),
+    false,
+    "A genuinely late independent-action surface must still fail the browser evidence gate.",
   );
 }
 
