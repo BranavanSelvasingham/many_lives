@@ -31,6 +31,10 @@ const APP_READY_TIMEOUT_MS = Number(
 const AUTOPLAY_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_AUTOPLAY_START_TIMEOUT_MS ?? "20000",
 );
+const AUTOPLAY_NEAR_ARRIVAL_GRACE_MS = Number(
+  process.env.MANY_LIVES_VISUAL_AUTOPLAY_NEAR_ARRIVAL_GRACE_MS ?? "8000",
+);
+const AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS = 0.95;
 const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = 8_000;
 const RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT = 3;
 const RUN_RESPONSIVE_DECISION_GUARD_ONLY =
@@ -2680,6 +2684,51 @@ function assertOpeningActionCarryForwardContractGuard() {
       "opening route progress regression",
     ),
   );
+  assert.equal(
+    openingActionNeedsNearArrivalGrace({
+      movement: {
+        playerRoute: {
+          active: true,
+          legal: true,
+          progress: 0.974,
+          reachesDestination: true,
+        },
+      },
+      openingActionCarryForward: {
+        completionEvidence: ["route-progress"],
+        phase: "opening_in_progress",
+        requiredVisibleInput: false,
+        selectedActionId: "enter:boarding-house",
+        status: "in_progress",
+        targetLocationId: "boarding-house",
+        watchMode: { autoplayEnabled: true, enabled: true, frozen: false },
+      },
+    }),
+    true,
+    "a legal near-complete opening route should receive bounded hosted-renderer grace",
+  );
+  assert.equal(
+    openingActionNeedsNearArrivalGrace({
+      movement: {
+        playerRoute: {
+          active: true,
+          legal: true,
+          progress: 0.94,
+          reachesDestination: true,
+        },
+      },
+      openingActionCarryForward: {
+        phase: "opening_in_progress",
+        requiredVisibleInput: false,
+        selectedActionId: "enter:boarding-house",
+        status: "in_progress",
+        targetLocationId: "boarding-house",
+        watchMode: { autoplayEnabled: true, enabled: true, frozen: false },
+      },
+    }),
+    false,
+    "an opening route below the near-arrival threshold must not weaken the pacing deadline",
+  );
 
   const mutateCarryForward = (changes) => ({
     openingActionCarryForward: {
@@ -2745,6 +2794,25 @@ function openingActionHasAutoplayProgressed(browserProbe) {
       carryForward.requiredVisibleInput === false &&
       (carryForward.progressedBeyondOpening ||
         openingActionProgressEvidence(carryForward).length > 0),
+  );
+}
+
+function openingActionNeedsNearArrivalGrace(browserProbe) {
+  const carryForward = browserProbe?.openingActionCarryForward;
+  const route = browserProbe?.movement?.playerRoute;
+  return Boolean(
+    carryForward?.status === "in_progress" &&
+      carryForward.phase === "opening_in_progress" &&
+      carryForward.selectedActionId === "enter:boarding-house" &&
+      carryForward.targetLocationId === "boarding-house" &&
+      carryForward.requiredVisibleInput === false &&
+      carryForward.watchMode?.enabled &&
+      !carryForward.watchMode?.frozen &&
+      route?.active &&
+      route.legal &&
+      route.reachesDestination &&
+      Number.isFinite(route.progress) &&
+      route.progress >= AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS,
   );
 }
 
@@ -4051,27 +4119,57 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
     return openingProbe;
   }
 
-  return waitFor(
-    async () => {
-      const probe = await session.readBrowserProbe();
-      if (!probe?.watchMode?.enabled || probe.watchMode?.frozen) {
-        return false;
-      }
+  const readAdvancedProbe = async () => {
+    const probe = await session.readBrowserProbe();
+    if (!probe?.watchMode?.enabled || probe.watchMode?.frozen) {
+      return false;
+    }
 
-      const advanced =
-        openingActionHasAutoplayProgressed(probe) ||
-        probe.clock?.totalMinutes > openingProbe.clock?.totalMinutes ||
-        probe.autonomy?.key !== openingProbe.autonomy?.key ||
-        probe.location?.id !== openingProbe.location?.id ||
-        Boolean(probe.activeConversation?.npcId);
+    const advanced =
+      openingActionHasAutoplayProgressed(probe) ||
+      probe.clock?.totalMinutes > openingProbe.clock?.totalMinutes ||
+      probe.autonomy?.key !== openingProbe.autonomy?.key ||
+      probe.location?.id !== openingProbe.location?.id ||
+      Boolean(probe.activeConversation?.npcId);
 
-      return advanced ? probe : false;
-    },
-    AUTOPLAY_START_TIMEOUT_MS,
-    `${label} did not leave the opening Watch Rowan begin state within ${AUTOPLAY_START_TIMEOUT_MS}ms. Opening state: ${JSON.stringify(
-      compactDecisionArtifactProbeDiagnostic(openingProbe),
-    )}`,
-  );
+    return advanced ? probe : false;
+  };
+  const openingDiagnostic = compactDecisionArtifactProbeDiagnostic(openingProbe);
+
+  try {
+    return await waitFor(
+      readAdvancedProbe,
+      AUTOPLAY_START_TIMEOUT_MS,
+      `${label} did not leave the opening Watch Rowan begin state within ${AUTOPLAY_START_TIMEOUT_MS}ms. Opening state: ${JSON.stringify(
+        openingDiagnostic,
+      )}`,
+    );
+  } catch (error) {
+    const latestProbe = await session.readBrowserProbe();
+    if (
+      !openingActionNeedsNearArrivalGrace(openingProbe) &&
+      !openingActionNeedsNearArrivalGrace(latestProbe)
+    ) {
+      throw new Error(
+        `${error.message} Latest state: ${JSON.stringify(
+          compactDecisionArtifactProbeDiagnostic(latestProbe),
+        )}`,
+        { cause: error },
+      );
+    }
+
+    return waitFor(
+      readAdvancedProbe,
+      AUTOPLAY_NEAR_ARRIVAL_GRACE_MS,
+      `${label} reached a legal route at ${Math.round(
+        AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS * 100,
+      )}%+ but did not complete the autonomous opening transition within the additional ${AUTOPLAY_NEAR_ARRIVAL_GRACE_MS}ms. Opening state: ${JSON.stringify(
+        openingDiagnostic,
+      )}. Latest state: ${JSON.stringify(
+        compactDecisionArtifactProbeDiagnostic(latestProbe),
+      )}`,
+    );
+  }
 }
 
 async function runFreshAutoplayStartCheck(session) {
