@@ -97,3 +97,16 @@ test("Chrome startup retries once and records actionable diagnostics", () => {
   assert.match(source, /browser\.once\("exit", \(code, signal\) =>/);
   assert.match(source, /stderr: browserStderr\.trim\(\) \|\| null/);
 });
+
+test("browser evidence waits for readable rail geometry", () => {
+  assert.match(
+    source,
+    /async function waitForGameplayDom\(label, session, probe, game\)/,
+  );
+  assert.match(source, /await session\.waitForAnimationFrames\(2\)/);
+  assert.match(
+    source,
+    /assertRailReadability\(label, game, probe, lastDom\)/,
+  );
+  assert.match(source, /Last readability error:/);
+});

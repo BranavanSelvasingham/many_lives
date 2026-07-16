@@ -5469,20 +5469,28 @@ function assertProbeAuditability(label, game, probe) {
   }
 }
 
-async function waitForGameplayDom(label, session, probe) {
+async function waitForGameplayDom(label, session, probe, game) {
   const expectedLabel = probe.autonomy.label.slice(0, 28);
   const expectedPattern = new RegExp(escapeRegExp(expectedLabel), "i");
   const startedAt = Date.now();
   let lastDom = null;
+  let lastReadabilityError = null;
 
   while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
     try {
+      await session.waitForAnimationFrames(2);
       lastDom = await session.readDomSnapshot();
-      if (
-        lastDom?.hasFrameworkErrorOverlay ||
-        expectedPattern.test(lastDom?.bodyText ?? "")
-      ) {
+      if (lastDom?.hasFrameworkErrorOverlay) {
         return lastDom;
+      }
+      if (expectedPattern.test(lastDom?.bodyText ?? "")) {
+        try {
+          assertRailReadability(label, game, probe, lastDom);
+          return lastDom;
+        } catch (error) {
+          lastReadabilityError =
+            error instanceof Error ? error.message : String(error);
+        }
       }
     } catch {}
 
@@ -5492,7 +5500,7 @@ async function waitForGameplayDom(label, session, probe) {
   assert.fail(
     `${label}: rendered UI did not catch up to the current Rowan beat "${expectedLabel}". Last DOM: ${
       lastDom?.bodyTextSample ?? "missing"
-    }`,
+    }. Last readability error: ${lastReadabilityError ?? "none"}`,
   );
 }
 
@@ -10559,7 +10567,7 @@ async function captureBrowserState({ game, index, label, session }) {
     allowPendingPlayback: true,
   });
   assertCityEventState(label, game);
-  const dom = await waitForGameplayDom(label, session, initialProbe);
+  const dom = await waitForGameplayDom(label, session, initialProbe, game);
   const probe = await refreshProbeForVisibleIndependentNpcSurface({
     label,
     probe: initialProbe,
