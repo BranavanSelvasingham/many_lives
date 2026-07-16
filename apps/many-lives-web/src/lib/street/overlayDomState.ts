@@ -159,20 +159,32 @@ export function restoreOverlayRenderState(
     const commandRailIdentityMatches =
       (state.scrollIdentityByKey.get("command-rail") ?? "") ===
       (commandRail.dataset.preserveScrollKey ?? "");
+    const railViewport = commandRail.closest<HTMLElement>(
+      "[data-rail-viewport]",
+    )?.dataset.railViewport;
+    const leadWithDirective =
+      railViewport !== "desktop" &&
+      (commandRailWasOpened || !commandRailIdentityMatches);
     if (commandRailWasOpened) {
       commandRail.scrollTop = 0;
+      ensureCommandRailDirectiveVisible(commandRail);
     } else if (!commandRailIdentityMatches) {
       scrollCommandRailToDirective(commandRail);
     } else if (state.commandRailNearBottom) {
       commandRail.scrollTop = commandRail.scrollHeight;
+      ensureCommandRailConversationVisible(commandRail);
     } else if (state.commandRailScrollTop !== null) {
       commandRail.scrollTop = Math.min(
         state.commandRailScrollTop,
         Math.max(commandRail.scrollHeight - commandRail.clientHeight, 0),
       );
     }
-    ensureCommandRailDirectiveVisible(commandRail);
-    ensureCommandRailConversationVisible(commandRail);
+    if (
+      !leadWithDirective &&
+      (commandRailWasOpened || !commandRailIdentityMatches)
+    ) {
+      ensureCommandRailConversationVisible(commandRail);
+    }
   }
 
   const transcript = root.querySelector<HTMLElement>(

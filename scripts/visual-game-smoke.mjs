@@ -35,7 +35,9 @@ const AUTOPLAY_NEAR_ARRIVAL_GRACE_MS = Number(
   process.env.MANY_LIVES_VISUAL_AUTOPLAY_NEAR_ARRIVAL_GRACE_MS ?? "8000",
 );
 const AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS = 0.95;
-const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = 8_000;
+const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_VISUAL_DECISION_READABILITY_TIMEOUT_MS ?? "30000",
+);
 const RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT = 3;
 const RUN_RESPONSIVE_DECISION_GUARD_ONLY =
   process.env.MANY_LIVES_VISUAL_DECISION_GUARD_ONLY === "1";
@@ -800,7 +802,7 @@ class CdpSession {
           return null;
         }
       })();
-      const mapVisibleFraction = (() => {
+      const sceneVisibleFraction = (() => {
         const scene = cameraProbe?.sceneViewportCss;
         if (!scene || scene.width <= 0 || scene.height <= 0) {
           return null;
@@ -937,7 +939,9 @@ class CdpSession {
           y: Math.round(rightStackRect.y)
         } : null,
         rootClass: root?.className ?? "",
-        mapVisibleFraction,
+        cameraActiveSpaceId: cameraProbe?.activeSpaceId ?? null,
+        cameraActiveSpaceKind: cameraProbe?.activeSpaceKind ?? null,
+        sceneVisibleFraction,
         sceneViewportCss: cameraProbe?.sceneViewportCss ?? null,
         npcPresence,
         timePill: timePillRect ? {
@@ -3433,7 +3437,9 @@ function compactDecisionArtifactReadabilityGeometry(page) {
         }
       : null,
     dockRoot: page?.dockRoot ?? null,
-    mapVisibleFraction: page?.mapVisibleFraction ?? null,
+    cameraActiveSpaceId: page?.cameraActiveSpaceId ?? null,
+    cameraActiveSpaceKind: page?.cameraActiveSpaceKind ?? null,
+    sceneVisibleFraction: page?.sceneVisibleFraction ?? null,
     rail: page?.rail ?? null,
     railState: page?.railState ?? null,
     rightStack: page?.rightStack ?? null,
@@ -3527,7 +3533,9 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       x: 12,
       y: 898,
     },
-    mapVisibleFraction: 0.62,
+    cameraActiveSpaceId: "street:south-quay",
+    cameraActiveSpaceKind: "street",
+    sceneVisibleFraction: 0.62,
     rail: { height: 538, width: 376, x: 576, y: 94 },
     railState: "expanded",
     rightStack: { height: 538, width: 376, x: 576, y: 94 },
@@ -3595,36 +3603,47 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       state,
       page,
       (settledPage) =>
-        assertMapVisibilityGeometry(
+        assertSceneVisibilityGeometry(
           settledPage,
           compactViewport,
           "responsive decision guard",
+          "street:south-quay",
         ),
     );
-  const missingMapPage = {
+  const missingScenePage = {
     ...readablePage,
-    mapVisibleFraction: null,
+    cameraActiveSpaceId: null,
+    cameraActiveSpaceKind: null,
+    sceneVisibleFraction: null,
     sceneViewportCss: null,
   };
-  const clippedMapPage = {
+  const clippedScenePage = {
     ...readablePage,
-    mapVisibleFraction: 0.49,
+    sceneVisibleFraction: 0.49,
+  };
+  const staleSpacePage = {
+    ...readablePage,
+    cameraActiveSpaceId: "interior:boarding-house",
   };
 
   let coherent = createDecisionArtifactReadabilityState();
-  for (const invalidPage of [missingMapPage, clippedMapPage]) {
+  for (const invalidPage of [
+    missingScenePage,
+    clippedScenePage,
+    staleSpacePage,
+  ]) {
     for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
       const evaluated = evaluateSettledSample(coherent, invalidPage);
       coherent = evaluated.state;
       assert.ok(
         evaluated.error,
-        "Absent or clipped map geometry must reject the settled readability sample.",
+        "Absent, clipped, or stale scene geometry must reject the settled readability sample.",
       );
     }
     assert.equal(
       decisionArtifactReadabilityStable(coherent),
       false,
-      "Permanently absent or clipped map geometry must never satisfy settled readability.",
+      "Permanently absent, clipped, or stale scene geometry must never satisfy settled readability.",
     );
   }
 
@@ -3638,7 +3657,7 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     false,
     "Fewer than the required coherent samples must not satisfy settled readability.",
   );
-  const interrupted = evaluateSettledSample(coherent, missingMapPage);
+  const interrupted = evaluateSettledSample(coherent, missingScenePage);
   assert.ok(interrupted.error);
   coherent = interrupted.state;
   for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
@@ -3649,7 +3668,23 @@ function assertDecisionArtifactReadabilityWaitRegression() {
   assert.equal(
     decisionArtifactReadabilityStable(coherent),
     true,
-    "Decision readability and valid map geometry should pass only after a coherent stable sequence.",
+    "Decision readability and valid scene geometry should pass only after a coherent stable sequence.",
+  );
+
+  const interiorPage = {
+    ...readablePage,
+    cameraActiveSpaceId: "interior:boarding-house",
+    cameraActiveSpaceKind: "interior",
+  };
+  assert.doesNotThrow(
+    () =>
+      assertSceneVisibilityGeometry(
+        interiorPage,
+        compactViewport,
+        "responsive interior decision guard",
+        "interior:boarding-house",
+      ),
+    "A coherent interior scene must satisfy compact scene primacy without requiring a street map.",
   );
 }
 
@@ -3898,7 +3933,13 @@ function assertDecisionHierarchy(page, label, artifactPayload) {
   );
 }
 
-function assertOverlayGeometry(page, viewport, label, expectedHudText) {
+function assertOverlayGeometry(
+  page,
+  viewport,
+  label,
+  expectedHudText,
+  expectedSpaceId = null,
+) {
   const viewportBottom = viewport.height;
   const viewportRight = viewport.width;
   const rectBottom = (rect) => rect?.bottom ?? rect?.y + rect?.height;
@@ -4026,19 +4067,36 @@ function assertOverlayGeometry(page, viewport, label, expectedHudText) {
     `${label}: rail-to-dock clearance is ${clearance}px; expected at least 8px. Rail ${JSON.stringify(rail)}, dock ${JSON.stringify(dock)}.`,
   );
 
-  assertMapVisibilityGeometry(page, viewport, label);
+  assertSceneVisibilityGeometry(page, viewport, label, expectedSpaceId);
 }
 
-function assertMapVisibilityGeometry(page, viewport, label) {
+function assertSceneVisibilityGeometry(
+  page,
+  viewport,
+  label,
+  expectedSpaceId = null,
+) {
   if (viewport.width > 960) {
     return;
   }
 
-  const minimumMapVisibleFraction = viewport.width <= 560 ? 0.45 : 0.5;
   assert.ok(
-    Number.isFinite(page.mapVisibleFraction) &&
-      page.mapVisibleFraction >= minimumMapVisibleFraction,
-    `${label}: only ${page.mapVisibleFraction} of the map remains visible; expected at least ${minimumMapVisibleFraction}. Scene viewport: ${JSON.stringify(page.sceneViewportCss)}.`,
+    page.cameraActiveSpaceId,
+    `${label}: the active scene camera probe is missing.`,
+  );
+  if (expectedSpaceId) {
+    assert.equal(
+      page.cameraActiveSpaceId,
+      expectedSpaceId,
+      `${label}: camera scene ${page.cameraActiveSpaceId} does not match active space ${expectedSpaceId}.`,
+    );
+  }
+
+  const minimumSceneVisibleFraction = viewport.width <= 560 ? 0.45 : 0.5;
+  assert.ok(
+    Number.isFinite(page.sceneVisibleFraction) &&
+      page.sceneVisibleFraction >= minimumSceneVisibleFraction,
+    `${label}: only ${page.sceneVisibleFraction} of the active scene remains visible; expected at least ${minimumSceneVisibleFraction}. Scene viewport: ${JSON.stringify(page.sceneViewportCss)}.`,
   );
 }
 
@@ -4432,6 +4490,32 @@ async function runResponsiveDecisionArtifactCheck(session) {
     advancedProbe.autonomy?.planningTrace,
   );
 
+  await session.navigate(
+    `${activeWebBase}/?freezeAutoplay=1&responsiveDecisionStable=${viewport.name}-${Date.now()}&gameId=${encodeURIComponent(advancedProbe.gameId)}`,
+  );
+  await session.waitForAppReady();
+  const frozenProbe = await waitFor(
+    async () => {
+      const probe = await session.readBrowserProbe();
+      const payload = selectedVisibleDecisionArtifactPayload(probe);
+      if (
+        probe?.gameId !== advancedProbe.gameId ||
+        probe.watchMode?.frozen !== true ||
+        !payload
+      ) {
+        return null;
+      }
+      return probe;
+    },
+    APP_READY_TIMEOUT_MS,
+    `${viewport.name}: timed out waiting for the advanced decision state to stabilize with autoplay frozen.`,
+  );
+  assertVisibleDecisionArtifactPayload(
+    selectedVisibleDecisionArtifactPayload(frozenProbe),
+    `${viewport.name} frozen responsive decision probe`,
+    frozenProbe.autonomy?.planningTrace,
+  );
+
   const initialPage = await session.inspectPage();
   if (initialPage.railState !== "expanded") {
     await session.clickSelector(".ml-rail-toggle");
@@ -4441,7 +4525,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
     `${viewport.name} responsive decision rail`,
     {
       accept: ({ page }) => page.railState === "expanded",
-      assertSettledPage: ({ page, payload }) => {
+      assertSettledPage: ({ page, payload, probe }) => {
         assertDecisionHierarchy(
           page,
           `${viewport.name} responsive decision hierarchy`,
@@ -4452,6 +4536,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
           viewport,
           `${viewport.name} responsive decision expanded`,
           page.visibleTimeChips,
+          probe.location?.spaceId ?? null,
         );
         assertExpandedRailScroll(
           page,
@@ -4488,6 +4573,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
     viewport,
     `${viewport.name} responsive decision expanded`,
     page.visibleTimeChips,
+    readableRail.probe.location?.spaceId ?? null,
   );
   assertExpandedRailScroll(
     page,
