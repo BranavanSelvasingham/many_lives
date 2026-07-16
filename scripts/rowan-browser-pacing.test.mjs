@@ -129,6 +129,7 @@ test("browser evidence waits for readable rail geometry", () => {
   );
   assert.match(source, /commandRail\.rect\?\.height >= 120/);
   assert.match(source, /assertRailReadabilityStateRegression\(\)/);
+  assert.match(source, /await session\.waitForVisualMoveSettlement\(/);
 });
 
 test("streaming conversation growth keeps following a readable exchange", () => {

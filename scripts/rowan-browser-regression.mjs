@@ -2269,6 +2269,37 @@ class CdpSession {
     );
   }
 
+  async waitForVisualMoveSettlement(previousGame, nextGame) {
+    const startedAt = Date.now();
+    let lastProbe = null;
+
+    while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
+      try {
+        const probe = await this.readBrowserProbe();
+        if (probe) {
+          lastProbe = probe;
+        }
+        if (
+          browserProbeMatchesGameCoreSnapshot(probe, nextGame) &&
+          probe?.movement?.playerRoute?.active !== true &&
+          probe?.visualPlayer?.isMovingToServerState !== true
+        ) {
+          return probe;
+        }
+      } catch {}
+
+      await sleep(PROBE_POLL_INTERVAL_MS);
+    }
+
+    throw new Error(
+      `Timed out waiting for visual movement to settle from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}. Last probe: ${JSON.stringify(
+        compactBrowserProbeForWait(lastProbe),
+        null,
+        2,
+      )}`,
+    );
+  }
+
   async captureScreenshot(targetPath) {
     const validateTextPaint = shouldValidateGameplayScreenshotPaint(targetPath);
     const readPaintProbe = validateTextPaint
@@ -16352,6 +16383,7 @@ async function main() {
             "utf8",
           );
         }
+        await session.waitForVisualMoveSettlement(previousGame, game);
       }
       gameRef.current = game;
       const capture =
