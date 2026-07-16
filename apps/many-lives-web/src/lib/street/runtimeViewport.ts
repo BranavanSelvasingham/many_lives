@@ -113,15 +113,20 @@ export function getCompactOverlayLayoutMetrics(
   const { height, width } = viewport;
   const { overlayInset } = getOverlayLayoutMetrics(viewport);
   const phone = isPhoneRailViewport(viewport);
+  const narrowCompact = !phone && width <= 720;
   const dockHeightBudget = phone ? 56 : 92;
   const railBottomOffset = dockHeightBudget + OVERLAY_CLEARANCE;
   const railCollapsedHeight = options.hasPrimaryAction
     ? phone
       ? 190
-      : 150
+      : narrowCompact
+        ? 190
+        : 150
     : phone
       ? 144
-      : 116;
+      : narrowCompact
+        ? 168
+        : 132;
   const maximumExpandedHeight = Math.max(
     railCollapsedHeight,
     height -

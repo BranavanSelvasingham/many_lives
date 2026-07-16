@@ -155,12 +155,7 @@ const OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS = {
   minX: 180,
   minY: 550,
 };
-const KETTLE_LAMP_LANDMARK_BOUNDS = {
-  maxX: 1550,
-  maxY: 700,
-  minX: 1138,
-  minY: 324,
-};
+const AUTHORED_LANDMARK_ARRIVAL_MAX_DISTANCE = 8;
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const KETTLE_SIDE_WORLD_MIN_X = 900;
 const MAP_AGENCY_TARGET_LABEL_MAX_OFFSET = 120;
@@ -1647,6 +1642,7 @@ class CdpSession {
       const commandRail = document.querySelector('[data-preserve-scroll="command-rail"]');
       const rowanDirective = document.querySelector('[data-rowan-directive="true"]');
       const decisionArtifact = document.querySelector("[data-visible-decision-artifact='true']");
+      const rightStack = document.querySelector(".ml-right-stack");
       const chatBubbles = Array.from(document.querySelectorAll(".ml-chat-bubble"));
       const latestChatBubble = chatBubbles.at(-1) ?? null;
       const chatRows = Array.from(document.querySelectorAll(".ml-chat-row"));
@@ -1790,6 +1786,18 @@ class CdpSession {
           visibleHeight >= minimumReadableHeight - 1
         );
       })();
+      const railSummaryElement = (selector) => {
+        const element = document.querySelector(selector);
+        return element
+          ? {
+              ariaExpanded: element.getAttribute("aria-expanded"),
+              clippedBy: clippingAncestorsFor(selector),
+              rect: rectFromElement(element),
+              text: element.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+              visible: isVisibleEnabled(element),
+            }
+          : null;
+      };
 
       return {
         actionLabels: Array.from(document.querySelectorAll("[data-action-id]"))
@@ -1863,6 +1871,18 @@ class CdpSession {
           focusWindow: rectFor(".ml-inline-focus-window"),
           latestChatExchange,
           latestChatBubble: rectFromElement(latestChatBubble),
+          railSummary: rightStack
+            ? {
+                name: railSummaryElement(".ml-rail-name"),
+                peek: railSummaryElement(".ml-rail-peek-label"),
+                rect: rectFromElement(rightStack),
+                state: rightStack.getAttribute("data-rail-state"),
+                status: railSummaryElement(".ml-rail-status"),
+                thought: railSummaryElement(".ml-rail-thought"),
+                toggle: railSummaryElement(".ml-rail-toggle"),
+                viewport: rightStack.getAttribute("data-rail-viewport"),
+              }
+            : null,
           rowanDirective: rectFromElement(rowanDirective),
           document: {
             clientHeight: document.documentElement.clientHeight,
@@ -8329,7 +8349,26 @@ function rectIsInside(inner, outer, tolerance = 2) {
 
 function assertRailReadability(label, game, probe, dom) {
   const commandRail = dom.layout?.commandRail;
-  if (commandRail && !game.activeConversation) {
+  const railSummary = dom.layout?.railSummary;
+  const collapsed = railSummary?.state === "collapsed";
+
+  if (collapsed) {
+    assertCollapsedRailSummaryReadability(label, game, railSummary);
+    assert.ok(
+      (commandRail?.rect?.height ?? 0) <= 2,
+      `${label}: collapsed compact rail exposed the full command body instead of preserving map primacy (${JSON.stringify(
+        commandRail,
+      )}).`,
+    );
+  }
+
+  if (!collapsed && commandRail && !game.activeConversation) {
+    assert.ok(
+      commandRail.rect?.height >= 120,
+      `${label}: expanded Rowan command rail collapsed below a readable height (${JSON.stringify(
+        commandRail,
+      )}).`,
+    );
     assert.notEqual(
       commandRail.anchorVisible,
       false,
@@ -8342,7 +8381,7 @@ function assertRailReadability(label, game, probe, dom) {
     );
   }
 
-  if (!game.activeConversation) {
+  if (!collapsed && !game.activeConversation) {
     assert.notEqual(
       probe.railVisibility?.commandRailAnchorVisible,
       false,
@@ -8350,7 +8389,7 @@ function assertRailReadability(label, game, probe, dom) {
     );
   }
 
-  if (!game.activeConversation) {
+  if (collapsed || !game.activeConversation) {
     return;
   }
 
@@ -8374,6 +8413,144 @@ function assertRailReadability(label, game, probe, dom) {
       )}).`,
     );
   }
+}
+
+function assertCollapsedRailSummaryReadability(label, game, summary) {
+  assert.notEqual(
+    summary.viewport,
+    "desktop",
+    `${label}: desktop rail must not use the collapsed summary contract.`,
+  );
+  assert.ok(summary.rect, `${label}: collapsed Rowan summary has no rail rectangle.`);
+
+  for (const [key, element] of Object.entries({
+    name: summary.name,
+    peek: summary.peek,
+    status: summary.status,
+    thought: summary.thought,
+    toggle: summary.toggle,
+  })) {
+    assert.ok(
+      element?.visible && element.rect && element.text,
+      `${label}: collapsed Rowan ${key} is missing or not visibly readable (${JSON.stringify(
+        element,
+      )}).`,
+    );
+    assert.ok(
+      rectIsInside(element.rect, summary.rect, 2),
+      `${label}: collapsed Rowan ${key} is clipped outside the summary rail (${JSON.stringify(
+        { element, rail: summary.rect },
+      )}).`,
+    );
+    assert.deepEqual(
+      element.clippedBy,
+      [],
+      `${label}: collapsed Rowan ${key} is clipped by an overflow ancestor (${JSON.stringify(
+        element.clippedBy,
+      )}).`,
+    );
+  }
+
+  assert.equal(
+    summary.name.text,
+    game.player.name,
+    `${label}: collapsed rail does not identify the active player.`,
+  );
+  assert.doesNotMatch(
+    summary.status.text,
+    /\b(?:null|undefined)\b/i,
+    `${label}: collapsed rail status leaked an unresolved value.`,
+  );
+  assert.ok(
+    summary.peek.text.length >= 8,
+    `${label}: collapsed Rowan context is too short to identify the active beat.`,
+  );
+  assert.ok(
+    summary.thought.text.length >= 8,
+    `${label}: collapsed Rowan thought is too short to communicate the active beat.`,
+  );
+  assert.equal(
+    normalizeVisibleActionText(summary.toggle.text),
+    "open",
+    `${label}: collapsed rail toggle must visibly offer OPEN.`,
+  );
+  assert.equal(
+    summary.toggle.ariaExpanded,
+    "false",
+    `${label}: collapsed rail toggle must expose aria-expanded=false.`,
+  );
+}
+
+function assertRailReadabilityStateRegression() {
+  const rect = (top, bottom, left = 565, right = 943) => ({
+    bottom,
+    height: bottom - top,
+    left,
+    right,
+    top,
+    width: right - left,
+  });
+  const element = (text, top, bottom, extra = {}) => ({
+    ariaExpanded: null,
+    clippedBy: [],
+    rect: rect(top, bottom, 579, 929),
+    text,
+    visible: true,
+    ...extra,
+  });
+  const summary = {
+    name: element("Rowan", 530, 554),
+    peek: element("First morning in South Quay", 580, 596),
+    rect: rect(510, 666),
+    state: "collapsed",
+    status: element("Watching Rowan", 558, 578),
+    thought: element("Rowan is stepping inside Morrow House to ask Mara.", 600, 632),
+    toggle: element("Open", 528, 566, { ariaExpanded: "false" }),
+    viewport: "compact",
+  };
+  const game = { activeConversation: null, player: { name: "Rowan" } };
+  const probe = {
+    rail: { status: "Watching Rowan" },
+    railVisibility: { commandRailAnchorVisible: false },
+  };
+  const collapsedDom = {
+    layout: {
+      commandRail: { anchorVisible: false, rect: rect(665, 666), scrollTop: 5 },
+      railSummary: summary,
+      rowanDirective: rect(675, 1041, 579, 929),
+    },
+  };
+
+  assert.doesNotThrow(
+    () => assertRailReadability("collapsed-regression", game, probe, collapsedDom),
+    "An intentional one-pixel collapsed command body must defer to its readable summary.",
+  );
+  assert.throws(
+    () =>
+      assertRailReadability("collapsed-clipped-regression", game, probe, {
+        layout: {
+          ...collapsedDom.layout,
+          railSummary: {
+            ...summary,
+            thought: { ...summary.thought, clippedBy: [{ element: ".ml-rail-shell" }] },
+          },
+        },
+      }),
+    /thought is clipped/,
+    "A clipped collapsed Rowan thought must fail readability.",
+  );
+  assert.throws(
+    () =>
+      assertRailReadability("expanded-regression", game, probe, {
+        layout: {
+          ...collapsedDom.layout,
+          commandRail: { anchorVisible: true, rect: rect(665, 666), scrollTop: 0 },
+          railSummary: { ...summary, state: "expanded" },
+        },
+      }),
+    /collapsed below a readable height/,
+    "A one-pixel expanded command rail must fail readability.",
+  );
 }
 
 function assertPlayerRouteDiagnostics(label, probe) {
@@ -8655,7 +8832,6 @@ function assertKettleTargetCueSpatialAuthority(byLabel, label) {
 }
 
 function assertSettledOutdoorPlayerLocationCorrelation({
-  bounds,
   entry,
   label,
   locationId,
@@ -8683,24 +8859,24 @@ function assertSettledOutdoorPlayerLocationCorrelation({
     locationId,
     `${label}: movement geometry current location must agree with ${locationName}.`,
   );
-  assert.ok(
-    pointInsideBounds(movementGeometry?.playerWorldPoint, bounds),
-    `${label}: settled movement geometry point is outside the authored ${locationName} region: ${JSON.stringify({
-      point: movementGeometry?.playerWorldPoint,
-      bounds,
-      movement: movementGeometry,
-    })}.`,
-  );
+  assertSettledPointUsesAuthoredLandmarkArrival({
+    movementGeometry,
+    point: movementGeometry?.playerWorldPoint,
+    pointSource: "movement geometry",
+    label,
+    locationId,
+    locationName,
+  });
 
   if (entry.camera?.playerWorldPoint) {
-    assert.ok(
-      pointInsideBounds(entry.camera.playerWorldPoint, bounds),
-      `${label}: settled camera/player point is outside the authored ${locationName} region: ${JSON.stringify({
-        point: entry.camera.playerWorldPoint,
-        bounds,
-        movement: movementGeometry,
-      })}.`,
-    );
+    assertSettledPointUsesAuthoredLandmarkArrival({
+      movementGeometry,
+      point: entry.camera.playerWorldPoint,
+      pointSource: "camera/player geometry",
+      label,
+      locationId,
+      locationName,
+    });
   }
 
   if (!entry.mapAgency) {
@@ -8712,12 +8888,60 @@ function assertSettledOutdoorPlayerLocationCorrelation({
     locationId,
     `${label}: map-agency current location must agree with ${locationName}.`,
   );
+  assertSettledPointUsesAuthoredLandmarkArrival({
+    movementGeometry,
+    point: entry.mapAgency.playerWorldPoint,
+    pointSource: "map-agency geometry",
+    label,
+    locationId,
+    locationName,
+  });
+}
+
+function assertSettledPointUsesAuthoredLandmarkArrival({
+  movementGeometry,
+  point,
+  pointSource,
+  label,
+  locationId,
+  locationName,
+}) {
   assert.ok(
-    pointInsideBounds(entry.mapAgency.playerWorldPoint, bounds),
-    `${label}: settled player map-agency point is outside the authored ${locationName} region: ${JSON.stringify({
-      point: entry.mapAgency.playerWorldPoint,
-      bounds,
-      movement: movementGeometry,
+    point,
+    `${label}: ${pointSource} must expose Rowan's settled world point.`,
+  );
+  const authoredArrivalPoints = movementGeometry?.authoredArrivalPoints ?? [];
+  assert.ok(
+    authoredArrivalPoints.length > 0,
+    `${label}: ${locationName} must expose authored door/frontage/approach coordinates.`,
+  );
+  assert.ok(
+    authoredArrivalPoints.some(
+      (arrival) =>
+        pointDistance(point, arrival) <= AUTHORED_LANDMARK_ARRIVAL_MAX_DISTANCE,
+    ),
+    `${label}: settled ${pointSource} point is not at an authored ${locationName} door/frontage/approach: ${JSON.stringify({
+      authoredArrivalPoints,
+      point,
+    })}.`,
+  );
+
+  const competingLandmarkFootprints =
+    movementGeometry?.competingLandmarkFootprints ?? [];
+  assert.ok(
+    competingLandmarkFootprints.length > 0,
+    `${label}: ${locationName} must expose competing authored landmark footprints.`,
+  );
+  const overlappingLandmarks = competingLandmarkFootprints
+    .filter(({ bounds }) => pointInsideBounds(point, bounds))
+    .map(({ locationId: competingLocationId }) => competingLocationId);
+  assert.deepEqual(
+    overlappingLandmarks,
+    [],
+    `${label}: settled ${pointSource} point for ${locationId} overlaps a competing landmark footprint: ${JSON.stringify({
+      competingLandmarkFootprints,
+      overlappingLandmarks,
+      point,
     })}.`,
   );
 }
@@ -10327,6 +10551,25 @@ function assertRectInsideRect(label, rect, containerRect, name, containerName) {
   );
 }
 
+function assertRectHorizontallyInsideRect(
+  label,
+  rect,
+  containerRect,
+  name,
+  containerName,
+) {
+  assert.ok(rect, `${label}: missing ${name} layout bounds.`);
+  assert.ok(containerRect, `${label}: missing ${containerName} layout bounds.`);
+
+  assert.ok(
+    rect.left >= containerRect.left - 1 &&
+      rect.right <= containerRect.right + 1,
+    `${label}: ${name} overflows ${containerName} horizontally. ${name}=${JSON.stringify(
+      rect,
+    )} ${containerName}=${JSON.stringify(containerRect)}`,
+  );
+}
+
 function assertNoAncestorClipping(label, clippedBy, name) {
   assert.deepEqual(
     clippedBy ?? [],
@@ -10414,13 +10657,31 @@ function assertCriticalVisualCoherence(label, dom, options = {}) {
       "right rail",
     );
 
-    for (const fieldNote of layout.fieldNotes ?? []) {
-      assertRectInsideRect(
+    assertRectInsideRect(
+      label,
+      layout.focusBody,
+      layout.focusWindow,
+      "focus body",
+      "focus panel",
+    );
+    const fieldNotes = layout.fieldNotes ?? [];
+    for (const fieldNote of fieldNotes) {
+      assertRectHorizontallyInsideRect(
         label,
         fieldNote.rect,
-        layout.focusWindow,
+        layout.focusBody,
         `field note ${fieldNote.key ?? "unknown"}`,
-        "focus panel",
+        "focus body",
+      );
+    }
+    if (fieldNotes.length > 0) {
+      assert.ok(
+        fieldNotes.some(
+          (fieldNote) =>
+            fieldNote.rect?.bottom > layout.focusBody.top + 1 &&
+            fieldNote.rect?.top < layout.focusBody.bottom - 1,
+        ),
+        `${label}: scrollable focus body does not expose any field note in its visible viewport.`,
       );
     }
   }
@@ -15779,6 +16040,7 @@ function buildRegressionSteps(gameRef) {
 }
 
 async function main() {
+  assertRailReadabilityStateRegression();
   assertUnavailableApproachAdviceAuthorityRegression();
   assertActiveRouteTargetAuthorityRegression();
   assertScheduledNpcLocationChangeAuditRegression();
@@ -16369,7 +16631,6 @@ async function main() {
     "Expected the staged move to keep Kettle & Lamp as the target.",
   );
   assertSettledOutdoorPlayerLocationCorrelation({
-    bounds: KETTLE_LAMP_LANDMARK_BOUNDS,
     entry: byLabel["stage-cafe-move"],
     label: "stage-cafe-move",
     locationId: "tea-house",
@@ -16470,7 +16731,6 @@ async function main() {
     "Expected Rowan to visibly arrive back at Morrow House.",
   );
   assertSettledOutdoorPlayerLocationCorrelation({
-    bounds: OPENING_MORROW_HOUSE_DOOR_ANCHOR_BOUNDS,
     entry: byLabel["stage-home-move"],
     label: "stage-home-move",
     locationId: "boarding-house",

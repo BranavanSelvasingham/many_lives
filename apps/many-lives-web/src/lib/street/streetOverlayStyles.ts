@@ -2535,6 +2535,12 @@ export function buildStreetOverlayStyle({
         display: flex;
         z-index: 4;
       }
+      .ml-root.is-collapsible-rail:has(.ml-inline-focus-window) .ml-right-stack {
+        display: none;
+      }
+      .ml-root.is-collapsible-rail .ml-dock:has(.ml-inline-focus-window) > .ml-dock-panel {
+        display: none;
+      }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-right-stack {
         height: var(--ml-compact-rail-collapsed-height);
         max-height: var(--ml-compact-rail-collapsed-height);
@@ -2605,6 +2611,16 @@ export function buildStreetOverlayStyle({
         -webkit-line-clamp: 1;
         -webkit-box-orient: vertical;
         overflow: hidden;
+      }
+      .ml-root.is-collapsible-rail.is-rail-collapsed .ml-rail-head .ml-kicker {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .ml-root.is-collapsible-rail.is-rail-collapsed .ml-rail-peek-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-compact-primary-action {
         display: flex;

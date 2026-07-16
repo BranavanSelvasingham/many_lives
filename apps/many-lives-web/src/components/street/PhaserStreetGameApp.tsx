@@ -5958,6 +5958,14 @@ function buildPlayerLocationGeometryDiagnostics(
     actionId,
     playerTile,
   );
+  const authoredArrivalPoints = getAuthoredLocationArrivalPoints(
+    runtimeState.indices,
+    anchorLocationId,
+  );
+  const competingLandmarkFootprints = getCompetingLandmarkFootprints(
+    runtimeState.indices,
+    anchorLocationId,
+  );
   const distanceToAnchor = anchor.worldPoint
     ? distanceBetween(playerWorldPoint, anchor.worldPoint)
     : null;
@@ -5975,6 +5983,11 @@ function buildPlayerLocationGeometryDiagnostics(
     anchorWorldPoint: anchor.worldPoint
       ? roundBrowserPoint(anchor.worldPoint)
       : null,
+    authoredArrivalPoints: authoredArrivalPoints.map((arrival) => ({
+      kind: arrival.kind,
+      ...roundBrowserPoint(arrival),
+    })),
+    competingLandmarkFootprints,
     currentLocationId: game.player.currentLocationId ?? null,
     currentLocationName: resolveBrowserProbeLocationName(
       game,
@@ -11327,20 +11340,12 @@ function resolveAuthoredLocationWorldPoint({
     return null;
   }
 
-  const candidatePoints = dedupePointSequence([
-    ...(anchors.playerApproaches ?? []).map((candidate) => ({
-      x: candidate.x,
-      y: candidate.y,
-    })),
-    {
-      x: anchors.frontage.x,
-      y: anchors.frontage.y,
-    },
-    {
-      x: anchors.door.x,
-      y: anchors.door.y,
-    },
-  ]);
+  const candidatePoints = getAuthoredLocationArrivalPoints(indices, locationId)
+    .filter(
+      (candidate) =>
+        !pointInsideCompetingLandmarkFootprint(indices, locationId, candidate),
+    )
+    .map(({ x, y }) => ({ x, y }));
   if (candidatePoints.length === 0) {
     return null;
   }
@@ -11419,12 +11424,83 @@ function snapAuthoredLocationWorldPoint(
 
   if (
     nearestPoint &&
-    distanceBetween(nearestPoint.world, point) <= maxAuthoredLocationSnapDistance
+    distanceBetween(nearestPoint.world, point) <=
+      maxAuthoredLocationSnapDistance &&
+    !pointInsideCompetingLandmarkFootprint(
+      indices,
+      locationId,
+      nearestPoint.world,
+    )
   ) {
     return nearestPoint.world;
   }
 
   return point;
+}
+
+function getAuthoredLocationArrivalPoints(
+  indices: RuntimeIndices,
+  locationId: string | null,
+) {
+  const anchors = locationId
+    ? indices.visualScene?.locationAnchors[locationId]
+    : null;
+  if (!anchors) {
+    return [];
+  }
+
+  const candidates: Array<
+    Point & { kind: "door" | "frontage" | "player-approach" }
+  > = [
+    ...(anchors.playerApproaches ?? []).map((point) => ({
+      kind: "player-approach" as const,
+      x: point.x,
+      y: point.y,
+    })),
+    { kind: "frontage", x: anchors.frontage.x, y: anchors.frontage.y },
+    { kind: "door", x: anchors.door.x, y: anchors.door.y },
+  ];
+
+  return candidates.filter(
+    (candidate, index) =>
+      candidates.findIndex(
+        (other) =>
+          other.x === candidate.x &&
+          other.y === candidate.y &&
+          other.kind === candidate.kind,
+      ) === index,
+  );
+}
+
+function getCompetingLandmarkFootprints(
+  indices: RuntimeIndices,
+  locationId: string | null,
+) {
+  return (indices.visualScene?.landmarks ?? [])
+    .filter((landmark) => landmark.locationId !== locationId)
+    .map((landmark) => ({
+      bounds: {
+        maxX: landmark.rect.x + landmark.rect.width,
+        maxY: landmark.rect.y + landmark.rect.height,
+        minX: landmark.rect.x,
+        minY: landmark.rect.y,
+      },
+      locationId: landmark.locationId,
+    }));
+}
+
+function pointInsideCompetingLandmarkFootprint(
+  indices: RuntimeIndices,
+  locationId: string,
+  point: Point,
+) {
+  return getCompetingLandmarkFootprints(indices, locationId).some(
+    ({ bounds }) =>
+      point.x >= bounds.minX &&
+      point.x <= bounds.maxX &&
+      point.y >= bounds.minY &&
+      point.y <= bounds.maxY,
+  );
 }
 
 function colorToCssRgba(color: number, alpha: number) {

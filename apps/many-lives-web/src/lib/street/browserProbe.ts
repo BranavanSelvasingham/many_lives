@@ -33,6 +33,20 @@ export type StreetBrowserMovementDiagnostics = {
       x: number;
       y: number;
     } | null;
+    authoredArrivalPoints: Array<{
+      kind: "door" | "frontage" | "player-approach";
+      x: number;
+      y: number;
+    }>;
+    competingLandmarkFootprints: Array<{
+      bounds: {
+        maxX: number;
+        maxY: number;
+        minX: number;
+        minY: number;
+      };
+      locationId: string;
+    }>;
     currentLocationId: string | null;
     currentLocationName: string | null;
     currentSpaceId: string | null;

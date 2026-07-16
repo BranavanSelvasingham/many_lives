@@ -119,6 +119,16 @@ test("browser evidence waits for readable rail geometry", () => {
   assert.match(source, /conversationFullyRendered/);
   assert.match(source, /readableStableSamples >= 2/);
   assert.match(source, /Last readability error:/);
+  assert.match(
+    source,
+    /const collapsed = railSummary\?\.state === "collapsed"/,
+  );
+  assert.match(
+    source,
+    /assertCollapsedRailSummaryReadability\(label, game, railSummary\)/,
+  );
+  assert.match(source, /commandRail\.rect\?\.height >= 120/);
+  assert.match(source, /assertRailReadabilityStateRegression\(\)/);
 });
 
 test("streaming conversation growth keeps following a readable exchange", () => {
