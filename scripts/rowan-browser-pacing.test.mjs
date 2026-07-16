@@ -7,6 +7,13 @@ const browserRegressionPath = new URL(
   import.meta.url,
 );
 const source = await readFile(browserRegressionPath, "utf8");
+const overlayDomStateSource = await readFile(
+  new URL(
+    "../apps/many-lives-web/src/lib/street/overlayDomState.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const assertionStart = source.indexOf(
   "function assertReadableFirstAfternoonDwell(",
 );
@@ -108,5 +115,19 @@ test("browser evidence waits for readable rail geometry", () => {
     source,
     /assertRailReadability\(label, game, probe, lastDom\)/,
   );
+  assert.match(source, /expectedConversationLine/);
+  assert.match(source, /conversationFullyRendered/);
+  assert.match(source, /readableStableSamples >= 2/);
   assert.match(source, /Last readability error:/);
+});
+
+test("streaming conversation growth keeps following a readable exchange", () => {
+  assert.match(
+    overlayDomStateSource,
+    /commandRailConversationVisible: commandRail\s*\? isCommandRailConversationVisible\(commandRail\)/,
+  );
+  assert.match(
+    overlayDomStateSource,
+    /else if \(state\.commandRailConversationVisible\) {\s*ensureCommandRailConversationVisible\(commandRail\);/,
+  );
 });

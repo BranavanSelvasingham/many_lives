@@ -5472,9 +5472,15 @@ function assertProbeAuditability(label, game, probe) {
 async function waitForGameplayDom(label, session, probe, game) {
   const expectedLabel = probe.autonomy.label.slice(0, 28);
   const expectedPattern = new RegExp(escapeRegExp(expectedLabel), "i");
+  const expectedConversationLine = game.activeConversation?.lines
+    .at(-1)
+    ?.text.replace(/\s+/g, " ")
+    .trim();
   const startedAt = Date.now();
   let lastDom = null;
+  let lastReadableSignature = null;
   let lastReadabilityError = null;
+  let readableStableSamples = 0;
 
   while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
     try {
@@ -5483,14 +5489,42 @@ async function waitForGameplayDom(label, session, probe, game) {
       if (lastDom?.hasFrameworkErrorOverlay) {
         return lastDom;
       }
-      if (expectedPattern.test(lastDom?.bodyText ?? "")) {
+      const normalizedBodyText = (lastDom?.bodyText ?? "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const conversationFullyRendered =
+        !expectedConversationLine ||
+        normalizedBodyText.includes(expectedConversationLine);
+      if (
+        expectedPattern.test(normalizedBodyText) &&
+        conversationFullyRendered
+      ) {
         try {
           assertRailReadability(label, game, probe, lastDom);
-          return lastDom;
+          if (!expectedConversationLine) {
+            return lastDom;
+          }
+
+          const readableSignature = JSON.stringify({
+            conversationText: lastDom.conversationText,
+            exchange: lastDom.layout?.latestChatExchange,
+            latestBubble: lastDom.layout?.latestChatBubble,
+            scrollTop: lastDom.layout?.commandRail?.scrollTop,
+          });
+          readableStableSamples =
+            readableSignature === lastReadableSignature
+              ? readableStableSamples + 1
+              : 1;
+          lastReadableSignature = readableSignature;
+          if (readableStableSamples >= 2) {
+            return lastDom;
+          }
         } catch (error) {
           lastReadabilityError =
             error instanceof Error ? error.message : String(error);
         }
+      } else if (expectedConversationLine) {
+        lastReadabilityError = "final conversation line is still streaming";
       }
     } catch {}
 

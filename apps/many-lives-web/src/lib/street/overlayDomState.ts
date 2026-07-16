@@ -1,5 +1,6 @@
 export type OverlayRenderState = {
   activeFieldKey: string | null;
+  commandRailConversationVisible: boolean;
   commandRailNearBottom: boolean;
   commandRailScrollTop: number | null;
   commandRailWasCollapsed: boolean;
@@ -80,6 +81,9 @@ export function captureOverlayRenderState(
       activeField && root.contains(activeField)
         ? (activeField.dataset.overlayFieldKey ?? null)
         : null,
+    commandRailConversationVisible: commandRail
+      ? isCommandRailConversationVisible(commandRail)
+      : false,
     commandRailNearBottom: commandRail
       ? commandRail.scrollHeight -
           commandRail.scrollTop -
@@ -172,6 +176,8 @@ export function restoreOverlayRenderState(
       scrollCommandRailToDirective(commandRail);
     } else if (state.commandRailNearBottom) {
       commandRail.scrollTop = commandRail.scrollHeight;
+      ensureCommandRailConversationVisible(commandRail);
+    } else if (state.commandRailConversationVisible) {
       ensureCommandRailConversationVisible(commandRail);
     } else if (state.commandRailScrollTop !== null) {
       commandRail.scrollTop = Math.min(
@@ -271,12 +277,50 @@ function ensureCommandRailDirectiveVisible(commandRail: HTMLElement) {
 }
 
 function ensureCommandRailConversationVisible(commandRail: HTMLElement) {
+  const targetRect = commandRailConversationTargetRect(commandRail);
+  if (!targetRect) {
+    return;
+  }
+
+  const railRect = commandRail.getBoundingClientRect();
+  if (
+    targetRect.bottom <= railRect.bottom - 8 &&
+    targetRect.top >= railRect.top + 8
+  ) {
+    return;
+  }
+
+  let nextScrollTop = commandRail.scrollTop;
+  if (targetRect.bottom > railRect.bottom - 8) {
+    nextScrollTop += targetRect.bottom - railRect.bottom + 14;
+  }
+  if (targetRect.top < railRect.top + 8) {
+    nextScrollTop += targetRect.top - railRect.top - 10;
+  }
+
+  commandRail.scrollTop = Math.max(nextScrollTop, 0);
+}
+
+function isCommandRailConversationVisible(commandRail: HTMLElement) {
+  const targetRect = commandRailConversationTargetRect(commandRail);
+  if (!targetRect) {
+    return false;
+  }
+
+  const railRect = commandRail.getBoundingClientRect();
+  return (
+    targetRect.bottom <= railRect.bottom - 8 &&
+    targetRect.top >= railRect.top + 8
+  );
+}
+
+function commandRailConversationTargetRect(commandRail: HTMLElement) {
   const rows = Array.from(
     commandRail.querySelectorAll<HTMLElement>(".ml-chat-row"),
   );
   const latestRow = rows.at(-1);
   if (!latestRow) {
-    return;
+    return null;
   }
 
   const railRect = commandRail.getBoundingClientRect();
@@ -297,30 +341,14 @@ function ensureCommandRailConversationVisible(commandRail: HTMLElement) {
     latestMeaningfulExchange,
   );
   const latestRowRect = latestRow.getBoundingClientRect();
-  const targetRect =
+  return (
     preferredRect && rectFitsCommandRail(preferredRect, railRect)
       ? preferredRect
       : latestMeaningfulRect &&
           rectFitsCommandRail(latestMeaningfulRect, railRect)
         ? latestMeaningfulRect
-        : latestRowRect;
-
-  if (
-    targetRect.bottom <= railRect.bottom - 8 &&
-    targetRect.top >= railRect.top + 8
-  ) {
-    return;
-  }
-
-  let nextScrollTop = commandRail.scrollTop;
-  if (targetRect.bottom > railRect.bottom - 8) {
-    nextScrollTop += targetRect.bottom - railRect.bottom + 14;
-  }
-  if (targetRect.top < railRect.top + 8) {
-    nextScrollTop += targetRect.top - railRect.top - 10;
-  }
-
-  commandRail.scrollTop = Math.max(nextScrollTop, 0);
+        : latestRowRect
+  );
 }
 
 function conversationRowHasSpokenText(row: HTMLElement) {
