@@ -131,3 +131,30 @@ test("streaming conversation growth keeps following a readable exchange", () => 
     /else if \(state\.commandRailConversationVisible\) {\s*ensureCommandRailConversationVisible\(commandRail\);/,
   );
 });
+
+test("scheduled NPC evidence retains intermediate settled watch probes", () => {
+  assert.match(
+    source,
+    /recordInhabitScheduledNpcObservation\(\{\s*attempt,\s*milestoneLabel: milestone\.label,/,
+  );
+  assert.match(
+    source,
+    /if \(milestone\.reached\(probe\)\) \{/,
+  );
+  assert.ok(
+    source.indexOf("recordInhabitScheduledNpcObservation({") <
+      source.indexOf("if (milestone.reached(probe)) {"),
+  );
+  assert.match(
+    source,
+    /scheduledNpcObservationTimeline: scheduledNpcObservations/,
+  );
+  assert.match(
+    source,
+    /\.\.\.scheduledNpcObservationTimeline\.map\(\(entry, observationIndex\) =>/,
+  );
+  assert.match(source, /evidenceForMilestone: milestoneLabel/);
+  assert.match(source, /cue\.timelineIndex <= timelineIndex/);
+  assert.match(source, /cue\.cueKind === "next-scheduled-stop"/);
+  assert.match(source, /assertScheduledNpcLocationChangeAuditRegression\(\);/);
+});

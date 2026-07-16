@@ -9185,6 +9185,26 @@ function assertActiveRouteTargetAuthorityRegression() {
 }
 
 function buildMovementAuditSummary(timeline, options = {}) {
+  const scheduledNpcObservationTimeline =
+    options.scheduledNpcObservationTimeline ?? [];
+  const timelineIndexByLabel = new Map(
+    timeline.map((entry, index) => [entry.label, index]),
+  );
+  const scheduledNpcEvidenceTimeline = [
+    ...timeline.map((entry, timelineIndex) => ({ entry, timelineIndex })),
+    ...scheduledNpcObservationTimeline.map((entry, observationIndex) => {
+      const milestoneIndex = timelineIndexByLabel.get(
+        entry.evidenceForMilestone,
+      );
+      return {
+        entry,
+        timelineIndex:
+          typeof milestoneIndex === "number"
+            ? milestoneIndex - 0.5
+            : timeline.length + observationIndex,
+      };
+    }),
+  ];
   const playerRoutes = timeline
     .filter((entry) => entry.movement?.playerRoute?.active)
     .map((entry) => {
@@ -9221,7 +9241,9 @@ function buildMovementAuditSummary(timeline, options = {}) {
         timelineIndex,
       });
     }
+  }
 
+  for (const { entry, timelineIndex } of scheduledNpcEvidenceTimeline) {
     for (const marker of entry.movement?.scheduledNpcMarkerSamples ?? []) {
       scheduledNpcMarkerSamples.push({
         activeSpaceId: marker.activeSpaceId ?? null,
@@ -9286,6 +9308,7 @@ function buildMovementAuditSummary(timeline, options = {}) {
         routeKind: route.routeKind,
         routed: Boolean(route.routed),
         sampledPointsLegal: Boolean(route.sampledPointsLegal),
+        timelineIndex,
         toLocationId: route.toLocationId,
         unreachableSegments: route.unreachableSegments ?? 0,
         visualObstaclesClear: Boolean(route.visualObstaclesClear),
@@ -9758,27 +9781,46 @@ function buildScheduledNpcLocationChangeAudit({
   timeline,
   visualCueSamples,
 }) {
-  const routeSampleMatches = ({ fromLocationId, npcId, toLocationId }) =>
+  const routeSampleMatches = ({
+    fromLocationId,
+    npcId,
+    timelineIndex,
+    toLocationId,
+  }) =>
     routeSamples.filter(
       (route) =>
         route.npcId === npcId &&
         route.fromLocationId === fromLocationId &&
-        route.toLocationId === toLocationId,
+        route.toLocationId === toLocationId &&
+        route.timelineIndex <= timelineIndex,
     );
-  const markerSampleMatches = ({ fromLocationId, npcId, toLocationId }) =>
+  const markerSampleMatches = ({
+    fromLocationId,
+    npcId,
+    timelineIndex,
+    toLocationId,
+  }) =>
     markerSamples.filter(
       (marker) =>
         marker.npcId === npcId &&
         marker.currentLocationId === fromLocationId &&
-        marker.toLocationId === toLocationId,
+        marker.toLocationId === toLocationId &&
+        marker.timelineIndex <= timelineIndex,
     );
-  const visualCueSampleMatches = ({ fromLocationId, npcId, toLocationId }) =>
+  const visualCueSampleMatches = ({
+    fromLocationId,
+    npcId,
+    timelineIndex,
+    toLocationId,
+  }) =>
     visualCueSamples.filter(
       (cue) =>
         cue.npcId === npcId &&
         cue.fromLocationId === fromLocationId &&
         cue.toLocationId === toLocationId &&
-        cue.cueKind === "current-schedule-stop",
+        (cue.cueKind === "current-schedule-stop" ||
+          cue.cueKind === "next-scheduled-stop") &&
+        cue.timelineIndex <= timelineIndex,
     );
   const changes = [];
 
@@ -9817,24 +9859,27 @@ function buildScheduledNpcLocationChangeAudit({
 
       const matchingRoutes = currentStopChanged
         ? routeSampleMatches({
-            fromLocationId,
-            npcId,
-            toLocationId,
-          })
+          fromLocationId,
+          npcId,
+          timelineIndex: index,
+          toLocationId,
+        })
         : [];
       const matchingMarkers = currentStopChanged
         ? markerSampleMatches({
-            fromLocationId,
-            npcId,
-            toLocationId,
-          })
+          fromLocationId,
+          npcId,
+          timelineIndex: index,
+          toLocationId,
+        })
         : [];
       const matchingVisualCues = currentStopChanged
         ? visualCueSampleMatches({
-            fromLocationId,
-            npcId,
-            toLocationId,
-          })
+          fromLocationId,
+          npcId,
+          timelineIndex: index,
+          toLocationId,
+        })
         : [];
       const legalRouteEvidence = matchingRoutes.find(
         (route) =>
@@ -9853,10 +9898,13 @@ function buildScheduledNpcLocationChangeAudit({
           ...matchingMarkers,
           ...matchingVisualCues,
         ]);
-      const continuityGapReason =
-        currentStopChanged && legalRouteEvidence && !markerEvidence.valid
-          ? "marker-not-visible-before-stop-change"
-          : null;
+      const continuityGapReason = currentStopChanged
+        ? !legalRouteEvidence
+          ? "legal-route-not-observed-before-stop-change"
+          : !markerEvidence.valid
+            ? "marker-not-visible-before-stop-change"
+            : null
+        : null;
 
       changes.push({
         acceptedNoRouteReason,
@@ -9880,6 +9928,101 @@ function buildScheduledNpcLocationChangeAudit({
   }
 
   return changes;
+}
+
+function assertScheduledNpcLocationChangeAuditRegression() {
+  const timeline = [
+    {
+      label: "before-nia-stop-change",
+      worldPressure: {
+        npcSchedules: [
+          {
+            currentLocationId: "market-square",
+            currentScheduleLocationId: "market-square",
+            id: "npc-nia",
+          },
+        ],
+      },
+    },
+    {
+      label: "after-nia-stop-change",
+      worldPressure: {
+        npcSchedules: [
+          {
+            currentLocationId: "moss-pier",
+            currentScheduleLocationId: "moss-pier",
+            id: "npc-nia",
+          },
+        ],
+      },
+    },
+  ];
+  const routeSample = {
+    acceptedNoRouteReason: null,
+    fromLocationId: "market-square",
+    key: "npc-nia:next-scheduled-stop:market-square->moss-pier",
+    legal: true,
+    npcId: "npc-nia",
+    pathLength: 11,
+    reachesTarget: true,
+    routed: true,
+    sampledPointsLegal: true,
+    timelineIndex: 0,
+    toLocationId: "moss-pier",
+    unreachableSegments: 0,
+    visualObstaclesClear: true,
+  };
+  const visualCueSample = {
+    cueKind: "next-scheduled-stop",
+    cueLabel: "Nia: to Pilgrim Slip",
+    cueSignal: "footfall trace and small intent notch",
+    fromLocationId: "market-square",
+    npcId: "npc-nia",
+    onRoute: true,
+    position: { x: 900, y: 720 },
+    routeLegal: true,
+    routePathLength: 11,
+    routeProgress: 0.45,
+    timelineIndex: 0.5,
+    toLocationId: "moss-pier",
+    visible: true,
+  };
+  const audit = ({ cue = visualCueSample, route = routeSample } = {}) =>
+    buildScheduledNpcLocationChangeAudit({
+      markerSamples: [],
+      routeSamples: [route],
+      timeline,
+      visualCueSamples: [cue],
+    })[0];
+
+  assert.equal(
+    audit().continuityGapReason,
+    null,
+    "A legal pre-transition next-stop cue must prove visible scheduled NPC continuity.",
+  );
+  assert.equal(
+    audit({ cue: { ...visualCueSample, cueKind: "local-schedule-round" } })
+      .continuityGapReason,
+    "marker-not-visible-before-stop-change",
+    "A local patrol cue must not stand in for cross-location NPC movement.",
+  );
+  assert.equal(
+    audit({ cue: { ...visualCueSample, timelineIndex: 1.5 } })
+      .continuityGapReason,
+    "marker-not-visible-before-stop-change",
+    "A cue first observed after the location change must not prove continuity.",
+  );
+  assert.equal(
+    audit({ cue: { ...visualCueSample, onRoute: false } })
+      .continuityGapReason,
+    "marker-not-visible-before-stop-change",
+    "An off-route cue must not prove continuity.",
+  );
+  assert.equal(
+    audit({ route: { ...routeSample, legal: false } }).continuityGapReason,
+    "legal-route-not-observed-before-stop-change",
+    "An illegal route must remain a scheduled NPC continuity gap.",
+  );
 }
 
 function summarizeScheduledNpcMarkerEvidence(samples) {
@@ -14456,6 +14599,7 @@ async function clickUntilInhabitMilestone({
   clickLog,
   maxClicks,
   milestone,
+  scheduledNpcObservations,
   objectiveSequenceAudit,
   session,
 }) {
@@ -14464,6 +14608,12 @@ async function clickUntilInhabitMilestone({
       session,
       `${milestone.label}-settled-${attempt}`,
     );
+    recordInhabitScheduledNpcObservation({
+      attempt,
+      milestoneLabel: milestone.label,
+      observations: scheduledNpcObservations,
+      probe,
+    });
     if (milestone.reached(probe)) {
       return probe;
     }
@@ -14716,6 +14866,30 @@ async function clickUntilInhabitMilestone({
   );
 }
 
+function recordInhabitScheduledNpcObservation({
+  attempt,
+  milestoneLabel,
+  observations,
+  probe,
+}) {
+  const movement = probe?.movement;
+  if (
+    !movement ||
+    ((movement.scheduledNpcMarkerSamples?.length ?? 0) === 0 &&
+      (movement.scheduledNpcVisualCues?.length ?? 0) === 0 &&
+      (movement.scheduledNpcRoutes?.length ?? 0) === 0)
+  ) {
+    return;
+  }
+
+  observations.push({
+    clock: probe.clock ?? null,
+    evidenceForMilestone: milestoneLabel,
+    label: `${milestoneLabel}-settled-${attempt}`,
+    movement,
+  });
+}
+
 async function watchUntilIndependentNpcResolution({
   maxWaitMs,
   session,
@@ -14799,6 +14973,7 @@ async function runInhabitGameplayPass(session) {
   const moments = [];
   const clickLog = [];
   const objectiveSequenceAudit = [];
+  const scheduledNpcObservations = [];
   const milestonesReached = [];
   let momentIndex = 0;
 
@@ -14910,6 +15085,7 @@ async function runInhabitGameplayPass(session) {
       maxClicks: milestone.maxClicks,
       milestone,
       objectiveSequenceAudit,
+      scheduledNpcObservations,
       session,
     });
     milestonesReached.push(milestone.label);
@@ -14950,6 +15126,7 @@ async function runInhabitGameplayPass(session) {
     maxClicks: yardOutcomeMilestone.maxClicks,
     milestone: yardOutcomeMilestone,
     objectiveSequenceAudit,
+    scheduledNpcObservations,
     session,
   });
   milestonesReached.push(yardOutcomeMilestone.label);
@@ -15167,6 +15344,7 @@ async function runInhabitGameplayPass(session) {
         "stage-home-move": "covered-by-route-timeline-report",
       },
     },
+    scheduledNpcObservationTimeline: scheduledNpcObservations,
   });
   assertOpeningPlayerLocationGeometrySample(
     movementAudit,
@@ -15203,6 +15381,7 @@ async function runInhabitGameplayPass(session) {
     progressionClicks: clickLog,
     reportPath,
     rowanNotebookClick,
+    scheduledNpcObservationCount: scheduledNpcObservations.length,
     scheduledNpcSpatialEvidence,
     status: "passed",
     url,
@@ -15602,6 +15781,7 @@ function buildRegressionSteps(gameRef) {
 async function main() {
   assertUnavailableApproachAdviceAuthorityRegression();
   assertActiveRouteTargetAuthorityRegression();
+  assertScheduledNpcLocationChangeAuditRegression();
   assertProgressAwareStagedWorkWaitRegression();
   assertPostFirstAfternoonTrajectoryNeutralGuard();
   assertYardNotebookCommitmentGuard();
