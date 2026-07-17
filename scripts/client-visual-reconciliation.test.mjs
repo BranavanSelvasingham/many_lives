@@ -80,8 +80,8 @@ test("the 900ms observer cannot deduplicate stale optimistic render state", () =
 test("deferred move authority settles outside playback transitions", () => {
   const transitions = transitionBodies(applyGameUpdateSource);
   assert.ok(
-    transitions.length >= 3,
-    "expected deferred and ordinary playback transitions",
+    transitions.length >= 2,
+    "expected staged and ordinary playback transitions",
   );
   for (const transition of transitions) {
     for (const call of authorityCalls) {
@@ -104,23 +104,20 @@ test("deferred move authority settles outside playback transitions", () => {
     deadlineStart,
     deadlineEnd,
   );
-  const playbackTransitionIndex = deadlineSource.indexOf(
-    "startTransition(() => {",
-  );
-
   assert.ok(deadlineStart >= 0 && deadlineEnd > deadlineStart);
-  assert.ok(playbackTransitionIndex > 0);
-  assert.ok(
-    deadlineSource.indexOf("setGame(nextGame);") < playbackTransitionIndex,
-  );
-  assert.ok(
-    deadlineSource.indexOf("clearOptimisticPlayerMove();") <
-      playbackTransitionIndex,
-  );
+  assert.doesNotMatch(deadlineSource, /startTransition\(\(\) => \{/);
   assert.match(deadlineSource, /pendingVisualGameUpdateRef\.current = null;/);
   assert.match(
     deadlineSource,
     /settleCompletedMovePlayback\(current, nextGame\)/,
+  );
+  assert.ok(
+    deadlineSource.indexOf("setGame(nextGame);") <
+      deadlineSource.indexOf("settleCompletedMovePlayback(current, nextGame)"),
+  );
+  assert.ok(
+    deadlineSource.indexOf("clearOptimisticPlayerMove();") <
+      deadlineSource.indexOf("settleCompletedMovePlayback(current, nextGame)"),
   );
 });
 

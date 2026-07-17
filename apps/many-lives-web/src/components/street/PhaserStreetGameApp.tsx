@@ -1256,11 +1256,9 @@ export function PhaserStreetGameApp() {
             pendingVisualGameUpdateRef.current = null;
             setGame(nextGame);
             clearOptimisticPlayerMove();
-            startTransition(() => {
-              setRowanPlayback((current) =>
-                settleCompletedMovePlayback(current, nextGame),
-              );
-            });
+            setRowanPlayback((current) =>
+              settleCompletedMovePlayback(current, nextGame),
+            );
           }, transitionMs),
         };
 
