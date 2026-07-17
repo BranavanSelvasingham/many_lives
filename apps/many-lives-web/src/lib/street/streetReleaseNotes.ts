@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.12",
-  build: "8c0014a",
-  source: "Scheduled review resolution",
+  version: "0.1.13",
+  build: "dfd0148",
+  source: "Whole-game pacing review",
   features: [
     {
-      title: "A readable first stopping point",
+      title: "A human-paced first afternoon",
       body:
-        "The first-afternoon completion and the next objective now remain visible long enough to understand before watch mode continues.",
+        "Watch mode now gives real decisions, walks, conversations, work, and consequences enough time to read across a three-to-five-minute opening.",
     },
     {
-      title: "Advice stays current",
+      title: "Manual play stays brisk",
       body:
-        "Conversations no longer present completed work or resolved neighborhood trouble as live choices.",
+        "The slower presentation applies only while watching; manual movement and playback keep their existing timing.",
     },
     {
-      title: "Stronger pacing regression coverage",
+      title: "Measured from load to consequence",
       body:
-        "Browser checks now verify readable chapter handoffs, zero-click continuity, and state-correct visible advice.",
+        "Browser checks now enforce the full opening duration, quick follow-through, zero clicks, and a maximum visible progress gap.",
     },
   ],
 };
