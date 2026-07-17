@@ -3456,6 +3456,37 @@ function createDecisionArtifactReadabilityState() {
   };
 }
 
+function decisionArtifactReadabilitySignature(geometry) {
+  const sceneViewport = geometry.sceneViewportCss;
+  return JSON.stringify({
+    cameraActiveSpaceId: geometry.cameraActiveSpaceId,
+    cameraActiveSpaceKind: geometry.cameraActiveSpaceKind,
+    commandRail: geometry.commandRail
+      ? {
+          clientHeight: geometry.commandRail.clientHeight,
+          overflowY: geometry.commandRail.overflowY,
+        }
+      : null,
+    decisionArtifact: geometry.decisionArtifact,
+    dockRoot: geometry.dockRoot,
+    rail: geometry.rail,
+    railState: geometry.railState,
+    rightStack: geometry.rightStack,
+    sceneVisibleFraction: Number.isFinite(geometry.sceneVisibleFraction)
+      ? Number(geometry.sceneVisibleFraction.toFixed(2))
+      : null,
+    sceneViewportCss: sceneViewport
+      ? {
+          height: Math.round(sceneViewport.height),
+          width: Math.round(sceneViewport.width),
+          x: Math.round(sceneViewport.x),
+          y: Math.round(sceneViewport.y),
+        }
+      : null,
+    timePill: geometry.timePill,
+  });
+}
+
 function recordDecisionArtifactReadabilitySample(state, page) {
   const geometry = compactDecisionArtifactReadabilityGeometry(page);
   const readable =
@@ -3468,7 +3499,7 @@ function recordDecisionArtifactReadabilitySample(state, page) {
     };
   }
 
-  const signature = JSON.stringify(geometry);
+  const signature = decisionArtifactReadabilitySignature(geometry);
   return {
     geometry,
     signature,
@@ -3576,6 +3607,24 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     "A naturally settled expanded rail should become stably readable.",
   );
 
+  const transcriptGrowthPage = {
+    ...readablePage,
+    commandRail: {
+      ...readablePage.commandRail,
+      scrollHeight: readablePage.commandRail.scrollHeight + 180,
+      scrollTop: 32,
+    },
+  };
+  const transcriptGrowth = recordDecisionArtifactReadabilitySample(
+    settling,
+    transcriptGrowthPage,
+  );
+  assert.equal(
+    transcriptGrowth.stableSamples,
+    settling.stableSamples + 1,
+    "Live transcript growth must not reset otherwise stable decision readability.",
+  );
+
   let clipped = createDecisionArtifactReadabilityState();
   for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT + 1; sample += 1) {
     clipped = recordDecisionArtifactReadabilitySample(clipped, unreadablePage);
@@ -3590,7 +3639,10 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     ...readablePage,
     decisionArtifact: { ...readablePage.decisionArtifact, y: 260 },
   };
-  const shifted = recordDecisionArtifactReadabilitySample(settling, shiftedPage);
+  const shifted = recordDecisionArtifactReadabilitySample(
+    transcriptGrowth,
+    shiftedPage,
+  );
   assert.equal(
     shifted.stableSamples,
     1,
