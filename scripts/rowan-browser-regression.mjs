@@ -121,7 +121,6 @@ const CDP_READ_RETRY_DELAY_MS = Number(
 );
 const SIM_WAIT_TIMEOUT_MS = 15_000;
 const SIM_CONVERSATION_PLAYBACK_EXTRA_WAIT_MS = 15_000;
-const SIM_CONVERSATION_PLAYBACK_STALL_GRACE_MS = 5_000;
 const SIM_WORK_PLAYBACK_EXTRA_WAIT_MS = 15_000;
 const SIM_WORK_PLAYBACK_STALL_GRACE_MS = 5_000;
 const SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS = 2_000;
@@ -5562,10 +5561,7 @@ function shouldContinueConversationDomWait({ elapsedMs, progress }) {
   return Boolean(
     elapsedMs <
       SIM_WAIT_TIMEOUT_MS + SIM_CONVERSATION_PLAYBACK_EXTRA_WAIT_MS &&
-      progress.advanceCount >= 2 &&
-      progress.lastProgressElapsedMs !== null &&
-      elapsedMs - progress.lastProgressElapsedMs <=
-        SIM_CONVERSATION_PLAYBACK_STALL_GRACE_MS,
+      progress.advanceCount >= 2,
   );
 }
 
@@ -5595,8 +5591,20 @@ function assertConversationPlaybackWaitRegression() {
   );
   assert.equal(
     shouldContinueConversationDomWait({ elapsedMs: 20_000, progress }),
+    true,
+    "proven type-on playback should retain its bounded settlement window through hosted-runner pauses",
+  );
+  assert.equal(
+    shouldContinueConversationDomWait({
+      elapsedMs: 15_000,
+      progress: {
+        advanceCount: 1,
+        lastProgressElapsedMs: 14_750,
+        maxPrefixLength: 28,
+      },
+    }),
     false,
-    "stalled conversation playback should not keep extending the DOM wait",
+    "a single partial transcript sample must not extend the DOM wait",
   );
   assert.equal(
     shouldContinueConversationDomWait({
