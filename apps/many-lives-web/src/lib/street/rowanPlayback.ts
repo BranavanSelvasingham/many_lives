@@ -30,6 +30,23 @@ export const ROWAN_PLAYBACK_TIMING_MS = {
   turnChangePause: 420,
 } as const;
 
+export const ROWAN_WATCH_PRESENTATION_TIMING_MS = {
+  autonomyDelay: {
+    acting: 10_000,
+    conversation: 10_800,
+    moving: 6_000,
+    waiting: 9_800,
+  },
+  durableCard: 3_400,
+  movementMax: 8_000,
+  movementPerTile: 420,
+  semanticCard: 2_800,
+} as const;
+
+type DeriveRowanPlaybackBeatsOptions = {
+  watchMode?: boolean;
+};
+
 export type RecentBeat = {
   detail: string;
   key: string;
@@ -310,6 +327,7 @@ export function buildConversationLineBeat(
 export function deriveRowanPlaybackBeats(
   previousGame: StreetGameState,
   nextGame: StreetGameState,
+  { watchMode = false }: DeriveRowanPlaybackBeatsOptions = {},
 ): RowanPlaybackBeat[] {
   if (previousGame.id !== nextGame.id) {
     return [];
@@ -357,7 +375,7 @@ export function deriveRowanPlaybackBeats(
           `Rowan is on his way to ${moveTargetName}.`,
         { energyDelta, moneyDelta },
       ),
-      durationMs: moveDurationMs(playerMoveDistance),
+      durationMs: moveDurationMs(playerMoveDistance, watchMode),
       key: `move:${nextGame.currentTime}:${nextGame.player.x}:${nextGame.player.y}:${nextGame.rowanAutonomy?.key ?? "idle"}`,
       kind: "move",
       locationId: nextGame.player.currentLocationId,
@@ -601,7 +619,30 @@ export function deriveRowanPlaybackBeats(
     }
   }
 
-  return beats;
+  return watchMode ? applyWatchPresentationTiming(beats) : beats;
+}
+
+const DURABLE_WATCH_BEAT_KINDS = new Set<RowanPlaybackBeatKind>([
+  "action_complete",
+  "city_beat",
+  "rest",
+  "thread_landed",
+]);
+
+function applyWatchPresentationTiming(beats: RowanPlaybackBeat[]) {
+  return beats.map((beat) => {
+    if (beat.kind === "move") {
+      return beat;
+    }
+
+    const minimumDurationMs = DURABLE_WATCH_BEAT_KINDS.has(beat.kind)
+      ? ROWAN_WATCH_PRESENTATION_TIMING_MS.durableCard
+      : ROWAN_WATCH_PRESENTATION_TIMING_MS.semanticCard;
+    return {
+      ...beat,
+      durationMs: Math.max(beat.durationMs, minimumDurationMs),
+    };
+  });
 }
 
 function appendResourceDelta(
@@ -950,8 +991,8 @@ function recentBeatFromPlaybackBeat(
 
 function beatStillMatchesGameLocation(
   beat:
-    | Pick<RowanPlaybackBeat, "kind" | "locationId">
-    | Pick<RecentBeat, "kind" | "locationId">
+    | Pick<RowanPlaybackBeat, "key" | "kind" | "locationId">
+    | Pick<RecentBeat, "key" | "kind" | "locationId">
     | null
     | undefined,
   game: StreetGameState,
@@ -960,14 +1001,38 @@ function beatStillMatchesGameLocation(
     return true;
   }
 
+  if (beat?.kind === "action_start") {
+    const teaShiftStage = /^tea-shift-stage:([^:]+):/.exec(beat.key)?.[1];
+    if (
+      teaShiftStage &&
+      teaShiftStage !== game.firstAfternoon?.teaShiftStage
+    ) {
+      return false;
+    }
+
+    const jobId = /^action-start:([^:]+):/.exec(beat.key)?.[1];
+    if (jobId) {
+      const job = game.jobs.find((candidate) => candidate.id === jobId);
+      if (!job?.accepted || job.completed || job.missed) {
+        return false;
+      }
+    }
+  }
+
   return !beat?.locationId || beat.locationId === game.player.currentLocationId;
 }
 
-function moveDurationMs(tileCount: number) {
+function moveDurationMs(tileCount: number, watchMode: boolean) {
+  const perTileMs = watchMode
+    ? ROWAN_WATCH_PRESENTATION_TIMING_MS.movementPerTile
+    : 360;
+  const maximumMs = watchMode
+    ? ROWAN_WATCH_PRESENTATION_TIMING_MS.movementMax
+    : 4_800;
   return clamp(
-    tileCount * 360,
+    tileCount * perTileMs,
     ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap,
-    4800,
+    maximumMs,
   );
 }
 

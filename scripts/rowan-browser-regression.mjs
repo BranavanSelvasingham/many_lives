@@ -79,7 +79,7 @@ const PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS ?? "5000",
 );
 const AUTOPLAY_OBSERVATION_TIMEOUT_MS = Number(
-  process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS ?? "300000",
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS ?? "360000",
 );
 const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_OBSERVE_CARRY_FORWARD_TIMEOUT_MS ?? "90000",
@@ -104,6 +104,24 @@ const AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS = Number(
 const AUTOPLAY_PACING_MIN_MEANINGFUL_BEATS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_MIN_MEANINGFUL_BEATS ?? "6",
 );
+const AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS = 180_000;
+const AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS = 300_000;
+const AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS = 2_000;
+const AUTOPLAY_DURABLE_DWELL_AUDIT_BEAT_KINDS = new Set([
+  "action_complete",
+  "city_beat",
+  "rest",
+  "thread_landed",
+]);
+const AUTOPLAY_SEMANTIC_DWELL_AUDIT_BEAT_KINDS = new Set([
+  "action_start",
+  "objective_shift",
+  "time_passed",
+]);
+const AUTOPLAY_DWELL_AUDIT_BEAT_KINDS = new Set([
+  ...AUTOPLAY_DURABLE_DWELL_AUDIT_BEAT_KINDS,
+  ...AUTOPLAY_SEMANTIC_DWELL_AUDIT_BEAT_KINDS,
+]);
 const INHABIT_GAMEPLAY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_INHABIT_GAMEPLAY_TIMEOUT_MS ?? "540000",
 );
@@ -11492,6 +11510,10 @@ async function runAutoplayObservation(session) {
         diagnosticsPath: pacingLedgerPath,
         firstDecisionAppElapsedMs: pacingLedger.firstDecisionAppElapsedMs,
         firstDecisionElapsedMs: pacingLedger.firstDecisionElapsedMs,
+        firstAfternoonCompletedAppElapsedMs:
+          pacingLedger.firstAfternoonCompletedAppElapsedMs,
+        firstAfternoonCompletedElapsedMs:
+          pacingLedger.firstAfternoonCompletedElapsedMs,
         firstInteractionElapsedMs: pacingLedger.firstInteractionElapsedMs,
         idleGapLimitMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
         maxInAppGapMs: pacingLedger.maxInAppGapMs,
@@ -11499,7 +11521,12 @@ async function runAutoplayObservation(session) {
         meaningfulBeatCount: pacingLedger.meaningfulBeatCount,
         meaningfulProvenanceCount:
           pacingLedger.meaningfulActionSamples.length,
+        minimumPlaybackCardDwellMs:
+          pacingLedger.minimumPlaybackCardDwellMs,
+        interruptedPlaybackCardDwells:
+          pacingLedger.interruptedPlaybackCardDwells,
         naturalStop: pacingLedger.naturalStop,
+        playbackCardDwells: pacingLedger.playbackCardDwells,
         progressKinds: pacingLedger.progressKinds,
         progressionClicks: 0,
         trajectory: {
@@ -12069,6 +12096,116 @@ function assertAutoplayProgressGapGuard() {
   );
 }
 
+function assertAutoplayFirstAfternoonDuration(durationMs, diagnosticsPath) {
+  assert.ok(
+    typeof durationMs === "number" &&
+      durationMs >= AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS &&
+      durationMs <= AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS,
+    `Fresh autoplay first-afternoon completion must land between ${AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS}ms and ${AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS}ms app-monotonic. Diagnostics: ${diagnosticsPath}. Measured: ${durationMs}ms.`,
+  );
+}
+
+function assertAutoplayFirstAfternoonDurationGuard() {
+  for (const durationMs of [
+    AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS,
+    AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS,
+  ]) {
+    assert.doesNotThrow(() =>
+      assertAutoplayFirstAfternoonDuration(durationMs, "passing-fixture"),
+    );
+  }
+  for (const durationMs of [
+    AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS - 1,
+    AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS + 1,
+  ]) {
+    assert.throws(() =>
+      assertAutoplayFirstAfternoonDuration(durationMs, "failing-fixture"),
+    );
+  }
+}
+
+function assertAutoplayAppMonotonicResetGuard() {
+  const stitched = buildCumulativeAppMonotonicSamples([
+    { appMonotonicMs: 1_000 },
+    { appMonotonicMs: 6_000 },
+    { appMonotonicMs: null },
+    { appMonotonicMs: 500 },
+    { appMonotonicMs: 2_000 },
+  ]);
+  assert.deepEqual(
+    stitched.map((sample) => ({
+      appMonotonicMs: sample.appMonotonicMs,
+      rawAppMonotonicMs: sample.rawAppMonotonicMs,
+    })),
+    [
+      { appMonotonicMs: 1_000, rawAppMonotonicMs: 1_000 },
+      { appMonotonicMs: 6_000, rawAppMonotonicMs: 6_000 },
+      { appMonotonicMs: null, rawAppMonotonicMs: null },
+      { appMonotonicMs: 6_500, rawAppMonotonicMs: 500 },
+      { appMonotonicMs: 8_000, rawAppMonotonicMs: 2_000 },
+    ],
+    "Autoplay pacing must stitch app-monotonic segments across a page-clock reset.",
+  );
+}
+
+function assertAutoplayPlaybackCardDwellResetGuard() {
+  const audit = buildAutoplayPlaybackCardDwellAudit([
+    {
+      appMonotonicMs: 5_000,
+      playback: {
+        activeKey: "interrupted-card",
+        activeKind: "thread_landed",
+        activeTitle: "Interrupted consequence",
+      },
+      rawAppMonotonicMs: 5_000,
+    },
+    {
+      appMonotonicMs: 5_500,
+      playback: null,
+      rawAppMonotonicMs: 500,
+    },
+    {
+      appMonotonicMs: 6_000,
+      playback: {
+        activeKey: "semantic-card",
+        activeKind: "action_start",
+        activeTitle: "Visible work stage",
+      },
+      rawAppMonotonicMs: 1_000,
+    },
+    {
+      appMonotonicMs: 8_400,
+      playback: null,
+      rawAppMonotonicMs: 3_400,
+    },
+    {
+      appMonotonicMs: 9_000,
+      playback: {
+        activeKey: "durable-card",
+        activeKind: "action_complete",
+        activeTitle: "Visible consequence",
+      },
+      rawAppMonotonicMs: 4_000,
+    },
+    {
+      appMonotonicMs: 11_800,
+      playback: null,
+      rawAppMonotonicMs: 6_800,
+    },
+  ]);
+
+  assert.deepEqual(
+    audit.dwells.map((entry) => entry.appDurationMs),
+    [2_400, 2_800],
+    "Completed semantic and durable cards must retain app-monotonic dwell evidence.",
+  );
+  assert.deepEqual(
+    audit.interrupted.map((entry) => entry.key),
+    ["interrupted-card"],
+    "A page-clock reset must mark an active card as interrupted instead of reporting a false dwell.",
+  );
+}
+
 function inhabitCameraDelta(before, after) {
   return {
     x:
@@ -12319,7 +12456,7 @@ function autoplayObservationSignature(sample) {
 }
 
 function buildAutoplayObservationPacingLedger(samples) {
-  const normalizedSamples = [];
+  const rawNormalizedSamples = [];
   let previousSignature = null;
 
   for (const sample of samples ?? []) {
@@ -12327,9 +12464,12 @@ function buildAutoplayObservationPacingLedger(samples) {
     if (signature === previousSignature) {
       continue;
     }
-    normalizedSamples.push(sample);
+    rawNormalizedSamples.push(sample);
     previousSignature = signature;
   }
+  const normalizedSamples = buildCumulativeAppMonotonicSamples(
+    rawNormalizedSamples,
+  );
 
   const transitions = [];
   for (let index = 1; index < normalizedSamples.length; index += 1) {
@@ -12400,6 +12540,13 @@ function buildAutoplayObservationPacingLedger(samples) {
     elapsedMs: sample.elapsedMs,
   }));
   const finalSample = normalizedSamples.at(-1) ?? null;
+  const firstAfternoonCompletionSample = normalizedSamples.find(
+    (sample) => sample.firstAfternoon?.completedAt,
+  );
+  const playbackCardDwellAudit = buildAutoplayPlaybackCardDwellAudit(
+    normalizedSamples,
+  );
+  const playbackCardDwells = playbackCardDwellAudit.dwells;
 
   return {
     approachSamples,
@@ -12409,6 +12556,13 @@ function buildAutoplayObservationPacingLedger(samples) {
         ? Math.max(0, decisionSample.appMonotonicMs - firstAppMonotonicMs)
         : null,
     firstDecisionElapsedMs: decisionSample?.elapsedMs ?? null,
+    firstAfternoonCompletedAppElapsedMs:
+      firstAfternoonCompletionSample &&
+      typeof firstAfternoonCompletionSample.appMonotonicMs === "number"
+        ? Math.max(0, firstAfternoonCompletionSample.appMonotonicMs)
+        : null,
+    firstAfternoonCompletedElapsedMs:
+      firstAfternoonCompletionSample?.elapsedMs ?? null,
     firstInteractionElapsedMs:
       normalizedSamples.find((sample) => sample.activeConversation)?.elapsedMs ??
       null,
@@ -12420,7 +12574,12 @@ function buildAutoplayObservationPacingLedger(samples) {
       (sample) => sample.genericCarryForwardCopyVisible,
     ),
     incompleteProvenanceSamples,
+    interruptedPlaybackCardDwells: playbackCardDwellAudit.interrupted,
     meaningfulActionSamples,
+    minimumPlaybackCardDwellMs:
+      playbackCardDwells.length > 0
+        ? Math.min(...playbackCardDwells.map((entry) => entry.appDurationMs))
+        : null,
     maxInAppGapMs:
       appIdleGapMs.length > 0 ? Math.max(...appIdleGapMs) : null,
     maxIdleGapMs: idleGapMs.length > 0 ? Math.max(...idleGapMs) : null,
@@ -12432,6 +12591,7 @@ function buildAutoplayObservationPacingLedger(samples) {
     meaningfulBeatCount: nonDecisionTransitions.length,
     progressKinds,
     progressGaps,
+    playbackCardDwells,
     repeatedPeopleRecoveryCycles:
       findRepeatedPeopleRecoveryCycles(normalizedSamples),
     samples: normalizedSamples,
@@ -12443,6 +12603,106 @@ function buildAutoplayObservationPacingLedger(samples) {
       (sample) => (sample.replyAffordances?.length ?? 0) > 0,
     ),
   };
+}
+
+function buildCumulativeAppMonotonicSamples(samples) {
+  let completedSegmentMs = 0;
+  let previousRawAppMonotonicMs = null;
+
+  return (samples ?? []).map((sample) => {
+    const rawAppMonotonicMs = sample.appMonotonicMs;
+    if (typeof rawAppMonotonicMs !== "number") {
+      return {
+        ...sample,
+        appMonotonicMs: null,
+        rawAppMonotonicMs,
+      };
+    }
+
+    if (
+      typeof previousRawAppMonotonicMs === "number" &&
+      rawAppMonotonicMs < previousRawAppMonotonicMs
+    ) {
+      completedSegmentMs += previousRawAppMonotonicMs;
+    }
+    previousRawAppMonotonicMs = rawAppMonotonicMs;
+
+    return {
+      ...sample,
+      appMonotonicMs: completedSegmentMs + rawAppMonotonicMs,
+      rawAppMonotonicMs,
+    };
+  });
+}
+
+function buildAutoplayPlaybackCardDwellAudit(samples) {
+  const dwells = [];
+  const interrupted = [];
+  let activeCard = null;
+
+  for (const sample of samples ?? []) {
+    const activeKey = sample.playback?.activeKey ?? null;
+    const activeKind = sample.playback?.activeKind ?? null;
+    const appMonotonicMs = sample.appMonotonicMs;
+    const rawAppMonotonicMs = sample.rawAppMonotonicMs;
+    const appClockReset =
+      activeCard &&
+      typeof rawAppMonotonicMs === "number" &&
+      typeof activeCard.lastRawAppMonotonicMs === "number" &&
+      rawAppMonotonicMs < activeCard.lastRawAppMonotonicMs;
+
+    if (appClockReset) {
+      interrupted.push({
+        key: activeCard.key,
+        kind: activeCard.kind,
+        observedAppDurationMs: Math.max(
+          0,
+          activeCard.lastAppMonotonicMs - activeCard.startedAtMs,
+        ),
+        title: activeCard.title,
+      });
+      activeCard = null;
+    }
+
+    if (
+      activeCard &&
+      activeCard.key !== activeKey &&
+      typeof appMonotonicMs === "number"
+    ) {
+      dwells.push({
+        appDurationMs: Math.max(0, appMonotonicMs - activeCard.startedAtMs),
+        key: activeCard.key,
+        kind: activeCard.kind,
+        title: activeCard.title,
+      });
+      activeCard = null;
+    }
+
+    if (
+      !activeCard &&
+      activeKey &&
+      AUTOPLAY_DWELL_AUDIT_BEAT_KINDS.has(activeKind) &&
+      typeof appMonotonicMs === "number"
+    ) {
+      activeCard = {
+        key: activeKey,
+        kind: activeKind,
+        lastAppMonotonicMs: appMonotonicMs,
+        lastRawAppMonotonicMs: rawAppMonotonicMs,
+        startedAtMs: appMonotonicMs,
+        title: sample.playback?.activeTitle ?? null,
+      };
+    } else if (
+      activeCard &&
+      activeCard.key === activeKey &&
+      typeof appMonotonicMs === "number"
+    ) {
+      activeCard.lastAppMonotonicMs = appMonotonicMs;
+      activeCard.lastRawAppMonotonicMs = rawAppMonotonicMs;
+    }
+  }
+
+  return { dwells, interrupted };
 }
 
 function buildAutoplayObservationProgressGaps(samples, transitions) {
@@ -12701,6 +12961,24 @@ function classifyAutoplayObservationProgress(previous, next) {
 }
 
 function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
+  assertAutoplayFirstAfternoonDuration(
+    ledger.firstAfternoonCompletedAppElapsedMs,
+    diagnosticsPath,
+  );
+  const hasSemanticPlaybackCard = ledger.playbackCardDwells.some((entry) =>
+    AUTOPLAY_SEMANTIC_DWELL_AUDIT_BEAT_KINDS.has(entry.kind),
+  );
+  const hasDurablePlaybackCard = ledger.playbackCardDwells.some((entry) =>
+    AUTOPLAY_DURABLE_DWELL_AUDIT_BEAT_KINDS.has(entry.kind),
+  );
+  assert.ok(
+    hasSemanticPlaybackCard &&
+      hasDurablePlaybackCard &&
+      typeof ledger.minimumPlaybackCardDwellMs === "number" &&
+      ledger.minimumPlaybackCardDwellMs >=
+        AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS,
+    `Fresh autoplay semantic playback cards must remain visible for at least ${AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS}ms app-monotonic. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(ledger.playbackCardDwells, null, 2)}`,
+  );
   assert.ok(
     ledger.firstDecisionElapsedMs !== null &&
       ledger.firstDecisionElapsedMs <= AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS,
@@ -12841,9 +13119,13 @@ function assertWatchPacingAudit(watchPacingAudit) {
   assert.ok(
     watchPacingAudit.openingFirstActionBeats.every(
       (entry) =>
-        (entry.appDurationMs ?? entry.durationMs ?? Infinity) <= 1_600,
+        entry.autoContinueIntendedDelayMs === 600 &&
+        (entry.fullAppDurationMs ??
+          entry.appDurationMs ??
+          entry.durationMs ??
+          Infinity) <= AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS,
     ),
-    `Opening first-action watch beat should carry forward promptly: ${JSON.stringify(
+    `Opening first-action watch beat must keep its 600ms schedule and validate within ${AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS}ms: ${JSON.stringify(
       watchPacingAudit.openingFirstActionBeats,
       null,
       2,
@@ -16265,6 +16547,9 @@ async function main() {
   assertIndependentNpcSurfaceRefreshGuard();
   assertWatchPacingTransitionSignatureGuard();
   assertAutoplayProgressGapGuard();
+  assertAutoplayFirstAfternoonDurationGuard();
+  assertAutoplayAppMonotonicResetGuard();
+  assertAutoplayPlaybackCardDwellResetGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
     process.stdout.write(
       "[many-lives] Simulator wait deterministic guard passed.\n",

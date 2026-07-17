@@ -93,6 +93,79 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
   assert.match(source, /progressKinds\.push\("playback-progress"\)/);
 });
 
+test("app-monotonic pacing survives a page clock reset", () => {
+  assert.match(source, /buildCumulativeAppMonotonicSamples\(/);
+  assert.match(source, /rawAppMonotonicMs/);
+  assert.match(source, /completedSegmentMs \+= previousRawAppMonotonicMs/);
+  assert.match(source, /assertAutoplayAppMonotonicResetGuard\(\);/);
+  assert.match(
+    source,
+    /\{ appMonotonicMs: 6_500, rawAppMonotonicMs: 500 \}/,
+  );
+});
+
+test("first-afternoon pacing enforces an exact app-monotonic duration window", () => {
+  assert.match(
+    source,
+    /const AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS = 180_000;/,
+  );
+  assert.match(
+    source,
+    /const AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS = 300_000;/,
+  );
+  assert.match(
+    source,
+    /firstAfternoonCompletedAppElapsedMs:/,
+  );
+  assert.match(
+    pacingAssertionSource,
+    /assertAutoplayFirstAfternoonDuration\(\s*ledger\.firstAfternoonCompletedAppElapsedMs,/,
+  );
+  assert.match(source, /assertAutoplayFirstAfternoonDurationGuard\(\);/);
+  assert.match(
+    source,
+    /AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS - 1/,
+  );
+  assert.match(
+    source,
+    /AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS \+ 1/,
+  );
+});
+
+test("autoplay observation timeout includes five-minute completion margin", () => {
+  assert.match(
+    source,
+    /MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS \?\? "360000"/,
+  );
+});
+
+test("semantic playback cards have measured browser dwell evidence", () => {
+  assert.match(
+    source,
+    /const AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS = 2_000;/,
+  );
+  assert.match(source, /buildAutoplayPlaybackCardDwellAudit\(/);
+  assert.match(source, /minimumPlaybackCardDwellMs:/);
+  assert.match(
+    pacingAssertionSource,
+    /ledger\.minimumPlaybackCardDwellMs >=\s*AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS/,
+  );
+  assert.match(source, /interruptedPlaybackCardDwells:/);
+  assert.match(source, /assertAutoplayPlaybackCardDwellResetGuard\(\);/);
+  assert.match(source, /rawAppMonotonicMs < activeCard\.lastRawAppMonotonicMs/);
+});
+
+test("opening watch action keeps 600ms scheduling within follow-through acceptance", () => {
+  assert.match(
+    source,
+    /entry\.autoContinueIntendedDelayMs === 600/,
+  );
+  assert.match(
+    source,
+    /entry\.fullAppDurationMs[\s\S]*AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS/,
+  );
+});
+
 test("Chrome startup retries once and records actionable diagnostics", () => {
   assert.match(source, /const CHROME_START_ATTEMPTS = Number\(/);
   assert.match(

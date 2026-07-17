@@ -164,6 +164,7 @@ import {
   isFirstAfternoonOpening,
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
+  ROWAN_WATCH_PRESENTATION_TIMING_MS,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RecentBeat,
@@ -244,8 +245,6 @@ const CAMERA_WHEEL_PAN_SENSITIVITY = 0.92;
 const DEFAULT_PLAYER_MOVE_MS_PER_TILE = 320;
 const PLAYER_MAX_MOVE_DURATION_MS = 5200;
 const RUNTIME_RENDER_FPS_LIMIT = 24;
-const WATCH_PLAYER_MOVE_MS_PER_TILE = 300;
-const WATCH_PLAYER_MAX_MOVE_DURATION_MS = 5200;
 const PLAYER_MOVE_DURATION_MULTIPLIER = 0.72;
 const STREET_GAME_SESSION_STORAGE_KEY = "many-lives:street-game-id";
 const STREET_SIM_BASE_DAY = "2026-03-21T00:00:00.000Z";
@@ -268,7 +267,10 @@ const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
   mode: "idle",
   stepKind: "idle",
 };
-function autoContinueDelayMsForBeat(game: StreetGameState) {
+function autoContinueDelayMsForBeat(
+  game: StreetGameState,
+  { watchMode = false }: { watchMode?: boolean } = {},
+) {
   if (isFirstAfternoonOpening(game)) {
     return AUTOPLAY_OPENING_AUTOSTART_DELAY_MS;
   }
@@ -282,14 +284,17 @@ function autoContinueDelayMsForBeat(game: StreetGameState) {
   }
 
   const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
+  const autonomyDelay = watchMode
+    ? ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay
+    : AUTONOMY_BEAT_DELAY_MS;
   const baseDelay =
     autonomy.mode === "conversation"
-      ? AUTONOMY_BEAT_DELAY_MS.conversation
+      ? autonomyDelay.conversation
       : autonomy.mode === "waiting"
-        ? AUTONOMY_BEAT_DELAY_MS.waiting
+        ? autonomyDelay.waiting
         : autonomy.mode === "moving"
-          ? AUTONOMY_BEAT_DELAY_MS.moving
-          : AUTONOMY_BEAT_DELAY_MS.acting;
+          ? autonomyDelay.moving
+          : autonomyDelay.acting;
 
   if (
     autonomy.layer !== "conversation" ||
@@ -430,9 +435,11 @@ function estimateDeferredPlayerMoveMs(
     route && routeReachesDestination(route, nextGame.player)
       ? pathDistance(route)
       : distanceBetween(previousGame.player, nextGame.player);
-  const msPerTile = options.watchMode ? WATCH_PLAYER_MOVE_MS_PER_TILE : 360;
+  const msPerTile = options.watchMode
+    ? ROWAN_WATCH_PRESENTATION_TIMING_MS.movementPerTile
+    : 360;
   const maxDuration = options.watchMode
-    ? WATCH_PLAYER_MAX_MOVE_DURATION_MS
+    ? ROWAN_WATCH_PRESENTATION_TIMING_MS.movementMax
     : PLAYER_MAX_MOVE_DURATION_MS;
 
   return clamp(
@@ -1201,7 +1208,9 @@ export function PhaserStreetGameApp() {
 
       const nextPlaybackBeats =
         previousGame && previousGame.id === nextGame.id
-          ? deriveRowanPlaybackBeats(previousGame, nextGame)
+          ? deriveRowanPlaybackBeats(previousGame, nextGame, {
+              watchMode: rowanWatchModeEnabled,
+            })
           : [];
 
       if (
@@ -1626,7 +1635,9 @@ export function PhaserStreetGameApp() {
       return;
     }
 
-    const intendedDelayMs = autoContinueDelayMsForBeat(game);
+    const intendedDelayMs = autoContinueDelayMsForBeat(game, {
+      watchMode: rowanWatchModeEnabled,
+    });
     let beatTiming = autoContinueBeatStartedRef.current;
     if (beatTiming?.key !== autoContinueKey) {
       beatTiming = {
@@ -8923,7 +8934,7 @@ function syncPlayerMotion(runtimeState: RuntimeState) {
   const path = visualRoute.tilePath.length > 0 ? visualRoute.tilePath : [fromPoint];
   const playerMoveMsPerTile = derivePlayerMoveMsPerTile(runtimeState);
   const playerMoveMaxDurationMs = runtimeState.snapshot.rowanWatchModeEnabled
-    ? WATCH_PLAYER_MAX_MOVE_DURATION_MS
+    ? ROWAN_WATCH_PRESENTATION_TIMING_MS.movementMax
     : PLAYER_MAX_MOVE_DURATION_MS;
   const durationMs =
     runtimeState.snapshot.optimisticPlayerMoveDurationMs ??
@@ -9106,8 +9117,12 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
     return DEFAULT_PLAYER_MOVE_MS_PER_TILE;
   }
 
+  if (runtimeState.snapshot.rowanWatchModeEnabled) {
+    return ROWAN_WATCH_PRESENTATION_TIMING_MS.movementPerTile;
+  }
+
   if (runtimeState.indices.activeSpace) {
-    return runtimeState.snapshot.rowanWatchModeEnabled ? 420 : 340;
+    return 340;
   }
 
   const currentLocation = game.player.currentLocationId
@@ -9136,11 +9151,10 @@ function derivePlayerMoveMsPerTile(runtimeState: RuntimeState) {
 
   const rawMsPerTile =
     (patrolCycleSeconds(currentLocation.type) * 1000) / patrolDistance;
-  const watchMultiplier = runtimeState.snapshot.rowanWatchModeEnabled ? 1.24 : 1;
   return clamp(
-    rawMsPerTile * PLAYER_MOVE_DURATION_MULTIPLIER * watchMultiplier,
-    runtimeState.snapshot.rowanWatchModeEnabled ? 360 : 300,
-    runtimeState.snapshot.rowanWatchModeEnabled ? 880 : 760,
+    rawMsPerTile * PLAYER_MOVE_DURATION_MULTIPLIER,
+    300,
+    760,
   );
 }
 

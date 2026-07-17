@@ -9,6 +9,8 @@ import {
   isBlockingRowanPlayback,
   isBlockingRowanPlaybackForGame,
   remainingAutoplayDelayMs,
+  ROWAN_PLAYBACK_TIMING_MS,
+  ROWAN_WATCH_PRESENTATION_TIMING_MS,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
@@ -189,6 +191,99 @@ describe("Rowan playback helpers", () => {
     expect(completedBeats.map((beat) => beat.kind)).toContain(
       "action_complete",
     );
+
+    const watchAcceptedBeats = deriveRowanPlaybackBeats(
+      asWebGame(world),
+      asWebGame(accepted),
+      { watchMode: true },
+    );
+    const watchStartedBeats = deriveRowanPlaybackBeats(
+      asWebGame(readyToWork),
+      asWebGame(started),
+      { watchMode: true },
+    );
+    const watchCompletedBeats = deriveRowanPlaybackBeats(
+      asWebGame(counter),
+      asWebGame(completed),
+      { watchMode: true },
+    );
+
+    expect(
+      acceptedBeats.find((beat) => beat.kind === "action_start")?.durationMs,
+    ).toBe(ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap);
+    expect(
+      startedBeats.find((beat) => beat.kind === "action_start")?.durationMs,
+    ).toBe(ROWAN_PLAYBACK_TIMING_MS.minimumAutoplayGap);
+    expect(
+      completedBeats.find((beat) => beat.kind === "action_complete")
+        ?.durationMs,
+    ).toBe(ROWAN_PLAYBACK_TIMING_MS.postActionCompletePause);
+    expect(
+      watchAcceptedBeats.find((beat) => beat.kind === "action_start")
+        ?.durationMs,
+    ).toBe(ROWAN_WATCH_PRESENTATION_TIMING_MS.semanticCard);
+    expect(
+      watchStartedBeats.find((beat) => beat.kind === "action_start")
+        ?.durationMs,
+    ).toBe(ROWAN_WATCH_PRESENTATION_TIMING_MS.semanticCard);
+    expect(
+      watchCompletedBeats.find((beat) => beat.kind === "action_complete")
+        ?.durationMs,
+    ).toBe(ROWAN_WATCH_PRESENTATION_TIMING_MS.durableCard);
+
+    const rushBeat = watchStartedBeats.find(
+      (beat) => beat.key.startsWith("tea-shift-stage:rush:"),
+    );
+    expect(rushBeat).toBeTruthy();
+    expect(
+      alignRowanPlaybackWithGame(
+        { activeBeat: rushBeat, queuedBeats: rushBeat ? [rushBeat] : [] },
+        asWebGame(started),
+      ).activeBeat,
+    ).toBe(rushBeat);
+    const alignedWithCompletedShift = alignRowanPlaybackWithGame(
+      { activeBeat: rushBeat, queuedBeats: rushBeat ? [rushBeat] : [] },
+      asWebGame(completed),
+    );
+    expect(alignedWithCompletedShift.activeBeat).toBeUndefined();
+    expect(alignedWithCompletedShift.queuedBeats).toHaveLength(0);
+  });
+
+  it("uses a watch-only movement profile without changing manual defaults", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-watch-move");
+    const moved = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+
+    const manualMove = deriveRowanPlaybackBeats(
+      asWebGame(world),
+      asWebGame(moved),
+    ).find((beat) => beat.kind === "move");
+    const watchMove = deriveRowanPlaybackBeats(
+      asWebGame(world),
+      asWebGame(moved),
+      { watchMode: true },
+    ).find((beat) => beat.kind === "move");
+
+    expect(manualMove?.durationMs).toBeLessThanOrEqual(4_800);
+    expect(watchMove?.durationMs).toBeGreaterThan(manualMove?.durationMs ?? 0);
+    expect(watchMove?.durationMs).toBeLessThanOrEqual(
+      ROWAN_WATCH_PRESENTATION_TIMING_MS.movementMax,
+    );
+    expect(ROWAN_WATCH_PRESENTATION_TIMING_MS).toMatchObject({
+      autonomyDelay: {
+        acting: 10_000,
+        conversation: 10_800,
+        moving: 6_000,
+        waiting: 9_800,
+      },
+      durableCard: 3_400,
+      movementPerTile: 420,
+      semanticCard: 2_800,
+    });
   });
 
   it("surfaces an independent NPC resolution as a rail-visible city beat", async () => {
