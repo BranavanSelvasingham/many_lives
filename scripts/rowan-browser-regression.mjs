@@ -120,6 +120,8 @@ const CDP_READ_RETRY_DELAY_MS = Number(
   process.env.MANY_LIVES_BROWSER_CDP_READ_RETRY_DELAY_MS ?? "250",
 );
 const SIM_WAIT_TIMEOUT_MS = 15_000;
+const SIM_CONVERSATION_PLAYBACK_EXTRA_WAIT_MS = 15_000;
+const SIM_CONVERSATION_PLAYBACK_STALL_GRACE_MS = 5_000;
 const SIM_WORK_PLAYBACK_EXTRA_WAIT_MS = 15_000;
 const SIM_WORK_PLAYBACK_STALL_GRACE_MS = 5_000;
 const SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS = 2_000;
@@ -5520,6 +5522,109 @@ function assertProbeAuditability(label, game, probe) {
   }
 }
 
+function renderedConversationLinePrefixLength(bodyText, expectedLine) {
+  const normalizedBodyText = (bodyText ?? "").replace(/\s+/g, " ").trim();
+  const normalizedExpectedLine = (expectedLine ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  for (let length = normalizedExpectedLine.length; length >= 8; length -= 1) {
+    if (normalizedBodyText.includes(normalizedExpectedLine.slice(0, length))) {
+      return length;
+    }
+  }
+  return 0;
+}
+
+function updateConversationPlaybackProgress({
+  bodyText,
+  elapsedMs,
+  expectedLine,
+  progress,
+}) {
+  const prefixLength = renderedConversationLinePrefixLength(
+    bodyText,
+    expectedLine,
+  );
+  if (prefixLength <= progress.maxPrefixLength) {
+    return progress;
+  }
+  return {
+    advanceCount: progress.advanceCount + 1,
+    lastProgressElapsedMs: elapsedMs,
+    maxPrefixLength: prefixLength,
+  };
+}
+
+function shouldContinueConversationDomWait({ elapsedMs, progress }) {
+  if (elapsedMs < SIM_WAIT_TIMEOUT_MS) {
+    return true;
+  }
+  return Boolean(
+    elapsedMs <
+      SIM_WAIT_TIMEOUT_MS + SIM_CONVERSATION_PLAYBACK_EXTRA_WAIT_MS &&
+      progress.advanceCount >= 2 &&
+      progress.lastProgressElapsedMs !== null &&
+      elapsedMs - progress.lastProgressElapsedMs <=
+        SIM_CONVERSATION_PLAYBACK_STALL_GRACE_MS,
+  );
+}
+
+function assertConversationPlaybackWaitRegression() {
+  const expectedLine = "Do you still need hands, or should Rowan move on?";
+  let progress = {
+    advanceCount: 0,
+    lastProgressElapsedMs: null,
+    maxPrefixLength: 0,
+  };
+  progress = updateConversationPlaybackProgress({
+    bodyText: "Do you still",
+    elapsedMs: 13_500,
+    expectedLine,
+    progress,
+  });
+  progress = updateConversationPlaybackProgress({
+    bodyText: "Do you still need hands, or",
+    elapsedMs: 14_750,
+    expectedLine,
+    progress,
+  });
+  assert.equal(
+    shouldContinueConversationDomWait({ elapsedMs: 15_000, progress }),
+    true,
+    "recent visible conversation progress should extend the DOM settlement wait",
+  );
+  assert.equal(
+    shouldContinueConversationDomWait({ elapsedMs: 20_000, progress }),
+    false,
+    "stalled conversation playback should not keep extending the DOM wait",
+  );
+  assert.equal(
+    shouldContinueConversationDomWait({
+      elapsedMs:
+        SIM_WAIT_TIMEOUT_MS + SIM_CONVERSATION_PLAYBACK_EXTRA_WAIT_MS,
+      progress: updateConversationPlaybackProgress({
+        bodyText: expectedLine.slice(0, -1),
+        elapsedMs:
+          SIM_WAIT_TIMEOUT_MS +
+          SIM_CONVERSATION_PLAYBACK_EXTRA_WAIT_MS -
+          1,
+        expectedLine,
+        progress,
+      }),
+    }),
+    false,
+    "conversation playback settlement must retain a hard deadline",
+  );
+  assert.equal(
+    renderedConversationLinePrefixLength(
+      "Unrelated transcript copy changed while waiting.",
+      expectedLine,
+    ),
+    0,
+    "unrelated transcript growth must not count as final-line progress",
+  );
+}
+
 async function waitForGameplayDom(label, session, probe, game) {
   const expectedLabel = probe.autonomy.label.slice(0, 28);
   const expectedPattern = new RegExp(escapeRegExp(expectedLabel), "i");
@@ -5532,8 +5637,18 @@ async function waitForGameplayDom(label, session, probe, game) {
   let lastReadableSignature = null;
   let lastReadabilityError = null;
   let readableStableSamples = 0;
+  let conversationPlaybackProgress = {
+    advanceCount: 0,
+    lastProgressElapsedMs: null,
+    maxPrefixLength: 0,
+  };
 
-  while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
+  while (
+    shouldContinueConversationDomWait({
+      elapsedMs: Date.now() - startedAt,
+      progress: conversationPlaybackProgress,
+    })
+  ) {
     try {
       await session.waitForAnimationFrames(2);
       lastDom = await session.readDomSnapshot();
@@ -5543,6 +5658,14 @@ async function waitForGameplayDom(label, session, probe, game) {
       const normalizedBodyText = (lastDom?.bodyText ?? "")
         .replace(/\s+/g, " ")
         .trim();
+      if (expectedConversationLine) {
+        conversationPlaybackProgress = updateConversationPlaybackProgress({
+          bodyText: normalizedBodyText,
+          elapsedMs: Date.now() - startedAt,
+          expectedLine: expectedConversationLine,
+          progress: conversationPlaybackProgress,
+        });
+      }
       const conversationFullyRendered =
         !expectedConversationLine ||
         normalizedBodyText.includes(expectedConversationLine);
@@ -5585,7 +5708,9 @@ async function waitForGameplayDom(label, session, probe, game) {
   assert.fail(
     `${label}: rendered UI did not catch up to the current Rowan beat "${expectedLabel}". Last DOM: ${
       lastDom?.bodyTextSample ?? "missing"
-    }. Last readability error: ${lastReadabilityError ?? "none"}`,
+    }. Conversation playback: ${JSON.stringify(
+      conversationPlaybackProgress,
+    )}. Last readability error: ${lastReadabilityError ?? "none"}`,
   );
 }
 
@@ -16076,6 +16201,7 @@ async function main() {
   assertActiveRouteTargetAuthorityRegression();
   assertScheduledNpcLocationChangeAuditRegression();
   assertProgressAwareStagedWorkWaitRegression();
+  assertConversationPlaybackWaitRegression();
   assertPostFirstAfternoonTrajectoryNeutralGuard();
   assertYardNotebookCommitmentGuard();
   assertIndependentNpcSurfaceRefreshGuard();
