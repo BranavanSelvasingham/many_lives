@@ -12026,6 +12026,47 @@ function assertAutoplayProgressGapGuard() {
     overBudgetGaps[0].appDurationMs > AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
     "An over-budget app-visible gap must remain a product pacing failure even when observer time is shorter.",
   );
+
+  const gradualRouteSamples = [
+    {
+      appMonotonicMs: 0,
+      autonomy: { label: "Return home" },
+      elapsedMs: 0,
+      movement: { routeProgress: 0 },
+    },
+    {
+      appMonotonicMs: 1_000,
+      autonomy: { label: "Return home" },
+      elapsedMs: 1_000,
+      movement: { routeProgress: 0.07 },
+    },
+    {
+      appMonotonicMs: 2_000,
+      autonomy: { label: "Return home" },
+      elapsedMs: 2_000,
+      movement: { routeProgress: 0.14 },
+    },
+  ];
+  const gradualRouteTransitions = gradualRouteSamples
+    .slice(1)
+    .map((sample, index) => ({
+      progressKinds: classifyAutoplayObservationProgress(
+        gradualRouteSamples[index],
+        sample,
+      ),
+      toElapsedMs: sample.elapsedMs,
+    }));
+  assert.deepEqual(
+    buildAutoplayObservationProgressGaps(
+      gradualRouteSamples,
+      gradualRouteTransitions,
+    ).map((gap) => ({
+      appDurationMs: gap.appDurationMs,
+      progressKinds: gap.progressKinds,
+    })),
+    [{ appDurationMs: 2_000, progressKinds: ["route-progress"] }],
+    "Gradual visible route movement must accumulate into progress instead of reading as an idle gap until arrival.",
+  );
 }
 
 function inhabitCameraDelta(before, after) {
@@ -12413,11 +12454,20 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
   let previousProgressSample = samples[0];
   for (let index = 0; index < transitions.length; index += 1) {
     const transition = transitions[index];
-    if (!transition.progressKinds.some((kind) => kind !== "decision-artifact")) {
+    const nextSample = samples[index + 1];
+    const progressKinds = [
+      ...new Set([
+        ...transition.progressKinds,
+        ...classifyAutoplayObservationProgress(
+          previousProgressSample,
+          nextSample,
+        ),
+      ]),
+    ];
+    if (!progressKinds.some((kind) => kind !== "decision-artifact")) {
       continue;
     }
 
-    const nextSample = samples[index + 1];
     const appDurationMs =
       typeof previousProgressSample.appMonotonicMs === "number" &&
       typeof nextSample?.appMonotonicMs === "number"
@@ -12435,7 +12485,7 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
       ),
       fromAutonomyLabel: previousProgressSample.autonomy?.label ?? null,
       fromElapsedMs: previousProgressSample.elapsedMs,
-      progressKinds: transition.progressKinds,
+      progressKinds,
       toAutonomyLabel: nextSample?.autonomy?.label ?? null,
       toElapsedMs: nextSample?.elapsedMs ?? transition.toElapsedMs,
     });
