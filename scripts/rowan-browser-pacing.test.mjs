@@ -184,6 +184,10 @@ test("semantic playback cards have measured browser dwell evidence", () => {
   assert.match(source, /interruptedPlaybackCardDwells:/);
   assert.match(source, /assertAutoplayPlaybackCardDwellResetGuard\(\);/);
   assert.match(source, /rawAppMonotonicMs < activeCard\.lastRawAppMonotonicMs/);
+  assert.match(
+    source,
+    /activeCard\.lastAppMonotonicMs - activeCard\.startedAtMs/,
+  );
 });
 
 test("opening watch action keeps 600ms scheduling within follow-through acceptance", () => {

@@ -12799,6 +12799,32 @@ function assertAutoplayPlaybackCardDwellResetGuard() {
     ["interrupted-card"],
     "A page-clock reset must mark an active card as interrupted instead of reporting a false dwell.",
   );
+
+  const terminalAudit = buildAutoplayPlaybackCardDwellAudit([
+    {
+      appMonotonicMs: 12_000,
+      playback: {
+        activeKey: "terminal-semantic-card",
+        activeKind: "time_passed",
+        activeTitle: "Time passed",
+      },
+      rawAppMonotonicMs: 7_000,
+    },
+    {
+      appMonotonicMs: 14_400,
+      playback: {
+        activeKey: "terminal-semantic-card",
+        activeKind: "time_passed",
+        activeTitle: "Time passed",
+      },
+      rawAppMonotonicMs: 9_400,
+    },
+  ]);
+  assert.deepEqual(
+    terminalAudit.dwells.map((entry) => entry.appDurationMs),
+    [2_400],
+    "A semantic card still visible at the natural stop must retain its measured dwell.",
+  );
 }
 
 function inhabitCameraDelta(before, after) {
@@ -13316,6 +13342,21 @@ function buildAutoplayPlaybackCardDwellAudit(samples) {
       activeCard.lastAppMonotonicMs = appMonotonicMs;
       activeCard.lastRawAppMonotonicMs = rawAppMonotonicMs;
     }
+  }
+
+  if (
+    activeCard &&
+    typeof activeCard.lastAppMonotonicMs === "number"
+  ) {
+    dwells.push({
+      appDurationMs: Math.max(
+        0,
+        activeCard.lastAppMonotonicMs - activeCard.startedAtMs,
+      ),
+      key: activeCard.key,
+      kind: activeCard.kind,
+      title: activeCard.title,
+    });
   }
 
   return { dwells, interrupted };
