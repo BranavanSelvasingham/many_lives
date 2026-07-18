@@ -104,7 +104,7 @@ test("app-monotonic pacing survives a page clock reset", () => {
   );
 });
 
-test("first-afternoon pacing enforces an exact app-monotonic duration window", () => {
+test("first-afternoon pacing enforces the app-monotonic duration window with sampling tolerance", () => {
   assert.match(
     source,
     /const AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS = 180_000;/,
@@ -112,6 +112,10 @@ test("first-afternoon pacing enforces an exact app-monotonic duration window", (
   assert.match(
     source,
     /const AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS = 300_000;/,
+  );
+  assert.match(
+    source,
+    /const AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS = 250;/,
   );
   assert.match(
     source,
@@ -124,11 +128,11 @@ test("first-afternoon pacing enforces an exact app-monotonic duration window", (
   assert.match(source, /assertAutoplayFirstAfternoonDurationGuard\(\);/);
   assert.match(
     source,
-    /AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS - 1/,
+    /AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS -\s*AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS -\s*1/,
   );
   assert.match(
     source,
-    /AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS \+ 1/,
+    /AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS \+\s*AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS \+\s*1/,
   );
 });
 
@@ -136,6 +140,33 @@ test("autoplay observation timeout includes five-minute completion margin", () =
   assert.match(
     source,
     /MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS \?\? "360000"/,
+  );
+});
+
+test("opening map evidence is frozen before zero-click pacing begins", () => {
+  const runStart = source.indexOf(
+    "async function runAutoplayObservation(session, { game, openingWorldVariant })",
+  );
+  const runEnd = source.indexOf(
+    "\nfunction assertAutoplayOpeningWorldTrajectoryEvidence(",
+    runStart,
+  );
+  const runSource = source.slice(runStart, runEnd);
+  const frozenCapture = runSource.indexOf(
+    'captureMilestoneOnce("opening", openingProbe, openingDom)',
+  );
+  const pacingStart = runSource.indexOf("const pacingStartedAt = Date.now()");
+
+  assert.ok(runStart >= 0 && runEnd > runStart);
+  assert.match(runSource, /autoplayBrowserUrl\(game\.id, \{ frozen: true \}\)/);
+  assert.match(source, /autoplay=\$\{frozen \? "0" : "1"\}/);
+  assert.match(source, /frozen \? "&freezeAutoplay=1" : ""/);
+  assert.match(runSource, /probe\.watchMode\?\.status !== "frozen"/);
+  assert.match(runSource, /frozen opening evidence mutated the game clock/);
+  assert.match(runSource, /frozen opening evidence moved Rowan/);
+  assert.ok(
+    frozenCapture >= 0 && frozenCapture < pacingStart,
+    "Opening map evidence must be captured before the normal autoplay page starts its pacing clock.",
   );
 });
 

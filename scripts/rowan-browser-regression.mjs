@@ -106,6 +106,7 @@ const AUTOPLAY_PACING_MIN_MEANINGFUL_BEATS = Number(
 );
 const AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS = 180_000;
 const AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS = 300_000;
+const AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS = 250;
 const AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS = 2_000;
 const AUTOPLAY_DURABLE_DWELL_AUDIT_BEAT_KINDS = new Set([
   "action_complete",
@@ -675,8 +676,8 @@ function slug(label) {
     .replace(/^-|-$/g, "");
 }
 
-function autoplayBrowserUrl(gameId) {
-  return `${getWebBase()}?gameId=${encodeURIComponent(gameId)}&autoplay=1&observe=1`;
+function autoplayBrowserUrl(gameId, { frozen = false } = {}) {
+  return `${getWebBase()}?gameId=${encodeURIComponent(gameId)}&autoplay=${frozen ? "0" : "1"}&observe=1${frozen ? "&freezeAutoplay=1" : ""}`;
 }
 
 function sleep(ms) {
@@ -11563,6 +11564,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     `Autoplay evidence game ${game.id} did not match ${openingWorldVariant}.`,
   );
   const url = autoplayBrowserUrl(game.id);
+  const openingEvidenceUrl = autoplayBrowserUrl(game.id, { frozen: true });
   const pacingLedgerPath = path.join(
     OUTPUT_DIR,
     `${openingWorldVariant}-autoplay-pacing-ledger.json`,
@@ -11577,6 +11579,78 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   let lastSampleAt = 0;
   let lastDomAuditAt = 0;
   let lastProbeSignature = null;
+  const trajectoryMilestones = [];
+  const capturedMilestoneKeys = new Set();
+  let footholdRouteStartProgress = null;
+  let visibleCopyAuditCount = 0;
+  const captureMilestoneOnce = async (key, probe, milestoneDom = null) => {
+    if (capturedMilestoneKeys.has(key)) {
+      return trajectoryMilestones.find((entry) => entry.key === key) ?? null;
+    }
+    const evidence = await captureAutoplayTrajectoryMilestone({
+      dom: milestoneDom,
+      key,
+      openingWorldVariant,
+      probe,
+      session,
+    });
+    capturedMilestoneKeys.add(key);
+    trajectoryMilestones.push(evidence);
+    return evidence;
+  };
+
+  await session.navigate(openingEvidenceUrl);
+  const openingProbe = await waitFor(
+    async () => {
+      const probe = acceptedAutoplayPacingProbe(
+        await session.readAutoplayPacingProbe(
+          `${openingWorldVariant}:autoplay:frozen-opening-probe`,
+        ),
+      );
+      if (
+        !probe ||
+        probe.gameId !== game.id ||
+        probe.location?.spaceId !== "street:south-quay" ||
+        probe.watchMode?.status !== "frozen"
+      ) {
+        return false;
+      }
+      const camera = await session
+        .readCameraProbe(
+          `${openingWorldVariant}:autoplay:frozen-opening-camera`,
+        )
+        .catch(() => null);
+      const mapAgency = await session
+        .readMapAgencyProbe(
+          `${openingWorldVariant}:autoplay:frozen-opening-map-agency`,
+        )
+        .catch(() => null);
+      return camera && mapAgency ? probe : false;
+    },
+    APP_READY_TIMEOUT_MS,
+    `${openingWorldVariant}: frozen opening map/camera evidence remained unavailable.`,
+    PROBE_POLL_INTERVAL_MS,
+  );
+  const openingDom = await session
+    .readAutoplayDomAudit(`${openingWorldVariant}:autoplay:frozen-opening-dom`)
+    .catch(() => null);
+  assert.equal(
+    openingProbe.clock?.iso,
+    game.currentTime,
+    `${openingWorldVariant}: frozen opening evidence mutated the game clock.`,
+  );
+  assert.equal(
+    openingProbe.location?.id,
+    game.player.currentLocationId,
+    `${openingWorldVariant}: frozen opening evidence moved Rowan.`,
+  );
+  assertNoVisibleImplementationLanguage(
+    `${openingWorldVariant} autoplay opening`,
+    openingDom?.bodyText ?? "",
+  );
+  visibleCopyAuditCount += openingDom ? 1 : 0;
+  await captureMilestoneOnce("opening", openingProbe, openingDom);
+
   const pacingStartedAt = Date.now();
   await session.navigate(url);
   const startProbe = await waitFor(
@@ -11614,10 +11688,6 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   lastDomAuditAt = lastSampleAt;
   lastProbeSignature = autoplayObservationSignature(pacingSamples.at(-1));
 
-  const trajectoryMilestones = [];
-  const capturedMilestoneKeys = new Set();
-  let footholdRouteStartProgress = null;
-  let visibleCopyAuditCount = 0;
   assert.equal(
     startProbe.gameId,
     game.id,
@@ -11628,23 +11698,6 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     startDom?.bodyText ?? "",
   );
   visibleCopyAuditCount += startDom ? 1 : 0;
-
-  const captureMilestoneOnce = async (key, probe, milestoneDom = null) => {
-    if (capturedMilestoneKeys.has(key)) {
-      return trajectoryMilestones.find((entry) => entry.key === key) ?? null;
-    }
-    const evidence = await captureAutoplayTrajectoryMilestone({
-      dom: milestoneDom,
-      key,
-      openingWorldVariant,
-      probe,
-      session,
-    });
-    capturedMilestoneKeys.add(key);
-    trajectoryMilestones.push(evidence);
-    return evidence;
-  };
-  await captureMilestoneOnce("opening", startProbe, startDom);
 
   let screenshotPath = null;
   let completedProbe = null;
@@ -12629,24 +12682,36 @@ function assertAutoplayProgressGapGuard() {
 function assertAutoplayFirstAfternoonDuration(durationMs, diagnosticsPath) {
   assert.ok(
     typeof durationMs === "number" &&
-      durationMs >= AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS &&
-      durationMs <= AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS,
-    `Fresh autoplay first-afternoon completion must land between ${AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS}ms and ${AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS}ms app-monotonic. Diagnostics: ${diagnosticsPath}. Measured: ${durationMs}ms.`,
+      durationMs >=
+        AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS -
+          AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS &&
+      durationMs <=
+        AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS +
+          AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS,
+    `Fresh autoplay first-afternoon completion must land between ${AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS}ms and ${AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS}ms app-monotonic (within ${AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS}ms sampling tolerance). Diagnostics: ${diagnosticsPath}. Measured: ${durationMs}ms.`,
   );
 }
 
 function assertAutoplayFirstAfternoonDurationGuard() {
   for (const durationMs of [
     AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS,
+    AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS -
+      AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS,
     AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS,
+    AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS +
+      AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS,
   ]) {
     assert.doesNotThrow(() =>
       assertAutoplayFirstAfternoonDuration(durationMs, "passing-fixture"),
     );
   }
   for (const durationMs of [
-    AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS - 1,
-    AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS + 1,
+    AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS -
+      AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS -
+      1,
+    AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS +
+      AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS +
+      1,
   ]) {
     assert.throws(() =>
       assertAutoplayFirstAfternoonDuration(durationMs, "failing-fixture"),
