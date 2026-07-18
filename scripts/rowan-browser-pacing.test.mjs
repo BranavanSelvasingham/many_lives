@@ -91,6 +91,10 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
   );
   assert.doesNotMatch(pacingAssertionSource, /ledger\.maxIdleGapMs/);
   assert.match(source, /progressKinds\.push\("playback-progress"\)/);
+  assert.match(
+    source,
+    /activeConversation\?\.replay\?\.streamedWordCount/,
+  );
 });
 
 test("app-monotonic pacing survives a page clock reset", () => {

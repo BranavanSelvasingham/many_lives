@@ -105,6 +105,7 @@ import {
   type PendingConversationSource,
 } from "@/lib/street/rowanAutonomy";
 import {
+  advanceStreetPresentationClock,
   buildStreetBrowserProbeJson,
   type StreetBrowserMovementDiagnostics,
 } from "@/lib/street/browserProbe";
@@ -974,6 +975,7 @@ type RuntimeState = {
   pendingConversationAutostartNpcId: string | null;
   playerEntranceGameId: string | null;
   playerMotion: PlayerMotionState;
+  presentationClockMs: number;
   renderScale: number;
   snapshot: StreetAppSnapshot;
   ui: UiState;
@@ -1957,6 +1959,7 @@ async function createRuntime(options: {
       initialIndices,
       runtimeNow,
     ),
+    presentationClockMs: 0,
     cameraProjection: null,
     renderScale,
     snapshot: initialSnapshot,
@@ -2186,11 +2189,15 @@ async function createRuntime(options: {
       );
     },
 
-    update(this: PhaserType.Scene) {
+    update(this: PhaserType.Scene, _time: number, delta: number) {
       if (!runtimeState.objects) {
         return;
       }
 
+      runtimeState.presentationClockMs = advanceStreetPresentationClock(
+        runtimeState.presentationClockMs,
+        delta,
+      );
       renderDynamicScene(runtimeState.objects, runtimeState);
     },
   };
@@ -4179,18 +4186,21 @@ function installStreetProbeAccessor(root: HTMLDivElement) {
       return payload;
     }
 
-    const appMonotonicMs = performance.now();
+    const wallMonotonicMs = performance.now();
     const timing =
       payload.timing && typeof payload.timing === "object"
         ? (payload.timing as Record<string, unknown>)
         : {};
-    timing.appMonotonicMs = appMonotonicMs;
+    timing.wallMonotonicMs = wallMonotonicMs;
+    if (typeof timing.appMonotonicMs !== "number") {
+      timing.appMonotonicMs = wallMonotonicMs;
+    }
     if (timing.autoContinue && typeof timing.autoContinue === "object") {
       const autoContinue = timing.autoContinue as Record<string, unknown>;
       if (typeof autoContinue.startedAtMs === "number") {
         autoContinue.elapsedMs = Math.max(
           0,
-          appMonotonicMs - autoContinue.startedAtMs,
+          wallMonotonicMs - autoContinue.startedAtMs,
         );
       }
     }
@@ -7447,7 +7457,9 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     rowanRail,
     snapshot: {
       ...snapshot,
+      conversationReplay: runtimeState.conversationReplay,
       movement: browserMovementDiagnostics,
+      presentationClockMs: runtimeState.presentationClockMs,
       rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
       rowanAutoplayFrozen: snapshot.rowanAutoplayFrozen,
       rowanWatchModeEnabled: snapshot.rowanWatchModeEnabled,

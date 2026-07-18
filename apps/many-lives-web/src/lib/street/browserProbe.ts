@@ -169,6 +169,12 @@ export type StreetBrowserProbeSnapshot = {
     startedAtMs: number;
   } | null;
   busyLabel?: string | null;
+  conversationReplay?: {
+    isReplaying: boolean;
+    revealedEntryIds: string[];
+    streamedWordCount: number;
+    streamingEntryId: string | null;
+  };
   movement?: StreetBrowserMovementDiagnostics;
   optimisticPlayerPosition?: {
     x: number;
@@ -181,6 +187,7 @@ export type StreetBrowserProbeSnapshot = {
   rowanAutoplayEnabled?: boolean;
   rowanAutoplayFrozen?: boolean;
   rowanWatchModeEnabled?: boolean;
+  presentationClockMs?: number;
   visualEventCues?: Array<{
     backingEvents: Array<{
       id: string;
@@ -197,6 +204,22 @@ export type StreetBrowserProbeSnapshot = {
     visibleLabel: string | null;
   }>;
 };
+
+export const STREET_PRESENTATION_FRAME_GAP_CAP_MS = 250;
+
+export function advanceStreetPresentationClock(
+  currentMs: number,
+  frameDeltaMs: number,
+) {
+  const safeCurrentMs = Number.isFinite(currentMs) ? Math.max(0, currentMs) : 0;
+  const safeFrameDeltaMs = Number.isFinite(frameDeltaMs)
+    ? Math.max(0, frameDeltaMs)
+    : 0;
+  return (
+    safeCurrentMs +
+    Math.min(safeFrameDeltaMs, STREET_PRESENTATION_FRAME_GAP_CAP_MS)
+  );
+}
 
 function objectiveProbePayload(game: StreetGameState) {
   const objective = game.player.objective;
@@ -859,8 +882,12 @@ export function buildStreetBrowserProbeJson({
   rowanRail,
   snapshot,
 }: BuildStreetBrowserProbeJsonOptions) {
-  const appMonotonicMs =
+  const wallMonotonicMs =
     typeof performance === "undefined" ? null : performance.now();
+  const appMonotonicMs =
+    typeof snapshot.presentationClockMs === "number"
+      ? snapshot.presentationClockMs
+      : wallMonotonicMs;
   const currentLocation = game.locations.find(
     (location) => location.id === game.player.currentLocationId,
   );
@@ -872,6 +899,18 @@ export function buildStreetBrowserProbeJson({
           lines: activeConversation.lines.length,
           npcId: activeConversation.npcId,
           npcName: conversationNpcName ?? null,
+          replay:
+            snapshot.conversationReplay && rowanRail.useConversationTranscript
+            ? {
+                isReplaying: snapshot.conversationReplay.isReplaying,
+                revealedEntryCount:
+                  snapshot.conversationReplay.revealedEntryIds.length,
+                streamedWordCount:
+                  snapshot.conversationReplay.streamedWordCount,
+                streamingEntryId:
+                  snapshot.conversationReplay.streamingEntryId,
+              }
+            : null,
           updatedAt: activeConversation.updatedAt,
         }
       : null,
@@ -927,14 +966,15 @@ export function buildStreetBrowserProbeJson({
     },
     timing: {
       appMonotonicMs,
+      wallMonotonicMs,
       autoContinue: snapshot.autoContinueBeatTiming
         ? {
             elapsedMs:
-              appMonotonicMs === null
+              wallMonotonicMs === null
                 ? null
                 : Math.max(
                     0,
-                    appMonotonicMs -
+                    wallMonotonicMs -
                       snapshot.autoContinueBeatTiming.startedAtMs,
                   ),
             intendedDelayMs:

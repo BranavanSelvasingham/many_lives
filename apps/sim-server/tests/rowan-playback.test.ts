@@ -17,7 +17,11 @@ import {
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
-import { buildStreetBrowserProbeJson } from "../../many-lives-web/src/lib/street/browserProbe.js";
+import {
+  advanceStreetPresentationClock,
+  buildStreetBrowserProbeJson,
+  STREET_PRESENTATION_FRAME_GAP_CAP_MS,
+} from "../../many-lives-web/src/lib/street/browserProbe.js";
 import { buildIndependentNpcActionRecords } from "../../many-lives-web/src/lib/street/independentNpcActions.js";
 import { isObjectiveTrailStepPlayerFacingForPlayback } from "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
@@ -50,6 +54,94 @@ function setClock(
 }
 
 describe("Rowan playback helpers", () => {
+  it("measures rendered presentation time without charging long frame stalls", () => {
+    expect(advanceStreetPresentationClock(1_000, 32)).toBe(1_032);
+    expect(advanceStreetPresentationClock(1_032, 2_000)).toBe(
+      1_032 + STREET_PRESENTATION_FRAME_GAP_CAP_MS,
+    );
+    expect(advanceStreetPresentationClock(Number.NaN, -20)).toBe(0);
+  });
+
+  it("exposes presentation timing and visible transcript streaming", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("rowan-probe-presentation-clock");
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    expect(world.activeConversation).toBeDefined();
+
+    const playback = createEmptyRowanPlaybackState();
+    const railView = buildRowanRailViewModel({
+      conversationReplayActive: true,
+      fallbackThought: "Rowan is listening to Mara.",
+      game: asWebGame(world),
+      playback,
+      quietStatusLabel: world.currentScene.title,
+      watchMode: true,
+    });
+    const probe = JSON.parse(
+      buildStreetBrowserProbeJson({
+        activeConversation: world.activeConversation,
+        game: asWebGame(world),
+        rowanRail: railView,
+        snapshot: {
+          conversationReplay: {
+            isReplaying: true,
+            revealedEntryIds: ["line-1"],
+            streamedWordCount: 7,
+            streamingEntryId: "line-2",
+          },
+          presentationClockMs: 12_345,
+          rowanPlayback: playback,
+          rowanWatchModeEnabled: true,
+        },
+      }),
+    );
+
+    expect(probe.timing).toMatchObject({
+      appMonotonicMs: 12_345,
+      wallMonotonicMs: expect.any(Number),
+    });
+    expect(probe.activeConversation.replay).toEqual({
+      isReplaying: true,
+      revealedEntryCount: 1,
+      streamedWordCount: 7,
+      streamingEntryId: "line-2",
+    });
+
+    const quietRail = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is listening to Mara.",
+      game: asWebGame(world),
+      playback,
+      quietStatusLabel: world.currentScene.title,
+      watchMode: false,
+    });
+    const hiddenReplayProbe = JSON.parse(
+      buildStreetBrowserProbeJson({
+        activeConversation: world.activeConversation,
+        game: asWebGame(world),
+        rowanRail: {
+          ...quietRail,
+          useConversationTranscript: false,
+        },
+        snapshot: {
+          conversationReplay: {
+            isReplaying: true,
+            revealedEntryIds: ["line-1"],
+            streamedWordCount: 8,
+            streamingEntryId: "line-2",
+          },
+          rowanPlayback: playback,
+          rowanWatchModeEnabled: false,
+        },
+      }),
+    );
+    expect(hiddenReplayProbe.activeConversation.replay).toBeNull();
+  });
+
   it("tightens watch pacing only while Rowan is equipped for a live problem", () => {
     const world = seedStreetGame("rowan-playback-equipped-problem");
     const pump = world.problems.find(

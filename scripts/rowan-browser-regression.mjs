@@ -12681,6 +12681,27 @@ function assertAutoplayProgressGapGuard() {
     ["route-progress"],
     "The visible start of a route must reset the pacing clock before sampled distance changes accumulate.",
   );
+
+  assert.deepEqual(
+    classifyAutoplayObservationProgress(
+      {
+        activeConversation: {
+          lines: 2,
+          npcId: "npc-mara",
+          replay: { revealedEntryCount: 0, streamedWordCount: 3 },
+        },
+      },
+      {
+        activeConversation: {
+          lines: 2,
+          npcId: "npc-mara",
+          replay: { revealedEntryCount: 0, streamedWordCount: 4 },
+        },
+      },
+    ),
+    ["conversation-progress"],
+    "Visible transcript streaming must reset the autoplay pacing clock.",
+  );
 }
 
 function assertAutoplayFirstAfternoonDuration(durationMs, diagnosticsPath) {
@@ -12988,11 +13009,13 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
       busyLabel: probe?.busyLabel ?? null,
     },
     appMonotonicMs: probe?.timing?.appMonotonicMs ?? null,
+    wallMonotonicMs: probe?.timing?.wallMonotonicMs ?? null,
     activeConversation: probe?.activeConversation
       ? {
           lines: probe.activeConversation.lines ?? null,
           npcId: probe.activeConversation.npcId ?? null,
           npcName: probe.activeConversation.npcName ?? null,
+          replay: probe.activeConversation.replay ?? null,
         }
       : null,
     autonomy: probe?.autonomy
@@ -13577,7 +13600,13 @@ function classifyAutoplayObservationProgress(previous, next) {
     (previous.activeConversation?.npcId ?? null) !==
       (next.activeConversation?.npcId ?? null) ||
     (previous.activeConversation?.lines ?? null) !==
-      (next.activeConversation?.lines ?? null)
+      (next.activeConversation?.lines ?? null) ||
+    previous.activeConversation?.replay?.streamingEntryId !==
+      next.activeConversation?.replay?.streamingEntryId ||
+    previous.activeConversation?.replay?.streamedWordCount !==
+      next.activeConversation?.replay?.streamedWordCount ||
+    previous.activeConversation?.replay?.revealedEntryCount !==
+      next.activeConversation?.replay?.revealedEntryCount
   ) {
     progressKinds.push("conversation-progress");
   }
