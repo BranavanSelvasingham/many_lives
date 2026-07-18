@@ -825,6 +825,7 @@ function openingActionCarryForwardProbePayload({
           label: game.rowanAutonomy.label ?? null,
           locationId: game.player.currentLocationId ?? null,
           mode: game.rowanAutonomy.mode,
+          npcId: game.rowanAutonomy.npcId ?? null,
           targetLocationId: game.rowanAutonomy.targetLocationId ?? null,
         }
       : null,

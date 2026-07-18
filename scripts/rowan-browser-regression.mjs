@@ -12611,6 +12611,19 @@ function assertAutoplayProgressGapGuard() {
     [{ appDurationMs: 2_000, progressKinds: ["route-progress"] }],
     "Gradual visible route movement must accumulate into progress instead of reading as an idle gap until arrival.",
   );
+
+  assert.deepEqual(
+    classifyAutoplayObservationProgress(
+      {
+        movement: { routeActive: false, routeProgress: null },
+      },
+      {
+        movement: { routeActive: true, routeProgress: 0.007 },
+      },
+    ),
+    ["route-progress"],
+    "The visible start of a route must reset the pacing clock before sampled distance changes accumulate.",
+  );
 }
 
 function assertAutoplayFirstAfternoonDuration(durationMs, diagnosticsPath) {
@@ -13443,6 +13456,7 @@ function classifyAutoplayObservationProgress(previous, next) {
   if (
     previous.location?.id !== next.location?.id ||
     previous.location?.spaceId !== next.location?.spaceId ||
+    (!previous.movement?.routeActive && next.movement?.routeActive) ||
     (typeof previousRouteProgress === "number" &&
       typeof nextRouteProgress === "number" &&
       nextRouteProgress - previousRouteProgress >= 0.12)

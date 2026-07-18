@@ -2608,8 +2608,14 @@ function assertValidOpeningAutoplaySupersession(carryForward, label) {
     supersededBy.activeConversationNpcId.length > 0
       ? supersededBy.activeConversationNpcId
       : null;
+  const selectedConversationNpcId =
+    supersededBy.mode === "conversation" &&
+    typeof supersededBy.npcId === "string" &&
+    supersededBy.npcId.length > 0
+      ? supersededBy.npcId
+      : null;
   assert.ok(
-    actionId || activeConversationNpcId,
+    actionId || activeConversationNpcId || selectedConversationNpcId,
     `${label}: superseding autoplay progress is missing a current action or conversation: ${JSON.stringify(carryForward)}.`,
   );
   assert.notEqual(
@@ -2617,7 +2623,7 @@ function assertValidOpeningAutoplaySupersession(carryForward, label) {
     "enter:boarding-house",
     `${label}: superseding autoplay progress still reports the opening action: ${JSON.stringify(carryForward)}.`,
   );
-  if (actionId) {
+  if (actionId || selectedConversationNpcId) {
     assert.ok(
       typeof supersededBy.label === "string" && supersededBy.label.length > 0,
       `${label}: superseding autoplay action is missing its visible label: ${JSON.stringify(carryForward)}.`,
@@ -2665,6 +2671,27 @@ function assertOpeningActionCarryForwardContractGuard() {
     assertOpeningActionCarryForward(
       progressedProbe,
       "opening carry-forward progressed-state regression",
+    ),
+  );
+
+  assert.doesNotThrow(() =>
+    assertOpeningActionCarryForward(
+      {
+        openingActionCarryForward: {
+          ...progressedProbe.openingActionCarryForward,
+          supersededBy: {
+            activeConversationNpcId: null,
+            actionId: null,
+            label: "Talk to Mara",
+            locationId: "boarding-house",
+            mode: "conversation",
+            npcId: "npc-mara",
+            targetLocationId: "boarding-house",
+          },
+          targetLocationId: "boarding-house",
+        },
+      },
+      "opening selected-conversation regression",
     ),
   );
 
@@ -2763,6 +2790,24 @@ function assertOpeningActionCarryForwardContractGuard() {
         "opening carry-forward missing-supersession regression",
       ),
     /missing the current autoplay action/,
+  );
+  assert.throws(
+    () =>
+      assertOpeningActionCarryForward(
+        mutateCarryForward({
+          supersededBy: {
+            activeConversationNpcId: null,
+            actionId: null,
+            label: "Talk to Mara",
+            locationId: "boarding-house",
+            mode: "conversation",
+            npcId: null,
+            targetLocationId: "boarding-house",
+          },
+        }),
+        "opening carry-forward ungrounded-conversation regression",
+      ),
+    /missing a current action or conversation/,
   );
   assert.throws(
     () =>
