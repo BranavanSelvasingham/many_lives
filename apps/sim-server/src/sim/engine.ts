@@ -10844,12 +10844,12 @@ function deriveConversationResolution(
       ) {
         return {
           decision:
-            "compare Ada's live lunch work with the leaking pump and choose from the simulator-legal current actions.",
+            "compare Ada's live lunch work with the leaking pump and choose what makes sense for Rowan right now.",
           memoryKind: "self",
           memoryText:
-            "Mara made both Ada's work and the Morrow Yard pump concrete without choosing Rowan's route for him.",
+            "Mara made both Ada's work and the leaking pump concrete without deciding for Rowan.",
           summary:
-            "Mara exposed multiple live first-afternoon approaches without settling the plan.",
+            "Mara showed Rowan two real ways to spend the afternoon without settling his choice.",
         };
       }
 

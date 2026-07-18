@@ -781,7 +781,7 @@ describe("World time pressure", () => {
 
   it("escalates discovered problems while Rowan spends time elsewhere", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-escalating-problems");
+    let world = await engine.createGame("game-escalating-problems-ordinary");
     const pump = world.problems.find((problem) => problem.id === "problem-pump");
 
     expect(pump?.escalationLevel).toBeUndefined();

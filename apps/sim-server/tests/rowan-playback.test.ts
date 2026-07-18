@@ -20,7 +20,10 @@ import { buildIndependentNpcActionRecords } from "../../many-lives-web/src/lib/s
 import { isObjectiveTrailStepPlayerFacingForPlayback } from "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import { SimulationEngine } from "../src/sim/engine.js";
-import { seedStreetGame } from "../src/street-sim/seedGame.js";
+import {
+  deriveOpeningWorldVariant,
+  seedStreetGame,
+} from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
   StreetGameState,
@@ -47,7 +50,7 @@ function setClock(
 describe("Rowan playback helpers", () => {
   it("derives move and arrival beats from a real location change", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("rowan-playback-move");
+    const world = await engine.createGame("rowan-playback-move-ordinary");
     const moved = await engine.runCommand(world, {
       type: "move_to",
       x: 6,
@@ -87,7 +90,9 @@ describe("Rowan playback helpers", () => {
 
   it("labels portal transitions as entering interiors instead of walking", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    const world = await engine.createGame("rowan-playback-enter-interior");
+    const world = await engine.createGame(
+      "rowan-playback-enter-interior-ordinary",
+    );
     const entered = await enterMorrowHouse(engine, world);
 
     const beats = deriveRowanPlaybackBeats(asWebGame(world), asWebGame(entered));
@@ -609,6 +614,93 @@ describe("Rowan playback helpers", () => {
       requiredVisibleInput: false,
       selectedActionId: "enter:boarding-house",
       status: "queued",
+    });
+  });
+
+  it("keeps pre-known pump facts from superseding the current opening action", async () => {
+    const gameId = "game-2";
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame(gameId);
+    const buildProbe = (game: StreetGameState) => {
+      const playback = createEmptyRowanPlaybackState();
+      const railView = buildRowanRailViewModel({
+        conversationReplayActive: false,
+        fallbackThought: "Rowan is getting the first room settled.",
+        game: asWebGame(game),
+        playback,
+        quietStatusLabel: game.currentScene.title,
+        watchMode: true,
+      });
+
+      return JSON.parse(
+        buildStreetBrowserProbeJson({
+          activeConversation: game.activeConversation,
+          game: asWebGame(game),
+          rowanRail: railView,
+          snapshot: {
+            rowanPlayback: playback,
+            rowanWatchModeEnabled: true,
+          },
+        }),
+      );
+    };
+
+    expect(deriveOpeningWorldVariant(gameId)).toBe("noticed-pump");
+    expect(world.firstAfternoon?.approachesKnownAt).toBe(world.currentTime);
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "enter:boarding-house",
+      targetLocationId: "boarding-house",
+    });
+
+    const openingProbe = buildProbe(world);
+    expect(openingProbe.openingActionCarryForward).toMatchObject({
+      completionEvidence: ["first-afternoon-approaches-known"],
+      phase: "opening_queued",
+      progressedBeyondOpening: false,
+      requiredVisibleInput: false,
+      selectedActionId: "enter:boarding-house",
+      status: "queued",
+      supersededBy: null,
+      targetLocationId: "boarding-house",
+    });
+
+    const progressed = structuredClone(world);
+    progressed.rowanAutonomy = {
+      ...progressed.rowanAutonomy,
+      actionId: "talk:npc-mara",
+      label: "Talk to Mara",
+      mode: "acting",
+      stepKind: "talk",
+      targetLocationId: "boarding-house",
+    };
+    expect(buildProbe(progressed).openingActionCarryForward).toMatchObject({
+      phase: "superseded_by_autoplay_progress",
+      progressedBeyondOpening: true,
+      supersededBy: {
+        actionId: "talk:npc-mara",
+        targetLocationId: "boarding-house",
+      },
+    });
+
+    const consequenceReached = structuredClone(world);
+    consequenceReached.firstAfternoon = {
+      ...consequenceReached.firstAfternoon,
+      consequence: {
+        achievedAt: consequenceReached.currentTime,
+        evidence: "The leaking pump is repaired.",
+        id: "problem-pump",
+        kind: "local-problem",
+        label: "Leaking hand pump solved",
+      },
+    };
+    expect(
+      buildProbe(consequenceReached).openingActionCarryForward,
+    ).toMatchObject({
+      completionEvidence: expect.arrayContaining([
+        "first-afternoon-consequence-local-problem",
+      ]),
+      phase: "superseded_by_autoplay_progress",
+      progressedBeyondOpening: true,
     });
   });
 

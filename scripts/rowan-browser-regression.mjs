@@ -155,6 +155,9 @@ const SCAFFOLD_ONLY_TRACE_PROVENANCES = new Set([
   "stale-predicate",
   "stale-trail",
 ]);
+const OPENING_WORLD_VARIANTS = ["ordinary-lead", "noticed-pump"];
+const VISIBLE_IMPLEMENTATION_LANGUAGE_PATTERN =
+  /(?:\bdeterministic\b|\bplanner(?:\s+trace|\s+recommendation)?\b|\bsimulator(?:[- ](?:validated|legal)|\s+validation)?\b|\blegal (?:action|conversation) surface\b|\b(?:desired-state|objective|stale) predicate\b|\bpredicate\b|\broute progress\b|\brouteKey\b|\bplanningTrace\b|\bactionId\b|\bselectedPlanKey\b|\bplanKey\b|\btargetLocationId\b|\bcurrent world state\b)/i;
 const FALLBACK_WEB_PORT = Number(
   process.env.MANY_LIVES_BROWSER_WEB_FALLBACK_PORT ?? "3101",
 );
@@ -544,6 +547,56 @@ async function createGame() {
   return payload.game;
 }
 
+function openingWorldVariantFromGame(game) {
+  const pump = game?.problems?.find((problem) => problem.id === "problem-pump");
+  const teaJob = game?.jobs?.find((job) => job.id === "job-tea-shift");
+  const knownLocationIds = game?.player?.knownLocationIds ?? [];
+  const noticedPump =
+    pump?.discovered === true &&
+    teaJob?.discovered === true &&
+    knownLocationIds.includes("repair-stall") &&
+    knownLocationIds.includes("tea-house");
+  const ordinaryLead =
+    pump?.discovered !== true &&
+    teaJob?.discovered !== true &&
+    !knownLocationIds.includes("repair-stall") &&
+    !knownLocationIds.includes("tea-house");
+
+  assert.ok(
+    noticedPump || ordinaryLead,
+    `Fresh game did not expose a recognized opening-world trajectory: ${JSON.stringify(
+      {
+        gameId: game?.id ?? null,
+        knownLocationIds,
+        pumpDiscovered: pump?.discovered ?? null,
+        teaJobDiscovered: teaJob?.discovered ?? null,
+      },
+    )}`,
+  );
+  return noticedPump ? "noticed-pump" : "ordinary-lead";
+}
+
+async function createGameForOpeningWorldVariant(expectedVariant) {
+  assert.ok(
+    OPENING_WORLD_VARIANTS.includes(expectedVariant),
+    `Unknown opening-world variant: ${expectedVariant}.`,
+  );
+  const attempts = [];
+
+  for (let attempt = 1; attempt <= 32; attempt += 1) {
+    const game = await createGame();
+    const actualVariant = openingWorldVariantFromGame(game);
+    attempts.push({ actualVariant, gameId: game.id });
+    if (actualVariant === expectedVariant) {
+      return game;
+    }
+  }
+
+  throw new Error(
+    `Could not create a fresh ${expectedVariant} game after ${attempts.length} attempts: ${JSON.stringify(attempts)}.`,
+  );
+}
+
 async function advanceObjective(
   gameId,
   allowTimeSkip = false,
@@ -620,6 +673,10 @@ function slug(label) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+function autoplayBrowserUrl(gameId) {
+  return `${getWebBase()}?gameId=${encodeURIComponent(gameId)}&autoplay=1&observe=1`;
 }
 
 function sleep(ms) {
@@ -1234,7 +1291,9 @@ class CdpSession {
   async readAutoplayDomAudit(label = "autoplay-dom-audit") {
     return this.evaluateForRead(`(() => {
       const compactText = (element) =>
-        element?.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+        (element?.innerText ?? element?.textContent ?? "")
+          .replace(/\\s+/g, " ")
+          .trim();
       const progressionSelectors = [
         "[data-advance-objective]:not([disabled])",
         "[data-action-id]:not([disabled])",
@@ -3257,8 +3316,7 @@ function visibleDecisionArtifactFromGame(game) {
   const rationale =
     travelPhase === "route-progress"
       ? compactVisibleDecisionText(
-          autonomyReason ??
-            "Rowan is carrying out the route he already validated.",
+          autonomyReason ?? "Rowan is carrying out the route he already chose.",
           132,
         )
       : rationaleBase;
@@ -3305,14 +3363,22 @@ function visibleDecisionArtifactFromGame(game) {
     selectedAction,
     sourceSummary:
       travelPhase === "route-progress"
-        ? "Validated route progress"
+        ? trace?.selectedRecommendation?.sourceKind === "live-llm"
+          ? "Live recommendation, checked before Rowan set out"
+          : trace?.selectedRecommendation?.sourceKind ===
+              "deterministic-fallback"
+            ? "Built-in recommendation, checked before Rowan set out"
+            : "Rowan's current choice, checked before he set out"
         : trace?.selectedRecommendation?.sourceKind === "live-llm"
-          ? "Live planner recommendation, checked before acting"
-          : trace
-            ? "Planner recommendation, checked before acting"
-            : conversationDecision
-              ? "Conversation result"
-              : "Rowan's current intent",
+          ? "Live recommendation, checked before acting"
+          : trace?.selectedRecommendation?.sourceKind ===
+              "deterministic-fallback"
+            ? "Built-in recommendation, checked before acting"
+            : trace
+              ? "Rowan's current choice, checked before acting"
+              : conversationDecision
+                ? "Conversation result"
+                : "Rowan's current intent",
   };
 }
 
@@ -3534,9 +3600,9 @@ function visibleDecisionBackingSummary(backing, hasTrace) {
     case "projected-follow-up-legal-action":
       return "The follow-up was checked before committing.";
     case "simulator-validated-move":
-      return "The move was validated before Rowan carries it out.";
+      return "The move was checked before Rowan carries it out.";
     case "simulator-validated-wait":
-      return "The wait was validated before Rowan spends the time.";
+      return "The wait was checked before Rowan spends the time.";
     default:
       return hasTrace
         ? "Checked against the current choices."
@@ -3588,6 +3654,30 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\btargetLocationId\b/gi, "")
     .replace(/\bactionId\b/gi, "")
     .replace(/^Action:\s*/i, "")
+    .replace(
+      /\b(?:cloned\s+)?destination(?:'s)?\s+legal action surface\b/gi,
+      "choices available there",
+    )
+    .replace(
+      /\b(?:cloned\s+)?future legal action surface\b/gi,
+      "choices available then",
+    )
+    .replace(/\bcurrent legal action surface\b/gi, "choices available now")
+    .replace(/\blegal action surface\b/gi, "available choices")
+    .replace(
+      /\bre-evaluate the legal conversation surface\b/gi,
+      "see whether the conversation is still available",
+    )
+    .replace(/\blegal conversation surface\b/gi, "available conversation")
+    .replace(/\bsimulator-legal current actions\b/gi, "choices available now")
+    .replace(/\bsimulator[- ]validated\b/gi, "checked")
+    .replace(/\b(?:fresh\s+)?simulator validation\b/gi, "a fresh check")
+    .replace(/\bsimulator\b/gi, "the game")
+    .replace(/\bdeterministic fallback\b/gi, "built-in guidance")
+    .replace(/\bdeterministic planner\b/gi, "Rowan's judgment")
+    .replace(/\bdeterministic route progress\b/gi, "Rowan's follow-through")
+    .replace(/\bplanner recommendation\b/gi, "recommendation")
+    .replace(/\broute progress\b/gi, "follow-through")
     .replace(/\bcurrent objective\b/gi, "current aim")
     .replace(/\bcurrent world state\b/gi, "current situation")
     .replace(/\bplanner trace\b/gi, "Rowan weighs")
@@ -3602,6 +3692,11 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\b(?:objective action|route hint action)\b/gi, "opening")
     .replace(/\bsuggested move\b/gi, "option")
     .replace(/\broute hint\b/gi, "suggested path")
+    .replace(/\blegal current actions?\b/gi, "choices available now")
+    .replace(/\blegal actions?\b/gi, "available choices")
+    .replace(/\blegal move\b/gi, "available move")
+    .replace(/\bbe legal\b/gi, "be available")
+    .replace(/\bvalidation\b/gi, "check")
     .replace(
       /\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi,
       "",
@@ -5214,6 +5309,7 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
     artifact.backingSummary,
     artifact.sourceSummary,
   ].join(" ");
+  assertNoVisibleImplementationLanguage(label, playerText);
   assert.doesNotMatch(
     playerText,
     /(?:\b(routeKey|advance_objective|planningTrace|worldPressure|cityEvents|jobWindows|npcSchedules|npcPressureMoves|planKey|actionId|targetLocationId|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate)\b|That opening has closed|keeps to the confirmed choice)/i,
@@ -5228,6 +5324,45 @@ function assertVisibleDecisionArtifactPayload(label, artifact) {
     playerText,
     /\b(?:Yard|Tea-house) work lead confirmed\b[^.]{0,90}\bnot confirmed\b/i,
     `${label}: decision artifact contradicts a confirmed work-lead outcome with an unmet blocker.`,
+  );
+}
+
+function assertNoVisibleImplementationLanguage(label, text) {
+  const visibleText = String(text ?? "");
+  const match = visibleText.match(VISIBLE_IMPLEMENTATION_LANGUAGE_PATTERN);
+  assert.equal(
+    match,
+    null,
+    `${label}: visible product copy leaked planner/simulator implementation language${
+      match
+        ? ` ("${match[0]}"): ${visibleText.slice(
+            Math.max(0, (match.index ?? 0) - 80),
+            (match.index ?? 0) + match[0].length + 120,
+          )}`
+        : ""
+    }.`,
+  );
+}
+
+function assertVisibleImplementationLanguageGuardRegression() {
+  for (const leakedCopy of [
+    "Deterministic route progress, simulator-validated",
+    "Re-check this action against the destination's legal action surface.",
+    "Re-evaluate the legal conversation surface before asking again.",
+    "Choose from the simulator-legal current actions.",
+    "The objective predicate came from planningTrace.actionId.",
+  ]) {
+    assert.throws(
+      () => assertNoVisibleImplementationLanguage("guard-fixture", leakedCopy),
+      /implementation language/,
+      `Visible-copy leakage guard accepted: ${leakedCopy}`,
+    );
+  }
+  assert.doesNotThrow(() =>
+    assertNoVisibleImplementationLanguage(
+      "guard-control",
+      "Built-in recommendation, checked before Rowan set out. Buy the wrench, then see whether the pump can still be repaired.",
+    ),
   );
 }
 
@@ -5399,6 +5534,7 @@ function assertVisibleDecisionArtifactDom(label, dom, artifactPayload = null) {
     /\b(?:Rowan is at [^,.]+,\s*so\b|useful next move|has a reason to get to [^,.]+ before deciding again)\b/i,
     `${label}: decision callback fell back to generic route-playback wording.`,
   );
+  assertNoVisibleImplementationLanguage(label, artifact.text);
 }
 
 function assertProbeAuditability(label, game, probe) {
@@ -6085,6 +6221,7 @@ function assertGameplayDom(label, game, probe, dom) {
     /Planner trace|Rejected:|Blocked:|fits the current objective|current objective|Action:/i,
     `${label}: default Rowan rail leaked debug/planner language.`,
   );
+  assertNoVisibleImplementationLanguage(label, dom.bodyText);
   assert.doesNotMatch(
     dom.bodyText,
     /Nudge Rowan|Do this step|This step is ready now|A next step is ready|Advance now|Autoplay is on; this skips|skip the (?:wait|pause)|confirm and commit/i,
@@ -11313,11 +11450,126 @@ async function captureProbeState({ game, label }) {
   };
 }
 
-async function runAutoplayObservation(session) {
-  const url = `${getWebBase()}?new=1&autoplayRegression=${Date.now()}`;
+const OPENING_WORLD_TRAJECTORY_EXPECTATIONS = {
+  "noticed-pump": {
+    consequenceId: "problem-pump",
+    consequenceKind: "local-problem",
+    footholdRouteTargetId: "repair-stall",
+  },
+  "ordinary-lead": {
+    consequenceId: "job-tea-shift",
+    consequenceKind: "tea-work",
+    footholdRouteTargetId: "tea-house",
+  },
+};
+
+function trajectoryFootholdReached(probe, openingWorldVariant) {
+  if (openingWorldVariant === "noticed-pump") {
+    return (probe?.worldPressure?.problems ?? []).some(
+      (problem) =>
+        problem.id === "problem-pump" &&
+        ["solved", "resolved"].includes(problem.status),
+    );
+  }
+
+  return (probe?.worldPressure?.jobWindows ?? []).some(
+    (job) => job.id === "job-tea-shift" && job.completed,
+  );
+}
+
+function compactAutoplayPlayerRoute(probe) {
+  const route = probe?.movement?.playerRoute;
+  if (!route) {
+    return null;
+  }
+
+  return {
+    active: Boolean(route.active),
+    diagnostics: route.diagnostics ?? null,
+    legal: route.legal ?? null,
+    progress:
+      typeof route.progress === "number"
+        ? roundAuditNumber(route.progress)
+        : null,
+    reachesDestination: route.reachesDestination ?? null,
+    sampledPointsLegal: route.sampledPointsLegal ?? null,
+    targetLocationId: route.targetLocationId ?? null,
+    tilePathLength: route.tilePath?.length ?? null,
+    visualObstaclesClear: route.visualObstaclesClear ?? null,
+    worldPathLength: route.worldPath?.length ?? null,
+  };
+}
+
+async function captureAutoplayTrajectoryMilestone({
+  dom,
+  key,
+  openingWorldVariant,
+  probe,
+  session,
+}) {
+  const label = `${openingWorldVariant} autoplay ${key}`;
+  const visibleDom =
+    dom ?? (await session.readAutoplayDomAudit(`${slug(label)}:dom-audit`));
+  assertNoVisibleImplementationLanguage(label, visibleDom?.bodyText ?? "");
+  if (probe?.autonomy?.planningTrace) {
+    assertVisibleDecisionArtifactPayload(
+      label,
+      probe.autonomy.visibleDecisionArtifact,
+    );
+  }
+  const camera = await session
+    .readCameraProbe(`${slug(label)}:camera-probe`)
+    .catch(() => null);
+  const mapAgency = await session
+    .readMapAgencyProbe(`${slug(label)}:map-agency-probe`)
+    .catch(() => null);
+  const screenshot = path.join(
+    OUTPUT_DIR,
+    `${openingWorldVariant}-autoplay-${slug(key)}.png`,
+  );
+  await session.captureScreenshot(screenshot);
+
+  return {
+    autonomyLabel: probe?.autonomy?.label ?? null,
+    camera: camera
+      ? {
+          sceneViewportCss: camera.sceneViewportCss ?? null,
+          scroll: camera.scroll ?? null,
+          visibleWorldRect: camera.visibleWorldRect ?? null,
+        }
+      : null,
+    clock: probe?.clock ?? null,
+    key,
+    location: probe?.location ?? null,
+    mapAgency,
+    playerRoute: compactAutoplayPlayerRoute(probe),
+    screenshot,
+    visibleCopySample: compactObjectiveSequenceText(
+      visibleDom?.bodyTextSample ?? visibleDom?.bodyText ?? "",
+      320,
+    ),
+    visibleDecisionArtifact: compactVisibleDecisionArtifact(
+      probe?.autonomy?.visibleDecisionArtifact ??
+        probe?.rail?.visibleDecisionArtifact ??
+        null,
+    ),
+  };
+}
+
+async function runAutoplayObservation(session, { game, openingWorldVariant }) {
+  assert.equal(
+    openingWorldVariantFromGame(game),
+    openingWorldVariant,
+    `Autoplay evidence game ${game.id} did not match ${openingWorldVariant}.`,
+  );
+  const url = autoplayBrowserUrl(game.id);
   const pacingLedgerPath = path.join(
     OUTPUT_DIR,
-    "autoplay-observation-pacing-ledger.json",
+    `${openingWorldVariant}-autoplay-pacing-ledger.json`,
+  );
+  const trajectoryEvidencePath = path.join(
+    OUTPUT_DIR,
+    `${openingWorldVariant}-autoplay-trajectory-evidence.json`,
   );
   const pacingSamples = [];
   let pacingCompleted = false;
@@ -11327,9 +11579,19 @@ async function runAutoplayObservation(session) {
   let lastProbeSignature = null;
   const pacingStartedAt = Date.now();
   await session.navigate(url);
-  const startProbe = await session.readAutoplayPacingProbe();
+  const startProbe = await waitFor(
+    async () =>
+      acceptedAutoplayPacingProbe(
+        await session.readAutoplayPacingProbe(
+          `${openingWorldVariant}:autoplay:start-probe`,
+        ),
+      ),
+    APP_READY_TIMEOUT_MS,
+    `${openingWorldVariant}: autoplay opening probe remained unavailable after navigation.`,
+    PROBE_POLL_INTERVAL_MS,
+  );
   const startDom = await session
-    .readAutoplayDomAudit("fresh-autoplay-observation:start-dom")
+    .readAutoplayDomAudit(`${openingWorldVariant}:autoplay:start-dom`)
     .catch(() => null);
   assert.equal(
     startProbe.watchMode?.enabled,
@@ -11352,17 +11614,53 @@ async function runAutoplayObservation(session) {
   lastDomAuditAt = lastSampleAt;
   lastProbeSignature = autoplayObservationSignature(pacingSamples.at(-1));
 
-  const screenshotPath = path.join(
-    OUTPUT_DIR,
-    "autoplay-observation-complete.png",
+  const trajectoryMilestones = [];
+  const capturedMilestoneKeys = new Set();
+  let footholdRouteStartProgress = null;
+  let visibleCopyAuditCount = 0;
+  assert.equal(
+    startProbe.gameId,
+    game.id,
+    `${openingWorldVariant}: browser opened a different fresh game than the selected trajectory seed.`,
   );
+  assertNoVisibleImplementationLanguage(
+    `${openingWorldVariant} autoplay start`,
+    startDom?.bodyText ?? "",
+  );
+  visibleCopyAuditCount += startDom ? 1 : 0;
+
+  const captureMilestoneOnce = async (key, probe, milestoneDom = null) => {
+    if (capturedMilestoneKeys.has(key)) {
+      return trajectoryMilestones.find((entry) => entry.key === key) ?? null;
+    }
+    const evidence = await captureAutoplayTrajectoryMilestone({
+      dom: milestoneDom,
+      key,
+      openingWorldVariant,
+      probe,
+      session,
+    });
+    capturedMilestoneKeys.add(key);
+    trajectoryMilestones.push(evidence);
+    return evidence;
+  };
+  await captureMilestoneOnce("opening", startProbe, startDom);
+
+  let screenshotPath = null;
   let completedProbe = null;
   let dom = null;
 
   try {
     const completion = await waitFor(
       async () => {
-        const probe = await session.readAutoplayPacingProbe();
+        const probe = acceptedAutoplayPacingProbe(
+          await session.readAutoplayPacingProbe(
+            `${openingWorldVariant}:autoplay:pacing-probe`,
+          ),
+        );
+        if (!probe) {
+          return false;
+        }
         let sampleDom = null;
         const now = Date.now();
         const probeSample = sampleAutoplayObservationSample({
@@ -11383,9 +11681,16 @@ async function runAutoplayObservation(session) {
         if (shouldSample) {
           if (shouldAuditDom) {
             sampleDom = await session
-              .readAutoplayDomAudit("fresh-autoplay-observation:dom-audit")
+              .readAutoplayDomAudit(`${openingWorldVariant}:autoplay:dom-audit`)
               .catch(() => null);
             lastDomAuditAt = now;
+          }
+          if (sampleDom) {
+            assertNoVisibleImplementationLanguage(
+              `${openingWorldVariant} autoplay sample`,
+              sampleDom.bodyText,
+            );
+            visibleCopyAuditCount += 1;
           }
           pacingSamples.push(
             sampleAutoplayObservationSample({
@@ -11396,6 +11701,39 @@ async function runAutoplayObservation(session) {
           );
           lastSampleAt = now;
           lastProbeSignature = probeSignature;
+        }
+
+        if (probe.activeConversation) {
+          await captureMilestoneOnce("first-interaction", probe, sampleDom);
+        }
+
+        const expectedRouteTarget =
+          OPENING_WORLD_TRAJECTORY_EXPECTATIONS[openingWorldVariant]
+            .footholdRouteTargetId;
+        const route = probe?.movement?.playerRoute;
+        if (route?.active && route.targetLocationId === expectedRouteTarget) {
+          if (!capturedMilestoneKeys.has("foothold-route-start")) {
+            const routeStart = await captureMilestoneOnce(
+              "foothold-route-start",
+              probe,
+              sampleDom,
+            );
+            footholdRouteStartProgress = routeStart?.playerRoute?.progress ?? 0;
+          } else if (
+            !capturedMilestoneKeys.has("foothold-route-mid") &&
+            typeof route.progress === "number" &&
+            route.progress >= Math.max(0.3, footholdRouteStartProgress + 0.1)
+          ) {
+            await captureMilestoneOnce("foothold-route-mid", probe, sampleDom);
+          }
+        }
+
+        if (trajectoryFootholdReached(probe, openingWorldVariant)) {
+          await captureMilestoneOnce(
+            "consequential-foothold",
+            probe,
+            sampleDom,
+          );
         }
 
         if (
@@ -11412,7 +11750,11 @@ async function runAutoplayObservation(session) {
     );
     completedProbe = completion.probe;
     dom = await session.readDomSnapshot(
-      "fresh-autoplay-observation:final-dom",
+      `${openingWorldVariant}:autoplay:final-dom`,
+    );
+    assertNoVisibleImplementationLanguage(
+      `${openingWorldVariant} autoplay final`,
+      dom.bodyText,
     );
     const completedSample = sampleAutoplayObservationSample({
       dom,
@@ -11428,7 +11770,7 @@ async function runAutoplayObservation(session) {
     }
 
     assertNoVisibleWatchModeProgressionControls(
-      "fresh-autoplay-observation",
+      `${openingWorldVariant}-autoplay-observation`,
       completedProbe,
       dom,
     );
@@ -11449,22 +11791,22 @@ async function runAutoplayObservation(session) {
     );
     if (completedProbe.autonomy?.planningTrace) {
       assertVisibleDecisionArtifactPayload(
-        "fresh-autoplay-observation",
+        `${openingWorldVariant}-autoplay-observation`,
         completedProbe.autonomy.visibleDecisionArtifact,
       );
       assertVisibleDecisionNextCheckForTrace(
-        "fresh-autoplay-observation",
+        `${openingWorldVariant}-autoplay-observation`,
         completedProbe.autonomy.planningTrace,
         completedProbe.autonomy.visibleDecisionArtifact,
       );
       assertVisibleDecisionSelectedActionMatchesImmediateStep(
-        "fresh-autoplay-observation",
+        `${openingWorldVariant}-autoplay-observation`,
         completedProbe.autonomy.planningTrace,
         completedProbe.autonomy.visibleDecisionArtifact,
         completedProbe.autonomy,
       );
       assertVisibleDecisionArtifactDom(
-        "fresh-autoplay-observation",
+        `${openingWorldVariant}-autoplay-observation`,
         dom,
         completedProbe.autonomy.visibleDecisionArtifact,
       );
@@ -11473,14 +11815,34 @@ async function runAutoplayObservation(session) {
       completedProbe.clock.totalMinutes > startProbe.clock.totalMinutes,
       "Autoplay observation did not advance game time.",
     );
+    visibleCopyAuditCount += 1;
 
     const pacingLedger = buildAutoplayObservationPacingLedger(pacingSamples);
-    await session.captureScreenshot(screenshotPath);
+    if (trajectoryFootholdReached(completedProbe, openingWorldVariant)) {
+      await captureMilestoneOnce("consequential-foothold", completedProbe, dom);
+    }
+    const naturalStopMilestone = await captureMilestoneOnce(
+      "natural-stop",
+      completedProbe,
+      dom,
+    );
+    screenshotPath = naturalStopMilestone.screenshot;
+    const trajectoryEvidence = {
+      consequence: completedProbe.firstAfternoon?.consequence ?? null,
+      gameId: completedProbe.gameId,
+      meaningfulProvenanceCount: pacingLedger.meaningfulActionSamples.length,
+      milestones: trajectoryMilestones,
+      naturalStop: pacingLedger.naturalStop,
+      openingWorldVariant,
+      progressionClicks: 0,
+      visibleCopyAuditCount,
+    };
     await writeFile(
       pacingLedgerPath,
       `${JSON.stringify(
         {
           ...pacingLedger,
+          openingWorldVariant,
           screenshot: screenshotPath,
           status: "passed",
         },
@@ -11489,7 +11851,16 @@ async function runAutoplayObservation(session) {
       )}\n`,
       "utf8",
     );
+    await writeFile(
+      trajectoryEvidencePath,
+      `${JSON.stringify(trajectoryEvidence, null, 2)}\n`,
+      "utf8",
+    );
     assertAutoplayObservationPacingLedger(pacingLedger, pacingLedgerPath);
+    assertAutoplayOpeningWorldTrajectoryEvidence(
+      trajectoryEvidence,
+      trajectoryEvidencePath,
+    );
     pacingCompleted = true;
 
     return {
@@ -11547,6 +11918,7 @@ async function runAutoplayObservation(session) {
           ],
         },
       },
+      openingWorldVariant,
       screenshot: screenshotPath,
       start: {
         autonomyLabel: startProbe.autonomy?.label ?? null,
@@ -11554,6 +11926,8 @@ async function runAutoplayObservation(session) {
         gameId: startProbe.gameId,
         watchMode: startProbe.watchMode,
       },
+      trajectoryEvidence,
+      trajectoryEvidencePath,
     };
   } catch (error) {
     pacingFailure = error instanceof Error ? error.stack ?? error.message : String(error);
@@ -11567,6 +11941,7 @@ async function runAutoplayObservation(session) {
           {
             ...partialLedger,
             failure: pacingFailure,
+            openingWorldVariant,
             screenshot: completedProbe ? screenshotPath : null,
             status: "failed",
           },
@@ -11575,11 +11950,152 @@ async function runAutoplayObservation(session) {
         )}\n`,
         "utf8",
       );
-      if (completedProbe) {
+      if (completedProbe && screenshotPath) {
         await session.captureScreenshot(screenshotPath).catch(() => undefined);
       }
     }
   }
+}
+
+function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
+  const expectation =
+    OPENING_WORLD_TRAJECTORY_EXPECTATIONS[evidence.openingWorldVariant];
+  assert.ok(
+    expectation,
+    `Unknown autoplay trajectory evidence variant: ${evidence.openingWorldVariant}.`,
+  );
+  assert.equal(
+    evidence.progressionClicks,
+    0,
+    `${evidence.openingWorldVariant}: watch-mode trajectory used progression clicks. Evidence: ${evidencePath}.`,
+  );
+  assert.equal(
+    evidence.naturalStop,
+    true,
+    `${evidence.openingWorldVariant}: trajectory did not reach a natural first-afternoon stop. Evidence: ${evidencePath}.`,
+  );
+  assert.equal(
+    evidence.consequence?.id,
+    expectation.consequenceId,
+    `${evidence.openingWorldVariant}: unexpected first foothold consequence. Evidence: ${evidencePath}.`,
+  );
+  assert.equal(
+    evidence.consequence?.kind,
+    expectation.consequenceKind,
+    `${evidence.openingWorldVariant}: unexpected first foothold kind. Evidence: ${evidencePath}.`,
+  );
+  assert.ok(
+    evidence.meaningfulProvenanceCount >= 4,
+    `${evidence.openingWorldVariant}: too few legal/provenance-backed actions. Evidence: ${evidencePath}.`,
+  );
+  assert.ok(
+    evidence.visibleCopyAuditCount >= 4,
+    `${evidence.openingWorldVariant}: too few visible-copy leak audits. Evidence: ${evidencePath}.`,
+  );
+
+  const milestones = Object.fromEntries(
+    evidence.milestones.map((milestone) => [milestone.key, milestone]),
+  );
+  for (const key of [
+    "opening",
+    "first-interaction",
+    "foothold-route-start",
+    "foothold-route-mid",
+    "consequential-foothold",
+    "natural-stop",
+  ]) {
+    assert.ok(
+      milestones[key]?.screenshot,
+      `${evidence.openingWorldVariant}: missing ${key} browser screenshot. Evidence: ${evidencePath}.`,
+    );
+  }
+
+  const routeStart = milestones["foothold-route-start"]?.playerRoute;
+  const routeMid = milestones["foothold-route-mid"]?.playerRoute;
+  assert.equal(
+    routeStart?.targetLocationId,
+    expectation.footholdRouteTargetId,
+    `${evidence.openingWorldVariant}: route-start evidence targeted the wrong landmark. Evidence: ${evidencePath}.`,
+  );
+  assert.equal(
+    routeMid?.targetLocationId,
+    expectation.footholdRouteTargetId,
+    `${evidence.openingWorldVariant}: route-mid evidence targeted the wrong landmark. Evidence: ${evidencePath}.`,
+  );
+  assert.ok(
+    typeof routeStart?.progress === "number" &&
+      typeof routeMid?.progress === "number" &&
+      routeMid.progress > routeStart.progress,
+    `${evidence.openingWorldVariant}: route-start and route-mid screenshots do not prove continuous progress. Evidence: ${evidencePath}.`,
+  );
+  for (const [label, route] of [
+    ["route-start", routeStart],
+    ["route-mid", routeMid],
+  ]) {
+    assert.equal(
+      route?.legal,
+      true,
+      `${evidence.openingWorldVariant}: ${label} route was not legal. Evidence: ${evidencePath}.`,
+    );
+    assert.equal(
+      route?.reachesDestination,
+      true,
+      `${evidence.openingWorldVariant}: ${label} route did not reach its authored landmark. Evidence: ${evidencePath}.`,
+    );
+    assert.equal(
+      route?.sampledPointsLegal,
+      true,
+      `${evidence.openingWorldVariant}: ${label} route crossed an invalid sample. Evidence: ${evidencePath}.`,
+    );
+    assert.equal(
+      route?.visualObstaclesClear,
+      true,
+      `${evidence.openingWorldVariant}: ${label} route crossed authored scenery. Evidence: ${evidencePath}.`,
+    );
+  }
+  assert.ok(
+    milestones.opening?.camera && milestones.opening?.mapAgency,
+    `${evidence.openingWorldVariant}: opening evidence is missing camera/map authority. Evidence: ${evidencePath}.`,
+  );
+  assert.equal(
+    milestones.opening?.location?.spaceId,
+    "street:south-quay",
+    `${evidence.openingWorldVariant}: opening evidence did not begin outside on South Quay. Evidence: ${evidencePath}.`,
+  );
+}
+
+function buildOpeningWorldVariationEvidence(observations) {
+  const evidence = Object.fromEntries(
+    OPENING_WORLD_VARIANTS.map((openingWorldVariant) => {
+      const observation = observations[openingWorldVariant];
+      assert.ok(
+        observation,
+        `Missing ${openingWorldVariant} autoplay observation.`,
+      );
+      return [
+        openingWorldVariant,
+        {
+          completed: observation.completed,
+          openingWorldVariant,
+          pacingLedger: observation.pacingLedger,
+          trajectoryEvidence: observation.trajectoryEvidence,
+          trajectoryEvidencePath: observation.trajectoryEvidencePath,
+        },
+      ];
+    }),
+  );
+
+  assert.notEqual(
+    evidence["ordinary-lead"].completed.gameId,
+    evidence["noticed-pump"].completed.gameId,
+    "Ordinary and noticed-pump evidence must come from distinct fresh games.",
+  );
+  assert.notEqual(
+    evidence["ordinary-lead"].completed.firstAfternoon?.consequence?.id,
+    evidence["noticed-pump"].completed.firstAfternoon?.consequence?.id,
+    "Opening-world browser evidence did not prove distinct footholds.",
+  );
+  return evidence;
 }
 
 async function runUnavailableNpcCrossLayerCheck(session) {
@@ -11651,7 +12167,8 @@ async function runUnavailableNpcCrossLayerCheck(session) {
 }
 
 async function runObserveOnlyCarryForwardObservation(session) {
-  const url = `${getWebBase()}?new=1&autoplay=0&observe=1&observeCarryForward=${Date.now()}`;
+  const game = await createGameForOpeningWorldVariant("ordinary-lead");
+  const url = `${getWebBase()}?gameId=${encodeURIComponent(game.id)}&autoplay=0&observe=1&observeCarryForward=${Date.now()}`;
   await session.navigate(url);
   const startProbe = await session.readBrowserProbe();
   const carryForward = startProbe.openingActionCarryForward;
@@ -12429,6 +12946,27 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
     watchMode: probe?.watchMode ?? null,
     worldPressure: compactWorldPressureSnapshot(probe?.worldPressure ?? null),
   };
+}
+
+function acceptedAutoplayPacingProbe(probe) {
+  return probe && typeof probe === "object" ? probe : null;
+}
+
+function assertAutoplayNullProbeRetryGuard() {
+  for (const transientRead of [null, undefined, false]) {
+    assert.equal(
+      acceptedAutoplayPacingProbe(transientRead),
+      null,
+      "A transient empty autoplay probe read must be retried without producing evidence.",
+    );
+  }
+
+  const fixture = { gameId: "game-autoplay-probe-fixture" };
+  assert.equal(
+    acceptedAutoplayPacingProbe(fixture),
+    fixture,
+    "A populated autoplay probe must pass through without being rewritten.",
+  );
 }
 
 function autoplayObservationSignature(sample) {
@@ -14440,6 +14978,7 @@ function assertInhabitPlayerDom(
   }
   assertNoUnavailableApproachAdvice(label, probe, dom);
   assertNoVisibleWatchModeProgressionControls(label, probe, dom);
+  assertNoVisibleImplementationLanguage(label, dom.bodyText);
 
   const complete = /first afternoon complete/i.test(dom.bodyText);
   const autoContinuing = Boolean(probe?.autonomy?.autoContinue);
@@ -15725,7 +16264,8 @@ async function watchUntilIndependentNpcResolution({
 }
 
 async function runInhabitGameplayPass(session) {
-  const url = `${getWebBase()}?new=1&freezeAutoplay=1&inhabitGameplay=${Date.now()}`;
+  const game = await createGameForOpeningWorldVariant("ordinary-lead");
+  const url = `${getWebBase()}?gameId=${encodeURIComponent(game.id)}&freezeAutoplay=1&inhabitGameplay=${Date.now()}`;
   await session.navigate(url);
   const moments = [];
   const clickLog = [];
@@ -16369,6 +16909,7 @@ function buildRegressionSummary({
   independentNpcActionEvidence,
   movementAudit,
   observeOnlyCarryForward,
+  openingWorldVariationEvidence,
   outputStatus,
   overlayChecks,
   phaseDiagnostics = null,
@@ -16408,6 +16949,7 @@ function buildRegressionSummary({
     scheduledNpcMarkerSamples: movementAudit.scheduledNpcMarkerSamples,
     scheduledNpcVisualCues: movementAudit.scheduledNpcVisualCueSamples,
     screenshotCount,
+    openingWorldVariationEvidence,
     steps: timeline.map((entry) => ({
       activeConversation: entry.activeConversation?.npcId ?? null,
       activeEvents: entry.cityEvents.active.map((event) => event.id),
@@ -16550,6 +17092,8 @@ async function main() {
   assertAutoplayFirstAfternoonDurationGuard();
   assertAutoplayAppMonotonicResetGuard();
   assertAutoplayPlaybackCardDwellResetGuard();
+  assertVisibleImplementationLanguageGuardRegression();
+  assertAutoplayNullProbeRetryGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
     process.stdout.write(
       "[many-lives] Simulator wait deterministic guard passed.\n",
@@ -16562,10 +17106,11 @@ async function main() {
   const summaryPath = path.join(OUTPUT_DIR, "summary.json");
   const timelinePath = path.join(OUTPUT_DIR, "timeline.json");
   const timeline = [];
-  let game = await createGame();
+  let game = await createGameForOpeningWorldVariant("ordinary-lead");
   const gameRef = { current: game };
   let overlayChecks = [];
   let autoplayObservation = null;
+  let openingWorldVariationEvidence = null;
   let observeOnlyCarryForward = null;
   let unavailableNpcCrossLayer = null;
   let inhabitGameplay = null;
@@ -16634,6 +17179,7 @@ async function main() {
       independentNpcActionEvidence: buildIndependentNpcActionEvidence(timeline),
       movementAudit: checkpointMovementAudit,
       observeOnlyCarryForward,
+      openingWorldVariationEvidence,
       outputStatus,
       overlayChecks,
       phaseDiagnostics,
@@ -16704,12 +17250,27 @@ async function main() {
 
   try {
     if (session !== null) {
-      autoplayObservation = await runBrowserPhase(
-        "autoplay-observation",
-        AUTOPLAY_OBSERVATION_TIMEOUT_MS,
-        () => runAutoplayObservation(session),
-      );
-      await writeCheckpointSummary("autoplay-observation-complete");
+      const autoplayObservations = {};
+      for (const openingWorldVariant of OPENING_WORLD_VARIANTS) {
+        const observationGame =
+          await createGameForOpeningWorldVariant(openingWorldVariant);
+        autoplayObservations[openingWorldVariant] = await runBrowserPhase(
+          `autoplay-observation-${openingWorldVariant}`,
+          AUTOPLAY_OBSERVATION_TIMEOUT_MS,
+          () =>
+            runAutoplayObservation(session, {
+              game: observationGame,
+              openingWorldVariant,
+            }),
+        );
+        await recycleBrowserSession(
+          `autoplay-observation-${openingWorldVariant}`,
+        );
+      }
+      autoplayObservation = autoplayObservations["ordinary-lead"];
+      openingWorldVariationEvidence =
+        buildOpeningWorldVariationEvidence(autoplayObservations);
+      await writeCheckpointSummary("opening-world-variations-complete");
       await recycleBrowserSession("scripted-timeline");
     }
 
@@ -16940,6 +17501,7 @@ async function main() {
           independentNpcActionEvidence: buildIndependentNpcActionEvidence(timeline),
           movementAudit: interimMovementAudit,
           observeOnlyCarryForward,
+          openingWorldVariationEvidence,
           outputStatus: phaseDiagnostics.failedPhase
             ? "browser-checks-failed-cleanup-pending"
             : "browser-checks-complete-cleanup-pending",
@@ -17383,6 +17945,7 @@ async function main() {
     independentNpcActionEvidence,
     movementAudit,
     observeOnlyCarryForward,
+    openingWorldVariationEvidence,
     outputStatus: "passed",
     overlayChecks,
     phaseDiagnostics,

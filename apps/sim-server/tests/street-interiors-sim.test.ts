@@ -174,7 +174,7 @@ describe("street interior simulation", () => {
 
   it("rejects invalid portal actions from the wrong active space", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("interior-invalid-portal");
+    let world = await engine.createGame("interior-invalid-portal-ordinary");
 
     world = await engine.runCommand(world, {
       type: "act",

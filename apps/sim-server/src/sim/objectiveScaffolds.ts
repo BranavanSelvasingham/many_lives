@@ -2997,7 +2997,7 @@ const FIRST_AFTERNOON_OUTCOME_TEMPLATES: FirstAfternoonRouteOutcomeTemplate[] =
     {
       id: "first-afternoon-room",
       label: "Room terms understood",
-      urgency: 8,
+      urgency: 10,
       npcId: ({ hasRoomTerms }) => (hasRoomTerms ? undefined : "npc-mara"),
       targetLocationId: ({ hasRoomTerms, homeLocationId }) =>
         hasRoomTerms ? undefined : homeLocationId,
@@ -4017,12 +4017,12 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         ],
         resolutionFallback: {
           decision:
-            "compare Ada's live lunch work with the leaking pump and choose from the simulator-legal current actions.",
+            "compare Ada's live lunch work with the leaking pump and choose what makes sense for Rowan right now.",
           memoryKind: "self",
           memoryText:
-            "Mara made both Ada's work and the pump concrete without choosing the route for Rowan.",
+            "Mara made both Ada's work and the leaking pump concrete without deciding for Rowan.",
           summary:
-            "Mara exposed multiple live first-afternoon approaches without settling the plan.",
+            "Mara showed Rowan two real ways to spend the afternoon without settling his choice.",
         },
         responseAffirmsEvidence: textGroundsFirstAfternoonApproaches,
         responseGroundsEvidence: textGroundsFirstAfternoonApproaches,
@@ -5433,6 +5433,10 @@ export function objectiveRouteScaffoldOutcomeEvaluation(input: {
 
   switch (outcomeId) {
     case "mara-ada-hear-lead":
+      return objectiveRouteOutcomeEvaluation(maraAdaLeadHeard(world), {
+        evidence:
+          "Mara has explained what tonight's room and first lead require.",
+      });
     case "first-afternoon-room":
       return objectiveRouteOutcomeEvaluation(firstAfternoonRoomTermsKnown(world), {
         evidence:
@@ -7203,7 +7207,7 @@ function countPlayerConversationsWithNpc(
   ).length;
 }
 
-function firstAfternoonRoomTermsKnown(world: StreetGameState) {
+function maraAdaLeadHeard(world: StreetGameState) {
   return (
     countPlayerConversationsWithNpc(world, "npc-mara") > 0 ||
     Boolean(
@@ -7212,4 +7216,8 @@ function firstAfternoonRoomTermsKnown(world: StreetGameState) {
       world.firstAfternoon?.leadFieldNote,
     )
   );
+}
+
+function firstAfternoonRoomTermsKnown(world: StreetGameState) {
+  return countPlayerConversationsWithNpc(world, "npc-mara") > 0;
 }

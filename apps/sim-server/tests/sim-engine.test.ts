@@ -15,6 +15,10 @@ import { buildRowanVisibleDecisionArtifact } from "../../many-lives-web/src/lib/
 import { objectiveRouteMoveRationaleForOutcome } from "../src/sim/objectiveScaffolds.js";
 import { buildRowanCognition } from "../src/sim/rowanCognition.js";
 import { runRowanLoopSmoke } from "../src/sim/rowanLoopSmoke.js";
+import {
+  deriveOpeningWorldVariant,
+  seedStreetGame,
+} from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
   StreetGameState,
@@ -70,6 +74,14 @@ type PlanningAIProviderResult =
   | StreetPlanningResult
   | null
   | ((input: StreetPlanningRequest) => StreetPlanningResult | null);
+
+class HeuristicConversationResolutionProvider extends MockAIProvider {
+  override async interpretStreetConversation(
+    _input: StreetConversationInterpretationRequest,
+  ) {
+    return {};
+  }
+}
 
 class PlanningAIProvider extends MockAIProvider {
   override readonly name = "openai";
@@ -488,6 +500,126 @@ function actionById(world: StreetGameState, actionId: string) {
   return world.availableActions.find((action) => action.id === actionId);
 }
 
+interface SeededFirstAfternoonTimelineEntry {
+  actionId?: string;
+  backing?: string;
+  clock: string;
+  consequenceId?: string;
+  energy: number;
+  footholdState: string;
+  locationId?: string;
+  objectiveProgress?: string;
+  provenance?: string;
+  sourceKind?: string;
+  step: number;
+  validation?: string;
+}
+
+async function runSeededFirstAfternoon(gameId: string) {
+  const engine = new SimulationEngine(new MockAIProvider());
+  let world = await engine.createGame(gameId);
+  const timeline: SeededFirstAfternoonTimelineEntry[] = [];
+
+  for (let step = 0; step <= 30; step += 1) {
+    const planningTrace = world.rowanAutonomy.planningTrace;
+    const selected = planningTrace?.considered.find(
+      (option) => option.status === "selected",
+    );
+    const pump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const isNaturalStop = Boolean(
+      world.firstAfternoon?.completedAt &&
+      world.rowanAutonomy.stepKind === "idle" &&
+      world.rowanAutonomy.autoContinue === false,
+    );
+
+    timeline.push({
+      actionId: planningTrace?.selectedActionId,
+      backing: planningTrace?.selectedLegalBacking?.source,
+      clock: `${String(world.clock.hour).padStart(2, "0")}:${String(world.clock.minute).padStart(2, "0")}`,
+      consequenceId: world.firstAfternoon?.consequence?.id,
+      energy: world.player.energy,
+      footholdState: `pump=${pump?.status ?? "missing"},tea=${teaJob?.completed ? "completed" : teaJob?.accepted ? "accepted" : teaJob?.discovered ? "known" : "unknown"}`,
+      locationId: world.player.currentLocationId,
+      objectiveProgress: world.player.objective?.progress.label,
+      provenance: selected?.provenance,
+      sourceKind: planningTrace?.selectedRecommendation?.sourceKind,
+      step,
+      validation: planningTrace?.selectedRecommendation?.validationStatus,
+    });
+
+    if (isNaturalStop) {
+      return { finalWorld: world, timeline };
+    }
+
+    expect(
+      world.rowanAutonomy.stepKind,
+      JSON.stringify(timeline, null, 2),
+    ).not.toBe("blocked");
+    expect(world.rowanAutonomy.intent?.reason).toBeTruthy();
+    expect(world.rowanAutonomy.intent?.signals.length).toBeGreaterThanOrEqual(
+      2,
+    );
+    expect(planningTrace, JSON.stringify(timeline, null, 2)).toBeDefined();
+    expect(selected, JSON.stringify(timeline, null, 2)).toBeDefined();
+    expect(planningTrace?.immediateAction).toMatchObject({ legal: true });
+    expect(planningTrace?.selectedLegalBacking).toBeDefined();
+    expect(planningTrace?.selectedRecommendation).toMatchObject({
+      accepted: true,
+    });
+    expect(planningTrace?.selectedRecommendation?.validationStatus).not.toBe(
+      "unvalidated",
+    );
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+  }
+
+  throw new Error(
+    `Seed ${gameId} did not reach a natural first-afternoon stop.\n${formatSeededFirstAfternoonTimeline(gameId, timeline)}`,
+  );
+}
+
+function seededFirstAfternoonSignature(
+  result: Awaited<ReturnType<typeof runSeededFirstAfternoon>>,
+) {
+  return {
+    timeline: result.timeline,
+    final: {
+      clock: result.finalWorld.clock,
+      consequence: result.finalWorld.firstAfternoon?.consequence,
+      energy: result.finalWorld.player.energy,
+      fieldNote: result.finalWorld.firstAfternoon?.fieldNote,
+      inventory: result.finalWorld.player.inventory,
+      locationId: result.finalWorld.player.currentLocationId,
+      memories: result.finalWorld.player.memories,
+      money: result.finalWorld.player.money,
+      objective: result.finalWorld.player.objective,
+      pump: result.finalWorld.problems.find(
+        (problem) => problem.id === "problem-pump",
+      ),
+      teaJob: result.finalWorld.jobs.find((job) => job.id === "job-tea-shift"),
+    },
+  };
+}
+
+function formatSeededFirstAfternoonTimeline(
+  gameId: string,
+  timeline: SeededFirstAfternoonTimelineEntry[],
+) {
+  return [
+    `[seeded-first-afternoon] ${gameId} (${deriveOpeningWorldVariant(gameId)})`,
+    ...timeline.map(
+      (entry) =>
+        `${entry.step}. ${entry.clock} ${entry.locationId ?? "street"} | action=${entry.actionId ?? "natural-stop"} | provenance=${entry.provenance ?? "completed"} | backing=${entry.backing ?? "none"} | validation=${entry.validation ?? "none"} | ${entry.footholdState} | consequence=${entry.consequenceId ?? "none"} | progress=${entry.objectiveProgress ?? "none"} | energy=${entry.energy}`,
+    ),
+  ].join("\n");
+}
+
 const npcFirstContactPrimerCases = [
   {
     feed:
@@ -557,6 +689,138 @@ async function enterNpcPrimerScene(
     },
   };
 }
+
+  it("derives reproducible opening facts before legal scoring branches after Mara", async () => {
+    const ordinaryId = "game-1";
+    const noticedPumpId = "game-2";
+    const ordinaryEngine = new SimulationEngine(new MockAIProvider());
+    const noticedPumpEngine = new SimulationEngine(new MockAIProvider());
+
+    expect(deriveOpeningWorldVariant(ordinaryId)).toBe("ordinary-lead");
+    expect(deriveOpeningWorldVariant(noticedPumpId)).toBe("noticed-pump");
+    expect(seedStreetGame(noticedPumpId)).toEqual(
+      seedStreetGame(noticedPumpId),
+    );
+
+    const ordinary = await ordinaryEngine.createGame(ordinaryId);
+    const noticedPump = await noticedPumpEngine.createGame(noticedPumpId);
+    const ordinaryPump = ordinary.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    const noticedPumpProblem = noticedPump.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+
+    expect(ordinaryPump).toMatchObject({
+      discovered: false,
+      status: "active",
+      urgency: 3,
+    });
+    expect(
+      ordinary.jobs.find((job) => job.id === "job-tea-shift"),
+    ).toMatchObject({ discovered: false });
+    expect(ordinary.player.knownLocationIds).not.toContain("repair-stall");
+    expect(ordinary.rowanAutonomy).toMatchObject({
+      actionId: "enter:boarding-house",
+      targetLocationId: "boarding-house",
+    });
+    expect(ordinary).toMatchObject({
+      activeSpaceId: "street:south-quay",
+      player: {
+        spaceId: "street:south-quay",
+        x: 3,
+        y: 9,
+      },
+    });
+
+    expect(noticedPumpProblem).toMatchObject({
+      discovered: true,
+      status: "active",
+      urgency: 4,
+    });
+    expect(noticedPumpProblem?.escalatedAt).toBeUndefined();
+    expect(noticedPumpProblem?.escalationLevel).toBeUndefined();
+    expect(
+      noticedPump.jobs.find((job) => job.id === "job-tea-shift"),
+    ).toMatchObject({ discovered: true });
+    expect(noticedPump.player.knownLocationIds).toEqual(
+      expect.arrayContaining(["courtyard", "tea-house", "repair-stall"]),
+    );
+    expect(noticedPump.feed.map((entry) => entry.text).join(" ")).toMatch(
+      /pump.*Ada.*Mercer Repairs/i,
+    );
+    expect(
+      noticedPump.player.memories.map((memory) => memory.text).join(" "),
+    ).toMatch(/pump.*Ada.*Mercer Repairs/i);
+    expect(noticedPump.rowanAutonomy).toMatchObject({
+      actionId: "enter:boarding-house",
+      targetLocationId: "boarding-house",
+      planningTrace: {
+        immediateAction: {
+          actionId: "enter:boarding-house",
+          legal: true,
+        },
+        selectedLegalBacking: {
+          actionId: "enter:boarding-house",
+          locationId: "boarding-house",
+          source: "current-legal-action-surface",
+        },
+        selectedPressureId: "predicate:first-afternoon-room",
+        selectedPressureKind: "predicate",
+        selectedRecommendation: {
+          validationStatus: "legal-action-surface-validated",
+        },
+      },
+    });
+    expect(noticedPump).toMatchObject({
+      activeSpaceId: ordinary.activeSpaceId,
+      player: {
+        spaceId: ordinary.player.spaceId,
+        x: ordinary.player.x,
+        y: ordinary.player.y,
+      },
+    });
+    expect(ordinary.rowanAutonomy.planningTrace?.selectedActionId).toBe(
+      noticedPump.rowanAutonomy.planningTrace?.selectedActionId,
+    );
+
+    const [ordinaryAfterMara, noticedPumpAfterMara] = await Promise.all([
+      advanceUntil(
+        ordinaryEngine,
+        ordinary,
+        (world) =>
+          !world.activeConversation &&
+          world.firstAfternoon?.approachesKnownAt !== undefined &&
+          world.rowanAutonomy.actionId === "move:tea-house" &&
+          world.rowanAutonomy.targetLocationId === "tea-house",
+        8,
+      ),
+      advanceUntil(
+        noticedPumpEngine,
+        noticedPump,
+        (world) =>
+          !world.activeConversation &&
+          world.firstAfternoon?.approachesKnownAt !== undefined &&
+          world.rowanAutonomy.actionId === "move:repair-stall" &&
+          world.rowanAutonomy.targetLocationId === "repair-stall",
+        8,
+      ),
+    ]);
+
+    expect(ordinaryAfterMara.rowanAutonomy).toMatchObject({
+      actionId: "move:tea-house",
+      targetLocationId: "tea-house",
+    });
+    expect(noticedPumpAfterMara.rowanAutonomy).toMatchObject({
+      actionId: "move:repair-stall",
+      targetLocationId: "repair-stall",
+      planningTrace: {
+        selectedLegalBacking: expect.objectContaining({
+          source: expect.stringMatching(/legal-action/),
+        }),
+      },
+    });
+  });
 
 function countExactText(entries: Array<{ text: string }>, text: string) {
   return entries.filter((entry) => entry.text === text).length;
@@ -661,6 +925,19 @@ describe("SimulationEngine street slice", () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-first-afternoon-completion-outcome");
 
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "exit:boarding-house",
+    });
     world = await engine.runCommand(world, {
       type: "move_to",
       x: 6,
@@ -747,7 +1024,9 @@ describe("SimulationEngine street slice", () => {
       "When the first afternoon opened up, Rowan kept Ada's work and the house's local trouble as competing live approaches.",
     );
 
-    let pumpWorld = await engine.createGame("game-first-afternoon-pump-copy");
+    let pumpWorld = await engine.createGame(
+      "game-first-afternoon-pump-copy-ordinary",
+    );
     pumpWorld = await enterMorrowHouse(engine, pumpWorld);
     const pumpProblem = pumpWorld.problems.find(
       (problem) => problem.id === "problem-pump",
@@ -1334,7 +1613,7 @@ describe("SimulationEngine street slice", () => {
 
   it("preserves cart solve action narrative and effects", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-cart-solve-copy");
+    let world = await engine.createGame("game-cart-solve-copy-ordinary");
     const cart = world.problems.find(
       (problem) => problem.id === "problem-cart",
     );
@@ -1761,7 +2040,7 @@ describe("SimulationEngine street slice", () => {
   it("grounds post-rest Morrow Yard moves in live pump pressure instead of generic target copy", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame(
-      "game-post-rest-morrow-yard-grounded-copy",
+      "game-post-rest-morrow-yard-grounded-copy-ordinary",
     );
     const genericRouteCopy =
       /What Rowan knows now points to|useful next place|before deciding again|before choosing the next legal action|Head to Morrow Yard/i;
@@ -1972,8 +2251,12 @@ describe("SimulationEngine street slice", () => {
   });
 
   it("opens the first afternoon with room talk before the work lead", async () => {
-    const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-first-afternoon-opening");
+    const engine = new SimulationEngine(
+      new HeuristicConversationResolutionProvider(),
+    );
+    let world = await engine.createGame(
+      "game-first-afternoon-opening-ordinary",
+    );
 
     world = await advanceUntil(
       engine,
@@ -1992,12 +2275,20 @@ describe("SimulationEngine street slice", () => {
     expect(playerLine?.text).not.toMatch(/hands|lunch|work lead/i);
     expect(maraLine?.text).toMatch(/Morrow House|room|Ada|Kettle & Lamp/i);
     expect(world.activeConversation?.objectiveText).toBeUndefined();
-    expect(world.activeConversation?.decision).toMatch(/Ada.*pump|pump.*Ada/i);
+    expect(world.activeConversation?.decision).toBe(
+      "compare Ada's live lunch work with the leaking pump and choose what makes sense for Rowan right now.",
+    );
+    expect(world.player.memories.map((memory) => memory.text)).toContain(
+      "Mara made both Ada's work and the leaking pump concrete without deciding for Rowan.",
+    );
+    expect(world.conversationThreads["npc-mara"]?.summary).toBe(
+      "Mara showed Rowan two real ways to spend the afternoon without settling his choice.",
+    );
   });
 
   it("describes the Ada lead as a situated cafe lead from Morrow House", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-ada-route-copy");
+    let world = await engine.createGame("game-ada-route-copy-ordinary");
 
     world = await advanceUntil(
       engine,
@@ -2136,7 +2427,7 @@ describe("SimulationEngine street slice", () => {
   it("attempts live OpenAI-mode dialogue for first Mara and Ada conversations", async () => {
     const provider = new LiveDialogueAIProvider();
     const engine = new SimulationEngine(provider);
-    let world = await engine.createGame("game-live-first-dialogue");
+    let world = await engine.createGame("game-live-first-dialogue-ordinary");
 
     world = await advanceUntil(
       engine,
@@ -2229,7 +2520,9 @@ describe("SimulationEngine street slice", () => {
   it("does not let vague Mara dialogue invisibly unlock the Ada lead", async () => {
     const provider = new VagueMaraLiveAIProvider();
     const engine = new SimulationEngine(provider);
-    let world = await engine.createGame("game-vague-mara-evidence-gate");
+    let world = await engine.createGame(
+      "game-vague-mara-evidence-gate-ordinary",
+    );
 
     world = await advanceUntil(
       engine,
@@ -2628,7 +2921,9 @@ describe("SimulationEngine street slice", () => {
 
   it("keeps the live planner on Ada after the first-afternoon plan is selected", async () => {
     const setupEngine = new SimulationEngine(new MockAIProvider());
-    let world = await setupEngine.createGame("game-ai-planner-ada-plan");
+    let world = await setupEngine.createGame(
+      "game-ai-planner-ada-plan-ordinary",
+    );
 
     world = await advanceUntil(
       setupEngine,
@@ -3044,7 +3339,9 @@ describe("SimulationEngine street slice", () => {
         "Follow the old pier trail even though Ada is the current predicate.",
     });
     const engine = new SimulationEngine(provider);
-    let world = await engine.createGame("game-live-planner-poisoned-trail");
+    let world = await engine.createGame(
+      "game-live-planner-poisoned-trail-ordinary",
+    );
 
     world.player.knownLocationIds = [
       ...new Set([...world.player.knownLocationIds, "tea-house"]),
@@ -3206,7 +3503,9 @@ describe("SimulationEngine street slice", () => {
 
   it("drops first-afternoon Ada route authority after the lunch window slips", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-first-afternoon-stale-ada-route");
+    let world = await engine.createGame(
+      "game-first-afternoon-stale-ada-route-ordinary",
+    );
 
     world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
@@ -3457,7 +3756,7 @@ describe("SimulationEngine street slice", () => {
     };
 
     const predicateSetup = await buildPostMaraWorld(
-      "game-pressure-branch-predicate",
+      "game-pressure-branch-predicate-ordinary",
     );
     let predicateWorld = await predicateSetup.engine.runCommand(
       predicateSetup.world,
@@ -4610,7 +4909,7 @@ describe("SimulationEngine street slice", () => {
 
   it("ignores a poisoned explore trail target when choosing the next place from live state", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-explore-poisoned-trail");
+    let world = await engine.createGame("game-explore-poisoned-trail-ordinary");
 
     world = await engine.runCommand(world, {
       type: "set_objective",
@@ -4740,7 +5039,9 @@ describe("SimulationEngine street slice", () => {
 
   it("keeps route-derived people semantics subordinate to explicit predicate targets", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-predicate-target-over-people-route");
+    let world = await engine.createGame(
+      "game-predicate-target-over-people-route-ordinary",
+    );
 
     world.player.currentLocationId = "boarding-house";
     world.player.knownLocationIds = [
@@ -5788,8 +6089,12 @@ describe("SimulationEngine street slice", () => {
 
   it("lets urgent live pressure outrank stale tool route move intent", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-urgent-job-over-tool-move-intent");
-    const teaHouse = world.locations.find((location) => location.id === "tea-house");
+    let world = await engine.createGame(
+      "game-urgent-job-over-tool-move-intent-ordinary",
+    );
+    const teaHouse = world.locations.find(
+      (location) => location.id === "tea-house",
+    );
     const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
 
     expect(teaHouse).toBeDefined();
@@ -6298,7 +6603,7 @@ describe("SimulationEngine street slice", () => {
 
   it("routes a wrench objective to Jo instead of reopening Mara", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-tool-route");
+    let world = await engine.createGame("game-tool-route-ordinary");
 
     world = await enterMorrowHouse(engine, world);
     world = await engine.runCommand(world, {
@@ -6628,6 +6933,130 @@ describe("SimulationEngine street slice", () => {
       routeKey: "first-afternoon",
       progress: { completed: 4, total: 4 },
     });
+  });
+
+  it("reproduces seeded first afternoons while preserving distinct validated footholds", async () => {
+    const ordinaryId = "game-1";
+    const noticedPumpId = "game-2";
+    const [ordinary, noticedPump] = await Promise.all([
+      runSeededFirstAfternoon(ordinaryId),
+      runSeededFirstAfternoon(noticedPumpId),
+    ]);
+    const [ordinaryRepeat, noticedPumpRepeat] = await Promise.all([
+      runSeededFirstAfternoon(ordinaryId),
+      runSeededFirstAfternoon(noticedPumpId),
+    ]);
+
+    console.info(
+      [
+        formatSeededFirstAfternoonTimeline(ordinaryId, ordinary.timeline),
+        formatSeededFirstAfternoonTimeline(noticedPumpId, noticedPump.timeline),
+      ].join("\n\n"),
+    );
+
+    expect(seededFirstAfternoonSignature(ordinaryRepeat)).toEqual(
+      seededFirstAfternoonSignature(ordinary),
+    );
+    expect(seededFirstAfternoonSignature(noticedPumpRepeat)).toEqual(
+      seededFirstAfternoonSignature(noticedPump),
+    );
+
+    const results = [ordinary, noticedPump];
+    const consequenceIds = results.map(
+      (result) => result.finalWorld.firstAfternoon?.consequence?.id,
+    );
+    const consequenceKinds = results.map(
+      (result) => result.finalWorld.firstAfternoon?.consequence?.kind,
+    );
+    const actionPaths = results.map((result) =>
+      result.timeline
+        .map((entry) => entry.actionId)
+        .filter((actionId): actionId is string => Boolean(actionId))
+        .filter((actionId, index, entries) => actionId !== entries[index - 1]),
+    );
+
+    expect(new Set(consequenceIds).size).toBeGreaterThanOrEqual(2);
+    expect(consequenceIds).toEqual(
+      expect.arrayContaining(["job-tea-shift", "problem-pump"]),
+    );
+    expect(consequenceKinds).toEqual(
+      expect.arrayContaining(["tea-work", "local-problem"]),
+    );
+    expect(actionPaths[0]).not.toEqual(actionPaths[1]);
+    expect(actionPaths[0]).toEqual(
+      expect.arrayContaining([
+        "talk:npc-mara",
+        "move:tea-house",
+        "talk:npc-ada",
+        "work:job-tea-shift",
+      ]),
+    );
+    expect(actionPaths[1]).toEqual(
+      expect.arrayContaining([
+        "talk:npc-mara",
+        "move:repair-stall",
+        "buy:item-wrench",
+        "move:courtyard",
+        "solve:problem-pump",
+      ]),
+    );
+
+    for (const result of results) {
+      const finalWorld = result.finalWorld;
+      expect(finalWorld.player.objective).toMatchObject({
+        routeKey: "first-afternoon",
+        progress: { completed: 4, total: 4 },
+      });
+      expect(
+        finalWorld.player.objective?.outcomes.every(
+          (outcome) =>
+            outcome.authority === "predicate" && outcome.status === "met",
+        ),
+      ).toBe(true);
+      expect(finalWorld.firstAfternoon?.fieldNote).toMatchObject({
+        evidence: expect.any(String),
+        learned: expect.stringContaining("first durable foothold"),
+        memory: expect.any(String),
+        next: expect.any(String),
+      });
+      expect(finalWorld.player.currentLocationId).toBe(
+        finalWorld.player.homeLocationId,
+      );
+      expect(finalWorld.rowanAutonomy).toMatchObject({
+        autoContinue: false,
+        label: "First afternoon complete",
+        stepKind: "idle",
+      });
+      expect(finalWorld.firstAfternoon?.completedAt).toBeDefined();
+      expect(
+        result.timeline
+          .slice(0, -1)
+          .every(
+            (entry) =>
+              entry.actionId &&
+              entry.backing &&
+              entry.provenance &&
+              entry.sourceKind &&
+              entry.validation &&
+              entry.validation !== "unvalidated",
+          ),
+      ).toBe(true);
+    }
+
+    expect(
+      ordinary.finalWorld.jobs.find((job) => job.id === "job-tea-shift"),
+    ).toMatchObject({ completed: true, missed: false });
+    expect(
+      noticedPump.finalWorld.problems.find(
+        (problem) => problem.id === "problem-pump",
+      ),
+    ).toMatchObject({ discovered: true, status: "solved" });
+    expect(noticedPump.finalWorld.player.inventory).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "item-wrench" })]),
+    );
+    expect(
+      noticedPump.finalWorld.player.reputation.morrow_house,
+    ).toBeGreaterThan(ordinary.finalWorld.player.reputation.morrow_house);
   });
 
   it("hands first-afternoon completion into a fresh state-derived next objective", async () => {

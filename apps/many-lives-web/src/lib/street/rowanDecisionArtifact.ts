@@ -138,8 +138,7 @@ export function buildRowanVisibleDecisionArtifactFromState({
   const rationale =
     travelPhase === "route-progress"
       ? compactDecisionText(
-          autonomyReason ??
-            "Rowan is carrying out the route he already validated.",
+          autonomyReason ?? "Rowan is carrying out the route he already chose.",
           132,
         )
       : rationaleBase;
@@ -588,9 +587,9 @@ function backingSummaryForTrace(
     case "projected-follow-up-legal-action":
       return "The follow-up was checked before committing.";
     case "simulator-validated-move":
-      return "The move was validated before Rowan carries it out.";
+      return "The move was checked before Rowan carries it out.";
     case "simulator-validated-wait":
-      return "The wait was validated before Rowan spends the time.";
+      return "The wait was checked before Rowan spends the time.";
     default:
       return trace
         ? "Checked against the current choices."
@@ -606,20 +605,20 @@ function sourceSummaryForDecisionArtifact(
   const sourceKind = planningTrace?.selectedRecommendation?.sourceKind;
   if (travelPhase === "route-progress") {
     if (sourceKind === "live-llm") {
-      return "Live planner route progress, simulator-validated";
+      return "Live recommendation, checked before Rowan set out";
     }
     if (sourceKind === "deterministic-fallback") {
-      return "Deterministic fallback route progress, simulator-validated";
+      return "Built-in recommendation, checked before Rowan set out";
     }
-    return "Deterministic route progress, simulator-validated";
+    return "Rowan's current choice, checked before he set out";
   }
 
   if (sourceKind === "live-llm") {
-    return "Live planner recommendation, checked before acting";
+    return "Live recommendation, checked before acting";
   }
 
   if (sourceKind === "deterministic-fallback") {
-    return "Deterministic fallback, checked before acting";
+    return "Built-in recommendation, checked before acting";
   }
 
   if (planningTrace?.selectedPressureKind === "commitment") {
@@ -627,7 +626,7 @@ function sourceSummaryForDecisionArtifact(
   }
 
   if (planningTrace) {
-    return "Deterministic planner recommendation, checked before acting";
+    return "Rowan's current choice, checked before acting";
   }
 
   if (activeConversationDecision) {
@@ -681,6 +680,30 @@ function compactDecisionText(value: string | null | undefined, max: number) {
       "",
     )
     .replace(/^Action:\s*/i, "")
+    .replace(
+      /\b(?:cloned\s+)?destination(?:'s)?\s+legal action surface\b/gi,
+      "choices available there",
+    )
+    .replace(
+      /\b(?:cloned\s+)?future legal action surface\b/gi,
+      "choices available then",
+    )
+    .replace(/\bcurrent legal action surface\b/gi, "choices available now")
+    .replace(/\blegal action surface\b/gi, "available choices")
+    .replace(
+      /\bre-evaluate the legal conversation surface\b/gi,
+      "see whether the conversation is still available",
+    )
+    .replace(/\blegal conversation surface\b/gi, "available conversation")
+    .replace(/\bsimulator-legal current actions\b/gi, "choices available now")
+    .replace(/\bsimulator[- ]validated\b/gi, "checked")
+    .replace(/\b(?:fresh\s+)?simulator validation\b/gi, "a fresh check")
+    .replace(/\bsimulator\b/gi, "the game")
+    .replace(/\bdeterministic fallback\b/gi, "built-in guidance")
+    .replace(/\bdeterministic planner\b/gi, "Rowan's judgment")
+    .replace(/\bdeterministic route progress\b/gi, "Rowan's follow-through")
+    .replace(/\bplanner recommendation\b/gi, "recommendation")
+    .replace(/\broute progress\b/gi, "follow-through")
     .replace(/\bcurrent objective\b/gi, "current aim")
     .replace(/\bcurrent world state\b/gi, "current situation")
     .replace(/\bplanner trace\b/gi, "Rowan weighs")
@@ -695,7 +718,15 @@ function compactDecisionText(value: string | null | undefined, max: number) {
     .replace(/\b(?:objective action|route hint action)\b/gi, "opening")
     .replace(/\bsuggested move\b/gi, "option")
     .replace(/\broute hint\b/gi, "suggested path")
-    .replace(/\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi, "")
+    .replace(/\blegal current actions?\b/gi, "choices available now")
+    .replace(/\blegal actions?\b/gi, "available choices")
+    .replace(/\blegal move\b/gi, "available move")
+    .replace(/\bbe legal\b/gi, "be available")
+    .replace(/\bvalidation\b/gi, "check")
+    .replace(
+      /\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi,
+      "",
+    )
     .replace(/\s{2,}/g, " ")
     .trim();
 

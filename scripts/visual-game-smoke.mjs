@@ -3124,8 +3124,28 @@ function visibleDecisionNextCheckForOutcome(planningTrace) {
     70,
   )[0];
 
-  const lead = stripTrailingVisibleDecisionPunctuation(label);
+  const lead = visibleDecisionNextCheckLead(outcome, label, signal);
   return compactVisibleDecisionText(signal ? `${lead}: ${signal}` : label, 118);
+}
+
+function visibleDecisionNextCheckLead(outcome, label, signal) {
+  if (signal && outcome.status === "blocked") {
+    if (
+      /^Yard work lead confirmed$/i.test(label) &&
+      /\bnot confirmed\b/i.test(signal)
+    ) {
+      return "Confirm yard work lead";
+    }
+
+    if (
+      /^Tea-house work lead confirmed$/i.test(label) &&
+      /\bnot confirmed\b/i.test(signal)
+    ) {
+      return "Confirm tea-house work lead";
+    }
+  }
+
+  return stripTrailingVisibleDecisionPunctuation(label);
 }
 
 function isCurrentOrMetaTraceOutcome(planningTrace, outcome) {
@@ -3193,6 +3213,30 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\btargetLocationId\b/gi, "")
     .replace(/\bactionId\b/gi, "")
     .replace(/^Action:\s*/i, "")
+    .replace(
+      /\b(?:cloned\s+)?destination(?:'s)?\s+legal action surface\b/gi,
+      "choices available there",
+    )
+    .replace(
+      /\b(?:cloned\s+)?future legal action surface\b/gi,
+      "choices available then",
+    )
+    .replace(/\bcurrent legal action surface\b/gi, "choices available now")
+    .replace(/\blegal action surface\b/gi, "available choices")
+    .replace(
+      /\bre-evaluate the legal conversation surface\b/gi,
+      "see whether the conversation is still available",
+    )
+    .replace(/\blegal conversation surface\b/gi, "available conversation")
+    .replace(/\bsimulator-legal current actions\b/gi, "choices available now")
+    .replace(/\bsimulator[- ]validated\b/gi, "checked")
+    .replace(/\b(?:fresh\s+)?simulator validation\b/gi, "a fresh check")
+    .replace(/\bsimulator\b/gi, "the game")
+    .replace(/\bdeterministic fallback\b/gi, "built-in guidance")
+    .replace(/\bdeterministic planner\b/gi, "Rowan's judgment")
+    .replace(/\bdeterministic route progress\b/gi, "Rowan's follow-through")
+    .replace(/\bplanner recommendation\b/gi, "recommendation")
+    .replace(/\broute progress\b/gi, "follow-through")
     .replace(/\bcurrent objective\b/gi, "current aim")
     .replace(/\bcurrent world state\b/gi, "current situation")
     .replace(/\bplanner trace\b/gi, "Rowan weighs")
@@ -3207,11 +3251,89 @@ function compactVisibleDecisionText(value, max) {
     .replace(/\b(?:objective action|route hint action)\b/gi, "opening")
     .replace(/\bsuggested move\b/gi, "option")
     .replace(/\broute hint\b/gi, "suggested path")
+    .replace(/\blegal current actions?\b/gi, "choices available now")
+    .replace(/\blegal actions?\b/gi, "available choices")
+    .replace(/\blegal move\b/gi, "available move")
+    .replace(/\bbe legal\b/gi, "be available")
+    .replace(/\bvalidation\b/gi, "check")
     .replace(/\b(?:npc|job|problem|route|enter|talk|move|wait|objective|location):[A-Za-z0-9_-]+\b/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 
-  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}...`;
+  return text.length <= max
+    ? text
+    : `${text.slice(0, Math.max(0, max - 1)).trimEnd()}...`;
+}
+
+function assertVisibleDecisionCopyCompactionContractGuard() {
+  for (const [source, expected] of [
+    [
+      "Deterministic route progress, simulator-validated.",
+      "Rowan's follow-through, checked.",
+    ],
+    [
+      "Re-check this action against the destination's legal action surface.",
+      "Re-check this action against the choices available there.",
+    ],
+    [
+      "Re-evaluate the legal conversation surface before asking again.",
+      "see whether the conversation is still available before asking again.",
+    ],
+    [
+      "Choose from the simulator-legal current actions.",
+      "Choose from the choices available now.",
+    ],
+    [
+      "Use deterministic planner and deterministic fallback after fresh simulator validation.",
+      "Use Rowan's judgment and built-in guidance after a fresh check.",
+    ],
+  ]) {
+    assert.equal(
+      compactVisibleDecisionText(source, 200),
+      expected,
+      `Visible decision copy compaction drifted for: ${source}`,
+    );
+  }
+
+  const selectedStep = {
+    actionId: "enter:boarding-house",
+    label: "Enter Morrow House",
+    legal: true,
+  };
+  const planningTrace = {
+    nextSteps: [
+      selectedStep,
+      {
+        actionId: "talk:npc-mara",
+        label: "Talk to Mara",
+        legal: true,
+        rationale:
+          "After reaching Morrow House, re-evaluate the legal conversation surface before Rowan asks the next question.",
+      },
+    ],
+    outcomes: [],
+    selectedActionId: selectedStep.actionId,
+  };
+  assert.equal(
+    visibleDecisionNextCheck(planningTrace, selectedStep, selectedStep.label),
+    "Talk to Mara: After reaching Morrow House, see whether the conversation is still available before Rowan a...",
+    "Trace-backed Next Check reconstruction must use the sanitized player-facing rationale.",
+  );
+
+  assert.equal(
+    visibleDecisionNextCheckForOutcome({
+      outcomes: [
+        {
+          blockers: ["Tea-house work lead is not confirmed"],
+          id: "tea-house-lead",
+          label: "Tea-house work lead confirmed",
+          status: "blocked",
+        },
+      ],
+    }),
+    "Confirm tea-house work lead: Tea-house work lead is not confirmed",
+    "Blocked work-lead Next Check reconstruction must use the product outcome lead.",
+  );
 }
 
 function assertVisibleDecisionArtifactDom(
@@ -5783,6 +5905,7 @@ async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
   assertOpeningActionCarryForwardContractGuard();
   assertGroundedNearMorrowEntryAgencyGuard();
+  assertVisibleDecisionCopyCompactionContractGuard();
   assertDecisionArtifactReadabilityWaitRegression();
   if (RUN_RESPONSIVE_DECISION_GUARD_ONLY) {
     process.stdout.write(

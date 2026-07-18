@@ -39,7 +39,10 @@ import {
   buildFirstAfternoonCompletionContinueCopy,
   firstAfternoonMaraAdaLeadFieldNoteNextCopy,
 } from "../../many-lives-web/src/lib/street/rowanFallbackNarrative.js";
-import { seedStreetGame } from "../src/street-sim/seedGame.js";
+import {
+  deriveOpeningWorldVariant,
+  seedStreetGame,
+} from "../src/street-sim/seedGame.js";
 import type {
   PlayerObjective,
   StreetGameState,
@@ -229,8 +232,11 @@ const MARA_ADA_GROUNDING_FOLLOWUP =
   "Just to be clear, are Ada's Kettle & Lamp lunch work and the leaking Morrow Yard pump both live ways I could make this afternoon count?";
 const MARA_ADA_GROUNDED_FALLBACK_REPLY =
   "Morrow House can hold you tonight if you help keep it easy to live in. Ada at Kettle & Lamp may need lunch hands, and the pump in Morrow Yard is leaking now. Both are live approaches; choose from what the block actually allows.";
-const MARA_ADA_GROUNDING_FALLBACK_MEMORY =
-  "Mara made both Ada's work and the pump concrete without choosing the route for Rowan.";
+const MARA_ADA_RESOLUTION_COPY = [
+  "compare Ada's live lunch work with the leaking pump and choose what makes sense for Rowan right now.",
+  "Mara made both Ada's work and the leaking pump concrete without deciding for Rowan.",
+  "Mara showed Rowan two real ways to spend the afternoon without settling his choice.",
+];
 const MARA_ADA_REQUIRED_PROMPT_LINE =
   "- Required for this Mara reply: visibly ground both Ada/Kettle & Lamp work and the leaking Morrow Yard pump.";
 const MARA_ADA_PROMPT_OVERRIDE_LINE =
@@ -786,6 +792,78 @@ function worldWithRecentConversationLead(
 }
 
 describe("street reasoning authority", () => {
+  it("keeps deterministic opening variation in authored state instead of planner control flow", () => {
+    const seedSource = readFileSync(
+      new URL("../src/street-sim/seedGame.ts", import.meta.url),
+      "utf8",
+    );
+    const engineSource = readFileSync(
+      new URL("../src/sim/engine.ts", import.meta.url),
+      "utf8",
+    );
+    const scaffoldSource = readFileSync(
+      new URL("../src/sim/objectiveScaffolds.ts", import.meta.url),
+      "utf8",
+    );
+    const roomTermsSource = scaffoldSource.match(
+      /function firstAfternoonRoomTermsKnown[\s\S]*?\n}/,
+    )?.[0];
+    const derivationSource = deriveOpeningWorldVariant.toString();
+    const ordinary = seedStreetGame("game-1");
+    const noticedPump = seedStreetGame("game-2");
+
+    expect(deriveOpeningWorldVariant("game-1")).toBe("ordinary-lead");
+    expect(deriveOpeningWorldVariant("game-2")).toBe("noticed-pump");
+    expect(seedSource).toContain("deriveOpeningWorldVariant(gameId)");
+    expect(seedSource).toContain("buildOpeningWorldFacts(gameId)");
+    expect(seedSource).not.toMatch(/Math\.random|Date\.now|randomUUID/);
+    expect(seedSource).not.toMatch(
+      /gameId\s*===|gameId\.(startsWith|endsWith|includes)/,
+    );
+    expect(derivationSource).not.toMatch(
+      /routeKey|actionId|planner|objective/i,
+    );
+    expect(engineSource).not.toContain("deriveOpeningWorldVariant");
+    expect(engineSource).not.toContain("noticed-pump");
+    expect(scaffoldSource).not.toContain("deriveOpeningWorldVariant");
+    expect(scaffoldSource).not.toContain("noticed-pump");
+    expect(roomTermsSource).toContain(
+      'countPlayerConversationsWithNpc(world, "npc-mara")',
+    );
+    expect(roomTermsSource).not.toMatch(
+      /approachesKnownAt|planSettledAt|leadFieldNote/,
+    );
+
+    expect(ordinary.player.objective?.routeKey).toBe("first-afternoon");
+    expect(noticedPump.player.objective?.routeKey).toBe("first-afternoon");
+    expect(ordinary.activeSpaceId).toBe("street:south-quay");
+    expect(noticedPump.activeSpaceId).toBe(ordinary.activeSpaceId);
+    expect(noticedPump.player).toMatchObject({
+      spaceId: ordinary.player.spaceId,
+      x: ordinary.player.x,
+      y: ordinary.player.y,
+    });
+    expect(noticedPump.currentScene.spaceId).toBe(noticedPump.activeSpaceId);
+    expect(ordinary.rowanAutonomy).toEqual(noticedPump.rowanAutonomy);
+    expect(ordinary).not.toHaveProperty("openingWorldVariant");
+    expect(noticedPump).not.toHaveProperty("openingWorldVariant");
+    expect(
+      noticedPump.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({ discovered: true, urgency: 4 });
+    expect(
+      noticedPump.jobs.find((job) => job.id === "job-tea-shift"),
+    ).toMatchObject({ discovered: true });
+    expect(noticedPump.feed.map((entry) => entry.text).join(" ")).toMatch(
+      /Morrow Yard pump.*Ada.*Mercer Repairs/i,
+    );
+    expect(
+      noticedPump.player.memories.map((memory) => memory.text).join(" "),
+    ).toMatch(/Morrow Yard pump.*Ada.*Mercer Repairs/i);
+    expect(noticedPump.player.currentThought).toMatch(
+      /Morrow Yard pump.*Ada.*Mercer Repairs/i,
+    );
+  });
+
   it("keeps first-afternoon action rationale in scaffold data, not engine control flow", () => {
     const engineSource = readFileSync(
       new URL("../src/sim/engine.ts", import.meta.url),
@@ -1653,7 +1731,6 @@ describe("street reasoning authority", () => {
     for (const groundingCopy of [
       MARA_ADA_GROUNDING_FOLLOWUP,
       MARA_ADA_GROUNDED_FALLBACK_REPLY,
-      MARA_ADA_GROUNDING_FALLBACK_MEMORY,
       MARA_ADA_REQUIRED_PROMPT_LINE,
       MARA_ADA_PROMPT_OVERRIDE_LINE,
       MARA_ADA_GROUNDED_PROMPT_LINE,
@@ -1661,6 +1738,11 @@ describe("street reasoning authority", () => {
       expect(scaffoldSource).toContain(groundingCopy);
       expect(engineSource).not.toContain(groundingCopy);
       expect(promptSource).not.toContain(groundingCopy);
+    }
+
+    for (const resolutionCopy of MARA_ADA_RESOLUTION_COPY) {
+      expect(scaffoldSource).toContain(resolutionCopy);
+      expect(engineSource).toContain(resolutionCopy);
     }
 
     expect(scaffoldSource).toContain("conversationGroundingPolicies");
@@ -2489,7 +2571,9 @@ describe("street reasoning authority", () => {
 
   it("keeps poisoned first-afternoon Mara/Ada trail hints behind a current legal action", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-first-afternoon-poisoned-ada-route");
+    let world = await engine.createGame(
+      "game-first-afternoon-poisoned-ada-route-ordinary",
+    );
     const currentObjective = world.player.objective as PlayerObjective;
     const pumpProblem = world.problems.find(
       (problem) => problem.id === "problem-pump",

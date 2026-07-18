@@ -294,4 +294,110 @@ describe("Rowan visible decision artifact", () => {
     expect(artifact?.considered).toContain("Head to Morrow Yard");
     expect(artifact?.passedOver).toContain("Return to Morrow House");
   });
+
+  it("translates pump-route implementation language before it reaches the player", () => {
+    const artifact = buildRowanVisibleDecisionArtifactFromState({
+      autonomyActionId: "move:repair-stall",
+      autonomyLabel: "On the way to Mercer Repairs",
+      autonomyReason: "Deterministic route progress, simulator-validated.",
+      autonomySignals: [
+        "Re-evaluate the legal conversation surface before asking again.",
+      ],
+      objectiveText: "Get a wrench for the leaking Morrow Yard pump.",
+      planningTrace: {
+        blockers: [],
+        considered: [
+          {
+            actionId: "move:repair-stall",
+            label: "Head to Mercer Repairs",
+            matchedOutcomeId: "fix-pump",
+            planKey: "help-yard-pump",
+            pressureId: "problem-pump",
+            pressureKind: "problem",
+            pressureLabel: "Leaking hand pump needs a tool Rowan can get",
+            provenance: "objective-predicate" as const,
+            rationale:
+              "Compare the pump with Ada's work and choose from the simulator-legal current actions.",
+            score: 9,
+            status: "selected" as const,
+            targetLocationId: "repair-stall",
+          },
+        ],
+        nextSteps: [
+          {
+            actionId: "move:repair-stall",
+            kind: "move",
+            label: "Head to Mercer Repairs",
+            legal: true,
+            rationale: "The pump needs the wrench sold there.",
+            validation:
+              "The simulator must validate the move before route progress.",
+            targetLocationId: "repair-stall",
+          },
+          {
+            actionId: "buy:item-wrench",
+            kind: "act",
+            label: "Buy old wrench",
+            legal: true,
+            rationale:
+              "After reaching Mercer Repairs, re-check this action against the destination's legal action surface before applying consequences.",
+            targetLocationId: "repair-stall",
+            validation:
+              "The simulator must validate the action against the legal action surface.",
+          },
+        ],
+        outcomes: [
+          {
+            blockers: ["Rowan still needs the wrench."],
+            id: "fix-pump",
+            label: "Leaking hand pump solved",
+            status: "blocked",
+            urgency: 9,
+          },
+        ],
+        rejected: [],
+        selectedActionId: "move:repair-stall",
+        selectedLabel: "Head to Mercer Repairs",
+        selectedLegalBacking: {
+          actionId: "move:repair-stall",
+          locationId: "repair-stall",
+          source: "simulator-validated-move",
+        },
+        selectedMatchedOutcomeId: "fix-pump",
+        selectedPlanKey: "help-yard-pump",
+        selectedPressureId: "problem-pump",
+        selectedPressureKind: "problem",
+        selectedPressureLabel: "Leaking hand pump needs a tool Rowan can get",
+        selectedRecommendation: {
+          accepted: true,
+          advisory: true,
+          sourceKind: "deterministic-fallback",
+          validationStatus: "simulator-validated",
+        },
+        selectedTargetLocationId: "repair-stall",
+      },
+      travelPhase: "route-progress",
+    });
+
+    const visibleText = [
+      artifact?.objective,
+      ...(artifact?.constraints ?? []),
+      ...(artifact?.considered ?? []),
+      artifact?.nextCheck,
+      artifact?.rationale,
+      artifact?.backingSummary,
+      artifact?.sourceSummary,
+    ].join(" ");
+
+    expect(artifact?.sourceSummary).toBe(
+      "Built-in recommendation, checked before Rowan set out",
+    );
+    expect(artifact?.nextCheck).toMatch(/choices available there/i);
+    expect(artifact?.backingSummary).toBe(
+      "The move was checked before Rowan carries it out.",
+    );
+    expect(visibleText).not.toMatch(
+      /deterministic|planner|simulator|legal (?:action|conversation) surface|route progress|planningTrace|routeKey|actionId|predicate/i,
+    );
+  });
 });

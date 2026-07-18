@@ -412,6 +412,15 @@ describe("street dialogue fallback", () => {
         MARA_ADA_GROUNDED_FALLBACK_REPLY,
       ),
     ).toBe(true);
+    expect(policy?.resolutionFallback).toEqual({
+      decision:
+        "compare Ada's live lunch work with the leaking pump and choose what makes sense for Rowan right now.",
+      memoryKind: "self",
+      memoryText:
+        "Mara made both Ada's work and the leaking pump concrete without deciding for Rowan.",
+      summary:
+        "Mara showed Rowan two real ways to spend the afternoon without settling his choice.",
+    });
     expect(
       objectiveRouteTextAffirmsConversationPolicy(
         policy,

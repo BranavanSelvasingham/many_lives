@@ -18,6 +18,7 @@ import type {
   FeedEntry,
   JobState,
   LocationState,
+  MemoryEntry,
   NpcState,
   ProblemState,
   StreetGameState,
@@ -41,9 +42,52 @@ const NEIGHBORHOODS = {
   pilgrimSteps: "Pilgrim Steps",
 } as const;
 
+export type OpeningWorldVariant = "ordinary-lead" | "noticed-pump";
+
+interface OpeningWorldFacts {
+  activeSpaceId: string;
+  currentThought: string;
+  discoveredJobIds: string[];
+  feed: FeedEntry[];
+  knownLocationIds: string[];
+  memories: MemoryEntry[];
+  playerStart: { x: number; y: number };
+  problemOverrides: Partial<
+    Record<
+      string,
+      Pick<
+        ProblemState,
+        "discovered" | "escalatedAt" | "escalationLevel" | "urgency"
+      >
+    >
+  >;
+}
+
+export function deriveOpeningWorldVariant(gameId: string): OpeningWorldVariant {
+  let hash = 2_166_136_261;
+
+  for (let index = 0; index < gameId.length; index += 1) {
+    hash ^= gameId.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+
+  return (hash >>> 0) % 4 === 0 ? "noticed-pump" : "ordinary-lead";
+}
+
 export function seedStreetGame(gameId: string): StreetGameState {
   const locations = buildLocations();
   const map = buildMap();
+  const openingWorld = buildOpeningWorldFacts(gameId);
+  const jobs = buildJobs();
+  const problems = buildProblems();
+
+  for (const job of jobs) {
+    job.discovered = openingWorld.discoveredJobIds.includes(job.id);
+  }
+  for (const problem of problems) {
+    Object.assign(problem, openingWorld.problemOverrides[problem.id]);
+  }
+
   const feed: FeedEntry[] = [
     {
       id: "feed-1",
@@ -57,6 +101,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
       tone: "memory",
       text: `Mara said ${DISTRICT_NAME} explains itself a little more every time you stop where people are already struggling instead of only asking where the money is.`,
     },
+    ...openingWorld.feed,
   ];
 
   return {
@@ -67,7 +112,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
     districtName: DISTRICT_NAME,
     districtNarrative: DISTRICT_NARRATIVE,
     visualSceneId: "south-quay-v2",
-    activeSpaceId: STREET_SPACE_ID,
+    activeSpaceId: openingWorld.activeSpaceId,
     currentTime: SCENARIO_START,
     clock: {
       day: 1,
@@ -83,15 +128,15 @@ export function seedStreetGame(gameId: string): StreetGameState {
       id: "player",
       name: "Rowan",
       backstory: ROWAN_BACKSTORY,
-      spaceId: STREET_SPACE_ID,
-      x: 3,
-      y: 9,
+      spaceId: openingWorld.activeSpaceId,
+      x: openingWorld.playerStart.x,
+      y: openingWorld.playerStart.y,
       currentLocationId: "boarding-house",
       homeLocationId: "boarding-house",
       money: 12,
       energy: 72,
       inventory: [],
-      knownLocationIds: ["boarding-house", "courtyard"],
+      knownLocationIds: openingWorld.knownLocationIds,
       knownNpcIds: ["npc-mara"],
       activeJobId: undefined,
       objective: {
@@ -116,20 +161,12 @@ export function seedStreetGame(gameId: string): StreetGameState {
         south_quay: 0,
         crane_yard: 0,
       },
-      memories: [
-        {
-          id: "memory-1",
-          time: SCENARIO_START,
-          kind: "place",
-          text: "You woke up at Morrow House with only tonight's bed certain, new enough to Brackenport that every lane still feels like a question and every face might matter.",
-        },
-      ],
-      currentThought:
-        "Tonight's bed is real, but it is not much of a life yet. Start with Mara, learn what is actually live, then choose one useful foothold from the current block.",
+      memories: openingWorld.memories,
+      currentThought: openingWorld.currentThought,
     },
     npcs: buildNpcs(),
-    jobs: buildJobs(),
-    problems: buildProblems(),
+    jobs,
+    problems,
     cityEvents: createInitialCityEvents(),
     firstAfternoon: {},
     feed,
@@ -137,7 +174,7 @@ export function seedStreetGame(gameId: string): StreetGameState {
     conversationThreads: {},
     activeConversation: undefined,
     currentScene: {
-      spaceId: STREET_SPACE_ID,
+      spaceId: openingWorld.activeSpaceId,
       locationId: "boarding-house",
       title: "",
       description: "",
@@ -158,6 +195,66 @@ export function seedStreetGame(gameId: string): StreetGameState {
       stepKind: "idle",
     },
     summary: "",
+  };
+}
+
+function buildOpeningWorldFacts(gameId: string): OpeningWorldFacts {
+  const baseFacts: OpeningWorldFacts = {
+    activeSpaceId: STREET_SPACE_ID,
+    currentThought:
+      "Tonight's bed is real, but it is not much of a life yet. Start with Mara, learn what is actually live, then choose one useful foothold from the current block.",
+    discoveredJobIds: [],
+    feed: [],
+    knownLocationIds: ["boarding-house", "courtyard"],
+    memories: [
+      {
+        id: "memory-1",
+        time: SCENARIO_START,
+        kind: "place",
+        text: "You woke up at Morrow House with only tonight's bed certain, new enough to Brackenport that every lane still feels like a question and every face might matter.",
+      },
+    ],
+    playerStart: { x: 3, y: 9 },
+    problemOverrides: {},
+  };
+
+  if (deriveOpeningWorldVariant(gameId) === "ordinary-lead") {
+    return baseFacts;
+  }
+
+  return {
+    ...baseFacts,
+    currentThought:
+      "The Morrow Yard pump is already spreading water, Ada's lunch work is still open, and Mercer Repairs has the wrench the pump needs. Choose from those live facts.",
+    discoveredJobIds: ["job-tea-shift"],
+    feed: [
+      {
+        id: "feed-3",
+        time: SCENARIO_START,
+        tone: "problem",
+        text: "Before breakfast cleared, you noticed the Morrow Yard pump spreading water across the stones. Mara also pointed out Ada's open lunch work and Mercer Repairs as the nearby place to buy a wrench.",
+      },
+    ],
+    knownLocationIds: [
+      ...baseFacts.knownLocationIds,
+      "tea-house",
+      "repair-stall",
+    ],
+    memories: [
+      ...baseFacts.memories,
+      {
+        id: "memory-2",
+        time: SCENARIO_START,
+        kind: "problem",
+        text: "You already saw the Morrow Yard pump worsening, know Ada has lunch work open, and remember that Mercer Repairs sells the wrench needed for the leak.",
+      },
+    ],
+    problemOverrides: {
+      "problem-pump": {
+        discovered: true,
+        urgency: 4,
+      },
+    },
   };
 }
 

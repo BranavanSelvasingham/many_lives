@@ -643,23 +643,29 @@ function openingActionSupersededByAutoplayProgress({
   evidence: string[];
   targetLocationId: string | null;
 }) {
+  const openingActionCurrent =
+    actionId === "enter:boarding-house" &&
+    targetLocationId === "boarding-house";
   const routeProgressedPastOpening =
-    evidence.includes("route-progress") &&
-    !(
-      actionId === "enter:boarding-house" &&
-      targetLocationId === "boarding-house"
-    );
+    evidence.includes("route-progress") && !openingActionCurrent;
+  const approachesSupersededOpening =
+    evidence.includes("first-afternoon-approaches-known") &&
+    !openingActionCurrent;
+  const strongProgressEvidence = evidence.some(
+    (entry) =>
+      [
+        "first-afternoon-lead-recorded",
+        "first-afternoon-completed",
+        "interaction-active",
+      ].includes(entry) ||
+      entry.startsWith("first-afternoon-tea-shift-") ||
+      entry.startsWith("first-afternoon-consequence-"),
+  );
+
   return (
     routeProgressedPastOpening ||
-    evidence.some(
-      (entry) =>
-        [
-          "first-afternoon-approaches-known",
-          "first-afternoon-lead-recorded",
-          "first-afternoon-completed",
-          "interaction-active",
-        ].includes(entry) || entry.startsWith("first-afternoon-tea-shift-"),
-    )
+    approachesSupersededOpening ||
+    strongProgressEvidence
   );
 }
 
@@ -700,20 +706,28 @@ function openingActionCarryForwardProbePayload({
     game,
     snapshot,
   });
+  const currentActionId = game.rowanAutonomy.actionId ?? null;
+  const currentTargetLocationId =
+    geometry?.targetLocationId ??
+    game.rowanAutonomy.targetLocationId ??
+    null;
+  const openingActionCurrent =
+    currentActionId === "enter:boarding-house" &&
+    currentTargetLocationId === "boarding-house";
   const progressedBeyondOpening = openingActionSupersededByAutoplayProgress({
-    actionId: game.rowanAutonomy.actionId ?? null,
+    actionId: currentActionId,
     evidence: completionEvidence,
-    targetLocationId:
-      geometry?.targetLocationId ??
-      game.rowanAutonomy.targetLocationId ??
-      null,
+    targetLocationId: currentTargetLocationId,
   });
   const completed =
     completionEvidence.includes("entered-morrow-house") ||
     completionEvidence.includes("mara-conversation-active") ||
     progressedBeyondOpening;
   const openingActionRelevant =
-    completed || progressedBeyondOpening || openingActionStillRelevant(game);
+    completed ||
+    progressedBeyondOpening ||
+    openingActionCurrent ||
+    openingActionStillRelevant(game);
   const selectedActionId =
     completed
       ? "enter:boarding-house"

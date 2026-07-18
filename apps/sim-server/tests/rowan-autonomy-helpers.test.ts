@@ -241,7 +241,9 @@ describe("Rowan autonomy helper seams", () => {
 
   it("pins the most relevant finished thread when Rowan has moved on but the conversation still matters", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
-    let world = await engine.createGame("game-rowan-rail-finished-thread");
+    let world = await engine.createGame(
+      "game-rowan-rail-finished-thread-ordinary",
+    );
 
     for (let index = 0; index < 24; index += 1) {
       world = await engine.runCommand(world, {

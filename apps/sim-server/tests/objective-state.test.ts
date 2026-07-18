@@ -455,7 +455,7 @@ describe("objectiveState classification", () => {
       {
         id: "first-afternoon-room",
         label: "Room terms understood",
-        urgency: 8,
+        urgency: 10,
       },
       {
         id: "first-afternoon-approaches",
@@ -757,7 +757,9 @@ describe("objectiveState classification", () => {
     const afterMara = seedStreetGame("objective-mara-ada-route-mara");
     const afterPlan = seedStreetGame("objective-mara-ada-route-plan");
     const afterReached = seedStreetGame("objective-mara-ada-route-reached");
-    const afterRecorded = seedStreetGame("objective-mara-ada-route-recorded");
+    const afterRecorded = seedStreetGame(
+      "objective-mara-ada-route-recorded-ordinary",
+    );
     const afterChoice = seedStreetGame("objective-mara-ada-route-choice");
 
     for (const world of [
@@ -3196,7 +3198,7 @@ describe("objectiveState classification", () => {
   });
 
   it("preserves problem and tool objective outcome blockers and evidence", () => {
-    const cartActive = seedStreetGame("objective-cart-active-copy");
+    const cartActive = seedStreetGame("objective-cart-active-copy-ordinary");
     setProblemState(cartActive, "problem-cart", {
       discovered: false,
       status: "active",
@@ -3540,7 +3542,9 @@ describe("objectiveState classification", () => {
     ];
 
     for (const scenario of cases) {
-      const world = seedStreetGame(`objective-cart-${scenario.name}`);
+      const world = seedStreetGame(
+        `objective-cart-${scenario.name}-ordinary`,
+      );
       setProblemState(world, "problem-cart", scenario.patch);
 
       const objective = buildPlayerObjectiveState(world, {
@@ -3911,7 +3915,9 @@ describe("objectiveState classification", () => {
     ];
 
     for (const scenario of cases) {
-      const world = seedStreetGame(`objective-tool-${scenario.name}`);
+      const world = seedStreetGame(
+        `objective-tool-${scenario.name}-ordinary`,
+      );
       setProblemState(world, scenario.problemId, scenario.patch);
       if (scenario.hasWrench) {
         addWrench(world);
