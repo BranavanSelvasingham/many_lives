@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.13",
-  build: "dfd0148",
-  source: "Whole-game pacing review",
+  version: "0.1.14",
+  build: "f3bcdb5",
+  source: "Opening trajectory review",
   features: [
     {
-      title: "A human-paced first afternoon",
+      title: "The first afternoon can genuinely differ",
       body:
-        "Watch mode now gives real decisions, walks, conversations, work, and consequences enough time to read across a three-to-five-minute opening.",
+        "What Rowan already knows can now lead to either Kettle & Lamp work or the leaking Morrow Yard pump, with different routes and lasting consequences.",
     },
     {
-      title: "Manual play stays brisk",
+      title: "Every run still opens on the city",
       body:
-        "The slower presentation applies only while watching; manual movement and playback keep their existing timing.",
+        "Both openings begin map-first outside Morrow House, carry on with zero clicks, and preserve a clear first decision and walkable route.",
     },
     {
-      title: "Measured from load to consequence",
+      title: "Reasoning reads like Rowan, not the engine",
       body:
-        "Browser checks now enforce the full opening duration, quick follow-through, zero clicks, and a maximum visible progress gap.",
+        "Decision cards now translate planner and simulator terminology into concise player-facing choices, checks, and rationale.",
     },
   ],
 };
