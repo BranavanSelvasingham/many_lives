@@ -79,7 +79,11 @@ const PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_PROCESS_EXIT_DIAGNOSTICS_TIMEOUT_MS ?? "5000",
 );
 const AUTOPLAY_OBSERVATION_TIMEOUT_MS = Number(
-  process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS ?? "360000",
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS ?? "600000",
+);
+const AUTOPLAY_OBSERVATION_PHASE_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_PHASE_TIMEOUT_MS ??
+    String(AUTOPLAY_OBSERVATION_TIMEOUT_MS + 60_000),
 );
 const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_OBSERVE_CARRY_FORWARD_TIMEOUT_MS ?? "90000",
@@ -17248,6 +17252,7 @@ async function main() {
     },
     timeouts: {
       autoplayObservationMs: AUTOPLAY_OBSERVATION_TIMEOUT_MS,
+      autoplayObservationPhaseMs: AUTOPLAY_OBSERVATION_PHASE_TIMEOUT_MS,
       cleanupMs: CLEANUP_TIMEOUT_MS,
       inhabitGameplayMs: INHABIT_GAMEPLAY_TIMEOUT_MS,
       observeCarryForwardMs: OBSERVE_CARRY_FORWARD_TIMEOUT_MS,
@@ -17376,7 +17381,7 @@ async function main() {
           await createGameForOpeningWorldVariant(openingWorldVariant);
         autoplayObservations[openingWorldVariant] = await runBrowserPhase(
           `autoplay-observation-${openingWorldVariant}`,
-          AUTOPLAY_OBSERVATION_TIMEOUT_MS,
+          AUTOPLAY_OBSERVATION_PHASE_TIMEOUT_MS,
           () =>
             runAutoplayObservation(session, {
               game: observationGame,

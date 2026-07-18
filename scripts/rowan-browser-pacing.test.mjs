@@ -136,10 +136,18 @@ test("first-afternoon pacing enforces the app-monotonic duration window with sam
   );
 });
 
-test("autoplay observation timeout includes five-minute completion margin", () => {
+test("autoplay observer budget preserves strict app-visible pacing evidence", () => {
   assert.match(
     source,
-    /MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS \?\? "360000"/,
+    /MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATION_TIMEOUT_MS \?\? "600000"/,
+  );
+  assert.match(
+    source,
+    /AUTOPLAY_OBSERVATION_TIMEOUT_MS \+ 60_000/,
+  );
+  assert.match(
+    source,
+    /`autoplay-observation-\$\{openingWorldVariant\}`,\s*AUTOPLAY_OBSERVATION_PHASE_TIMEOUT_MS/,
   );
 });
 

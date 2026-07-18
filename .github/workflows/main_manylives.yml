@@ -52,7 +52,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: manylives-harness-failure-${{ github.sha }}
-          path: ${{ runner.temp }}/manylives-app-harness
+          path: |
+            ${{ runner.temp }}/manylives-app-harness
+            !${{ runner.temp }}/manylives-app-harness/rowan-browser/chrome-session/**
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7
