@@ -73,6 +73,11 @@ describe("Rowan playback helpers", () => {
       ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS,
     );
 
+    world.player.energy = 12;
+    expect(rowanWatchAutonomyDelayForState(asWebGame(world)).moving).toBe(
+      ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS.drainedMoving,
+    );
+
     pump!.status = "solved";
     expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
       ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay,
@@ -319,6 +324,7 @@ describe("Rowan playback helpers", () => {
       durableCard: 3_400,
       movementPerTile: 420,
       semanticCard: 2_800,
+      timePassageCard: 4_500,
     });
   });
 
@@ -1082,6 +1088,11 @@ describe("Rowan playback helpers", () => {
       asWebGame(beforeJump),
       asWebGame(afterJump),
     );
+    const watchBeats = deriveRowanPlaybackBeats(
+      asWebGame(beforeJump),
+      asWebGame(afterJump),
+      { watchMode: true },
+    );
 
     expect(beats.map((beat) => beat.kind)).not.toContain("rest");
     expect(beats).toEqual(
@@ -1092,6 +1103,9 @@ describe("Rowan playback helpers", () => {
         }),
       ]),
     );
+    expect(
+      watchBeats.find((beat) => beat.kind === "time_passed")?.durationMs,
+    ).toBe(ROWAN_WATCH_PRESENTATION_TIMING_MS.timePassageCard);
   });
 
   it("does not promote stale Morrow standing trail hints after the Nia lead takes over", async () => {

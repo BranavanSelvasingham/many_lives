@@ -41,11 +41,13 @@ export const ROWAN_WATCH_PRESENTATION_TIMING_MS = {
   movementMax: 8_000,
   movementPerTile: 420,
   semanticCard: 2_800,
+  timePassageCard: 4_500,
 } as const;
 
 export const ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS = {
   acting: 6_200,
   conversation: 10_800,
+  drainedMoving: 3_200,
   moving: 4_000,
   waiting: 6_200,
 } as const;
@@ -61,9 +63,16 @@ export function rowanWatchAutonomyDelayForState(game: StreetGameState) {
       ),
   );
 
-  return equippedProblemActive
-    ? ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS
-    : ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay;
+  if (!equippedProblemActive) {
+    return ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay;
+  }
+
+  return game.player.energy < 28
+    ? {
+        ...ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS,
+        moving: ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS.drainedMoving,
+      }
+    : ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS;
 }
 
 type DeriveRowanPlaybackBeatsOptions = {
@@ -658,9 +667,12 @@ function applyWatchPresentationTiming(beats: RowanPlaybackBeat[]) {
       return beat;
     }
 
-    const minimumDurationMs = DURABLE_WATCH_BEAT_KINDS.has(beat.kind)
-      ? ROWAN_WATCH_PRESENTATION_TIMING_MS.durableCard
-      : ROWAN_WATCH_PRESENTATION_TIMING_MS.semanticCard;
+    const minimumDurationMs =
+      beat.kind === "time_passed"
+        ? ROWAN_WATCH_PRESENTATION_TIMING_MS.timePassageCard
+        : DURABLE_WATCH_BEAT_KINDS.has(beat.kind)
+          ? ROWAN_WATCH_PRESENTATION_TIMING_MS.durableCard
+          : ROWAN_WATCH_PRESENTATION_TIMING_MS.semanticCard;
     return {
       ...beat,
       durationMs: Math.max(beat.durationMs, minimumDurationMs),
