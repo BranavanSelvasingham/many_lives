@@ -165,6 +165,7 @@ import {
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
+  rowanWatchAutonomyDelayForState,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RecentBeat,
@@ -285,7 +286,7 @@ function autoContinueDelayMsForBeat(
 
   const autonomy = game.rowanAutonomy ?? FALLBACK_ROWAN_AUTONOMY;
   const autonomyDelay = watchMode
-    ? ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay
+    ? rowanWatchAutonomyDelayForState(game)
     : AUTONOMY_BEAT_DELAY_MS;
   const baseDelay =
     autonomy.mode === "conversation"

@@ -43,6 +43,29 @@ export const ROWAN_WATCH_PRESENTATION_TIMING_MS = {
   semanticCard: 2_800,
 } as const;
 
+export const ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS = {
+  acting: 6_200,
+  conversation: 10_800,
+  moving: 4_000,
+  waiting: 6_200,
+} as const;
+
+export function rowanWatchAutonomyDelayForState(game: StreetGameState) {
+  const inventoryIds = new Set(game.player.inventory.map((item) => item.id));
+  const equippedProblemActive = game.problems.some(
+    (problem) =>
+      problem.discovered &&
+      problem.status === "active" &&
+      Boolean(
+        problem.requiredItemId && inventoryIds.has(problem.requiredItemId),
+      ),
+  );
+
+  return equippedProblemActive
+    ? ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS
+    : ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay;
+}
+
 type DeriveRowanPlaybackBeatsOptions = {
   watchMode?: boolean;
 };

@@ -11,6 +11,8 @@ import {
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
+  ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS,
+  rowanWatchAutonomyDelayForState,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
@@ -48,6 +50,35 @@ function setClock(
 }
 
 describe("Rowan playback helpers", () => {
+  it("tightens watch pacing only while Rowan is equipped for a live problem", () => {
+    const world = seedStreetGame("rowan-playback-equipped-problem");
+    const pump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+
+    expect(pump).toBeDefined();
+    expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
+      ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay,
+    );
+
+    pump!.discovered = true;
+    pump!.status = "active";
+    world.player.inventory.push({
+      description: "A solid old wrench.",
+      id: pump!.requiredItemId!,
+      name: "Old wrench",
+    });
+
+    expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
+      ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS,
+    );
+
+    pump!.status = "solved";
+    expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
+      ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay,
+    );
+  });
+
   it("derives move and arrival beats from a real location change", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     const world = await engine.createGame("rowan-playback-move-ordinary");
