@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.14",
-  build: "f3bcdb5",
-  source: "Opening trajectory review",
+  version: "0.1.15",
+  build: "7966456",
+  source: "Release 0.1.15",
   features: [
     {
-      title: "The first afternoon can genuinely differ",
+      title: "Rowan is clearly the agent under observation",
       body:
-        "What Rowan already knows can now lead to either Kettle & Lamp work or the leaking Morrow Yard pump, with different routes and lasting consequences.",
+        "The persistent rail now identifies Rowan as the autonomous agent, so watching the city never casts the viewer as the character making the decisions.",
     },
     {
-      title: "Every run still opens on the city",
+      title: "Progress and reasoning have distinct homes",
       body:
-        "Both openings begin map-first outside Morrow House, carry on with zero clicks, and preserve a clear first decision and walkable route.",
+        "Progress holds outcomes, evidence, and accomplishments, while Reasoning holds Rowan's beliefs, plans, confidence, memories, and next uncertainty.",
     },
     {
-      title: "Reasoning reads like Rowan, not the engine",
+      title: "Opening walks keep their own story",
       body:
-        "Decision cards now translate planner and simulator terminology into concise player-facing choices, checks, and rationale.",
+        "Kettle & Lamp and Mercer Repairs openings preserve distinct, continuous routes tied to the current world state from first decision through consequence.",
     },
   ],
 };
