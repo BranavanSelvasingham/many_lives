@@ -325,6 +325,37 @@ test("browser evidence waits for readable rail geometry", () => {
   assert.match(source, /await session\.waitForVisualMoveSettlement\(/);
 });
 
+test("conversation capture settles the expected beat independently of a newer streaming follow-up", () => {
+  assert.match(
+    source,
+    /function conversationBeatReadabilitySignature\(dom, expectedLine\)/,
+  );
+  assert.match(
+    source,
+    /\(dom\?\.layout\?\.chatBubbles \?\? \[\]\)\.find\(\(bubble\) =>/,
+  );
+  assert.match(
+    source,
+    /conversationBeatReadabilitySignature\(\s*lastDom,\s*expectedConversationLine,?\s*\)/,
+  );
+  assert.match(
+    source,
+    /The previous whole-transcript signature must reproduce the hosted reset\./,
+  );
+  assert.match(
+    source,
+    /A newer streaming follow-up must not restart settlement for an already rendered Mara beat\./,
+  );
+  assert.match(
+    source,
+    /The expected conversation bubble itself must still settle before capture\./,
+  );
+  assert.doesNotMatch(
+    source,
+    /const readableSignature = JSON\.stringify\(\{\s*conversationText:/,
+  );
+});
+
 test("streaming conversation growth keeps following a readable exchange", () => {
   assert.match(
     overlayDomStateSource,

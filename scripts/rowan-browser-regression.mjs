@@ -5713,6 +5713,37 @@ function updateConversationPlaybackProgress({
   };
 }
 
+function conversationBeatReadabilitySignature(dom, expectedLine) {
+  const normalizedExpectedLine = (expectedLine ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalizedExpectedLine) {
+    return null;
+  }
+
+  const expectedBubble = (dom?.layout?.chatBubbles ?? []).find((bubble) =>
+    (bubble.text ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .includes(normalizedExpectedLine),
+  );
+  if (!expectedBubble?.rect) {
+    return null;
+  }
+
+  return JSON.stringify({
+    bubble: {
+      height: expectedBubble.rect.height,
+      width: expectedBubble.rect.width,
+    },
+    line: normalizedExpectedLine,
+    rail: {
+      height: dom.layout?.commandRail?.rect?.height ?? null,
+      width: dom.layout?.commandRail?.rect?.width ?? null,
+    },
+  });
+}
+
 function shouldContinueConversationDomWait({ elapsedMs, progress }) {
   if (elapsedMs < SIM_WAIT_TIMEOUT_MS) {
     return true;
@@ -5790,6 +5821,93 @@ function assertConversationPlaybackWaitRegression() {
     0,
     "unrelated transcript growth must not count as final-line progress",
   );
+
+  const maraLine =
+    "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before lunch.";
+  const maraBubble = {
+    rect: { height: 112, width: 340 },
+    text: maraLine,
+  };
+  const hostedFirstSample = {
+    conversationText: `${maraLine} Got it. Anything I`,
+    layout: {
+      chatBubbles: [
+        maraBubble,
+        {
+          rect: { height: 44, width: 200 },
+          text: "Got it. Anything I",
+        },
+      ],
+      commandRail: {
+        rect: { height: 500, width: 400 },
+        scrollTop: 116,
+      },
+      latestChatBubble: { height: 44, width: 200 },
+      latestChatExchange: {
+        fitsCommandRail: true,
+        rect: { height: 164, width: 340 },
+      },
+    },
+  };
+  const hostedGrowingFollowup = {
+    ...hostedFirstSample,
+    conversationText: `${maraLine} Got it. Anything I should know before I ask`,
+    layout: {
+      ...hostedFirstSample.layout,
+      chatBubbles: [
+        maraBubble,
+        {
+          rect: { height: 74, width: 260 },
+          text: "Got it. Anything I should know before I ask",
+        },
+      ],
+      commandRail: {
+        ...hostedFirstSample.layout.commandRail,
+        scrollTop: 146,
+      },
+      latestChatBubble: { height: 74, width: 260 },
+      latestChatExchange: {
+        fitsCommandRail: true,
+        rect: { height: 194, width: 340 },
+      },
+    },
+  };
+  const wholeTranscriptSignature = (dom) =>
+    JSON.stringify({
+      conversationText: dom.conversationText,
+      exchange: dom.layout.latestChatExchange,
+      latestBubble: dom.layout.latestChatBubble,
+      scrollTop: dom.layout.commandRail.scrollTop,
+    });
+  assert.notEqual(
+    wholeTranscriptSignature(hostedFirstSample),
+    wholeTranscriptSignature(hostedGrowingFollowup),
+    "The previous whole-transcript signature must reproduce the hosted reset.",
+  );
+  assert.equal(
+    conversationBeatReadabilitySignature(hostedFirstSample, maraLine),
+    conversationBeatReadabilitySignature(hostedGrowingFollowup, maraLine),
+    "A newer streaming follow-up must not restart settlement for an already rendered Mara beat.",
+  );
+  assert.notEqual(
+    conversationBeatReadabilitySignature(hostedFirstSample, maraLine),
+    conversationBeatReadabilitySignature(
+      {
+        ...hostedFirstSample,
+        layout: {
+          ...hostedFirstSample.layout,
+          chatBubbles: [
+            {
+              ...maraBubble,
+              rect: { ...maraBubble.rect, height: maraBubble.rect.height + 20 },
+            },
+          ],
+        },
+      },
+      maraLine,
+    ),
+    "The expected conversation bubble itself must still settle before capture.",
+  );
 }
 
 async function waitForGameplayDom(label, session, probe, game) {
@@ -5846,19 +5964,22 @@ async function waitForGameplayDom(label, session, probe, game) {
             return lastDom;
           }
 
-          const readableSignature = JSON.stringify({
-            conversationText: lastDom.conversationText,
-            exchange: lastDom.layout?.latestChatExchange,
-            latestBubble: lastDom.layout?.latestChatBubble,
-            scrollTop: lastDom.layout?.commandRail?.scrollTop,
-          });
-          readableStableSamples =
-            readableSignature === lastReadableSignature
-              ? readableStableSamples + 1
-              : 1;
-          lastReadableSignature = readableSignature;
-          if (readableStableSamples >= 2) {
-            return lastDom;
+          const readableSignature = conversationBeatReadabilitySignature(
+            lastDom,
+            expectedConversationLine,
+          );
+          if (!readableSignature) {
+            lastReadabilityError =
+              "fully rendered conversation line has no readable transcript bubble";
+          } else {
+            readableStableSamples =
+              readableSignature === lastReadableSignature
+                ? readableStableSamples + 1
+                : 1;
+            lastReadableSignature = readableSignature;
+            if (readableStableSamples >= 2) {
+              return lastDom;
+            }
           }
         } catch (error) {
           lastReadabilityError =
