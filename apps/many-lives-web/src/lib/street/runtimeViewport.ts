@@ -139,7 +139,7 @@ export function getCompactOverlayLayoutMetrics(
     ? width <= 430
       ? clamp(height * 0.43, 360, 370)
       : clamp(height * 0.44, 360, 400)
-    : clamp(height * 0.54, 340, 560);
+    : clamp(height * 0.62, 340, 640);
   const railExpandedHeight = Math.min(
     desiredExpandedHeight,
     maximumExpandedHeight,

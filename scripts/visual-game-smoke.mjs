@@ -125,6 +125,12 @@ const VIEWPORTS = [
     width: 669,
   },
 ];
+const RESPONSIVE_DECISION_VIEWPORT_NAMES = new Set([
+  "codex-compact",
+  "codex-retina-compact",
+  "codex-screenshot-tall",
+  "codex-retina-tall",
+]);
 const INTERIOR_CAMERA_VIEWPORT = {
   deviceScaleFactor: 2,
   height: 998,
@@ -186,10 +192,10 @@ async function waitFor(condition, timeoutMs, message) {
   throw new Error(message);
 }
 
-async function fetchJson(url, init) {
+async function fetchJson(url, init, timeoutMs = 8_000) {
   const response = await fetch(url, {
     ...init,
-    signal: AbortSignal.timeout(8_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
@@ -253,6 +259,7 @@ async function startWebServer(baseUrl) {
       detached: process.platform !== "win32",
       env: {
         ...process.env,
+        AI_PROVIDER: "mock",
         MANY_LIVES_ALLOW_IN_PROCESS_SIM_FALLBACK: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -778,6 +785,31 @@ class CdpSession {
           ).length,
         ]),
       );
+      const decisionFieldGeometry = Object.fromEntries(
+        ["aim", "choice", "rationale", "next-check"].map((field) => {
+          const element = decisionArtifact?.querySelector(
+            "[data-decision-field='" + field + "']",
+          );
+          const source = element?.getBoundingClientRect() ?? null;
+          const visible = element ? visibleRectFor(element) : null;
+          const fullyVisible = Boolean(
+            source &&
+              visible &&
+              visible.left <= source.left + 1 &&
+              visible.right >= source.right - 1 &&
+              visible.top <= source.top + 1 &&
+              visible.bottom >= source.bottom - 1,
+          );
+          return [
+            field,
+            {
+              fullyVisible,
+              rect: rectData(source),
+              visibleRect: rectData(visible),
+            },
+          ];
+        }),
+      );
       const visualHierarchy = (() => {
         const probe = document.querySelector("#ml-browser-visual-hierarchy-probe");
         try {
@@ -921,6 +953,7 @@ class CdpSession {
         decisionArtifactCount: decisionArtifacts.length,
         decisionDetailsOpen: decisionDetails?.open ?? null,
         decisionFieldCounts,
+        decisionFieldGeometry,
         hasFrameworkOverlay:
           text.includes("Unhandled Runtime Error") ||
           text.includes("Application error") ||
@@ -3603,6 +3636,7 @@ function compactDecisionArtifactReadabilityGeometry(page) {
           y: page.decisionArtifact.y,
         }
       : null,
+    decisionFields: page?.decisionFieldGeometry ?? null,
     dockRoot: page?.dockRoot ?? null,
     cameraActiveSpaceId: page?.cameraActiveSpaceId ?? null,
     cameraActiveSpaceKind: page?.cameraActiveSpaceKind ?? null,
@@ -3635,6 +3669,7 @@ function decisionArtifactReadabilitySignature(geometry) {
         }
       : null,
     decisionArtifact: geometry.decisionArtifact,
+    decisionFields: geometry.decisionFields,
     dockRoot: geometry.dockRoot,
     rail: geometry.rail,
     railState: geometry.railState,
@@ -3654,10 +3689,32 @@ function decisionArtifactReadabilitySignature(geometry) {
   });
 }
 
+function assertDecisionFieldsFullyVisible(page, label) {
+  const requiredFields = ["aim", "choice", "rationale"];
+  if ((page?.decisionFieldCounts?.["next-check"] ?? 0) > 0) {
+    requiredFields.push("next-check");
+  }
+
+  for (const field of requiredFields) {
+    const geometry = page?.decisionFieldGeometry?.[field];
+    assert.ok(
+      geometry?.fullyVisible,
+      `${label}: decision field ${field} is clipped in the expanded rail: ${JSON.stringify(geometry)}.`,
+    );
+  }
+}
+
 function recordDecisionArtifactReadabilitySample(state, page) {
   const geometry = compactDecisionArtifactReadabilityGeometry(page);
-  const readable =
+  let readable =
     page?.railState === "expanded" && page?.decisionArtifact?.visible === true;
+  if (readable) {
+    try {
+      assertDecisionFieldsFullyVisible(page, "responsive decision readability");
+    } catch {
+      readable = false;
+    }
+  }
   if (!readable) {
     return {
       geometry,
@@ -3721,6 +3778,40 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       x: 588,
       y: 254,
     },
+    decisionFieldCounts: {
+      aim: 1,
+      choice: 1,
+      rationale: 1,
+      "next-check": 1,
+    },
+    decisionFieldGeometry: Object.fromEntries(
+      ["aim", "choice", "rationale", "next-check"].map((field, index) => [
+        field,
+        {
+          fullyVisible: true,
+          rect: {
+            bottom: 300 + index * 45,
+            height: 36,
+            left: 598,
+            right: 922,
+            top: 264 + index * 45,
+            width: 324,
+            x: 598,
+            y: 264 + index * 45,
+          },
+          visibleRect: {
+            bottom: 300 + index * 45,
+            height: 36,
+            left: 598,
+            right: 922,
+            top: 264 + index * 45,
+            width: 324,
+            x: 598,
+            y: 264 + index * 45,
+          },
+        },
+      ]),
+    ),
     dockRoot: {
       bottom: 970,
       height: 72,
@@ -3757,6 +3848,39 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       y: 640,
     },
   };
+  const clippedLongMaraPage = {
+    ...readablePage,
+    decisionArtifact: {
+      ...readablePage.decisionArtifact,
+      height: 372,
+    },
+    decisionFieldGeometry: {
+      ...readablePage.decisionFieldGeometry,
+      rationale: {
+        fullyVisible: false,
+        rect: {
+          bottom: 654,
+          height: 72,
+          left: 598,
+          right: 922,
+          top: 582,
+          width: 324,
+          x: 598,
+          y: 582,
+        },
+        visibleRect: {
+          bottom: 604,
+          height: 22,
+          left: 598,
+          right: 922,
+          top: 582,
+          width: 324,
+          x: 598,
+          y: 582,
+        },
+      },
+    },
+  };
 
   let settling = createDecisionArtifactReadabilityState();
   settling = recordDecisionArtifactReadabilitySample(settling, unreadablePage);
@@ -3764,6 +3888,15 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     settling.stableSamples,
     0,
     "Transiently clipped decision geometry must not count as readable.",
+  );
+  settling = recordDecisionArtifactReadabilitySample(
+    settling,
+    clippedLongMaraPage,
+  );
+  assert.equal(
+    settling.stableSamples,
+    0,
+    "A long Mara artifact with a clipped Why This field must not count as readable.",
   );
   for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
     settling = recordDecisionArtifactReadabilitySample(settling, readablePage);
@@ -4678,165 +4811,217 @@ async function runFreshAutoplayOptOutCheck(session) {
   };
 }
 
-async function runResponsiveDecisionArtifactCheck(session) {
-  const viewport =
-    VIEWPORTS.find((candidate) => candidate.name === "codex-compact") ??
-    VIEWPORTS.find((candidate) => candidate.width <= 960) ??
-    VIEWPORTS[0];
-  const url = `${activeWebBase}/?new=1&responsiveDecision=${viewport.name}-${Date.now()}`;
-  await session.setViewport(viewport);
-  await session.navigate(url);
-  await session.waitForAppReady();
-  await session.waitForWatchModeUi(viewport);
-
-  const openingProbe = await waitForOpeningActionCarryForward(
-    session,
-    `${viewport.name} responsive decision opening`,
+async function createLongMaraDecisionArtifactGame() {
+  const gameId = await createSmokeGame(
+    activeWebBase,
+    "Long Mara decision artifact check",
   );
-  const advancedProbe = await waitForFreshAutoplayAdvance(
-    session,
-    openingProbe,
-    `${viewport.name} responsive decision`,
-  );
-  assertVisibleDecisionArtifactPayload(
-    advancedProbe.autonomy?.visibleDecisionArtifact,
-    `${viewport.name} responsive decision probe`,
-    advancedProbe.autonomy?.planningTrace,
-  );
-  assertVisibleDecisionArtifactPayload(
-    advancedProbe.rail?.visibleDecisionArtifact,
-    `${viewport.name} responsive decision rail probe`,
-    advancedProbe.autonomy?.planningTrace,
-  );
-
-  await session.navigate(
-    `${activeWebBase}/?freezeAutoplay=1&responsiveDecisionStable=${viewport.name}-${Date.now()}&gameId=${encodeURIComponent(advancedProbe.gameId)}`,
-  );
-  await session.waitForAppReady();
-  const frozenProbe = await waitFor(
-    async () => {
-      const probe = await session.readBrowserProbe();
-      const payload = selectedVisibleDecisionArtifactPayload(probe);
-      if (
-        probe?.gameId !== advancedProbe.gameId ||
-        probe.watchMode?.frozen !== true ||
-        !payload
-      ) {
-        return null;
-      }
-      return probe;
-    },
-    APP_READY_TIMEOUT_MS,
-    `${viewport.name}: timed out waiting for the advanced decision state to stabilize with autoplay frozen.`,
-  );
-  assertVisibleDecisionArtifactPayload(
-    selectedVisibleDecisionArtifactPayload(frozenProbe),
-    `${viewport.name} frozen responsive decision probe`,
-    frozenProbe.autonomy?.planningTrace,
-  );
-
-  const initialPage = await session.inspectPage();
-  if (initialPage.railState !== "expanded") {
-    await session.clickSelector(".ml-rail-toggle");
-  }
-  const readableRail = await waitForVisibleDecisionArtifactDom(
-    session,
-    `${viewport.name} responsive decision rail`,
-    {
-      accept: ({ page }) => page.railState === "expanded",
-      assertSettledPage: ({ page, payload, probe }) => {
-        assertDecisionHierarchy(
-          page,
-          `${viewport.name} responsive decision hierarchy`,
-          payload,
-        );
-        assertOverlayGeometry(
-          page,
-          viewport,
-          `${viewport.name} responsive decision expanded`,
-          page.visibleTimeChips,
-          probe.location?.spaceId ?? null,
-        );
-        assertExpandedRailScroll(
-          page,
-          `${viewport.name} responsive decision expanded`,
-        );
-        assertBoundedVisualHierarchy(
-          page,
-          `${viewport.name} responsive decision expanded`,
-        );
+  let game = null;
+  let advanceCount = 0;
+  while (advanceCount < 12 && game?.activeConversation?.npcId !== "npc-mara") {
+    const advanced = await fetchJson(
+      `${activeWebBase}/sim/game/${gameId}/command`,
+      {
+        body: JSON.stringify({
+          allowTimeSkip: true,
+          type: "advance_objective",
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
       },
-      stableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
-      timeoutMs: RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS,
-    },
-  );
-  const page = readableRail.page;
-  const readablePayload = readableRail.payload;
+      30_000,
+    );
+    game = advanced?.game ?? null;
+    advanceCount += 1;
+  }
   assert.equal(
-    page.railState,
-    "expanded",
-    `${viewport.name}: responsive decision check could not expand the rail.`,
+    game?.activeConversation?.npcId,
+    "npc-mara",
+    `Long Mara decision artifact check did not reach Mara's live conversation after ${advanceCount} objective advances.`,
   );
-  assertVisibleDecisionArtifactDom(
-    page.decisionArtifact,
-    `${viewport.name} responsive decision rail`,
-    readablePayload,
+  const groundedDecision = [
+    game?.activeConversation?.decision,
+    game?.activeConversation?.objectiveText,
+    game?.rowanAutonomy?.planningTrace?.nextSteps?.[0]?.rationale,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  assert.match(
+    groundedDecision,
+    /(?:\bAda\b[\s\S]*\bpump\b|\bpump\b[\s\S]*\bAda\b)/i,
+    "Long Mara decision artifact check did not produce the state-backed Ada/pump comparison.",
   );
-  assertDecisionHierarchy(
-    page,
-    `${viewport.name} responsive decision hierarchy`,
-    readablePayload,
-  );
-  assertOverlayGeometry(
-    page,
-    viewport,
-    `${viewport.name} responsive decision expanded`,
-    page.visibleTimeChips,
-    readableRail.probe.location?.spaceId ?? null,
-  );
-  assertExpandedRailScroll(
-    page,
-    `${viewport.name} responsive decision expanded`,
-  );
-  assertBoundedVisualHierarchy(
-    page,
-    `${viewport.name} responsive decision expanded`,
-  );
-
-  const screenshotPath = path.join(
-    OUTPUT_DIR,
-    `${viewport.name}-decision-artifact.png`,
-  );
-  await captureValidatedScreenshot({
-    expectedHudText: page.visibleTimeChips,
-    label: `${viewport.name} responsive decision`,
-    page,
-    session,
-    targetPath: screenshotPath,
-    viewport,
-  });
 
   return {
-    advanced: {
-      autonomy: advancedProbe.autonomy,
-      clock: advancedProbe.clock,
-      location: advancedProbe.location,
-      openingActionCarryForward: advancedProbe.openingActionCarryForward,
-      rail: advancedProbe.rail,
-      visibleDecisionArtifact: advancedProbe.autonomy?.visibleDecisionArtifact,
-      watchMode: advancedProbe.watchMode,
-    },
-    expandedDecisionArtifact: page.decisionArtifact,
-    expandedGeometry: compactDecisionArtifactReadabilityGeometry(page),
-    opening: {
-      autonomy: openingProbe.autonomy,
-      clock: openingProbe.clock,
-      location: openingProbe.location,
-      openingActionCarryForward: openingProbe.openingActionCarryForward,
-      watchMode: openingProbe.watchMode,
-    },
-    screenshotPath,
-    viewport,
+    advanceCount,
+    decision: groundedDecision,
+    gameId,
+  };
+}
+
+function responsiveDecisionViewports() {
+  if (requestedViewportName) {
+    const requested = VIEWPORTS.find(
+      (viewport) => viewport.name === requestedViewportName,
+    );
+    if (requested && RESPONSIVE_DECISION_VIEWPORT_NAMES.has(requested.name)) {
+      return [requested];
+    }
+    return [
+      VIEWPORTS.find((viewport) => viewport.name === "codex-compact"),
+    ].filter(Boolean);
+  }
+  return VIEWPORTS.filter((viewport) =>
+    RESPONSIVE_DECISION_VIEWPORT_NAMES.has(viewport.name),
+  );
+}
+
+async function runResponsiveDecisionArtifactCheck(session) {
+  const { gameId } = await createLongMaraDecisionArtifactGame();
+  const results = [];
+
+  for (const viewport of responsiveDecisionViewports()) {
+    await session.setViewport(viewport);
+    await session.navigate(
+      `${activeWebBase}/?freezeAutoplay=1&responsiveDecisionLongMara=${viewport.name}-${Date.now()}&gameId=${encodeURIComponent(gameId)}`,
+    );
+    await session.waitForAppReady();
+    await session.waitForWatchModeUi(viewport);
+    const frozenProbe = await waitFor(
+      async () => {
+        const probe = await session.readBrowserProbe();
+        const payload = selectedVisibleDecisionArtifactPayload(probe);
+        if (
+          probe?.gameId !== gameId ||
+          probe.watchMode?.frozen !== true ||
+          probe.activeConversation?.npcId !== "npc-mara" ||
+          !/^With Mara$/i.test(probe.autonomy?.label ?? "") ||
+          !payload
+        ) {
+          return null;
+        }
+        return probe;
+      },
+      APP_READY_TIMEOUT_MS,
+      `${viewport.name}: timed out waiting for the deterministic long Mara decision artifact.`,
+    );
+    const frozenPayload = selectedVisibleDecisionArtifactPayload(frozenProbe);
+    assertVisibleDecisionArtifactPayload(
+      frozenPayload,
+      `${viewport.name} long Mara responsive decision probe`,
+      frozenProbe.autonomy?.planningTrace,
+    );
+    assert.ok(
+      (frozenPayload?.objective.length ?? 0) >= 80 &&
+        (frozenPayload?.nextCheck?.length ?? 0) >= 60 &&
+        (frozenPayload?.rationale.length ?? 0) >= 60,
+      `${viewport.name}: deterministic Mara artifact no longer exercises long aim, next-check, and rationale copy.`,
+    );
+
+    const initialPage = await session.inspectPage();
+    if (initialPage.railState !== "expanded") {
+      await session.clickSelector(".ml-rail-toggle");
+    }
+    const readableRail = await waitForVisibleDecisionArtifactDom(
+      session,
+      `${viewport.name} long Mara responsive decision rail`,
+      {
+        accept: ({ page }) => page.railState === "expanded",
+        assertSettledPage: ({ page, payload, probe }) => {
+          assertDecisionHierarchy(
+            page,
+            `${viewport.name} long Mara responsive decision hierarchy`,
+            payload,
+          );
+          assertDecisionFieldsFullyVisible(
+            page,
+            `${viewport.name} long Mara responsive decision`,
+          );
+          assertOverlayGeometry(
+            page,
+            viewport,
+            `${viewport.name} long Mara responsive decision expanded`,
+            page.visibleTimeChips,
+            probe.location?.spaceId ?? null,
+          );
+          assertExpandedRailScroll(
+            page,
+            `${viewport.name} long Mara responsive decision expanded`,
+          );
+          assertBoundedVisualHierarchy(
+            page,
+            `${viewport.name} long Mara responsive decision expanded`,
+          );
+        },
+        stableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
+        timeoutMs: RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS,
+      },
+    );
+    const page = readableRail.page;
+    const readablePayload = readableRail.payload;
+    assert.equal(
+      page.railState,
+      "expanded",
+      `${viewport.name}: responsive decision check could not expand the rail.`,
+    );
+    assertVisibleDecisionArtifactDom(
+      page.decisionArtifact,
+      `${viewport.name} long Mara responsive decision rail`,
+      readablePayload,
+    );
+    assertDecisionHierarchy(
+      page,
+      `${viewport.name} long Mara responsive decision hierarchy`,
+      readablePayload,
+    );
+    assertDecisionFieldsFullyVisible(
+      page,
+      `${viewport.name} long Mara responsive decision`,
+    );
+    assertOverlayGeometry(
+      page,
+      viewport,
+      `${viewport.name} long Mara responsive decision expanded`,
+      page.visibleTimeChips,
+      readableRail.probe.location?.spaceId ?? null,
+    );
+    assertExpandedRailScroll(
+      page,
+      `${viewport.name} long Mara responsive decision expanded`,
+    );
+    assertBoundedVisualHierarchy(
+      page,
+      `${viewport.name} long Mara responsive decision expanded`,
+    );
+    assertNoWatchModeReplyAffordances(
+      page,
+      `${viewport.name} long Mara responsive decision`,
+    );
+
+    const screenshotPath = path.join(
+      OUTPUT_DIR,
+      `${viewport.name}-decision-artifact.png`,
+    );
+    await captureValidatedScreenshot({
+      expectedHudText: page.visibleTimeChips,
+      label: `${viewport.name} long Mara responsive decision`,
+      page,
+      session,
+      targetPath: screenshotPath,
+      viewport,
+    });
+    results.push({
+      expandedDecisionArtifact: page.decisionArtifact,
+      expandedGeometry: compactDecisionArtifactReadabilityGeometry(page),
+      probe: compactDecisionArtifactProbeDiagnostic(frozenProbe),
+      screenshotPath,
+      viewport,
+    });
+  }
+
+  return {
+    gameId,
+    results,
   };
 }
 
