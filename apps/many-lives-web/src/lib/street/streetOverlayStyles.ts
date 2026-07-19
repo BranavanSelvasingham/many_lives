@@ -366,46 +366,6 @@ export function buildStreetOverlayStyle({
         flex: 0 0 auto;
         padding: 12px 14px;
       }
-      .ml-dock-identity {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-top: 10px;
-        border-radius: 18px;
-        border: 1px solid rgba(205, 174, 115, 0.2);
-        background:
-          radial-gradient(circle at top left, rgba(205, 174, 115, 0.16), transparent 48%),
-          linear-gradient(180deg, rgba(26, 33, 38, 0.9), rgba(14, 19, 24, 0.94));
-        padding: 10px 12px;
-      }
-      .ml-dock-identity-copy {
-        min-width: 0;
-      }
-      .ml-dock-identity-kicker {
-        font-size: 10px;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: rgba(236, 222, 184, 0.7);
-      }
-      .ml-dock-identity-name {
-        margin-top: 4px;
-        font-size: 18px;
-        font-weight: 700;
-        line-height: 1;
-        color: rgba(252, 246, 230, 0.98);
-      }
-      .ml-dock-identity-badge {
-        flex-shrink: 0;
-        border-radius: 999px;
-        border: 1px solid rgba(141, 208, 205, 0.28);
-        background: rgba(31, 52, 55, 0.6);
-        padding: 8px 10px;
-        font-size: 10px;
-        letter-spacing: 0.16em;
-        text-transform: uppercase;
-        color: rgba(214, 245, 243, 0.92);
-      }
       .ml-kicker {
         font-size: 11px;
         letter-spacing: 0.24em;
@@ -1959,6 +1919,16 @@ export function buildStreetOverlayStyle({
         text-transform: uppercase;
         color: rgba(241, 214, 160, 0.9);
       }
+      .ml-release-purpose {
+        margin-top: 10px;
+        border-radius: 14px;
+        border: 1px solid rgba(205, 174, 115, 0.2);
+        background: rgba(205, 174, 115, 0.08);
+        padding: 10px;
+      }
+      .ml-release-notes-kicker {
+        margin-top: 14px;
+      }
       .ml-release-feature-list {
         display: grid;
         gap: 8px;
@@ -2002,8 +1972,7 @@ export function buildStreetOverlayStyle({
         );
         box-shadow: 0 16px 34px rgba(0, 0, 0, 0.22);
       }
-      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-panel > .ml-kicker,
-      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-identity {
+      .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-panel > .ml-kicker {
         display: none;
       }
       .ml-root.is-watch-mode:not(.is-collapsible-rail) .ml-dock-row {
@@ -2502,8 +2471,7 @@ export function buildStreetOverlayStyle({
       .ml-root.is-collapsible-rail .ml-dock-panel {
         padding: 10px;
       }
-      .ml-root.is-collapsible-rail .ml-dock-panel > .ml-kicker,
-      .ml-root.is-collapsible-rail .ml-dock-identity {
+      .ml-root.is-collapsible-rail .ml-dock-panel > .ml-kicker {
         display: none;
       }
       .ml-root.is-collapsible-rail .ml-dock-row {
@@ -2596,7 +2564,9 @@ export function buildStreetOverlayStyle({
         letter-spacing: 0.1em;
       }
       .ml-root.is-phone-rail.is-rail-expanded .ml-rail-status {
-        display: none;
+        padding: 5px 7px;
+        font-size: 9px;
+        letter-spacing: 0.1em;
       }
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-command-rail {
         flex: 0 0 0;

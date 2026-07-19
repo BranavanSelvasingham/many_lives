@@ -3028,7 +3028,7 @@ function createRuntimeObjects(
   playerRig.avatar.setScale(1.06);
 
   const playerTitle = scene.add
-    .text(0, -47, "YOU", {
+    .text(0, -47, "ROWAN", {
       align: "center",
       color: "#f6deb0",
       fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
@@ -7589,13 +7589,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         }
         <div class="ml-panel ml-dock-panel">
           <div class="ml-kicker">Controls</div>
-          <div class="ml-dock-identity">
-            <div class="ml-dock-identity-copy">
-              <div class="ml-dock-identity-kicker">You are</div>
-              <div class="ml-dock-identity-name">${escapeHtml(game.player.name)}</div>
-            </div>
-            <div class="ml-dock-identity-badge">Main Perspective</div>
-          </div>
           <div class="ml-dock-row">
             ${buildTabButton("actions", dockActiveTab === "actions", "ml-dock-button")}
             ${buildTabButton("people", dockActiveTab === "people", "ml-dock-button")}
@@ -7606,8 +7599,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             focusMeta?.subtitle ??
               upcomingCommitmentLabel ??
               (watchModeUiEnabled
-                ? "Drag the map to look around. Open Locals, Journal, or Notebook when you want details."
-                : "Scroll or drag the map to look around. Click a street tile to move, or open People, Journal, and Notebook for details."),
+                ? "Drag the map to look around. Open Locals, Progress, or Reasoning when you want details."
+                : "Scroll or drag the map to look around. Click a street tile to move, or open Locals, Progress, and Reasoning for details."),
           )}</div>
         </div>
       </div>
@@ -7620,14 +7613,14 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         <div class="ml-panel ml-rail-shell">
           <div class="ml-rail-head">
             <div class="ml-rail-head-copy">
-              <div class="ml-kicker">${escapeHtml(game.cityName)} • ${escapeHtml(
-                game.districtName,
-              )}</div>
+              <div class="ml-kicker">Agent under observation</div>
               <div class="ml-rail-heading-row">
                 <div class="ml-rail-name">${escapeHtml(game.player.name)}</div>
-              <div class="ml-rail-status">${escapeHtml(railStatusLabel)}</div>
+                <div class="ml-rail-status">Autonomous Agent</div>
               </div>
-              <div class="ml-rail-peek-label">${escapeHtml(railPeekLabel)}</div>
+              <div class="ml-rail-peek-label">${escapeHtml(
+                `${game.cityName} • ${game.districtName} • ${railStatusLabel} • ${railPeekLabel}`,
+              )}</div>
               <div class="ml-rail-thought">${escapeHtml(railThought)}</div>
               ${compactPrimaryActionHtml}
             </div>
@@ -11640,17 +11633,17 @@ function focusPanelMeta(
       };
     case "journal":
       return {
-        kicker: "Field Notes",
+        kicker: "Objective Performance",
         subtitle:
-          "Objectives, field notes, and what Rowan should do next.",
-        title: "Journal",
+          "Objective outcomes, evidence, and what Rowan has accomplished.",
+        title: "Progress",
       };
     case "mind":
       return {
-        kicker: "Rowan's Notebook",
+        kicker: "Agent Reasoning",
         subtitle:
-          "Beliefs, plans, remembered clues, and unfinished questions.",
-        title: "Notebook",
+          "Beliefs, plans, remembered evidence, and the next uncertainty.",
+        title: "Reasoning",
       };
   }
 }

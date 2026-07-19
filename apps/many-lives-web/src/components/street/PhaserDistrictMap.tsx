@@ -765,7 +765,7 @@ function updateConversationCard(
   );
 
   objects.conversationCard
-    .setText(`${activeConversationNpc.name}: ${overlay.npcText}\nYou: ${overlay.playerText}`)
+    .setText(`${activeConversationNpc.name}: ${overlay.npcText}\nRowan: ${overlay.playerText}`)
     .setPosition(midX, topY)
     .setVisible(true);
 }

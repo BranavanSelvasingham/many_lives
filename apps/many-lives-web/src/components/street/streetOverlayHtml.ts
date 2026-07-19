@@ -316,8 +316,8 @@ export function buildReleaseInfoHtml(open: boolean) {
         data-toggle-release-info="true"
         aria-controls="ml-release-panel"
         aria-expanded="${open ? "true" : "false"}"
-        aria-label="Show Many Lives release notes"
-        title="Release notes"
+        aria-label="About Many Lives"
+        title="About Many Lives"
         type="button"
       >
         <span aria-hidden="true">i</span>
@@ -335,7 +335,7 @@ export function buildReleaseInfoHtml(open: boolean) {
           >
             <div class="ml-release-panel-head">
               <div>
-                <div class="ml-kicker">Release</div>
+                <div class="ml-kicker">About the simulation</div>
                 <div class="ml-release-title" id="ml-release-title">Many Lives ${escapeHtml(
                   STREET_RELEASE_INFO.version,
                 )}</div>
@@ -343,17 +343,30 @@ export function buildReleaseInfoHtml(open: boolean) {
               <button
                 class="ml-release-close"
                 data-close-release-info="true"
-                aria-label="Close release notes"
-                title="Close release notes"
+                aria-label="Close About Many Lives"
+                title="Close"
                 type="button"
               >
                 &times;
               </button>
             </div>
+            <div class="ml-release-purpose">
+              <div class="ml-release-feature-title">What this sim is testing</div>
+              <div class="ml-release-feature-copy">
+                Many Lives observes how well Rowan, an autonomous agent, handles a changing everyday world: understanding objectives, forming and revising plans, choosing valid actions, working with people, recovering from setbacks, and making measurable progress without step-by-step guidance.
+              </div>
+            </div>
+            <div class="ml-release-purpose">
+              <div class="ml-release-feature-title">What to watch</div>
+              <div class="ml-release-feature-copy">
+                Progress shows what Rowan achieved. Reasoning shows what Rowan believed, planned, and still needed to learn. Together they make the agent's performance visible.
+              </div>
+            </div>
             <div class="ml-release-build">
               <span>${escapeHtml(STREET_RELEASE_INFO.source)}</span>
               <span>${escapeHtml(STREET_RELEASE_INFO.build)}</span>
             </div>
+            <div class="ml-kicker ml-release-notes-kicker">Latest changes</div>
             <div class="ml-release-feature-list">
               ${STREET_RELEASE_INFO.features
                 .map(
@@ -629,7 +642,7 @@ export function buildJournalTabHtml(options: {
       </div>
       <div class="ml-focus-stack">
         <div class="ml-card">
-          <div class="ml-kicker">Accomplishments And Feed</div>
+          <div class="ml-kicker">Evidence And Activity</div>
           <div class="ml-list" style="margin-top: 12px;">
             ${objectiveCompleted
               .slice(0, 3)
@@ -703,7 +716,7 @@ export function buildMindTabHtml(options: {
   return `
     <div class="ml-focus-stack">
       <div class="ml-card ml-notebook-card">
-        <div class="ml-kicker">Rowan's Notebook</div>
+        <div class="ml-kicker">Rowan's Reasoning</div>
         <div class="ml-card-title" style="margin-top: 8px;">${escapeHtml(
           notebook.title,
         )}</div>
@@ -841,7 +854,7 @@ export function buildMindTabHtml(options: {
         </div>
       </div>
       <div class="ml-card">
-        <div class="ml-kicker">Journal</div>
+        <div class="ml-kicker">Recent Memories</div>
         <div class="ml-list" style="margin-top: 12px;">
           ${
             game.player.memories.length === 0
@@ -1229,9 +1242,9 @@ function tabLabel(tab: OverlayActiveTab) {
     case "people":
       return "Locals";
     case "journal":
-      return "Journal";
+      return "Progress";
     case "mind":
-      return "Notebook";
+      return "Reasoning";
     default:
       return "World";
   }

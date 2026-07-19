@@ -98,6 +98,8 @@ const AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES = 48;
 const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
+const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
+const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
 const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
@@ -1573,10 +1575,18 @@ class CdpSession {
                 screencastFrameCapturedAtEpochMs(
                   this.screencast.routeFrameArchive.at(-1),
                 ),
-              routeFrameArchivedAcceptedCount:
-                this.screencast.routeFrameArchivedAcceptedCount,
+              routeFrameArchiveFrozen:
+                this.screencast.routeFrameArchiveFrozen,
+              routeFrameArchivedSampleCount:
+                this.screencast.routeFrameArchivedSampleCount,
               routeFrameArchivedLastSampleAtEpochMs:
                 this.screencast.routeFrameArchivedLastSampleAtEpochMs,
+              routeFrameObservedSegmentCount:
+                this.screencast.routeFrameObservedSegmentCount,
+              routeFrameOpeningSegment:
+                this.screencast.routeFrameOpeningSegment,
+              routeSampleArchiveCount:
+                this.screencast.routeSampleArchive.length,
               status: this.screencast.status,
               waiterCount: this.screencast.waiters.length,
             };
@@ -3272,9 +3282,13 @@ class CdpSession {
       ignoredFrameCount: 0,
       lastSequence: 0,
       routeFrameArchive: [],
-      routeFrameArchivedAcceptedCount: 0,
+      routeFrameArchiveFrozen: false,
       routeFrameArchivedLastSampleAtEpochMs: null,
+      routeFrameArchivedSampleCount: 0,
       routeFrameHistory: [],
+      routeFrameObservedSegmentCount: 0,
+      routeFrameOpeningSegment: null,
+      routeSampleArchive: [],
       startedAtEpochMs: Date.now(),
       status: "starting",
       waiters: [],
@@ -3348,28 +3362,49 @@ class CdpSession {
     ].sort((left, right) => left.sequence - right.sequence);
   }
 
+  autoplayRouteCaptureSamples(recorder = null) {
+    const archivedSamples = this.screencast?.routeSampleArchive ?? [];
+    if (archivedSamples.length > 0) {
+      return [...archivedSamples];
+    }
+    return [
+      ...(buildAutoplayRouteCaptureSegments({
+        expectedTargetLocationId: recorder?.expectedTargetLocationId,
+        samples: recorder?.samples,
+      })[0]?.samples ?? []),
+    ];
+  }
+
   archiveAutoplayRouteFrames(recorder) {
     const state = this.screencast;
     if (!state || !recorder) {
       return 0;
     }
-    const samples = (recorder.samples ?? [])
-      .filter(
-        (sample) =>
-          sample?.source === "movement-probe-recorder" &&
-          typeof sample.capturedAtEpochMs === "number",
-      )
-      .sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs);
+    const combinedSamples = [
+      ...new Map(
+        [...state.routeSampleArchive, ...(recorder.samples ?? [])].map(
+          (sample) => [sample.capturedAtEpochMs, sample],
+        ),
+      ).values(),
+    ];
+    const segments = buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId: recorder.expectedTargetLocationId,
+      samples: combinedSamples,
+    });
+    const openingSegment = segments[0] ?? null;
+    const samples = openingSegment?.samples ?? [];
     const firstSampleAtEpochMs = samples[0]?.capturedAtEpochMs ?? null;
     const lastSampleAtEpochMs = samples.at(-1)?.capturedAtEpochMs ?? null;
-    const acceptedCount = Number(recorder.acceptedCount ?? samples.length);
-    if (
-      firstSampleAtEpochMs === null ||
-      lastSampleAtEpochMs === null ||
-      (acceptedCount <= state.routeFrameArchivedAcceptedCount &&
-        lastSampleAtEpochMs <=
-          (state.routeFrameArchivedLastSampleAtEpochMs ?? -Infinity))
-    ) {
+    state.routeFrameArchiveFrozen = segments.length > 1;
+    state.routeFrameObservedSegmentCount = segments.length;
+    state.routeFrameOpeningSegment = compactAutoplayRouteCaptureSegments(
+      openingSegment ? [openingSegment] : [],
+    )[0] ?? null;
+    state.routeSampleArchive = samples.slice(
+      0,
+      AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS,
+    );
+    if (firstSampleAtEpochMs === null || lastSampleAtEpochMs === null) {
       return state.routeFrameArchive.length;
     }
 
@@ -3397,10 +3432,7 @@ class CdpSession {
         state.routeFrameArchive.length - AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES,
       );
     }
-    state.routeFrameArchivedAcceptedCount = Math.max(
-      state.routeFrameArchivedAcceptedCount,
-      acceptedCount,
-    );
+    state.routeFrameArchivedSampleCount = samples.length;
     state.routeFrameArchivedLastSampleAtEpochMs = Math.max(
       state.routeFrameArchivedLastSampleAtEpochMs ?? -Infinity,
       lastSampleAtEpochMs,
@@ -12768,6 +12800,113 @@ function isAutoplayFootholdRouteFrame(route, expectedTargetLocationId) {
   );
 }
 
+function autoplayRouteSampleHudSignature(sample) {
+  const stableHudText = (sample?.paintProbe?.stableRegions ?? [])
+    .filter((region) => region.surface === "hud")
+    .map((region) => region.text?.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const hudText =
+    stableHudText.length > 0
+      ? stableHudText
+      : (sample?.paintProbe?.regions ?? [])
+          .filter((region) => region.surface === "hud")
+          .map((region) => region.text?.replace(/\s+/g, " ").trim())
+          .filter(Boolean);
+  return hudText.length > 0 ? JSON.stringify(hudText) : null;
+}
+
+function autoplayRouteSamplePathSignature(sample) {
+  const route = sample?.route;
+  const tilePathLength = Array.isArray(route?.tilePath)
+    ? route.tilePath.length
+    : (route?.tilePathLength ?? null);
+  const worldPathLength = Array.isArray(route?.worldPath)
+    ? route.worldPath.length
+    : (route?.worldPathLength ?? null);
+  return JSON.stringify({
+    targetLocationId: route?.targetLocationId ?? null,
+    tilePathLength,
+    worldPathLength,
+  });
+}
+
+function buildAutoplayRouteCaptureSegments({
+  expectedTargetLocationId,
+  samples,
+}) {
+  const legalSamples = (samples ?? [])
+    .filter(
+      (sample) =>
+        sample?.source === "movement-probe-recorder" &&
+        typeof sample.capturedAtEpochMs === "number" &&
+        isAutoplayFootholdRouteFrame(
+          sample.route,
+          expectedTargetLocationId,
+        ),
+    )
+    .sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs);
+  const segments = [];
+
+  for (const sample of legalSamples) {
+    const current = segments.at(-1);
+    const previous = current?.samples.at(-1) ?? null;
+    const gapMs = previous
+      ? sample.capturedAtEpochMs - previous.capturedAtEpochMs
+      : 0;
+    const progressReset = Boolean(
+      previous &&
+        sample.route.progress +
+          AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE <
+          previous.route.progress,
+    );
+    const pathChanged = Boolean(
+      previous &&
+        autoplayRouteSamplePathSignature(sample) !==
+          autoplayRouteSamplePathSignature(previous),
+    );
+    const previousHudSignature = autoplayRouteSampleHudSignature(previous);
+    const hudSignature = autoplayRouteSampleHudSignature(sample);
+    const hudChanged = Boolean(
+      previousHudSignature &&
+        hudSignature &&
+        hudSignature !== previousHudSignature,
+    );
+    const boundaryReasons = [
+      gapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS ? "sample-gap" : null,
+      progressReset ? "progress-reset" : null,
+      pathChanged ? "path-change" : null,
+      hudChanged ? "hud-change" : null,
+    ].filter(Boolean);
+
+    if (!current || boundaryReasons.length > 0) {
+      segments.push({
+        boundaryReasons,
+        hudSignature,
+        pathSignature: autoplayRouteSamplePathSignature(sample),
+        samples: [sample],
+      });
+      continue;
+    }
+    current.samples.push(sample);
+  }
+
+  return segments;
+}
+
+function compactAutoplayRouteCaptureSegments(segments) {
+  return (segments ?? []).map((segment, index) => ({
+    boundaryReasons: segment.boundaryReasons,
+    firstCapturedAtEpochMs: segment.samples[0]?.capturedAtEpochMs ?? null,
+    firstProgress: segment.samples[0]?.route?.progress ?? null,
+    hudSignature: segment.hudSignature,
+    index,
+    lastCapturedAtEpochMs: segment.samples.at(-1)?.capturedAtEpochMs ?? null,
+    lastProgress: segment.samples.at(-1)?.route?.progress ?? null,
+    pathSignature: segment.pathSignature,
+    sampleCount: segment.samples.length,
+  }));
+}
+
 function nextAutoplayFootholdRouteMilestone({
   capturedRouteMid,
   capturedRouteStart,
@@ -12802,6 +12941,66 @@ function autoplayRouteCaptureWindowCoherent(
       isAutoplayFootholdRouteFrame(afterRoute, expectedTargetLocationId) &&
       afterRoute.progress >= beforeRoute.progress,
   );
+}
+
+function buildAutoplayRouteCaptureSampleFromPacingProbe({
+  expectedTargetLocationId,
+  paintProbe,
+  probe,
+}) {
+  const route = probe?.movement?.playerRoute;
+  if (
+    !isAutoplayFootholdRouteFrame(route, expectedTargetLocationId) ||
+    typeof probe?.cdpRead?.capturedAtEpochMs !== "number" ||
+    !paintProbe
+  ) {
+    return null;
+  }
+
+  return {
+    capturedAtEpochMs: Math.max(
+      probe.cdpRead.capturedAtEpochMs,
+      typeof paintProbe.capturedAtEpochMs === "number"
+        ? paintProbe.capturedAtEpochMs
+        : probe.cdpRead.capturedAtEpochMs,
+    ),
+    capturedAtMonotonicMs: probe.cdpRead.capturedAtMonotonicMs ?? null,
+    paintProbe,
+    route,
+    source: "cdp-pacing-probe",
+  };
+}
+
+async function archiveAutoplayRouteCaptureFromPacingProbe({
+  expectedTargetLocationId,
+  label,
+  probe,
+  session,
+}) {
+  if (
+    !isAutoplayFootholdRouteFrame(
+      probe?.movement?.playerRoute,
+      expectedTargetLocationId,
+    )
+  ) {
+    return null;
+  }
+  const paintProbe = await session.readScreenshotPaintProbe(
+    `${label}:paint-probe`,
+  );
+  const sample = buildAutoplayRouteCaptureSampleFromPacingProbe({
+    expectedTargetLocationId,
+    paintProbe,
+    probe,
+  });
+  if (!sample) {
+    return null;
+  }
+  session.archiveAutoplayRouteFrames({
+    expectedTargetLocationId,
+    samples: [sample],
+  });
+  return sample;
 }
 
 function buildAutoplayFootholdRouteGuardFixture(
@@ -12884,6 +13083,48 @@ function assertAutoplayFootholdRouteCaptureGuard() {
     ),
     false,
     "A route target change must invalidate the screenshot capture window.",
+  );
+  const fallbackPaintProbe = {
+    capturedAtEpochMs: 1_750_000_000_010,
+    regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+    stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+    viewport: { height: 625, width: 1365 },
+  };
+  const fallbackSample = buildAutoplayRouteCaptureSampleFromPacingProbe({
+    expectedTargetLocationId: "tea-house",
+    paintProbe: fallbackPaintProbe,
+    probe: {
+      cdpRead: {
+        capturedAtEpochMs: 1_750_000_000_000,
+        capturedAtMonotonicMs: 100,
+      },
+      movement: { playerRoute: lateStart },
+    },
+  });
+  assert.equal(
+    fallbackSample?.source,
+    "cdp-pacing-probe",
+    "A legal pacing probe must provide a Node-owned route sample when the page recorder disappears.",
+  );
+  assert.equal(
+    fallbackSample?.capturedAtEpochMs,
+    fallbackPaintProbe.capturedAtEpochMs,
+    "The fallback route sample must use the paint snapshot timestamp for frame bracketing.",
+  );
+  assert.equal(
+    buildAutoplayRouteCaptureSampleFromPacingProbe({
+      expectedTargetLocationId: "repair-stall",
+      paintProbe: fallbackPaintProbe,
+      probe: {
+        cdpRead: {
+          capturedAtEpochMs: 1_750_000_000_000,
+          capturedAtMonotonicMs: 100,
+        },
+        movement: { playerRoute: lateStart },
+      },
+    }),
+    null,
+    "The Node-owned fallback must not archive a legal route to the wrong target.",
   );
 }
 
@@ -13247,17 +13488,11 @@ function buildAutoplayRecordedRouteWindowCandidates({
   frames,
   samples,
 }) {
-  const legalSamples = (samples ?? [])
-    .filter(
-      (sample) =>
-        sample?.source === "movement-probe-recorder" &&
-        typeof sample.capturedAtEpochMs === "number" &&
-        isAutoplayFootholdRouteFrame(
-          sample.route,
-          expectedTargetLocationId,
-        ),
-    )
-    .sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs);
+  const legalSamples =
+    buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId,
+      samples,
+    })[0]?.samples ?? [];
   const eligibleFrames = (frames ?? [])
     .filter(
       (frame) =>
@@ -13392,10 +13627,15 @@ function selectAutoplayRecordedRouteTrajectory({
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
+  const segments = buildAutoplayRouteCaptureSegments({
+    expectedTargetLocationId,
+    samples,
+  });
+  const openingSegment = segments[0] ?? null;
   const candidates = buildAutoplayRecordedRouteWindowCandidates({
     expectedTargetLocationId,
     frames,
-    samples,
+    samples: openingSegment?.samples ?? [],
   });
   let lastError = null;
 
@@ -13443,8 +13683,22 @@ function selectAutoplayRecordedRouteTrajectory({
   if (lastError) {
     throw lastError;
   }
+  const openingStartAtEpochMs =
+    openingSegment?.samples[0]?.capturedAtEpochMs ?? null;
+  const openingEndAtEpochMs =
+    openingSegment?.samples.at(-1)?.capturedAtEpochMs ?? null;
+  const openingFrameCount = (frames ?? []).filter((frame) => {
+    const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+    return Boolean(
+      capturedAtEpochMs !== null &&
+        openingStartAtEpochMs !== null &&
+        openingEndAtEpochMs !== null &&
+        capturedAtEpochMs >= openingStartAtEpochMs &&
+        capturedAtEpochMs <= openingEndAtEpochMs,
+    );
+  }).length;
   throw new Error(
-    `${label}: proactive recorder did not contain two distinct legal route frame windows. Legal snapshots: ${(samples ?? []).filter((sample) => sample?.source === "movement-probe-recorder" && isAutoplayFootholdRouteFrame(sample.route, expectedTargetLocationId)).length}. Historical frames: ${(frames ?? []).length}.`,
+    `${label}: opening route segment did not contain two distinct legal route frame windows. Segments: ${segments.length}. Opening samples: ${openingSegment?.samples.length ?? 0}. Opening frames: ${openingFrameCount}. Historical frames: ${(frames ?? []).length}.`,
   );
 }
 
@@ -13467,7 +13721,7 @@ async function waitForAutoplayRecordedRouteTrajectory({
         expectedTargetLocationId,
         frames: session.autoplayRouteFrameHistory(),
         label,
-        samples: lastRecorder?.samples ?? [],
+        samples: session.autoplayRouteCaptureSamples(lastRecorder),
       });
     } catch (error) {
       lastError = error;
@@ -13483,6 +13737,12 @@ async function waitForAutoplayRecordedRouteTrajectory({
         parseErrorCount: lastRecorder.parseErrorCount,
         rejectedCount: lastRecorder.rejectedCount,
         sampleCount: lastRecorder.samples?.length ?? 0,
+        segments: compactAutoplayRouteCaptureSegments(
+          buildAutoplayRouteCaptureSegments({
+            expectedTargetLocationId,
+            samples: lastRecorder.samples,
+          }),
+        ),
         startedAtEpochMs: lastRecorder.startedAtEpochMs,
         status: lastRecorder.status,
         unavailableCount: lastRecorder.unavailableCount,
@@ -13818,12 +14078,20 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
               const recorder = await session.readAutoplayRouteCaptureRecorder(
                 `${openingWorldVariant}:autoplay:route-recorder-read`,
               );
+              if (!recorder || recorder.acceptedCount === 0) {
+                await archiveAutoplayRouteCaptureFromPacingProbe({
+                  expectedTargetLocationId: expectedRouteTarget,
+                  label: `${openingWorldVariant}:autoplay:route-fallback`,
+                  probe,
+                  session,
+                });
+              }
               session.archiveAutoplayRouteFrames(recorder);
               return selectAutoplayRecordedRouteTrajectory({
                 expectedTargetLocationId: expectedRouteTarget,
                 frames: session.autoplayRouteFrameHistory(),
                 label: `${openingWorldVariant} autoplay foothold route`,
-                samples: recorder?.samples ?? [],
+                samples: session.autoplayRouteCaptureSamples(recorder),
               });
             } catch {
               return null;
@@ -14612,11 +14880,11 @@ async function runOverlayPanelChecks(session) {
 
   const panels = [
     {
-      label: "overlay-notebook",
+      label: "overlay-reasoning",
       selector: '[data-tab="mind"]',
       expectedTab: "mind",
       expectedText: [
-        /Rowan's Notebook/i,
+        /Rowan's Reasoning/i,
         /Current Belief/i,
         /Current Plan/i,
         /City Pulse/i,
@@ -14630,11 +14898,11 @@ async function runOverlayPanelChecks(session) {
       ],
     },
     {
-      label: "overlay-journal",
+      label: "overlay-progress",
       selector: '[data-tab="journal"]',
       expectedTab: "journal",
       expectedText: [
-        /Journal/i,
+        /Progress/i,
         /Field Note/i,
         /Mara's lead verified/i,
         /First afternoon settled/i,
@@ -17404,11 +17672,21 @@ function assertInhabitPlayerDom(
     /Rowan/i,
     `${label}: player-facing UI does not identify Rowan.`,
   );
+  assert.match(
+    dom.bodyText,
+    /Agent under observation\s+Rowan\s+Autonomous Agent/i,
+    `${label}: observer-facing UI should identify Rowan as the autonomous agent under observation.`,
+  );
+  assert.doesNotMatch(
+    dom.bodyText,
+    /You are\s+Rowan/i,
+    `${label}: observer-facing UI incorrectly casts the viewer as Rowan.`,
+  );
   assert.ok(
     dom.tabLabels.some((tab) => /World/i.test(tab)) &&
       dom.tabLabels.some((tab) => /Locals/i.test(tab)) &&
-      dom.tabLabels.some((tab) => /Journal/i.test(tab)) &&
-      dom.tabLabels.some((tab) => /Notebook/i.test(tab)),
+      dom.tabLabels.some((tab) => /Progress/i.test(tab)) &&
+      dom.tabLabels.some((tab) => /Reasoning/i.test(tab)),
     `${label}: player-facing tabs are not all reachable.`,
   );
   assert.doesNotMatch(
@@ -18051,15 +18329,15 @@ async function runInhabitPanelChecks(session) {
     },
     {
       expectedTab: "journal",
-      label: "inhabit-panel-journal",
+      label: "inhabit-panel-progress",
       selector: '[data-tab="journal"]',
-      text: /Journal|Objectives|Field/i,
+      text: /Progress|Objective|Field/i,
     },
     {
       expectedTab: "mind",
-      label: "inhabit-panel-notebook",
+      label: "inhabit-panel-reasoning",
       selector: '[data-tab="mind"]',
-      text: /(?=.*Notebook)(?=.*City Pulse)(?=.*South Quay is moving)/is,
+      text: /(?=.*Reasoning)(?=.*City Pulse)(?=.*South Quay is moving)/is,
     },
   ];
 
@@ -18143,6 +18421,40 @@ async function runInhabitPanelChecks(session) {
   return checks;
 }
 
+async function runInhabitAboutCheck(session) {
+  const label = "inhabit-about-many-lives";
+  await session.clickVisibleSelector('[data-toggle-release-info="true"]');
+  await sleep(250);
+
+  const bodyText = await session.evaluate(`(() =>
+    document.body?.innerText?.replace(/\\s+/g, " ").trim() ?? ""
+  )()`);
+  for (const expectedText of [
+    /About the simulation/i,
+    /What this sim is testing/i,
+    /Rowan, an autonomous agent/i,
+    /without step-by-step guidance/i,
+    /Progress shows what Rowan achieved/i,
+    /Reasoning shows what Rowan believed/i,
+  ]) {
+    assert.match(
+      bodyText,
+      expectedText,
+      `${label}: About Many Lives did not explain the agent-evaluation purpose.`,
+    );
+  }
+
+  const screenshot = path.join(OUTPUT_DIR, `${label}.png`);
+  await session.captureScreenshot(screenshot);
+  await session.clickVisibleSelector('[data-close-release-info="true"]');
+
+  return {
+    bodyTextSample: bodyText.slice(0, 480),
+    label,
+    screenshot,
+  };
+}
+
 async function runInhabitRowanNotebookClickCheck(session) {
   const label = "inhabit-rowan-click-notebook";
   const camera = await waitForInhabitCameraProbe(session, label);
@@ -18217,14 +18529,14 @@ async function runInhabitRowanNotebookClickCheck(session) {
   assert.equal(
     dom.activeTab,
     "mind",
-    `${label}: clicking Rowan should open the Notebook tab. ${JSON.stringify({
+    `${label}: clicking Rowan should open the Reasoning tab. ${JSON.stringify({
       clickDebug,
       screenshot,
     })}`,
   );
 
   for (const expectedText of [
-    /Rowan's Notebook/i,
+    /Rowan's Reasoning/i,
     /Current Belief/i,
     /Current Plan/i,
     /Confidence/i,
@@ -18233,7 +18545,7 @@ async function runInhabitRowanNotebookClickCheck(session) {
     assert.match(
       dom.bodyText,
       expectedText,
-      `${label}: Rowan click did not reveal the expected Notebook content.`,
+      `${label}: Rowan click did not reveal the expected Reasoning content.`,
     );
   }
   const probe = await session.readBrowserProbe(`${label}:browser-probe`);
@@ -18747,6 +19059,7 @@ async function runInhabitGameplayPass(session) {
 
   const rowanNotebookClick = await runInhabitRowanNotebookClickCheck(session);
   const panelChecks = await runInhabitPanelChecks(session);
+  const aboutManyLives = await runInhabitAboutCheck(session);
   const cameraCheck = await runInhabitCameraCheck(session);
   const frozenProbe = await session.readBrowserProbe(
     "inhabit-frozen-browser-probe",
@@ -19119,6 +19432,7 @@ async function runInhabitGameplayPass(session) {
 
   const reportPath = path.join(OUTPUT_DIR, "inhabit-gameplay-report.json");
   const report = {
+    aboutManyLives,
     cameraCheck,
     cityEventVisualEvidence,
     clickCount: clickLog.length,

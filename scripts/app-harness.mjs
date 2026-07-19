@@ -592,6 +592,7 @@ async function assertArtifacts(logLine, artifacts) {
 }
 
 async function assertRowanBrowserArtifacts(logLine) {
+  const overlayLabels = ["overlay-reasoning", "overlay-progress"];
   await assertArtifacts(logLine, [
     {
       filePath: path.join(BROWSER_PLAYTEST_DIR, "timeline.json"),
@@ -617,20 +618,16 @@ async function assertRowanBrowserArtifacts(logLine) {
       filePath: path.join(BROWSER_PLAYTEST_DIR, "rowan-gameplay-regression.mp4"),
       minBytes: 100_000,
     },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "overlay-notebook.png"),
+    ...overlayLabels.map((label) => ({
+      filePath: path.join(BROWSER_PLAYTEST_DIR, `${label}.png`),
       minBytes: 120_000,
-    },
-    {
-      filePath: path.join(BROWSER_PLAYTEST_DIR, "overlay-journal.png"),
-      minBytes: 120_000,
-    },
+    })),
   ]);
 
   const summary = JSON.parse(
     await readFile(path.join(BROWSER_PLAYTEST_DIR, "summary.json"), "utf8"),
   );
-  const overlayLabels = new Set(
+  const checkedOverlayLabels = new Set(
     (summary.overlayChecks ?? []).map((check) => check.label),
   );
 
@@ -660,8 +657,8 @@ async function assertRowanBrowserArtifacts(logLine) {
     );
   }
 
-  for (const label of ["overlay-notebook", "overlay-journal"]) {
-    if (!overlayLabels.has(label)) {
+  for (const label of overlayLabels) {
+    if (!checkedOverlayLabels.has(label)) {
       throw new Error(`Rowan browser playtest missing overlay check: ${label}.`);
     }
   }
@@ -781,7 +778,7 @@ async function assertRowanBrowserArtifacts(logLine) {
   );
 
   logLine(
-    `[many-lives:harness] rowan browser summary ok: ${summary.screenshotCount} gameplay screenshots, ${overlayLabels.size} overlay checks, ${inhabit.visibleControlClickCount} visible player clicks, ${inhabit.watchedAutoContinueCount ?? 0} watch beats, recording ${summary.evidence.recordingPath}.`,
+    `[many-lives:harness] rowan browser summary ok: ${summary.screenshotCount} gameplay screenshots, ${overlayLabels.length} overlay checks, ${inhabit.visibleControlClickCount} visible player clicks, ${inhabit.watchedAutoContinueCount ?? 0} watch beats, recording ${summary.evidence.recordingPath}.`,
   );
 }
 

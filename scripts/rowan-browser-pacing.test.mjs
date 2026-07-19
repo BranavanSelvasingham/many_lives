@@ -255,7 +255,7 @@ test("opening map evidence is frozen before zero-click pacing begins", () => {
   );
 });
 
-test("proactive route history survives a delayed observer and rejects unproven windows", () => {
+test("proactive route history survives a delayed observer and rejects unproven windows", async () => {
   const policyStart = source.indexOf(
     "function isAutoplayFootholdRouteFrame(",
   );
@@ -285,15 +285,19 @@ test("proactive route history survives a delayed observer and rejects unproven w
   const routeCapture = Function(
     "assert",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
+    "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
     "screencastFrameCapturedAtEpochMs",
     "screencastFrameIsBracketedByEpochProbes",
     "requireStableAutoplayScreenshotPaintProbe",
     "assertAutoplayRouteHudContinuity",
-    `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, selectAutoplayRecordedRouteTrajectory };`,
+    `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
+    2_000,
+    0.02,
     125,
     framePolicy.screencastFrameCapturedAtEpochMs,
     framePolicy.screencastFrameIsBracketedByEpochProbes,
@@ -307,16 +311,73 @@ test("proactive route history survives a delayed observer and rejects unproven w
     routeCapture.assertAutoplayFootholdRouteCaptureGuard(),
   );
 
+  const fallbackSample =
+    routeCapture.buildAutoplayRouteCaptureSampleFromPacingProbe({
+      expectedTargetLocationId: "tea-house",
+      paintProbe: {
+        capturedAtEpochMs: 1_750_000_000_010,
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      },
+      probe: {
+        cdpRead: {
+          capturedAtEpochMs: 1_750_000_000_000,
+          capturedAtMonotonicMs: 100,
+        },
+        movement: {
+          playerRoute: routeCapture.buildAutoplayFootholdRouteGuardFixture(0.3),
+        },
+      },
+    });
+  assert.equal(fallbackSample.source, "cdp-pacing-probe");
+  assert.equal(fallbackSample.capturedAtEpochMs, 1_750_000_000_010);
+  let archivedFallbackRecorder = null;
+  const archivedFallbackSample =
+    await routeCapture.archiveAutoplayRouteCaptureFromPacingProbe({
+      expectedTargetLocationId: "tea-house",
+      label: "page-recorder-loss-fixture",
+      probe: {
+        cdpRead: {
+          capturedAtEpochMs: 1_750_000_000_000,
+          capturedAtMonotonicMs: 100,
+        },
+        movement: {
+          playerRoute: routeCapture.buildAutoplayFootholdRouteGuardFixture(0.3),
+        },
+      },
+      session: {
+        archiveAutoplayRouteFrames(recorder) {
+          archivedFallbackRecorder = recorder;
+        },
+        async readScreenshotPaintProbe() {
+          return fallbackSample.paintProbe;
+        },
+      },
+    });
+  assert.equal(archivedFallbackSample.source, "cdp-pacing-probe");
+  assert.equal(archivedFallbackRecorder.expectedTargetLocationId, "tea-house");
+  assert.equal(archivedFallbackRecorder.samples.length, 1);
+
   const capturedAtEpochMs = 1_750_000_000_000;
-  const paintProbe = {
-    regions: [{ surface: "hud", text: "DAY 1" }],
-    stableRegions: [{ surface: "hud", text: "DAY 1" }],
+  const paintProbeForTime = (time) => ({
+    regions: [
+      { surface: "hud", text: "DAY 1" },
+      { surface: "hud", text: time },
+    ],
+    stableRegions: [{ surface: "hud", text: `DAY 1 ${time}` }],
     viewport: { height: 625, width: 1365 },
-  };
-  const routeSample = (progress, offsetMs, overrides = {}) => ({
+  });
+  const paintProbe = paintProbeForTime("11:05");
+  const routeSample = (
+    progress,
+    offsetMs,
+    overrides = {},
+    samplePaintProbe = paintProbe,
+  ) => ({
     capturedAtEpochMs: capturedAtEpochMs + offsetMs,
     capturedAtMonotonicMs: 100 + offsetMs,
-    paintProbe,
+    paintProbe: samplePaintProbe,
     route: routeCapture.buildAutoplayFootholdRouteGuardFixture(
       progress,
       overrides,
@@ -358,23 +419,63 @@ test("proactive route history survives a delayed observer and rejects unproven w
     screencastFrame(102, 30_260),
     screencastFrame(103, 30_390),
   ];
+  const laterPaintProbe = paintProbeForTime("12:21");
+  const laterSamples = [
+    routeSample(0.02, 29_800, { tilePathLength: 4 }, laterPaintProbe),
+    routeSample(0.05, 29_900, { tilePathLength: 4 }, laterPaintProbe),
+    routeSample(0.08, 30_000, { tilePathLength: 4 }, laterPaintProbe),
+    routeSample(0.12, 30_100, { tilePathLength: 4 }, laterPaintProbe),
+    routeSample(0.25, 30_200, { tilePathLength: 4 }, laterPaintProbe),
+    routeSample(0.32, 30_300, { tilePathLength: 4 }, laterPaintProbe),
+    routeSample(0.4, 30_400, { tilePathLength: 4 }, laterPaintProbe),
+    routeSample(0.48, 30_500, { tilePathLength: 4 }, laterPaintProbe),
+  ];
+  const mixedSamples = [...samples, ...laterSamples];
+  const segments = routeCapture.buildAutoplayRouteCaptureSegments({
+    expectedTargetLocationId: "tea-house",
+    samples: mixedSamples,
+  });
+  assert.equal(segments.length, 2);
+  assert.equal(segments[0].samples.length, samples.length);
+  assert.equal(segments[1].samples.length, laterSamples.length);
+  assert.ok(segments[1].boundaryReasons.includes("sample-gap"));
+  assert.ok(segments[1].boundaryReasons.includes("progress-reset"));
+  assert.ok(segments[1].boundaryReasons.includes("path-change"));
+  assert.ok(segments[1].boundaryReasons.includes("hud-change"));
   assert.throws(
     () =>
       routeCapture.selectAutoplayRecordedRouteTrajectory({
         expectedTargetLocationId: "tea-house",
         frames: expiredGenericFrames,
         label: "expired generic ring fixture",
-        samples,
+        samples: mixedSamples,
         validateFrame,
         validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
       }),
-    /did not contain two distinct legal route frame windows/,
+    /opening route segment did not contain two distinct legal route frame windows/,
+  );
+  assert.throws(
+    () =>
+      routeCapture.selectAutoplayRecordedRouteTrajectory({
+        expectedTargetLocationId: "tea-house",
+        frames: [
+          frames[0],
+          frames[1],
+          expiredGenericFrames[0],
+          expiredGenericFrames[1],
+        ],
+        label: "cross-segment pairing fixture",
+        samples: mixedSamples,
+        validateFrame,
+        validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+      }),
+    /opening route segment did not contain two distinct legal route frame windows/,
   );
   const trajectory = routeCapture.selectAutoplayRecordedRouteTrajectory({
     expectedTargetLocationId: "tea-house",
     frames: [...frames, ...expiredGenericFrames],
     label: "delayed hosted observer fixture",
-    samples,
+    samples: mixedSamples,
     validateFrame,
     validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
   });
@@ -434,7 +535,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
           validateFrame,
           validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
         }),
-      /did not contain two distinct legal route frame windows/,
+      /opening route segment did not contain two distinct legal route frame windows/,
     );
   }
 
@@ -1102,6 +1203,18 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     source,
     /MANY_LIVES_BROWSER_AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS[\s\S]*?"8000"/,
   );
+  const routeSegmentsPolicyStart = source.indexOf(
+    "function isAutoplayFootholdRouteFrame(",
+  );
+  const routeSegmentsPolicyEnd = source.indexOf(
+    "\nasync function captureAutoplayFrozenTrajectoryMilestone(",
+    routeSegmentsPolicyStart,
+  );
+  const routeSegmentsPolicy = Function(
+    "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
+    "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments };`,
+  )(2_000, 0.02);
   const classStart = source.indexOf("class CdpSession {");
   const classEnd = source.indexOf(
     "\nasync function launchBrowserSession(",
@@ -1117,6 +1230,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS",
     "AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES",
     "AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES",
+    "AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS",
+    "buildAutoplayRouteCaptureSegments",
+    "compactAutoplayRouteCaptureSegments",
     "CDP_WAIT_TIMEOUT_MS",
     "screencastFrameCapturedAtEpochMs",
     "withTimeout",
@@ -1131,6 +1247,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     125,
     16,
     4,
+    16,
+    routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
+    routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
     20,
     (frame) =>
       typeof frame?.metadata?.timestamp === "number"
@@ -1221,9 +1340,24 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   });
   const archivedRecorder = {
     acceptedCount: 8,
+    expectedTargetLocationId: "tea-house",
     samples: [0, 100, 200, 300, 400, 500, 600, 700].map(
-      (offsetMs) => ({
+      (offsetMs, index) => ({
         capturedAtEpochMs: archiveStartedAt + offsetMs,
+        paintProbe: {
+          stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        },
+        route: {
+          active: true,
+          legal: true,
+          progress: 0.02 + index * 0.06,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          targetLocationId: "tea-house",
+          tilePathLength: 15,
+          visualObstaclesClear: true,
+          worldPathLength: 16,
+        },
         source: "movement-probe-recorder",
       }),
     ),
@@ -1237,6 +1371,31 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       sessionId: 20 + index,
     });
   });
+  const laterSamples = [4_800, 4_900, 5_000, 5_100, 5_200, 5_300].map(
+    (offsetMs, index) => ({
+      capturedAtEpochMs: archiveStartedAt + offsetMs,
+      paintProbe: {
+        stableRegions: [{ surface: "hud", text: "DAY 1 12:21" }],
+      },
+      route: {
+        active: true,
+        legal: true,
+        progress: 0.01 + index * 0.08,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        targetLocationId: "tea-house",
+        tilePathLength: 4,
+        visualObstaclesClear: true,
+        worldPathLength: 4,
+      },
+      source: "movement-probe-recorder",
+    }),
+  );
+  archiveSession.archiveAutoplayRouteFrames({
+    acceptedCount: archivedRecorder.acceptedCount + laterSamples.length,
+    expectedTargetLocationId: "tea-house",
+    samples: [...archivedRecorder.samples, ...laterSamples],
+  });
   assert.ok(
     archiveSession.screencast.routeFrameHistory.every(
       (frame) => frame.sequence > routeOffsets.length,
@@ -1246,6 +1405,18 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   assert.deepEqual(
     archiveSession.screencast.routeFrameArchive.map((frame) => frame.data),
     ["route-1", "route-2", "route-3", "route-4"],
+  );
+  assert.equal(archiveSession.screencast.routeFrameArchiveFrozen, true);
+  assert.equal(archiveSession.screencast.routeFrameObservedSegmentCount, 2);
+  assert.equal(archiveSession.screencast.routeFrameArchivedSampleCount, 8);
+  assert.equal(archiveSession.autoplayRouteCaptureSamples().length, 8);
+  assert.match(
+    archiveSession.screencast.routeFrameOpeningSegment.hudSignature,
+    /11:05/,
+  );
+  assert.doesNotMatch(
+    archiveSession.screencast.routeFrameOpeningSegment.hudSignature,
+    /12:21/,
   );
   assert.deepEqual(
     archiveSession

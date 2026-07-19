@@ -1421,7 +1421,7 @@ export function StreetGameApp() {
 
             <div className="border-t border-[rgba(134,145,154,0.18)] pt-5">
               <div className="mb-3 text-[0.76rem] uppercase tracking-[0.18em] text-[color:var(--text-dim)]">
-                Journal
+                Recent Memories
               </div>
               <div className="max-h-[480px] space-y-3 overflow-y-auto pr-1">
                 {game.player.memories.length === 0 ? (
@@ -2551,7 +2551,7 @@ function buildCharacterProfiles({
       statusLabel:
         game.player.objective?.progress?.label ??
         `${game.player.knownNpcIds.length} people known`,
-      tagLabel: "You",
+      tagLabel: "Rowan",
       known: true,
       isPlayer: true,
       sections: playerSections,
