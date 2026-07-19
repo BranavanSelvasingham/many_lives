@@ -255,7 +255,7 @@ test("opening map evidence is frozen before zero-click pacing begins", () => {
   );
 });
 
-test("late foothold route samples require two coherent distinct screenshot windows", async () => {
+test("proactive route history survives a delayed observer and rejects unproven windows", () => {
   const policyStart = source.indexOf(
     "function isAutoplayFootholdRouteFrame(",
   );
@@ -264,51 +264,13 @@ test("late foothold route samples require two coherent distinct screenshot windo
     policyStart,
   );
   const policySource = source.slice(policyStart, policyEnd);
-  const policy = Function(
-    "assert",
-    "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
-    `${policySource}; return { autoplayRouteCaptureWindowCoherent, assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, nextAutoplayFootholdRouteMilestone };`,
-  )(assert, 0.1);
-  const lateStart = policy.buildAutoplayFootholdRouteGuardFixture(0.633);
-
-  assert.equal(
-    policy.nextAutoplayFootholdRouteMilestone({
-      capturedRouteMid: false,
-      capturedRouteStart: false,
-      expectedTargetLocationId: "tea-house",
-      route: lateStart,
-      routeStartProgress: null,
-    }),
-    "foothold-route-start",
+  const recordedStart = source.indexOf(
+    "function buildAutoplayRecordedRouteWindowCandidates(",
   );
-  assert.equal(
-    policy.nextAutoplayFootholdRouteMilestone({
-      capturedRouteMid: false,
-      capturedRouteStart: true,
-      expectedTargetLocationId: "tea-house",
-      route: policy.buildAutoplayFootholdRouteGuardFixture(0.744),
-      routeStartProgress: lateStart.progress,
-    }),
-    "foothold-route-mid",
+  const recordedEnd = source.indexOf(
+    "\nasync function waitForAutoplayRecordedRouteTrajectory(",
+    recordedStart,
   );
-  assert.equal(
-    policy.autoplayRouteCaptureWindowCoherent(
-      lateStart,
-      policy.buildAutoplayFootholdRouteGuardFixture(1, { active: false }),
-      "tea-house",
-    ),
-    false,
-  );
-  assert.doesNotThrow(() => policy.assertAutoplayFootholdRouteCaptureGuard());
-
-  const routeWindowStart = source.indexOf(
-    "async function readAutoplayRouteCaptureProbe(",
-  );
-  const routeWindowEnd = source.indexOf(
-    "\nasync function captureAutoplayRouteTrajectoryMilestone(",
-    routeWindowStart,
-  );
-  const routeWindowSource = source.slice(routeWindowStart, routeWindowEnd);
   const framePolicyStart = source.indexOf(
     "function screencastFrameCapturedAtEpochMs(",
   );
@@ -317,231 +279,185 @@ test("late foothold route samples require two coherent distinct screenshot windo
     framePolicyStart,
   );
   const framePolicy = Function(
-    `${source.slice(framePolicyStart, framePolicyEnd)}; return { cdpProbeCapturedAtEpochMs, screencastFrameCapturedAtEpochMs, screencastFrameIsBracketedByEpochProbes };`,
+    `${source.slice(framePolicyStart, framePolicyEnd)}; return { screencastFrameCapturedAtEpochMs, screencastFrameIsBracketedByEpochProbes };`,
   )();
-  const genericCaptureStart = source.indexOf(
-    "async function acquireAutoplayScreencastFrameWindow(",
-  );
-  const genericCaptureEnd = source.indexOf(
-    "\nfunction autoplayLiveMilestoneMatches(",
-    genericCaptureStart,
-  );
-  const genericCapture = Function(
-    "assert",
-    "AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS",
-    "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
-    "cdpProbeCapturedAtEpochMs",
-    "requireStableAutoplayScreenshotPaintProbe",
-    "screencastFrameCapturedAtEpochMs",
-    "screencastFrameIsBracketedByEpochProbes",
-    "sleep",
-    "slug",
-    "validateAutoplayScreencastFrame",
-    "assertStableAutoplayScreencastFramePair",
-    `${source.slice(genericCaptureStart, genericCaptureEnd)}; return acquireAutoplayScreencastFrameWindow;`,
-  )(
-    assert,
-    3,
-    125,
-    framePolicy.cdpProbeCapturedAtEpochMs,
-    (_before, after) => after,
-    framePolicy.screencastFrameCapturedAtEpochMs,
-    framePolicy.screencastFrameIsBracketedByEpochProbes,
-    async () => {},
-    (value) => value,
-    () => ({
-      buffer: Buffer.from("validated-frame"),
-      height: 625,
-      paintProbe: {},
-      textPaint: { regionCount: 9, surfaces: ["hud"] },
-      width: 1365,
-    }),
-    () => ({ hudPixelDifferenceRatio: 0 }),
-  );
+  let routeHudContinuityChecks = 0;
   const routeCapture = Function(
     "assert",
-    "AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS",
-    "AUTOPLAY_ROUTE_CAPTURE_PROBE_RETRY_DELAY_MS",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
-    "sleep",
-    "slug",
-    "acquireAutoplayScreencastFrameWindow",
-    "assertStableAutoplayScreencastFramePair",
+    "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
+    "screencastFrameCapturedAtEpochMs",
+    "screencastFrameIsBracketedByEpochProbes",
+    "requireStableAutoplayScreenshotPaintProbe",
     "assertAutoplayRouteHudContinuity",
-    `${policySource}\n${routeWindowSource}; return { acquireAutoplayRouteScreencastWindow, buildAutoplayFootholdRouteGuardFixture };`,
+    `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
-    3,
-    0,
     0.1,
-    async () => {},
-    (value) => value,
-    genericCapture,
-    () => ({ hudPixelDifferenceRatio: 0 }),
-    () => ({}),
+    125,
+    framePolicy.screencastFrameCapturedAtEpochMs,
+    framePolicy.screencastFrameIsBracketedByEpochProbes,
+    (_before, after) => after,
+    () => {
+      routeHudContinuityChecks += 1;
+      return { routeHudContinuityPixelDifferenceRatio: 0 };
+    },
   );
+  assert.doesNotThrow(() =>
+    routeCapture.assertAutoplayFootholdRouteCaptureGuard(),
+  );
+
   const capturedAtEpochMs = 1_750_000_000_000;
-  const routeProbe = (progress, offsetMs, overrides = {}) => ({
+  const paintProbe = {
+    regions: [{ surface: "hud", text: "DAY 1" }],
+    stableRegions: [{ surface: "hud", text: "DAY 1" }],
+    viewport: { height: 625, width: 1365 },
+  };
+  const routeSample = (progress, offsetMs, overrides = {}) => ({
     capturedAtEpochMs: capturedAtEpochMs + offsetMs,
     capturedAtMonotonicMs: 100 + offsetMs,
+    paintProbe,
     route: routeCapture.buildAutoplayFootholdRouteGuardFixture(
       progress,
       overrides,
     ),
+    source: "movement-probe-recorder",
   });
   const screencastFrame = (sequence, offsetMs) => ({
     data: `active-route-png-${sequence}`,
     metadata: { timestamp: (capturedAtEpochMs + offsetMs) / 1_000 },
     sequence,
   });
-  const fakeSession = ({ afterSequence, frame, probes }) => {
-    const calls = [];
-    const confirmationFrame = {
-      ...frame,
-      metadata: {
-        ...frame.metadata,
-        timestamp: frame.metadata.timestamp + 0.13,
-      },
-      sequence: frame.sequence + 1,
-    };
-    let nextFrame = frame;
-    let blockingScreenshotCalls = 0;
-    return {
-      calls,
-      captureScreenshot: async () => {
-        blockingScreenshotCalls += 1;
-        await new Promise(() => {});
-      },
-      get blockingScreenshotCalls() {
-        return blockingScreenshotCalls;
-      },
-      readAutoplayRouteProbe: async () => {
-        const probe = probes.shift();
-        calls.push(probe ? `route:${probe.route.progress}` : "route:null");
-        return probe;
-      },
-      autoplayScreencastSequence: () => {
-        calls.push(`sequence:${afterSequence}`);
-        return afterSequence;
-      },
-      readScreenshotPaintProbe: async () => {
-        calls.push("paint");
-        return { regions: [], viewport: { height: 625, width: 1365 } };
-      },
-      waitForAutoplayScreencastFrame: async (options) => {
-        calls.push(`frame:${nextFrame.sequence}`);
-        assert.equal(
-          options.afterSequence,
-          nextFrame === frame ? afterSequence : frame.sequence,
-        );
-        const result = nextFrame;
-        assert.ok(
-          framePolicy.screencastFrameCapturedAtEpochMs(result) >=
-            options.minimumCapturedAtEpochMs,
-        );
-        nextFrame = confirmationFrame;
-        return result;
-      },
-    };
-  };
-
-  const hostedStart = routeCapture.buildAutoplayFootholdRouteGuardFixture(0.523);
-  const startSession = fakeSession({
-    afterSequence: 10,
-    frame: screencastFrame(11, 145),
-    probes: [routeProbe(0.53, 10), null, routeProbe(0.56, 300)],
+  const frames = [
+    screencastFrame(10, 150),
+    screencastFrame(11, 280),
+    screencastFrame(12, 550),
+    screencastFrame(13, 680),
+  ];
+  const samples = [
+    routeSample(0.02, 0),
+    routeSample(0.04, 100),
+    routeSample(0.08, 200),
+    routeSample(0.12, 300),
+    routeSample(0.25, 400),
+    routeSample(0.32, 500),
+    routeSample(0.4, 600),
+    routeSample(0.48, 700),
+  ];
+  const validateFrame = ({ frame, paintProbe: acceptedPaintProbe }) => ({
+    buffer: Buffer.from(frame.data),
+    height: 625,
+    paintProbe: acceptedPaintProbe,
+    textPaint: { regionCount: 9, surfaces: ["hud"] },
+    width: 1365,
   });
-  const startWindow =
-    await routeCapture.acquireAutoplayRouteScreencastWindow({
-      expectedTargetLocationId: "tea-house",
-      initialRoute: hostedStart,
-      label: "slow ordinary screenshot fixture",
-      session: startSession,
-    });
-  assert.equal(startWindow.beforeRoute.progress, 0.53);
-  assert.equal(startWindow.afterRoute.progress, 0.56);
-  assert.equal(startWindow.frame.sequence, 12);
-  assert.equal(startSession.blockingScreenshotCalls, 0);
-  assert.deepEqual(startSession.calls, [
-    "route:0.53",
-    "paint",
-    "sequence:10",
-    "frame:11",
-    "frame:12",
-    "paint",
-    "route:null",
-    "route:0.56",
-  ]);
-
-  const midSession = fakeSession({
-    afterSequence: 20,
-    frame: screencastFrame(21, 1_145),
-    probes: [routeProbe(0.68, 1_010), routeProbe(0.71, 1_300)],
-  });
-  const midWindow = await routeCapture.acquireAutoplayRouteScreencastWindow({
+  const delayedCurrentObserverProbe = null;
+  const trajectory = routeCapture.selectAutoplayRecordedRouteTrajectory({
     expectedTargetLocationId: "tea-house",
-    initialRoute: routeCapture.buildAutoplayFootholdRouteGuardFixture(0.67),
-    label: "distinct mid screencast fixture",
-    session: midSession,
+    frames,
+    label: "delayed hosted observer fixture",
+    samples,
+    validateFrame,
+    validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
   });
-  assert.ok(
-    midWindow.beforeRoute.progress - startWindow.afterRoute.progress >= 0.1,
-  );
-  assert.ok(midWindow.frame.sequence > startWindow.frame.sequence);
 
-  for (const [label, afterProbe] of [
-    ["arrival", routeProbe(1, 2_040, { active: false })],
+  assert.equal(delayedCurrentObserverProbe, null);
+  assert.equal(trajectory.start.frame.sequence, 11);
+  assert.equal(trajectory.mid.frame.sequence, 13);
+  assert.equal(trajectory.start.beforeProbe.source, "movement-probe-recorder");
+  assert.equal(trajectory.mid.afterProbe.source, "movement-probe-recorder");
+  assert.ok(
+    trajectory.mid.beforeProbe.route.progress -
+      trajectory.start.afterProbe.route.progress >=
+      0.1,
+  );
+  assert.ok(
+    framePolicy.screencastFrameCapturedAtEpochMs(
+      trajectory.start.frame,
+    ) - trajectory.start.beforeProbe.capturedAtEpochMs >= 125,
+  );
+  assert.ok(
+    framePolicy.screencastFrameCapturedAtEpochMs(trajectory.mid.frame) <=
+      trajectory.mid.afterProbe.capturedAtEpochMs,
+  );
+  assert.equal(routeHudContinuityChecks, 1);
+
+  for (const [label, rejectedSamples] of [
+    ["absent", []],
+    [
+      "stale fallback",
+      samples.map((sample) => ({
+        ...sample,
+        source: "browser-probe-fallback",
+      })),
+    ],
     [
       "target mismatch",
-      routeProbe(0.7, 2_040, { targetLocationId: "repair-stall" }),
+      samples.map((sample) => ({
+        ...sample,
+        route: { ...sample.route, targetLocationId: "repair-stall" },
+      })),
+    ],
+    [
+      "arrival",
+      samples.map((sample) => ({
+        ...sample,
+        route: { ...sample.route, active: false, progress: 1 },
+      })),
     ],
   ]) {
-    const mismatchSession = fakeSession({
-      afterSequence: 30,
-      frame: screencastFrame(31, 2_145),
-      probes: [routeProbe(0.68, 2_010), {
-        ...afterProbe,
-        capturedAtEpochMs: capturedAtEpochMs + 2_300,
-      }],
-    });
-    await assert.rejects(
-      routeCapture.acquireAutoplayRouteScreencastWindow({
-        expectedTargetLocationId: "tea-house",
-        initialRoute: routeCapture.buildAutoplayFootholdRouteGuardFixture(0.67),
-        label: `${label} screencast fixture`,
-        session: mismatchSession,
-      }),
-      /screencast frame was not bracketed by one coherent current state/,
+    assert.throws(
+      () =>
+        routeCapture.selectAutoplayRecordedRouteTrajectory({
+          expectedTargetLocationId: "tea-house",
+          frames,
+          label,
+          samples: rejectedSamples,
+          validateFrame,
+          validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+        }),
+      /did not contain two distinct legal route frame windows/,
     );
   }
 
   const captureStart = source.indexOf(
-    "async function captureAutoplayRouteTrajectoryMilestone(",
+    "async function captureAutoplayRouteScreenshotWindow(",
   );
   const captureEnd = source.indexOf(
-    "\nasync function waitForDistinctAutoplayFootholdRouteProbe(",
+    "\nasync function runAutoplayObservation(",
     captureStart,
   );
   const captureSource = source.slice(captureStart, captureEnd);
+  const recordedSource = source.slice(recordedStart, recordedEnd);
+  const runStart = source.indexOf(
+    "async function runAutoplayObservation(session, { game, openingWorldVariant })",
+  );
+  const runEnd = source.indexOf(
+    "\nfunction assertAutoplayOpeningWorldTrajectoryEvidence(",
+    runStart,
+  );
+  const runSource = source.slice(runStart, runEnd);
+  const recorderStartIndex = runSource.indexOf(
+    "await session.startAutoplayRouteCaptureRecorder(",
+  );
+  const observationWaitIndex = runSource.indexOf(
+    "const completion = await waitFor(",
+  );
 
-  assert.ok(captureStart >= 0 && captureEnd > captureStart);
+  assert.ok(
+    recordedStart >= 0 &&
+      recordedEnd > recordedStart &&
+      captureStart >= 0 &&
+      captureEnd > captureStart,
+  );
   assert.doesNotMatch(
-    routeWindowSource,
+    recordedSource,
     /captureScreenshot|Page\.captureScreenshot/,
-    "Route evidence must not await the blocking screenshot command.",
-  );
-  const genericCaptureSource = source.slice(
-    genericCaptureStart,
-    genericCaptureEnd,
-  );
-  assert.match(genericCaptureSource, /waitForAutoplayScreencastFrame\(/);
-  assert.match(
-    genericCaptureSource,
-    /screencastFrameIsBracketedByEpochProbes\(/,
+    "Proactive route evidence must not await the blocking screenshot command.",
   );
   assert.match(source, /decodePngPixels\(buffer\)/);
   assert.match(
-    routeWindowSource,
+    captureSource,
     /writeFile\(screenshot, captureWindow\.validated\.buffer\)/,
   );
   assert.match(source, /Page\.startScreencast/);
@@ -557,7 +473,12 @@ test("late foothold route samples require two coherent distinct screenshot windo
   );
   assert.doesNotMatch(source, /Page\.setWebLifecycleState/);
   assert.doesNotMatch(source, /Emulation\.setVirtualTimePolicy/);
-  assert.match(source, /async readAutoplayRouteProbe\(/);
+  assert.ok(
+    recorderStartIndex >= 0 && recorderStartIndex < observationWaitIndex,
+    "The in-page route recorder must start before the delayed Node observer loop.",
+  );
+  assert.match(runSource, /selectAutoplayRecordedRouteTrajectory\(/);
+  assert.doesNotMatch(runSource, /route\?\.active\s*&&[\s\S]*waitForAutoplayRecordedRouteTrajectory/);
   assert.doesNotMatch(
     captureSource,
     /readAutoplayDomAudit|readCameraProbe|readMapAgencyProbe/,
@@ -574,94 +495,21 @@ test("late foothold route samples require two coherent distinct screenshot windo
     /capturedAtEpochMs: beforeCapturedAtEpochMs/,
     "Route evidence must retain its before-probe wall-clock timestamp.",
   );
-  assert.match(source, /waitForDistinctAutoplayFootholdRouteProbe\(/);
   assert.match(source, /routeMidWindow\.before\.progress - routeStartWindow\.after\.progress/);
   assert.match(source, /routeMidWindow\.frame\.sequence > routeStartWindow\.frame\.sequence/);
-  const routeCaptureIndex = source.indexOf(
-    "const expectedRouteTarget =",
-    source.indexOf("const completion = await waitFor("),
-  );
-  const domSamplingIndex = source.indexOf(
-    "let sampleDom = null",
-    routeCaptureIndex,
-  );
-  assert.ok(
-    routeCaptureIndex >= 0 && routeCaptureIndex < domSamplingIndex,
-    "Route capture must run before optional DOM sampling can consume the route.",
-  );
-  assert.match(source, /assertAutoplayFootholdRouteCaptureGuard\(\);/);
-});
-
-test("route probes retain current overlay fallback while rejecting absent state", async () => {
-  const methodStart = source.indexOf("  async readAutoplayRouteProbe(");
-  const methodEnd = source.indexOf(
+  assert.match(source, /probeSource[\s\S]*movement-probe-recorder/);
+  const routeProbeMethodStart = source.indexOf("  async readAutoplayRouteProbe(");
+  const routeProbeMethodEnd = source.indexOf(
     "\n  async readAutoplayDomAudit(",
-    methodStart,
+    routeProbeMethodStart,
   );
-  const RouteProbeReader = Function(
-    `return class RouteProbeReader {${source.slice(methodStart, methodEnd)}};`,
-  )();
-  const reader = new RouteProbeReader();
-  const route = {
-    active: true,
-    legal: true,
-    progress: 0.42,
-    reachesDestination: true,
-    sampledPointsLegal: true,
-    targetLocationId: "tea-house",
-    visualObstaclesClear: true,
-  };
-  const evaluateWithProbeSources = ({ browserProbe, movementProbe }) =>
-    async (expression) => {
-      const scripts = new Map([
-        ["#ml-browser-movement-probe", movementProbe],
-        ["#ml-browser-probe", browserProbe],
-      ]);
-      const document = {
-        querySelector: (selector) => {
-          const payload = scripts.get(selector);
-          return payload === null || payload === undefined
-            ? null
-            : { textContent: JSON.stringify(payload) };
-        },
-      };
-      return Function(
-        "document",
-        "performance",
-        `return ${expression};`,
-      )(document, { now: () => 123 });
-    };
-
-  reader.evaluateForRead = evaluateWithProbeSources({
-    browserProbe: { movement: { playerRoute: route } },
-    movementProbe: null,
-  });
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const fallbackProbe = await reader.readAutoplayRouteProbe(
-      `persistent movement probe gap ${attempt}`,
-    );
-    assert.equal(fallbackProbe.source, "browser-probe-fallback");
-    assert.deepEqual(fallbackProbe.route, route);
-  }
-
-  reader.evaluateForRead = evaluateWithProbeSources({
-    browserProbe: null,
-    movementProbe: null,
-  });
-  assert.equal(
-    await reader.readAutoplayRouteProbe("genuinely absent route probe"),
-    null,
+  const routeProbeMethod = source.slice(
+    routeProbeMethodStart,
+    routeProbeMethodEnd,
   );
-
-  reader.evaluateForRead = evaluateWithProbeSources({
-    browserProbe: { movement: { playerRoute: { ...route, active: false } } },
-    movementProbe: null,
-  });
-  const staleFallback = await reader.readAutoplayRouteProbe(
-    "stale fallback route probe",
-  );
-  assert.equal(staleFallback.source, "browser-probe-fallback");
-  assert.equal(staleFallback.route.active, false);
+  assert.match(routeProbeMethod, /#ml-browser-movement-probe/);
+  assert.doesNotMatch(routeProbeMethod, /#ml-browser-probe|fallback/);
+  assert.match(source, /assertAutoplayFootholdRouteCaptureGuard\(\);/);
 });
 
 test("live frame acquisition retries HUD drift and transient unavailable probes", async () => {
@@ -1228,6 +1076,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME",
     "AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS",
     "AUTOPLAY_SCREENCAST_MAX_BUFFERED_FRAMES",
+    "AUTOPLAY_ROUTE_RECORDER_FRAME_HISTORY_MS",
+    "AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS",
+    "AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES",
     "CDP_WAIT_TIMEOUT_MS",
     "screencastFrameCapturedAtEpochMs",
     "withTimeout",
@@ -1238,6 +1089,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     4,
     60,
     4,
+    2_000,
+    125,
+    16,
     20,
     (frame) => frame?.metadata?.timestamp * 1_000,
     (promise, timeoutMs, message) =>

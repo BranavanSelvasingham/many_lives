@@ -91,8 +91,12 @@ const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
 const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_SAMPLE_INTERVAL_MS ?? "1250",
 );
-const AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS = 3;
-const AUTOPLAY_ROUTE_CAPTURE_PROBE_RETRY_DELAY_MS = 40;
+const AUTOPLAY_ROUTE_RECORDER_FRAME_HISTORY_MS = 20_000;
+const AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS = 125;
+const AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES = 160;
+const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
+const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
+const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
 const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
@@ -103,7 +107,6 @@ const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = Number(
 );
 const AUTOPLAY_SCREENCAST_MAX_BUFFERED_FRAMES = 4;
 const AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX = 0.75;
-const AUTOPLAY_ROUTE_MID_CAPTURE_WINDOW_MS = 3_000;
 const AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS = 0.1;
 const AUTOPLAY_DOM_AUDIT_INTERVAL_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_DOM_AUDIT_INTERVAL_MS ?? "5000",
@@ -1546,6 +1549,16 @@ class CdpSession {
                   : null,
               lastFrameCapturedAtEpochMs,
               lastSequence: this.screencast.lastSequence,
+              routeFrameHistoryCount:
+                this.screencast.routeFrameHistory.length,
+              routeFrameHistoryFirstCapturedAtEpochMs:
+                screencastFrameCapturedAtEpochMs(
+                  this.screencast.routeFrameHistory[0],
+                ),
+              routeFrameHistoryLastCapturedAtEpochMs:
+                screencastFrameCapturedAtEpochMs(
+                  this.screencast.routeFrameHistory.at(-1),
+                ),
               status: this.screencast.status,
               waiterCount: this.screencast.waiters.length,
             };
@@ -1736,48 +1749,28 @@ class CdpSession {
 
   async readAutoplayRouteProbe(label = "autoplay-route-probe") {
     const probe = await this.evaluateForRead(`(() => {
-      const parseProbe = (selector) => {
-        const script = document.querySelector(selector);
-        if (!script) {
-          return null;
-        }
-        try {
-          return JSON.parse(script.textContent || "null");
-        } catch (error) {
-          return { parseError: String(error), selector };
-        }
-      };
-      const liveMovement = parseProbe("#ml-browser-movement-probe");
-      if (liveMovement?.parseError) {
-        return liveMovement;
-      }
-      const browserProbe = liveMovement
-        ? null
-        : parseProbe("#ml-browser-probe");
-      if (browserProbe?.parseError) {
-        return browserProbe;
+      const script = document.querySelector("#ml-browser-movement-probe");
+      if (!script) {
+        return null;
       }
       try {
-        const movement = liveMovement ?? browserProbe?.movement ?? null;
-        const route = movement?.playerRoute ?? null;
+        const route = JSON.parse(script.textContent || "null")?.playerRoute ?? null;
         return route
           ? {
               capturedAtEpochMs: Date.now(),
               capturedAtMonotonicMs: performance.now(),
               route,
-              source: liveMovement
-                ? "movement-probe"
-                : "browser-probe-fallback"
+              source: "movement-probe"
             }
           : null;
       } catch (error) {
-        return { parseError: String(error), selector: "autoplay route probe" };
+        return { parseError: String(error) };
       }
     })()`, label);
 
     if (probe?.parseError) {
       throw new Error(
-        `Could not parse ${probe.selector ?? "autoplay route probe"}: ${probe.parseError}`,
+        `Could not parse #ml-browser-movement-probe: ${probe.parseError}`,
       );
     }
 
@@ -2997,6 +2990,258 @@ class CdpSession {
     })()`, label);
   }
 
+  async startAutoplayRouteCaptureRecorder({
+    expectedTargetLocationId,
+    label = "autoplay-route-recorder-start",
+  }) {
+    return this.evaluateForRead(`(() => {
+      const recorderKey = "__manyLivesAutoplayRouteCaptureRecorder";
+      const previous = window[recorderKey];
+      if (previous?.intervalId) {
+        window.clearInterval(previous.intervalId);
+      }
+      const expectedTargetLocationId = ${JSON.stringify(expectedTargetLocationId)};
+      const maxSnapshots = ${AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS};
+      const state = {
+        acceptedCount: 0,
+        expectedTargetLocationId,
+        intervalId: null,
+        lastObservedRoute: null,
+        parseErrorCount: 0,
+        rejectedCount: 0,
+        samples: [],
+        startedAtEpochMs: Date.now(),
+        status: "active",
+        unavailableCount: 0
+      };
+      const readPaintProbe = () => {
+        const selectors = [
+          ["hud", ".ml-time-chip"],
+          ["dock", ".ml-dock-button"],
+          ["rail", ".ml-rail-name"],
+          ["rail", ".ml-rail-thought"],
+          ["rail", ".ml-command-rail .ml-kicker"]
+        ];
+        const regions = selectors.flatMap(([surface, selector]) =>
+          Array.from(document.querySelectorAll(selector)).flatMap((element) => {
+            const style = window.getComputedStyle(element);
+            if (style.visibility === "hidden" || style.display === "none") {
+              return [];
+            }
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+            const textRegions = [];
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              const text = node.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+              if (!text) {
+                continue;
+              }
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              const rect = range.getBoundingClientRect();
+              if (rect.width <= 0 || rect.height <= 0) {
+                continue;
+              }
+              const insideViewport =
+                rect.left >= 0 &&
+                rect.right <= window.innerWidth &&
+                rect.top >= 0 &&
+                rect.bottom <= window.innerHeight;
+              const insideClippingAncestors = (() => {
+                for (
+                  let ancestor = element.parentElement;
+                  ancestor;
+                  ancestor = ancestor.parentElement
+                ) {
+                  const ancestorStyle = window.getComputedStyle(ancestor);
+                  const clips = [
+                    ancestorStyle.overflow,
+                    ancestorStyle.overflowX,
+                    ancestorStyle.overflowY
+                  ].some((value) =>
+                    ["hidden", "clip", "scroll", "auto"].includes(value)
+                  );
+                  if (!clips) {
+                    continue;
+                  }
+                  const ancestorRect = ancestor.getBoundingClientRect();
+                  if (
+                    rect.left < ancestorRect.left ||
+                    rect.right > ancestorRect.right ||
+                    rect.top < ancestorRect.top ||
+                    rect.bottom > ancestorRect.bottom
+                  ) {
+                    return false;
+                  }
+                }
+                return true;
+              })();
+              if (!insideViewport || !insideClippingAncestors) {
+                continue;
+              }
+              textRegions.push({
+                rect: {
+                  bottom: rect.bottom,
+                  left: rect.left,
+                  right: rect.right,
+                  top: rect.top
+                },
+                surface,
+                text
+              });
+            }
+            return textRegions;
+          })
+        );
+        const stableRegions = Array.from(
+          document.querySelectorAll(".ml-time-pill"),
+        ).flatMap((element) => {
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          if (
+            style.visibility === "hidden" ||
+            style.display === "none" ||
+            rect.width <= 0 ||
+            rect.height <= 0 ||
+            rect.left < 0 ||
+            rect.right > window.innerWidth ||
+            rect.top < 0 ||
+            rect.bottom > window.innerHeight
+          ) {
+            return [];
+          }
+          return [{
+            rect: {
+              bottom: rect.bottom,
+              left: rect.left,
+              right: rect.right,
+              top: rect.top
+            },
+            surface: "hud",
+            text: (element.innerText ?? element.textContent ?? "")
+              .replace(/\\s+/g, " ")
+              .trim()
+          }];
+        });
+        return {
+          capturedAtEpochMs: Date.now(),
+          regions,
+          stableRegions,
+          viewport: { height: window.innerHeight, width: window.innerWidth }
+        };
+      };
+      const sample = () => {
+        const capturedAtEpochMs = Date.now();
+        const capturedAtMonotonicMs = performance.now();
+        const script = document.querySelector("#ml-browser-movement-probe");
+        if (!script) {
+          state.unavailableCount += 1;
+          return;
+        }
+        let route = null;
+        try {
+          route = JSON.parse(script.textContent || "null")?.playerRoute ?? null;
+        } catch {
+          state.parseErrorCount += 1;
+          return;
+        }
+        state.lastObservedRoute = route
+          ? {
+              active: route.active === true,
+              progress: route.progress ?? null,
+              targetLocationId: route.targetLocationId ?? null
+            }
+          : null;
+        const acceptable = Boolean(
+          route?.active === true &&
+            route.targetLocationId === expectedTargetLocationId &&
+            typeof route.progress === "number" &&
+            Number.isFinite(route.progress) &&
+            route.progress >= 0 &&
+            route.progress < 1 &&
+            route.legal === true &&
+            route.reachesDestination === true &&
+            route.sampledPointsLegal === true &&
+            route.visualObstaclesClear === true
+        );
+        if (!acceptable) {
+          state.rejectedCount += 1;
+          return;
+        }
+        state.samples.push({
+          capturedAtEpochMs,
+          capturedAtMonotonicMs,
+          paintProbe: readPaintProbe(),
+          route,
+          source: "movement-probe-recorder"
+        });
+        state.acceptedCount += 1;
+        if (state.samples.length > maxSnapshots) {
+          state.samples.splice(0, state.samples.length - maxSnapshots);
+        }
+      };
+      state.intervalId = window.setInterval(
+        sample,
+        ${AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS},
+      );
+      window[recorderKey] = state;
+      sample();
+      return {
+        expectedTargetLocationId,
+        startedAtEpochMs: state.startedAtEpochMs,
+        status: state.status
+      };
+    })()`, label);
+  }
+
+  async readAutoplayRouteCaptureRecorder(
+    label = "autoplay-route-recorder-read",
+  ) {
+    return this.evaluateForRead(`(() => {
+      const state = window.__manyLivesAutoplayRouteCaptureRecorder;
+      if (!state) {
+        return null;
+      }
+      return {
+        acceptedCount: state.acceptedCount,
+        expectedTargetLocationId: state.expectedTargetLocationId,
+        lastObservedRoute: state.lastObservedRoute,
+        parseErrorCount: state.parseErrorCount,
+        rejectedCount: state.rejectedCount,
+        samples: state.samples,
+        startedAtEpochMs: state.startedAtEpochMs,
+        status: state.status,
+        unavailableCount: state.unavailableCount
+      };
+    })()`, label);
+  }
+
+  async stopAutoplayRouteCaptureRecorder(
+    label = "autoplay-route-recorder-stop",
+  ) {
+    return this.evaluateForRead(`(() => {
+      const state = window.__manyLivesAutoplayRouteCaptureRecorder;
+      if (!state) {
+        return null;
+      }
+      if (state.intervalId) {
+        window.clearInterval(state.intervalId);
+        state.intervalId = null;
+      }
+      state.status = "stopped";
+      return {
+        acceptedCount: state.acceptedCount,
+        expectedTargetLocationId: state.expectedTargetLocationId,
+        lastObservedRoute: state.lastObservedRoute,
+        parseErrorCount: state.parseErrorCount,
+        rejectedCount: state.rejectedCount,
+        sampleCount: state.samples.length,
+        startedAtEpochMs: state.startedAtEpochMs,
+        status: state.status,
+        unavailableCount: state.unavailableCount
+      };
+    })()`, label);
+  }
+
   async startAutoplayScreencast() {
     assert.ok(
       !this.screencast,
@@ -3008,6 +3253,7 @@ class CdpSession {
       generation: this.screencastGeneration + 1,
       ignoredFrameCount: 0,
       lastSequence: 0,
+      routeFrameHistory: [],
       startedAtEpochMs: Date.now(),
       status: "starting",
       waiters: [],
@@ -3064,6 +3310,10 @@ class CdpSession {
 
   autoplayScreencastSequence() {
     return this.screencast?.lastSequence ?? 0;
+  }
+
+  autoplayRouteFrameHistory() {
+    return [...(this.screencast?.routeFrameHistory ?? [])];
   }
 
   waitForAutoplayScreencastFrame({
@@ -3158,6 +3408,26 @@ class CdpSession {
     state.frames.push(frame);
     if (state.frames.length > AUTOPLAY_SCREENCAST_MAX_BUFFERED_FRAMES) {
       state.frames.shift();
+    }
+    const lastRouteFrame = state.routeFrameHistory.at(-1) ?? null;
+    const lastRouteFrameCapturedAtEpochMs =
+      screencastFrameCapturedAtEpochMs(lastRouteFrame);
+    if (
+      lastRouteFrameCapturedAtEpochMs === null ||
+      capturedAtEpochMs - lastRouteFrameCapturedAtEpochMs >=
+        AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS
+    ) {
+      state.routeFrameHistory.push(frame);
+    }
+    const oldestAcceptedRouteFrameEpochMs =
+      capturedAtEpochMs - AUTOPLAY_ROUTE_RECORDER_FRAME_HISTORY_MS;
+    while (
+      state.routeFrameHistory.length > 0 &&
+      (state.routeFrameHistory.length > AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES ||
+        screencastFrameCapturedAtEpochMs(state.routeFrameHistory[0]) <
+          oldestAcceptedRouteFrameEpochMs)
+    ) {
+      state.routeFrameHistory.shift();
     }
 
     for (const waiter of [...state.waiters]) {
@@ -12880,101 +13150,280 @@ async function captureAutoplayLiveTrajectoryMilestone({
   };
 }
 
-async function readAutoplayRouteCaptureProbe({ label, session }) {
-  for (
-    let attempt = 1;
-    attempt <= AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS;
-    attempt += 1
-  ) {
-    const route = await session
-      .readAutoplayRouteProbe(`${label}:attempt-${attempt}`)
-      .catch(() => null);
-    if (route) {
-      return route;
-    }
-    if (attempt < AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS) {
-      await sleep(AUTOPLAY_ROUTE_CAPTURE_PROBE_RETRY_DELAY_MS);
-    }
-  }
-  return null;
-}
-
-async function acquireAutoplayRouteScreencastWindow({
+function buildAutoplayRecordedRouteWindowCandidates({
   expectedTargetLocationId,
-  hudReference = null,
-  initialRoute,
-  label,
-  session,
+  frames,
+  samples,
 }) {
-  const captureWindow = await acquireAutoplayScreencastFrameWindow({
-    initialProbe: { route: initialRoute },
-    isCaptureWindowCoherent: (beforeProbe, afterProbe) =>
-      autoplayRouteCaptureWindowCoherent(
+  const legalSamples = (samples ?? [])
+    .filter(
+      (sample) =>
+        sample?.source === "movement-probe-recorder" &&
+        typeof sample.capturedAtEpochMs === "number" &&
+        isAutoplayFootholdRouteFrame(
+          sample.route,
+          expectedTargetLocationId,
+        ),
+    )
+    .sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs);
+  const eligibleFrames = (frames ?? [])
+    .filter(
+      (frame) =>
+        typeof screencastFrameCapturedAtEpochMs(frame) === "number",
+    )
+    .sort(
+      (left, right) =>
+        screencastFrameCapturedAtEpochMs(left) -
+        screencastFrameCapturedAtEpochMs(right),
+    );
+  const windows = [];
+
+  for (let frameIndex = 0; frameIndex < eligibleFrames.length; frameIndex += 1) {
+    const candidateFrame = eligibleFrames[frameIndex];
+    const candidateCapturedAtEpochMs =
+      screencastFrameCapturedAtEpochMs(candidateFrame);
+    const confirmationFrame = eligibleFrames
+      .slice(frameIndex + 1)
+      .find(
+        (frame) =>
+          screencastFrameCapturedAtEpochMs(frame) >=
+          candidateCapturedAtEpochMs +
+            AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      );
+    if (!confirmationFrame) {
+      continue;
+    }
+    const confirmationCapturedAtEpochMs =
+      screencastFrameCapturedAtEpochMs(confirmationFrame);
+    const beforeProbe = legalSamples
+      .filter(
+        (sample) =>
+          sample.capturedAtEpochMs <=
+          candidateCapturedAtEpochMs -
+            AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      )
+      .at(-1);
+    const afterProbe = legalSamples.find(
+      (sample) =>
+        sample.capturedAtEpochMs >= confirmationCapturedAtEpochMs,
+    );
+    if (
+      !beforeProbe ||
+      !afterProbe ||
+      !autoplayRouteCaptureWindowCoherent(
         beforeProbe.route,
         afterProbe.route,
         expectedTargetLocationId,
-      ),
-    isInitialProbeCoherent: (_initialProbe, beforeProbe) =>
-      autoplayRouteCaptureWindowCoherent(
-        initialRoute,
-        beforeProbe.route,
-        expectedTargetLocationId,
-      ),
+      ) ||
+      !screencastFrameIsBracketedByEpochProbes(
+        candidateFrame,
+        beforeProbe,
+        afterProbe,
+      ) ||
+      !screencastFrameIsBracketedByEpochProbes(
+        confirmationFrame,
+        beforeProbe,
+        afterProbe,
+      )
+    ) {
+      continue;
+    }
+    windows.push({
+      afterProbe,
+      beforeProbe,
+      candidateFrame,
+      confirmationFrame,
+    });
+  }
+
+  return windows;
+}
+
+function validateAutoplayRecordedRouteWindow({
+  hudReference = null,
+  label,
+  recordedWindow,
+  validateFrame = validateAutoplayScreencastFrame,
+  validateStableFramePair = assertStableAutoplayScreencastFramePair,
+}) {
+  const paintProbe = requireStableAutoplayScreenshotPaintProbe(
+    recordedWindow.beforeProbe.paintProbe,
+    recordedWindow.afterProbe.paintProbe,
     label,
-    readProbe: (probeLabel) =>
-      readAutoplayRouteCaptureProbe({ label: probeLabel, session }),
-    session,
-    validateStableFramePair: (options) => ({
-      ...assertStableAutoplayScreencastFramePair(options),
-      ...assertAutoplayRouteHudContinuity({
-        ...options,
-        hudReference,
-      }),
-    }),
+  );
+  const candidateValidated = validateFrame({
+    frame: recordedWindow.candidateFrame,
+    label,
+    paintProbe,
   });
+  const confirmationValidated = validateFrame({
+    frame: recordedWindow.confirmationFrame,
+    label,
+    paintProbe,
+  });
+  const frameStability = {
+    ...validateStableFramePair({
+      afterBuffer: confirmationValidated.buffer,
+      beforeBuffer: candidateValidated.buffer,
+      label,
+      paintProbe: confirmationValidated.paintProbe,
+    }),
+    ...(hudReference
+      ? assertAutoplayRouteHudContinuity({
+          afterBuffer: confirmationValidated.buffer,
+          beforeBuffer: candidateValidated.buffer,
+          hudReference,
+          label,
+          paintProbe: confirmationValidated.paintProbe,
+        })
+      : {}),
+  };
   return {
-    ...captureWindow,
-    afterProbeSource: captureWindow.afterProbe.source ?? null,
-    afterRoute: captureWindow.afterProbe.route,
-    beforeProbeSource: captureWindow.beforeProbe.source ?? null,
-    beforeRoute: captureWindow.beforeProbe.route,
+    afterProbe: recordedWindow.afterProbe,
+    beforeProbe: recordedWindow.beforeProbe,
+    frame: recordedWindow.confirmationFrame,
+    validated: {
+      ...confirmationValidated,
+      textPaint: {
+        ...confirmationValidated.textPaint,
+        ...frameStability,
+      },
+    },
   };
 }
 
-async function captureAutoplayRouteScreenshotWindow({
+function selectAutoplayRecordedRouteTrajectory({
   expectedTargetLocationId,
-  hudReference = null,
-  initialRoute,
+  frames,
   label,
-  screenshot,
+  samples,
+  validateFrame = validateAutoplayScreencastFrame,
+  validateStableFramePair = assertStableAutoplayScreencastFramePair,
+}) {
+  const candidates = buildAutoplayRecordedRouteWindowCandidates({
+    expectedTargetLocationId,
+    frames,
+    samples,
+  });
+  let lastError = null;
+
+  for (const startCandidate of candidates) {
+    let start;
+    try {
+      start = validateAutoplayRecordedRouteWindow({
+        label: `${label} route-start`,
+        recordedWindow: startCandidate,
+        validateFrame,
+        validateStableFramePair,
+      });
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+    const hudReference = {
+      buffer: start.validated.buffer,
+      paintProbe: start.validated.paintProbe,
+    };
+    for (const midCandidate of candidates) {
+      if (
+        midCandidate.confirmationFrame.sequence <= start.frame.sequence ||
+        midCandidate.beforeProbe.route.progress -
+            start.afterProbe.route.progress <
+          AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
+      ) {
+        continue;
+      }
+      try {
+        const mid = validateAutoplayRecordedRouteWindow({
+          hudReference,
+          label: `${label} route-mid`,
+          recordedWindow: midCandidate,
+          validateFrame,
+          validateStableFramePair,
+        });
+        return { mid, start };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error(
+    `${label}: proactive recorder did not contain two distinct legal route frame windows. Legal snapshots: ${(samples ?? []).filter((sample) => sample?.source === "movement-probe-recorder" && isAutoplayFootholdRouteFrame(sample.route, expectedTargetLocationId)).length}. Historical frames: ${(frames ?? []).length}.`,
+  );
+}
+
+async function waitForAutoplayRecordedRouteTrajectory({
+  expectedTargetLocationId,
+  label,
   session,
 }) {
-  const captureWindow =
-    await acquireAutoplayRouteScreencastWindow({
-      expectedTargetLocationId,
-      hudReference,
-      initialRoute,
-      label,
-      session,
-    });
+  const startedAt = Date.now();
+  let lastError = null;
+  let lastRecorder = null;
+
+  while (Date.now() - startedAt < AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS) {
+    try {
+      lastRecorder = await session.readAutoplayRouteCaptureRecorder(
+        `${slug(label)}:recorder-read`,
+      );
+      return selectAutoplayRecordedRouteTrajectory({
+        expectedTargetLocationId,
+        frames: session.autoplayRouteFrameHistory(),
+        label,
+        samples: lastRecorder?.samples ?? [],
+      });
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(180);
+  }
+
+  const recorderDiagnostics = lastRecorder
+    ? {
+        acceptedCount: lastRecorder.acceptedCount,
+        expectedTargetLocationId: lastRecorder.expectedTargetLocationId,
+        lastObservedRoute: lastRecorder.lastObservedRoute,
+        parseErrorCount: lastRecorder.parseErrorCount,
+        rejectedCount: lastRecorder.rejectedCount,
+        sampleCount: lastRecorder.samples?.length ?? 0,
+        startedAtEpochMs: lastRecorder.startedAtEpochMs,
+        status: lastRecorder.status,
+        unavailableCount: lastRecorder.unavailableCount,
+      }
+    : null;
+  throw new Error(
+    `${label}: timed out after ${AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS}ms waiting for two proactive route frame windows. Recorder diagnostics: ${JSON.stringify(recorderDiagnostics)}. CDP diagnostics: ${JSON.stringify(session.cdpDiagnosticSnapshot?.() ?? null)}. Last validation error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
+}
+
+async function captureAutoplayRouteScreenshotWindow({
+  label,
+  recordedCaptureWindow = null,
+  screenshot,
+}) {
+  assert.ok(
+    recordedCaptureWindow,
+    `${label}: proactive route capture window was unavailable.`,
+  );
+  const captureWindow = recordedCaptureWindow;
   await writeFile(screenshot, captureWindow.validated.buffer);
 
   return {
     afterCapturedAtEpochMs: cdpProbeCapturedAtEpochMs(
       captureWindow.afterProbe,
     ),
-    afterProbeSource: captureWindow.afterProbeSource,
-    afterRoute: captureWindow.afterRoute,
+    afterProbeSource: captureWindow.afterProbe.source ?? null,
+    afterRoute: captureWindow.afterProbe.route,
     beforeCapturedAtEpochMs: cdpProbeCapturedAtEpochMs(
       captureWindow.beforeProbe,
     ),
-    beforeProbeSource: captureWindow.beforeProbeSource,
-    beforeRoute: captureWindow.beforeRoute,
+    beforeProbeSource: captureWindow.beforeProbe.source ?? null,
+    beforeRoute: captureWindow.beforeProbe.route,
     frame: compactAutoplayScreencastCaptureWindow(captureWindow).frame,
-    hudReference: {
-      buffer: captureWindow.validated.buffer,
-      paintProbe: captureWindow.validated.paintProbe,
-    },
     textPaint: captureWindow.validated.textPaint,
   };
 }
@@ -12982,17 +13431,15 @@ async function captureAutoplayRouteScreenshotWindow({
 async function captureAutoplayRouteTrajectoryMilestone({
   dom,
   expectedTargetLocationId,
-  hudReference = null,
   key,
   openingWorldVariant,
-  probe,
-  session,
+  recordedCaptureWindow = null,
 }) {
   const label = `${openingWorldVariant} autoplay ${key}`;
-  const beforeRoute = probe?.movement?.playerRoute ?? null;
+  const beforeRoute = recordedCaptureWindow?.beforeProbe?.route ?? null;
   assert.ok(
     isAutoplayFootholdRouteFrame(beforeRoute, expectedTargetLocationId),
-    `${label}: route frame was not active, legal, and targeted at ${expectedTargetLocationId} before capture.`,
+    `${label}: recorded route frame was not active, legal, and targeted at ${expectedTargetLocationId} before capture.`,
   );
 
   const screenshot = path.join(
@@ -13007,21 +13454,15 @@ async function captureAutoplayRouteTrajectoryMilestone({
     beforeProbeSource,
     beforeRoute: screenshotBeforeRoute,
     frame: screencastFrame,
-    hudReference: acceptedHudReference,
     textPaint,
   } =
     await captureAutoplayRouteScreenshotWindow({
-      expectedTargetLocationId,
-      hudReference,
-      initialRoute: beforeRoute,
       label,
+      recordedCaptureWindow,
       screenshot,
-      session,
     });
   const afterProbe = {
-    ...probe,
     movement: {
-      ...(probe?.movement ?? {}),
       playerRoute: afterRoute,
     },
   };
@@ -13030,20 +13471,14 @@ async function captureAutoplayRouteTrajectoryMilestone({
   if (visibleDom) {
     assertNoVisibleImplementationLanguage(label, visibleDom.bodyText ?? "");
   }
-  if (afterProbe?.autonomy?.planningTrace) {
-    assertVisibleDecisionArtifactPayload(
-      label,
-      afterProbe.autonomy.visibleDecisionArtifact,
-    );
-  }
 
   return {
     evidence: {
-      autonomyLabel: afterProbe?.autonomy?.label ?? null,
+      autonomyLabel: null,
       camera: null,
-      clock: afterProbe?.clock ?? null,
+      clock: null,
       key,
-      location: afterProbe?.location ?? null,
+      location: null,
       mapAgency: null,
       playerRoute: compactAutoplayPlayerRoute(afterProbe),
       routeCaptureWindow: {
@@ -13068,53 +13503,11 @@ async function captureAutoplayRouteTrajectoryMilestone({
         320,
       ),
       visibleDecisionArtifact: compactVisibleDecisionArtifact(
-        afterProbe?.autonomy?.visibleDecisionArtifact ??
-          afterProbe?.rail?.visibleDecisionArtifact ??
-          null,
+        null,
       ),
     },
-    hudReference: acceptedHudReference,
     probe: afterProbe,
   };
-}
-
-async function waitForDistinctAutoplayFootholdRouteProbe({
-  expectedTargetLocationId,
-  routeStartProgress,
-  session,
-}) {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < AUTOPLAY_ROUTE_MID_CAPTURE_WINDOW_MS) {
-    const probe = acceptedAutoplayPacingProbe(
-      await session
-        .readAutoplayPacingProbe("autoplay:foothold-route-mid-probe")
-        .catch(() => null),
-    );
-    if (!probe) {
-      await sleep(PROBE_POLL_INTERVAL_MS);
-      continue;
-    }
-    const route = probe?.movement?.playerRoute;
-    if (
-      !route?.active ||
-      route.targetLocationId !== expectedTargetLocationId
-    ) {
-      return null;
-    }
-    if (
-      nextAutoplayFootholdRouteMilestone({
-        capturedRouteMid: false,
-        capturedRouteStart: true,
-        expectedTargetLocationId,
-        route,
-        routeStartProgress,
-      }) === "foothold-route-mid"
-    ) {
-      return probe;
-    }
-    await sleep(PROBE_POLL_INTERVAL_MS);
-  }
-  return null;
 }
 
 async function runAutoplayObservation(session, { game, openingWorldVariant }) {
@@ -13141,8 +13534,6 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   let lastProbeSignature = null;
   const trajectoryMilestones = [];
   const capturedMilestoneKeys = new Set();
-  let footholdRouteHudReference = null;
-  let footholdRouteStartProgress = null;
   let autoplayScreencastStarted = false;
   let visibleCopyAuditCount = 0;
   const captureFrozenMilestoneOnce = async (
@@ -13181,36 +13572,24 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   };
   const captureRouteMilestoneOnce = async (
     key,
-    probe,
     expectedTargetLocationId,
     milestoneDom = null,
+    recordedCaptureWindow = null,
   ) => {
     if (capturedMilestoneKeys.has(key)) {
       return {
         evidence:
           trajectoryMilestones.find((entry) => entry.key === key) ?? null,
-        probe,
+        probe: null,
       };
-    }
-    if (key === "foothold-route-mid") {
-      assert.ok(
-        footholdRouteHudReference,
-        `${openingWorldVariant}: route-mid capture was missing its accepted route-start HUD reference.`,
-      );
     }
     const captured = await captureAutoplayRouteTrajectoryMilestone({
       dom: milestoneDom,
       expectedTargetLocationId,
-      hudReference:
-        key === "foothold-route-mid" ? footholdRouteHudReference : null,
       key,
       openingWorldVariant,
-      probe,
-      session,
+      recordedCaptureWindow,
     });
-    if (key === "foothold-route-start") {
-      footholdRouteHudReference = captured.hudReference;
-    }
     capturedMilestoneKeys.add(key);
     trajectoryMilestones.push(captured.evidence);
     return captured;
@@ -13319,10 +13698,19 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   let screenshotPath = null;
   let completedProbe = null;
   let dom = null;
+  const expectedRouteTarget =
+    OPENING_WORLD_TRAJECTORY_EXPECTATIONS[openingWorldVariant]
+      .footholdRouteTargetId;
+  let autoplayRouteRecorderStarted = false;
 
   await session.startAutoplayScreencast();
   autoplayScreencastStarted = true;
   try {
+    await session.startAutoplayRouteCaptureRecorder({
+      expectedTargetLocationId: expectedRouteTarget,
+      label: `${openingWorldVariant}:autoplay:route-recorder-start`,
+    });
+    autoplayRouteRecorderStarted = true;
     const completion = await waitFor(
       async () => {
         const probe = acceptedAutoplayPacingProbe(
@@ -13334,50 +13722,61 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
           return false;
         }
 
-        const expectedRouteTarget =
-          OPENING_WORLD_TRAJECTORY_EXPECTATIONS[openingWorldVariant]
-            .footholdRouteTargetId;
-        const route = probe?.movement?.playerRoute;
-        if (route?.active && route.targetLocationId === expectedRouteTarget) {
-          const nextRouteMilestone = nextAutoplayFootholdRouteMilestone({
-            capturedRouteMid: capturedMilestoneKeys.has("foothold-route-mid"),
-            capturedRouteStart: capturedMilestoneKeys.has(
-              "foothold-route-start",
-            ),
-            expectedTargetLocationId: expectedRouteTarget,
-            route,
-            routeStartProgress: footholdRouteStartProgress,
-          });
-          if (nextRouteMilestone === "foothold-route-start") {
-            const routeStart = await captureRouteMilestoneOnce(
-              "foothold-route-start",
-              probe,
-              expectedRouteTarget,
-            );
-            footholdRouteStartProgress =
-              routeStart.evidence?.routeCaptureWindow?.after?.progress ??
-              routeStart.evidence?.playerRoute?.progress ??
-              null;
-            const distinctRouteProbe =
-              await waitForDistinctAutoplayFootholdRouteProbe({
-                expectedTargetLocationId: expectedRouteTarget,
-                routeStartProgress: footholdRouteStartProgress,
-                session,
-              });
-            if (distinctRouteProbe) {
-              await captureRouteMilestoneOnce(
-                "foothold-route-mid",
-                distinctRouteProbe,
-                expectedRouteTarget,
+        if (!capturedMilestoneKeys.has("foothold-route-start")) {
+          const recordedTrajectory = await (async () => {
+            try {
+              const recorder = await session.readAutoplayRouteCaptureRecorder(
+                `${openingWorldVariant}:autoplay:route-recorder-read`,
               );
+              return selectAutoplayRecordedRouteTrajectory({
+                expectedTargetLocationId: expectedRouteTarget,
+                frames: session.autoplayRouteFrameHistory(),
+                label: `${openingWorldVariant} autoplay foothold route`,
+                samples: recorder?.samples ?? [],
+              });
+            } catch {
+              return null;
             }
-          } else if (nextRouteMilestone === "foothold-route-mid") {
+          })();
+          if (recordedTrajectory) {
+            await captureRouteMilestoneOnce(
+              "foothold-route-start",
+              expectedRouteTarget,
+              null,
+              recordedTrajectory.start,
+            );
             await captureRouteMilestoneOnce(
               "foothold-route-mid",
-              probe,
               expectedRouteTarget,
+              null,
+              recordedTrajectory.mid,
             );
           }
+        }
+
+        if (
+          (probe?.firstAfternoon?.completedAt ||
+            /first afternoon complete/i.test(probe?.autonomy?.label ?? "")) &&
+          !capturedMilestoneKeys.has("foothold-route-start")
+        ) {
+          const recordedTrajectory =
+            await waitForAutoplayRecordedRouteTrajectory({
+              expectedTargetLocationId: expectedRouteTarget,
+              label: `${openingWorldVariant} autoplay completed foothold route`,
+              session,
+            });
+          await captureRouteMilestoneOnce(
+            "foothold-route-start",
+            expectedRouteTarget,
+            null,
+            recordedTrajectory.start,
+          );
+          await captureRouteMilestoneOnce(
+            "foothold-route-mid",
+            expectedRouteTarget,
+            null,
+            recordedTrajectory.mid,
+          );
         }
 
         let sampleDom = null;
@@ -13631,6 +14030,18 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     pacingFailure = error instanceof Error ? error.stack ?? error.message : String(error);
     throw error;
   } finally {
+    if (autoplayRouteRecorderStarted) {
+      await session
+        .stopAutoplayRouteCaptureRecorder(
+          `${openingWorldVariant}:autoplay:route-recorder-stop`,
+        )
+        .catch((error) => {
+          if (!pacingFailure) {
+            throw error;
+          }
+        });
+      autoplayRouteRecorderStarted = false;
+    }
     if (autoplayScreencastStarted) {
       await session.stopAutoplayScreencast().catch((error) => {
         if (!pacingFailure) {
@@ -13738,6 +14149,16 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
     ["route-start", routeStartWindow],
     ["route-mid", routeMidWindow],
   ]) {
+    assert.equal(
+      window?.before?.probeSource,
+      "movement-probe-recorder",
+      `${evidence.openingWorldVariant}: ${label} before-state did not come from the proactive movement recorder. Evidence: ${evidencePath}.`,
+    );
+    assert.equal(
+      window?.after?.probeSource,
+      "movement-probe-recorder",
+      `${evidence.openingWorldVariant}: ${label} after-state did not come from the proactive movement recorder. Evidence: ${evidencePath}.`,
+    );
     assert.ok(
       autoplayRouteCaptureWindowCoherent(
         window?.before,
