@@ -14,6 +14,20 @@ const overlayDomStateSource = await readFile(
   ),
   "utf8",
 );
+const streetRuntimeSource = await readFile(
+  new URL(
+    "../apps/many-lives-web/src/components/street/PhaserStreetGameApp.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const rowanPlaybackSource = await readFile(
+  new URL(
+    "../apps/many-lives-web/src/lib/street/rowanPlayback.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const assertionStart = source.indexOf(
   "function assertReadableFirstAfternoonDwell(",
 );
@@ -138,6 +152,64 @@ test("first-afternoon pacing enforces the app-monotonic duration window with sam
   assert.match(
     source,
     /AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS \+\s*AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS \+\s*1/,
+  );
+});
+
+test("first-afternoon pacing keeps the full route budget contract strict", () => {
+  assert.match(
+    source,
+    /MANY_LIVES_BROWSER_AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS \?\? "15000"/,
+  );
+  assert.match(
+    pacingAssertionSource,
+    /ledger\.maxInAppGapMs <= AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS/,
+  );
+  assert.match(
+    pacingAssertionSource,
+    /ledger\.minimumPlaybackCardDwellMs >=\s*AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS/,
+  );
+  assert.match(
+    pacingAssertionSource,
+    /assertAutoplayFirstAfternoonDuration\(\s*ledger\.firstAfternoonCompletedAppElapsedMs,/,
+  );
+});
+
+test("first-afternoon runtime floor keeps real elapsed time across reloads", () => {
+  assert.match(
+    rowanPlaybackSource,
+    /many-lives:street-first-afternoon-start:/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /storage\.getItem\(storageKey\)/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /readOrCreateRowanWatchFirstAfternoonPresentationStart\([\s\S]*window\.sessionStorage,[\s\S]*Date\.now\(\)/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /const presentationElapsedMs =[\s\S]*rowanWatchFirstAfternoonPresentationElapsedMs\([\s\S]*Date\.now\(\)/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /autoContinueDelayMsForBeat\(game, \{\s*presentationElapsedMs,/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /reconcileAutoContinueBeatTiming\([\s\S]*intendedDelayMs,[\s\S]*timingNowMs/,
+  );
+  assert.doesNotMatch(
+    streetRuntimeSource,
+    /autoContinueDelayMsForBeat\(game, \{\s*beatStartedAtMs,/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /rowanWatchDelayForFirstAfternoonFloor\([\s\S]*presentationElapsedMs: number \| undefined/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /intendedDelayMs < current\.intendedDelayMs[\s\S]*\? nowMs[\s\S]*: current\.startedAtMs/,
   );
 });
 

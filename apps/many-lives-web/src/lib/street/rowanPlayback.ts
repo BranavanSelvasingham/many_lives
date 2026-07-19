@@ -44,7 +44,7 @@ export const ROWAN_WATCH_PRESENTATION_TIMING_MS = {
   timePassageCard: 4_500,
 } as const;
 
-export const ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS = {
+export const ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS = {
   acting: 6_200,
   conversation: 10_800,
   drainedMoving: 3_200,
@@ -52,8 +52,133 @@ export const ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS = {
   waiting: 6_200,
 } as const;
 
+export const ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS = 182_000;
+export const ROWAN_WATCH_FIRST_AFTERNOON_PRESENTATION_START_PREFIX =
+  "many-lives:street-first-afternoon-start:";
+
+type RowanWatchPresentationStartStorage = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+};
+
+type AutoContinueBeatTiming = {
+  intendedDelayMs: number;
+  key: string;
+  startedAtMs: number;
+};
+
+export function reconcileAutoContinueBeatTiming(
+  current: AutoContinueBeatTiming | null,
+  key: string,
+  intendedDelayMs: number,
+  nowMs: number,
+): AutoContinueBeatTiming {
+  if (!current || current.key !== key) {
+    return { intendedDelayMs, key, startedAtMs: nowMs };
+  }
+  if (current.intendedDelayMs === intendedDelayMs) {
+    return current;
+  }
+
+  return {
+    ...current,
+    intendedDelayMs,
+    startedAtMs:
+      intendedDelayMs < current.intendedDelayMs
+        ? nowMs
+        : current.startedAtMs,
+  };
+}
+
+export function readOrCreateRowanWatchFirstAfternoonPresentationStart(
+  gameId: string,
+  storage: RowanWatchPresentationStartStorage,
+  nowEpochMs: number,
+) {
+  const storageKey =
+    `${ROWAN_WATCH_FIRST_AFTERNOON_PRESENTATION_START_PREFIX}${gameId}`;
+  try {
+    const stored = Number(storage.getItem(storageKey));
+    if (Number.isFinite(stored) && stored > 0 && stored <= nowEpochMs) {
+      return stored;
+    }
+    storage.setItem(storageKey, String(nowEpochMs));
+  } catch {
+    // A page-local epoch still protects pacing when session storage is unavailable.
+  }
+  return nowEpochMs;
+}
+
+export function rowanWatchFirstAfternoonPresentationElapsedMs(
+  startedAtEpochMs: number | undefined,
+  nowEpochMs: number,
+) {
+  if (
+    startedAtEpochMs === undefined ||
+    !Number.isFinite(startedAtEpochMs) ||
+    !Number.isFinite(nowEpochMs) ||
+    startedAtEpochMs <= 0 ||
+    nowEpochMs < startedAtEpochMs
+  ) {
+    return undefined;
+  }
+
+  return nowEpochMs - startedAtEpochMs;
+}
+
+export function rowanWatchDelayForFirstAfternoonFloor(
+  game: StreetGameState,
+  baseDelayMs: number,
+  presentationElapsedMs: number | undefined,
+) {
+  const takeStockPending = Boolean(
+    !game.firstAfternoon?.completedAt &&
+      game.rowanAutonomy?.actionId === "reflect:first-afternoon",
+  );
+  if (!takeStockPending || presentationElapsedMs === undefined) {
+    return baseDelayMs;
+  }
+
+  return Math.max(
+    baseDelayMs,
+    ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS -
+      Math.max(0, presentationElapsedMs),
+  );
+}
+
+export function rowanWatchFirstAfternoonFloorBeatDurations(
+  game: StreetGameState,
+  presentationElapsedMs: number | undefined,
+) {
+  if (
+    presentationElapsedMs === undefined ||
+    game.firstAfternoon?.completedAt ||
+    game.rowanAutonomy?.actionId !== "reflect:first-afternoon"
+  ) {
+    return [];
+  }
+
+  const remainingDwellMs = Math.max(
+    0,
+    ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS -
+      presentationElapsedMs -
+      ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay.acting,
+  );
+  if (remainingDwellMs < 2_000) {
+    return [];
+  }
+
+  const beatCount = Math.min(3, Math.ceil(remainingDwellMs / 10_000));
+  const beatDurationMs = Math.min(10_000, remainingDwellMs / beatCount);
+  return Array.from({ length: beatCount }, () => beatDurationMs);
+}
+
 export function rowanWatchAutonomyDelayForState(game: StreetGameState) {
   const inventoryIds = new Set(game.player.inventory.map((item) => item.id));
+  const selectedPressureId =
+    game.rowanAutonomy?.planningTrace?.selectedPressureId ?? null;
+  const selectedPressureKind =
+    game.rowanAutonomy?.planningTrace?.selectedPressureKind ?? null;
   const equippedProblemActive = game.problems.some(
     (problem) =>
       problem.discovered &&
@@ -62,20 +187,34 @@ export function rowanWatchAutonomyDelayForState(game: StreetGameState) {
         problem.requiredItemId && inventoryIds.has(problem.requiredItemId),
       ),
   );
+  const selectedComplexProblemActive = game.problems.some(
+    (problem) =>
+      problem.discovered &&
+      problem.status === "active" &&
+      Boolean(
+        problem.requiredItemId &&
+          selectedPressureId?.includes(problem.id) &&
+          (selectedPressureKind === "tool" ||
+            selectedPressureKind === "problem"),
+      ),
+  );
 
-  if (!equippedProblemActive) {
+  if (!selectedComplexProblemActive && !equippedProblemActive) {
     return ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay;
   }
 
   return game.player.energy < 28
     ? {
-        ...ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS,
-        moving: ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS.drainedMoving,
+        ...ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS,
+        moving: equippedProblemActive
+          ? ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS.drainedMoving
+          : ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS.moving,
       }
-    : ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS;
+    : ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS;
 }
 
 type DeriveRowanPlaybackBeatsOptions = {
+  presentationElapsedMs?: number;
   watchMode?: boolean;
 };
 
@@ -359,7 +498,10 @@ export function buildConversationLineBeat(
 export function deriveRowanPlaybackBeats(
   previousGame: StreetGameState,
   nextGame: StreetGameState,
-  { watchMode = false }: DeriveRowanPlaybackBeatsOptions = {},
+  {
+    presentationElapsedMs,
+    watchMode = false,
+  }: DeriveRowanPlaybackBeatsOptions = {},
 ): RowanPlaybackBeat[] {
   if (previousGame.id !== nextGame.id) {
     return [];
@@ -587,6 +729,48 @@ export function deriveRowanPlaybackBeats(
       title: independentNpcActionBeatTitle(action, locationName),
       tone: "info",
     });
+  }
+
+  if (
+    watchMode &&
+    previousGame.rowanAutonomy?.actionId !==
+      nextGame.rowanAutonomy?.actionId
+  ) {
+    const consequenceLabel =
+      nextGame.firstAfternoon?.consequence?.label ?? "one durable foothold";
+    const floorBeatDurations = rowanWatchFirstAfternoonFloorBeatDurations(
+      nextGame,
+      presentationElapsedMs,
+    );
+    const floorBeatCopy = [
+      {
+        detail: `Rowan is weighing ${consequenceLabel.toLowerCase()} against what the room and the afternoon now require.`,
+        title: "Taking stock of the afternoon",
+      },
+      {
+        detail:
+          "Rowan is recording what changed before he chooses the next commitment.",
+        title: "Recording what changed",
+      },
+      {
+        detail:
+          "With the consequence clear, Rowan can choose what deserves the next part of the day.",
+        title: "Choosing what comes next",
+      },
+    ];
+    for (const [index, durationMs] of floorBeatDurations.entries()) {
+      const copy = floorBeatCopy[index] ?? floorBeatCopy[2]!;
+      beats.push({
+        blocking: true,
+        detail: copy.detail,
+        durationMs,
+        key: `first-afternoon-take-stock:${nextGame.currentTime}:${index}`,
+        kind: "objective_shift",
+        locationId: nextGame.player.currentLocationId,
+        title: copy.title,
+        tone: "objective",
+      });
+    }
   }
 
   if (previousObjectiveText !== nextObjectiveText && nextObjectiveText) {

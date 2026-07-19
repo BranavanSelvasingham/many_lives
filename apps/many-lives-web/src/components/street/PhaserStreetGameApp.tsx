@@ -162,10 +162,14 @@ import {
   estimateLiveConversationBeatMs,
   isBlockingRowanPlaybackForGame,
   isFirstAfternoonOpening,
+  readOrCreateRowanWatchFirstAfternoonPresentationStart,
+  reconcileAutoContinueBeatTiming,
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
   rowanWatchAutonomyDelayForState,
+  rowanWatchDelayForFirstAfternoonFloor,
+  rowanWatchFirstAfternoonPresentationElapsedMs,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
   type RecentBeat,
@@ -268,9 +272,13 @@ const FALLBACK_ROWAN_AUTONOMY: StreetGameState["rowanAutonomy"] = {
   mode: "idle",
   stepKind: "idle",
 };
+
 function autoContinueDelayMsForBeat(
   game: StreetGameState,
-  { watchMode = false }: { watchMode?: boolean } = {},
+  {
+    presentationElapsedMs,
+    watchMode = false,
+  }: { presentationElapsedMs?: number; watchMode?: boolean } = {},
 ) {
   if (isFirstAfternoonOpening(game)) {
     return AUTOPLAY_OPENING_AUTOSTART_DELAY_MS;
@@ -297,15 +305,17 @@ function autoContinueDelayMsForBeat(
           ? autonomyDelay.moving
           : autonomyDelay.acting;
 
-  if (
+  const transcriptAwareDelay =
     autonomy.layer !== "conversation" ||
     !game.activeConversation?.lines.length
-  ) {
-    return baseDelay;
-  }
+      ? baseDelay
+      : Math.max(baseDelay, estimateLiveConversationBeatMs(game) + 900);
 
-  // Keep Rowan's next step behind the human-visible transcript, not just the sim state.
-  return Math.max(baseDelay, estimateLiveConversationBeatMs(game) + 900);
+  return rowanWatchDelayForFirstAfternoonFloor(
+    game,
+    transcriptAwareDelay,
+    presentationElapsedMs,
+  );
 }
 
 function buildWatchModeAdvanceKey(game: StreetGameState | null) {
@@ -1049,6 +1059,10 @@ export function PhaserStreetGameApp() {
     useRef<AutoContinueBeatTiming | null>(null);
   const autoContinueBeatTimingRef =
     useRef<AutoContinueBeatTiming | null>(null);
+  const firstAfternoonPresentationStartRef = useRef<{
+    gameId: string;
+    startedAtEpochMs: number;
+  } | null>(null);
   const pendingVisualGameUpdateRef = useRef<PendingVisualGameUpdate | null>(
     null,
   );
@@ -1091,6 +1105,29 @@ export function PhaserStreetGameApp() {
   useEffect(() => {
     gameRef.current = game;
   }, [game]);
+
+  useEffect(() => {
+    if (
+      !game ||
+      !rowanWatchModeEnabled ||
+      rowanAutoplayFrozen ||
+      game.firstAfternoon?.completedAt
+    ) {
+      return;
+    }
+    if (firstAfternoonPresentationStartRef.current?.gameId === game.id) {
+      return;
+    }
+    firstAfternoonPresentationStartRef.current = {
+      gameId: game.id,
+      startedAtEpochMs:
+        readOrCreateRowanWatchFirstAfternoonPresentationStart(
+          game.id,
+          window.sessionStorage,
+          Date.now(),
+        ),
+    };
+  }, [game, rowanAutoplayFrozen, rowanWatchModeEnabled]);
 
   useEffect(() => {
     optimisticPlayerRef.current = optimisticPlayerPosition;
@@ -1210,6 +1247,15 @@ export function PhaserStreetGameApp() {
       const nextPlaybackBeats =
         previousGame && previousGame.id === nextGame.id
           ? deriveRowanPlaybackBeats(previousGame, nextGame, {
+              presentationElapsedMs:
+                firstAfternoonPresentationStartRef.current?.gameId ===
+                nextGame.id
+                  ? rowanWatchFirstAfternoonPresentationElapsedMs(
+                      firstAfternoonPresentationStartRef.current
+                        .startedAtEpochMs,
+                      Date.now(),
+                    )
+                  : undefined,
               watchMode: rowanWatchModeEnabled,
             })
           : [];
@@ -1636,26 +1682,32 @@ export function PhaserStreetGameApp() {
       return;
     }
 
+    const timingNowMs = performance.now();
+    const presentationElapsedMs =
+      firstAfternoonPresentationStartRef.current?.gameId === game.id
+        ? rowanWatchFirstAfternoonPresentationElapsedMs(
+            firstAfternoonPresentationStartRef.current.startedAtEpochMs,
+            Date.now(),
+          )
+        : undefined;
     const intendedDelayMs = autoContinueDelayMsForBeat(game, {
+      presentationElapsedMs,
       watchMode: rowanWatchModeEnabled,
     });
-    let beatTiming = autoContinueBeatStartedRef.current;
-    if (beatTiming?.key !== autoContinueKey) {
-      beatTiming = {
-        intendedDelayMs,
-        key: autoContinueKey,
-        startedAtMs: performance.now(),
-      };
-      autoContinueBeatStartedRef.current = beatTiming;
-    } else if (beatTiming.intendedDelayMs !== intendedDelayMs) {
-      beatTiming = { ...beatTiming, intendedDelayMs };
+    const beatTiming = reconcileAutoContinueBeatTiming(
+      autoContinueBeatStartedRef.current,
+      autoContinueKey,
+      intendedDelayMs,
+      timingNowMs,
+    );
+    if (autoContinueBeatStartedRef.current !== beatTiming) {
       autoContinueBeatStartedRef.current = beatTiming;
     }
     publishAutoContinueBeatTiming(beatTiming);
     const delayMs = remainingAutoplayDelayMs(
       intendedDelayMs,
       beatTiming.startedAtMs,
-      performance.now(),
+      timingNowMs,
     );
 
     objectiveAutoContinueTimerRef.current = window.setTimeout(() => {

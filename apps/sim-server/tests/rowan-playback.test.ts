@@ -10,8 +10,14 @@ import {
   isBlockingRowanPlaybackForGame,
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
+  ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS,
+  ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS,
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
-  ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS,
+  readOrCreateRowanWatchFirstAfternoonPresentationStart,
+  reconcileAutoContinueBeatTiming,
+  rowanWatchDelayForFirstAfternoonFloor,
+  rowanWatchFirstAfternoonFloorBeatDurations,
+  rowanWatchFirstAfternoonPresentationElapsedMs,
   rowanWatchAutonomyDelayForState,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
@@ -128,7 +134,7 @@ describe("Rowan playback helpers", () => {
     expect(hiddenReplayProbe.activeConversation.replay).toBeNull();
   });
 
-  it("tightens watch pacing only while Rowan is equipped for a live problem", () => {
+  it("budgets the full multi-stop problem route before and after Rowan gets its tool", () => {
     const world = seedStreetGame("rowan-playback-equipped-problem");
     const pump = world.problems.find(
       (problem) => problem.id === "problem-pump",
@@ -141,25 +147,193 @@ describe("Rowan playback helpers", () => {
 
     pump!.discovered = true;
     pump!.status = "active";
+    expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
+      ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay,
+    );
+
+    world.rowanAutonomy.planningTrace = {
+      blockers: [],
+      considered: [],
+      nextSteps: [],
+      outcomes: [],
+      rejected: [],
+      selectedPressureId: `tool:${pump!.requiredItemId}:${pump!.id}`,
+      selectedPressureKind: "tool",
+    };
+    expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
+      ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS,
+    );
+
     world.player.inventory.push({
       description: "A solid old wrench.",
       id: pump!.requiredItemId!,
       name: "Old wrench",
     });
+    world.rowanAutonomy.planningTrace!.selectedPressureId = "energy:recover";
+    world.rowanAutonomy.planningTrace!.selectedPressureKind = "energy";
 
     expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
-      ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS,
+      ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS,
     );
 
     world.player.energy = 12;
     expect(rowanWatchAutonomyDelayForState(asWebGame(world)).moving).toBe(
-      ROWAN_WATCH_URGENT_PROBLEM_TIMING_MS.drainedMoving,
+      ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS.drainedMoving,
     );
 
     pump!.status = "solved";
     expect(rowanWatchAutonomyDelayForState(asWebGame(world))).toBe(
       ROWAN_WATCH_PRESENTATION_TIMING_MS.autonomyDelay,
     );
+  });
+
+  it("keeps reload-safe floor beats and the final delay within one three-minute budget", () => {
+    const world = seedStreetGame("rowan-playback-first-afternoon-floor");
+    world.rowanAutonomy.actionId = "reflect:first-afternoon";
+    world.firstAfternoon = {
+      ...world.firstAfternoon,
+      completedAt: undefined,
+    };
+
+    const storageValues = new Map<string, string>();
+    const sessionStorage = {
+      getItem(key: string) {
+        return storageValues.get(key) ?? null;
+      },
+      setItem(key: string, value: string) {
+        storageValues.set(key, value);
+      },
+    };
+    const initialEpochMs = 1_000_000;
+    const startedAtEpochMs =
+      readOrCreateRowanWatchFirstAfternoonPresentationStart(
+        world.id,
+        sessionStorage,
+        initialEpochMs,
+      );
+    const reloadedAtEpochMs = initialEpochMs + 160_000;
+    const persistedStartAfterReload =
+      readOrCreateRowanWatchFirstAfternoonPresentationStart(
+        world.id,
+        sessionStorage,
+        reloadedAtEpochMs,
+      );
+    expect(persistedStartAfterReload).toBe(startedAtEpochMs);
+    const presentationElapsedAfterReload =
+      rowanWatchFirstAfternoonPresentationElapsedMs(
+        persistedStartAfterReload,
+        reloadedAtEpochMs,
+      )!;
+    expect(presentationElapsedAfterReload).toBe(160_000);
+
+    const floorBeatDurations = rowanWatchFirstAfternoonFloorBeatDurations(
+      asWebGame(world),
+      presentationElapsedAfterReload,
+    );
+    expect(floorBeatDurations).toEqual([6_000, 6_000]);
+    expect(Math.max(...floorBeatDurations)).toBeLessThanOrEqual(10_000);
+    const floorBeatDwellMs = floorBeatDurations.reduce(
+      (total, duration) => total + duration,
+      0,
+    );
+    const presentationElapsedAfterFloorBeats =
+      rowanWatchFirstAfternoonPresentationElapsedMs(
+        persistedStartAfterReload,
+        reloadedAtEpochMs + floorBeatDwellMs,
+      )!;
+    const finalDelayMs = rowanWatchDelayForFirstAfternoonFloor(
+      asWebGame(world),
+      10_000,
+      presentationElapsedAfterFloorBeats,
+    );
+    expect(finalDelayMs).toBe(10_000);
+    expect(finalDelayMs).toBeLessThan(15_000);
+    expect(
+      presentationElapsedAfterReload + floorBeatDwellMs + finalDelayMs,
+    ).toBe(ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS);
+    const beforeTakeStock = structuredClone(world);
+    beforeTakeStock.rowanAutonomy.actionId = "enter:boarding-house";
+    expect(
+      deriveRowanPlaybackBeats(asWebGame(beforeTakeStock), asWebGame(world), {
+        presentationElapsedMs: presentationElapsedAfterReload,
+        watchMode: true,
+      })
+        .filter((beat) => beat.key.startsWith("first-afternoon-take-stock:"))
+        .map((beat) => ({ durationMs: beat.durationMs, title: beat.title })),
+    ).toEqual([
+      { durationMs: 6_000, title: "Taking stock of the afternoon" },
+      { durationMs: 6_000, title: "Recording what changed" },
+    ]);
+    expect(
+      deriveRowanPlaybackBeats(
+        asWebGame(structuredClone(world)),
+        asWebGame(world),
+        {
+          presentationElapsedMs: presentationElapsedAfterFloorBeats,
+          watchMode: true,
+        },
+      ).filter((beat) =>
+        beat.key.startsWith("first-afternoon-take-stock:"),
+      ),
+    ).toEqual([]);
+
+    const pendingFloorTiming = {
+      intendedDelayMs: 26_924,
+      key: "take-stock",
+      startedAtMs: 155_000,
+    };
+    const postFloorTiming = reconcileAutoContinueBeatTiming(
+      pendingFloorTiming,
+      pendingFloorTiming.key,
+      10_000,
+      176_000,
+    );
+    expect(postFloorTiming).toEqual({
+      intendedDelayMs: 10_000,
+      key: "take-stock",
+      startedAtMs: 176_000,
+    });
+    expect(
+      remainingAutoplayDelayMs(
+        postFloorTiming.intendedDelayMs,
+        postFloorTiming.startedAtMs,
+        176_000,
+      ),
+    ).toBe(10_000);
+    const transcriptGrowthTiming = reconcileAutoContinueBeatTiming(
+      pendingFloorTiming,
+      pendingFloorTiming.key,
+      32_000,
+      176_000,
+    );
+    expect(transcriptGrowthTiming.startedAtMs).toBe(
+      pendingFloorTiming.startedAtMs,
+    );
+    expect(transcriptGrowthTiming.intendedDelayMs).toBe(32_000);
+
+    const slowPresentationElapsedMs = 289_000;
+    expect(
+      rowanWatchFirstAfternoonFloorBeatDurations(
+        asWebGame(world),
+        slowPresentationElapsedMs,
+      ),
+    ).toEqual([]);
+    expect(
+      rowanWatchDelayForFirstAfternoonFloor(
+        asWebGame(world),
+        10_000,
+        slowPresentationElapsedMs,
+      ),
+    ).toBe(10_000);
+
+    world.firstAfternoon!.completedAt = "2026-03-21T14:14:00.000Z";
+    expect(
+      rowanWatchDelayForFirstAfternoonFloor(
+        asWebGame(world),
+        10_000,
+        presentationElapsedAfterReload,
+      ),
+    ).toBe(10_000);
   });
 
   it("derives move and arrival beats from a real location change", async () => {
