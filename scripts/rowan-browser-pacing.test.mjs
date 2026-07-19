@@ -1029,7 +1029,11 @@ test("HUD glyph validation rejects a missing DAY run over a visible chip", () =>
   );
 });
 
-test("screencast stop, late frames, and command timeouts cannot poison the next observation", async () => {
+test("screencast slow frames stay bounded and lifecycle failures remain diagnostic", async () => {
+  assert.match(
+    source,
+    /MANY_LIVES_BROWSER_AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS[\s\S]*?"8000"/,
+  );
   const classStart = source.indexOf("class CdpSession {");
   const classEnd = source.indexOf(
     "\nasync function launchBrowserSession(",
@@ -1049,7 +1053,7 @@ test("screencast stop, late frames, and command timeouts cannot poison the next 
     assert,
     5,
     4,
-    20,
+    60,
     4,
     20,
     (frame) => frame?.metadata?.timestamp * 1_000,
@@ -1117,6 +1121,60 @@ test("screencast stop, late frames, and command timeouts cannot poison the next 
       .length >= 4,
     "Every current or late screencast event must be acknowledged.",
   );
+
+  const slowFrameSession = new CdpSession({
+    browser: null,
+    outputDir: "/tmp",
+    pageWsUrl: "ws://127.0.0.1:9222/devtools/page/slow-frame",
+    url: "http://127.0.0.1/",
+  });
+  slowFrameSession.socket = {
+    bytesRead: 128,
+    bytesWritten: 64,
+    destroyed: false,
+    readyState: "open",
+    writable: true,
+  };
+  slowFrameSession.send = async () => ({});
+  await slowFrameSession.startAutoplayScreencast();
+  const slowFrameStartedAt = slowFrameSession.screencast.startedAtEpochMs;
+  const delayedFrame = slowFrameSession.waitForAutoplayScreencastFrame({
+    afterSequence: 0,
+    minimumCapturedAtEpochMs: slowFrameStartedAt,
+  });
+  setTimeout(() => {
+    slowFrameSession.handleAutoplayScreencastFrame({
+      data: "delayed-ci-frame",
+      metadata: { timestamp: (slowFrameStartedAt + 35) / 1_000 },
+      sessionId: 5,
+    });
+  }, 35);
+  assert.equal((await delayedFrame).data, "delayed-ci-frame");
+
+  const terminalWaitStartedAt = Date.now();
+  await assert.rejects(
+    slowFrameSession.waitForAutoplayScreencastFrame({
+      afterSequence: 1,
+      minimumCapturedAtEpochMs: slowFrameStartedAt + 100,
+    }),
+    (error) => {
+      assert.match(
+        error.message,
+        /Timed out waiting 60ms.*after sequence 1 captured at or after/,
+      );
+      assert.match(error.message, /CDP diagnostics:/);
+      assert.match(error.message, /"lastSequence":1/);
+      assert.match(error.message, /"writable":true/);
+      return true;
+    },
+  );
+  assert.ok(Date.now() - terminalWaitStartedAt >= 50);
+  assert.equal(slowFrameSession.screencast.waiters.length, 0);
+  assert.equal(
+    slowFrameSession.transportEvents.at(-1)?.kind,
+    "screencast-frame-wait-timeout",
+  );
+  await slowFrameSession.stopAutoplayScreencast();
 
   const timeoutSession = new CdpSession({
     browser: null,

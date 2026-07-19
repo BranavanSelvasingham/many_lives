@@ -98,7 +98,9 @@ const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
 const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
 const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 4;
-const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = 2_000;
+const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS ?? "8000",
+);
 const AUTOPLAY_SCREENCAST_MAX_BUFFERED_FRAMES = 4;
 const AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX = 0.75;
 const AUTOPLAY_ROUTE_MID_CAPTURE_WINDOW_MS = 3_000;
@@ -1526,15 +1528,28 @@ class CdpSession {
         method: request.method,
       })),
       screencast: this.screencast
-        ? {
-            active: this.screencast.active,
-            bufferedFrames: this.screencast.frames.length,
-            generation: this.screencast.generation,
-            ignoredFrameCount: this.screencast.ignoredFrameCount,
-            lastSequence: this.screencast.lastSequence,
-            status: this.screencast.status,
-            waiterCount: this.screencast.waiters.length,
-          }
+        ? (() => {
+            const lastFrame = this.screencast.frames.at(-1) ?? null;
+            const lastFrameCapturedAtEpochMs =
+              screencastFrameCapturedAtEpochMs(lastFrame);
+            return {
+              active: this.screencast.active,
+              bufferedFrameSequences: this.screencast.frames.map(
+                (frame) => frame.sequence,
+              ),
+              bufferedFrames: this.screencast.frames.length,
+              generation: this.screencast.generation,
+              ignoredFrameCount: this.screencast.ignoredFrameCount,
+              lastFrameAgeMs:
+                typeof lastFrameCapturedAtEpochMs === "number"
+                  ? Math.max(0, Date.now() - lastFrameCapturedAtEpochMs)
+                  : null,
+              lastFrameCapturedAtEpochMs,
+              lastSequence: this.screencast.lastSequence,
+              status: this.screencast.status,
+              waiterCount: this.screencast.waiters.length,
+            };
+          })()
         : null,
       socket: {
         bytesRead: socket?.bytesRead ?? null,
@@ -3066,9 +3081,15 @@ class CdpSession {
         if (index >= 0) {
           state.waiters.splice(index, 1);
         }
+        this.recordCdpTransportEvent("screencast-frame-wait-timeout", {
+          afterSequence,
+          minimumCapturedAtEpochMs,
+          timeoutMs,
+        });
+        const diagnostics = this.cdpDiagnosticSnapshot();
         reject(
           new Error(
-            `Timed out waiting ${timeoutMs}ms for an asynchronous autoplay screencast frame after sequence ${afterSequence}.`,
+            `Timed out waiting ${timeoutMs}ms for an asynchronous autoplay screencast frame after sequence ${afterSequence} captured at or after ${minimumCapturedAtEpochMs}. CDP diagnostics: ${JSON.stringify(diagnostics)}`,
           ),
         );
       }, timeoutMs);
