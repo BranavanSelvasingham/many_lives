@@ -94,6 +94,7 @@ const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
 const AUTOPLAY_ROUTE_RECORDER_FRAME_HISTORY_MS = 20_000;
 const AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS = 125;
 const AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES = 160;
+const AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES = 48;
 const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
@@ -1127,25 +1128,28 @@ function assertAutoplayRouteHudContinuity({
     paintProbe,
     `${label} route HUD continuity`,
   );
-  const hudRegion = continuityPaintProbe.stableRegions.find(
+  const hudRegions = continuityPaintProbe.stableRegions.filter(
     (region) => region.surface === "hud",
   );
-  assert.ok(hudRegion, `${label}: route HUD continuity region was unavailable.`);
-  const candidateDifferenceRatio = screenshotRegionPixelDifferenceRatio(
-    hudReference.buffer,
-    beforeBuffer,
-    hudRegion.rect,
-    continuityPaintProbe.viewport,
-  );
-  const confirmationDifferenceRatio = screenshotRegionPixelDifferenceRatio(
-    hudReference.buffer,
-    afterBuffer,
-    hudRegion.rect,
-    continuityPaintProbe.viewport,
+  assert.ok(
+    hudRegions.length > 0,
+    `${label}: route HUD continuity regions were unavailable.`,
   );
   const routeHudContinuityPixelDifferenceRatio = Math.max(
-    candidateDifferenceRatio,
-    confirmationDifferenceRatio,
+    ...hudRegions.flatMap((hudRegion) => [
+      screenshotRegionPixelDifferenceRatio(
+        hudReference.buffer,
+        beforeBuffer,
+        hudRegion.rect,
+        continuityPaintProbe.viewport,
+      ),
+      screenshotRegionPixelDifferenceRatio(
+        hudReference.buffer,
+        afterBuffer,
+        hudRegion.rect,
+        continuityPaintProbe.viewport,
+      ),
+    ]),
   );
   assert.ok(
     routeHudContinuityPixelDifferenceRatio <=
@@ -1559,6 +1563,20 @@ class CdpSession {
                 screencastFrameCapturedAtEpochMs(
                   this.screencast.routeFrameHistory.at(-1),
                 ),
+              routeFrameArchiveCount:
+                this.screencast.routeFrameArchive.length,
+              routeFrameArchiveFirstCapturedAtEpochMs:
+                screencastFrameCapturedAtEpochMs(
+                  this.screencast.routeFrameArchive[0],
+                ),
+              routeFrameArchiveLastCapturedAtEpochMs:
+                screencastFrameCapturedAtEpochMs(
+                  this.screencast.routeFrameArchive.at(-1),
+                ),
+              routeFrameArchivedAcceptedCount:
+                this.screencast.routeFrameArchivedAcceptedCount,
+              routeFrameArchivedLastSampleAtEpochMs:
+                this.screencast.routeFrameArchivedLastSampleAtEpochMs,
               status: this.screencast.status,
               waiterCount: this.screencast.waiters.length,
             };
@@ -3253,6 +3271,9 @@ class CdpSession {
       generation: this.screencastGeneration + 1,
       ignoredFrameCount: 0,
       lastSequence: 0,
+      routeFrameArchive: [],
+      routeFrameArchivedAcceptedCount: 0,
+      routeFrameArchivedLastSampleAtEpochMs: null,
       routeFrameHistory: [],
       startedAtEpochMs: Date.now(),
       status: "starting",
@@ -3313,7 +3334,78 @@ class CdpSession {
   }
 
   autoplayRouteFrameHistory() {
-    return [...(this.screencast?.routeFrameHistory ?? [])];
+    const state = this.screencast;
+    if (!state) {
+      return [];
+    }
+    return [
+      ...new Map(
+        [...state.routeFrameArchive, ...state.routeFrameHistory].map((frame) => [
+          frame.sequence,
+          frame,
+        ]),
+      ).values(),
+    ].sort((left, right) => left.sequence - right.sequence);
+  }
+
+  archiveAutoplayRouteFrames(recorder) {
+    const state = this.screencast;
+    if (!state || !recorder) {
+      return 0;
+    }
+    const samples = (recorder.samples ?? [])
+      .filter(
+        (sample) =>
+          sample?.source === "movement-probe-recorder" &&
+          typeof sample.capturedAtEpochMs === "number",
+      )
+      .sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs);
+    const firstSampleAtEpochMs = samples[0]?.capturedAtEpochMs ?? null;
+    const lastSampleAtEpochMs = samples.at(-1)?.capturedAtEpochMs ?? null;
+    const acceptedCount = Number(recorder.acceptedCount ?? samples.length);
+    if (
+      firstSampleAtEpochMs === null ||
+      lastSampleAtEpochMs === null ||
+      (acceptedCount <= state.routeFrameArchivedAcceptedCount &&
+        lastSampleAtEpochMs <=
+          (state.routeFrameArchivedLastSampleAtEpochMs ?? -Infinity))
+    ) {
+      return state.routeFrameArchive.length;
+    }
+
+    const archivedSequences = new Set(
+      state.routeFrameArchive.map((frame) => frame.sequence),
+    );
+    for (const frame of state.routeFrameHistory) {
+      const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+      if (
+        capturedAtEpochMs === null ||
+        capturedAtEpochMs < firstSampleAtEpochMs ||
+        capturedAtEpochMs > lastSampleAtEpochMs ||
+        archivedSequences.has(frame.sequence)
+      ) {
+        continue;
+      }
+      state.routeFrameArchive.push(frame);
+      archivedSequences.add(frame.sequence);
+    }
+    if (
+      state.routeFrameArchive.length > AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES
+    ) {
+      state.routeFrameArchive.splice(
+        0,
+        state.routeFrameArchive.length - AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES,
+      );
+    }
+    state.routeFrameArchivedAcceptedCount = Math.max(
+      state.routeFrameArchivedAcceptedCount,
+      acceptedCount,
+    );
+    state.routeFrameArchivedLastSampleAtEpochMs = Math.max(
+      state.routeFrameArchivedLastSampleAtEpochMs ?? -Infinity,
+      lastSampleAtEpochMs,
+    );
+    return state.routeFrameArchive.length;
   }
 
   waitForAutoplayScreencastFrame({
@@ -13370,6 +13462,7 @@ async function waitForAutoplayRecordedRouteTrajectory({
       lastRecorder = await session.readAutoplayRouteCaptureRecorder(
         `${slug(label)}:recorder-read`,
       );
+      session.archiveAutoplayRouteFrames(lastRecorder);
       return selectAutoplayRecordedRouteTrajectory({
         expectedTargetLocationId,
         frames: session.autoplayRouteFrameHistory(),
@@ -13718,9 +13811,6 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
             `${openingWorldVariant}:autoplay:pacing-probe`,
           ),
         );
-        if (!probe) {
-          return false;
-        }
 
         if (!capturedMilestoneKeys.has("foothold-route-start")) {
           const recordedTrajectory = await (async () => {
@@ -13728,6 +13818,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
               const recorder = await session.readAutoplayRouteCaptureRecorder(
                 `${openingWorldVariant}:autoplay:route-recorder-read`,
               );
+              session.archiveAutoplayRouteFrames(recorder);
               return selectAutoplayRecordedRouteTrajectory({
                 expectedTargetLocationId: expectedRouteTarget,
                 frames: session.autoplayRouteFrameHistory(),
@@ -13752,6 +13843,10 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
               recordedTrajectory.mid,
             );
           }
+        }
+
+        if (!probe) {
+          return false;
         }
 
         if (

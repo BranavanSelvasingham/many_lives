@@ -352,9 +352,27 @@ test("proactive route history survives a delayed observer and rejects unproven w
     width: 1365,
   });
   const delayedCurrentObserverProbe = null;
+  const expiredGenericFrames = [
+    screencastFrame(100, 30_000),
+    screencastFrame(101, 30_130),
+    screencastFrame(102, 30_260),
+    screencastFrame(103, 30_390),
+  ];
+  assert.throws(
+    () =>
+      routeCapture.selectAutoplayRecordedRouteTrajectory({
+        expectedTargetLocationId: "tea-house",
+        frames: expiredGenericFrames,
+        label: "expired generic ring fixture",
+        samples,
+        validateFrame,
+        validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+      }),
+    /did not contain two distinct legal route frame windows/,
+  );
   const trajectory = routeCapture.selectAutoplayRecordedRouteTrajectory({
     expectedTargetLocationId: "tea-house",
-    frames,
+    frames: [...frames, ...expiredGenericFrames],
     label: "delayed hosted observer fixture",
     samples,
     validateFrame,
@@ -478,6 +496,10 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "The in-page route recorder must start before the delayed Node observer loop.",
   );
   assert.match(runSource, /selectAutoplayRecordedRouteTrajectory\(/);
+  assert.match(
+    runSource,
+    /archiveAutoplayRouteFrames\(recorder\);\s+return selectAutoplayRecordedRouteTrajectory/,
+  );
   assert.doesNotMatch(runSource, /route\?\.active\s*&&[\s\S]*waitForAutoplayRecordedRouteTrajectory/);
   assert.doesNotMatch(
     captureSource,
@@ -683,9 +705,24 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
     ],
     stableRegions: [
       {
-        rect: { bottom: 10, left: 5, right: 60, top: 1 },
+        rect: { bottom: 10, left: 2, right: 10, top: 1 },
         surface: "hud",
-        text: "DAY 1 11:05 LATE MORNING MONEY $12 70 ENERGY",
+        text: "DAY 1",
+      },
+      {
+        rect: { bottom: 10, left: 10, right: 30, top: 1 },
+        surface: "hud",
+        text: "11:05 LATE MORNING",
+      },
+      {
+        rect: { bottom: 10, left: 32, right: 39, top: 1 },
+        surface: "hud",
+        text: "$12",
+      },
+      {
+        rect: { bottom: 10, left: 42, right: 53, top: 1 },
+        surface: "hud",
+        text: "70 ENERGY",
       },
     ],
     viewport: { height: 50, width: 100 },
@@ -1079,6 +1116,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_RECORDER_FRAME_HISTORY_MS",
     "AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS",
     "AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES",
+    "AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES",
     "CDP_WAIT_TIMEOUT_MS",
     "screencastFrameCapturedAtEpochMs",
     "withTimeout",
@@ -1092,8 +1130,12 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     2_000,
     125,
     16,
+    4,
     20,
-    (frame) => frame?.metadata?.timestamp * 1_000,
+    (frame) =>
+      typeof frame?.metadata?.timestamp === "number"
+        ? frame.metadata.timestamp * 1_000
+        : null,
     (promise, timeoutMs, message) =>
       Promise.race([
         promise,
@@ -1158,6 +1200,62 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       .length >= 4,
     "Every current or late screencast event must be acknowledged.",
   );
+
+  const archiveSession = new CdpSession({
+    browser: null,
+    outputDir: "/tmp",
+    pageWsUrl: "ws://127.0.0.1:9222/devtools/page/route-archive",
+    url: "http://127.0.0.1/",
+  });
+  archiveSession.socket = { destroyed: false, writable: true };
+  archiveSession.send = async () => ({});
+  await archiveSession.startAutoplayScreencast();
+  const archiveStartedAt = archiveSession.screencast.startedAtEpochMs;
+  const routeOffsets = [150, 280, 550, 680];
+  routeOffsets.forEach((offsetMs, index) => {
+    archiveSession.handleAutoplayScreencastFrame({
+      data: `route-${index + 1}`,
+      metadata: { timestamp: (archiveStartedAt + offsetMs) / 1_000 },
+      sessionId: 10 + index,
+    });
+  });
+  const archivedRecorder = {
+    acceptedCount: 8,
+    samples: [0, 100, 200, 300, 400, 500, 600, 700].map(
+      (offsetMs) => ({
+        capturedAtEpochMs: archiveStartedAt + offsetMs,
+        source: "movement-probe-recorder",
+      }),
+    ),
+  };
+  assert.equal(archiveSession.archiveAutoplayRouteFrames(archivedRecorder), 4);
+  assert.equal(archiveSession.archiveAutoplayRouteFrames(archivedRecorder), 4);
+  [5_000, 5_130, 5_260, 5_390].forEach((offsetMs, index) => {
+    archiveSession.handleAutoplayScreencastFrame({
+      data: `post-route-${index + 1}`,
+      metadata: { timestamp: (archiveStartedAt + offsetMs) / 1_000 },
+      sessionId: 20 + index,
+    });
+  });
+  assert.ok(
+    archiveSession.screencast.routeFrameHistory.every(
+      (frame) => frame.sequence > routeOffsets.length,
+    ),
+    "The generic route ring fixture must expire every route-time frame.",
+  );
+  assert.deepEqual(
+    archiveSession.screencast.routeFrameArchive.map((frame) => frame.data),
+    ["route-1", "route-2", "route-3", "route-4"],
+  );
+  assert.deepEqual(
+    archiveSession
+      .autoplayRouteFrameHistory()
+      .slice(0, routeOffsets.length)
+      .map((frame) => frame.data),
+    ["route-1", "route-2", "route-3", "route-4"],
+    "Delayed selection must retain the bounded route archive after the generic ring expires.",
+  );
+  await archiveSession.stopAutoplayScreencast();
 
   const slowFrameSession = new CdpSession({
     browser: null,
