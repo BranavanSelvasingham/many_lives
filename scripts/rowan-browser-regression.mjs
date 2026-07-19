@@ -91,6 +91,8 @@ const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
 const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_SAMPLE_INTERVAL_MS ?? "1250",
 );
+const AUTOPLAY_ROUTE_MID_CAPTURE_WINDOW_MS = 3_000;
+const AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS = 0.1;
 const AUTOPLAY_DOM_AUDIT_INTERVAL_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_DOM_AUDIT_INTERVAL_MS ?? "5000",
 );
@@ -150,6 +152,8 @@ const SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS = 2_000;
 const SIM_WORK_PLAYBACK_PROGRESS_EPSILON = 0.002;
 const RUN_SIM_WAIT_GUARD_ONLY =
   process.env.MANY_LIVES_BROWSER_SIM_WAIT_GUARD_ONLY === "1";
+const RUN_AUTOPLAY_OBSERVATIONS_ONLY =
+  process.env.MANY_LIVES_BROWSER_AUTOPLAY_OBSERVATIONS_ONLY === "1";
 const MAP_AGENCY_PROBE_SETTLE_TIMEOUT_MS = 2_000;
 const WEB_START_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_WEB_START_TIMEOUT_MS ?? "45000",
@@ -11626,6 +11630,139 @@ function compactAutoplayPlayerRoute(probe) {
   };
 }
 
+function isAutoplayFootholdRouteFrame(route, expectedTargetLocationId) {
+  return Boolean(
+    route?.active &&
+      route.targetLocationId === expectedTargetLocationId &&
+      typeof route.progress === "number" &&
+      route.progress >= 0 &&
+      route.progress < 1 &&
+      route.legal === true &&
+      route.reachesDestination === true &&
+      route.sampledPointsLegal === true &&
+      route.visualObstaclesClear === true,
+  );
+}
+
+function nextAutoplayFootholdRouteMilestone({
+  capturedRouteMid,
+  capturedRouteStart,
+  expectedTargetLocationId,
+  route,
+  routeStartProgress,
+}) {
+  if (!isAutoplayFootholdRouteFrame(route, expectedTargetLocationId)) {
+    return null;
+  }
+  if (!capturedRouteStart) {
+    return "foothold-route-start";
+  }
+  if (
+    !capturedRouteMid &&
+    typeof routeStartProgress === "number" &&
+    route.progress >=
+      routeStartProgress + AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
+  ) {
+    return "foothold-route-mid";
+  }
+  return null;
+}
+
+function autoplayRouteCaptureWindowCoherent(
+  beforeRoute,
+  afterRoute,
+  expectedTargetLocationId,
+) {
+  return Boolean(
+    isAutoplayFootholdRouteFrame(beforeRoute, expectedTargetLocationId) &&
+      isAutoplayFootholdRouteFrame(afterRoute, expectedTargetLocationId) &&
+      afterRoute.progress >= beforeRoute.progress,
+  );
+}
+
+function buildAutoplayFootholdRouteGuardFixture(
+  progress,
+  overrides = {},
+) {
+  return {
+    active: true,
+    legal: true,
+    progress,
+    reachesDestination: true,
+    sampledPointsLegal: true,
+    targetLocationId: "tea-house",
+    visualObstaclesClear: true,
+    ...overrides,
+  };
+}
+
+function assertAutoplayFootholdRouteCaptureGuard() {
+  const lateStart = buildAutoplayFootholdRouteGuardFixture(0.633);
+  assert.equal(
+    nextAutoplayFootholdRouteMilestone({
+      capturedRouteMid: false,
+      capturedRouteStart: false,
+      expectedTargetLocationId: "tea-house",
+      route: lateStart,
+      routeStartProgress: null,
+    }),
+    "foothold-route-start",
+    "A first legal route sample around 0.63 must still anchor continuity evidence.",
+  );
+  assert.equal(
+    nextAutoplayFootholdRouteMilestone({
+      capturedRouteMid: false,
+      capturedRouteStart: true,
+      expectedTargetLocationId: "tea-house",
+      route: buildAutoplayFootholdRouteGuardFixture(0.69),
+      routeStartProgress: lateStart.progress,
+    }),
+    null,
+    "A later route sample below the distinct-progress floor must not become mid evidence.",
+  );
+  const distinctMid = buildAutoplayFootholdRouteGuardFixture(0.744);
+  assert.equal(
+    nextAutoplayFootholdRouteMilestone({
+      capturedRouteMid: false,
+      capturedRouteStart: true,
+      expectedTargetLocationId: "tea-house",
+      route: distinctMid,
+      routeStartProgress: lateStart.progress,
+    }),
+    "foothold-route-mid",
+    "A second legal sample at least 0.1 later must become distinct mid evidence.",
+  );
+  assert.equal(
+    autoplayRouteCaptureWindowCoherent(
+      lateStart,
+      buildAutoplayFootholdRouteGuardFixture(0.651),
+      "tea-house",
+    ),
+    true,
+    "An immediately bracketed active route screenshot must remain coherent.",
+  );
+  assert.equal(
+    autoplayRouteCaptureWindowCoherent(
+      lateStart,
+      buildAutoplayFootholdRouteGuardFixture(1, { active: false }),
+      "tea-house",
+    ),
+    false,
+    "Arrival pixels must not be paired with metadata from an earlier active route probe.",
+  );
+  assert.equal(
+    autoplayRouteCaptureWindowCoherent(
+      lateStart,
+      buildAutoplayFootholdRouteGuardFixture(0.744, {
+        targetLocationId: "repair-stall",
+      }),
+      "tea-house",
+    ),
+    false,
+    "A route target change must invalidate the screenshot capture window.",
+  );
+}
+
 async function captureAutoplayTrajectoryMilestone({
   dom,
   key,
@@ -11682,6 +11819,121 @@ async function captureAutoplayTrajectoryMilestone({
   };
 }
 
+async function captureAutoplayRouteTrajectoryMilestone({
+  dom,
+  expectedTargetLocationId,
+  key,
+  openingWorldVariant,
+  probe,
+  session,
+}) {
+  const label = `${openingWorldVariant} autoplay ${key}`;
+  const beforeRoute = probe?.movement?.playerRoute ?? null;
+  assert.ok(
+    isAutoplayFootholdRouteFrame(beforeRoute, expectedTargetLocationId),
+    `${label}: route frame was not active, legal, and targeted at ${expectedTargetLocationId} before capture.`,
+  );
+
+  const screenshot = path.join(
+    OUTPUT_DIR,
+    `${openingWorldVariant}-autoplay-${slug(key)}.png`,
+  );
+  await session.captureScreenshot(screenshot);
+  const afterProbe = acceptedAutoplayPacingProbe(
+    await session.readAutoplayPacingProbe(`${slug(label)}:post-screenshot-probe`),
+  );
+  assert.ok(
+    afterProbe,
+    `${label}: browser probe was unavailable immediately after screenshot capture.`,
+  );
+  const afterRoute = afterProbe?.movement?.playerRoute ?? null;
+  assert.ok(
+    autoplayRouteCaptureWindowCoherent(
+      beforeRoute,
+      afterRoute,
+      expectedTargetLocationId,
+    ),
+    `${label}: screenshot was not bracketed by the same active legal route. Before: ${JSON.stringify(compactAutoplayPlayerRoute(probe))}. After: ${JSON.stringify(compactAutoplayPlayerRoute(afterProbe))}.`,
+  );
+
+  const visibleDom = dom ?? null;
+  if (visibleDom) {
+    assertNoVisibleImplementationLanguage(label, visibleDom.bodyText ?? "");
+  }
+  if (afterProbe?.autonomy?.planningTrace) {
+    assertVisibleDecisionArtifactPayload(
+      label,
+      afterProbe.autonomy.visibleDecisionArtifact,
+    );
+  }
+
+  return {
+    evidence: {
+      autonomyLabel: afterProbe?.autonomy?.label ?? null,
+      camera: null,
+      clock: afterProbe?.clock ?? null,
+      key,
+      location: afterProbe?.location ?? null,
+      mapAgency: null,
+      playerRoute: compactAutoplayPlayerRoute(afterProbe),
+      routeCaptureWindow: {
+        after: compactAutoplayPlayerRoute(afterProbe),
+        before: compactAutoplayPlayerRoute(probe),
+      },
+      screenshot,
+      visibleCopySample: compactObjectiveSequenceText(
+        visibleDom?.bodyTextSample ?? visibleDom?.bodyText ?? "",
+        320,
+      ),
+      visibleDecisionArtifact: compactVisibleDecisionArtifact(
+        afterProbe?.autonomy?.visibleDecisionArtifact ??
+          afterProbe?.rail?.visibleDecisionArtifact ??
+          null,
+      ),
+    },
+    probe: afterProbe,
+  };
+}
+
+async function waitForDistinctAutoplayFootholdRouteProbe({
+  expectedTargetLocationId,
+  routeStartProgress,
+  session,
+}) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < AUTOPLAY_ROUTE_MID_CAPTURE_WINDOW_MS) {
+    const probe = acceptedAutoplayPacingProbe(
+      await session
+        .readAutoplayPacingProbe("autoplay:foothold-route-mid-probe")
+        .catch(() => null),
+    );
+    if (!probe) {
+      await sleep(PROBE_POLL_INTERVAL_MS);
+      continue;
+    }
+    const route = probe?.movement?.playerRoute;
+    if (
+      !route?.active ||
+      route.targetLocationId !== expectedTargetLocationId
+    ) {
+      return null;
+    }
+    if (
+      nextAutoplayFootholdRouteMilestone({
+        capturedRouteMid: false,
+        capturedRouteStart: true,
+        expectedTargetLocationId,
+        route,
+        routeStartProgress,
+      }) === "foothold-route-mid"
+    ) {
+      return probe;
+    }
+    await sleep(PROBE_POLL_INTERVAL_MS);
+  }
+  return null;
+}
+
 async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   assert.equal(
     openingWorldVariantFromGame(game),
@@ -11722,6 +11974,31 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     capturedMilestoneKeys.add(key);
     trajectoryMilestones.push(evidence);
     return evidence;
+  };
+  const captureRouteMilestoneOnce = async (
+    key,
+    probe,
+    expectedTargetLocationId,
+    milestoneDom = null,
+  ) => {
+    if (capturedMilestoneKeys.has(key)) {
+      return {
+        evidence:
+          trajectoryMilestones.find((entry) => entry.key === key) ?? null,
+        probe,
+      };
+    }
+    const captured = await captureAutoplayRouteTrajectoryMilestone({
+      dom: milestoneDom,
+      expectedTargetLocationId,
+      key,
+      openingWorldVariant,
+      probe,
+      session,
+    });
+    capturedMilestoneKeys.add(key);
+    trajectoryMilestones.push(captured.evidence);
+    return captured;
   };
 
   await session.navigate(openingEvidenceUrl);
@@ -11890,19 +12167,46 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
             .footholdRouteTargetId;
         const route = probe?.movement?.playerRoute;
         if (route?.active && route.targetLocationId === expectedRouteTarget) {
-          if (!capturedMilestoneKeys.has("foothold-route-start")) {
-            const routeStart = await captureMilestoneOnce(
+          const nextRouteMilestone = nextAutoplayFootholdRouteMilestone({
+            capturedRouteMid: capturedMilestoneKeys.has("foothold-route-mid"),
+            capturedRouteStart: capturedMilestoneKeys.has(
+              "foothold-route-start",
+            ),
+            expectedTargetLocationId: expectedRouteTarget,
+            route,
+            routeStartProgress: footholdRouteStartProgress,
+          });
+          if (nextRouteMilestone === "foothold-route-start") {
+            const routeStart = await captureRouteMilestoneOnce(
               "foothold-route-start",
               probe,
+              expectedRouteTarget,
               sampleDom,
             );
-            footholdRouteStartProgress = routeStart?.playerRoute?.progress ?? 0;
-          } else if (
-            !capturedMilestoneKeys.has("foothold-route-mid") &&
-            typeof route.progress === "number" &&
-            route.progress >= Math.max(0.3, footholdRouteStartProgress + 0.1)
-          ) {
-            await captureMilestoneOnce("foothold-route-mid", probe, sampleDom);
+            footholdRouteStartProgress =
+              routeStart.evidence?.routeCaptureWindow?.after?.progress ??
+              routeStart.evidence?.playerRoute?.progress ??
+              null;
+            const distinctRouteProbe =
+              await waitForDistinctAutoplayFootholdRouteProbe({
+                expectedTargetLocationId: expectedRouteTarget,
+                routeStartProgress: footholdRouteStartProgress,
+                session,
+              });
+            if (distinctRouteProbe) {
+              await captureRouteMilestoneOnce(
+                "foothold-route-mid",
+                distinctRouteProbe,
+                expectedRouteTarget,
+              );
+            }
+          } else if (nextRouteMilestone === "foothold-route-mid") {
+            await captureRouteMilestoneOnce(
+              "foothold-route-mid",
+              probe,
+              expectedRouteTarget,
+              sampleDom,
+            );
           }
         }
 
@@ -12190,6 +12494,9 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
 
   const routeStart = milestones["foothold-route-start"]?.playerRoute;
   const routeMid = milestones["foothold-route-mid"]?.playerRoute;
+  const routeStartWindow =
+    milestones["foothold-route-start"]?.routeCaptureWindow;
+  const routeMidWindow = milestones["foothold-route-mid"]?.routeCaptureWindow;
   assert.equal(
     routeStart?.targetLocationId,
     expectation.footholdRouteTargetId,
@@ -12205,6 +12512,29 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
       typeof routeMid?.progress === "number" &&
       routeMid.progress > routeStart.progress,
     `${evidence.openingWorldVariant}: route-start and route-mid screenshots do not prove continuous progress. Evidence: ${evidencePath}.`,
+  );
+  for (const [label, window] of [
+    ["route-start", routeStartWindow],
+    ["route-mid", routeMidWindow],
+  ]) {
+    assert.ok(
+      autoplayRouteCaptureWindowCoherent(
+        window?.before,
+        window?.after,
+        expectation.footholdRouteTargetId,
+      ),
+      `${evidence.openingWorldVariant}: ${label} screenshot was not bracketed by one active legal route. Evidence: ${evidencePath}.`,
+    );
+  }
+  assert.ok(
+    routeMidWindow.before.progress - routeStartWindow.after.progress >=
+      AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS,
+    `${evidence.openingWorldVariant}: route frames were not separated by ${AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS} progress. Evidence: ${evidencePath}.`,
+  );
+  assert.notEqual(
+    milestones["foothold-route-start"].screenshot,
+    milestones["foothold-route-mid"].screenshot,
+    `${evidence.openingWorldVariant}: route-start and route-mid reused the same screenshot. Evidence: ${evidencePath}.`,
   );
   for (const [label, route] of [
     ["route-start", routeStart],
@@ -17410,6 +17740,7 @@ async function main() {
   assertAutoplayFirstAfternoonDurationGuard();
   assertAutoplayAppMonotonicResetGuard();
   assertAutoplayPlaybackCardDwellResetGuard();
+  assertAutoplayFootholdRouteCaptureGuard();
   assertVisibleImplementationLanguageGuardRegression();
   assertAutoplayNullProbeRetryGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
@@ -17590,6 +17921,15 @@ async function main() {
       openingWorldVariationEvidence =
         buildOpeningWorldVariationEvidence(autoplayObservations);
       await writeCheckpointSummary("opening-world-variations-complete");
+      if (RUN_AUTOPLAY_OBSERVATIONS_ONLY) {
+        browserChecksCompleted = true;
+        await writeStream(
+          process.stdout,
+          `[many-lives] Focused dual-trajectory autoplay browser check passed.\n[many-lives] Output: ${OUTPUT_DIR}\n[many-lives] Summary: ${summaryPath}\n`,
+          "stdout",
+        );
+        return;
+      }
       await recycleBrowserSession("scripted-timeline");
     }
 

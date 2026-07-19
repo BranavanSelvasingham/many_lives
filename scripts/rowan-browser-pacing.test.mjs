@@ -255,6 +255,84 @@ test("opening map evidence is frozen before zero-click pacing begins", () => {
   );
 });
 
+test("late foothold route samples require two coherent distinct screenshot windows", () => {
+  const policyStart = source.indexOf(
+    "function isAutoplayFootholdRouteFrame(",
+  );
+  const policyEnd = source.indexOf(
+    "\nasync function captureAutoplayTrajectoryMilestone(",
+    policyStart,
+  );
+  const policySource = source.slice(policyStart, policyEnd);
+  const policy = Function(
+    "assert",
+    "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    `${policySource}; return { autoplayRouteCaptureWindowCoherent, assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, nextAutoplayFootholdRouteMilestone };`,
+  )(assert, 0.1);
+  const lateStart = policy.buildAutoplayFootholdRouteGuardFixture(0.633);
+
+  assert.equal(
+    policy.nextAutoplayFootholdRouteMilestone({
+      capturedRouteMid: false,
+      capturedRouteStart: false,
+      expectedTargetLocationId: "tea-house",
+      route: lateStart,
+      routeStartProgress: null,
+    }),
+    "foothold-route-start",
+  );
+  assert.equal(
+    policy.nextAutoplayFootholdRouteMilestone({
+      capturedRouteMid: false,
+      capturedRouteStart: true,
+      expectedTargetLocationId: "tea-house",
+      route: policy.buildAutoplayFootholdRouteGuardFixture(0.744),
+      routeStartProgress: lateStart.progress,
+    }),
+    "foothold-route-mid",
+  );
+  assert.equal(
+    policy.autoplayRouteCaptureWindowCoherent(
+      lateStart,
+      policy.buildAutoplayFootholdRouteGuardFixture(1, { active: false }),
+      "tea-house",
+    ),
+    false,
+  );
+  assert.doesNotThrow(() => policy.assertAutoplayFootholdRouteCaptureGuard());
+
+  const captureStart = source.indexOf(
+    "async function captureAutoplayRouteTrajectoryMilestone(",
+  );
+  const captureEnd = source.indexOf(
+    "\nasync function waitForDistinctAutoplayFootholdRouteProbe(",
+    captureStart,
+  );
+  const captureSource = source.slice(captureStart, captureEnd);
+  const screenshotIndex = captureSource.indexOf(
+    "await session.captureScreenshot(screenshot)",
+  );
+  const postScreenshotProbeIndex = captureSource.indexOf(
+    ":post-screenshot-probe",
+  );
+
+  assert.ok(captureStart >= 0 && captureEnd > captureStart);
+  assert.ok(
+    screenshotIndex >= 0 &&
+      screenshotIndex < postScreenshotProbeIndex,
+    "Route pixels must be captured before the post-screenshot coherence probe.",
+  );
+  assert.doesNotMatch(
+    captureSource,
+    /readAutoplayDomAudit|readCameraProbe|readMapAgencyProbe/,
+    "Route capture must return to phase sampling without blocking auxiliary reads.",
+  );
+  assert.match(captureSource, /routeCaptureWindow:/);
+  assert.match(source, /waitForDistinctAutoplayFootholdRouteProbe\(/);
+  assert.match(source, /routeMidWindow\.before\.progress - routeStartWindow\.after\.progress/);
+  assert.match(source, /assertAutoplayFootholdRouteCaptureGuard\(\);/);
+});
+
 test("semantic playback cards have measured browser dwell evidence", () => {
   assert.match(
     source,
