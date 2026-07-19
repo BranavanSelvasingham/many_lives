@@ -1736,27 +1736,48 @@ class CdpSession {
 
   async readAutoplayRouteProbe(label = "autoplay-route-probe") {
     const probe = await this.evaluateForRead(`(() => {
-      const script = document.querySelector("#ml-browser-movement-probe");
-      if (!script) {
-        return null;
+      const parseProbe = (selector) => {
+        const script = document.querySelector(selector);
+        if (!script) {
+          return null;
+        }
+        try {
+          return JSON.parse(script.textContent || "null");
+        } catch (error) {
+          return { parseError: String(error), selector };
+        }
+      };
+      const liveMovement = parseProbe("#ml-browser-movement-probe");
+      if (liveMovement?.parseError) {
+        return liveMovement;
+      }
+      const browserProbe = liveMovement
+        ? null
+        : parseProbe("#ml-browser-probe");
+      if (browserProbe?.parseError) {
+        return browserProbe;
       }
       try {
-        const route = JSON.parse(script.textContent || "null")?.playerRoute ?? null;
+        const movement = liveMovement ?? browserProbe?.movement ?? null;
+        const route = movement?.playerRoute ?? null;
         return route
           ? {
               capturedAtEpochMs: Date.now(),
               capturedAtMonotonicMs: performance.now(),
-              route
+              route,
+              source: liveMovement
+                ? "movement-probe"
+                : "browser-probe-fallback"
             }
           : null;
       } catch (error) {
-        return { parseError: String(error) };
+        return { parseError: String(error), selector: "autoplay route probe" };
       }
     })()`, label);
 
     if (probe?.parseError) {
       throw new Error(
-        `Could not parse #ml-browser-movement-probe: ${probe.parseError}`,
+        `Could not parse ${probe.selector ?? "autoplay route probe"}: ${probe.parseError}`,
       );
     }
 
@@ -12608,8 +12629,9 @@ async function acquireAutoplayScreencastFrameWindow({
   ) {
     const beforeProbe = await readProbe(`${slug(label)}:before-frame-probe`);
     if (!beforeProbe) {
+      const diagnostics = session.cdpDiagnosticSnapshot?.() ?? null;
       lastCaptureError = new Error(
-        `${label}: current-state probe was unavailable before frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}.`,
+        `${label}: current-state probe was unavailable before frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}. CDP diagnostics: ${JSON.stringify(diagnostics)}.`,
       );
       if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
         process.stdout.write(
@@ -12653,8 +12675,9 @@ async function acquireAutoplayScreencastFrameWindow({
     );
     const afterProbe = await readProbe(`${slug(label)}:after-frame-probe`);
     if (!afterProbe) {
+      const diagnostics = session.cdpDiagnosticSnapshot?.() ?? null;
       lastCaptureError = new Error(
-        `${label}: current-state probe was unavailable after frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}.`,
+        `${label}: current-state probe was unavailable after frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}. CDP diagnostics: ${JSON.stringify(diagnostics)}.`,
       );
       if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
         process.stdout.write(
@@ -12911,7 +12934,9 @@ async function acquireAutoplayRouteScreencastWindow({
   });
   return {
     ...captureWindow,
+    afterProbeSource: captureWindow.afterProbe.source ?? null,
     afterRoute: captureWindow.afterProbe.route,
+    beforeProbeSource: captureWindow.beforeProbe.source ?? null,
     beforeRoute: captureWindow.beforeProbe.route,
   };
 }
@@ -12938,10 +12963,12 @@ async function captureAutoplayRouteScreenshotWindow({
     afterCapturedAtEpochMs: cdpProbeCapturedAtEpochMs(
       captureWindow.afterProbe,
     ),
+    afterProbeSource: captureWindow.afterProbeSource,
     afterRoute: captureWindow.afterRoute,
     beforeCapturedAtEpochMs: cdpProbeCapturedAtEpochMs(
       captureWindow.beforeProbe,
     ),
+    beforeProbeSource: captureWindow.beforeProbeSource,
     beforeRoute: captureWindow.beforeRoute,
     frame: compactAutoplayScreencastCaptureWindow(captureWindow).frame,
     hudReference: {
@@ -12974,8 +13001,10 @@ async function captureAutoplayRouteTrajectoryMilestone({
   );
   const {
     afterCapturedAtEpochMs,
+    afterProbeSource,
     afterRoute,
     beforeCapturedAtEpochMs,
+    beforeProbeSource,
     beforeRoute: screenshotBeforeRoute,
     frame: screencastFrame,
     hudReference: acceptedHudReference,
@@ -13021,12 +13050,14 @@ async function captureAutoplayRouteTrajectoryMilestone({
         after: {
           ...compactAutoplayPlayerRoute(afterProbe),
           capturedAtEpochMs: afterCapturedAtEpochMs,
+          probeSource: afterProbeSource,
         },
         before: {
           ...compactAutoplayPlayerRoute({
             movement: { playerRoute: screenshotBeforeRoute },
           }),
           capturedAtEpochMs: beforeCapturedAtEpochMs,
+          probeSource: beforeProbeSource,
         },
         frame: screencastFrame,
         textPaint,

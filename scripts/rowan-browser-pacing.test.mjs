@@ -592,6 +592,78 @@ test("late foothold route samples require two coherent distinct screenshot windo
   assert.match(source, /assertAutoplayFootholdRouteCaptureGuard\(\);/);
 });
 
+test("route probes retain current overlay fallback while rejecting absent state", async () => {
+  const methodStart = source.indexOf("  async readAutoplayRouteProbe(");
+  const methodEnd = source.indexOf(
+    "\n  async readAutoplayDomAudit(",
+    methodStart,
+  );
+  const RouteProbeReader = Function(
+    `return class RouteProbeReader {${source.slice(methodStart, methodEnd)}};`,
+  )();
+  const reader = new RouteProbeReader();
+  const route = {
+    active: true,
+    legal: true,
+    progress: 0.42,
+    reachesDestination: true,
+    sampledPointsLegal: true,
+    targetLocationId: "tea-house",
+    visualObstaclesClear: true,
+  };
+  const evaluateWithProbeSources = ({ browserProbe, movementProbe }) =>
+    async (expression) => {
+      const scripts = new Map([
+        ["#ml-browser-movement-probe", movementProbe],
+        ["#ml-browser-probe", browserProbe],
+      ]);
+      const document = {
+        querySelector: (selector) => {
+          const payload = scripts.get(selector);
+          return payload === null || payload === undefined
+            ? null
+            : { textContent: JSON.stringify(payload) };
+        },
+      };
+      return Function(
+        "document",
+        "performance",
+        `return ${expression};`,
+      )(document, { now: () => 123 });
+    };
+
+  reader.evaluateForRead = evaluateWithProbeSources({
+    browserProbe: { movement: { playerRoute: route } },
+    movementProbe: null,
+  });
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const fallbackProbe = await reader.readAutoplayRouteProbe(
+      `persistent movement probe gap ${attempt}`,
+    );
+    assert.equal(fallbackProbe.source, "browser-probe-fallback");
+    assert.deepEqual(fallbackProbe.route, route);
+  }
+
+  reader.evaluateForRead = evaluateWithProbeSources({
+    browserProbe: null,
+    movementProbe: null,
+  });
+  assert.equal(
+    await reader.readAutoplayRouteProbe("genuinely absent route probe"),
+    null,
+  );
+
+  reader.evaluateForRead = evaluateWithProbeSources({
+    browserProbe: { movement: { playerRoute: { ...route, active: false } } },
+    movementProbe: null,
+  });
+  const staleFallback = await reader.readAutoplayRouteProbe(
+    "stale fallback route probe",
+  );
+  assert.equal(staleFallback.source, "browser-probe-fallback");
+  assert.equal(staleFallback.route.active, false);
+});
+
 test("live frame acquisition retries HUD drift and transient unavailable probes", async () => {
   const framePolicyStart = source.indexOf(
     "function screencastFrameCapturedAtEpochMs(",
@@ -953,6 +1025,24 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
       validateStableFramePair: () => ({}),
     }),
     /current-state probe was unavailable after frame capture on attempt 3\/3/,
+  );
+  await assert.rejects(
+    acquireFrame({
+      initialProbe: probe(2_390),
+      isCaptureWindowCoherent: (before, after) =>
+        before.state === after.state,
+      isInitialProbeCoherent: (initial, before) =>
+        initial.state === before.state,
+      label: "persistent unavailable before probe diagnostics",
+      readProbe: async () => null,
+      session: {
+        cdpDiagnosticSnapshot: () => ({
+          pendingRequests: [],
+          socket: { writable: true },
+        }),
+      },
+    }),
+    /current-state probe was unavailable before frame capture on attempt 3\/3\. CDP diagnostics: \{"pendingRequests":\[\],"socket":\{"writable":true\}\}/,
   );
   assert.deepEqual(
     persistentValidatedSequences,
