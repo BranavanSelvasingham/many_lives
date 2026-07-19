@@ -38,6 +38,7 @@ const AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS = 0.95;
 const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_READABILITY_TIMEOUT_MS ?? "30000",
 );
+const RESPONSIVE_DECISION_CAMERA_RECOVERY_GRACE_MS = 1_500;
 const RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT = 3;
 const RUN_RESPONSIVE_DECISION_GUARD_ONLY =
   process.env.MANY_LIVES_VISUAL_DECISION_GUARD_ONLY === "1";
@@ -3704,10 +3705,21 @@ function assertDecisionFieldsFullyVisible(page, label) {
   }
 }
 
+function decisionArtifactCameraProbeReady(page) {
+  return Boolean(
+    page?.cameraActiveSpaceId &&
+      page?.cameraActiveSpaceKind &&
+      page?.sceneViewportCss &&
+      Number.isFinite(page?.sceneVisibleFraction),
+  );
+}
+
 function recordDecisionArtifactReadabilitySample(state, page) {
   const geometry = compactDecisionArtifactReadabilityGeometry(page);
   let readable =
-    page?.railState === "expanded" && page?.decisionArtifact?.visible === true;
+    page?.railState === "expanded" &&
+    page?.decisionArtifact?.visible === true &&
+    decisionArtifactCameraProbeReady(page);
   if (readable) {
     try {
       assertDecisionFieldsFullyVisible(page, "responsive decision readability");
@@ -3881,6 +3893,13 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       },
     },
   };
+  const missingScenePage = {
+    ...readablePage,
+    cameraActiveSpaceId: null,
+    cameraActiveSpaceKind: null,
+    sceneVisibleFraction: null,
+    sceneViewportCss: null,
+  };
 
   let settling = createDecisionArtifactReadabilityState();
   settling = recordDecisionArtifactReadabilitySample(settling, unreadablePage);
@@ -3898,6 +3917,32 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     0,
     "A long Mara artifact with a clipped Why This field must not count as readable.",
   );
+  settling = recordDecisionArtifactReadabilitySample(settling, readablePage);
+  assert.equal(settling.stableSamples, 1);
+  let settledAssertionCalls = 0;
+  const missingCameraSample = evaluateDecisionArtifactReadabilitySample(
+    settling,
+    missingScenePage,
+    () => {
+      settledAssertionCalls += 1;
+    },
+  );
+  assert.equal(
+    missingCameraSample.error,
+    null,
+    "A missing camera probe is an unsettled sample, not an overlay assertion failure.",
+  );
+  assert.equal(
+    missingCameraSample.state.stableSamples,
+    0,
+    "A missing camera probe must reset accumulated decision readability.",
+  );
+  assert.equal(
+    settledAssertionCalls,
+    0,
+    "Overlay assertions must not run before the active scene camera probe is ready.",
+  );
+  settling = missingCameraSample.state;
   for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
     settling = recordDecisionArtifactReadabilitySample(settling, readablePage);
   }
@@ -3962,13 +4007,6 @@ function assertDecisionArtifactReadabilityWaitRegression() {
           "street:south-quay",
         ),
     );
-  const missingScenePage = {
-    ...readablePage,
-    cameraActiveSpaceId: null,
-    cameraActiveSpaceKind: null,
-    sceneVisibleFraction: null,
-    sceneViewportCss: null,
-  };
   const clippedScenePage = {
     ...readablePage,
     sceneVisibleFraction: 0.49,
@@ -3979,23 +4017,19 @@ function assertDecisionArtifactReadabilityWaitRegression() {
   };
 
   let coherent = createDecisionArtifactReadabilityState();
-  for (const invalidPage of [
-    missingScenePage,
-    clippedScenePage,
-    staleSpacePage,
-  ]) {
+  for (const invalidPage of [clippedScenePage, staleSpacePage]) {
     for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
       const evaluated = evaluateSettledSample(coherent, invalidPage);
       coherent = evaluated.state;
       assert.ok(
         evaluated.error,
-        "Absent, clipped, or stale scene geometry must reject the settled readability sample.",
+        "Clipped or stale scene geometry must reject the settled readability sample.",
       );
     }
     assert.equal(
       decisionArtifactReadabilityStable(coherent),
       false,
-      "Permanently absent, clipped, or stale scene geometry must never satisfy settled readability.",
+      "Permanently clipped or stale scene geometry must never satisfy settled readability.",
     );
   }
 
@@ -4010,7 +4044,16 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     "Fewer than the required coherent samples must not satisfy settled readability.",
   );
   const interrupted = evaluateSettledSample(coherent, missingScenePage);
-  assert.ok(interrupted.error);
+  assert.equal(
+    interrupted.error,
+    null,
+    "A transiently missing camera probe must wait instead of failing overlay geometry.",
+  );
+  assert.equal(
+    interrupted.state.stableSamples,
+    0,
+    "A transiently missing camera probe must interrupt the coherent sample sequence.",
+  );
   coherent = interrupted.state;
   for (let sample = 0; sample < RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT; sample += 1) {
     const evaluated = evaluateSettledSample(coherent, readablePage);
@@ -4876,6 +4919,52 @@ function responsiveDecisionViewports() {
   );
 }
 
+async function waitForResponsiveDecisionCameraProbe(
+  session,
+  viewport,
+  expectedSpaceId,
+  label,
+) {
+  const startedAt = Date.now();
+  let lastGeometry = null;
+  let recoveryCount = 0;
+
+  while (Date.now() - startedAt < RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS) {
+    const page = await session.inspectPage();
+    lastGeometry = compactDecisionArtifactReadabilityGeometry(page);
+    if (
+      decisionArtifactCameraProbeReady(page) &&
+      (!expectedSpaceId || page.cameraActiveSpaceId === expectedSpaceId)
+    ) {
+      return {
+        activeSpaceId: page.cameraActiveSpaceId,
+        activeSpaceKind: page.cameraActiveSpaceKind,
+        recoveryCount,
+        sceneVisibleFraction: page.sceneVisibleFraction,
+        waitedMs: Date.now() - startedAt,
+      };
+    }
+
+    if (
+      recoveryCount === 0 &&
+      Date.now() - startedAt >= RESPONSIVE_DECISION_CAMERA_RECOVERY_GRACE_MS
+    ) {
+      await session.setViewport({
+        ...viewport,
+        height: viewport.height - 1,
+      });
+      await sleep(POLL_INTERVAL_MS);
+      await session.setViewport(viewport);
+      recoveryCount += 1;
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `${label}: active scene camera probe did not recover before decision sampling: ${JSON.stringify(lastGeometry)}.`,
+  );
+}
+
 async function runResponsiveDecisionArtifactCheck(session) {
   const { gameId } = await createLongMaraDecisionArtifactGame();
   const results = [];
@@ -4922,6 +5011,12 @@ async function runResponsiveDecisionArtifactCheck(session) {
     if (initialPage.railState !== "expanded") {
       await session.clickSelector(".ml-rail-toggle");
     }
+    const cameraReadiness = await waitForResponsiveDecisionCameraProbe(
+      session,
+      viewport,
+      frozenProbe.location?.spaceId ?? null,
+      `${viewport.name} long Mara responsive decision camera`,
+    );
     const readableRail = await waitForVisibleDecisionArtifactDom(
       session,
       `${viewport.name} long Mara responsive decision rail`,
@@ -5011,6 +5106,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
       viewport,
     });
     results.push({
+      cameraReadiness,
       expandedDecisionArtifact: page.decisionArtifact,
       expandedGeometry: compactDecisionArtifactReadabilityGeometry(page),
       probe: compactDecisionArtifactProbeDiagnostic(frozenProbe),
