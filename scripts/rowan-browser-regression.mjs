@@ -12702,6 +12702,42 @@ function assertAutoplayProgressGapGuard() {
     ["conversation-progress"],
     "Visible transcript streaming must reset the autoplay pacing clock.",
   );
+
+  assert.deepEqual(
+    classifyAutoplayObservationProgress(
+      {
+        activity: { busyLabel: null },
+        autonomy: { label: "Return to Morrow House to recover" },
+      },
+      {
+        activity: {
+          busyLabel:
+            "Following Rowan: Return to Morrow House to recover...",
+        },
+        autonomy: { label: "Return to Morrow House to recover" },
+      },
+    ),
+    ["activity-progress"],
+    "A newly visible state-backed activity must reset the autoplay pacing clock.",
+  );
+
+  assert.deepEqual(
+    classifyAutoplayObservationProgress(
+      {
+        activity: {
+          busyLabel:
+            "Following Rowan: Return to Morrow House to recover...",
+        },
+        autonomy: { label: "Return to Morrow House to recover" },
+      },
+      {
+        activity: { busyLabel: null },
+        autonomy: { label: "On the way to Morrow House" },
+      },
+    ),
+    ["activity-progress"],
+    "A visible autonomy transition must reset the autoplay pacing clock.",
+  );
 }
 
 function assertAutoplayFirstAfternoonDuration(durationMs, diagnosticsPath) {
@@ -13570,6 +13606,14 @@ function classifyAutoplayObservationProgress(previous, next) {
   const progressKinds = [];
   const previousRouteProgress = previous.movement?.routeProgress ?? null;
   const nextRouteProgress = next.movement?.routeProgress ?? null;
+  if (
+    (previous.autonomy?.label ?? null) !== (next.autonomy?.label ?? null) ||
+    ((!previous.activity?.busyLabel ||
+      previous.activity.busyLabel !== next.activity?.busyLabel) &&
+      Boolean(next.activity?.busyLabel))
+  ) {
+    progressKinds.push("activity-progress");
+  }
   if (
     (!previous.visibleDecisionArtifact && next.visibleDecisionArtifact) ||
     previous.visibleDecisionArtifact?.selectedAction !==
