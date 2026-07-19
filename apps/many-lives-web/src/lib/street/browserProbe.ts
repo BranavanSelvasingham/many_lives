@@ -187,7 +187,6 @@ export type StreetBrowserProbeSnapshot = {
   rowanAutoplayEnabled?: boolean;
   rowanAutoplayFrozen?: boolean;
   rowanWatchModeEnabled?: boolean;
-  presentationClockMs?: number;
   visualEventCues?: Array<{
     backingEvents: Array<{
       id: string;
@@ -204,22 +203,6 @@ export type StreetBrowserProbeSnapshot = {
     visibleLabel: string | null;
   }>;
 };
-
-export const STREET_PRESENTATION_FRAME_GAP_CAP_MS = 250;
-
-export function advanceStreetPresentationClock(
-  currentMs: number,
-  frameDeltaMs: number,
-) {
-  const safeCurrentMs = Number.isFinite(currentMs) ? Math.max(0, currentMs) : 0;
-  const safeFrameDeltaMs = Number.isFinite(frameDeltaMs)
-    ? Math.max(0, frameDeltaMs)
-    : 0;
-  return (
-    safeCurrentMs +
-    Math.min(safeFrameDeltaMs, STREET_PRESENTATION_FRAME_GAP_CAP_MS)
-  );
-}
 
 function objectiveProbePayload(game: StreetGameState) {
   const objective = game.player.objective;
@@ -884,10 +867,7 @@ export function buildStreetBrowserProbeJson({
 }: BuildStreetBrowserProbeJsonOptions) {
   const wallMonotonicMs =
     typeof performance === "undefined" ? null : performance.now();
-  const appMonotonicMs =
-    typeof snapshot.presentationClockMs === "number"
-      ? snapshot.presentationClockMs
-      : wallMonotonicMs;
+  const appMonotonicMs = wallMonotonicMs;
   const currentLocation = game.locations.find(
     (location) => location.id === game.player.currentLocationId,
   );

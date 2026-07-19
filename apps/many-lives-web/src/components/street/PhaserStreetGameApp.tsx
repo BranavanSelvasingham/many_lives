@@ -105,7 +105,6 @@ import {
   type PendingConversationSource,
 } from "@/lib/street/rowanAutonomy";
 import {
-  advanceStreetPresentationClock,
   buildStreetBrowserProbeJson,
   type StreetBrowserMovementDiagnostics,
 } from "@/lib/street/browserProbe";
@@ -975,7 +974,6 @@ type RuntimeState = {
   pendingConversationAutostartNpcId: string | null;
   playerEntranceGameId: string | null;
   playerMotion: PlayerMotionState;
-  presentationClockMs: number;
   renderScale: number;
   snapshot: StreetAppSnapshot;
   ui: UiState;
@@ -1959,7 +1957,6 @@ async function createRuntime(options: {
       initialIndices,
       runtimeNow,
     ),
-    presentationClockMs: 0,
     cameraProjection: null,
     renderScale,
     snapshot: initialSnapshot,
@@ -2189,15 +2186,11 @@ async function createRuntime(options: {
       );
     },
 
-    update(this: PhaserType.Scene, _time: number, delta: number) {
+    update(this: PhaserType.Scene) {
       if (!runtimeState.objects) {
         return;
       }
 
-      runtimeState.presentationClockMs = advanceStreetPresentationClock(
-        runtimeState.presentationClockMs,
-        delta,
-      );
       renderDynamicScene(runtimeState.objects, runtimeState);
     },
   };
@@ -4192,6 +4185,8 @@ function installStreetProbeAccessor(root: HTMLDivElement) {
         ? (payload.timing as Record<string, unknown>)
         : {};
     timing.wallMonotonicMs = wallMonotonicMs;
+    // Keep the overlay-render timestamp so delayed browser reads do not inflate
+    // presentation dwell or progress gaps. Wall time remains diagnostic.
     if (typeof timing.appMonotonicMs !== "number") {
       timing.appMonotonicMs = wallMonotonicMs;
     }
@@ -7459,7 +7454,6 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       ...snapshot,
       conversationReplay: runtimeState.conversationReplay,
       movement: browserMovementDiagnostics,
-      presentationClockMs: runtimeState.presentationClockMs,
       rowanAutoplayEnabled: snapshot.rowanAutoplayEnabled,
       rowanAutoplayFrozen: snapshot.rowanAutoplayFrozen,
       rowanWatchModeEnabled: snapshot.rowanWatchModeEnabled,

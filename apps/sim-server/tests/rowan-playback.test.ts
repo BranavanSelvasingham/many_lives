@@ -17,11 +17,7 @@ import {
   startNextRowanPlaybackBeat,
   type RowanPlaybackBeat,
 } from "../../many-lives-web/src/lib/street/rowanPlayback.js";
-import {
-  advanceStreetPresentationClock,
-  buildStreetBrowserProbeJson,
-  STREET_PRESENTATION_FRAME_GAP_CAP_MS,
-} from "../../many-lives-web/src/lib/street/browserProbe.js";
+import { buildStreetBrowserProbeJson } from "../../many-lives-web/src/lib/street/browserProbe.js";
 import { buildIndependentNpcActionRecords } from "../../many-lives-web/src/lib/street/independentNpcActions.js";
 import { isObjectiveTrailStepPlayerFacingForPlayback } from "../../many-lives-web/src/lib/street/rowanPlaybackScaffolds.js";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
@@ -54,15 +50,7 @@ function setClock(
 }
 
 describe("Rowan playback helpers", () => {
-  it("measures rendered presentation time without charging long frame stalls", () => {
-    expect(advanceStreetPresentationClock(1_000, 32)).toBe(1_032);
-    expect(advanceStreetPresentationClock(1_032, 2_000)).toBe(
-      1_032 + STREET_PRESENTATION_FRAME_GAP_CAP_MS,
-    );
-    expect(advanceStreetPresentationClock(Number.NaN, -20)).toBe(0);
-  });
-
-  it("exposes presentation timing and visible transcript streaming", async () => {
+  it("exposes browser-local presentation timing and visible transcript streaming", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("rowan-probe-presentation-clock");
     world = await enterMorrowHouse(engine, world);
@@ -93,17 +81,15 @@ describe("Rowan playback helpers", () => {
             streamedWordCount: 7,
             streamingEntryId: "line-2",
           },
-          presentationClockMs: 12_345,
           rowanPlayback: playback,
           rowanWatchModeEnabled: true,
         },
       }),
     );
 
-    expect(probe.timing).toMatchObject({
-      appMonotonicMs: 12_345,
-      wallMonotonicMs: expect.any(Number),
-    });
+    expect(probe.timing.appMonotonicMs).toEqual(
+      probe.timing.wallMonotonicMs,
+    );
     expect(probe.activeConversation.replay).toEqual({
       isReplaying: true,
       revealedEntryCount: 1,
