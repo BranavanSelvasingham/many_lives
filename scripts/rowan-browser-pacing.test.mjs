@@ -592,7 +592,7 @@ test("late foothold route samples require two coherent distinct screenshot windo
   assert.match(source, /assertAutoplayFootholdRouteCaptureGuard\(\);/);
 });
 
-test("route-mid retries persistent HUD compositor drift while allowing map movement", async () => {
+test("live frame acquisition retries HUD drift and transient unavailable probes", async () => {
   const framePolicyStart = source.indexOf(
     "function screencastFrameCapturedAtEpochMs(",
   );
@@ -866,6 +866,99 @@ test("route-mid retries persistent HUD compositor drift while allowing map movem
   assert.equal(routeHudContinuityRejections, 1);
   assert.equal(stabilityCalls, 2);
   assert.equal(blockingCaptureCalls, 0);
+
+  const buildProbeRetrySession = (retryFrames) => {
+    let sequence = 0;
+    return {
+      autoplayScreencastSequence: () => sequence,
+      readScreenshotPaintProbe: async () => paintProbe(),
+      waitForAutoplayScreencastFrame: async (options) => {
+        const frame = retryFrames.find(
+          (candidate) =>
+            candidate.sequence > options.afterSequence &&
+            framePolicy.screencastFrameCapturedAtEpochMs(candidate) >=
+              options.minimumCapturedAtEpochMs,
+        );
+        assert.ok(frame, "Expected an eligible probe-retry screencast frame.");
+        sequence = frame.sequence;
+        return frame;
+      },
+    };
+  };
+  const validateProbeRetryFrame = (validatedSequences) =>
+    ({ frame, paintProbe: stablePaintProbe }) => {
+      validatedSequences.push(frame.sequence);
+      return {
+        buffer: Buffer.from(frame.data),
+        height: 625,
+        paintProbe: stablePaintProbe,
+        textPaint: { regionCount: 8, surfaces: ["hud", "dock", "rail"] },
+        width: 1365,
+      };
+    };
+  const transientProbeFrames = [
+    { data: "unbracketed", metadata: { timestamp: (epoch + 840) / 1_000 }, sequence: 1 },
+    { data: "unbracketed-confirmation", metadata: { timestamp: (epoch + 970) / 1_000 }, sequence: 2 },
+    { data: "bracketed", metadata: { timestamp: (epoch + 1_140) / 1_000 }, sequence: 3 },
+    { data: "bracketed-confirmation", metadata: { timestamp: (epoch + 1_270) / 1_000 }, sequence: 4 },
+  ];
+  const transientProbes = [probe(700), null, probe(1_000), probe(1_300)];
+  const transientValidatedSequences = [];
+  const transientCapture = await acquireFrame({
+    initialProbe: probe(690),
+    isCaptureWindowCoherent: (before, after) => before.state === after.state,
+    isInitialProbeCoherent: (initial, before) =>
+      initial.state === before.state,
+    label: "transient unavailable after probe",
+    readProbe: async () => transientProbes.shift(),
+    session: buildProbeRetrySession(transientProbeFrames),
+    validateFrame: validateProbeRetryFrame(transientValidatedSequences),
+    validateStableFramePair: () => ({}),
+  });
+  assert.equal(transientCapture.frame.sequence, 4);
+  assert.deepEqual(
+    transientValidatedSequences,
+    [3, 4],
+    "Pixels from the attempt without an after-probe must never be validated.",
+  );
+
+  const persistentProbeFrames = [
+    { data: "attempt-1", metadata: { timestamp: (epoch + 1_540) / 1_000 }, sequence: 1 },
+    { data: "attempt-1-confirmation", metadata: { timestamp: (epoch + 1_670) / 1_000 }, sequence: 2 },
+    { data: "attempt-2", metadata: { timestamp: (epoch + 1_840) / 1_000 }, sequence: 3 },
+    { data: "attempt-2-confirmation", metadata: { timestamp: (epoch + 1_970) / 1_000 }, sequence: 4 },
+    { data: "attempt-3", metadata: { timestamp: (epoch + 2_140) / 1_000 }, sequence: 5 },
+    { data: "attempt-3-confirmation", metadata: { timestamp: (epoch + 2_270) / 1_000 }, sequence: 6 },
+  ];
+  const persistentProbes = [
+    probe(1_400),
+    null,
+    probe(1_700),
+    null,
+    probe(2_000),
+    null,
+  ];
+  const persistentValidatedSequences = [];
+  await assert.rejects(
+    acquireFrame({
+      initialProbe: probe(1_390),
+      isCaptureWindowCoherent: (before, after) =>
+        before.state === after.state,
+      isInitialProbeCoherent: (initial, before) =>
+        initial.state === before.state,
+      label: "persistent unavailable after probe",
+      readProbe: async () => persistentProbes.shift(),
+      session: buildProbeRetrySession(persistentProbeFrames),
+      validateFrame: validateProbeRetryFrame(persistentValidatedSequences),
+      validateStableFramePair: () => ({}),
+    }),
+    /current-state probe was unavailable after frame capture on attempt 3\/3/,
+  );
+  assert.deepEqual(
+    persistentValidatedSequences,
+    [],
+    "Persistent unbracketed pixels must never be validated.",
+  );
 
   await assert.rejects(
     acquireFrame({

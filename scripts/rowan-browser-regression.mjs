@@ -12599,7 +12599,7 @@ async function acquireAutoplayScreencastFrameWindow({
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
-  let lastPaintError = null;
+  let lastCaptureError = null;
 
   for (
     let attempt = 1;
@@ -12607,7 +12607,19 @@ async function acquireAutoplayScreencastFrameWindow({
     attempt += 1
   ) {
     const beforeProbe = await readProbe(`${slug(label)}:before-frame-probe`);
-    assert.ok(beforeProbe, `${label}: current-state probe was unavailable before frame capture.`);
+    if (!beforeProbe) {
+      lastCaptureError = new Error(
+        `${label}: current-state probe was unavailable before frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}.`,
+      );
+      if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
+        process.stdout.write(
+          `[many-lives] Retrying unavailable autoplay current-state probe ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
+        );
+        await sleep(180);
+        continue;
+      }
+      break;
+    }
     assert.ok(
       isInitialProbeCoherent(initialProbe, beforeProbe),
       `${label}: milestone state changed before asynchronous frame capture. Initial: ${JSON.stringify(initialProbe)}. Before: ${JSON.stringify(beforeProbe)}.`,
@@ -12640,7 +12652,19 @@ async function acquireAutoplayScreencastFrameWindow({
       `${slug(label)}:after-frame-paint-probe`,
     );
     const afterProbe = await readProbe(`${slug(label)}:after-frame-probe`);
-    assert.ok(afterProbe, `${label}: current-state probe was unavailable after frame capture.`);
+    if (!afterProbe) {
+      lastCaptureError = new Error(
+        `${label}: current-state probe was unavailable after frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}.`,
+      );
+      if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
+        process.stdout.write(
+          `[many-lives] Retrying unavailable autoplay current-state probe ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
+        );
+        await sleep(180);
+        continue;
+      }
+      break;
+    }
     assert.ok(
       isCaptureWindowCoherent(beforeProbe, afterProbe),
       `${label}: screencast frame was not bracketed by one coherent current state. Before: ${JSON.stringify(beforeProbe)}. After: ${JSON.stringify(afterProbe)}.`,
@@ -12698,7 +12722,7 @@ async function acquireAutoplayScreencastFrameWindow({
         },
       };
     } catch (error) {
-      lastPaintError = error;
+      lastCaptureError = error;
       if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
         process.stdout.write(
           `[many-lives] Retrying incomplete autoplay screencast frame ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
@@ -12708,7 +12732,7 @@ async function acquireAutoplayScreencastFrameWindow({
     }
   }
 
-  throw lastPaintError ?? new Error(`${label}: screencast frame validation failed.`);
+  throw lastCaptureError ?? new Error(`${label}: screencast frame validation failed.`);
 }
 
 function autoplayLiveMilestoneMatches(key, probe, openingWorldVariant) {
