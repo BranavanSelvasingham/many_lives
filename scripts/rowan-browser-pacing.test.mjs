@@ -255,7 +255,7 @@ test("opening map evidence is frozen before zero-click pacing begins", () => {
   );
 });
 
-test("late foothold route samples require two coherent distinct screenshot windows", () => {
+test("late foothold route samples require two coherent distinct screenshot windows", async () => {
   const policyStart = source.indexOf(
     "function isAutoplayFootholdRouteFrame(",
   );
@@ -301,6 +301,82 @@ test("late foothold route samples require two coherent distinct screenshot windo
   );
   assert.doesNotThrow(() => policy.assertAutoplayFootholdRouteCaptureGuard());
 
+  const routeWindowStart = source.indexOf(
+    "async function readAutoplayRouteCaptureProbe(",
+  );
+  const routeWindowEnd = source.indexOf(
+    "\nasync function captureAutoplayRouteTrajectoryMilestone(",
+    routeWindowStart,
+  );
+  const routeWindowSource = source.slice(routeWindowStart, routeWindowEnd);
+  const routeCapture = Function(
+    "assert",
+    "AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS",
+    "AUTOPLAY_ROUTE_CAPTURE_PROBE_RETRY_DELAY_MS",
+    "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    "sleep",
+    "slug",
+    `${policySource}\n${routeWindowSource}; return { buildAutoplayFootholdRouteGuardFixture, captureAutoplayRouteScreenshotWindow };`,
+  )(assert, 3, 0, 0.1, async () => {}, (value) => value);
+  const captureCalls = [];
+  const captureRoutes = [
+    routeCapture.buildAutoplayFootholdRouteGuardFixture(0.641),
+    null,
+    routeCapture.buildAutoplayFootholdRouteGuardFixture(0.652),
+  ];
+  const captureWindow =
+    await routeCapture.captureAutoplayRouteScreenshotWindow({
+      expectedTargetLocationId: "tea-house",
+      initialRoute: lateStart,
+      label: "transient null route fixture",
+      screenshot: "/tmp/route-fixture.png",
+      session: {
+        captureScreenshot: async (_path, { afterCapture, beforeCapture }) => {
+          await beforeCapture();
+          captureCalls.push("screenshot");
+          await afterCapture();
+        },
+        readAutoplayRouteProbe: async () => {
+          const route = captureRoutes.shift();
+          captureCalls.push(route ? `route:${route.progress}` : "route:null");
+          return route;
+        },
+      },
+    });
+  assert.equal(captureWindow.beforeRoute.progress, 0.641);
+  assert.equal(captureWindow.afterRoute.progress, 0.652);
+  assert.deepEqual(captureCalls, [
+    "route:0.641",
+    "screenshot",
+    "route:null",
+    "route:0.652",
+  ]);
+
+  const arrivalCalls = [];
+  const arrivalRoutes = [
+    routeCapture.buildAutoplayFootholdRouteGuardFixture(0.641),
+    null,
+    routeCapture.buildAutoplayFootholdRouteGuardFixture(1, { active: false }),
+  ];
+  await assert.rejects(
+    routeCapture.captureAutoplayRouteScreenshotWindow({
+      expectedTargetLocationId: "tea-house",
+      initialRoute: lateStart,
+      label: "arrival route fixture",
+      screenshot: "/tmp/arrival-route-fixture.png",
+      session: {
+        captureScreenshot: async (_path, { afterCapture, beforeCapture }) => {
+          await beforeCapture();
+          arrivalCalls.push("screenshot");
+          await afterCapture();
+        },
+        readAutoplayRouteProbe: async () => arrivalRoutes.shift(),
+      },
+    }),
+    /screenshot was not bracketed by the same active legal route/,
+  );
+  assert.deepEqual(arrivalCalls, ["screenshot"]);
+
   const captureStart = source.indexOf(
     "async function captureAutoplayRouteTrajectoryMilestone(",
   );
@@ -309,19 +385,37 @@ test("late foothold route samples require two coherent distinct screenshot windo
     captureStart,
   );
   const captureSource = source.slice(captureStart, captureEnd);
-  const screenshotIndex = captureSource.indexOf(
-    "await session.captureScreenshot(screenshot)",
+  const screenshotMethodStart = source.indexOf("async captureScreenshot(");
+  const screenshotMethodEnd = source.indexOf(
+    "\n  waitForEvent(",
+    screenshotMethodStart,
   );
-  const postScreenshotProbeIndex = captureSource.indexOf(
-    ":post-screenshot-probe",
+  const screenshotMethodSource = source.slice(
+    screenshotMethodStart,
+    screenshotMethodEnd,
+  );
+  const beforeCaptureIndex = screenshotMethodSource.indexOf(
+    "await beforeCapture({ attempt })",
+  );
+  const screenshotIndex = screenshotMethodSource.indexOf(
+    'this.send("Page.captureScreenshot"',
+  );
+  const afterCaptureIndex = screenshotMethodSource.indexOf(
+    "await afterCapture({ attempt })",
   );
 
   assert.ok(captureStart >= 0 && captureEnd > captureStart);
   assert.ok(
-    screenshotIndex >= 0 &&
-      screenshotIndex < postScreenshotProbeIndex,
-    "Route pixels must be captured before the post-screenshot coherence probe.",
+    beforeCaptureIndex >= 0 &&
+      beforeCaptureIndex < screenshotIndex &&
+      screenshotIndex < afterCaptureIndex,
+    "Route probes must run immediately around Page.captureScreenshot.",
   );
+  assert.match(routeWindowSource, /beforeCapture:/);
+  assert.match(routeWindowSource, /afterCapture:/);
+  assert.doesNotMatch(source, /Page\.setWebLifecycleState/);
+  assert.doesNotMatch(source, /Emulation\.setVirtualTimePolicy/);
+  assert.match(source, /async readAutoplayRouteProbe\(/);
   assert.doesNotMatch(
     captureSource,
     /readAutoplayDomAudit|readCameraProbe|readMapAgencyProbe/,
@@ -330,6 +424,18 @@ test("late foothold route samples require two coherent distinct screenshot windo
   assert.match(captureSource, /routeCaptureWindow:/);
   assert.match(source, /waitForDistinctAutoplayFootholdRouteProbe\(/);
   assert.match(source, /routeMidWindow\.before\.progress - routeStartWindow\.after\.progress/);
+  const routeCaptureIndex = source.indexOf(
+    "const expectedRouteTarget =",
+    source.indexOf("const completion = await waitFor("),
+  );
+  const domSamplingIndex = source.indexOf(
+    "let sampleDom = null",
+    routeCaptureIndex,
+  );
+  assert.ok(
+    routeCaptureIndex >= 0 && routeCaptureIndex < domSamplingIndex,
+    "Route capture must run before optional DOM sampling can consume the route.",
+  );
   assert.match(source, /assertAutoplayFootholdRouteCaptureGuard\(\);/);
 });
 

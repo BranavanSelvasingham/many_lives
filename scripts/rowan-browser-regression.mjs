@@ -91,6 +91,8 @@ const OBSERVE_CARRY_FORWARD_TIMEOUT_MS = Number(
 const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_PACING_SAMPLE_INTERVAL_MS ?? "1250",
 );
+const AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS = 3;
+const AUTOPLAY_ROUTE_CAPTURE_PROBE_RETRY_DELAY_MS = 40;
 const AUTOPLAY_ROUTE_MID_CAPTURE_WINDOW_MS = 3_000;
 const AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS = 0.1;
 const AUTOPLAY_DOM_AUDIT_INTERVAL_MS = Number(
@@ -1297,6 +1299,28 @@ class CdpSession {
     return probe;
   }
 
+  async readAutoplayRouteProbe(label = "autoplay-route-probe") {
+    const route = await this.evaluateForRead(`(() => {
+      const script = document.querySelector("#ml-browser-movement-probe");
+      if (!script) {
+        return null;
+      }
+      try {
+        return JSON.parse(script.textContent || "null")?.playerRoute ?? null;
+      } catch (error) {
+        return { parseError: String(error) };
+      }
+    })()`, label);
+
+    if (route?.parseError) {
+      throw new Error(
+        `Could not parse #ml-browser-movement-probe: ${route.parseError}`,
+      );
+    }
+
+    return route;
+  }
+
   async readAutoplayDomAudit(label = "autoplay-dom-audit") {
     return this.evaluateForRead(`(() => {
       const compactText = (element) =>
@@ -2387,7 +2411,10 @@ class CdpSession {
     );
   }
 
-  async captureScreenshot(targetPath) {
+  async captureScreenshot(
+    targetPath,
+    { afterCapture = null, beforeCapture = null } = {},
+  ) {
     const validateTextPaint = shouldValidateGameplayScreenshotPaint(targetPath);
     const readPaintProbe = validateTextPaint
       ? () => this.evaluateForRead(`(() => {
@@ -2480,6 +2507,9 @@ class CdpSession {
     let lastError = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       const paintProbeBefore = await readPaintProbe();
+      if (beforeCapture) {
+        await beforeCapture({ attempt });
+      }
       const response = await this.send("Page.captureScreenshot", {
         captureBeyondViewport: false,
         format: "png",
@@ -2488,6 +2518,9 @@ class CdpSession {
       const data = response?.result?.data;
       if (!data) {
         throw new Error("Chrome did not return screenshot data.");
+      }
+      if (afterCapture) {
+        await afterCapture({ attempt });
       }
 
       const buffer = Buffer.from(data, "base64");
@@ -11819,6 +11852,76 @@ async function captureAutoplayTrajectoryMilestone({
   };
 }
 
+async function readAutoplayRouteCaptureProbe({ label, session }) {
+  for (
+    let attempt = 1;
+    attempt <= AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    const route = await session
+      .readAutoplayRouteProbe(`${label}:attempt-${attempt}`)
+      .catch(() => null);
+    if (route) {
+      return route;
+    }
+    if (attempt < AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS) {
+      await sleep(AUTOPLAY_ROUTE_CAPTURE_PROBE_RETRY_DELAY_MS);
+    }
+  }
+  return null;
+}
+
+async function captureAutoplayRouteScreenshotWindow({
+  expectedTargetLocationId,
+  initialRoute,
+  label,
+  screenshot,
+  session,
+}) {
+  let afterRoute = null;
+  let beforeRoute = null;
+  await session.captureScreenshot(screenshot, {
+    afterCapture: async () => {
+      afterRoute = await readAutoplayRouteCaptureProbe({
+        label: `${slug(label)}:after-screenshot-probe`,
+        session,
+      });
+      assert.ok(
+        afterRoute,
+        `${label}: route probe remained unavailable after screenshot capture.`,
+      );
+      assert.ok(
+        autoplayRouteCaptureWindowCoherent(
+          beforeRoute,
+          afterRoute,
+          expectedTargetLocationId,
+        ),
+        `${label}: screenshot was not bracketed by the same active legal route. Before: ${JSON.stringify(beforeRoute)}. After: ${JSON.stringify(afterRoute)}.`,
+      );
+    },
+    beforeCapture: async () => {
+      beforeRoute = await readAutoplayRouteCaptureProbe({
+        label: `${slug(label)}:before-screenshot-probe`,
+        session,
+      });
+      assert.ok(
+        beforeRoute,
+        `${label}: route probe remained unavailable before screenshot capture.`,
+      );
+      assert.ok(
+        autoplayRouteCaptureWindowCoherent(
+          initialRoute,
+          beforeRoute,
+          expectedTargetLocationId,
+        ),
+        `${label}: route changed before screenshot capture began. Initial: ${JSON.stringify(initialRoute)}. Before: ${JSON.stringify(beforeRoute)}.`,
+      );
+    },
+  });
+
+  return { afterRoute, beforeRoute };
+}
+
 async function captureAutoplayRouteTrajectoryMilestone({
   dom,
   expectedTargetLocationId,
@@ -11838,23 +11941,21 @@ async function captureAutoplayRouteTrajectoryMilestone({
     OUTPUT_DIR,
     `${openingWorldVariant}-autoplay-${slug(key)}.png`,
   );
-  await session.captureScreenshot(screenshot);
-  const afterProbe = acceptedAutoplayPacingProbe(
-    await session.readAutoplayPacingProbe(`${slug(label)}:post-screenshot-probe`),
-  );
-  assert.ok(
-    afterProbe,
-    `${label}: browser probe was unavailable immediately after screenshot capture.`,
-  );
-  const afterRoute = afterProbe?.movement?.playerRoute ?? null;
-  assert.ok(
-    autoplayRouteCaptureWindowCoherent(
-      beforeRoute,
-      afterRoute,
+  const { afterRoute, beforeRoute: screenshotBeforeRoute } =
+    await captureAutoplayRouteScreenshotWindow({
       expectedTargetLocationId,
-    ),
-    `${label}: screenshot was not bracketed by the same active legal route. Before: ${JSON.stringify(compactAutoplayPlayerRoute(probe))}. After: ${JSON.stringify(compactAutoplayPlayerRoute(afterProbe))}.`,
-  );
+      initialRoute: beforeRoute,
+      label,
+      screenshot,
+      session,
+    });
+  const afterProbe = {
+    ...probe,
+    movement: {
+      ...(probe?.movement ?? {}),
+      playerRoute: afterRoute,
+    },
+  };
 
   const visibleDom = dom ?? null;
   if (visibleDom) {
@@ -11878,7 +11979,9 @@ async function captureAutoplayRouteTrajectoryMilestone({
       playerRoute: compactAutoplayPlayerRoute(afterProbe),
       routeCaptureWindow: {
         after: compactAutoplayPlayerRoute(afterProbe),
-        before: compactAutoplayPlayerRoute(probe),
+        before: compactAutoplayPlayerRoute({
+          movement: { playerRoute: screenshotBeforeRoute },
+        }),
       },
       screenshot,
       visibleCopySample: compactObjectiveSequenceText(
@@ -12116,6 +12219,53 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
         if (!probe) {
           return false;
         }
+
+        const expectedRouteTarget =
+          OPENING_WORLD_TRAJECTORY_EXPECTATIONS[openingWorldVariant]
+            .footholdRouteTargetId;
+        const route = probe?.movement?.playerRoute;
+        if (route?.active && route.targetLocationId === expectedRouteTarget) {
+          const nextRouteMilestone = nextAutoplayFootholdRouteMilestone({
+            capturedRouteMid: capturedMilestoneKeys.has("foothold-route-mid"),
+            capturedRouteStart: capturedMilestoneKeys.has(
+              "foothold-route-start",
+            ),
+            expectedTargetLocationId: expectedRouteTarget,
+            route,
+            routeStartProgress: footholdRouteStartProgress,
+          });
+          if (nextRouteMilestone === "foothold-route-start") {
+            const routeStart = await captureRouteMilestoneOnce(
+              "foothold-route-start",
+              probe,
+              expectedRouteTarget,
+            );
+            footholdRouteStartProgress =
+              routeStart.evidence?.routeCaptureWindow?.after?.progress ??
+              routeStart.evidence?.playerRoute?.progress ??
+              null;
+            const distinctRouteProbe =
+              await waitForDistinctAutoplayFootholdRouteProbe({
+                expectedTargetLocationId: expectedRouteTarget,
+                routeStartProgress: footholdRouteStartProgress,
+                session,
+              });
+            if (distinctRouteProbe) {
+              await captureRouteMilestoneOnce(
+                "foothold-route-mid",
+                distinctRouteProbe,
+                expectedRouteTarget,
+              );
+            }
+          } else if (nextRouteMilestone === "foothold-route-mid") {
+            await captureRouteMilestoneOnce(
+              "foothold-route-mid",
+              probe,
+              expectedRouteTarget,
+            );
+          }
+        }
+
         let sampleDom = null;
         const now = Date.now();
         const probeSample = sampleAutoplayObservationSample({
@@ -12160,54 +12310,6 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
 
         if (probe.activeConversation) {
           await captureMilestoneOnce("first-interaction", probe, sampleDom);
-        }
-
-        const expectedRouteTarget =
-          OPENING_WORLD_TRAJECTORY_EXPECTATIONS[openingWorldVariant]
-            .footholdRouteTargetId;
-        const route = probe?.movement?.playerRoute;
-        if (route?.active && route.targetLocationId === expectedRouteTarget) {
-          const nextRouteMilestone = nextAutoplayFootholdRouteMilestone({
-            capturedRouteMid: capturedMilestoneKeys.has("foothold-route-mid"),
-            capturedRouteStart: capturedMilestoneKeys.has(
-              "foothold-route-start",
-            ),
-            expectedTargetLocationId: expectedRouteTarget,
-            route,
-            routeStartProgress: footholdRouteStartProgress,
-          });
-          if (nextRouteMilestone === "foothold-route-start") {
-            const routeStart = await captureRouteMilestoneOnce(
-              "foothold-route-start",
-              probe,
-              expectedRouteTarget,
-              sampleDom,
-            );
-            footholdRouteStartProgress =
-              routeStart.evidence?.routeCaptureWindow?.after?.progress ??
-              routeStart.evidence?.playerRoute?.progress ??
-              null;
-            const distinctRouteProbe =
-              await waitForDistinctAutoplayFootholdRouteProbe({
-                expectedTargetLocationId: expectedRouteTarget,
-                routeStartProgress: footholdRouteStartProgress,
-                session,
-              });
-            if (distinctRouteProbe) {
-              await captureRouteMilestoneOnce(
-                "foothold-route-mid",
-                distinctRouteProbe,
-                expectedRouteTarget,
-              );
-            }
-          } else if (nextRouteMilestone === "foothold-route-mid") {
-            await captureRouteMilestoneOnce(
-              "foothold-route-mid",
-              probe,
-              expectedRouteTarget,
-              sampleDom,
-            );
-          }
         }
 
         if (trajectoryFootholdReached(probe, openingWorldVariant)) {
