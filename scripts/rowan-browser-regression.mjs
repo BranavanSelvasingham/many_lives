@@ -93,6 +93,14 @@ const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
 );
 const AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS = 3;
 const AUTOPLAY_ROUTE_CAPTURE_PROBE_RETRY_DELAY_MS = 40;
+const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
+const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
+const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
+const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
+const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 4;
+const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = 2_000;
+const AUTOPLAY_SCREENCAST_MAX_BUFFERED_FRAMES = 4;
+const AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX = 0.75;
 const AUTOPLAY_ROUTE_MID_CAPTURE_WINDOW_MS = 3_000;
 const AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS = 0.1;
 const AUTOPLAY_DOM_AUDIT_INTERVAL_MS = Number(
@@ -974,9 +982,13 @@ function assertVisibleScreenshotTextPaint(buffer, probe, label) {
     const top = Math.max(0, Math.floor(region.rect.top * scaleY));
     const bottom = Math.min(height, Math.ceil(region.rect.bottom * scaleY));
     const characters = region.text.replace(/\s+/g, "").length;
+    const isHudText = region.surface === "hud";
     const horizontalBinCount = Math.max(
       2,
-      Math.min(6, Math.ceil(characters / 3)),
+      Math.min(
+        isHudText ? 8 : 6,
+        Math.ceil(characters / (isHudText ? 2 : 3)),
+      ),
     );
     const horizontalBins = new Uint16Array(horizontalBinCount);
     let brightPixels = 0;
@@ -989,7 +1001,7 @@ function assertVisibleScreenshotTextPaint(buffer, probe, label) {
         const green = pixels[pixelOffset + 1] ?? red;
         const blue = pixels[pixelOffset + 2] ?? red;
         const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
-        if (luminance >= 70) {
+        if (luminance >= (isHudText ? 90 : 70)) {
           brightPixels += 1;
           const relativeX = right > left ? (x - left) / (right - left) : 0;
           const bin = Math.min(
@@ -1002,18 +1014,232 @@ function assertVisibleScreenshotTextPaint(buffer, probe, label) {
       }
     }
 
-    const minimumBrightPixels = Math.max(
-      4,
-      1.5 * characters * scaleX * scaleY,
-      sampledPixels * 0.008,
+    const minimumBrightPixels = isHudText
+      ? Math.max(
+          5 * characters * scaleX * scaleY,
+          sampledPixels * 0.035,
+        )
+      : Math.max(
+          4,
+          1.5 * characters * scaleX * scaleY,
+          sampledPixels * 0.008,
+        );
+    const minimumPixelsPerActiveBin = isHudText
+      ? Math.max(2, Math.floor(2 * scaleX * scaleY))
+      : 2;
+    const activeBins = [...horizontalBins].filter(
+      (count) => count >= minimumPixelsPerActiveBin,
+    ).length;
+    const minimumActiveBins = Math.ceil(
+      horizontalBinCount * (isHudText ? 0.75 : 0.6),
     );
-    const activeBins = [...horizontalBins].filter((count) => count >= 2).length;
-    const minimumActiveBins = Math.ceil(horizontalBinCount * 0.6);
     assert.ok(
       brightPixels >= minimumBrightPixels && activeBins >= minimumActiveBins,
       `${label}: visible ${region.surface} text "${region.text.slice(0, 48)}" was not completely painted (${brightPixels} bright pixels, ${activeBins}/${horizontalBinCount} horizontal bins) at ${JSON.stringify(region.rect)}.`,
     );
   }
+}
+
+function screenshotRegionPixelDifferenceRatio(
+  beforeBuffer,
+  afterBuffer,
+  region,
+  viewport,
+) {
+  const before = decodePngPixels(beforeBuffer);
+  const after = decodePngPixels(afterBuffer);
+  assert.equal(after.width, before.width);
+  assert.equal(after.height, before.height);
+  const scaleX = before.width / viewport.width;
+  const scaleY = before.height / viewport.height;
+  const left = Math.max(0, Math.floor(region.left * scaleX));
+  const right = Math.min(before.width, Math.ceil(region.right * scaleX));
+  const top = Math.max(0, Math.floor(region.top * scaleY));
+  const bottom = Math.min(before.height, Math.ceil(region.bottom * scaleY));
+  let changedPixels = 0;
+  let sampledPixels = 0;
+
+  for (let y = top; y < bottom; y += 1) {
+    for (let x = left; x < right; x += 1) {
+      const beforeOffset = (y * before.width + x) * before.channels;
+      const afterOffset = (y * after.width + x) * after.channels;
+      const maximumChannelDifference = Math.max(
+        Math.abs(before.pixels[beforeOffset] - after.pixels[afterOffset]),
+        Math.abs(
+          (before.pixels[beforeOffset + 1] ?? before.pixels[beforeOffset]) -
+            (after.pixels[afterOffset + 1] ?? after.pixels[afterOffset]),
+        ),
+        Math.abs(
+          (before.pixels[beforeOffset + 2] ?? before.pixels[beforeOffset]) -
+            (after.pixels[afterOffset + 2] ?? after.pixels[afterOffset]),
+        ),
+      );
+      if (maximumChannelDifference >= 28) {
+        changedPixels += 1;
+      }
+      sampledPixels += 1;
+    }
+  }
+
+  return sampledPixels > 0 ? changedPixels / sampledPixels : 1;
+}
+
+function assertStableAutoplayScreencastFramePair({
+  afterBuffer,
+  beforeBuffer,
+  label,
+  paintProbe,
+}) {
+  const hudRegion = paintProbe.stableRegions?.find(
+    (region) => region.surface === "hud",
+  );
+  assert.ok(hudRegion, `${label}: stable HUD geometry was unavailable.`);
+  const hudPixelDifferenceRatio = screenshotRegionPixelDifferenceRatio(
+    beforeBuffer,
+    afterBuffer,
+    hudRegion.rect,
+    paintProbe.viewport,
+  );
+  assert.ok(
+    hudPixelDifferenceRatio <= 0.006,
+    `${label}: HUD pixels were not stable across consecutive screencast frames (${hudPixelDifferenceRatio.toFixed(4)} changed-pixel ratio).`,
+  );
+  return { hudPixelDifferenceRatio };
+}
+
+function assertAutoplayRouteHudContinuity({
+  afterBuffer,
+  beforeBuffer,
+  hudReference,
+  label,
+  paintProbe,
+}) {
+  if (!hudReference) {
+    return {};
+  }
+  const continuityPaintProbe = requireStableAutoplayScreenshotPaintProbe(
+    hudReference.paintProbe,
+    paintProbe,
+    `${label} route HUD continuity`,
+  );
+  const hudRegion = continuityPaintProbe.stableRegions.find(
+    (region) => region.surface === "hud",
+  );
+  assert.ok(hudRegion, `${label}: route HUD continuity region was unavailable.`);
+  const candidateDifferenceRatio = screenshotRegionPixelDifferenceRatio(
+    hudReference.buffer,
+    beforeBuffer,
+    hudRegion.rect,
+    continuityPaintProbe.viewport,
+  );
+  const confirmationDifferenceRatio = screenshotRegionPixelDifferenceRatio(
+    hudReference.buffer,
+    afterBuffer,
+    hudRegion.rect,
+    continuityPaintProbe.viewport,
+  );
+  const routeHudContinuityPixelDifferenceRatio = Math.max(
+    candidateDifferenceRatio,
+    confirmationDifferenceRatio,
+  );
+  assert.ok(
+    routeHudContinuityPixelDifferenceRatio <=
+      AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO,
+    `${label}: route-mid HUD pixels diverged from the accepted route-start HUD (${routeHudContinuityPixelDifferenceRatio.toFixed(4)} changed-pixel ratio).`,
+  );
+  return { routeHudContinuityPixelDifferenceRatio };
+}
+
+function maximumRectGeometryDelta(beforeRect, afterRect) {
+  return Math.max(
+    Math.abs(afterRect.bottom - beforeRect.bottom),
+    Math.abs(afterRect.left - beforeRect.left),
+    Math.abs(afterRect.right - beforeRect.right),
+    Math.abs(afterRect.top - beforeRect.top),
+  );
+}
+
+function matchStableAutoplayPaintRegions(
+  beforeRegions,
+  afterRegions,
+  label,
+  regionKind,
+) {
+  assert.equal(
+    afterRegions.length,
+    beforeRegions.length,
+    `${label}: visible ${regionKind} text runs changed during screencast capture (${beforeRegions.length} before, ${afterRegions.length} after).`,
+  );
+  const unmatchedAfter = [...afterRegions];
+  let maximumGeometryDeltaCssPx = 0;
+  const stableRegions = beforeRegions.map((beforeRegion) => {
+    const candidates = unmatchedAfter
+      .map((afterRegion, index) => ({
+        afterRegion,
+        delta: maximumRectGeometryDelta(beforeRegion.rect, afterRegion.rect),
+        index,
+      }))
+      .filter(
+        ({ afterRegion }) =>
+          afterRegion.surface === beforeRegion.surface &&
+          afterRegion.text === beforeRegion.text,
+      )
+      .sort((left, right) => left.delta - right.delta);
+    assert.ok(
+      candidates.length > 0,
+      `${label}: visible ${regionKind} text content changed during screencast capture; missing ${beforeRegion.surface} text ${JSON.stringify(beforeRegion.text)}.`,
+    );
+    const [{ afterRegion, delta, index }] = candidates;
+    assert.ok(
+      delta <= AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX,
+      `${label}: visible ${regionKind} text geometry drifted by ${delta.toFixed(3)} CSS px for ${beforeRegion.surface} text ${JSON.stringify(beforeRegion.text)}.`,
+    );
+    unmatchedAfter.splice(index, 1);
+    maximumGeometryDeltaCssPx = Math.max(maximumGeometryDeltaCssPx, delta);
+    return {
+      ...afterRegion,
+      rect: { ...afterRegion.rect },
+    };
+  });
+
+  return { maximumGeometryDeltaCssPx, stableRegions };
+}
+
+function requireStableAutoplayScreenshotPaintProbe(before, after, label) {
+  assert.deepEqual(
+    after.viewport,
+    before.viewport,
+    `${label}: viewport changed during screencast capture.`,
+  );
+  const text = matchStableAutoplayPaintRegions(
+    before.regions,
+    after.regions,
+    label,
+    "visible",
+  );
+  assert.ok(
+    text.stableRegions.length >= 8,
+    `${label}: expected stable visible HUD, dock, and rail text geometry.`,
+  );
+  const containers = matchStableAutoplayPaintRegions(
+    before.stableRegions ?? [],
+    after.stableRegions ?? [],
+    label,
+    "container",
+  );
+  assert.ok(
+    containers.stableRegions.some((region) => region.surface === "hud"),
+    `${label}: stable HUD container geometry was unavailable.`,
+  );
+
+  return {
+    maximumContainerGeometryDeltaCssPx:
+      containers.maximumGeometryDeltaCssPx,
+    maximumTextGeometryDeltaCssPx: text.maximumGeometryDeltaCssPx,
+    regions: text.stableRegions,
+    stableRegions: containers.stableRegions,
+    viewport: after.viewport,
+  };
 }
 
 function shouldValidateGameplayScreenshotPaint(targetPath) {
@@ -1055,11 +1281,113 @@ function mergeScreenshotPaintProbes(before, after, label) {
     sharedRegions.length >= 8,
     `${label}: too few stable visible text runs remained during screenshot capture (${sharedRegions.length}).`,
   );
+  const stableRegions = (before.stableRegions ?? []).map((beforeRegion) => {
+    const afterRegion = (after.stableRegions ?? []).find(
+      (candidate) =>
+        candidate.surface === beforeRegion.surface &&
+        candidate.text === beforeRegion.text,
+    );
+    assert.ok(
+      afterRegion,
+      `${label}: visible ${beforeRegion.surface} container changed during screenshot capture.`,
+    );
+    return {
+      ...beforeRegion,
+      rect: {
+        bottom: Math.max(beforeRegion.rect.bottom, afterRegion.rect.bottom),
+        left: Math.min(beforeRegion.rect.left, afterRegion.rect.left),
+        right: Math.max(beforeRegion.rect.right, afterRegion.rect.right),
+        top: Math.min(beforeRegion.rect.top, afterRegion.rect.top),
+      },
+    };
+  });
+  assert.ok(
+    stableRegions.some((region) => region.surface === "hud"),
+    `${label}: stable HUD container geometry was unavailable.`,
+  );
 
   return {
     regions: sharedRegions,
+    stableRegions,
     viewport: before.viewport,
   };
+}
+
+function screencastFrameCapturedAtEpochMs(frame) {
+  const timestampSeconds = frame?.metadata?.timestamp;
+  if (
+    typeof timestampSeconds !== "number" ||
+    !Number.isFinite(timestampSeconds) ||
+    timestampSeconds < 1_000_000_000
+  ) {
+    return null;
+  }
+  return timestampSeconds * 1_000;
+}
+
+function cdpProbeCapturedAtEpochMs(probe) {
+  return (
+    probe?.capturedAtEpochMs ?? probe?.cdpRead?.capturedAtEpochMs ?? null
+  );
+}
+
+function screencastFrameIsBracketedByEpochProbes(
+  frame,
+  beforeProbe,
+  afterProbe,
+) {
+  const frameCapturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+  const beforeCapturedAtEpochMs = cdpProbeCapturedAtEpochMs(beforeProbe);
+  const afterCapturedAtEpochMs = cdpProbeCapturedAtEpochMs(afterProbe);
+  return Boolean(
+    frameCapturedAtEpochMs !== null &&
+      typeof beforeCapturedAtEpochMs === "number" &&
+      typeof afterCapturedAtEpochMs === "number" &&
+      beforeCapturedAtEpochMs <= frameCapturedAtEpochMs &&
+      frameCapturedAtEpochMs <= afterCapturedAtEpochMs,
+  );
+}
+
+function autoplayMilestoneStateIdentity(probe) {
+  return {
+    activeConversation: probe?.activeConversation
+      ? {
+          lines: probe.activeConversation.lines ?? null,
+          npcId: probe.activeConversation.npcId ?? null,
+        }
+      : null,
+    autonomy: {
+      actionId: probe?.autonomy?.actionId ?? null,
+      label: probe?.autonomy?.label ?? null,
+      mode: probe?.autonomy?.mode ?? null,
+      stepKind: probe?.autonomy?.stepKind ?? null,
+      targetLocationId: probe?.autonomy?.targetLocationId ?? null,
+    },
+    clockIso: probe?.clock?.iso ?? null,
+    consequence: probe?.firstAfternoon?.consequence
+      ? {
+          id: probe.firstAfternoon.consequence.id ?? null,
+          kind: probe.firstAfternoon.consequence.kind ?? null,
+        }
+      : null,
+    firstAfternoonCompletedAt: probe?.firstAfternoon?.completedAt ?? null,
+    gameId: probe?.gameId ?? null,
+    location: {
+      id: probe?.location?.id ?? null,
+      spaceId: probe?.location?.spaceId ?? null,
+      x: probe?.location?.x ?? null,
+      y: probe?.location?.y ?? null,
+    },
+    objectiveProgress: probe?.objective?.progressLabel ?? null,
+  };
+}
+
+function autoplayMilestoneCaptureWindowCoherent(initial, before, after) {
+  const expected = JSON.stringify(autoplayMilestoneStateIdentity(initial));
+  return (
+    JSON.stringify(autoplayMilestoneStateIdentity(before)) === expected &&
+    JSON.stringify(autoplayMilestoneStateIdentity(after)) === expected
+  );
 }
 
 function isCdpRuntimeEvaluateTimeout(error) {
@@ -1080,6 +1408,11 @@ class CdpSession {
     this.messageId = 0;
     this.pending = new Map();
     this.eventListeners = new Map();
+    this.screencast = null;
+    this.screencastGeneration = 0;
+    this.transportEvents = [];
+    this.transportFailure = null;
+    this.closing = false;
     this.pageErrors = [];
     this.buffer = Buffer.alloc(0);
     this.handshakeComplete = false;
@@ -1096,10 +1429,25 @@ class CdpSession {
       this.handleData(chunk);
     });
     this.socket.on("error", (error) => {
-      for (const deferred of this.pending.values()) {
-        deferred.reject(error);
+      this.failCdpTransport("socket-error", error);
+    });
+    this.socket.on("end", () => {
+      if (!this.closing) {
+        this.failCdpTransport(
+          "socket-end",
+          new Error("Chrome DevTools socket ended unexpectedly."),
+        );
       }
-      this.pending.clear();
+    });
+    this.socket.on("close", (hadError) => {
+      if (!this.closing) {
+        this.failCdpTransport(
+          "socket-close",
+          new Error(
+            `Chrome DevTools socket closed unexpectedly (hadError=${hadError}).`,
+          ),
+        );
+      }
     });
 
     await once(this.socket, "connect");
@@ -1129,11 +1477,75 @@ class CdpSession {
   }
 
   async close() {
+    this.closing = true;
+    await this.stopAutoplayScreencast().catch((error) => {
+      this.recordCdpTransportEvent("screencast-stop-on-close-failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     try {
       this.socket?.destroy();
     } catch {}
 
     return closeChildProcess(this.browser);
+  }
+
+  recordCdpTransportEvent(kind, details = {}) {
+    this.transportEvents.push({
+      at: new Date().toISOString(),
+      kind,
+      ...details,
+    });
+    if (this.transportEvents.length > 20) {
+      this.transportEvents.splice(0, this.transportEvents.length - 20);
+    }
+  }
+
+  failCdpTransport(kind, error) {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.transportFailure = {
+      at: new Date().toISOString(),
+      kind,
+      message: failure.message,
+    };
+    this.recordCdpTransportEvent(kind, { error: failure.message });
+    for (const deferred of this.pending.values()) {
+      deferred.reject(failure);
+    }
+    this.pending.clear();
+  }
+
+  cdpDiagnosticSnapshot({ commandId = null, method = null } = {}) {
+    const socket = this.socket;
+    return {
+      commandId,
+      method,
+      pendingRequests: [...this.pending.entries()].map(([id, request]) => ({
+        ageMs: Date.now() - request.startedAtEpochMs,
+        id,
+        method: request.method,
+      })),
+      screencast: this.screencast
+        ? {
+            active: this.screencast.active,
+            bufferedFrames: this.screencast.frames.length,
+            generation: this.screencast.generation,
+            ignoredFrameCount: this.screencast.ignoredFrameCount,
+            lastSequence: this.screencast.lastSequence,
+            status: this.screencast.status,
+            waiterCount: this.screencast.waiters.length,
+          }
+        : null,
+      socket: {
+        bytesRead: socket?.bytesRead ?? null,
+        bytesWritten: socket?.bytesWritten ?? null,
+        destroyed: socket?.destroyed ?? null,
+        readyState: socket?.readyState ?? null,
+        writable: socket?.writable ?? null,
+      },
+      transportEvents: this.transportEvents.slice(-8),
+      transportFailure: this.transportFailure,
+    };
   }
 
   async evaluate(expression) {
@@ -1220,7 +1632,9 @@ class CdpSession {
           label,
           pendingRequestCount: this.pending.size,
           pendingRequestIds: [...this.pending.keys()],
+          pendingRequests: this.cdpDiagnosticSnapshot().pendingRequests,
           retryDelayMs: CDP_READ_RETRY_DELAY_MS,
+          screencast: this.cdpDiagnosticSnapshot().screencast,
           socket: {
             bytesRead: socket?.bytesRead ?? null,
             bytesWritten: socket?.bytesWritten ?? null,
@@ -1231,6 +1645,8 @@ class CdpSession {
             remoteAddress: socket?.remoteAddress ?? null,
             remotePort: socket?.remotePort ?? null,
           },
+          transportEvents: this.transportEvents.slice(-8),
+          transportFailure: this.transportFailure,
           url: this.url,
         },
         null,
@@ -1287,6 +1703,10 @@ class CdpSession {
         return movement;
       }
       payload.movement = movement ?? payload.movement;
+      payload.cdpRead = {
+        capturedAtEpochMs: Date.now(),
+        capturedAtMonotonicMs: performance.now()
+      };
       return payload;
     })()`, label);
 
@@ -1300,25 +1720,32 @@ class CdpSession {
   }
 
   async readAutoplayRouteProbe(label = "autoplay-route-probe") {
-    const route = await this.evaluateForRead(`(() => {
+    const probe = await this.evaluateForRead(`(() => {
       const script = document.querySelector("#ml-browser-movement-probe");
       if (!script) {
         return null;
       }
       try {
-        return JSON.parse(script.textContent || "null")?.playerRoute ?? null;
+        const route = JSON.parse(script.textContent || "null")?.playerRoute ?? null;
+        return route
+          ? {
+              capturedAtEpochMs: Date.now(),
+              capturedAtMonotonicMs: performance.now(),
+              route
+            }
+          : null;
       } catch (error) {
         return { parseError: String(error) };
       }
     })()`, label);
 
-    if (route?.parseError) {
+    if (probe?.parseError) {
       throw new Error(
-        `Could not parse #ml-browser-movement-probe: ${route.parseError}`,
+        `Could not parse #ml-browser-movement-probe: ${probe.parseError}`,
       );
     }
 
-    return route;
+    return probe;
   }
 
   async readAutoplayDomAudit(label = "autoplay-dom-audit") {
@@ -2411,98 +2838,309 @@ class CdpSession {
     );
   }
 
+  async readScreenshotPaintProbe(label = "screenshot-paint-probe") {
+    return this.evaluateForRead(`(() => {
+      const selectors = [
+        ["hud", ".ml-time-chip"],
+        ["dock", ".ml-dock-button"],
+        ["rail", ".ml-rail-name"],
+        ["rail", ".ml-rail-thought"],
+        ["rail", ".ml-command-rail .ml-kicker"]
+      ];
+      const regions = selectors.flatMap(([surface, selector]) =>
+        Array.from(document.querySelectorAll(selector)).flatMap((element) => {
+          const style = window.getComputedStyle(element);
+          if (
+            style.visibility === "hidden" ||
+            style.display === "none"
+          ) {
+            return [];
+          }
+          const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+          const textRegions = [];
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            const text = node.textContent?.replace(/\\s+/g, " ").trim() ?? "";
+            if (!text) {
+              continue;
+            }
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const rect = range.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) {
+              continue;
+            }
+            const insideViewport =
+              rect.left >= 0 &&
+              rect.right <= window.innerWidth &&
+              rect.top >= 0 &&
+              rect.bottom <= window.innerHeight;
+            const insideClippingAncestors = (() => {
+              for (
+                let ancestor = element.parentElement;
+                ancestor;
+                ancestor = ancestor.parentElement
+              ) {
+                const ancestorStyle = window.getComputedStyle(ancestor);
+                const clips = [
+                  ancestorStyle.overflow,
+                  ancestorStyle.overflowX,
+                  ancestorStyle.overflowY
+                ].some((value) =>
+                  ["hidden", "clip", "scroll", "auto"].includes(value)
+                );
+                if (!clips) {
+                  continue;
+                }
+                const ancestorRect = ancestor.getBoundingClientRect();
+                if (
+                  rect.left < ancestorRect.left ||
+                  rect.right > ancestorRect.right ||
+                  rect.top < ancestorRect.top ||
+                  rect.bottom > ancestorRect.bottom
+                ) {
+                  return false;
+                }
+              }
+              return true;
+            })();
+            if (!insideViewport || !insideClippingAncestors) {
+              continue;
+            }
+            textRegions.push({
+              rect: {
+                bottom: rect.bottom,
+                left: rect.left,
+                right: rect.right,
+                top: rect.top
+              },
+              surface,
+              text
+            });
+          }
+          return textRegions;
+        })
+      );
+      const stableRegions = [
+        ["hud", ".ml-time-pill"]
+      ].flatMap(([surface, selector]) =>
+        Array.from(document.querySelectorAll(selector)).flatMap((element) => {
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          if (
+            style.visibility === "hidden" ||
+            style.display === "none" ||
+            rect.width <= 0 ||
+            rect.height <= 0 ||
+            rect.left < 0 ||
+            rect.right > window.innerWidth ||
+            rect.top < 0 ||
+            rect.bottom > window.innerHeight
+          ) {
+            return [];
+          }
+          return [{
+            rect: {
+              bottom: rect.bottom,
+              left: rect.left,
+              right: rect.right,
+              top: rect.top
+            },
+            surface,
+            text: (element.innerText ?? element.textContent ?? "")
+              .replace(/\\s+/g, " ")
+              .trim()
+          }];
+        })
+      );
+      return {
+        capturedAtEpochMs: Date.now(),
+        regions,
+        stableRegions,
+        viewport: { height: window.innerHeight, width: window.innerWidth }
+      };
+    })()`, label);
+  }
+
+  async startAutoplayScreencast() {
+    assert.ok(
+      !this.screencast,
+      "Autoplay screencast was already active.",
+    );
+    const state = {
+      active: false,
+      frames: [],
+      generation: this.screencastGeneration + 1,
+      ignoredFrameCount: 0,
+      lastSequence: 0,
+      startedAtEpochMs: Date.now(),
+      status: "starting",
+      waiters: [],
+    };
+    this.screencastGeneration = state.generation;
+    this.screencast = state;
+    try {
+      await this.send(
+        "Page.startScreencast",
+        {
+          everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
+          format: "png",
+        },
+        { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+      );
+      state.active = true;
+      state.status = "active";
+    } catch (error) {
+      if (this.screencast === state) {
+        this.screencast = null;
+      }
+      throw error;
+    }
+  }
+
+  async stopAutoplayScreencast() {
+    const state = this.screencast;
+    if (!state) {
+      return;
+    }
+    state.active = false;
+    state.status = "stopping";
+    for (const waiter of state.waiters.splice(0)) {
+      clearTimeout(waiter.timeoutId);
+      waiter.reject(
+        new Error("Autoplay screencast stopped before a frame arrived."),
+      );
+    }
+    try {
+      if (!this.socket?.destroyed && this.socket?.writable) {
+        await this.send(
+          "Page.stopScreencast",
+          {},
+          { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+        );
+      }
+    } finally {
+      state.status = "stopped";
+      if (this.screencast === state) {
+        this.screencast = null;
+      }
+    }
+  }
+
+  autoplayScreencastSequence() {
+    return this.screencast?.lastSequence ?? 0;
+  }
+
+  waitForAutoplayScreencastFrame({
+    afterSequence,
+    minimumCapturedAtEpochMs,
+    timeoutMs = AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS,
+  }) {
+    const state = this.screencast;
+    assert.ok(
+      state && ["starting", "active"].includes(state.status),
+      "Autoplay screencast is not active.",
+    );
+    const matches = (frame) => {
+      const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+      return Boolean(
+        frame.sequence > afterSequence &&
+          capturedAtEpochMs !== null &&
+          capturedAtEpochMs >= minimumCapturedAtEpochMs,
+      );
+    };
+    const bufferedFrame = state.frames.find(matches);
+    if (bufferedFrame) {
+      return Promise.resolve(bufferedFrame);
+    }
+
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        afterSequence,
+        matches,
+        reject,
+        resolve,
+        timeoutId: null,
+      };
+      waiter.timeoutId = setTimeout(() => {
+        const index = state.waiters.indexOf(waiter);
+        if (index >= 0) {
+          state.waiters.splice(index, 1);
+        }
+        reject(
+          new Error(
+            `Timed out waiting ${timeoutMs}ms for an asynchronous autoplay screencast frame after sequence ${afterSequence}.`,
+          ),
+        );
+      }, timeoutMs);
+      state.waiters.push(waiter);
+    });
+  }
+
+  handleAutoplayScreencastFrame(params) {
+    const sessionId = params?.sessionId;
+    if (typeof sessionId === "number") {
+      void this.send(
+        "Page.screencastFrameAck",
+        { sessionId },
+        { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+      ).catch((error) => {
+        this.recordCdpTransportEvent("screencast-ack-failed", {
+          error: error instanceof Error ? error.message : String(error),
+          sessionId,
+        });
+      });
+    }
+
+    const state = this.screencast;
+    if (
+      !state ||
+      !["starting", "active"].includes(state.status) ||
+      typeof params?.data !== "string"
+    ) {
+      return;
+    }
+    const frame = {
+      data: params.data,
+      metadata: params.metadata ?? null,
+      sequence: state.lastSequence + 1,
+    };
+    const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+    if (
+      capturedAtEpochMs === null ||
+      capturedAtEpochMs < state.startedAtEpochMs
+    ) {
+      state.ignoredFrameCount += 1;
+      return;
+    }
+    state.lastSequence = frame.sequence;
+    state.frames.push(frame);
+    if (state.frames.length > AUTOPLAY_SCREENCAST_MAX_BUFFERED_FRAMES) {
+      state.frames.shift();
+    }
+
+    for (const waiter of [...state.waiters]) {
+      if (!waiter.matches(frame)) {
+        continue;
+      }
+      const index = state.waiters.indexOf(waiter);
+      if (index >= 0) {
+        state.waiters.splice(index, 1);
+      }
+      clearTimeout(waiter.timeoutId);
+      waiter.resolve(frame);
+    }
+  }
+
   async captureScreenshot(
     targetPath,
     { afterCapture = null, beforeCapture = null } = {},
   ) {
     const validateTextPaint = shouldValidateGameplayScreenshotPaint(targetPath);
     const readPaintProbe = validateTextPaint
-      ? () => this.evaluateForRead(`(() => {
-          const selectors = [
-            ["hud", ".ml-time-chip"],
-            ["dock", ".ml-dock-button"],
-            ["rail", ".ml-rail-name"],
-            ["rail", ".ml-rail-thought"],
-            ["rail", ".ml-command-rail .ml-kicker"]
-          ];
-          const regions = selectors.flatMap(([surface, selector]) =>
-            Array.from(document.querySelectorAll(selector)).flatMap((element) => {
-              const style = window.getComputedStyle(element);
-              if (
-                style.visibility === "hidden" ||
-                style.display === "none"
-              ) {
-                return [];
-              }
-              const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
-              const textRegions = [];
-              for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-                const text = node.textContent?.replace(/\\s+/g, " ").trim() ?? "";
-                if (!text) {
-                  continue;
-                }
-                const range = document.createRange();
-                range.selectNodeContents(node);
-                const rect = range.getBoundingClientRect();
-                if (rect.width <= 0 || rect.height <= 0) {
-                  continue;
-                }
-                const insideViewport =
-                  rect.left >= 0 &&
-                  rect.right <= window.innerWidth &&
-                  rect.top >= 0 &&
-                  rect.bottom <= window.innerHeight;
-                const insideClippingAncestors = (() => {
-                  for (
-                    let ancestor = element.parentElement;
-                    ancestor;
-                    ancestor = ancestor.parentElement
-                  ) {
-                    const ancestorStyle = window.getComputedStyle(ancestor);
-                    const clips = [
-                      ancestorStyle.overflow,
-                      ancestorStyle.overflowX,
-                      ancestorStyle.overflowY
-                    ].some((value) =>
-                      ["hidden", "clip", "scroll", "auto"].includes(value)
-                    );
-                    if (!clips) {
-                      continue;
-                    }
-                    const ancestorRect = ancestor.getBoundingClientRect();
-                    if (
-                      rect.left < ancestorRect.left ||
-                      rect.right > ancestorRect.right ||
-                      rect.top < ancestorRect.top ||
-                      rect.bottom > ancestorRect.bottom
-                    ) {
-                      return false;
-                    }
-                  }
-                  return true;
-                })();
-                if (!insideViewport || !insideClippingAncestors) {
-                  continue;
-                }
-                textRegions.push({
-                  rect: {
-                    bottom: rect.bottom,
-                    left: rect.left,
-                    right: rect.right,
-                    top: rect.top
-                  },
-                  surface,
-                  text
-                });
-              }
-              return textRegions;
-            })
-          );
-          return {
-            regions,
-            viewport: { height: window.innerHeight, width: window.innerWidth }
-          };
-        })()`, `screenshot-paint-probe:${path.basename(targetPath)}`)
+      ? () =>
+          this.readScreenshotPaintProbe(
+            `screenshot-paint-probe:${path.basename(targetPath)}`,
+          )
       : async () => null;
     let lastError = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -2563,22 +3201,58 @@ class CdpSession {
     });
   }
 
-  async send(method, params = {}) {
+  async send(method, params = {}, { timeoutMs = CDP_WAIT_TIMEOUT_MS } = {}) {
+    if (
+      !this.socket ||
+      this.socket.destroyed ||
+      !this.socket.writable ||
+      this.transportFailure
+    ) {
+      throw new Error(
+        `Cannot send Chrome DevTools command ${method}; transport is not writable. CDP diagnostics: ${JSON.stringify(this.cdpDiagnosticSnapshot({ method }))}`,
+      );
+    }
     this.messageId += 1;
     const id = this.messageId;
     const payload = JSON.stringify({ id, method, params });
     const promise = new Promise((resolve, reject) => {
-      this.pending.set(id, { reject, resolve });
+      this.pending.set(id, {
+        method,
+        reject,
+        resolve,
+        startedAtEpochMs: Date.now(),
+      });
     });
 
-    this.writeFrame(payload);
-    return withTimeout(
-      promise.finally(() => {
-        this.pending.delete(id);
-      }),
-      CDP_WAIT_TIMEOUT_MS,
-      `Timed out waiting for Chrome DevTools response for ${method}.`,
-    );
+    try {
+      this.writeFrame(payload);
+    } catch (error) {
+      this.pending.delete(id);
+      const failure = error instanceof Error ? error : new Error(String(error));
+      this.recordCdpTransportEvent("command-write-failed", {
+        commandId: id,
+        error: failure.message,
+        method,
+      });
+      throw new Error(
+        `Could not write Chrome DevTools command ${method}. CDP diagnostics: ${JSON.stringify(this.cdpDiagnosticSnapshot({ commandId: id, method }))}. ${failure.message}`,
+      );
+    }
+
+    try {
+      return await withTimeout(
+        promise,
+        timeoutMs,
+        `Timed out waiting for Chrome DevTools response for ${method}.`,
+      );
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error));
+      throw new Error(
+        `${failure.message} CDP diagnostics: ${JSON.stringify(this.cdpDiagnosticSnapshot({ commandId: id, method }))}`,
+      );
+    } finally {
+      this.pending.delete(id);
+    }
   }
 
   writeHandshake() {
@@ -2636,6 +3310,9 @@ class CdpSession {
       }
 
       const message = JSON.parse(frame.payload.toString("utf8"));
+      if (message.method === "Page.screencastFrame") {
+        this.handleAutoplayScreencastFrame(message.params);
+      }
       if (message.method === "Runtime.exceptionThrown") {
         this.recordPageError({
           method: message.method,
@@ -2771,6 +3448,9 @@ class CdpSession {
   }
 
   writeFrame(text) {
+    if (!this.socket || this.socket.destroyed || !this.socket.writable) {
+      throw new Error("Chrome DevTools socket is not writable.");
+    }
     const payload = Buffer.from(text, "utf8");
     const mask = randomBytes(4);
     let header;
@@ -2795,7 +3475,14 @@ class CdpSession {
       maskedPayload[index] = payload[index] ^ mask[index % 4];
     }
 
-    this.socket.write(Buffer.concat([header, mask, maskedPayload]));
+    const accepted = this.socket.write(
+      Buffer.concat([header, mask, maskedPayload]),
+    );
+    if (!accepted) {
+      this.recordCdpTransportEvent("socket-backpressure", {
+        bufferedBytes: this.socket.writableLength ?? null,
+      });
+    }
   }
 }
 
@@ -11796,7 +12483,7 @@ function assertAutoplayFootholdRouteCaptureGuard() {
   );
 }
 
-async function captureAutoplayTrajectoryMilestone({
+async function captureAutoplayFrozenTrajectoryMilestone({
   dom,
   key,
   openingWorldVariant,
@@ -11852,6 +12539,279 @@ async function captureAutoplayTrajectoryMilestone({
   };
 }
 
+function validateAutoplayScreencastFrame({
+  frame,
+  label,
+  paintProbe,
+}) {
+  const buffer = Buffer.from(frame.data, "base64");
+  const { height, width } = decodePngPixels(buffer);
+  assert.ok(
+    width >= 640 && height >= 360,
+    `${label}: screencast frame was too small (${width}x${height}).`,
+  );
+  assertNoLargeNearBlackDropout(buffer, label);
+  assertVisibleScreenshotTextPaint(buffer, paintProbe, label);
+  return {
+    buffer,
+    height,
+    paintProbe,
+    textPaint: {
+      regionCount: paintProbe.regions.length,
+      maximumContainerGeometryDeltaCssPx:
+        paintProbe.maximumContainerGeometryDeltaCssPx,
+      maximumTextGeometryDeltaCssPx:
+        paintProbe.maximumTextGeometryDeltaCssPx,
+      surfaces: [...new Set(paintProbe.regions.map((region) => region.surface))],
+    },
+    width,
+  };
+}
+
+async function acquireAutoplayScreencastFrameWindow({
+  initialProbe,
+  isCaptureWindowCoherent,
+  isInitialProbeCoherent,
+  label,
+  readProbe,
+  session,
+  validateFrame = validateAutoplayScreencastFrame,
+  validateStableFramePair = assertStableAutoplayScreencastFramePair,
+}) {
+  let lastPaintError = null;
+
+  for (
+    let attempt = 1;
+    attempt <= AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS;
+    attempt += 1
+  ) {
+    const beforeProbe = await readProbe(`${slug(label)}:before-frame-probe`);
+    assert.ok(beforeProbe, `${label}: current-state probe was unavailable before frame capture.`);
+    assert.ok(
+      isInitialProbeCoherent(initialProbe, beforeProbe),
+      `${label}: milestone state changed before asynchronous frame capture. Initial: ${JSON.stringify(initialProbe)}. Before: ${JSON.stringify(beforeProbe)}.`,
+    );
+    const paintProbeBefore = await session.readScreenshotPaintProbe(
+      `${slug(label)}:before-frame-paint-probe`,
+    );
+    const afterSequence = session.autoplayScreencastSequence();
+    const minimumCandidateCapturedAtEpochMs =
+      cdpProbeCapturedAtEpochMs(beforeProbe) +
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS;
+    const frame = await session.waitForAutoplayScreencastFrame({
+      afterSequence,
+      minimumCapturedAtEpochMs: minimumCandidateCapturedAtEpochMs,
+    });
+    const minimumConfirmationCapturedAtEpochMs =
+      screencastFrameCapturedAtEpochMs(frame) +
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS;
+    const confirmationFrame = await session.waitForAutoplayScreencastFrame({
+      afterSequence: frame.sequence,
+      minimumCapturedAtEpochMs: minimumConfirmationCapturedAtEpochMs,
+    });
+    assert.ok(
+      confirmationFrame.sequence > frame.sequence &&
+        screencastFrameCapturedAtEpochMs(confirmationFrame) >=
+          minimumConfirmationCapturedAtEpochMs,
+      `${label}: confirmation frame was not distinct and separated from its candidate by the ${AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS}ms compositing settle interval.`,
+    );
+    const paintProbeAfter = await session.readScreenshotPaintProbe(
+      `${slug(label)}:after-frame-paint-probe`,
+    );
+    const afterProbe = await readProbe(`${slug(label)}:after-frame-probe`);
+    assert.ok(afterProbe, `${label}: current-state probe was unavailable after frame capture.`);
+    assert.ok(
+      isCaptureWindowCoherent(beforeProbe, afterProbe),
+      `${label}: screencast frame was not bracketed by one coherent current state. Before: ${JSON.stringify(beforeProbe)}. After: ${JSON.stringify(afterProbe)}.`,
+    );
+    assert.ok(
+      screencastFrameIsBracketedByEpochProbes(frame, beforeProbe, afterProbe),
+      `${label}: screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(frame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
+    );
+    assert.ok(
+      screencastFrameCapturedAtEpochMs(frame) >=
+        minimumCandidateCapturedAtEpochMs,
+      `${label}: candidate screencast frame did not retain the ${AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS}ms compositing settle interval.`,
+    );
+    assert.ok(
+      screencastFrameIsBracketedByEpochProbes(
+        confirmationFrame,
+        beforeProbe,
+        afterProbe,
+      ),
+      `${label}: confirmation screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(confirmationFrame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
+    );
+
+    try {
+      const paintProbe = requireStableAutoplayScreenshotPaintProbe(
+        paintProbeBefore,
+        paintProbeAfter,
+        label,
+      );
+      const candidateValidated = validateFrame({
+        frame,
+        label,
+        paintProbe,
+      });
+      const confirmationValidated = validateFrame({
+        frame: confirmationFrame,
+        label,
+        paintProbe,
+      });
+      const frameStability = validateStableFramePair({
+        afterBuffer: confirmationValidated.buffer,
+        beforeBuffer: candidateValidated.buffer,
+        label,
+        paintProbe: confirmationValidated.paintProbe,
+      });
+      return {
+        afterProbe,
+        beforeProbe,
+        frame: confirmationFrame,
+        validated: {
+          ...confirmationValidated,
+          textPaint: {
+            ...confirmationValidated.textPaint,
+            ...frameStability,
+          },
+        },
+      };
+    } catch (error) {
+      lastPaintError = error;
+      if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
+        process.stdout.write(
+          `[many-lives] Retrying incomplete autoplay screencast frame ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
+        );
+        await sleep(180);
+      }
+    }
+  }
+
+  throw lastPaintError ?? new Error(`${label}: screencast frame validation failed.`);
+}
+
+function autoplayLiveMilestoneMatches(key, probe, openingWorldVariant) {
+  if (key === "first-interaction") {
+    return Boolean(probe?.activeConversation);
+  }
+  if (key === "consequential-foothold") {
+    return trajectoryFootholdReached(probe, openingWorldVariant);
+  }
+  if (key === "natural-stop") {
+    return Boolean(
+      probe?.firstAfternoon?.completedAt ||
+        /first afternoon complete/i.test(probe?.autonomy?.label ?? ""),
+    );
+  }
+  return false;
+}
+
+function compactAutoplayScreencastCaptureWindow(window) {
+  const compactProbe = (probe) => ({
+    capturedAtEpochMs: cdpProbeCapturedAtEpochMs(probe),
+    stateIdentity: autoplayMilestoneStateIdentity(probe),
+  });
+  return {
+    after: compactProbe(window.afterProbe),
+    before: compactProbe(window.beforeProbe),
+    frame: {
+      capturedAtEpochMs: screencastFrameCapturedAtEpochMs(window.frame),
+      deviceHeight: window.frame.metadata?.deviceHeight ?? null,
+      deviceWidth: window.frame.metadata?.deviceWidth ?? null,
+      height: window.validated.height,
+      sequence: window.frame.sequence,
+      width: window.validated.width,
+    },
+    textPaint: window.validated.textPaint,
+  };
+}
+
+async function captureAutoplayLiveTrajectoryMilestone({
+  dom,
+  key,
+  openingWorldVariant,
+  probe,
+  session,
+}) {
+  const label = `${openingWorldVariant} autoplay ${key}`;
+  assert.ok(
+    autoplayLiveMilestoneMatches(key, probe, openingWorldVariant),
+    `${label}: initial probe did not contain the requested live milestone.`,
+  );
+  const visibleDom =
+    dom ?? (await session.readAutoplayDomAudit(`${slug(label)}:dom-audit`));
+  assertNoVisibleImplementationLanguage(label, visibleDom?.bodyText ?? "");
+  if (probe?.autonomy?.planningTrace) {
+    assertVisibleDecisionArtifactPayload(
+      label,
+      probe.autonomy.visibleDecisionArtifact,
+    );
+  }
+  const camera = await session
+    .readCameraProbe(`${slug(label)}:camera-probe`)
+    .catch(() => null);
+  const mapAgency = await session
+    .readMapAgencyProbe(`${slug(label)}:map-agency-probe`)
+    .catch(() => null);
+  const screenshot = path.join(
+    OUTPUT_DIR,
+    `${openingWorldVariant}-autoplay-${slug(key)}.png`,
+  );
+  const captureWindow = await acquireAutoplayScreencastFrameWindow({
+    initialProbe: probe,
+    isCaptureWindowCoherent: (beforeProbe, afterProbe) =>
+      autoplayLiveMilestoneMatches(key, beforeProbe, openingWorldVariant) &&
+      autoplayLiveMilestoneMatches(key, afterProbe, openingWorldVariant) &&
+      autoplayMilestoneCaptureWindowCoherent(
+        probe,
+        beforeProbe,
+        afterProbe,
+      ),
+    isInitialProbeCoherent: (initial, beforeProbe) =>
+      autoplayLiveMilestoneMatches(key, beforeProbe, openingWorldVariant) &&
+      autoplayMilestoneCaptureWindowCoherent(
+        initial,
+        beforeProbe,
+        beforeProbe,
+      ),
+    label,
+    readProbe: async (probeLabel) =>
+      acceptedAutoplayPacingProbe(
+        await session.readAutoplayPacingProbe(probeLabel),
+      ),
+    session,
+  });
+  await writeFile(screenshot, captureWindow.validated.buffer);
+  const currentProbe = captureWindow.afterProbe;
+
+  return {
+    autonomyLabel: currentProbe?.autonomy?.label ?? null,
+    camera: camera
+      ? {
+          sceneViewportCss: camera.sceneViewportCss ?? null,
+          scroll: camera.scroll ?? null,
+          visibleWorldRect: camera.visibleWorldRect ?? null,
+        }
+      : null,
+    clock: currentProbe?.clock ?? null,
+    key,
+    liveCaptureWindow: compactAutoplayScreencastCaptureWindow(captureWindow),
+    location: currentProbe?.location ?? null,
+    mapAgency,
+    playerRoute: compactAutoplayPlayerRoute(currentProbe),
+    screenshot,
+    visibleCopySample: compactObjectiveSequenceText(
+      visibleDom?.bodyTextSample ?? visibleDom?.bodyText ?? "",
+      320,
+    ),
+    visibleDecisionArtifact: compactVisibleDecisionArtifact(
+      currentProbe?.autonomy?.visibleDecisionArtifact ??
+        currentProbe?.rail?.visibleDecisionArtifact ??
+        null,
+    ),
+  };
+}
+
 async function readAutoplayRouteCaptureProbe({ label, session }) {
   for (
     let attempt = 1;
@@ -11871,60 +12831,86 @@ async function readAutoplayRouteCaptureProbe({ label, session }) {
   return null;
 }
 
+async function acquireAutoplayRouteScreencastWindow({
+  expectedTargetLocationId,
+  hudReference = null,
+  initialRoute,
+  label,
+  session,
+}) {
+  const captureWindow = await acquireAutoplayScreencastFrameWindow({
+    initialProbe: { route: initialRoute },
+    isCaptureWindowCoherent: (beforeProbe, afterProbe) =>
+      autoplayRouteCaptureWindowCoherent(
+        beforeProbe.route,
+        afterProbe.route,
+        expectedTargetLocationId,
+      ),
+    isInitialProbeCoherent: (_initialProbe, beforeProbe) =>
+      autoplayRouteCaptureWindowCoherent(
+        initialRoute,
+        beforeProbe.route,
+        expectedTargetLocationId,
+      ),
+    label,
+    readProbe: (probeLabel) =>
+      readAutoplayRouteCaptureProbe({ label: probeLabel, session }),
+    session,
+    validateStableFramePair: (options) => ({
+      ...assertStableAutoplayScreencastFramePair(options),
+      ...assertAutoplayRouteHudContinuity({
+        ...options,
+        hudReference,
+      }),
+    }),
+  });
+  return {
+    ...captureWindow,
+    afterRoute: captureWindow.afterProbe.route,
+    beforeRoute: captureWindow.beforeProbe.route,
+  };
+}
+
 async function captureAutoplayRouteScreenshotWindow({
   expectedTargetLocationId,
+  hudReference = null,
   initialRoute,
   label,
   screenshot,
   session,
 }) {
-  let afterRoute = null;
-  let beforeRoute = null;
-  await session.captureScreenshot(screenshot, {
-    afterCapture: async () => {
-      afterRoute = await readAutoplayRouteCaptureProbe({
-        label: `${slug(label)}:after-screenshot-probe`,
-        session,
-      });
-      assert.ok(
-        afterRoute,
-        `${label}: route probe remained unavailable after screenshot capture.`,
-      );
-      assert.ok(
-        autoplayRouteCaptureWindowCoherent(
-          beforeRoute,
-          afterRoute,
-          expectedTargetLocationId,
-        ),
-        `${label}: screenshot was not bracketed by the same active legal route. Before: ${JSON.stringify(beforeRoute)}. After: ${JSON.stringify(afterRoute)}.`,
-      );
-    },
-    beforeCapture: async () => {
-      beforeRoute = await readAutoplayRouteCaptureProbe({
-        label: `${slug(label)}:before-screenshot-probe`,
-        session,
-      });
-      assert.ok(
-        beforeRoute,
-        `${label}: route probe remained unavailable before screenshot capture.`,
-      );
-      assert.ok(
-        autoplayRouteCaptureWindowCoherent(
-          initialRoute,
-          beforeRoute,
-          expectedTargetLocationId,
-        ),
-        `${label}: route changed before screenshot capture began. Initial: ${JSON.stringify(initialRoute)}. Before: ${JSON.stringify(beforeRoute)}.`,
-      );
-    },
-  });
+  const captureWindow =
+    await acquireAutoplayRouteScreencastWindow({
+      expectedTargetLocationId,
+      hudReference,
+      initialRoute,
+      label,
+      session,
+    });
+  await writeFile(screenshot, captureWindow.validated.buffer);
 
-  return { afterRoute, beforeRoute };
+  return {
+    afterCapturedAtEpochMs: cdpProbeCapturedAtEpochMs(
+      captureWindow.afterProbe,
+    ),
+    afterRoute: captureWindow.afterRoute,
+    beforeCapturedAtEpochMs: cdpProbeCapturedAtEpochMs(
+      captureWindow.beforeProbe,
+    ),
+    beforeRoute: captureWindow.beforeRoute,
+    frame: compactAutoplayScreencastCaptureWindow(captureWindow).frame,
+    hudReference: {
+      buffer: captureWindow.validated.buffer,
+      paintProbe: captureWindow.validated.paintProbe,
+    },
+    textPaint: captureWindow.validated.textPaint,
+  };
 }
 
 async function captureAutoplayRouteTrajectoryMilestone({
   dom,
   expectedTargetLocationId,
+  hudReference = null,
   key,
   openingWorldVariant,
   probe,
@@ -11941,9 +12927,18 @@ async function captureAutoplayRouteTrajectoryMilestone({
     OUTPUT_DIR,
     `${openingWorldVariant}-autoplay-${slug(key)}.png`,
   );
-  const { afterRoute, beforeRoute: screenshotBeforeRoute } =
+  const {
+    afterCapturedAtEpochMs,
+    afterRoute,
+    beforeCapturedAtEpochMs,
+    beforeRoute: screenshotBeforeRoute,
+    frame: screencastFrame,
+    hudReference: acceptedHudReference,
+    textPaint,
+  } =
     await captureAutoplayRouteScreenshotWindow({
       expectedTargetLocationId,
+      hudReference,
       initialRoute: beforeRoute,
       label,
       screenshot,
@@ -11978,10 +12973,18 @@ async function captureAutoplayRouteTrajectoryMilestone({
       mapAgency: null,
       playerRoute: compactAutoplayPlayerRoute(afterProbe),
       routeCaptureWindow: {
-        after: compactAutoplayPlayerRoute(afterProbe),
-        before: compactAutoplayPlayerRoute({
-          movement: { playerRoute: screenshotBeforeRoute },
-        }),
+        after: {
+          ...compactAutoplayPlayerRoute(afterProbe),
+          capturedAtEpochMs: afterCapturedAtEpochMs,
+        },
+        before: {
+          ...compactAutoplayPlayerRoute({
+            movement: { playerRoute: screenshotBeforeRoute },
+          }),
+          capturedAtEpochMs: beforeCapturedAtEpochMs,
+        },
+        frame: screencastFrame,
+        textPaint,
       },
       screenshot,
       visibleCopySample: compactObjectiveSequenceText(
@@ -11994,6 +12997,7 @@ async function captureAutoplayRouteTrajectoryMilestone({
           null,
       ),
     },
+    hudReference: acceptedHudReference,
     probe: afterProbe,
   };
 }
@@ -12061,13 +13065,34 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   let lastProbeSignature = null;
   const trajectoryMilestones = [];
   const capturedMilestoneKeys = new Set();
+  let footholdRouteHudReference = null;
   let footholdRouteStartProgress = null;
+  let autoplayScreencastStarted = false;
   let visibleCopyAuditCount = 0;
+  const captureFrozenMilestoneOnce = async (
+    key,
+    probe,
+    milestoneDom = null,
+  ) => {
+    if (capturedMilestoneKeys.has(key)) {
+      return trajectoryMilestones.find((entry) => entry.key === key) ?? null;
+    }
+    const evidence = await captureAutoplayFrozenTrajectoryMilestone({
+      dom: milestoneDom,
+      key,
+      openingWorldVariant,
+      probe,
+      session,
+    });
+    capturedMilestoneKeys.add(key);
+    trajectoryMilestones.push(evidence);
+    return evidence;
+  };
   const captureMilestoneOnce = async (key, probe, milestoneDom = null) => {
     if (capturedMilestoneKeys.has(key)) {
       return trajectoryMilestones.find((entry) => entry.key === key) ?? null;
     }
-    const evidence = await captureAutoplayTrajectoryMilestone({
+    const evidence = await captureAutoplayLiveTrajectoryMilestone({
       dom: milestoneDom,
       key,
       openingWorldVariant,
@@ -12091,14 +13116,25 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
         probe,
       };
     }
+    if (key === "foothold-route-mid") {
+      assert.ok(
+        footholdRouteHudReference,
+        `${openingWorldVariant}: route-mid capture was missing its accepted route-start HUD reference.`,
+      );
+    }
     const captured = await captureAutoplayRouteTrajectoryMilestone({
       dom: milestoneDom,
       expectedTargetLocationId,
+      hudReference:
+        key === "foothold-route-mid" ? footholdRouteHudReference : null,
       key,
       openingWorldVariant,
       probe,
       session,
     });
+    if (key === "foothold-route-start") {
+      footholdRouteHudReference = captured.hudReference;
+    }
     capturedMilestoneKeys.add(key);
     trajectoryMilestones.push(captured.evidence);
     return captured;
@@ -12154,7 +13190,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     openingDom?.bodyText ?? "",
   );
   visibleCopyAuditCount += openingDom ? 1 : 0;
-  await captureMilestoneOnce("opening", openingProbe, openingDom);
+  await captureFrozenMilestoneOnce("opening", openingProbe, openingDom);
 
   const pacingStartedAt = Date.now();
   await session.navigate(url);
@@ -12208,6 +13244,8 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   let completedProbe = null;
   let dom = null;
 
+  await session.startAutoplayScreencast();
+  autoplayScreencastStarted = true;
   try {
     const completion = await waitFor(
       async () => {
@@ -12517,6 +13555,14 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     pacingFailure = error instanceof Error ? error.stack ?? error.message : String(error);
     throw error;
   } finally {
+    if (autoplayScreencastStarted) {
+      await session.stopAutoplayScreencast().catch((error) => {
+        if (!pacingFailure) {
+          throw error;
+        }
+      });
+      autoplayScreencastStarted = false;
+    }
     if (!pacingCompleted) {
       const partialLedger = buildAutoplayObservationPacingLedger(pacingSamples);
       await writeFile(
@@ -12534,9 +13580,6 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
         )}\n`,
         "utf8",
       );
-      if (completedProbe && screenshotPath) {
-        await session.captureScreenshot(screenshotPath).catch(() => undefined);
-      }
     }
   }
 }
@@ -12627,6 +13670,28 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
       ),
       `${evidence.openingWorldVariant}: ${label} screenshot was not bracketed by one active legal route. Evidence: ${evidencePath}.`,
     );
+    assert.ok(
+      Number.isInteger(window?.frame?.sequence) &&
+        typeof window?.frame?.capturedAtEpochMs === "number" &&
+        window?.frame?.width >= 640 &&
+        window?.frame?.height >= 360,
+      `${evidence.openingWorldVariant}: ${label} is missing a usable asynchronous screencast frame. Evidence: ${evidencePath}.`,
+    );
+    assert.ok(
+      window.frame.capturedAtEpochMs - window.before.capturedAtEpochMs >=
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      `${evidence.openingWorldVariant}: ${label} frame did not retain the bounded compositing settle interval. Evidence: ${evidencePath}.`,
+    );
+    assert.ok(
+      window?.textPaint?.regionCount >= 8 &&
+        window.textPaint.surfaces.includes("hud") &&
+        window.textPaint.maximumTextGeometryDeltaCssPx <=
+          AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
+        window.textPaint.maximumContainerGeometryDeltaCssPx <=
+          AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
+        window.textPaint.hudPixelDifferenceRatio <= 0.006,
+      `${evidence.openingWorldVariant}: ${label} did not validate complete visible text paint. Evidence: ${evidencePath}.`,
+    );
   }
   assert.ok(
     routeMidWindow.before.progress - routeStartWindow.after.progress >=
@@ -12637,6 +13702,17 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
     milestones["foothold-route-start"].screenshot,
     milestones["foothold-route-mid"].screenshot,
     `${evidence.openingWorldVariant}: route-start and route-mid reused the same screenshot. Evidence: ${evidencePath}.`,
+  );
+  assert.ok(
+    routeMidWindow.frame.sequence > routeStartWindow.frame.sequence &&
+      routeMidWindow.frame.capturedAtEpochMs >
+        routeStartWindow.frame.capturedAtEpochMs,
+    `${evidence.openingWorldVariant}: route-start and route-mid did not use distinct ordered screencast frames. Evidence: ${evidencePath}.`,
+  );
+  assert.ok(
+    routeMidWindow.textPaint.routeHudContinuityPixelDifferenceRatio <=
+      AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO,
+    `${evidence.openingWorldVariant}: route-mid HUD diverged from its accepted route-start HUD. Evidence: ${evidencePath}.`,
   );
   for (const [label, route] of [
     ["route-start", routeStart],
@@ -12663,6 +13739,50 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
       `${evidence.openingWorldVariant}: ${label} route crossed authored scenery. Evidence: ${evidencePath}.`,
     );
   }
+  for (const key of [
+    "first-interaction",
+    "consequential-foothold",
+    "natural-stop",
+  ]) {
+    const window = milestones[key]?.liveCaptureWindow;
+    assert.deepEqual(
+      window?.before?.stateIdentity,
+      window?.after?.stateIdentity,
+      `${evidence.openingWorldVariant}: ${key} frame crossed a current-state identity boundary. Evidence: ${evidencePath}.`,
+    );
+    assert.ok(
+      window.frame.capturedAtEpochMs - window.before.capturedAtEpochMs >=
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS &&
+        window.frame.capturedAtEpochMs <= window.after.capturedAtEpochMs,
+      `${evidence.openingWorldVariant}: ${key} frame was stale or outside its state/time bracket. Evidence: ${evidencePath}.`,
+    );
+    assert.ok(
+      Number.isInteger(window.frame.sequence) &&
+        window.frame.width >= 640 &&
+        window.frame.height >= 360 &&
+        window.textPaint?.regionCount >= 8 &&
+        window.textPaint.surfaces.includes("hud") &&
+        window.textPaint.maximumTextGeometryDeltaCssPx <=
+          AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
+        window.textPaint.maximumContainerGeometryDeltaCssPx <=
+          AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
+        window.textPaint.hudPixelDifferenceRatio <= 0.006,
+      `${evidence.openingWorldVariant}: ${key} is missing complete text-validated live pixels. Evidence: ${evidencePath}.`,
+    );
+  }
+  const liveFrameSequences = evidence.milestones
+    .map(
+      (milestone) =>
+        milestone.liveCaptureWindow?.frame?.sequence ??
+        milestone.routeCaptureWindow?.frame?.sequence ??
+        null,
+    )
+    .filter(Number.isInteger);
+  assert.equal(
+    new Set(liveFrameSequences).size,
+    liveFrameSequences.length,
+    `${evidence.openingWorldVariant}: live milestones reused screencast pixels. Evidence: ${evidencePath}.`,
+  );
   assert.ok(
     milestones.opening?.camera && milestones.opening?.mapAgency,
     `${evidence.openingWorldVariant}: opening evidence is missing camera/map authority. Evidence: ${evidencePath}.`,

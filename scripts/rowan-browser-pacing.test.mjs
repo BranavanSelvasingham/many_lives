@@ -238,7 +238,7 @@ test("opening map evidence is frozen before zero-click pacing begins", () => {
   );
   const runSource = source.slice(runStart, runEnd);
   const frozenCapture = runSource.indexOf(
-    'captureMilestoneOnce("opening", openingProbe, openingDom)',
+    'captureFrozenMilestoneOnce("opening", openingProbe, openingDom)',
   );
   const pacingStart = runSource.indexOf("const pacingStartedAt = Date.now()");
 
@@ -260,7 +260,7 @@ test("late foothold route samples require two coherent distinct screenshot windo
     "function isAutoplayFootholdRouteFrame(",
   );
   const policyEnd = source.indexOf(
-    "\nasync function captureAutoplayTrajectoryMilestone(",
+    "\nasync function captureAutoplayFrozenTrajectoryMilestone(",
     policyStart,
   );
   const policySource = source.slice(policyStart, policyEnd);
@@ -309,6 +309,55 @@ test("late foothold route samples require two coherent distinct screenshot windo
     routeWindowStart,
   );
   const routeWindowSource = source.slice(routeWindowStart, routeWindowEnd);
+  const framePolicyStart = source.indexOf(
+    "function screencastFrameCapturedAtEpochMs(",
+  );
+  const framePolicyEnd = source.indexOf(
+    "\nfunction isCdpRuntimeEvaluateTimeout(",
+    framePolicyStart,
+  );
+  const framePolicy = Function(
+    `${source.slice(framePolicyStart, framePolicyEnd)}; return { cdpProbeCapturedAtEpochMs, screencastFrameCapturedAtEpochMs, screencastFrameIsBracketedByEpochProbes };`,
+  )();
+  const genericCaptureStart = source.indexOf(
+    "async function acquireAutoplayScreencastFrameWindow(",
+  );
+  const genericCaptureEnd = source.indexOf(
+    "\nfunction autoplayLiveMilestoneMatches(",
+    genericCaptureStart,
+  );
+  const genericCapture = Function(
+    "assert",
+    "AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS",
+    "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
+    "cdpProbeCapturedAtEpochMs",
+    "requireStableAutoplayScreenshotPaintProbe",
+    "screencastFrameCapturedAtEpochMs",
+    "screencastFrameIsBracketedByEpochProbes",
+    "sleep",
+    "slug",
+    "validateAutoplayScreencastFrame",
+    "assertStableAutoplayScreencastFramePair",
+    `${source.slice(genericCaptureStart, genericCaptureEnd)}; return acquireAutoplayScreencastFrameWindow;`,
+  )(
+    assert,
+    3,
+    125,
+    framePolicy.cdpProbeCapturedAtEpochMs,
+    (_before, after) => after,
+    framePolicy.screencastFrameCapturedAtEpochMs,
+    framePolicy.screencastFrameIsBracketedByEpochProbes,
+    async () => {},
+    (value) => value,
+    () => ({
+      buffer: Buffer.from("validated-frame"),
+      height: 625,
+      paintProbe: {},
+      textPaint: { regionCount: 9, surfaces: ["hud"] },
+      width: 1365,
+    }),
+    () => ({ hudPixelDifferenceRatio: 0 }),
+  );
   const routeCapture = Function(
     "assert",
     "AUTOPLAY_ROUTE_CAPTURE_PROBE_MAX_ATTEMPTS",
@@ -316,66 +365,155 @@ test("late foothold route samples require two coherent distinct screenshot windo
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
     "sleep",
     "slug",
-    `${policySource}\n${routeWindowSource}; return { buildAutoplayFootholdRouteGuardFixture, captureAutoplayRouteScreenshotWindow };`,
-  )(assert, 3, 0, 0.1, async () => {}, (value) => value);
-  const captureCalls = [];
-  const captureRoutes = [
-    routeCapture.buildAutoplayFootholdRouteGuardFixture(0.641),
-    null,
-    routeCapture.buildAutoplayFootholdRouteGuardFixture(0.652),
-  ];
-  const captureWindow =
-    await routeCapture.captureAutoplayRouteScreenshotWindow({
-      expectedTargetLocationId: "tea-house",
-      initialRoute: lateStart,
-      label: "transient null route fixture",
-      screenshot: "/tmp/route-fixture.png",
-      session: {
-        captureScreenshot: async (_path, { afterCapture, beforeCapture }) => {
-          await beforeCapture();
-          captureCalls.push("screenshot");
-          await afterCapture();
-        },
-        readAutoplayRouteProbe: async () => {
-          const route = captureRoutes.shift();
-          captureCalls.push(route ? `route:${route.progress}` : "route:null");
-          return route;
-        },
+    "acquireAutoplayScreencastFrameWindow",
+    "assertStableAutoplayScreencastFramePair",
+    "assertAutoplayRouteHudContinuity",
+    `${policySource}\n${routeWindowSource}; return { acquireAutoplayRouteScreencastWindow, buildAutoplayFootholdRouteGuardFixture };`,
+  )(
+    assert,
+    3,
+    0,
+    0.1,
+    async () => {},
+    (value) => value,
+    genericCapture,
+    () => ({ hudPixelDifferenceRatio: 0 }),
+    () => ({}),
+  );
+  const capturedAtEpochMs = 1_750_000_000_000;
+  const routeProbe = (progress, offsetMs, overrides = {}) => ({
+    capturedAtEpochMs: capturedAtEpochMs + offsetMs,
+    capturedAtMonotonicMs: 100 + offsetMs,
+    route: routeCapture.buildAutoplayFootholdRouteGuardFixture(
+      progress,
+      overrides,
+    ),
+  });
+  const screencastFrame = (sequence, offsetMs) => ({
+    data: `active-route-png-${sequence}`,
+    metadata: { timestamp: (capturedAtEpochMs + offsetMs) / 1_000 },
+    sequence,
+  });
+  const fakeSession = ({ afterSequence, frame, probes }) => {
+    const calls = [];
+    const confirmationFrame = {
+      ...frame,
+      metadata: {
+        ...frame.metadata,
+        timestamp: frame.metadata.timestamp + 0.13,
       },
+      sequence: frame.sequence + 1,
+    };
+    let nextFrame = frame;
+    let blockingScreenshotCalls = 0;
+    return {
+      calls,
+      captureScreenshot: async () => {
+        blockingScreenshotCalls += 1;
+        await new Promise(() => {});
+      },
+      get blockingScreenshotCalls() {
+        return blockingScreenshotCalls;
+      },
+      readAutoplayRouteProbe: async () => {
+        const probe = probes.shift();
+        calls.push(probe ? `route:${probe.route.progress}` : "route:null");
+        return probe;
+      },
+      autoplayScreencastSequence: () => {
+        calls.push(`sequence:${afterSequence}`);
+        return afterSequence;
+      },
+      readScreenshotPaintProbe: async () => {
+        calls.push("paint");
+        return { regions: [], viewport: { height: 625, width: 1365 } };
+      },
+      waitForAutoplayScreencastFrame: async (options) => {
+        calls.push(`frame:${nextFrame.sequence}`);
+        assert.equal(
+          options.afterSequence,
+          nextFrame === frame ? afterSequence : frame.sequence,
+        );
+        const result = nextFrame;
+        assert.ok(
+          framePolicy.screencastFrameCapturedAtEpochMs(result) >=
+            options.minimumCapturedAtEpochMs,
+        );
+        nextFrame = confirmationFrame;
+        return result;
+      },
+    };
+  };
+
+  const hostedStart = routeCapture.buildAutoplayFootholdRouteGuardFixture(0.523);
+  const startSession = fakeSession({
+    afterSequence: 10,
+    frame: screencastFrame(11, 145),
+    probes: [routeProbe(0.53, 10), null, routeProbe(0.56, 300)],
+  });
+  const startWindow =
+    await routeCapture.acquireAutoplayRouteScreencastWindow({
+      expectedTargetLocationId: "tea-house",
+      initialRoute: hostedStart,
+      label: "slow ordinary screenshot fixture",
+      session: startSession,
     });
-  assert.equal(captureWindow.beforeRoute.progress, 0.641);
-  assert.equal(captureWindow.afterRoute.progress, 0.652);
-  assert.deepEqual(captureCalls, [
-    "route:0.641",
-    "screenshot",
+  assert.equal(startWindow.beforeRoute.progress, 0.53);
+  assert.equal(startWindow.afterRoute.progress, 0.56);
+  assert.equal(startWindow.frame.sequence, 12);
+  assert.equal(startSession.blockingScreenshotCalls, 0);
+  assert.deepEqual(startSession.calls, [
+    "route:0.53",
+    "paint",
+    "sequence:10",
+    "frame:11",
+    "frame:12",
+    "paint",
     "route:null",
-    "route:0.652",
+    "route:0.56",
   ]);
 
-  const arrivalCalls = [];
-  const arrivalRoutes = [
-    routeCapture.buildAutoplayFootholdRouteGuardFixture(0.641),
-    null,
-    routeCapture.buildAutoplayFootholdRouteGuardFixture(1, { active: false }),
-  ];
-  await assert.rejects(
-    routeCapture.captureAutoplayRouteScreenshotWindow({
-      expectedTargetLocationId: "tea-house",
-      initialRoute: lateStart,
-      label: "arrival route fixture",
-      screenshot: "/tmp/arrival-route-fixture.png",
-      session: {
-        captureScreenshot: async (_path, { afterCapture, beforeCapture }) => {
-          await beforeCapture();
-          arrivalCalls.push("screenshot");
-          await afterCapture();
-        },
-        readAutoplayRouteProbe: async () => arrivalRoutes.shift(),
-      },
-    }),
-    /screenshot was not bracketed by the same active legal route/,
+  const midSession = fakeSession({
+    afterSequence: 20,
+    frame: screencastFrame(21, 1_145),
+    probes: [routeProbe(0.68, 1_010), routeProbe(0.71, 1_300)],
+  });
+  const midWindow = await routeCapture.acquireAutoplayRouteScreencastWindow({
+    expectedTargetLocationId: "tea-house",
+    initialRoute: routeCapture.buildAutoplayFootholdRouteGuardFixture(0.67),
+    label: "distinct mid screencast fixture",
+    session: midSession,
+  });
+  assert.ok(
+    midWindow.beforeRoute.progress - startWindow.afterRoute.progress >= 0.1,
   );
-  assert.deepEqual(arrivalCalls, ["screenshot"]);
+  assert.ok(midWindow.frame.sequence > startWindow.frame.sequence);
+
+  for (const [label, afterProbe] of [
+    ["arrival", routeProbe(1, 2_040, { active: false })],
+    [
+      "target mismatch",
+      routeProbe(0.7, 2_040, { targetLocationId: "repair-stall" }),
+    ],
+  ]) {
+    const mismatchSession = fakeSession({
+      afterSequence: 30,
+      frame: screencastFrame(31, 2_145),
+      probes: [routeProbe(0.68, 2_010), {
+        ...afterProbe,
+        capturedAtEpochMs: capturedAtEpochMs + 2_300,
+      }],
+    });
+    await assert.rejects(
+      routeCapture.acquireAutoplayRouteScreencastWindow({
+        expectedTargetLocationId: "tea-house",
+        initialRoute: routeCapture.buildAutoplayFootholdRouteGuardFixture(0.67),
+        label: `${label} screencast fixture`,
+        session: mismatchSession,
+      }),
+      /screencast frame was not bracketed by one coherent current state/,
+    );
+  }
 
   const captureStart = source.indexOf(
     "async function captureAutoplayRouteTrajectoryMilestone(",
@@ -385,34 +523,38 @@ test("late foothold route samples require two coherent distinct screenshot windo
     captureStart,
   );
   const captureSource = source.slice(captureStart, captureEnd);
-  const screenshotMethodStart = source.indexOf("async captureScreenshot(");
-  const screenshotMethodEnd = source.indexOf(
-    "\n  waitForEvent(",
-    screenshotMethodStart,
-  );
-  const screenshotMethodSource = source.slice(
-    screenshotMethodStart,
-    screenshotMethodEnd,
-  );
-  const beforeCaptureIndex = screenshotMethodSource.indexOf(
-    "await beforeCapture({ attempt })",
-  );
-  const screenshotIndex = screenshotMethodSource.indexOf(
-    'this.send("Page.captureScreenshot"',
-  );
-  const afterCaptureIndex = screenshotMethodSource.indexOf(
-    "await afterCapture({ attempt })",
-  );
 
   assert.ok(captureStart >= 0 && captureEnd > captureStart);
-  assert.ok(
-    beforeCaptureIndex >= 0 &&
-      beforeCaptureIndex < screenshotIndex &&
-      screenshotIndex < afterCaptureIndex,
-    "Route probes must run immediately around Page.captureScreenshot.",
+  assert.doesNotMatch(
+    routeWindowSource,
+    /captureScreenshot|Page\.captureScreenshot/,
+    "Route evidence must not await the blocking screenshot command.",
   );
-  assert.match(routeWindowSource, /beforeCapture:/);
-  assert.match(routeWindowSource, /afterCapture:/);
+  const genericCaptureSource = source.slice(
+    genericCaptureStart,
+    genericCaptureEnd,
+  );
+  assert.match(genericCaptureSource, /waitForAutoplayScreencastFrame\(/);
+  assert.match(
+    genericCaptureSource,
+    /screencastFrameIsBracketedByEpochProbes\(/,
+  );
+  assert.match(source, /decodePngPixels\(buffer\)/);
+  assert.match(
+    routeWindowSource,
+    /writeFile\(screenshot, captureWindow\.validated\.buffer\)/,
+  );
+  assert.match(source, /Page\.startScreencast/);
+  assert.match(source, /Page\.screencastFrameAck/);
+  assert.match(source, /Page\.stopScreencast/);
+  assert.match(
+    source,
+    /await session\.startAutoplayScreencast\(\);\s+autoplayScreencastStarted = true;/,
+  );
+  assert.match(
+    source,
+    /if \(autoplayScreencastStarted\) \{\s+await session\.stopAutoplayScreencast\(\)/,
+  );
   assert.doesNotMatch(source, /Page\.setWebLifecycleState/);
   assert.doesNotMatch(source, /Emulation\.setVirtualTimePolicy/);
   assert.match(source, /async readAutoplayRouteProbe\(/);
@@ -422,8 +564,19 @@ test("late foothold route samples require two coherent distinct screenshot windo
     "Route capture must return to phase sampling without blocking auxiliary reads.",
   );
   assert.match(captureSource, /routeCaptureWindow:/);
+  assert.match(
+    captureSource,
+    /capturedAtEpochMs: afterCapturedAtEpochMs/,
+    "Route evidence must retain its after-probe wall-clock timestamp.",
+  );
+  assert.match(
+    captureSource,
+    /capturedAtEpochMs: beforeCapturedAtEpochMs/,
+    "Route evidence must retain its before-probe wall-clock timestamp.",
+  );
   assert.match(source, /waitForDistinctAutoplayFootholdRouteProbe\(/);
   assert.match(source, /routeMidWindow\.before\.progress - routeStartWindow\.after\.progress/);
+  assert.match(source, /routeMidWindow\.frame\.sequence > routeStartWindow\.frame\.sequence/);
   const routeCaptureIndex = source.indexOf(
     "const expectedRouteTarget =",
     source.indexOf("const completion = await waitFor("),
@@ -437,6 +590,552 @@ test("late foothold route samples require two coherent distinct screenshot windo
     "Route capture must run before optional DOM sampling can consume the route.",
   );
   assert.match(source, /assertAutoplayFootholdRouteCaptureGuard\(\);/);
+});
+
+test("route-mid retries persistent HUD compositor drift while allowing map movement", async () => {
+  const framePolicyStart = source.indexOf(
+    "function screencastFrameCapturedAtEpochMs(",
+  );
+  const framePolicyEnd = source.indexOf(
+    "\nfunction isCdpRuntimeEvaluateTimeout(",
+    framePolicyStart,
+  );
+  const framePolicy = Function(
+    `${source.slice(framePolicyStart, framePolicyEnd)}; return { cdpProbeCapturedAtEpochMs, screencastFrameCapturedAtEpochMs, screencastFrameIsBracketedByEpochProbes };`,
+  )();
+  const paintPolicyStart = source.indexOf(
+    "function maximumRectGeometryDelta(",
+  );
+  const paintPolicyEnd = source.indexOf(
+    "\nfunction shouldValidateGameplayScreenshotPaint(",
+    paintPolicyStart,
+  );
+  const paintPolicy = Function(
+    "assert",
+    "AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX",
+    `${source.slice(paintPolicyStart, paintPolicyEnd)}; return { requireStableAutoplayScreenshotPaintProbe };`,
+  )(assert, 0.75);
+  const cleanHudPixels = Buffer.alloc(100 * 50 * 3, 18);
+  const fillHudRect = (pixels, { bottom, left, right, top }, value) => {
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const offset = (y * 100 + x) * 3;
+        pixels[offset] = value;
+        pixels[offset + 1] = value;
+        pixels[offset + 2] = value;
+      }
+    }
+  };
+  fillHudRect(cleanHudPixels, { bottom: 9, left: 12, right: 29, top: 2 }, 54);
+  fillHudRect(cleanHudPixels, { bottom: 9, left: 32, right: 39, top: 2 }, 42);
+  fillHudRect(cleanHudPixels, { bottom: 9, left: 42, right: 53, top: 2 }, 38);
+  const movingMapCleanHudPixels = Buffer.from(cleanHudPixels);
+  fillHudRect(
+    movingMapCleanHudPixels,
+    { bottom: 50, left: 0, right: 100, top: 14 },
+    96,
+  );
+  const misassignedMoneyHudPixels = Buffer.from(movingMapCleanHudPixels);
+  fillHudRect(
+    misassignedMoneyHudPixels,
+    { bottom: 9, left: 29, right: 39, top: 2 },
+    54,
+  );
+  const decodedFramePixels = new Map([
+    ["route-start-reference", cleanHudPixels],
+    ["partial", misassignedMoneyHudPixels],
+    ["partial-immediate", misassignedMoneyHudPixels],
+    ["partial-late", misassignedMoneyHudPixels],
+    ["clean", movingMapCleanHudPixels],
+    ["clean-immediate", movingMapCleanHudPixels],
+    ["clean-confirmation", movingMapCleanHudPixels],
+  ]);
+  const pixelPolicyStart = source.indexOf(
+    "function screenshotRegionPixelDifferenceRatio(",
+  );
+  const pixelPolicyEnd = source.indexOf(
+    "\nfunction shouldValidateGameplayScreenshotPaint(",
+    pixelPolicyStart,
+  );
+  const pixelPolicy = Function(
+    "assert",
+    "decodePngPixels",
+    "AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO",
+    "AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX",
+    `${source.slice(pixelPolicyStart, pixelPolicyEnd)}; return { assertAutoplayRouteHudContinuity, assertStableAutoplayScreencastFramePair };`,
+  )(
+    assert,
+    (buffer) => ({
+      channels: 3,
+      height: 50,
+      pixels: decodedFramePixels.get(buffer.toString()),
+      width: 100,
+    }),
+    0.006,
+    0.75,
+  );
+  const genericCaptureStart = source.indexOf(
+    "async function acquireAutoplayScreencastFrameWindow(",
+  );
+  const genericCaptureEnd = source.indexOf(
+    "\nfunction autoplayLiveMilestoneMatches(",
+    genericCaptureStart,
+  );
+  const acquireFrame = Function(
+    "assert",
+    "AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS",
+    "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
+    "cdpProbeCapturedAtEpochMs",
+    "requireStableAutoplayScreenshotPaintProbe",
+    "screencastFrameCapturedAtEpochMs",
+    "screencastFrameIsBracketedByEpochProbes",
+    "sleep",
+    "slug",
+    "validateAutoplayScreencastFrame",
+    "assertStableAutoplayScreencastFramePair",
+    `${source.slice(genericCaptureStart, genericCaptureEnd)}; return acquireAutoplayScreencastFrameWindow;`,
+  )(
+    assert,
+    3,
+    125,
+    framePolicy.cdpProbeCapturedAtEpochMs,
+    paintPolicy.requireStableAutoplayScreenshotPaintProbe,
+    framePolicy.screencastFrameCapturedAtEpochMs,
+    framePolicy.screencastFrameIsBracketedByEpochProbes,
+    async () => {},
+    (value) => value,
+    () => null,
+    () => null,
+  );
+  const epoch = 1_750_000_000_000;
+  const probe = (offsetMs, state = "conversation") => ({
+    capturedAtEpochMs: epoch + offsetMs,
+    state,
+  });
+  const frames = [
+    {
+      data: "partial",
+      metadata: { timestamp: (epoch + 140) / 1_000 },
+      sequence: 1,
+    },
+    {
+      data: "partial-immediate",
+      metadata: { timestamp: (epoch + 150) / 1_000 },
+      sequence: 2,
+    },
+    {
+      data: "partial-late",
+      metadata: { timestamp: (epoch + 280) / 1_000 },
+      sequence: 3,
+    },
+    {
+      data: "clean",
+      metadata: { timestamp: (epoch + 440) / 1_000 },
+      sequence: 4,
+    },
+    {
+      data: "clean-immediate",
+      metadata: { timestamp: (epoch + 450) / 1_000 },
+      sequence: 5,
+    },
+    {
+      data: "clean-confirmation",
+      metadata: { timestamp: (epoch + 580) / 1_000 },
+      sequence: 6,
+    },
+  ];
+  const probes = [probe(10), probe(300), probe(310), probe(600)];
+  const textRegion = (surface, text, left, right) => ({
+    rect: { bottom: 48, left, right, top: 28 },
+    surface,
+    text,
+  });
+  const paintProbe = () => ({
+    regions: [
+      textRegion("hud", "DAY 1", 2, 8),
+      textRegion("hud", "11:05", 10, 20),
+      textRegion("hud", "LATE MORNING", 21, 30),
+      textRegion("hud", "MONEY", 32, 38),
+      textRegion("hud", "$12", 40, 45),
+      textRegion("hud", "70 ENERGY", 47, 58),
+      textRegion("dock", "WORLD", 2, 8),
+      textRegion("rail", "Rowan", 70, 85),
+    ],
+    stableRegions: [
+      {
+        rect: { bottom: 10, left: 5, right: 60, top: 1 },
+        surface: "hud",
+        text: "DAY 1 11:05 LATE MORNING MONEY $12 70 ENERGY",
+      },
+    ],
+    viewport: { height: 50, width: 100 },
+  });
+  const shiftedGeometryProbe = paintProbe();
+  shiftedGeometryProbe.regions[4] = textRegion("hud", "$12", 34, 39);
+  assert.throws(
+    () =>
+      paintPolicy.requireStableAutoplayScreenshotPaintProbe(
+        paintProbe(),
+        shiftedGeometryProbe,
+        "shifted money chip fixture",
+      ),
+    /text geometry drifted/,
+  );
+  const paintProbes = [
+    paintProbe(),
+    paintProbe(),
+    paintProbe(),
+    paintProbe(),
+  ];
+  const routeStartHudReference = {
+    buffer: Buffer.from("route-start-reference"),
+    paintProbe: paintProbe(),
+  };
+  let blockingCaptureCalls = 0;
+  let lastSequence = 0;
+  let routeHudContinuityRejections = 0;
+  let stabilityCalls = 0;
+  const selectedFrameSequences = [];
+  const waitRequests = [];
+  const session = {
+    autoplayScreencastSequence: () => lastSequence,
+    captureScreenshot: async () => {
+      blockingCaptureCalls += 1;
+      await new Promise(() => {});
+    },
+    readScreenshotPaintProbe: async () => paintProbes.shift(),
+    waitForAutoplayScreencastFrame: async (options) => {
+      waitRequests.push(options);
+      const frame = frames.find(
+        (candidate) =>
+          candidate.sequence > options.afterSequence &&
+          framePolicy.screencastFrameCapturedAtEpochMs(candidate) >=
+            options.minimumCapturedAtEpochMs,
+      );
+      assert.ok(frame, "Expected an eligible asynchronous screencast frame.");
+      lastSequence = frame.sequence;
+      selectedFrameSequences.push(frame.sequence);
+      return frame;
+    },
+  };
+  const capture = await acquireFrame({
+    initialProbe: probe(0),
+    isCaptureWindowCoherent: (before, after) => before.state === after.state,
+    isInitialProbeCoherent: (initial, before) =>
+      initial.state === before.state,
+    label: "partial live milestone",
+    readProbe: async () => probes.shift(),
+    session,
+    validateFrame: ({ frame, paintProbe: stablePaintProbe }) => {
+      return {
+        buffer: Buffer.from(frame.data),
+        height: 625,
+        paintProbe: stablePaintProbe,
+        textPaint: { regionCount: 8, surfaces: ["hud", "dock", "rail"] },
+        width: 1365,
+      };
+    },
+    validateStableFramePair: (options) => {
+      stabilityCalls += 1;
+      const frameStability =
+        pixelPolicy.assertStableAutoplayScreencastFramePair(options);
+      try {
+        return {
+          ...frameStability,
+          ...pixelPolicy.assertAutoplayRouteHudContinuity({
+            ...options,
+            hudReference: routeStartHudReference,
+          }),
+        };
+      } catch (error) {
+        routeHudContinuityRejections += 1;
+        throw error;
+      }
+    },
+  });
+  assert.equal(capture.frame.sequence, 6);
+  assert.deepEqual(selectedFrameSequences, [1, 3, 4, 6]);
+  assert.equal(
+    Math.round(waitRequests[1].minimumCapturedAtEpochMs - epoch),
+    265,
+  );
+  assert.equal(
+    Math.round(waitRequests[3].minimumCapturedAtEpochMs - epoch),
+    565,
+  );
+  assert.equal(routeHudContinuityRejections, 1);
+  assert.equal(stabilityCalls, 2);
+  assert.equal(blockingCaptureCalls, 0);
+
+  await assert.rejects(
+    acquireFrame({
+      initialProbe: probe(200),
+      isCaptureWindowCoherent: (before, after) => before.state === after.state,
+      isInitialProbeCoherent: (initial, before) =>
+        initial.state === before.state,
+      label: "stale live milestone",
+      readProbe: async () => probe(210),
+      session: {
+        autoplayScreencastSequence: () => 2,
+        readScreenshotPaintProbe: session.readScreenshotPaintProbe,
+        waitForAutoplayScreencastFrame: (() => {
+          const staleFrames = [
+            {
+              data: "stale",
+              metadata: { timestamp: (epoch + 205) / 1_000 },
+              sequence: 3,
+            },
+            {
+              data: "stale-confirmation",
+              metadata: { timestamp: (epoch + 330) / 1_000 },
+              sequence: 4,
+            },
+          ];
+          return async () => staleFrames.shift();
+        })(),
+      },
+      validateFrame: () => assert.fail("stale pixels must not be validated"),
+    }),
+    /timestamp was outside its current-state probe window/,
+  );
+
+  await assert.rejects(
+    acquireFrame({
+      initialProbe: probe(300),
+      isCaptureWindowCoherent: (before, after) => before.state === after.state,
+      isInitialProbeCoherent: (initial, before) =>
+        initial.state === before.state,
+      label: "mismatched live milestone",
+      readProbe: (() => {
+        const mismatched = [probe(310), probe(330, "arrival")];
+        return async () => mismatched.shift();
+      })(),
+      session: {
+        autoplayScreencastSequence: () => 3,
+        readScreenshotPaintProbe: session.readScreenshotPaintProbe,
+        waitForAutoplayScreencastFrame: (() => {
+          const mismatchedFrames = [
+            {
+              data: "wrong-state",
+              metadata: { timestamp: (epoch + 320) / 1_000 },
+              sequence: 4,
+            },
+            {
+              data: "wrong-state-confirmation",
+              metadata: { timestamp: (epoch + 445) / 1_000 },
+              sequence: 5,
+            },
+          ];
+          return async () => mismatchedFrames.shift();
+        })(),
+      },
+      validateFrame: () => assert.fail("mismatched pixels must not be validated"),
+    }),
+    /not bracketed by one coherent current state/,
+  );
+
+  const runStart = source.indexOf("async function runAutoplayObservation(");
+  const liveStart = source.indexOf(
+    "await session.startAutoplayScreencast();",
+    runStart,
+  );
+  const runEnd = source.indexOf(
+    "\nfunction assertAutoplayOpeningWorldTrajectoryEvidence(",
+    liveStart,
+  );
+  assert.doesNotMatch(
+    source.slice(liveStart, runEnd),
+    /captureScreenshot|Page\.captureScreenshot/,
+    "No active autoplay milestone may invoke the blocking capture API.",
+  );
+  assert.match(source, /captureAutoplayFrozenTrajectoryMilestone/);
+  assert.match(source, /assertVisibleScreenshotTextPaint\(buffer, paintProbe, label\)/);
+});
+
+test("HUD glyph validation rejects a missing DAY run over a visible chip", () => {
+  const width = 120;
+  const height = 40;
+  const channels = 3;
+  const completePixels = Buffer.alloc(width * height * channels, 18);
+  const fillRect = (pixels, rect, value) => {
+    for (let y = rect.top; y < rect.bottom; y += 1) {
+      for (let x = rect.left; x < rect.right; x += 1) {
+        const offset = (y * width + x) * channels;
+        pixels[offset] = value;
+        pixels[offset + 1] = value;
+        pixels[offset + 2] = value;
+      }
+    }
+  };
+  const region = (surface, text, left, right, top = 2, bottom = 10) => ({
+    rect: { bottom, left, right, top },
+    surface,
+    text,
+  });
+  const probe = {
+    regions: [
+      region("hud", "DAY 1", 2, 14),
+      region("hud", "11:05", 16, 30),
+      region("hud", "LATE MORNING", 32, 58),
+      region("hud", "$12", 60, 70),
+      region("hud", "70 ENERGY", 72, 90),
+      region("hud", "4/4 MET", 92, 118),
+      region("dock", "WORLD", 2, 16, 20, 30),
+      region("rail", "Rowan", 20, 36, 20, 30),
+    ],
+    viewport: { height, width },
+  };
+  for (const textRegion of probe.regions) {
+    fillRect(completePixels, textRegion.rect, 200);
+  }
+  const missingDayPixels = Buffer.from(completePixels);
+  fillRect(missingDayPixels, probe.regions[0].rect, 80);
+  const decodedPixels = new Map([
+    ["complete-hud", completePixels],
+    ["missing-day-hud", missingDayPixels],
+  ]);
+  const textPaintStart = source.indexOf(
+    "function assertVisibleScreenshotTextPaint(",
+  );
+  const textPaintEnd = source.indexOf(
+    "\nfunction screenshotRegionPixelDifferenceRatio(",
+    textPaintStart,
+  );
+  const assertTextPaint = Function(
+    "assert",
+    "decodePngPixels",
+    `${source.slice(textPaintStart, textPaintEnd)}; return assertVisibleScreenshotTextPaint;`,
+  )(
+    assert,
+    (buffer) => ({
+      channels,
+      height,
+      pixels: decodedPixels.get(buffer.toString()),
+      width,
+    }),
+  );
+
+  assert.doesNotThrow(() =>
+    assertTextPaint(Buffer.from("complete-hud"), probe, "complete HUD fixture"),
+  );
+  assert.throws(
+    () =>
+      assertTextPaint(
+        Buffer.from("missing-day-hud"),
+        probe,
+        "missing DAY fixture",
+      ),
+    /visible hud text "DAY 1" was not completely painted/,
+  );
+});
+
+test("screencast stop, late frames, and command timeouts cannot poison the next observation", async () => {
+  const classStart = source.indexOf("class CdpSession {");
+  const classEnd = source.indexOf(
+    "\nasync function launchBrowserSession(",
+    classStart,
+  );
+  const CdpSession = Function(
+    "assert",
+    "AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS",
+    "AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME",
+    "AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS",
+    "AUTOPLAY_SCREENCAST_MAX_BUFFERED_FRAMES",
+    "CDP_WAIT_TIMEOUT_MS",
+    "screencastFrameCapturedAtEpochMs",
+    "withTimeout",
+    `${source.slice(classStart, classEnd)}; return CdpSession;`,
+  )(
+    assert,
+    5,
+    4,
+    20,
+    4,
+    20,
+    (frame) => frame?.metadata?.timestamp * 1_000,
+    (promise, timeoutMs, message) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(message)), timeoutMs),
+        ),
+      ]),
+  );
+  const session = new CdpSession({
+    browser: null,
+    outputDir: "/tmp",
+    pageWsUrl: "ws://127.0.0.1:9222/devtools/page/test",
+    url: "http://127.0.0.1/",
+  });
+  session.socket = { destroyed: false, writable: true };
+  const commands = [];
+  session.send = async (method, params) => {
+    commands.push({ method, params });
+    return {};
+  };
+
+  await session.startAutoplayScreencast();
+  const firstStartedAt = session.screencast.startedAtEpochMs;
+  session.handleAutoplayScreencastFrame({
+    data: "first",
+    metadata: { timestamp: (firstStartedAt + 1) / 1_000 },
+    sessionId: 1,
+  });
+  assert.equal(session.screencast.frames.length, 1);
+  const waiter = session.waitForAutoplayScreencastFrame({
+    afterSequence: 1,
+    minimumCapturedAtEpochMs: firstStartedAt,
+  });
+  const stopping = session.stopAutoplayScreencast();
+  await assert.rejects(waiter, /stopped before a frame arrived/);
+  await stopping;
+  session.handleAutoplayScreencastFrame({
+    data: "late",
+    metadata: { timestamp: (firstStartedAt + 2) / 1_000 },
+    sessionId: 2,
+  });
+
+  await session.startAutoplayScreencast();
+  const secondStartedAt = session.screencast.startedAtEpochMs;
+  session.handleAutoplayScreencastFrame({
+    data: "stale-generation",
+    metadata: { timestamp: (secondStartedAt - 1) / 1_000 },
+    sessionId: 3,
+  });
+  assert.equal(session.screencast.frames.length, 0);
+  assert.equal(session.screencast.ignoredFrameCount, 1);
+  session.handleAutoplayScreencastFrame({
+    data: "second",
+    metadata: { timestamp: (secondStartedAt + 1) / 1_000 },
+    sessionId: 4,
+  });
+  assert.equal(session.screencast.frames.length, 1);
+  assert.equal(session.screencast.frames[0].data, "second");
+  await session.stopAutoplayScreencast();
+  assert.ok(
+    commands.filter((command) => command.method === "Page.screencastFrameAck")
+      .length >= 4,
+    "Every current or late screencast event must be acknowledged.",
+  );
+
+  const timeoutSession = new CdpSession({
+    browser: null,
+    outputDir: "/tmp",
+    pageWsUrl: "ws://127.0.0.1:9222/devtools/page/timeout",
+    url: "http://127.0.0.1/",
+  });
+  timeoutSession.socket = { destroyed: false, writable: true };
+  timeoutSession.writeFrame = () => {};
+  await assert.rejects(
+    timeoutSession.send("Runtime.evaluate", {}, { timeoutMs: 5 }),
+    /Timed out waiting for Chrome DevTools response.*pendingRequests/,
+  );
+  assert.equal(timeoutSession.pending.size, 0);
+  timeoutSession.socket.destroyed = true;
+  await assert.rejects(
+    timeoutSession.send("Runtime.evaluate"),
+    /transport is not writable.*pendingRequests/,
+  );
 });
 
 test("semantic playback cards have measured browser dwell evidence", () => {
