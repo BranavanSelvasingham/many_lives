@@ -3703,11 +3703,31 @@ class CdpSession {
         state.routeFrameWindowArchive.length <
           AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
       ) {
-        const recorder =
-          await this.readOrRearmAutoplayRouteCaptureRecorder({
+        let recorder;
+        try {
+          recorder = await this.readOrRearmAutoplayRouteCaptureRecorder({
             expectedTargetLocationId,
             label: `${label}:recorder-read`,
           });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            state.active &&
+            /execution context|cannot find (?:default )?context|inspected target navigated|context was destroyed/i.test(
+              message,
+            )
+          ) {
+            state.routeFrameWindowRecorderStatus =
+              "execution-context-reset-retry";
+            this.recordCdpTransportEvent("route-recorder-context-reset-retry", {
+              error: message,
+              expectedTargetLocationId,
+            });
+            await sleep(25);
+            continue;
+          }
+          throw error;
+        }
         this.archiveAutoplayRouteFrames(recorder);
         const segments = buildAutoplayRouteCaptureSegments({
           expectedTargetLocationId,
@@ -3748,7 +3768,7 @@ class CdpSession {
           state.routeFrameWindowRecorderStatus = "opening-route-ended";
           break;
         }
-        await sleep(sawOpeningSegment ? 25 : PROBE_POLL_INTERVAL_MS);
+        await sleep(Math.min(PROBE_POLL_INTERVAL_MS, 25));
       }
       if (
         state.routeFrameWindowArchive.length >=
@@ -13902,9 +13922,7 @@ async function captureAutoplayProactiveRouteFrameWindow({
     return null;
   }
   const candidateFrame = await session.captureAutoplayRouteVisualFrame({
-    minimumCapturedAtEpochMs:
-      beforeProbe.capturedAtEpochMs +
-      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+    minimumCapturedAtEpochMs: beforeProbe.capturedAtEpochMs,
   });
   const confirmationFrame = await session.captureAutoplayRouteVisualFrame({
     minimumCapturedAtEpochMs:
@@ -14517,54 +14535,6 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   visibleCopyAuditCount += openingDom ? 1 : 0;
   await captureFrozenMilestoneOnce("opening", openingProbe, openingDom);
 
-  const pacingStartedAt = Date.now();
-  await session.navigate(url);
-  const startProbe = await waitFor(
-    async () =>
-      acceptedAutoplayPacingProbe(
-        await session.readAutoplayPacingProbe(
-          `${openingWorldVariant}:autoplay:start-probe`,
-        ),
-      ),
-    APP_READY_TIMEOUT_MS,
-    `${openingWorldVariant}: autoplay opening probe remained unavailable after navigation.`,
-    PROBE_POLL_INTERVAL_MS,
-  );
-  const startDom = await session
-    .readAutoplayDomAudit(`${openingWorldVariant}:autoplay:start-dom`)
-    .catch(() => null);
-  assert.equal(
-    startProbe.watchMode?.enabled,
-    true,
-    "Fresh autoplay observation did not start in watch mode.",
-  );
-  assert.notEqual(
-    startProbe.watchMode?.status,
-    "frozen",
-    "Fresh autoplay observation unexpectedly started frozen.",
-  );
-  pacingSamples.push(
-    sampleAutoplayObservationSample({
-      dom: startDom,
-      elapsedMs: Date.now() - pacingStartedAt,
-      probe: startProbe,
-    }),
-  );
-  lastSampleAt = Date.now();
-  lastDomAuditAt = lastSampleAt;
-  lastProbeSignature = autoplayObservationSignature(pacingSamples.at(-1));
-
-  assert.equal(
-    startProbe.gameId,
-    game.id,
-    `${openingWorldVariant}: browser opened a different fresh game than the selected trajectory seed.`,
-  );
-  assertNoVisibleImplementationLanguage(
-    `${openingWorldVariant} autoplay start`,
-    startDom?.bodyText ?? "",
-  );
-  visibleCopyAuditCount += startDom ? 1 : 0;
-
   let screenshotPath = null;
   let completedProbe = null;
   let dom = null;
@@ -14585,6 +14555,54 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
       expectedTargetLocationId: expectedRouteTarget,
       label: `${openingWorldVariant}:autoplay:route-visual-window-recorder`,
     });
+    const pacingStartedAt = Date.now();
+    await session.navigate(url);
+    const startProbe = await waitFor(
+      async () =>
+        acceptedAutoplayPacingProbe(
+          await session.readAutoplayPacingProbe(
+            `${openingWorldVariant}:autoplay:start-probe`,
+          ),
+        ),
+      APP_READY_TIMEOUT_MS,
+      `${openingWorldVariant}: autoplay opening probe remained unavailable after navigation.`,
+      PROBE_POLL_INTERVAL_MS,
+    );
+    const startDom = await session
+      .readAutoplayDomAudit(`${openingWorldVariant}:autoplay:start-dom`)
+      .catch(() => null);
+    assert.equal(
+      startProbe.watchMode?.enabled,
+      true,
+      "Fresh autoplay observation did not start in watch mode.",
+    );
+    assert.notEqual(
+      startProbe.watchMode?.status,
+      "frozen",
+      "Fresh autoplay observation unexpectedly started frozen.",
+    );
+    pacingSamples.push(
+      sampleAutoplayObservationSample({
+        dom: startDom,
+        elapsedMs: Date.now() - pacingStartedAt,
+        probe: startProbe,
+      }),
+    );
+    lastSampleAt = Date.now();
+    lastDomAuditAt = lastSampleAt;
+    lastProbeSignature = autoplayObservationSignature(pacingSamples.at(-1));
+
+    assert.equal(
+      startProbe.gameId,
+      game.id,
+      `${openingWorldVariant}: browser opened a different fresh game than the selected trajectory seed.`,
+    );
+    assertNoVisibleImplementationLanguage(
+      `${openingWorldVariant} autoplay start`,
+      startDom?.bodyText ?? "",
+    );
+    visibleCopyAuditCount += startDom ? 1 : 0;
+
     const completion = await waitFor(
       async () => {
         const probe = acceptedAutoplayPacingProbe(

@@ -559,6 +559,12 @@ test("proactive route history survives a delayed observer and rejects unproven w
   const recorderStartIndex = runSource.indexOf(
     "await session.startAutoplayRouteCaptureRecorder(",
   );
+  const visualRecorderStartIndex = runSource.indexOf(
+    "session.startAutoplayRouteVisualWindowRecorder(",
+  );
+  const normalNavigationIndex = runSource.indexOf(
+    "await session.navigate(url);",
+  );
   const observationWaitIndex = runSource.indexOf(
     "const completion = await waitFor(",
   );
@@ -600,6 +606,16 @@ test("proactive route history survives a delayed observer and rejects unproven w
   assert.ok(
     recorderStartIndex >= 0 && recorderStartIndex < observationWaitIndex,
     "The in-page route recorder must start before the delayed Node observer loop.",
+  );
+  assert.ok(
+    visualRecorderStartIndex >= 0 &&
+      visualRecorderStartIndex < normalNavigationIndex,
+    "The proactive visual recorder must be watching before autoplay navigation can begin the opening route.",
+  );
+  assert.match(
+    source,
+    /const candidateFrame = await session\.captureAutoplayRouteVisualFrame\(\{\s*minimumCapturedAtEpochMs: beforeProbe\.capturedAtEpochMs,\s*\}\);/,
+    "The first real screenshot must be captured immediately inside the legal opening segment.",
   );
   assert.match(runSource, /selectAutoplayRecordedRouteTrajectory\(/);
   assert.match(runSource, /startAutoplayRouteVisualWindowRecorder\(/);
@@ -1224,6 +1240,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments };`,
   )(2_000, 0.02);
+  let proactiveRouteCaptureFixture = async () => null;
   const classStart = source.indexOf("class CdpSession {");
   const classEnd = source.indexOf(
     "\nasync function launchBrowserSession(",
@@ -1278,7 +1295,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       afterRoute.targetLocationId === expectedTargetLocationId &&
       afterRoute.progress >= beforeRoute.progress,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
-    async () => null,
+    (options) => proactiveRouteCaptureFixture(options),
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
     20,
     (frame, beforeProbe, afterProbe) => {
@@ -1655,6 +1672,168 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   assert.ok(sparseSession.screencast.routeSampleArchive.length <= 16);
   assert.ok(sparseSession.screencast.routeRecorderRestarts.length <= 4);
   await sparseSession.stopAutoplayScreencast();
+    },
+  );
+
+  await t.test(
+    "live recorder captures the original four-sample segment before later same-target routes",
+    async () => {
+      const liveSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/live-route",
+        url: "http://127.0.0.1/",
+      });
+      liveSession.socket = { destroyed: false, writable: true };
+      liveSession.send = async () => ({});
+      await liveSession.startAutoplayScreencast();
+      const startedAt = liveSession.screencast.startedAtEpochMs;
+      const sample = (
+        progress,
+        offsetMs,
+        { hud = "DAY 1 11:05", pathLength = 15 } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+          viewport: { height: 625, width: 1365 },
+        },
+        recorderGeneration: 2,
+        route: {
+          active: true,
+          legal: true,
+          progress,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          targetLocationId: "tea-house",
+          tilePathLength: pathLength,
+          visualObstaclesClear: true,
+          worldPathLength: pathLength + 1,
+        },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.268, 0),
+        sample(0.42, 200),
+        sample(0.64, 300),
+        sample(0.863, 500),
+      ];
+      const recorder = (samples) => ({
+        acceptedCount: samples.length,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        lastObservedRoute: {
+          active: true,
+          progress: samples.at(-1).route.progress,
+          targetLocationId: "tea-house",
+        },
+        samples,
+        status: "active",
+      });
+      const stagedRecorders = [
+        recorder(openingSamples.slice(0, 2)),
+        recorder(openingSamples),
+      ];
+      const laterSameTargetSamples = [
+        sample(0.08, 3_000, { hud: "DAY 1 12:21", pathLength: 4 }),
+        sample(0.36, 3_200, { hud: "DAY 1 12:21", pathLength: 4 }),
+      ];
+      const laterRecorder = recorder([
+        ...openingSamples,
+        ...laterSameTargetSamples,
+      ]);
+      let recorderReadCount = 0;
+      liveSession.readOrRearmAutoplayRouteCaptureRecorder = async () => {
+        const next = stagedRecorders[recorderReadCount] ?? laterRecorder;
+        recorderReadCount += 1;
+        return next;
+      };
+      liveSession.handleAutoplayScreencastFrame({
+        data: "only-passive-opening-frame",
+        metadata: { timestamp: (startedAt + 100) / 1_000 },
+        sessionId: 41,
+      });
+
+      let proactiveCaptureCount = 0;
+      proactiveRouteCaptureFixture = async ({
+        expectedTargetLocationId,
+        session,
+      }) => {
+        const [beforeProbe, afterProbe] =
+          proactiveCaptureCount === 0
+            ? openingSamples.slice(0, 2)
+            : openingSamples.slice(2, 4);
+        const frame = (sequence, offsetMs, pixels) => ({
+          data: Buffer.from(pixels).toString("base64"),
+          metadata: {
+            source: "proactive-route-screenshot",
+            timestamp: (startedAt + offsetMs) / 1_000,
+          },
+          sequence,
+          source: "proactive-route-screenshot",
+        });
+        const baseSequence = 2_001 + proactiveCaptureCount * 2;
+        const beforeOffset =
+          beforeProbe.capturedAtEpochMs - startedAt;
+        const captured = session.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: {
+            afterProbe,
+            beforeProbe,
+            candidateFrame: frame(
+              baseSequence,
+              beforeOffset + 10,
+              `candidate-${proactiveCaptureCount}`,
+            ),
+            confirmationFrame: frame(
+              baseSequence + 1,
+              beforeOffset + 135,
+              `confirmation-${proactiveCaptureCount}`,
+            ),
+          },
+          recorder: stagedRecorders[proactiveCaptureCount],
+        });
+        proactiveCaptureCount += 1;
+        return captured;
+      };
+
+      try {
+        await liveSession.startAutoplayRouteVisualWindowRecorder({
+          expectedTargetLocationId: "tea-house",
+          label: "ci-ordering-live-route",
+        });
+        assert.equal(recorderReadCount, 2);
+        assert.equal(proactiveCaptureCount, 2);
+        assert.equal(
+          liveSession.screencast.routeFrameWindowRecorderStatus,
+          "complete",
+        );
+        assert.equal(liveSession.autoplayRouteFrameHistory().length, 1);
+        assert.equal(liveSession.autoplayRouteFrameWindows().length, 2);
+        assert.ok(
+          liveSession.autoplayRouteFrameWindows()[1].beforeProbe.route.progress -
+            liveSession.autoplayRouteFrameWindows()[0].afterProbe.route.progress >=
+            0.1,
+        );
+        assert.notEqual(
+          liveSession.autoplayRouteFrameWindows()[0].confirmationFrame.data,
+          liveSession.autoplayRouteFrameWindows()[1].confirmationFrame.data,
+        );
+
+        liveSession.archiveAutoplayRouteFrames(laterRecorder);
+        assert.equal(liveSession.screencast.routeFrameObservedSegmentCount, 2);
+        assert.equal(liveSession.screencast.routeSampleArchive.length, 4);
+        assert.equal(
+          liveSession.screencast.routeFrameOpeningSegment.lastProgress,
+          0.863,
+        );
+        assert.equal(liveSession.autoplayRouteFrameWindows().length, 2);
+      } finally {
+        proactiveRouteCaptureFixture = async () => null;
+        await liveSession.stopAutoplayScreencast();
+      }
     },
   );
 
