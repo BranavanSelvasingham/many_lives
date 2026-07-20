@@ -94,7 +94,9 @@ const AUTOPLAY_PACING_SAMPLE_INTERVAL_MS = Number(
 const AUTOPLAY_ROUTE_RECORDER_FRAME_HISTORY_MS = 20_000;
 const AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS = 125;
 const AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES = 160;
+const AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS = 4;
 const AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES = 48;
+const AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS = 2;
 const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
@@ -1585,6 +1587,26 @@ class CdpSession {
                 this.screencast.routeFrameObservedSegmentCount,
               routeFrameOpeningSegment:
                 this.screencast.routeFrameOpeningSegment,
+              routeFrameWindowArchiveCount:
+                this.screencast.routeFrameWindowArchive.length,
+              routeFrameWindowArchiveProgress:
+                this.screencast.routeFrameWindowArchive.map((window) => ({
+                  after: window.afterProbe?.route?.progress ?? null,
+                  before: window.beforeProbe?.route?.progress ?? null,
+                  frameSequence: window.confirmationFrame?.sequence ?? null,
+                })),
+              routeFrameWindowRecorderError:
+                this.screencast.routeFrameWindowRecorderError,
+              routeFrameWindowRecorderStatus:
+                this.screencast.routeFrameWindowRecorderStatus,
+              routeRecorderExpectedTargetLocationId:
+                this.screencast.routeRecorderExpectedTargetLocationId,
+              routeRecorderGeneration:
+                this.screencast.routeRecorderGeneration,
+              routeRecorderRestartCount:
+                this.screencast.routeRecorderRestartCount,
+              routeRecorderRestarts:
+                this.screencast.routeRecorderRestarts,
               routeSampleArchiveCount:
                 this.screencast.routeSampleArchive.length,
               status: this.screencast.status,
@@ -3020,8 +3042,13 @@ class CdpSession {
 
   async startAutoplayRouteCaptureRecorder({
     expectedTargetLocationId,
+    generation = null,
     label = "autoplay-route-recorder-start",
+    restartReason = null,
   }) {
+    const screencastState = this.screencast;
+    const recorderGeneration =
+      generation ?? Math.max(1, (screencastState?.routeRecorderGeneration ?? 0) + 1);
     return this.evaluateForRead(`(() => {
       const recorderKey = "__manyLivesAutoplayRouteCaptureRecorder";
       const previous = window[recorderKey];
@@ -3029,14 +3056,18 @@ class CdpSession {
         window.clearInterval(previous.intervalId);
       }
       const expectedTargetLocationId = ${JSON.stringify(expectedTargetLocationId)};
+      const generation = ${JSON.stringify(recorderGeneration)};
+      const restartReason = ${JSON.stringify(restartReason)};
       const maxSnapshots = ${AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS};
       const state = {
         acceptedCount: 0,
         expectedTargetLocationId,
+        generation,
         intervalId: null,
         lastObservedRoute: null,
         parseErrorCount: 0,
         rejectedCount: 0,
+        restartReason,
         samples: [],
         startedAtEpochMs: Date.now(),
         status: "active",
@@ -3199,6 +3230,7 @@ class CdpSession {
           capturedAtEpochMs,
           capturedAtMonotonicMs,
           paintProbe: readPaintProbe(),
+          recorderGeneration: generation,
           route,
           source: "movement-probe-recorder"
         });
@@ -3207,6 +3239,7 @@ class CdpSession {
           state.samples.splice(0, state.samples.length - maxSnapshots);
         }
       };
+      state.sample = sample;
       state.intervalId = window.setInterval(
         sample,
         ${AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS},
@@ -3215,10 +3248,25 @@ class CdpSession {
       sample();
       return {
         expectedTargetLocationId,
+        generation,
+        restartReason,
         startedAtEpochMs: state.startedAtEpochMs,
         status: state.status
       };
-    })()`, label);
+    })()`, label).then((recorder) => {
+      if (screencastState) {
+        assert.ok(
+          !screencastState.routeRecorderExpectedTargetLocationId ||
+            screencastState.routeRecorderExpectedTargetLocationId ===
+              expectedTargetLocationId,
+          "Autoplay route recorder target changed across one browser session.",
+        );
+        screencastState.routeRecorderExpectedTargetLocationId =
+          expectedTargetLocationId;
+        screencastState.routeRecorderGeneration = recorderGeneration;
+      }
+      return recorder;
+    });
   }
 
   async readAutoplayRouteCaptureRecorder(
@@ -3232,15 +3280,130 @@ class CdpSession {
       return {
         acceptedCount: state.acceptedCount,
         expectedTargetLocationId: state.expectedTargetLocationId,
+        generation: state.generation,
         lastObservedRoute: state.lastObservedRoute,
         parseErrorCount: state.parseErrorCount,
         rejectedCount: state.rejectedCount,
+        restartReason: state.restartReason,
         samples: state.samples,
         startedAtEpochMs: state.startedAtEpochMs,
         status: state.status,
         unavailableCount: state.unavailableCount
       };
     })()`, label);
+  }
+
+  async sampleAutoplayRouteCaptureRecorder(
+    label = "autoplay-route-recorder-sample",
+  ) {
+    return this.evaluateForRead(`(() => {
+      const state = window.__manyLivesAutoplayRouteCaptureRecorder;
+      if (!state || typeof state.sample !== "function") {
+        return null;
+      }
+      const acceptedCount = state.acceptedCount;
+      state.sample();
+      return state.acceptedCount > acceptedCount
+        ? state.samples.at(-1) ?? null
+        : null;
+    })()`, label);
+  }
+
+  async readOrRearmAutoplayRouteCaptureRecorder({
+    expectedTargetLocationId,
+    label = "autoplay-route-recorder-read-or-rearm",
+  }) {
+    const screencastState = this.screencast;
+    assert.ok(screencastState, "Autoplay screencast state is unavailable.");
+    const recorder = await this.readAutoplayRouteCaptureRecorder(
+      `${label}:read`,
+    );
+    if (recorder) {
+      assert.equal(
+        recorder.expectedTargetLocationId,
+        expectedTargetLocationId,
+        `${label}: page recorder target changed unexpectedly.`,
+      );
+      screencastState.routeRecorderExpectedTargetLocationId =
+        expectedTargetLocationId;
+      screencastState.routeRecorderGeneration = Math.max(
+        screencastState.routeRecorderGeneration,
+        recorder.generation ?? 1,
+      );
+      return recorder;
+    }
+
+    assert.equal(
+      screencastState.routeRecorderExpectedTargetLocationId,
+      expectedTargetLocationId,
+      `${label}: refusing to re-arm a missing recorder for a different target.`,
+    );
+    if (screencastState.routeRecorderRearmPromise) {
+      return screencastState.routeRecorderRearmPromise;
+    }
+    screencastState.routeRecorderRearmPromise = (async () => {
+      assert.ok(
+        screencastState.routeRecorderRestartCount <
+          AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS,
+        `${label}: missing recorder exceeded the bounded restart budget.`,
+      );
+      const generation = screencastState.routeRecorderGeneration + 1;
+      const restart = {
+        atEpochMs: Date.now(),
+        generation,
+        openingSampleCount: screencastState.routeSampleArchive.length,
+        openingWindowCount: screencastState.routeFrameWindowArchive.length,
+        reason: "execution-context-recorder-missing",
+        status: "starting",
+        targetLocationId: expectedTargetLocationId,
+      };
+      screencastState.routeRecorderRestartCount += 1;
+      screencastState.routeRecorderRestarts.push(restart);
+      if (
+        screencastState.routeRecorderRestarts.length >
+        AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS
+      ) {
+        screencastState.routeRecorderRestarts.splice(
+          0,
+          screencastState.routeRecorderRestarts.length -
+            AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS,
+        );
+      }
+      try {
+        await this.startAutoplayRouteCaptureRecorder({
+          expectedTargetLocationId,
+          generation,
+          label: `${label}:re-arm-generation-${generation}`,
+          restartReason: restart.reason,
+        });
+        const rearmed = await this.readAutoplayRouteCaptureRecorder(
+          `${label}:confirm-generation-${generation}`,
+        );
+        assert.equal(
+          rearmed?.expectedTargetLocationId,
+          expectedTargetLocationId,
+          `${label}: re-armed recorder did not retain the expected target.`,
+        );
+        assert.equal(
+          rearmed?.generation,
+          generation,
+          `${label}: re-armed recorder did not expose the expected generation.`,
+        );
+        restart.status = "active";
+        screencastState.routeFrameWindowRecorderStatus =
+          `rearmed-generation-${generation}`;
+        return rearmed;
+      } catch (error) {
+        restart.status = "failed";
+        restart.error = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+    })();
+    try {
+      return await screencastState.routeRecorderRearmPromise;
+    } finally {
+      screencastState.routeRecorderRearmPromise = null;
+    }
   }
 
   async stopAutoplayRouteCaptureRecorder(
@@ -3259,9 +3422,11 @@ class CdpSession {
       return {
         acceptedCount: state.acceptedCount,
         expectedTargetLocationId: state.expectedTargetLocationId,
+        generation: state.generation,
         lastObservedRoute: state.lastObservedRoute,
         parseErrorCount: state.parseErrorCount,
         rejectedCount: state.rejectedCount,
+        restartReason: state.restartReason,
         sampleCount: state.samples.length,
         startedAtEpochMs: state.startedAtEpochMs,
         status: state.status,
@@ -3286,6 +3451,15 @@ class CdpSession {
       routeFrameArchivedLastSampleAtEpochMs: null,
       routeFrameArchivedSampleCount: 0,
       routeFrameHistory: [],
+      routeFrameWindowArchive: [],
+      routeFrameWindowRecorderError: null,
+      routeFrameWindowRecorderPromise: null,
+      routeFrameWindowRecorderStatus: "idle",
+      routeRecorderExpectedTargetLocationId: null,
+      routeRecorderGeneration: 0,
+      routeRecorderRestartCount: 0,
+      routeRecorderRestarts: [],
+      routeRecorderRearmPromise: null,
       routeFrameObservedSegmentCount: 0,
       routeFrameOpeningSegment: null,
       routeSampleArchive: [],
@@ -3321,6 +3495,7 @@ class CdpSession {
     }
     state.active = false;
     state.status = "stopping";
+    await state.routeFrameWindowRecorderPromise?.catch(() => null);
     for (const waiter of state.waiters.splice(0)) {
       clearTimeout(waiter.timeoutId);
       waiter.reject(
@@ -3373,6 +3548,222 @@ class CdpSession {
         samples: recorder?.samples,
       })[0]?.samples ?? []),
     ];
+  }
+
+  autoplayRouteFrameWindows() {
+    return [...(this.screencast?.routeFrameWindowArchive ?? [])];
+  }
+
+  async captureAutoplayRouteVisualFrame({ minimumCapturedAtEpochMs }) {
+    const state = this.screencast;
+    assert.ok(
+      state && ["starting", "active"].includes(state.status),
+      "Autoplay screencast is not active for a route visual capture.",
+    );
+    const remainingSettleMs = minimumCapturedAtEpochMs - Date.now();
+    if (remainingSettleMs > 0) {
+      await sleep(remainingSettleMs);
+    }
+    const requestedAtEpochMs = Date.now();
+    const response = await this.send(
+      "Page.captureScreenshot",
+      {
+        captureBeyondViewport: false,
+        format: "png",
+        fromSurface: true,
+      },
+      { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+    );
+    const data = response?.result?.data;
+    assert.ok(data, "Chrome did not return proactive route screenshot data.");
+    const capturedAtEpochMs = Date.now();
+    state.lastSequence += 1;
+    return {
+      data,
+      metadata: {
+        capturedAtEpochMs,
+        requestedAtEpochMs,
+        source: "proactive-route-screenshot",
+        timestamp: capturedAtEpochMs / 1_000,
+      },
+      sequence: state.lastSequence,
+      source: "proactive-route-screenshot",
+    };
+  }
+
+  archiveAutoplayRouteFrameWindow({
+    expectedTargetLocationId,
+    recordedWindow,
+    recorder,
+  }) {
+    const state = this.screencast;
+    if (!state || !recordedWindow || !recorder) {
+      return null;
+    }
+    const openingSegment = buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId,
+      samples: [
+        ...state.routeSampleArchive,
+        ...(recorder.samples ?? []),
+      ],
+    })[0];
+    if (!openingSegment) {
+      return null;
+    }
+    const sampleBelongsToOpeningSegment = (sample) =>
+      sample?.source === "movement-probe-recorder" &&
+      openingSegment.samples.some(
+        (candidate) =>
+          candidate.capturedAtEpochMs === sample.capturedAtEpochMs &&
+          candidate.route?.progress === sample.route?.progress,
+      );
+    if (
+      !sampleBelongsToOpeningSegment(recordedWindow.beforeProbe) ||
+      !sampleBelongsToOpeningSegment(recordedWindow.afterProbe) ||
+      !autoplayRouteCaptureWindowCoherent(
+        recordedWindow.beforeProbe.route,
+        recordedWindow.afterProbe.route,
+        expectedTargetLocationId,
+      ) ||
+      !screencastFrameIsBracketedByEpochProbes(
+        recordedWindow.candidateFrame,
+        recordedWindow.beforeProbe,
+        recordedWindow.afterProbe,
+      ) ||
+      !screencastFrameIsBracketedByEpochProbes(
+        recordedWindow.confirmationFrame,
+        recordedWindow.beforeProbe,
+        recordedWindow.afterProbe,
+      ) ||
+      recordedWindow.confirmationFrame.sequence <=
+        recordedWindow.candidateFrame.sequence ||
+      screencastFrameCapturedAtEpochMs(recordedWindow.confirmationFrame) <
+        screencastFrameCapturedAtEpochMs(recordedWindow.candidateFrame) +
+          AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS
+    ) {
+      return null;
+    }
+    const existing = state.routeFrameWindowArchive;
+    if (
+      existing.some(
+        (window) =>
+          window.confirmationFrame.sequence ===
+          recordedWindow.confirmationFrame.sequence,
+      )
+    ) {
+      return recordedWindow;
+    }
+    const firstWindow = existing[0] ?? null;
+    if (
+      firstWindow &&
+      recordedWindow.beforeProbe.route.progress -
+          firstWindow.afterProbe.route.progress <
+        AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
+    ) {
+      return null;
+    }
+    if (
+      firstWindow &&
+      Buffer.from(firstWindow.confirmationFrame.data, "base64").equals(
+        Buffer.from(recordedWindow.confirmationFrame.data, "base64"),
+      )
+    ) {
+      return null;
+    }
+    existing.push(recordedWindow);
+    if (
+      existing.length > AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+    ) {
+      existing.splice(
+        0,
+        existing.length - AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS,
+      );
+    }
+    return recordedWindow;
+  }
+
+  startAutoplayRouteVisualWindowRecorder({
+    expectedTargetLocationId,
+    label = "autoplay-route-visual-window-recorder",
+  }) {
+    const state = this.screencast;
+    assert.ok(
+      state && ["starting", "active"].includes(state.status),
+      "Autoplay screencast is not active for the route visual recorder.",
+    );
+    if (state.routeFrameWindowRecorderPromise) {
+      return state.routeFrameWindowRecorderPromise;
+    }
+    state.routeFrameWindowRecorderStatus = "watching";
+    state.routeFrameWindowRecorderPromise = (async () => {
+      let sawOpeningSegment = false;
+      let captureAttemptCount = 0;
+      while (
+        state.active &&
+        state.routeFrameWindowArchive.length <
+          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+      ) {
+        const recorder =
+          await this.readOrRearmAutoplayRouteCaptureRecorder({
+            expectedTargetLocationId,
+            label: `${label}:recorder-read`,
+          });
+        this.archiveAutoplayRouteFrames(recorder);
+        const segments = buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId,
+          samples: state.routeSampleArchive,
+        });
+        const openingSegment = segments[0] ?? null;
+        if (openingSegment) {
+          sawOpeningSegment = true;
+        }
+        if (state.routeFrameObservedSegmentCount > 1) {
+          state.routeFrameWindowRecorderStatus = "opening-segment-ended";
+          break;
+        }
+        const latestSample = openingSegment?.samples.at(-1) ?? null;
+        const firstWindow = state.routeFrameWindowArchive[0] ?? null;
+        const progressIsDistinct = Boolean(
+          latestSample &&
+            (!firstWindow ||
+              latestSample.route.progress -
+                  firstWindow.afterProbe.route.progress >=
+                AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS),
+        );
+        if (progressIsDistinct && captureAttemptCount < 4) {
+          captureAttemptCount += 1;
+          await captureAutoplayProactiveRouteFrameWindow({
+            expectedTargetLocationId,
+            label: `${label}:window-${captureAttemptCount}`,
+            session: this,
+          });
+        }
+        if (
+          sawOpeningSegment &&
+          recorder?.lastObservedRoute &&
+          (recorder.lastObservedRoute.active !== true ||
+            recorder.lastObservedRoute.targetLocationId !==
+              expectedTargetLocationId)
+        ) {
+          state.routeFrameWindowRecorderStatus = "opening-route-ended";
+          break;
+        }
+        await sleep(sawOpeningSegment ? 25 : PROBE_POLL_INTERVAL_MS);
+      }
+      if (
+        state.routeFrameWindowArchive.length >=
+        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+      ) {
+        state.routeFrameWindowRecorderStatus = "complete";
+      } else if (!state.active) {
+        state.routeFrameWindowRecorderStatus = "stopped";
+      }
+    })().catch((error) => {
+      state.routeFrameWindowRecorderError =
+        error instanceof Error ? error.message : String(error);
+      state.routeFrameWindowRecorderStatus = "failed";
+    });
+    return state.routeFrameWindowRecorderPromise;
   }
 
   archiveAutoplayRouteFrames(recorder) {
@@ -12903,6 +13294,13 @@ function compactAutoplayRouteCaptureSegments(segments) {
     lastCapturedAtEpochMs: segment.samples.at(-1)?.capturedAtEpochMs ?? null,
     lastProgress: segment.samples.at(-1)?.route?.progress ?? null,
     pathSignature: segment.pathSignature,
+    recorderGenerations: [
+      ...new Set(
+        segment.samples
+          .map((sample) => sample.recorderGeneration)
+          .filter(Number.isInteger),
+      ),
+    ],
     sampleCount: segment.samples.length,
   }));
 }
@@ -13391,6 +13789,10 @@ function compactAutoplayScreencastCaptureWindow(window) {
       deviceWidth: window.frame.metadata?.deviceWidth ?? null,
       height: window.validated.height,
       sequence: window.frame.sequence,
+      source:
+        window.frame.source ??
+        window.frame.metadata?.source ??
+        "screencast",
       width: window.validated.width,
     },
     textPaint: window.validated.textPaint,
@@ -13483,16 +13885,106 @@ async function captureAutoplayLiveTrajectoryMilestone({
   };
 }
 
+async function captureAutoplayProactiveRouteFrameWindow({
+  expectedTargetLocationId,
+  label,
+  session,
+}) {
+  const beforeProbe = await session.sampleAutoplayRouteCaptureRecorder(
+    `${label}:before-route-sample`,
+  );
+  if (
+    !isAutoplayFootholdRouteFrame(
+      beforeProbe?.route,
+      expectedTargetLocationId,
+    )
+  ) {
+    return null;
+  }
+  const candidateFrame = await session.captureAutoplayRouteVisualFrame({
+    minimumCapturedAtEpochMs:
+      beforeProbe.capturedAtEpochMs +
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+  });
+  const confirmationFrame = await session.captureAutoplayRouteVisualFrame({
+    minimumCapturedAtEpochMs:
+      screencastFrameCapturedAtEpochMs(candidateFrame) +
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+  });
+  const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
+    `${label}:after-route-sample`,
+  );
+  if (
+    !autoplayRouteCaptureWindowCoherent(
+      beforeProbe.route,
+      afterProbe?.route,
+      expectedTargetLocationId,
+    )
+  ) {
+    return null;
+  }
+  const recorder =
+    await session.readOrRearmAutoplayRouteCaptureRecorder({
+      expectedTargetLocationId,
+      label: `${label}:recorder-read`,
+    });
+  session.archiveAutoplayRouteFrames(recorder);
+  return session.archiveAutoplayRouteFrameWindow({
+    expectedTargetLocationId,
+    recordedWindow: {
+      afterProbe,
+      beforeProbe,
+      candidateFrame,
+      confirmationFrame,
+    },
+    recorder,
+  });
+}
+
+function recordedRouteWindowBelongsToOpeningSegment({
+  expectedTargetLocationId,
+  openingSegment,
+  recordedWindow,
+}) {
+  const sampleBelongs = (sample) =>
+    sample?.source === "movement-probe-recorder" &&
+    openingSegment?.samples.some(
+      (candidate) =>
+        candidate.capturedAtEpochMs === sample.capturedAtEpochMs &&
+        candidate.route?.progress === sample.route?.progress,
+    );
+  return Boolean(
+    sampleBelongs(recordedWindow?.beforeProbe) &&
+      sampleBelongs(recordedWindow?.afterProbe) &&
+      autoplayRouteCaptureWindowCoherent(
+        recordedWindow.beforeProbe.route,
+        recordedWindow.afterProbe.route,
+        expectedTargetLocationId,
+      ) &&
+      screencastFrameIsBracketedByEpochProbes(
+        recordedWindow.candidateFrame,
+        recordedWindow.beforeProbe,
+        recordedWindow.afterProbe,
+      ) &&
+      screencastFrameIsBracketedByEpochProbes(
+        recordedWindow.confirmationFrame,
+        recordedWindow.beforeProbe,
+        recordedWindow.afterProbe,
+      ),
+  );
+}
+
 function buildAutoplayRecordedRouteWindowCandidates({
   expectedTargetLocationId,
   frames,
+  recordedWindows = [],
   samples,
 }) {
-  const legalSamples =
-    buildAutoplayRouteCaptureSegments({
-      expectedTargetLocationId,
-      samples,
-    })[0]?.samples ?? [];
+  const openingSegment = buildAutoplayRouteCaptureSegments({
+    expectedTargetLocationId,
+    samples,
+  })[0];
+  const legalSamples = openingSegment?.samples ?? [];
   const eligibleFrames = (frames ?? [])
     .filter(
       (frame) =>
@@ -13503,7 +13995,13 @@ function buildAutoplayRecordedRouteWindowCandidates({
         screencastFrameCapturedAtEpochMs(left) -
         screencastFrameCapturedAtEpochMs(right),
     );
-  const windows = [];
+  const windows = recordedWindows.filter((recordedWindow) =>
+    recordedRouteWindowBelongsToOpeningSegment({
+      expectedTargetLocationId,
+      openingSegment,
+      recordedWindow,
+    }),
+  );
 
   for (let frameIndex = 0; frameIndex < eligibleFrames.length; frameIndex += 1) {
     const candidateFrame = eligibleFrames[frameIndex];
@@ -13563,7 +14061,15 @@ function buildAutoplayRecordedRouteWindowCandidates({
     });
   }
 
-  return windows;
+  return [
+    ...new Map(
+      windows.map((window) => [window.confirmationFrame.sequence, window]),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      screencastFrameCapturedAtEpochMs(left.confirmationFrame) -
+      screencastFrameCapturedAtEpochMs(right.confirmationFrame),
+  );
 }
 
 function validateAutoplayRecordedRouteWindow({
@@ -13623,6 +14129,7 @@ function selectAutoplayRecordedRouteTrajectory({
   expectedTargetLocationId,
   frames,
   label,
+  recordedWindows = [],
   samples,
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
@@ -13635,6 +14142,7 @@ function selectAutoplayRecordedRouteTrajectory({
   const candidates = buildAutoplayRecordedRouteWindowCandidates({
     expectedTargetLocationId,
     frames,
+    recordedWindows,
     samples: openingSegment?.samples ?? [],
   });
   let lastError = null;
@@ -13673,6 +14181,10 @@ function selectAutoplayRecordedRouteTrajectory({
           validateFrame,
           validateStableFramePair,
         });
+        assert.ok(
+          !start.validated.buffer.equals(mid.validated.buffer),
+          `${label}: route-start and route-mid reused identical visual pixels.`,
+        );
         return { mid, start };
       } catch (error) {
         lastError = error;
@@ -13698,7 +14210,7 @@ function selectAutoplayRecordedRouteTrajectory({
     );
   }).length;
   throw new Error(
-    `${label}: opening route segment did not contain two distinct legal route frame windows. Segments: ${segments.length}. Opening samples: ${openingSegment?.samples.length ?? 0}. Opening frames: ${openingFrameCount}. Historical frames: ${(frames ?? []).length}.`,
+    `${label}: opening route segment did not contain two distinct legal route frame windows. Segments: ${segments.length}. Opening samples: ${openingSegment?.samples.length ?? 0}. Opening frames: ${openingFrameCount}. Proactive windows: ${recordedWindows.length}. Historical frames: ${(frames ?? []).length}.`,
   );
 }
 
@@ -13713,14 +14225,17 @@ async function waitForAutoplayRecordedRouteTrajectory({
 
   while (Date.now() - startedAt < AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS) {
     try {
-      lastRecorder = await session.readAutoplayRouteCaptureRecorder(
-        `${slug(label)}:recorder-read`,
-      );
+      lastRecorder =
+        await session.readOrRearmAutoplayRouteCaptureRecorder({
+          expectedTargetLocationId,
+          label: `${slug(label)}:recorder-read`,
+        });
       session.archiveAutoplayRouteFrames(lastRecorder);
       return selectAutoplayRecordedRouteTrajectory({
         expectedTargetLocationId,
         frames: session.autoplayRouteFrameHistory(),
         label,
+        recordedWindows: session.autoplayRouteFrameWindows(),
         samples: session.autoplayRouteCaptureSamples(lastRecorder),
       });
     } catch (error) {
@@ -13733,9 +14248,11 @@ async function waitForAutoplayRecordedRouteTrajectory({
     ? {
         acceptedCount: lastRecorder.acceptedCount,
         expectedTargetLocationId: lastRecorder.expectedTargetLocationId,
+        generation: lastRecorder.generation,
         lastObservedRoute: lastRecorder.lastObservedRoute,
         parseErrorCount: lastRecorder.parseErrorCount,
         rejectedCount: lastRecorder.rejectedCount,
+        restartReason: lastRecorder.restartReason,
         sampleCount: lastRecorder.samples?.length ?? 0,
         segments: compactAutoplayRouteCaptureSegments(
           buildAutoplayRouteCaptureSegments({
@@ -14064,6 +14581,10 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
       label: `${openingWorldVariant}:autoplay:route-recorder-start`,
     });
     autoplayRouteRecorderStarted = true;
+    session.startAutoplayRouteVisualWindowRecorder({
+      expectedTargetLocationId: expectedRouteTarget,
+      label: `${openingWorldVariant}:autoplay:route-visual-window-recorder`,
+    });
     const completion = await waitFor(
       async () => {
         const probe = acceptedAutoplayPacingProbe(
@@ -14075,9 +14596,11 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
         if (!capturedMilestoneKeys.has("foothold-route-start")) {
           const recordedTrajectory = await (async () => {
             try {
-              const recorder = await session.readAutoplayRouteCaptureRecorder(
-                `${openingWorldVariant}:autoplay:route-recorder-read`,
-              );
+              const recorder =
+                await session.readOrRearmAutoplayRouteCaptureRecorder({
+                  expectedTargetLocationId: expectedRouteTarget,
+                  label: `${openingWorldVariant}:autoplay:route-recorder-read`,
+                });
               if (!recorder || recorder.acceptedCount === 0) {
                 await archiveAutoplayRouteCaptureFromPacingProbe({
                   expectedTargetLocationId: expectedRouteTarget,
@@ -14091,6 +14614,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
                 expectedTargetLocationId: expectedRouteTarget,
                 frames: session.autoplayRouteFrameHistory(),
                 label: `${openingWorldVariant} autoplay foothold route`,
+                recordedWindows: session.autoplayRouteFrameWindows(),
                 samples: session.autoplayRouteCaptureSamples(recorder),
               });
             } catch {
@@ -14533,9 +15057,12 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
     assert.ok(
       Number.isInteger(window?.frame?.sequence) &&
         typeof window?.frame?.capturedAtEpochMs === "number" &&
+        ["screencast", "proactive-route-screenshot"].includes(
+          window?.frame?.source,
+        ) &&
         window?.frame?.width >= 640 &&
         window?.frame?.height >= 360,
-      `${evidence.openingWorldVariant}: ${label} is missing a usable asynchronous screencast frame. Evidence: ${evidencePath}.`,
+      `${evidence.openingWorldVariant}: ${label} is missing a usable asynchronous visual frame. Evidence: ${evidencePath}.`,
     );
     assert.ok(
       window.frame.capturedAtEpochMs - window.before.capturedAtEpochMs >=
@@ -14567,7 +15094,7 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
     routeMidWindow.frame.sequence > routeStartWindow.frame.sequence &&
       routeMidWindow.frame.capturedAtEpochMs >
         routeStartWindow.frame.capturedAtEpochMs,
-    `${evidence.openingWorldVariant}: route-start and route-mid did not use distinct ordered screencast frames. Evidence: ${evidencePath}.`,
+    `${evidence.openingWorldVariant}: route-start and route-mid did not use distinct ordered visual frames. Evidence: ${evidencePath}.`,
   );
   assert.ok(
     routeMidWindow.textPaint.routeHudContinuityPixelDifferenceRatio <=

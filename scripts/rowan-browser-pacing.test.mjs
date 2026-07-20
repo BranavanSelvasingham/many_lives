@@ -265,7 +265,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
   );
   const policySource = source.slice(policyStart, policyEnd);
   const recordedStart = source.indexOf(
-    "function buildAutoplayRecordedRouteWindowCandidates(",
+    "function recordedRouteWindowBelongsToOpeningSegment(",
   );
   const recordedEnd = source.indexOf(
     "\nasync function waitForAutoplayRecordedRouteTrajectory(",
@@ -580,6 +580,11 @@ test("proactive route history survives a delayed observer and rejects unproven w
     /writeFile\(screenshot, captureWindow\.validated\.buffer\)/,
   );
   assert.match(source, /Page\.startScreencast/);
+  assert.match(source, /source: "proactive-route-screenshot"/);
+  assert.match(
+    source,
+    /async captureAutoplayRouteVisualFrame[\s\S]*Page\.captureScreenshot/,
+  );
   assert.match(source, /Page\.screencastFrameAck/);
   assert.match(source, /Page\.stopScreencast/);
   assert.match(
@@ -597,6 +602,10 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "The in-page route recorder must start before the delayed Node observer loop.",
   );
   assert.match(runSource, /selectAutoplayRecordedRouteTrajectory\(/);
+  assert.match(runSource, /startAutoplayRouteVisualWindowRecorder\(/);
+  assert.match(runSource, /readOrRearmAutoplayRouteCaptureRecorder\(/);
+  assert.match(source, /execution-context-recorder-missing/);
+  assert.match(source, /routeRecorderRestarts/);
   assert.match(
     runSource,
     /archiveAutoplayRouteFrames\(recorder\);\s+return selectAutoplayRecordedRouteTrajectory/,
@@ -1198,7 +1207,7 @@ test("HUD glyph validation rejects a missing DAY run over a visible chip", () =>
   );
 });
 
-test("screencast slow frames stay bounded and lifecycle failures remain diagnostic", async () => {
+test("screencast slow frames stay bounded and lifecycle failures remain diagnostic", async (t) => {
   assert.match(
     source,
     /MANY_LIVES_BROWSER_AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS[\s\S]*?"8000"/,
@@ -1230,11 +1239,20 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_RECORDER_FRAME_INTERVAL_MS",
     "AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES",
     "AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES",
+    "AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS",
     "AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS",
+    "AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS",
+    "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
+    "PROBE_POLL_INTERVAL_MS",
+    "autoplayRouteCaptureWindowCoherent",
     "buildAutoplayRouteCaptureSegments",
+    "captureAutoplayProactiveRouteFrameWindow",
     "compactAutoplayRouteCaptureSegments",
     "CDP_WAIT_TIMEOUT_MS",
+    "screencastFrameIsBracketedByEpochProbes",
     "screencastFrameCapturedAtEpochMs",
+    "sleep",
     "withTimeout",
     `${source.slice(classStart, classEnd)}; return CdpSession;`,
   )(
@@ -1247,14 +1265,38 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     125,
     16,
     4,
+    2,
     16,
+    4,
+    0.1,
+    125,
+    25,
+    (beforeRoute, afterRoute, expectedTargetLocationId) =>
+      beforeRoute?.active === true &&
+      afterRoute?.active === true &&
+      beforeRoute.targetLocationId === expectedTargetLocationId &&
+      afterRoute.targetLocationId === expectedTargetLocationId &&
+      afterRoute.progress >= beforeRoute.progress,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
+    async () => null,
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
     20,
+    (frame, beforeProbe, afterProbe) => {
+      const capturedAtEpochMs =
+        typeof frame?.metadata?.timestamp === "number"
+          ? frame.metadata.timestamp * 1_000
+          : null;
+      return (
+        typeof capturedAtEpochMs === "number" &&
+        capturedAtEpochMs >= beforeProbe.capturedAtEpochMs &&
+        capturedAtEpochMs <= afterProbe.capturedAtEpochMs
+      );
+    },
     (frame) =>
       typeof frame?.metadata?.timestamp === "number"
         ? frame.metadata.timestamp * 1_000
         : null,
+    (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
     (promise, timeoutMs, message) =>
       Promise.race([
         promise,
@@ -1427,6 +1469,194 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "Delayed selection must retain the bounded route archive after the generic ring expires.",
   );
   await archiveSession.stopAutoplayScreencast();
+
+  await t.test(
+    "short opening routes archive two truthful visual windows despite sparse screencast timing",
+    async () => {
+  const sparseSession = new CdpSession({
+    browser: null,
+    outputDir: "/tmp",
+    pageWsUrl: "ws://127.0.0.1:9222/devtools/page/sparse-route",
+    url: "http://127.0.0.1/",
+  });
+  sparseSession.socket = { destroyed: false, writable: true };
+  sparseSession.send = async () => ({});
+  await sparseSession.startAutoplayScreencast();
+  const sparseStartedAt = sparseSession.screencast.startedAtEpochMs;
+  const sparsePaintProbe = {
+    regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+    stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+    viewport: { height: 625, width: 1365 },
+  };
+  const sparseSample = (progress, offsetMs, recorderGeneration = 2) => ({
+    capturedAtEpochMs: sparseStartedAt + offsetMs,
+    capturedAtMonotonicMs: offsetMs,
+    paintProbe: sparsePaintProbe,
+    recorderGeneration,
+    route: {
+      active: true,
+      legal: true,
+      progress,
+      reachesDestination: true,
+      sampledPointsLegal: true,
+      targetLocationId: "tea-house",
+      tilePathLength: 15,
+      visualObstaclesClear: true,
+      worldPathLength: 16,
+    },
+    source: "movement-probe-recorder",
+  });
+  const sparsePeriodicSamples = [
+    sparseSample(0.004, 0, 1),
+    sparseSample(0.25, 850),
+    sparseSample(0.597, 1_700),
+  ];
+  sparseSession.screencast.routeRecorderExpectedTargetLocationId =
+    "tea-house";
+  sparseSession.screencast.routeRecorderGeneration = 1;
+  sparseSession.screencast.routeSampleArchive = [sparsePeriodicSamples[0]];
+  let rearmRequest = null;
+  let rearmedRecorder = null;
+  sparseSession.readAutoplayRouteCaptureRecorder = async () =>
+    rearmedRecorder;
+  sparseSession.startAutoplayRouteCaptureRecorder = async (request) => {
+    rearmRequest = request;
+    sparseSession.screencast.routeRecorderGeneration = request.generation;
+    rearmedRecorder = {
+      acceptedCount: 0,
+      expectedTargetLocationId: request.expectedTargetLocationId,
+      generation: request.generation,
+      lastObservedRoute: null,
+      restartReason: request.restartReason,
+      samples: [],
+      status: "active",
+    };
+    return rearmedRecorder;
+  };
+  const recoveredRecorder =
+    await sparseSession.readOrRearmAutoplayRouteCaptureRecorder({
+      expectedTargetLocationId: "tea-house",
+      label: "sparse-route-context-reset",
+    });
+  assert.equal(recoveredRecorder.generation, 2);
+  assert.equal(rearmRequest.expectedTargetLocationId, "tea-house");
+  assert.equal(rearmRequest.restartReason, "execution-context-recorder-missing");
+  assert.equal(sparseSession.screencast.routeRecorderRestartCount, 1);
+  assert.deepEqual(sparseSession.screencast.routeRecorderRestarts, [
+    {
+      atEpochMs:
+        sparseSession.screencast.routeRecorderRestarts[0].atEpochMs,
+      generation: 2,
+      openingSampleCount: 1,
+      openingWindowCount: 0,
+      reason: "execution-context-recorder-missing",
+      status: "active",
+      targetLocationId: "tea-house",
+    },
+  ]);
+  sparseSession.handleAutoplayScreencastFrame({
+    data: "only-passive-route-frame",
+    metadata: { timestamp: (sparseStartedAt + 900) / 1_000 },
+    sessionId: 31,
+  });
+  assert.equal(
+    sparseSession.autoplayRouteFrameHistory().length,
+    1,
+    "The sparse CI fixture must begin with only one passive screencast frame.",
+  );
+  const startBefore = sparseSample(0.01, 100);
+  const startAfter = sparseSample(0.08, 450);
+  const midBefore = sparseSample(0.25, 850);
+  const midAfter = sparseSample(0.38, 1_200);
+  const recorderWithDirectBoundaries = {
+    acceptedCount: 6,
+    expectedTargetLocationId: "tea-house",
+    generation: 2,
+    restartReason: "execution-context-recorder-missing",
+    samples: [
+      ...sparsePeriodicSamples.slice(1),
+      startBefore,
+      startAfter,
+      midBefore,
+      midAfter,
+    ].sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs),
+  };
+  rearmedRecorder = recorderWithDirectBoundaries;
+  sparseSession.archiveAutoplayRouteFrames(recorderWithDirectBoundaries);
+  assert.deepEqual(
+    sparseSession.screencast.routeFrameOpeningSegment.recorderGenerations,
+    [1, 2],
+    "The opening segment must preserve truthful samples from both recorder generations.",
+  );
+  const proactiveFrame = (sequence, offsetMs, pixels) => ({
+    data: Buffer.from(pixels).toString("base64"),
+    metadata: {
+      source: "proactive-route-screenshot",
+      timestamp: (sparseStartedAt + offsetMs) / 1_000,
+    },
+    sequence,
+    source: "proactive-route-screenshot",
+  });
+  const sparseStartWindow = {
+    afterProbe: startAfter,
+    beforeProbe: startBefore,
+    candidateFrame: proactiveFrame(1_001, 225, "start-candidate-pixels"),
+    confirmationFrame: proactiveFrame(
+      1_002,
+      350,
+      "start-confirmation-pixels",
+    ),
+  };
+  const sparseMidWindow = {
+    afterProbe: midAfter,
+    beforeProbe: midBefore,
+    candidateFrame: proactiveFrame(1_003, 975, "mid-candidate-pixels"),
+    confirmationFrame: proactiveFrame(
+      1_004,
+      1_100,
+      "mid-confirmation-pixels",
+    ),
+  };
+  assert.ok(
+    sparseSession.archiveAutoplayRouteFrameWindow({
+      expectedTargetLocationId: "tea-house",
+      recordedWindow: sparseStartWindow,
+      recorder: recorderWithDirectBoundaries,
+    }),
+  );
+  assert.ok(
+    sparseSession.archiveAutoplayRouteFrameWindow({
+      expectedTargetLocationId: "tea-house",
+      recordedWindow: sparseMidWindow,
+      recorder: recorderWithDirectBoundaries,
+    }),
+  );
+  assert.deepEqual(
+    sparseSession
+      .autoplayRouteFrameWindows()
+      .map((window) => window.confirmationFrame.sequence),
+    [1_002, 1_004],
+    "A short opening route must retain two distinct proactive visual windows even with one passive frame.",
+  );
+  assert.equal(
+    sparseSession.autoplayRouteFrameWindows()[0].afterProbe.route.progress,
+    0.08,
+  );
+  assert.equal(
+    sparseSession.autoplayRouteFrameWindows()[1].beforeProbe.route.progress,
+    0.25,
+  );
+  assert.notEqual(
+    sparseSession.autoplayRouteFrameWindows()[0].confirmationFrame.data,
+    sparseSession.autoplayRouteFrameWindows()[1].confirmationFrame.data,
+    "The two proactive windows must contain genuinely distinct visual payloads.",
+  );
+  assert.equal(sparseSession.autoplayRouteFrameWindows().length, 2);
+  assert.ok(sparseSession.screencast.routeSampleArchive.length <= 16);
+  assert.ok(sparseSession.screencast.routeRecorderRestarts.length <= 4);
+  await sparseSession.stopAutoplayScreencast();
+    },
+  );
 
   const slowFrameSession = new CdpSession({
     browser: null,
