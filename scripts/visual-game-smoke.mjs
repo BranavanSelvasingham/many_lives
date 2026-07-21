@@ -38,6 +38,9 @@ const AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS = 0.95;
 const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_READABILITY_TIMEOUT_MS ?? "30000",
 );
+const RESPONSIVE_DECISION_STABILITY_GRACE_MS = Number(
+  process.env.MANY_LIVES_VISUAL_DECISION_STABILITY_GRACE_MS ?? "45000",
+);
 const RESPONSIVE_DECISION_CAMERA_RECOVERY_GRACE_MS = 1_500;
 const RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT = 3;
 const RUN_RESPONSIVE_DECISION_GUARD_ONLY =
@@ -3658,6 +3661,18 @@ function createDecisionArtifactReadabilityState() {
   };
 }
 
+function responsiveDecisionReadabilityDeadlineAt({
+  firstReadableAt,
+  readinessDeadlineAt,
+  requiredStableSamples,
+  stabilityGraceMs,
+}) {
+  if (requiredStableSamples <= 1 || firstReadableAt === null) {
+    return readinessDeadlineAt;
+  }
+  return Math.max(readinessDeadlineAt, firstReadableAt + stabilityGraceMs);
+}
+
 function decisionArtifactReadabilitySignature(geometry) {
   const sceneViewport = geometry.sceneViewportCss;
   return JSON.stringify({
@@ -4065,6 +4080,36 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     true,
     "Decision readability and valid scene geometry should pass only after a coherent stable sequence.",
   );
+  assert.equal(
+    responsiveDecisionReadabilityDeadlineAt({
+      firstReadableAt: null,
+      readinessDeadlineAt: 30_000,
+      requiredStableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
+      stabilityGraceMs: 45_000,
+    }),
+    30_000,
+    "A missing readable sample must not extend the readiness deadline.",
+  );
+  assert.equal(
+    responsiveDecisionReadabilityDeadlineAt({
+      firstReadableAt: 29_000,
+      readinessDeadlineAt: 30_000,
+      requiredStableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
+      stabilityGraceMs: 45_000,
+    }),
+    74_000,
+    "A late valid sample must receive one bounded stability-proof window.",
+  );
+  assert.equal(
+    responsiveDecisionReadabilityDeadlineAt({
+      firstReadableAt: 29_000,
+      readinessDeadlineAt: 30_000,
+      requiredStableSamples: 1,
+      stabilityGraceMs: 45_000,
+    }),
+    30_000,
+    "A single-sample caller must keep the original readiness deadline.",
+  );
 
   const interiorPage = {
     ...readablePage,
@@ -4086,11 +4131,24 @@ function assertDecisionArtifactReadabilityWaitRegression() {
 async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
   const timeoutMs = options.timeoutMs ?? AUTOPLAY_START_TIMEOUT_MS;
   const requiredStableSamples = options.stableSamples ?? 1;
+  const stabilityGraceMs =
+    options.stabilityGraceMs ?? RESPONSIVE_DECISION_STABILITY_GRACE_MS;
   const startedAt = Date.now();
+  const readinessDeadlineAt = startedAt + timeoutMs;
+  let effectiveDeadlineAt = readinessDeadlineAt;
+  let firstReadableAt = null;
   let lastMismatch = null;
   let readabilityState = createDecisionArtifactReadabilityState();
+  const timingDiagnostic = () => ({
+    effectiveTimeoutMs: effectiveDeadlineAt - startedAt,
+    elapsedMs: Date.now() - startedAt,
+    firstReadableElapsedMs:
+      firstReadableAt === null ? null : firstReadableAt - startedAt,
+    readinessTimeoutMs: timeoutMs,
+    stabilityGraceMs: requiredStableSamples > 1 ? stabilityGraceMs : 0,
+  });
 
-  while (Date.now() - startedAt < timeoutMs) {
+  while (Date.now() < effectiveDeadlineAt) {
     const probe = await session.readBrowserProbe();
     const page = await session.inspectPage();
     const payload = selectedVisibleDecisionArtifactPayload(probe);
@@ -4111,6 +4169,7 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
           compactDecisionArtifactReadabilityGeometry(page),
         rightStack: page.rightStack,
         selectedPayload: compactDecisionArtifactDiagnostic(payload),
+        timing: timingDiagnostic(),
         url: page.url,
       };
       await sleep(POLL_INTERVAL_MS);
@@ -4131,13 +4190,28 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
       if (evaluatedSample.error) {
         throw evaluatedSample.error;
       }
+      if (readabilityState.stableSamples > 0 && firstReadableAt === null) {
+        firstReadableAt = Date.now();
+        effectiveDeadlineAt = responsiveDecisionReadabilityDeadlineAt({
+          firstReadableAt,
+          readinessDeadlineAt,
+          requiredStableSamples,
+          stabilityGraceMs,
+        });
+      }
       if (
         decisionArtifactReadabilityStable(
           readabilityState,
           requiredStableSamples,
         )
       ) {
-        return { page, payload, probe, readabilityState };
+        return {
+          page,
+          payload,
+          probe,
+          readabilityState,
+          timing: timingDiagnostic(),
+        };
       }
       lastMismatch = {
         bodyText: page.bodyText,
@@ -4150,6 +4224,7 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
         readabilityGeometry: readabilityState.geometry,
         rightStack: page.rightStack,
         selectedPayload: compactDecisionArtifactDiagnostic(payload),
+        timing: timingDiagnostic(),
         url: page.url,
       };
       await sleep(POLL_INTERVAL_MS);
@@ -4167,6 +4242,7 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
           compactDecisionArtifactReadabilityGeometry(page),
         rightStack: page.rightStack,
         selectedPayload: compactDecisionArtifactDiagnostic(payload),
+        timing: timingDiagnostic(),
         url: page.url,
       };
       await sleep(POLL_INTERVAL_MS);
@@ -4180,7 +4256,7 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
   );
   throw new Error(
     [
-      `${label}: rendered decision artifact did not match the browser probe payload within ${timeoutMs}ms.`,
+      `${label}: rendered decision artifact did not match the browser probe payload within ${effectiveDeadlineAt - startedAt}ms.`,
       `Diagnostics: ${artifacts.diagnosticsPath}`,
       `Screenshot: ${artifacts.screenshotPath}`,
       `Last mismatch: ${JSON.stringify(lastMismatch, null, 2)}`,
@@ -5110,6 +5186,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
       expandedDecisionArtifact: page.decisionArtifact,
       expandedGeometry: compactDecisionArtifactReadabilityGeometry(page),
       probe: compactDecisionArtifactProbeDiagnostic(frozenProbe),
+      readabilityTiming: readableRail.timing,
       screenshotPath,
       viewport,
     });
