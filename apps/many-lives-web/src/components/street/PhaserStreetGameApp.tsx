@@ -162,6 +162,7 @@ import {
   estimateLiveConversationBeatMs,
   isBlockingRowanPlaybackForGame,
   isFirstAfternoonOpening,
+  markActiveRowanPlaybackBeatStarted,
   readOrCreateRowanWatchFirstAfternoonPresentationStart,
   reconcileAutoContinueBeatTiming,
   remainingAutoplayDelayMs,
@@ -1621,8 +1622,18 @@ export function PhaserStreetGameApp() {
       return;
     }
 
+    const startedAtMs = performance.now();
+    setRowanPlayback((current) =>
+      markActiveRowanPlaybackBeatStarted(
+        current,
+        activeBeat.key,
+        startedAtMs,
+      ),
+    );
     playbackTimerRef.current = window.setTimeout(() => {
-      setRowanPlayback((current) => completeActiveRowanPlaybackBeat(current));
+      setRowanPlayback((current) =>
+        completeActiveRowanPlaybackBeat(current, performance.now()),
+      );
     }, activeBeat.durationMs);
 
     return () => {

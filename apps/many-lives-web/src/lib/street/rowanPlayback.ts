@@ -255,8 +255,20 @@ export type RowanPlaybackBeat = {
   npcId?: string;
 };
 
+export type RowanPlaybackCompletedTiming = {
+  completedAtMs: number;
+  configuredDurationMs: number;
+  key: string;
+  kind: RowanPlaybackBeatKind;
+  locationId?: string;
+  startedAtMs: number;
+  title: string;
+};
+
 export type RowanPlaybackState = {
   activeBeat?: RowanPlaybackBeat;
+  activeBeatStartedAtMs?: number;
+  completedBeatTimings?: RowanPlaybackCompletedTiming[];
   lastCompletedBeat?: RecentBeat;
   queuedBeats: RowanPlaybackBeat[];
 };
@@ -352,21 +364,58 @@ export function startNextRowanPlaybackBeat(
   return {
     ...state,
     activeBeat,
+    activeBeatStartedAtMs: undefined,
     queuedBeats,
+  };
+}
+
+export function markActiveRowanPlaybackBeatStarted(
+  state: RowanPlaybackState,
+  activeBeatKey: string,
+  startedAtMs: number,
+): RowanPlaybackState {
+  if (
+    state.activeBeat?.key !== activeBeatKey ||
+    typeof state.activeBeatStartedAtMs === "number"
+  ) {
+    return state;
+  }
+
+  return {
+    ...state,
+    activeBeatStartedAtMs: startedAtMs,
   };
 }
 
 export function completeActiveRowanPlaybackBeat(
   state: RowanPlaybackState,
+  completedAtMs?: number,
 ): RowanPlaybackState {
   if (!state.activeBeat) {
     return state;
   }
 
   const recentBeat = recentBeatFromPlaybackBeat(state.activeBeat);
+  const completedBeatTiming =
+    typeof state.activeBeatStartedAtMs === "number" &&
+    typeof completedAtMs === "number"
+      ? {
+          completedAtMs,
+          configuredDurationMs: state.activeBeat.durationMs,
+          key: state.activeBeat.key,
+          kind: state.activeBeat.kind,
+          locationId: state.activeBeat.locationId,
+          startedAtMs: state.activeBeatStartedAtMs,
+          title: state.activeBeat.title,
+        }
+      : undefined;
   return {
     ...state,
     activeBeat: undefined,
+    activeBeatStartedAtMs: undefined,
+    completedBeatTimings: completedBeatTiming
+      ? [...(state.completedBeatTimings ?? []), completedBeatTiming].slice(-8)
+      : state.completedBeatTimings,
     lastCompletedBeat: recentBeat ?? state.lastCompletedBeat,
   };
 }
@@ -377,6 +426,9 @@ export function alignRowanPlaybackWithGame(
 ): RowanPlaybackState {
   const activeBeat = beatStillMatchesGameLocation(state.activeBeat, game)
     ? state.activeBeat
+    : undefined;
+  const activeBeatStartedAtMs = activeBeat
+    ? state.activeBeatStartedAtMs
     : undefined;
   const lastCompletedBeat = beatStillMatchesGameLocation(
     state.lastCompletedBeat,
@@ -390,6 +442,7 @@ export function alignRowanPlaybackWithGame(
 
   if (
     activeBeat === state.activeBeat &&
+    activeBeatStartedAtMs === state.activeBeatStartedAtMs &&
     lastCompletedBeat === state.lastCompletedBeat &&
     queuedBeats.length === state.queuedBeats.length
   ) {
@@ -399,6 +452,7 @@ export function alignRowanPlaybackWithGame(
   return {
     ...state,
     activeBeat,
+    activeBeatStartedAtMs,
     lastCompletedBeat,
     queuedBeats,
   };

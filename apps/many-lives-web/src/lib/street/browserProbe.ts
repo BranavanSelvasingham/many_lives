@@ -182,7 +182,11 @@ export type StreetBrowserProbeSnapshot = {
   };
   rowanPlayback?: Pick<
     RowanPlaybackState,
-    "activeBeat" | "lastCompletedBeat" | "queuedBeats"
+    | "activeBeat"
+    | "activeBeatStartedAtMs"
+    | "completedBeatTimings"
+    | "lastCompletedBeat"
+    | "queuedBeats"
   >;
   rowanAutoplayEnabled?: boolean;
   rowanAutoplayFrozen?: boolean;
@@ -1049,9 +1053,15 @@ export function buildStreetBrowserProbeJson({
     },
     movement: snapshot.movement ?? null,
     playback: {
+      activeDurationMs:
+        snapshot.rowanPlayback?.activeBeat?.durationMs ?? null,
       activeKind: snapshot.rowanPlayback?.activeBeat?.kind ?? null,
+      activeStartedAtMs:
+        snapshot.rowanPlayback?.activeBeatStartedAtMs ?? null,
       activeTitle: snapshot.rowanPlayback?.activeBeat?.title ?? null,
       activeKey: snapshot.rowanPlayback?.activeBeat?.key ?? null,
+      completedTimings:
+        snapshot.rowanPlayback?.completedBeatTimings ?? [],
       justHappened: snapshot.rowanPlayback?.lastCompletedBeat?.title ?? null,
       queuedCount: snapshot.rowanPlayback?.queuedBeats.length ?? 0,
     },

@@ -8,6 +8,7 @@ import {
   deriveRowanPlaybackBeats,
   isBlockingRowanPlayback,
   isBlockingRowanPlaybackForGame,
+  markActiveRowanPlaybackBeatStarted,
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
   ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS,
@@ -1171,6 +1172,71 @@ describe("Rowan playback helpers", () => {
     expect(remainingAutoplayDelayMs(3_400, 1_000, 1_420)).toBe(2_980);
     expect(remainingAutoplayDelayMs(3_400, 1_000, 4_500)).toBe(0);
     expect(remainingAutoplayDelayMs(3_400, null, 4_500)).toBe(3_400);
+  });
+
+  it("records exact browser playback dwell timing when a card completes", () => {
+    const semanticBeat: RowanPlaybackBeat = {
+      blocking: true,
+      detail: "Lunch is filling Kettle & Lamp.",
+      durationMs: ROWAN_WATCH_PRESENTATION_TIMING_MS.semanticCard,
+      key: "tea-shift-stage:rush:test",
+      kind: "action_start",
+      locationId: "tea-house",
+      title: "Lunch rush started",
+      tone: "objective",
+    };
+    let playback = startNextRowanPlaybackBeat(
+      appendRowanPlaybackBeats(createEmptyRowanPlaybackState(), [semanticBeat]),
+    );
+    playback = markActiveRowanPlaybackBeatStarted(
+      playback,
+      semanticBeat.key,
+      125_183.8,
+    );
+    playback = markActiveRowanPlaybackBeatStarted(
+      playback,
+      semanticBeat.key,
+      126_094.8,
+    );
+    expect(playback.activeBeatStartedAtMs).toBe(125_183.8);
+    playback = completeActiveRowanPlaybackBeat(playback, 127_983.8);
+
+    expect(playback.activeBeat).toBeUndefined();
+    expect(playback.lastCompletedBeat).toBeUndefined();
+    expect(playback.completedBeatTimings).toEqual([
+      {
+        completedAtMs: 127_983.8,
+        configuredDurationMs: 2_800,
+        key: semanticBeat.key,
+        kind: "action_start",
+        locationId: "tea-house",
+        startedAtMs: 125_183.8,
+        title: "Lunch rush started",
+      },
+    ]);
+
+    const game = asWebGame(seedStreetGame("playback-timing-probe"));
+    const probe = JSON.parse(
+      buildStreetBrowserProbeJson({
+        activeConversation: game.activeConversation,
+        game,
+        rowanRail: buildRowanRailViewModel({
+          conversationReplayActive: false,
+          fallbackThought: "Rowan is keeping the lunch rush moving.",
+          game,
+          playback,
+          quietStatusLabel: game.currentScene.title,
+          watchMode: true,
+        }),
+        snapshot: {
+          rowanPlayback: playback,
+          rowanWatchModeEnabled: true,
+        },
+      }),
+    );
+    expect(probe.playback.completedTimings).toEqual(
+      playback.completedBeatTimings,
+    );
   });
 
   it("drops playback beats that no longer match Rowan's current location", async () => {

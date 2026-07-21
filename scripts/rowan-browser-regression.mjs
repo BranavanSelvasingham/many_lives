@@ -17585,6 +17585,79 @@ function assertAutoplayPlaybackCardDwellResetGuard() {
     [2_400],
     "A semantic card still visible at the natural stop must retain its measured dwell.",
   );
+
+  const lateSampleAudit = buildAutoplayPlaybackCardDwellAudit([
+    {
+      appMonotonicMs: 126_094.8,
+      playback: {
+        activeDurationMs: 2_800,
+        activeKey: "late-sampled-semantic-card",
+        activeKind: "action_start",
+        activeTitle: "Lunch rush started",
+      },
+      rawAppMonotonicMs: 126_094.8,
+    },
+    {
+      appMonotonicMs: 127_983.8,
+      playback: {
+        activeDurationMs: 4_500,
+        activeKey: "following-time-card",
+        activeKind: "time_passed",
+        activeTitle: "Time passed",
+        completedTimings: [
+          {
+            completedAtMs: 127_983.8,
+            configuredDurationMs: 2_800,
+            key: "late-sampled-semantic-card",
+            kind: "action_start",
+            startedAtMs: 125_183.8,
+            title: "Lunch rush started",
+          },
+        ],
+      },
+      rawAppMonotonicMs: 127_983.8,
+    },
+  ]);
+  assert.deepEqual(
+    lateSampleAudit.dwells.filter(
+      (entry) => entry.key === "late-sampled-semantic-card",
+    ),
+    [
+      {
+        appDurationMs: 2_800,
+        configuredDurationMs: 2_800,
+        evidence: "browser-playback-timer",
+        key: "late-sampled-semantic-card",
+        kind: "action_start",
+        title: "Lunch rush started",
+      },
+    ],
+    "Browser timer evidence must replace a late polling sample instead of undercounting a readable card.",
+  );
+
+  const genuinelyShortAudit = buildAutoplayPlaybackCardDwellAudit([
+    {
+      appMonotonicMs: 127_983.8,
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 127_072.8,
+            configuredDurationMs: 2_800,
+            key: "genuinely-short-semantic-card",
+            kind: "action_start",
+            startedAtMs: 125_183.8,
+            title: "Lunch rush started",
+          },
+        ],
+      },
+      rawAppMonotonicMs: 127_983.8,
+    },
+  ]);
+  assert.ok(
+    genuinelyShortAudit.dwells[0].appDurationMs <
+      AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS,
+    "Exact timer evidence must still reject a genuinely short playback card.",
+  );
 }
 
 function inhabitCameraDelta(before, after) {
@@ -17798,9 +17871,12 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
     },
     planningTrace: probe?.autonomy?.planningTrace ?? null,
     playback: {
+      activeDurationMs: probe?.playback?.activeDurationMs ?? null,
       activeKey: probe?.playback?.activeKey ?? null,
       activeKind: probe?.playback?.activeKind ?? null,
+      activeStartedAtMs: probe?.playback?.activeStartedAtMs ?? null,
       activeTitle: probe?.playback?.activeTitle ?? null,
+      completedTimings: probe?.playback?.completedTimings ?? [],
       justHappened: probe?.playback?.justHappened ?? null,
       queuedCount: probe?.playback?.queuedCount ?? 0,
     },
@@ -18075,7 +18151,8 @@ function buildCumulativeAppMonotonicSamples(samples) {
 }
 
 function buildAutoplayPlaybackCardDwellAudit(samples) {
-  const dwells = [];
+  const exactDwells = new Map();
+  const sampledDwells = [];
   const interrupted = [];
   let activeCard = null;
 
@@ -18084,6 +18161,27 @@ function buildAutoplayPlaybackCardDwellAudit(samples) {
     const activeKind = sample.playback?.activeKind ?? null;
     const appMonotonicMs = sample.appMonotonicMs;
     const rawAppMonotonicMs = sample.rawAppMonotonicMs;
+    for (const completedTiming of sample.playback?.completedTimings ?? []) {
+      if (
+        completedTiming?.key &&
+        AUTOPLAY_DWELL_AUDIT_BEAT_KINDS.has(completedTiming.kind) &&
+        typeof completedTiming.startedAtMs === "number" &&
+        typeof completedTiming.completedAtMs === "number" &&
+        completedTiming.completedAtMs >= completedTiming.startedAtMs
+      ) {
+        exactDwells.set(completedTiming.key, {
+          appDurationMs:
+            completedTiming.completedAtMs - completedTiming.startedAtMs,
+          configuredDurationMs:
+            completedTiming.configuredDurationMs ?? null,
+          evidence: "browser-playback-timer",
+          key: completedTiming.key,
+          kind: completedTiming.kind,
+          title: completedTiming.title ?? null,
+        });
+      }
+    }
+
     const appClockReset =
       activeCard &&
       typeof rawAppMonotonicMs === "number" &&
@@ -18108,8 +18206,10 @@ function buildAutoplayPlaybackCardDwellAudit(samples) {
       activeCard.key !== activeKey &&
       typeof appMonotonicMs === "number"
     ) {
-      dwells.push({
+      sampledDwells.push({
         appDurationMs: Math.max(0, appMonotonicMs - activeCard.startedAtMs),
+        configuredDurationMs: activeCard.configuredDurationMs,
+        evidence: "sampled-card-transition",
         key: activeCard.key,
         kind: activeCard.kind,
         title: activeCard.title,
@@ -18124,11 +18224,21 @@ function buildAutoplayPlaybackCardDwellAudit(samples) {
       typeof appMonotonicMs === "number"
     ) {
       activeCard = {
+        configuredDurationMs:
+          sample.playback?.activeDurationMs ?? null,
         key: activeKey,
         kind: activeKind,
         lastAppMonotonicMs: appMonotonicMs,
         lastRawAppMonotonicMs: rawAppMonotonicMs,
-        startedAtMs: appMonotonicMs,
+        startedAtMs:
+          typeof sample.playback?.activeStartedAtMs === "number"
+            ? (sample.appDocumentOffsetMs ?? 0) +
+              sample.playback.activeStartedAtMs
+            : appMonotonicMs,
+        startEvidence:
+          typeof sample.playback?.activeStartedAtMs === "number"
+            ? "browser-playback-timer"
+            : "first-card-sample",
         title: sample.playback?.activeTitle ?? null,
       };
     } else if (
@@ -18136,6 +18246,15 @@ function buildAutoplayPlaybackCardDwellAudit(samples) {
       activeCard.key === activeKey &&
       typeof appMonotonicMs === "number"
     ) {
+      if (
+        activeCard.startEvidence !== "browser-playback-timer" &&
+        typeof sample.playback?.activeStartedAtMs === "number"
+      ) {
+        activeCard.startedAtMs =
+          (sample.appDocumentOffsetMs ?? 0) +
+          sample.playback.activeStartedAtMs;
+        activeCard.startEvidence = "browser-playback-timer";
+      }
       activeCard.lastAppMonotonicMs = appMonotonicMs;
       activeCard.lastRawAppMonotonicMs = rawAppMonotonicMs;
     }
@@ -18145,17 +18264,23 @@ function buildAutoplayPlaybackCardDwellAudit(samples) {
     activeCard &&
     typeof activeCard.lastAppMonotonicMs === "number"
   ) {
-    dwells.push({
+    sampledDwells.push({
       appDurationMs: Math.max(
         0,
         activeCard.lastAppMonotonicMs - activeCard.startedAtMs,
       ),
+      configuredDurationMs: activeCard.configuredDurationMs,
+      evidence: "sampled-terminal-card",
       key: activeCard.key,
       kind: activeCard.kind,
       title: activeCard.title,
     });
   }
 
+  const dwells = [
+    ...sampledDwells.filter((entry) => !exactDwells.has(entry.key)),
+    ...exactDwells.values(),
+  ];
   return { dwells, interrupted };
 }
 

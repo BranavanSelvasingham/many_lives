@@ -4317,6 +4317,12 @@ test("semantic playback cards have measured browser dwell evidence", () => {
   );
   assert.match(source, /buildAutoplayPlaybackCardDwellAudit\(/);
   assert.match(source, /minimumPlaybackCardDwellMs:/);
+  assert.match(source, /completedTimings: probe\?\.playback\?\.completedTimings/);
+  assert.match(source, /evidence: "browser-playback-timer"/);
+  assert.match(
+    source,
+    /completedTiming\.completedAtMs - completedTiming\.startedAtMs/,
+  );
   assert.match(
     pacingAssertionSource,
     /ledger\.minimumPlaybackCardDwellMs >=\s*AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS/,
