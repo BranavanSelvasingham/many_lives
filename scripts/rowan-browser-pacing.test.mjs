@@ -130,6 +130,16 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
   assert.doesNotMatch(pacingAssertionSource, /ledger\.maxIdleGapMs/);
   assert.match(source, /progressKinds\.push\("playback-progress"\)/);
   assert.match(source, /progressKinds\.push\("activity-progress"\)/);
+  assert.match(source, /stateBackedFollowThroughStarted/);
+  assert.match(
+    source,
+    /previous\.activity\.autoContinue\.key !== next\.activity\.autoContinue\.key/,
+  );
+  assert.match(source, /\^Following through:/);
+  assert.match(
+    source,
+    /Follow-through copy without a scheduler transition must remain cosmetic-only evidence/,
+  );
   assert.match(
     source,
     /activeConversation\?\.replay\?\.streamedWordCount/,

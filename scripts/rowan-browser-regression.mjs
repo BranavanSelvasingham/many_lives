@@ -17630,6 +17630,54 @@ function assertAutoplayProgressGapGuard() {
     classifyAutoplayObservationProgress(
       {
         activity: {
+          autoContinue: { key: "plan:return-home" },
+          busyLabel: "Following Rowan: Return to Morrow House...",
+        },
+        autonomy: { label: "Return to Morrow House to take stock" },
+        visibleDecisionArtifact: {
+          selectedAction: "Return to Morrow House to take stock",
+        },
+      },
+      {
+        activity: {
+          autoContinue: { key: "pending:return-home" },
+          busyLabel: null,
+        },
+        autonomy: { label: "Return to Morrow House to take stock" },
+        visibleDecisionArtifact: {
+          selectedAction:
+            "Following through: Return to Morrow House to take stock",
+        },
+      },
+    ),
+    ["activity-progress", "decision-artifact"],
+    "A visible follow-through backed by a new scheduler state must split a delayed polling gap.",
+  );
+
+  assert.deepEqual(
+    classifyAutoplayObservationProgress(
+      {
+        activity: { autoContinue: { key: "plan:return-home" } },
+        visibleDecisionArtifact: {
+          selectedAction: "Return to Morrow House to take stock",
+        },
+      },
+      {
+        activity: { autoContinue: { key: "plan:return-home" } },
+        visibleDecisionArtifact: {
+          selectedAction:
+            "Following through: Return to Morrow House to take stock",
+        },
+      },
+    ),
+    ["decision-artifact"],
+    "Follow-through copy without a scheduler transition must remain cosmetic-only evidence.",
+  );
+
+  assert.deepEqual(
+    classifyAutoplayObservationProgress(
+      {
+        activity: {
           busyLabel:
             "Following Rowan: Return to Morrow House to recover...",
         },
@@ -18765,6 +18813,18 @@ function classifyAutoplayObservationProgress(previous, next) {
   const progressKinds = [];
   const previousRouteProgress = previous.movement?.routeProgress ?? null;
   const nextRouteProgress = next.movement?.routeProgress ?? null;
+  const visibleDecisionSelectionChanged =
+    previous.visibleDecisionArtifact?.selectedAction !==
+    next.visibleDecisionArtifact?.selectedAction;
+  const stateBackedFollowThroughStarted = Boolean(
+    previous.activity?.autoContinue?.key &&
+      next.activity?.autoContinue?.key &&
+      previous.activity.autoContinue.key !== next.activity.autoContinue.key &&
+      visibleDecisionSelectionChanged &&
+      /^Following through:/i.test(
+        next.visibleDecisionArtifact?.selectedAction ?? "",
+      ),
+  );
   const previousCompletedPlayback =
     previous.playback?.completedTimings?.at(-1) ?? null;
   const nextCompletedPlayback = next.playback?.completedTimings?.at(-1) ?? null;
@@ -18772,14 +18832,14 @@ function classifyAutoplayObservationProgress(previous, next) {
     (previous.autonomy?.label ?? null) !== (next.autonomy?.label ?? null) ||
     ((!previous.activity?.busyLabel ||
       previous.activity.busyLabel !== next.activity?.busyLabel) &&
-      Boolean(next.activity?.busyLabel))
+      Boolean(next.activity?.busyLabel)) ||
+    stateBackedFollowThroughStarted
   ) {
     progressKinds.push("activity-progress");
   }
   if (
     (!previous.visibleDecisionArtifact && next.visibleDecisionArtifact) ||
-    previous.visibleDecisionArtifact?.selectedAction !==
-      next.visibleDecisionArtifact?.selectedAction ||
+    visibleDecisionSelectionChanged ||
     previous.visibleDecisionArtifact?.objective !==
       next.visibleDecisionArtifact?.objective
   ) {
