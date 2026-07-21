@@ -723,7 +723,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
   );
   assert.match(
     proactiveCaptureSource,
-    /const frame = await session\.captureAutoplayRouteVisualFrame\(\{\s*minimumCapturedAtEpochMs:\s*beforeProbe\.capturedAtEpochMs \+\s*AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,/,
+    /const capturedFrame = await session\.captureAutoplayRouteVisualFrame\(\{\s*minimumCapturedAtEpochMs:\s*beforeProbe\.capturedAtEpochMs \+\s*AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,/,
     "The position screenshot must retain the compositing settle interval inside the legal opening segment.",
   );
   assert.equal(
@@ -2764,6 +2764,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             "A renderer screenshot must never compete with the active screencast stream.",
           );
           assert.equal(params.optimizeForSpeed, true);
+          assert.equal(params.format, "jpeg");
+          assert.equal(params.quality, 90);
           assert.deepEqual(params.clip, {
             height: 625,
             scale: 0.6,
@@ -2775,7 +2777,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           return {
             result: {
               data: Buffer.from(
-                `starved-opening-rendered-position-${screenshotCount}`,
+                `\xff\xd8\xffstarved-opening-rendered-position-${screenshotCount}`,
+                "latin1",
               ).toString("base64"),
             },
           };
@@ -2854,6 +2857,15 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         afterSamples.shift() ?? null;
       starvationSession.readOrRearmAutoplayRouteCaptureRecorder = async () =>
         recorder;
+      starvationSession.normalizeAutoplayRouteVisualFrame = async (frame) => ({
+        ...frame,
+        data: Buffer.from(`normalized-${frame.sequence}`).toString("base64"),
+        metadata: {
+          ...frame.metadata,
+          format: "png",
+          sourceFormat: "jpeg",
+        },
+      });
 
       try {
         assert.equal(starvationSession.autoplayRouteFrameHistory().length, 0);

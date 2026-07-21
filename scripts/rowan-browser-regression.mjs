@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -468,6 +468,42 @@ async function runProcess(command, args, errorPrefix) {
 
   if (exitCode !== 0) {
     throw new Error(`${errorPrefix} exited with ${exitCode}.\n${stderr}`);
+  }
+}
+
+async function transcodeAutoplayRouteJpegToPng(jpegBuffer) {
+  const captureId = randomBytes(8).toString("hex");
+  const jpegPath = path.join(
+    tmpdir(),
+    `many-lives-route-capture-${captureId}.jpg`,
+  );
+  const pngPath = path.join(
+    tmpdir(),
+    `many-lives-route-capture-${captureId}.png`,
+  );
+  await writeFile(jpegPath, jpegBuffer);
+  try {
+    await runProcess(
+      FFMPEG_BIN,
+      [
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        jpegPath,
+        "-frames:v",
+        "1",
+        pngPath,
+      ],
+      "route screenshot JPEG-to-PNG conversion",
+    );
+    return await readFile(pngPath);
+  } finally {
+    await Promise.all([
+      unlink(jpegPath).catch(() => null),
+      unlink(pngPath).catch(() => null),
+    ]);
   }
 }
 
@@ -3837,9 +3873,10 @@ class CdpSession {
       {
         captureBeyondViewport: false,
         ...(clip ? { clip } : {}),
-        format: "png",
+        format: "jpeg",
         fromSurface: true,
         optimizeForSpeed: true,
+        quality: 90,
       },
       { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
     );
@@ -3852,12 +3889,40 @@ class CdpSession {
       metadata: {
         capturedAtEpochMs,
         clip,
+        format: "jpeg",
         requestedAtEpochMs,
         source: "proactive-route-screenshot",
         timestamp: capturedAtEpochMs / 1_000,
       },
       sequence: state.lastSequence,
       source: "proactive-route-screenshot",
+    };
+  }
+
+  async normalizeAutoplayRouteVisualFrame(frame) {
+    if (frame?.metadata?.format !== "jpeg") {
+      return frame;
+    }
+    const jpegBuffer = Buffer.from(frame.data, "base64");
+    assert.equal(
+      jpegBuffer.subarray(0, 3).toString("hex"),
+      "ffd8ff",
+      "Proactive route screenshot is not a JPEG.",
+    );
+    const pngBuffer = await transcodeAutoplayRouteJpegToPng(jpegBuffer);
+    assert.equal(
+      pngBuffer.subarray(0, 8).toString("hex"),
+      "89504e470d0a1a0a",
+      "Converted proactive route screenshot is not a PNG.",
+    );
+    return {
+      ...frame,
+      data: pngBuffer.toString("base64"),
+      metadata: {
+        ...frame.metadata,
+        format: "png",
+        sourceFormat: "jpeg",
+      },
     };
   }
 
@@ -14677,7 +14742,7 @@ async function captureAutoplayProactiveRouteFrameWindow({
     return null;
   }
   return session.withAutoplayScreencastPausedForRouteCapture(async () => {
-    const frame = await session.captureAutoplayRouteVisualFrame({
+    const capturedFrame = await session.captureAutoplayRouteVisualFrame({
       minimumCapturedAtEpochMs:
         beforeProbe.capturedAtEpochMs +
         AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
@@ -14697,13 +14762,16 @@ async function captureAutoplayProactiveRouteFrameWindow({
       session.recordAutoplayRouteFrameWindowRejection({
         afterProbe,
         beforeProbe,
-        frame,
+        frame: capturedFrame,
         reason: afterProbe
           ? "after-probe-route-identity-changed"
           : "after-probe-unavailable",
       });
       return null;
     }
+    const frame = await session.normalizeAutoplayRouteVisualFrame(
+      capturedFrame,
+    );
     const recorder =
       await session.readOrRearmAutoplayRouteCaptureRecorder({
         expectedTargetLocationId,
