@@ -104,6 +104,9 @@ const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
 const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
 const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
+const AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE = 0.6;
+const AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT = 360;
+const AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH = 640;
 const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
 const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
@@ -3791,7 +3794,10 @@ class CdpSession {
     return true;
   }
 
-  async captureAutoplayRouteVisualFrame({ minimumCapturedAtEpochMs }) {
+  async captureAutoplayRouteVisualFrame({
+    minimumCapturedAtEpochMs,
+    viewport = null,
+  }) {
     const state = this.screencast;
     assert.ok(
       state && ["starting", "active"].includes(state.status),
@@ -3804,10 +3810,33 @@ class CdpSession {
     );
     await sleepUntilEpochMs(minimumCapturedAtEpochMs);
     const requestedAtEpochMs = Date.now();
+    const viewportWidth = Number(viewport?.width);
+    const viewportHeight = Number(viewport?.height);
+    const clip =
+      Number.isFinite(viewportWidth) &&
+      viewportWidth > 0 &&
+      Number.isFinite(viewportHeight) &&
+      viewportHeight > 0
+        ? {
+            height: viewportHeight,
+            scale: Math.min(
+              1,
+              Math.max(
+                AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE,
+                AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH / viewportWidth,
+                AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT / viewportHeight,
+              ),
+            ),
+            width: viewportWidth,
+            x: 0,
+            y: 0,
+          }
+        : null;
     const response = await this.send(
       "Page.captureScreenshot",
       {
         captureBeyondViewport: false,
+        ...(clip ? { clip } : {}),
         format: "png",
         fromSurface: true,
         optimizeForSpeed: true,
@@ -3822,6 +3851,7 @@ class CdpSession {
       data,
       metadata: {
         capturedAtEpochMs,
+        clip,
         requestedAtEpochMs,
         source: "proactive-route-screenshot",
         timestamp: capturedAtEpochMs / 1_000,
@@ -14651,6 +14681,7 @@ async function captureAutoplayProactiveRouteFrameWindow({
       minimumCapturedAtEpochMs:
         beforeProbe.capturedAtEpochMs +
         AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      viewport: beforeProbe.paintProbe?.viewport ?? null,
     });
     const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
       `${label}:after-route-sample`,

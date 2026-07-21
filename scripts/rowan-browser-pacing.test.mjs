@@ -1456,6 +1456,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS",
     "AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    "AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE",
+    "AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT",
+    "AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
     "PROBE_POLL_INTERVAL_MS",
     "autoplayRouteCaptureWindowCoherent",
@@ -1489,6 +1492,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     4,
     1,
     0.1,
+    0.6,
+    360,
+    640,
     125,
     25,
     (beforeRoute, afterRoute, expectedTargetLocationId) =>
@@ -2758,6 +2764,13 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             "A renderer screenshot must never compete with the active screencast stream.",
           );
           assert.equal(params.optimizeForSpeed, true);
+          assert.deepEqual(params.clip, {
+            height: 625,
+            scale: 0.6,
+            width: 1365,
+            x: 0,
+            y: 0,
+          });
           screenshotCount += 1;
           return {
             result: {
