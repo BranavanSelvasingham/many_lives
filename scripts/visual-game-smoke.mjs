@@ -41,6 +41,9 @@ const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
 const RESPONSIVE_DECISION_STABILITY_GRACE_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_STABILITY_GRACE_MS ?? "45000",
 );
+const RESPONSIVE_DECISION_STABILITY_MAX_MS = Number(
+  process.env.MANY_LIVES_VISUAL_DECISION_STABILITY_MAX_MS ?? "120000",
+);
 const RESPONSIVE_DECISION_CAMERA_RECOVERY_GRACE_MS = 1_500;
 const RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT = 3;
 const RUN_RESPONSIVE_DECISION_GUARD_ONLY =
@@ -3662,15 +3665,24 @@ function createDecisionArtifactReadabilityState() {
 }
 
 function responsiveDecisionReadabilityDeadlineAt({
+  candidateReadableAt,
   firstReadableAt,
   readinessDeadlineAt,
   requiredStableSamples,
   stabilityGraceMs,
+  stabilityMaxMs,
 }) {
-  if (requiredStableSamples <= 1 || firstReadableAt === null) {
+  if (
+    requiredStableSamples <= 1 ||
+    firstReadableAt === null ||
+    candidateReadableAt === null
+  ) {
     return readinessDeadlineAt;
   }
-  return Math.max(readinessDeadlineAt, firstReadableAt + stabilityGraceMs);
+  return Math.min(
+    firstReadableAt + stabilityMaxMs,
+    Math.max(readinessDeadlineAt, candidateReadableAt + stabilityGraceMs),
+  );
 }
 
 function decisionArtifactReadabilitySignature(geometry) {
@@ -4082,30 +4094,60 @@ function assertDecisionArtifactReadabilityWaitRegression() {
   );
   assert.equal(
     responsiveDecisionReadabilityDeadlineAt({
+      candidateReadableAt: null,
       firstReadableAt: null,
       readinessDeadlineAt: 30_000,
       requiredStableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
       stabilityGraceMs: 45_000,
+      stabilityMaxMs: 120_000,
     }),
     30_000,
     "A missing readable sample must not extend the readiness deadline.",
   );
   assert.equal(
     responsiveDecisionReadabilityDeadlineAt({
+      candidateReadableAt: 29_000,
       firstReadableAt: 29_000,
       readinessDeadlineAt: 30_000,
       requiredStableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
       stabilityGraceMs: 45_000,
+      stabilityMaxMs: 120_000,
     }),
     74_000,
     "A late valid sample must receive one bounded stability-proof window.",
   );
   assert.equal(
     responsiveDecisionReadabilityDeadlineAt({
+      candidateReadableAt: 60_000,
+      firstReadableAt: 29_000,
+      readinessDeadlineAt: 30_000,
+      requiredStableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
+      stabilityGraceMs: 45_000,
+      stabilityMaxMs: 120_000,
+    }),
+    105_000,
+    "A changed coherent layout must receive a fresh stability-proof window.",
+  );
+  assert.equal(
+    responsiveDecisionReadabilityDeadlineAt({
+      candidateReadableAt: 145_000,
+      firstReadableAt: 29_000,
+      readinessDeadlineAt: 30_000,
+      requiredStableSamples: RESPONSIVE_DECISION_STABLE_SAMPLE_COUNT,
+      stabilityGraceMs: 45_000,
+      stabilityMaxMs: 120_000,
+    }),
+    149_000,
+    "Repeated coherent layout changes must not exceed the absolute stability cap.",
+  );
+  assert.equal(
+    responsiveDecisionReadabilityDeadlineAt({
+      candidateReadableAt: 29_000,
       firstReadableAt: 29_000,
       readinessDeadlineAt: 30_000,
       requiredStableSamples: 1,
       stabilityGraceMs: 45_000,
+      stabilityMaxMs: 120_000,
     }),
     30_000,
     "A single-sample caller must keep the original readiness deadline.",
@@ -4133,10 +4175,13 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
   const requiredStableSamples = options.stableSamples ?? 1;
   const stabilityGraceMs =
     options.stabilityGraceMs ?? RESPONSIVE_DECISION_STABILITY_GRACE_MS;
+  const stabilityMaxMs =
+    options.stabilityMaxMs ?? RESPONSIVE_DECISION_STABILITY_MAX_MS;
   const startedAt = Date.now();
   const readinessDeadlineAt = startedAt + timeoutMs;
   let effectiveDeadlineAt = readinessDeadlineAt;
   let firstReadableAt = null;
+  let candidateReadableAt = null;
   let lastMismatch = null;
   let readabilityState = createDecisionArtifactReadabilityState();
   const timingDiagnostic = () => ({
@@ -4144,8 +4189,11 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
     elapsedMs: Date.now() - startedAt,
     firstReadableElapsedMs:
       firstReadableAt === null ? null : firstReadableAt - startedAt,
+    candidateReadableElapsedMs:
+      candidateReadableAt === null ? null : candidateReadableAt - startedAt,
     readinessTimeoutMs: timeoutMs,
     stabilityGraceMs: requiredStableSamples > 1 ? stabilityGraceMs : 0,
+    stabilityMaxMs: requiredStableSamples > 1 ? stabilityMaxMs : 0,
   });
 
   while (Date.now() < effectiveDeadlineAt) {
@@ -4192,11 +4240,18 @@ async function waitForVisibleDecisionArtifactDom(session, label, options = {}) {
       }
       if (readabilityState.stableSamples > 0 && firstReadableAt === null) {
         firstReadableAt = Date.now();
+      }
+      if (readabilityState.stableSamples === 1) {
+        candidateReadableAt = Date.now();
+      }
+      if (readabilityState.stableSamples > 0) {
         effectiveDeadlineAt = responsiveDecisionReadabilityDeadlineAt({
+          candidateReadableAt,
           firstReadableAt,
           readinessDeadlineAt,
           requiredStableSamples,
           stabilityGraceMs,
+          stabilityMaxMs,
         });
       }
       if (
