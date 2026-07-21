@@ -1771,7 +1771,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
-    "render-driven sampling recovers a rearmed opening route after unavailable startup ticks",
+    "coalesced visual capture recovers five legal samples with one opening screencast frame",
     async () => {
       const startupSession = new CdpSession({
         browser: null,
@@ -1788,8 +1788,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
         viewport: { height: 625, width: 1365 },
       };
-      const progressValues = [0.178, 0.19, 0.24, 0.31, 0.43, 0.55, 0.67];
-      const offsets = [210, 215, 410, 610, 810, 1_010, 1_210];
+      const progressValues = [0.003, 0.244, 0.5, 0.75, 0.962];
+      const offsets = [300, 500, 700, 900, 1_100];
       const openingSamples = progressValues.map((progress, index) => ({
         capturedAtEpochMs: startedAt + offsets[index],
         capturedAtMonotonicMs: offsets[index],
@@ -1823,7 +1823,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         },
         source: "movement-probe-recorder",
       }));
-      const queuedSamples = [null, ...openingSamples.slice(1)];
+      const queuedSamples = [null, ...openingSamples.slice(1, 4)];
       let rearmCount = 0;
       startupSession.screencast.routeRecorderExpectedTargetLocationId =
         "tea-house";
@@ -1850,95 +1850,194 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           unavailableCount: 21,
         };
       };
-      const waitForSampleCount = async (expectedCount) => {
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          if (
-            startupSession.screencast.routeFrameSampleCount >= expectedCount
-          ) {
+      let releaseFirstCapture;
+      const firstCaptureHeld = new Promise((resolve) => {
+        releaseFirstCapture = resolve;
+      });
+      let markFirstCaptureStarted;
+      const firstCaptureStarted = new Promise((resolve) => {
+        markFirstCaptureStarted = resolve;
+      });
+      let proactiveCaptureCount = 0;
+      const proactiveFrame = (sequence, capturedAtEpochMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: {
+          source: "proactive-route-screenshot",
+          timestamp: capturedAtEpochMs / 1_000,
+        },
+        sequence,
+        source: "proactive-route-screenshot",
+      });
+      proactiveRouteCaptureFixture = async ({
+        beforeProbe,
+        expectedTargetLocationId,
+        session,
+      }) => {
+        const captureIndex = proactiveCaptureCount;
+        proactiveCaptureCount += 1;
+        if (captureIndex === 0) {
+          markFirstCaptureStarted();
+          await firstCaptureHeld;
+        }
+        const afterProbe =
+          captureIndex === 0 ? openingSamples[2] : openingSamples[4];
+        const baseSequence = 1_001 + captureIndex * 2;
+        const candidateCapturedAtEpochMs =
+          beforeProbe.capturedAtEpochMs + 20;
+        const recordedWindow = {
+          afterProbe,
+          beforeProbe,
+          candidateFrame: proactiveFrame(
+            baseSequence,
+            candidateCapturedAtEpochMs,
+            `candidate-${captureIndex}`,
+          ),
+          confirmationFrame: proactiveFrame(
+            baseSequence + 1,
+            candidateCapturedAtEpochMs + 125,
+            `confirmation-${captureIndex}`,
+          ),
+        };
+        const recorder = {
+          acceptedCount: captureIndex === 0 ? 3 : 5,
+          expectedTargetLocationId,
+          generation: 2,
+          samples:
+            captureIndex === 0
+              ? openingSamples.slice(0, 3)
+              : openingSamples,
+        };
+        session.archiveAutoplayRouteFrames(recorder);
+        return session.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow,
+          recorder,
+        });
+      };
+
+      const waitFor = async (predicate, message) => {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          if (predicate()) {
             return;
           }
           await new Promise((resolve) => setTimeout(resolve, 2));
         }
-        assert.fail(`Timed out waiting for ${expectedCount} frame samples.`);
+        assert.fail(message);
       };
-      const frameOffsets = [200, 400, 600, 800, 1_000, 1_200];
-      for (let index = 0; index < frameOffsets.length; index += 1) {
+      try {
         startupSession.handleAutoplayScreencastFrame({
-          data: `startup-frame-${index + 1}`,
+          data: "pre-opening-frame",
           metadata: {
-            timestamp: (startedAt + frameOffsets[index]) / 1_000,
+            timestamp: (startedAt + 100) / 1_000,
           },
-          sessionId: 50 + index,
+          sessionId: 50,
         });
-        await waitForSampleCount(index + 1);
-      }
+        await waitFor(
+          () => startupSession.screencast.routeFrameSampleCount === 1,
+          "The first rendered-frame route sample was not retained.",
+        );
+        await firstCaptureStarted;
+        assert.equal(startupSession.autoplayRouteFrameWindows().length, 0);
 
-      assert.equal(rearmCount, 1);
-      assert.equal(startupSession.screencast.routeFrameSampleCount, 6);
-      assert.equal(startupSession.screencast.routeFrameSampleError, null);
-      assert.equal(startupSession.screencast.routeFrameArchiveFrozen, false);
-      assert.equal(startupSession.screencast.routeSampleArchive.length, 7);
-      assert.ok(startupSession.autoplayRouteFrameHistory().length <= 8);
-      assert.ok(startupSession.screencast.routeSampleArchive.length <= 16);
-      const trajectory =
-        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+        startupSession.handleAutoplayScreencastFrame({
+          data: "only-opening-route-frame",
+          metadata: {
+            timestamp: (startedAt + 600) / 1_000,
+          },
+          sessionId: 51,
+        });
+        await waitFor(
+          () => startupSession.screencast.routeFrameSampleCount === 2,
+          "The second rendered-frame route sample was not retained.",
+        );
+        releaseFirstCapture();
+        await waitFor(
+          () => startupSession.autoplayRouteFrameWindows().length === 2,
+          "The coalesced pipeline did not retain two proactive route windows.",
+        );
+
+        assert.equal(rearmCount, 1);
+        assert.equal(startupSession.screencast.routeFrameSampleError, null);
+        assert.equal(startupSession.screencast.routeFrameWindowCaptureError, null);
+        assert.equal(
+          startupSession.screencast.routeFrameWindowCaptureStatus,
+          "complete",
+        );
+        assert.equal(
+          startupSession.screencast.routeFrameWindowCaptureAttemptCount,
+          2,
+        );
+        assert.equal(startupSession.screencast.routeFrameArchive.length, 1);
+        assert.equal(startupSession.screencast.routeSampleArchive.length, 5);
+        assert.ok(startupSession.screencast.routeFrameArchive.length <= 8);
+        assert.ok(startupSession.screencast.routeSampleArchive.length <= 16);
+
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: startupSession.autoplayRouteFrameHistory(),
+            label: "five-sample one-frame opening route",
+            recordedWindows: startupSession.autoplayRouteFrameWindows(),
+            samples: startupSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
+              buffer: Buffer.from(frame.data, "base64"),
+              paintProbe: framePaintProbe,
+              textPaint: {},
+            }),
+            validateStableFramePair: () => ({}),
+          });
+        assert.equal(trajectory.start.beforeProbe.route.progress, 0.244);
+        assert.equal(trajectory.start.afterProbe.route.progress, 0.5);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.75);
+        assert.equal(trajectory.mid.afterProbe.route.progress, 0.962);
+        assert.ok(
+          trajectory.mid.beforeProbe.route.progress -
+            trajectory.start.afterProbe.route.progress >=
+            0.1,
+        );
+        assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
+
+        startupSession.archiveAutoplayRouteFrames({
+          acceptedCount: 6,
           expectedTargetLocationId: "tea-house",
-          frames: startupSession.autoplayRouteFrameHistory(),
-          label: "rearmed unavailable-start route",
-          samples: startupSession.autoplayRouteCaptureSamples(),
-          validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
-            buffer: Buffer.from(frame.data),
-            paintProbe: framePaintProbe,
-            textPaint: {},
-          }),
-          validateStableFramePair: () => ({}),
+          samples: [
+            {
+              ...openingSamples.at(-1),
+              capturedAtEpochMs: startedAt + 10_000,
+              paintProbe: {
+                ...paintProbe,
+                regions: [{ surface: "hud", text: "DAY 1 11:25" }],
+                stableRegions: [{ surface: "hud", text: "DAY 1 11:25" }],
+              },
+              route: {
+                ...openingSamples.at(-1).route,
+                durationMs: 840,
+                progress: 0.1,
+                spaceId: "interior:tea-house",
+                tilePath: [
+                  { x: 7, y: 4 },
+                  { x: 8, y: 3 },
+                ],
+                worldPath: [
+                  { x: 396, y: 236 },
+                  { x: 436, y: 196 },
+                ],
+              },
+            },
+          ],
         });
-      assert.equal(trajectory.start.beforeProbe.route.progress, 0.19);
-      assert.equal(trajectory.start.afterProbe.route.progress, 0.31);
-      assert.equal(trajectory.mid.beforeProbe.route.progress, 0.43);
-      assert.ok(
-        trajectory.mid.beforeProbe.route.progress -
-          trajectory.start.afterProbe.route.progress >=
-          0.1,
-      );
-      assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
-
-      startupSession.archiveAutoplayRouteFrames({
-        acceptedCount: 7,
-        expectedTargetLocationId: "tea-house",
-        samples: [
-          {
-            ...openingSamples.at(-1),
-            capturedAtEpochMs: startedAt + 10_000,
-            paintProbe: {
-              ...paintProbe,
-              regions: [{ surface: "hud", text: "DAY 1 11:25" }],
-              stableRegions: [{ surface: "hud", text: "DAY 1 11:25" }],
-            },
-            route: {
-              ...openingSamples.at(-1).route,
-              durationMs: 840,
-              progress: 0.1,
-              spaceId: "interior:tea-house",
-              tilePath: [
-                { x: 7, y: 4 },
-                { x: 8, y: 3 },
-              ],
-              worldPath: [
-                { x: 396, y: 236 },
-                { x: 436, y: 196 },
-              ],
-            },
-          },
-        ],
-      });
-      assert.equal(startupSession.screencast.routeFrameArchiveFrozen, true);
-      assert.equal(startupSession.screencast.routeSampleArchive.length, 7);
-      assert.equal(
-        startupSession.screencast.routeFrameOpeningSegment.lastProgress,
-        0.67,
-      );
-      await startupSession.stopAutoplayScreencast();
+        assert.equal(startupSession.screencast.routeFrameArchiveFrozen, true);
+        assert.equal(startupSession.screencast.routeSampleArchive.length, 5);
+        assert.equal(startupSession.autoplayRouteFrameWindows().length, 2);
+        assert.equal(
+          startupSession.screencast.routeFrameOpeningSegment.lastProgress,
+          0.962,
+        );
+      } finally {
+        releaseFirstCapture();
+        proactiveRouteCaptureFixture = async () => null;
+        await startupSession.stopAutoplayScreencast();
+      }
     },
   );
 

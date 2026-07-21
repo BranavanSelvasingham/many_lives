@@ -1591,6 +1591,15 @@ class CdpSession {
               routeFrameSampleCount: this.screencast.routeFrameSampleCount,
               routeFrameSampleError: this.screencast.routeFrameSampleError,
               routeFrameSampleStatus: this.screencast.routeFrameSampleStatus,
+              routeFrameWindowCaptureAttemptCount:
+                this.screencast.routeFrameWindowCaptureAttemptCount,
+              routeFrameWindowCaptureError:
+                this.screencast.routeFrameWindowCaptureError,
+              routeFrameWindowCapturePendingProgress:
+                this.screencast.routeFrameWindowCapturePendingSample?.route
+                  ?.progress ?? null,
+              routeFrameWindowCaptureStatus:
+                this.screencast.routeFrameWindowCaptureStatus,
               routeFrameWindowArchiveCount:
                 this.screencast.routeFrameWindowArchive.length,
               routeFrameWindowArchiveProgress:
@@ -3470,6 +3479,11 @@ class CdpSession {
       routeFrameArchivedSampleCount: 0,
       routeFrameHistory: [],
       routeFrameWindowArchive: [],
+      routeFrameWindowCaptureAttemptCount: 0,
+      routeFrameWindowCaptureError: null,
+      routeFrameWindowCapturePendingSample: null,
+      routeFrameWindowCapturePromise: null,
+      routeFrameWindowCaptureStatus: "idle",
       routeFrameWindowRecorderError: null,
       routeFrameWindowRecorderPromise: null,
       routeFrameWindowRecorderStatus: "idle",
@@ -3520,7 +3534,9 @@ class CdpSession {
     state.active = false;
     state.status = "stopping";
     state.routeFrameSamplePending = false;
+    state.routeFrameWindowCapturePendingSample = null;
     await state.routeFrameSamplePromise?.catch(() => null);
+    await state.routeFrameWindowCapturePromise?.catch(() => null);
     await state.routeFrameWindowRecorderPromise?.catch(() => null);
     for (const waiter of state.waiters.splice(0)) {
       clearTimeout(waiter.timeoutId);
@@ -3708,6 +3724,136 @@ class CdpSession {
     return recordedWindow;
   }
 
+  scheduleAutoplayRouteVisualWindowCapture({
+    beforeProbe,
+    expectedTargetLocationId,
+    label = "autoplay-route-visual-window-capture",
+  }) {
+    const state = this.screencast;
+    if (
+      !state?.active ||
+      state.routeFrameArchiveFrozen ||
+      state.routeFrameWindowArchive.length >=
+        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS ||
+      !autoplayRouteCaptureWindowCoherent(
+        beforeProbe?.route,
+        beforeProbe?.route,
+        expectedTargetLocationId,
+      )
+    ) {
+      return state?.routeFrameWindowCapturePromise ?? Promise.resolve(null);
+    }
+    const pendingSample = state.routeFrameWindowCapturePendingSample;
+    if (
+      !pendingSample ||
+      beforeProbe.capturedAtEpochMs > pendingSample.capturedAtEpochMs
+    ) {
+      state.routeFrameWindowCapturePendingSample = beforeProbe;
+    }
+    if (state.routeFrameWindowCapturePromise) {
+      return state.routeFrameWindowCapturePromise;
+    }
+
+    state.routeFrameWindowCaptureStatus = "capturing-opening-route";
+    state.routeFrameWindowCapturePromise = (async () => {
+      let unavailableSampleCount = 0;
+      while (
+        state.active &&
+        !state.routeFrameArchiveFrozen &&
+        state.routeFrameWindowArchive.length <
+          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS &&
+        state.routeFrameWindowCaptureAttemptCount < 4
+      ) {
+        let sample = state.routeFrameWindowCapturePendingSample;
+        state.routeFrameWindowCapturePendingSample = null;
+        if (!sample) {
+          await sleep(AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS);
+          sample = await this.sampleAutoplayRouteCaptureRecorder(
+            `${label}:next-window-route-sample`,
+          );
+          if (sample) {
+            this.archiveAutoplayRouteFrames({
+              expectedTargetLocationId,
+              samples: [sample],
+            });
+          }
+        }
+        if (
+          !autoplayRouteCaptureWindowCoherent(
+            sample?.route,
+            sample?.route,
+            expectedTargetLocationId,
+          )
+        ) {
+          unavailableSampleCount += 1;
+          if (unavailableSampleCount >= 4) {
+            state.routeFrameWindowCaptureStatus = "waiting-for-opening-route";
+            break;
+          }
+          continue;
+        }
+        unavailableSampleCount = 0;
+        const firstWindow = state.routeFrameWindowArchive[0] ?? null;
+        if (
+          firstWindow &&
+          sample.route.progress - firstWindow.afterProbe.route.progress <
+            AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
+        ) {
+          continue;
+        }
+
+        state.routeFrameWindowCaptureAttemptCount += 1;
+        const captured = await captureAutoplayProactiveRouteFrameWindow({
+          beforeProbe: sample,
+          expectedTargetLocationId,
+          label: `${label}:window-${state.routeFrameWindowCaptureAttemptCount}`,
+          session: this,
+        });
+        if (!captured) {
+          continue;
+        }
+      }
+      if (
+        state.routeFrameWindowArchive.length >=
+        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+      ) {
+        state.routeFrameWindowCaptureStatus = "complete";
+      } else if (!state.active) {
+        state.routeFrameWindowCaptureStatus = "stopped";
+      }
+      return state.routeFrameWindowArchive.length;
+    })()
+      .catch((error) => {
+        state.routeFrameWindowCaptureError =
+          error instanceof Error ? error.message : String(error);
+        state.routeFrameWindowCaptureStatus = "failed";
+        this.recordCdpTransportEvent("route-frame-window-capture-failed", {
+          error: state.routeFrameWindowCaptureError,
+          expectedTargetLocationId,
+        });
+        return null;
+      })
+      .finally(() => {
+        state.routeFrameWindowCapturePromise = null;
+        const pending = state.routeFrameWindowCapturePendingSample;
+        if (
+          state.active &&
+          pending &&
+          !state.routeFrameArchiveFrozen &&
+          state.routeFrameWindowArchive.length <
+            AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS &&
+          state.routeFrameWindowCaptureAttemptCount < 4
+        ) {
+          this.scheduleAutoplayRouteVisualWindowCapture({
+            beforeProbe: pending,
+            expectedTargetLocationId,
+            label,
+          });
+        }
+      });
+    return state.routeFrameWindowCapturePromise;
+  }
+
   startAutoplayRouteVisualWindowRecorder({
     expectedTargetLocationId,
     label = "autoplay-route-visual-window-recorder",
@@ -3723,7 +3869,6 @@ class CdpSession {
     state.routeFrameWindowRecorderStatus = "watching";
     state.routeFrameWindowRecorderPromise = (async () => {
       let sawOpeningSegment = false;
-      let captureAttemptCount = 0;
       while (
         state.active &&
         state.routeFrameWindowArchive.length <
@@ -3776,12 +3921,11 @@ class CdpSession {
                   firstWindow.afterProbe.route.progress >=
                 AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS),
         );
-        if (progressIsDistinct && captureAttemptCount < 4) {
-          captureAttemptCount += 1;
-          await captureAutoplayProactiveRouteFrameWindow({
+        if (progressIsDistinct) {
+          await this.scheduleAutoplayRouteVisualWindowCapture({
+            beforeProbe: latestSample,
             expectedTargetLocationId,
-            label: `${label}:window-${captureAttemptCount}`,
-            session: this,
+            label,
           });
         }
         if (
@@ -3933,6 +4077,11 @@ class CdpSession {
           acceptedCount: state.routeFrameSampleCount,
           expectedTargetLocationId,
           samples: [sample],
+        });
+        this.scheduleAutoplayRouteVisualWindowCapture({
+          beforeProbe: sample,
+          expectedTargetLocationId,
+          label: "screencast-frame-route-window",
         });
       }
     })()
@@ -14071,13 +14220,16 @@ async function captureAutoplayLiveTrajectoryMilestone({
 }
 
 async function captureAutoplayProactiveRouteFrameWindow({
+  beforeProbe: initialBeforeProbe = null,
   expectedTargetLocationId,
   label,
   session,
 }) {
-  const beforeProbe = await session.sampleAutoplayRouteCaptureRecorder(
-    `${label}:before-route-sample`,
-  );
+  const beforeProbe =
+    initialBeforeProbe ??
+    (await session.sampleAutoplayRouteCaptureRecorder(
+      `${label}:before-route-sample`,
+    ));
   if (
     !isAutoplayFootholdRouteFrame(
       beforeProbe?.route,
