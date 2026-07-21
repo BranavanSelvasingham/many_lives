@@ -785,7 +785,10 @@ test("proactive route history survives a delayed observer and rejects unproven w
     /capturedAtEpochMs: beforeCapturedAtEpochMs/,
     "Route evidence must retain its before-probe wall-clock timestamp.",
   );
-  assert.match(source, /routeMidWindow\.before\.progress - routeStartWindow\.after\.progress/);
+  assert.match(
+    source,
+    /autoplayRecordedRouteWindowsHaveDistinctProgress\(\s*routeStartWindow,\s*routeMidWindow/,
+  );
   assert.match(source, /routeMidWindow\.frame\.sequence > routeStartWindow\.frame\.sequence/);
   assert.match(source, /probeSource[\s\S]*movement-probe-recorder/);
   const routeProbeMethodStart = source.indexOf("  async readAutoplayRouteProbe(");
@@ -3320,6 +3323,101 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(trajectory.mid.frame.sequence, 3);
         assert.equal(trajectory.start.beforeProbe.route.progress, 0.18);
         assert.equal(trajectory.mid.beforeProbe.route.progress, 0.51);
+
+        const adjacentSamples = [
+          sample(0.004, 0),
+          sample(0.31, 400),
+          sample(0.7, 800),
+        ];
+        const adjacentTrajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: [
+              {
+                data: Buffer.from("adjacent-route-position-start").toString(
+                  "base64",
+                ),
+                metadata: { timestamp: (startedAt + 200) / 1_000 },
+                sequence: 20,
+              },
+              {
+                data: Buffer.from("adjacent-route-position-mid").toString(
+                  "base64",
+                ),
+                metadata: { timestamp: (startedAt + 600) / 1_000 },
+                sequence: 21,
+              },
+            ],
+            label: "adjacent direct opening route frames",
+            samples: adjacentSamples,
+            validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
+              buffer: Buffer.from(frame.data, "base64"),
+              paintProbe: framePaintProbe,
+              textPaint: {},
+            }),
+            validateStableFramePair: () => ({}),
+          });
+        assert.equal(adjacentTrajectory.start.frame.sequence, 20);
+        assert.equal(adjacentTrajectory.mid.frame.sequence, 21);
+        assert.equal(
+          adjacentTrajectory.start.afterProbe.capturedAtEpochMs,
+          adjacentTrajectory.mid.beforeProbe.capturedAtEpochMs,
+          "Sparse CI samples may form adjacent legal frame windows with one shared boundary.",
+        );
+
+        assert.throws(
+          () =>
+            recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+              expectedTargetLocationId: "tea-house",
+              frames: [
+                {
+                  data: Buffer.from("close-route-position-start").toString(
+                    "base64",
+                  ),
+                  metadata: { timestamp: (startedAt + 140) / 1_000 },
+                  sequence: 30,
+                },
+                {
+                  data: Buffer.from("close-route-position-mid").toString(
+                    "base64",
+                  ),
+                  metadata: { timestamp: (startedAt + 572) / 1_000 },
+                  sequence: 31,
+                },
+              ],
+              label: "overly close direct opening route frames",
+              samples: [
+                sample(0.005, 0),
+                sample(0.043, 183),
+                sample(0.086, 433),
+                sample(0.122, 616),
+              ],
+              validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
+                buffer: Buffer.from(frame.data, "base64"),
+                paintProbe: framePaintProbe,
+                textPaint: {},
+              }),
+              validateStableFramePair: () => ({}),
+            }),
+          /did not contain two distinct legal rendered positions/,
+        );
+
+        const commandCountAfterRecovery = commands.length;
+        routeSession.screencast.routeFrameWindowArchive = [];
+        await routeSession.scheduleAutoplayRouteVisualWindowCapture({
+          beforeProbe: openingSamples[5],
+          expectedTargetLocationId: "tea-house",
+          label: "redundant-dense-route-rearm",
+        });
+        assert.equal(commands.length, commandCountAfterRecovery);
+        assert.equal(
+          routeSession.screencast.routeScreencastRearmAttemptCount,
+          1,
+        );
+        assert.equal(
+          routeSession.screencast.routeFrameWindowCaptureStatus,
+          "dense-route-rearm-complete-awaiting-direct-validation",
+        );
       } finally {
         proactiveRouteCaptureFixture = async () => null;
         await routeSession.stopAutoplayScreencast();

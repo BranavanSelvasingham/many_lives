@@ -4498,6 +4498,17 @@ class CdpSession {
       return state?.routeFrameWindowCapturePromise ?? Promise.resolve(null);
     }
     if (
+      state.routeScreencastRearmAttemptCount > 0 &&
+      !state.routeScreencastRearmPromise &&
+      state.everyNthFrame === AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME
+    ) {
+      state.routeFrameWindowCapturePendingSample = null;
+      state.routeFrameWindowCaptureStatus = state.routeScreencastRearmError
+        ? "dense-route-rearm-failed-awaiting-direct-validation"
+        : "dense-route-rearm-complete-awaiting-direct-validation";
+      return Promise.resolve(state.routeFrameWindowArchive.length);
+    }
+    if (
       typeof state.routeFrameWindowLastAttemptedSampleAtEpochMs === "number" &&
       beforeProbe.capturedAtEpochMs <=
         state.routeFrameWindowLastAttemptedSampleAtEpochMs
@@ -15570,6 +15581,70 @@ function validateAutoplayRecordedRouteFrame({
   };
 }
 
+function autoplayRecordedRouteWindowsHaveDistinctProgress(
+  start,
+  midCandidate,
+) {
+  const windowProbe = (window, position) =>
+    window?.[`${position}Probe`] ?? window?.[position] ?? null;
+  const probeProgress = (probe) =>
+    Number(probe?.route?.progress ?? probe?.progress);
+  const frameCapturedAtEpochMs = (frame) => {
+    const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+    if (typeof capturedAtEpochMs === "number") {
+      return capturedAtEpochMs;
+    }
+    return Number(frame?.capturedAtEpochMs);
+  };
+  const estimatedFrameProgress = (window) => {
+    const beforeProbe = windowProbe(window, "before");
+    const afterProbe = windowProbe(window, "after");
+    const beforeProgress = probeProgress(beforeProbe);
+    const afterProgress = probeProgress(afterProbe);
+    const beforeAtEpochMs = Number(beforeProbe?.capturedAtEpochMs);
+    const afterAtEpochMs = Number(afterProbe?.capturedAtEpochMs);
+    const capturedAtEpochMs = frameCapturedAtEpochMs(
+      window?.frame ?? window?.confirmationFrame,
+    );
+    if (
+      ![
+        beforeProgress,
+        afterProgress,
+        beforeAtEpochMs,
+        afterAtEpochMs,
+        capturedAtEpochMs,
+      ].every(Number.isFinite) ||
+      afterAtEpochMs <= beforeAtEpochMs ||
+      capturedAtEpochMs < beforeAtEpochMs ||
+      capturedAtEpochMs > afterAtEpochMs
+    ) {
+      return null;
+    }
+    const elapsedRatio =
+      (capturedAtEpochMs - beforeAtEpochMs) /
+      (afterAtEpochMs - beforeAtEpochMs);
+    return (
+      beforeProgress + (afterProgress - beforeProgress) * elapsedRatio
+    );
+  };
+  const startAfterProbe = windowProbe(start, "after");
+  const midBeforeProbe = windowProbe(midCandidate, "before");
+  const uncoveredProgress =
+    probeProgress(midBeforeProbe) - probeProgress(startAfterProbe);
+  if (uncoveredProgress >= AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS) {
+    return true;
+  }
+
+  const startFrameProgress = estimatedFrameProgress(start);
+  const midFrameProgress = estimatedFrameProgress(midCandidate);
+  return Boolean(
+    Number.isFinite(startFrameProgress) &&
+      Number.isFinite(midFrameProgress) &&
+      midFrameProgress - startFrameProgress >=
+        AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS,
+  );
+}
+
 function selectAutoplayRecordedRouteTrajectory({
   expectedTargetLocationId,
   frames,
@@ -15661,9 +15736,10 @@ function selectAutoplayRecordedRouteTrajectory({
           screencastFrameCapturedAtEpochMs(midFrame) <
             screencastFrameCapturedAtEpochMs(start.frame) +
               AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS ||
-          midCandidate.beforeProbe.route.progress -
-              start.afterProbe.route.progress <
-            AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
+          !autoplayRecordedRouteWindowsHaveDistinctProgress(
+            start,
+            midCandidate,
+          )
         ) {
           continue;
         }
@@ -16640,9 +16716,11 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
     );
   }
   assert.ok(
-    routeMidWindow.before.progress - routeStartWindow.after.progress >=
-      AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS,
-    `${evidence.openingWorldVariant}: route frames were not separated by ${AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS} progress. Evidence: ${evidencePath}.`,
+    autoplayRecordedRouteWindowsHaveDistinctProgress(
+      routeStartWindow,
+      routeMidWindow,
+    ),
+    `${evidence.openingWorldVariant}: route frames did not prove ${AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS} progress at their recorded frame timestamps. Evidence: ${evidencePath}.`,
   );
   assert.notEqual(
     milestones["foothold-route-start"].screenshot,
