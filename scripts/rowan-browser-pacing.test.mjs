@@ -1519,6 +1519,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "assert",
     "AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS",
     "AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME",
+    "AUTOPLAY_ROUTE_SCREENCAST_EVERY_NTH_FRAME",
+    "AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS",
     "AUTOPLAY_SCREENCAST_MAX_HEIGHT",
     "AUTOPLAY_SCREENCAST_MAX_WIDTH",
     "AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS",
@@ -1532,8 +1534,6 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS",
     "AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS",
     "AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS",
-    "AUTOPLAY_ROUTE_DIRECT_SCREENCAST_GRACE_MS",
-    "AUTOPLAY_ROUTE_NO_SCREENCAST_FALLBACK_GRACE_MS",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
     "AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE",
     "AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT",
@@ -1562,6 +1562,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     assert,
     5,
     2,
+    1,
+    25,
     375,
     819,
     60,
@@ -1575,8 +1577,6 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     16,
     4,
     1,
-    25,
-    8,
     0.1,
     0.6,
     360,
@@ -2283,6 +2283,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
 
   await t.test(
     "coalesced visual capture recovers five legal samples with one opening screencast frame",
+    { skip: "Superseded by dense direct-screencast route recovery." },
     async () => {
       const startupSession = new CdpSession({
         browser: null,
@@ -3157,7 +3158,241 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
+    "dense route rearm recovers the constrained-runner opening frame race",
+    async () => {
+      const routeSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/dense-route-rearm",
+        url: "http://127.0.0.1/",
+      });
+      routeSession.socket = { destroyed: false, writable: true };
+      const commands = [];
+      routeSession.send = async (method, params) => {
+        commands.push({ method, params });
+        return {};
+      };
+      await routeSession.startAutoplayScreencast();
+      const startedAt = routeSession.screencast.startedAtEpochMs;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const sample = (progress, offsetMs) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe,
+        recorderGeneration: 2,
+        route: {
+          active: true,
+          durationMs: 5_040,
+          legal: true,
+          progress,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          spaceId: "street:south-quay",
+          target: { x: 17, y: 9 },
+          targetLocationId: "tea-house",
+          tilePath: [
+            { x: 3, y: 9 },
+            { x: 17, y: 9 },
+          ],
+          visualObstaclesClear: true,
+          worldPath: [
+            { x: 331, y: 688 },
+            { x: 1_338, y: 656 },
+          ],
+        },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.004, 0),
+        sample(0.08, 100),
+        sample(0.18, 200),
+        sample(0.31, 400),
+        sample(0.51, 600),
+        sample(0.7, 800),
+      ];
+      const unsettledFrame = {
+        data: Buffer.from("unsettled-opening-frame").toString("base64"),
+        metadata: { timestamp: (startedAt + 42) / 1_000 },
+        sequence: 1,
+      };
+      routeSession.screencast.lastSequence = 1;
+      routeSession.screencast.routeFrameHistory.push(unsettledFrame);
+      routeSession.archiveAutoplayRouteFrames({
+        acceptedCount: 2,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: openingSamples.slice(0, 2),
+      });
+      assert.equal(routeSession.screencast.routeFrameArchive.length, 1);
+
+      const beforeSamples = [openingSamples[2], openingSamples[4]];
+      routeSession.sampleAutoplayRouteCaptureRecorder = async () =>
+        beforeSamples.shift() ?? null;
+      let directCaptureCount = 0;
+      routeSession.captureAutoplayScreencastRouteFrameWindow = async ({
+        afterSequence,
+        beforeProbe,
+        expectedTargetLocationId,
+      }) => {
+        const captureIndex = directCaptureCount;
+        directCaptureCount += 1;
+        const afterProbe = openingSamples[captureIndex === 0 ? 3 : 5];
+        const frame = {
+          data: Buffer.from(`dense-route-position-${captureIndex}`).toString(
+            "base64",
+          ),
+          metadata: {
+            timestamp:
+              (beforeProbe.capturedAtEpochMs + 125) / 1_000,
+          },
+          sequence: captureIndex + 2,
+        };
+        assert.equal(afterSequence, captureIndex === 0 ? 1 : 2);
+        const recorder = {
+          acceptedCount: captureIndex === 0 ? 4 : 6,
+          expectedTargetLocationId,
+          generation: 2,
+          samples: openingSamples.slice(0, captureIndex === 0 ? 4 : 6),
+        };
+        routeSession.archiveAutoplayRouteFrames(recorder);
+        return routeSession.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: { afterProbe, beforeProbe, frame },
+          recorder,
+        });
+      };
+      proactiveRouteCaptureFixture = async () => {
+        assert.fail("Opening-route recovery must not use a screenshot fallback.");
+      };
+
+      try {
+        await routeSession.scheduleAutoplayRouteVisualWindowCapture({
+          beforeProbe: openingSamples[0],
+          expectedTargetLocationId: "tea-house",
+          label: "dense-route-rearm",
+        });
+        assert.equal(directCaptureCount, 2);
+        assert.equal(routeSession.autoplayRouteFrameWindows().length, 2);
+        assert.equal(
+          routeSession.screencast.routeFrameWindowCaptureStatus,
+          "complete",
+        );
+        assert.equal(
+          routeSession.screencast.routeScreencastRearmAttemptCount,
+          1,
+        );
+        assert.equal(routeSession.screencast.routeScreencastRestoreCount, 1);
+        assert.equal(routeSession.screencast.everyNthFrame, 2);
+        assert.deepEqual(
+          commands
+            .filter(({ method }) =>
+              ["Page.startScreencast", "Page.stopScreencast"].includes(method),
+            )
+            .map(({ method, params }) => [method, params?.everyNthFrame ?? null]),
+          [
+            ["Page.startScreencast", 2],
+            ["Page.stopScreencast", null],
+            ["Page.startScreencast", 1],
+            ["Page.stopScreencast", null],
+            ["Page.startScreencast", 2],
+          ],
+        );
+
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: routeSession.autoplayRouteFrameHistory(),
+            label: "dense rearmed opening route",
+            recordedWindows: routeSession.autoplayRouteFrameWindows(),
+            samples: routeSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
+              buffer: Buffer.from(frame.data, "base64"),
+              paintProbe: framePaintProbe,
+              textPaint: {},
+            }),
+            validateStableFramePair: () => ({}),
+          });
+        assert.equal(trajectory.start.frame.sequence, 2);
+        assert.equal(trajectory.mid.frame.sequence, 3);
+        assert.equal(trajectory.start.beforeProbe.route.progress, 0.18);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.51);
+      } finally {
+        proactiveRouteCaptureFixture = async () => null;
+        await routeSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
+    "failed dense route rearm restores the prior screencast cadence",
+    async () => {
+      const recoverySession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/rearm-recovery",
+        url: "http://127.0.0.1/",
+      });
+      recoverySession.socket = { destroyed: false, writable: true };
+      const commands = [];
+      let denseStartRejected = false;
+      recoverySession.send = async (method, params) => {
+        commands.push({ method, params });
+        if (
+          method === "Page.startScreencast" &&
+          params?.everyNthFrame === 1 &&
+          !denseStartRejected
+        ) {
+          denseStartRejected = true;
+          throw new Error("synthetic dense cadence rejection");
+        }
+        return {};
+      };
+      await recoverySession.startAutoplayScreencast();
+      try {
+        await assert.rejects(
+          recoverySession.rearmAutoplayScreencastForRouteCapture(
+            "dense-rearm-recovery",
+          ),
+          /prior cadence was restored/,
+        );
+        assert.equal(recoverySession.screencast.everyNthFrame, 2);
+        assert.equal(
+          recoverySession.screencast.routeVisualCaptureTransportStatus,
+          "active",
+        );
+        assert.equal(
+          recoverySession.screencast.routeScreencastRearmStatus,
+          "failed-prior-cadence-recovered",
+        );
+        assert.match(
+          recoverySession.screencast.routeScreencastRearmError,
+          /synthetic dense cadence rejection/,
+        );
+        assert.deepEqual(
+          commands.map(({ method, params }) => [
+            method,
+            params?.everyNthFrame ?? null,
+          ]),
+          [
+            ["Page.startScreencast", 2],
+            ["Page.stopScreencast", null],
+            ["Page.startScreencast", 1],
+            ["Page.startScreencast", 2],
+          ],
+        );
+      } finally {
+        await recoverySession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
     "direct opening frames receive grace before screenshot fallback",
+    { skip: "Opening-route screenshot fallback was removed." },
     async () => {
       const graceSession = new CdpSession({
         browser: null,
@@ -3337,6 +3572,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
 
   await t.test(
     "failed screenshot fallback requires a fresh opening route sample",
+    { skip: "Opening-route screenshot fallback was removed." },
     async () => {
       const retrySession = new CdpSession({
         browser: null,
@@ -3443,6 +3679,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
 
   await t.test(
     "two archived opening frames supersede a hung screenshot fallback",
+    { skip: "Opening-route screenshot fallback was removed." },
     async () => {
       const renderedSession = new CdpSession({
         browser: null,
@@ -3687,6 +3924,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
 
   await t.test(
     "live recorder pairs one slow screenshot with a later resumed-screencast frame",
+    { skip: "Opening-route screenshot fallback was removed." },
     async () => {
       const liveSession = new CdpSession({
         browser: null,

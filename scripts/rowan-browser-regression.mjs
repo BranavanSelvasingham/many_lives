@@ -101,8 +101,6 @@ const AUTOPLAY_ROUTE_FRAME_WINDOW_REJECTION_MAX_ENTRIES = 8;
 const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
-const AUTOPLAY_ROUTE_DIRECT_SCREENCAST_GRACE_MS = 2_500;
-const AUTOPLAY_ROUTE_NO_SCREENCAST_FALLBACK_GRACE_MS = 750;
 const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
 const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
@@ -113,6 +111,8 @@ const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
 const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
 const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 2;
+const AUTOPLAY_ROUTE_SCREENCAST_EVERY_NTH_FRAME = 1;
+const AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS = 250;
 const AUTOPLAY_SCREENCAST_MAX_HEIGHT = 375;
 const AUTOPLAY_SCREENCAST_MAX_WIDTH = 819;
 const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = Number(
@@ -1783,6 +1783,18 @@ class CdpSession {
                 this.screencast.routeFrameWindowRecorderError,
               routeFrameWindowRecorderStatus:
                 this.screencast.routeFrameWindowRecorderStatus,
+              routeScreencastEveryNthFrame:
+                this.screencast.everyNthFrame,
+              routeScreencastRearmAttemptCount:
+                this.screencast.routeScreencastRearmAttemptCount,
+              routeScreencastRearmError:
+                this.screencast.routeScreencastRearmError,
+              routeScreencastRearmStatus:
+                this.screencast.routeScreencastRearmStatus,
+              routeScreencastRestoreCount:
+                this.screencast.routeScreencastRestoreCount,
+              routeScreencastRestoreError:
+                this.screencast.routeScreencastRestoreError,
               routeVisualCapturePauseCount:
                 this.screencast.routeVisualCapturePauseCount,
               routeVisualCapturePauseError:
@@ -3707,6 +3719,7 @@ class CdpSession {
     );
     const state = {
       active: false,
+      everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
       frames: [],
       generation: this.screencastGeneration + 1,
       ignoredFrameCount: 0,
@@ -3729,6 +3742,12 @@ class CdpSession {
       routeFrameWindowRecorderStatus: "idle",
       routeFrameWindowRejectedCount: 0,
       routeFrameWindowRejections: [],
+      routeScreencastRearmAttemptCount: 0,
+      routeScreencastRearmError: null,
+      routeScreencastRearmPromise: null,
+      routeScreencastRearmStatus: "idle",
+      routeScreencastRestoreCount: 0,
+      routeScreencastRestoreError: null,
       routeVisualCapturePauseCount: 0,
       routeVisualCapturePauseError: null,
       routeVisualCapturePaused: false,
@@ -3758,12 +3777,9 @@ class CdpSession {
     try {
       await this.send(
         "Page.startScreencast",
-        {
-          everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
-          format: "png",
-          maxHeight: AUTOPLAY_SCREENCAST_MAX_HEIGHT,
-          maxWidth: AUTOPLAY_SCREENCAST_MAX_WIDTH,
-        },
+        this.autoplayScreencastParameters(
+          AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
+        ),
         { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
       );
       state.active = true;
@@ -3773,6 +3789,153 @@ class CdpSession {
       if (this.screencast === state) {
         this.screencast = null;
       }
+      throw error;
+    }
+  }
+
+  autoplayScreencastParameters(everyNthFrame) {
+    return {
+      everyNthFrame,
+      format: "png",
+      maxHeight: AUTOPLAY_SCREENCAST_MAX_HEIGHT,
+      maxWidth: AUTOPLAY_SCREENCAST_MAX_WIDTH,
+    };
+  }
+
+  async setAutoplayScreencastCadence({
+    everyNthFrame,
+    label,
+    restoring = false,
+  }) {
+    const state = this.screencast;
+    assert.ok(
+      state && state.active && state.status === "active",
+      `${label}: autoplay screencast is not active.`,
+    );
+    assert.equal(
+      state.routeVisualCapturePaused,
+      false,
+      `${label}: cannot change cadence during an exclusive visual capture.`,
+    );
+    if (state.everyNthFrame === everyNthFrame) {
+      return false;
+    }
+
+    const statusPrefix = restoring ? "restoring" : "rearming";
+    const previousEveryNthFrame = state.everyNthFrame;
+    state.routeScreencastRearmStatus = statusPrefix;
+    state.routeVisualCaptureTransportStatus = statusPrefix;
+    await this.send(
+      "Page.stopScreencast",
+      {},
+      { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+    );
+    try {
+      await this.send(
+        "Page.startScreencast",
+        this.autoplayScreencastParameters(everyNthFrame),
+        { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+      );
+    } catch (error) {
+      const cadenceError =
+        error instanceof Error ? error : new Error(String(error));
+      try {
+        await this.send(
+          "Page.startScreencast",
+          this.autoplayScreencastParameters(previousEveryNthFrame),
+          { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+        );
+        state.everyNthFrame = previousEveryNthFrame;
+        state.routeVisualCaptureTransportStatus = "active";
+        state.routeScreencastRearmStatus = "prior-cadence-recovered";
+      } catch (recoveryError) {
+        state.routeVisualCaptureTransportStatus = "cadence-recovery-failed";
+        throw new Error(
+          `${label}: screencast cadence change failed (${cadenceError.message}) and prior cadence recovery failed (${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}).`,
+          { cause: cadenceError },
+        );
+      }
+      throw new Error(
+        `${label}: screencast cadence change failed and prior cadence was restored: ${cadenceError.message}`,
+        { cause: cadenceError },
+      );
+    }
+    state.everyNthFrame = everyNthFrame;
+    state.routeVisualCaptureTransportStatus = "active";
+    state.routeScreencastRearmStatus = restoring
+      ? "normal-cadence-restored"
+      : "dense-route-capture-active";
+    return true;
+  }
+
+  async rearmAutoplayScreencastForRouteCapture(
+    label = "autoplay-route-screencast-rearm",
+  ) {
+    const state = this.screencast;
+    assert.ok(state?.active, `${label}: autoplay screencast is not active.`);
+    if (
+      state.everyNthFrame === AUTOPLAY_ROUTE_SCREENCAST_EVERY_NTH_FRAME
+    ) {
+      return false;
+    }
+    if (state.routeScreencastRearmPromise) {
+      return state.routeScreencastRearmPromise;
+    }
+    state.routeScreencastRearmAttemptCount += 1;
+    state.routeScreencastRearmError = null;
+    state.routeScreencastRearmPromise = this.setAutoplayScreencastCadence({
+      everyNthFrame: AUTOPLAY_ROUTE_SCREENCAST_EVERY_NTH_FRAME,
+      label,
+    })
+      .catch((error) => {
+        state.routeScreencastRearmError =
+          error instanceof Error ? error.message : String(error);
+        state.routeScreencastRearmStatus =
+          state.routeScreencastRearmStatus === "prior-cadence-recovered"
+            ? "failed-prior-cadence-recovered"
+            : "failed";
+        this.recordCdpTransportEvent("route-screencast-rearm-failed", {
+          error: state.routeScreencastRearmError,
+          label,
+        });
+        throw error;
+      })
+      .finally(() => {
+        state.routeScreencastRearmPromise = null;
+      });
+    return state.routeScreencastRearmPromise;
+  }
+
+  async restoreAutoplayScreencastCadence(
+    label = "autoplay-route-screencast-restore",
+  ) {
+    const state = this.screencast;
+    if (
+      !state?.active ||
+      state.status !== "active" ||
+      state.everyNthFrame === AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME
+    ) {
+      return false;
+    }
+    state.routeScreencastRestoreError = null;
+    try {
+      const restored = await this.setAutoplayScreencastCadence({
+        everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
+        label,
+        restoring: true,
+      });
+      if (restored) {
+        state.routeScreencastRestoreCount += 1;
+      }
+      return restored;
+    } catch (error) {
+      state.routeScreencastRestoreError =
+        error instanceof Error ? error.message : String(error);
+      state.routeScreencastRearmStatus = "restore-failed";
+      this.recordCdpTransportEvent("route-screencast-restore-failed", {
+        error: state.routeScreencastRestoreError,
+        label,
+      });
       throw error;
     }
   }
@@ -3875,14 +4038,12 @@ class CdpSession {
         state.routeVisualCaptureTransportStatus = "resuming";
         await this.send(
           "Page.startScreencast",
-          {
-            everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
-            format: "png",
-            maxHeight: AUTOPLAY_SCREENCAST_MAX_HEIGHT,
-            maxWidth: AUTOPLAY_SCREENCAST_MAX_WIDTH,
-          },
+          this.autoplayScreencastParameters(
+            AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
+          ),
           { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
         );
+        state.everyNthFrame = AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME;
         state.routeVisualCaptureResumeCount += 1;
         state.routeVisualCaptureTransportStatus = "active";
       } else {
@@ -4071,6 +4232,7 @@ class CdpSession {
     beforeProbe,
     expectedTargetLocationId,
     label,
+    timeoutMs = AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS,
   }) {
     if (
       !isAutoplayFootholdRouteFrame(
@@ -4084,11 +4246,19 @@ class CdpSession {
       });
       return null;
     }
+    if (timeoutMs < AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS) {
+      this.recordAutoplayRouteFrameWindowRejection({
+        beforeProbe,
+        reason: "opening-route-frame-budget-exhausted",
+      });
+      return null;
+    }
     const frame = await this.waitForAutoplayScreencastFrame({
       afterSequence,
       minimumCapturedAtEpochMs:
         beforeProbe.capturedAtEpochMs +
         AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      timeoutMs,
     });
     const afterProbe = await this.sampleAutoplayRouteCaptureRecorder(
       `${label}:after-route-sample`,
@@ -4327,42 +4497,6 @@ class CdpSession {
     ) {
       return state?.routeFrameWindowCapturePromise ?? Promise.resolve(null);
     }
-    const firstOpeningSample = state.routeSampleArchive[0] ?? beforeProbe;
-    const observedDirectScreencastRoute = state.routeFrameSampleCount > 0;
-    const directScreencastGraceMs = observedDirectScreencastRoute
-      ? AUTOPLAY_ROUTE_DIRECT_SCREENCAST_GRACE_MS
-      : AUTOPLAY_ROUTE_NO_SCREENCAST_FALLBACK_GRACE_MS;
-    const openingRouteSampleSpanMs = Math.max(
-      0,
-      beforeProbe.capturedAtEpochMs -
-        (firstOpeningSample?.capturedAtEpochMs ?? beforeProbe.capturedAtEpochMs),
-    );
-    if (
-      state.routeFrameWindowArchive.length === 0 &&
-      state.routeFrameArchive.length >= 1
-    ) {
-      state.routeFrameWindowCapturePendingSample = null;
-      state.routeFrameWindowCaptureStatus =
-        state.routeFrameArchive.length >= 2
-          ? "waiting-for-direct-screencast-validation"
-          : "waiting-for-second-direct-screencast-frame";
-      return Promise.resolve(state.routeFrameArchive.length);
-    }
-    if (
-      state.routeFrameWindowArchive.length === 0 &&
-      openingRouteSampleSpanMs < directScreencastGraceMs
-    ) {
-      const pendingSample = state.routeFrameWindowCapturePendingSample;
-      if (
-        !pendingSample ||
-        beforeProbe.capturedAtEpochMs > pendingSample.capturedAtEpochMs
-      ) {
-        state.routeFrameWindowCapturePendingSample = beforeProbe;
-      }
-      state.routeFrameWindowCaptureStatus =
-        "waiting-for-direct-screencast-evidence";
-      return Promise.resolve(state.routeFrameArchive.length);
-    }
     if (
       typeof state.routeFrameWindowLastAttemptedSampleAtEpochMs === "number" &&
       beforeProbe.capturedAtEpochMs <=
@@ -4386,6 +4520,10 @@ class CdpSession {
 
     state.routeFrameWindowCaptureStatus = "capturing-opening-route";
     state.routeFrameWindowCapturePromise = (async () => {
+      await this.rearmAutoplayScreencastForRouteCapture(
+        `${label}:dense-opening-route-stream`,
+      );
+      state.routeFrameWindowCapturePendingSample = null;
       let unavailableSampleCount = 0;
       while (
         state.active &&
@@ -4447,21 +4585,39 @@ class CdpSession {
         state.routeFrameWindowLastAttemptedSampleAtEpochMs =
           sample.capturedAtEpochMs;
         const captureLabel = `${label}:window-${state.routeFrameWindowCaptureAttemptCount}`;
-        const captured = firstWindow
-          ? await this.captureAutoplayScreencastRouteFrameWindow({
-              afterSequence:
-                autoplayRecordedRouteWindowFrame(firstWindow)?.sequence ??
-                this.autoplayScreencastSequence(),
-              beforeProbe: sample,
-              expectedTargetLocationId,
-              label: captureLabel,
-            })
-          : await captureAutoplayProactiveRouteFrameWindow({
-              beforeProbe: sample,
-              expectedTargetLocationId,
-              label: captureLabel,
-              session: this,
-            });
+        const routeDurationMs = Number(sample.route.durationMs);
+        const routeProgress = Number(sample.route.progress);
+        const remainingRouteMs =
+          Number.isFinite(routeDurationMs) && Number.isFinite(routeProgress)
+            ? routeDurationMs * Math.max(0, 1 - routeProgress)
+            : AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS;
+        const frameTimeoutMs = Math.min(
+          AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS,
+          Math.max(
+            0,
+            Math.floor(
+              remainingRouteMs -
+                AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS * 2,
+            ),
+          ),
+        );
+        if (frameTimeoutMs < AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS) {
+          this.recordAutoplayRouteFrameWindowRejection({
+            beforeProbe: sample,
+            reason: "opening-route-frame-budget-exhausted",
+          });
+          state.routeFrameWindowCaptureStatus = "opening-route-ending";
+          break;
+        }
+        const captured = await this.captureAutoplayScreencastRouteFrameWindow({
+          afterSequence:
+            autoplayRecordedRouteWindowFrame(firstWindow)?.sequence ??
+            this.autoplayScreencastSequence(),
+          beforeProbe: sample,
+          expectedTargetLocationId,
+          label: captureLabel,
+          timeoutMs: frameTimeoutMs,
+        });
         if (state.routeRenderedFrameEvidenceAccepted) {
           state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
           break;
@@ -4498,24 +4654,15 @@ class CdpSession {
         });
         return null;
       })
-      .finally(() => {
-        state.routeFrameWindowCapturePromise = null;
-        const pending = state.routeFrameWindowCapturePendingSample;
-        if (
-          state.active &&
-          pending &&
-          !state.routeFrameArchiveFrozen &&
-          !state.routeRenderedFrameEvidenceAccepted &&
-          state.routeFrameWindowArchive.length <
-            AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS &&
-          state.routeFrameWindowCaptureAttemptCount < 4
-        ) {
-          this.scheduleAutoplayRouteVisualWindowCapture({
-            beforeProbe: pending,
-            expectedTargetLocationId,
-            label,
-          });
+      .finally(async () => {
+        try {
+          await this.restoreAutoplayScreencastCadence(
+            `${label}:restore-normal-stream`,
+          );
+        } catch {
+          // The recorded transport diagnostic carries the actionable error.
         }
+        state.routeFrameWindowCapturePromise = null;
       });
     return state.routeFrameWindowCapturePromise;
   }
