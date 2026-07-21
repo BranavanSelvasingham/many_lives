@@ -119,6 +119,9 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
   );
   assert.match(source, /buildAutoplayObservationProgressGaps\(/);
   assert.match(source, /previousProgressSample/);
+  assert.match(source, /exactPlaybackProgressCheckpointsBetween\(/);
+  assert.match(source, /exactPlaybackCheckpoints: playbackCheckpoints/);
+  assert.match(source, /A true 24-second product-visible silence must still fail/);
   assert.match(pacingAssertionSource, /ledger\.maxInAppGapMs/);
   assert.match(
     pacingAssertionSource,

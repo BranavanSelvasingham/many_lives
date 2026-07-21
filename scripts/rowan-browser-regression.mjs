@@ -17327,6 +17327,212 @@ function assertAutoplayProgressGapGuard() {
     "An over-budget app-visible gap must remain a product pacing failure even when observer time is shorter.",
   );
 
+  const latePollingSamples = [
+    {
+      appDocumentOffsetMs: 0,
+      appMonotonicMs: 206_179.4,
+      autonomy: { label: "Return to Morrow House to take stock" },
+      elapsedMs: 206_199,
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 205_050.8,
+            key: "arrived-at-yard",
+            kind: "arrive",
+            startedAtMs: 199_299.3,
+            title: "Arrived at Morrow Yard",
+          },
+        ],
+      },
+    },
+    {
+      appDocumentOffsetMs: 0,
+      appMonotonicMs: 230_304.9,
+      autonomy: { label: "Return to Morrow House to take stock" },
+      elapsedMs: 233_765,
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 209_649.2,
+            key: "arrived-at-yard",
+            kind: "arrive",
+            startedAtMs: 199_299.3,
+            title: "Arrived at Morrow Yard",
+          },
+          {
+            completedAtMs: 219_965.4,
+            key: "time-passed-after-pump",
+            kind: "time_passed",
+            startedAtMs: 213_052.3,
+            title: "Time passed",
+          },
+        ],
+      },
+    },
+  ];
+  const latePollingGaps = buildAutoplayObservationProgressGaps(
+    latePollingSamples,
+    [
+      {
+        progressKinds: classifyAutoplayObservationProgress(
+          latePollingSamples[0],
+          latePollingSamples[1],
+        ),
+        toElapsedMs: latePollingSamples[1].elapsedMs,
+      },
+    ],
+  );
+  assert.equal(
+    latePollingGaps[0].appDurationMs,
+    10_339.5,
+    "Exact playback transitions must split a late polling interval into its true product-visible gaps.",
+  );
+  assert.equal(
+    latePollingGaps[0].sampledAppDurationMs,
+    24_125.5,
+    "Pacing diagnostics must preserve the raw delayed polling interval.",
+  );
+  assert.deepEqual(
+    latePollingGaps[0].exactPlaybackCheckpoints.map(({ key, phase }) => ({
+      key,
+      phase,
+    })),
+    [
+      { key: "time-passed-after-pump", phase: "started" },
+      { key: "time-passed-after-pump", phase: "completed" },
+    ],
+    "The pacing ledger must expose exact transitions while deduplicating one playback instance by its original start.",
+  );
+  assert.ok(
+    latePollingGaps[0].appDurationMs <=
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "Observer latency must not fail a run that kept presenting exact playback progress.",
+  );
+
+  const trulySilentGap = buildAutoplayObservationProgressGaps(
+    [
+      { appMonotonicMs: 0, autonomy: { label: "Wait" }, elapsedMs: 0 },
+      {
+        appMonotonicMs: 24_125.5,
+        autonomy: { label: "Move" },
+        elapsedMs: 24_125.5,
+      },
+    ],
+    [
+      {
+        progressKinds: ["route-progress"],
+        toElapsedMs: 24_125.5,
+      },
+    ],
+  );
+  assert.ok(
+    trulySilentGap[0].appDurationMs > AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "A true 24-second product-visible silence must still fail the pacing gate.",
+  );
+
+  const sparseCheckpointGap = buildAutoplayObservationProgressGaps(
+    [
+      { appMonotonicMs: 0, autonomy: { label: "Wait" }, elapsedMs: 0 },
+      {
+        appMonotonicMs: 24_125.5,
+        autonomy: { label: "Move" },
+        elapsedMs: 24_125.5,
+        playback: {
+          completedTimings: [
+            {
+              completedAtMs: 2_000,
+              key: "early-card",
+              kind: "action_start",
+              startedAtMs: 1_000,
+              title: "Early update",
+            },
+          ],
+        },
+      },
+    ],
+    [
+      {
+        progressKinds: ["route-progress"],
+        toElapsedMs: 24_125.5,
+      },
+    ],
+  );
+  assert.ok(
+    sparseCheckpointGap[0].appDurationMs >
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "One early playback checkpoint must not excuse a later 22-second silence.",
+  );
+
+  const longStaticCardGap = buildAutoplayObservationProgressGaps(
+    [
+      { appMonotonicMs: 0, autonomy: { label: "Wait" }, elapsedMs: 0 },
+      {
+        appMonotonicMs: 24_000,
+        autonomy: { label: "Move" },
+        elapsedMs: 24_000,
+        playback: {
+          completedTimings: [
+            {
+              completedAtMs: 20_000,
+              key: "long-static-card",
+              kind: "action_start",
+              startedAtMs: 1_000,
+              title: "Still waiting",
+            },
+          ],
+        },
+      },
+    ],
+    [{ progressKinds: ["route-progress"], toElapsedMs: 24_000 }],
+  );
+  assert.ok(
+    longStaticCardGap[0].appDurationMs >
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "A playback card left static for 19 seconds must still fail the pacing gate.",
+  );
+
+  const pageResetGap = buildAutoplayObservationProgressGaps(
+    [
+      {
+        appDocumentOffsetMs: 0,
+        appMonotonicMs: 12_000,
+        autonomy: { label: "Before reload" },
+        elapsedMs: 12_000,
+        playback: {
+          completedTimings: [
+            {
+              completedAtMs: 11_000,
+              key: "old-document-card",
+              kind: "action_start",
+              startedAtMs: 10_000,
+              title: "Old document",
+            },
+          ],
+        },
+      },
+      {
+        appDocumentOffsetMs: 30_000,
+        appMonotonicMs: 31_000,
+        autonomy: { label: "After reload" },
+        elapsedMs: 31_000,
+      },
+      {
+        appDocumentOffsetMs: 30_000,
+        appMonotonicMs: 55_000,
+        autonomy: { label: "Move" },
+        elapsedMs: 55_000,
+      },
+    ],
+    [
+      { progressKinds: ["route-progress"], toElapsedMs: 31_000 },
+      { progressKinds: ["route-progress"], toElapsedMs: 55_000 },
+    ],
+  );
+  assert.ok(
+    pageResetGap[1].appDurationMs > AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "An old-document playback timer must not split a true gap after a page reset.",
+  );
+
   const gradualRouteSamples = [
     {
       appMonotonicMs: 0,
@@ -18294,6 +18500,11 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
   for (let index = 0; index < transitions.length; index += 1) {
     const transition = transitions[index];
     const nextSample = samples[index + 1];
+    const playbackCheckpoints = exactPlaybackProgressCheckpointsBetween(
+      samples,
+      previousProgressSample.appMonotonicMs,
+      nextSample?.appMonotonicMs,
+    );
     const progressKinds = [
       ...new Set([
         ...transition.progressKinds,
@@ -18301,18 +18512,32 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
           previousProgressSample,
           nextSample,
         ),
+        ...(playbackCheckpoints.length ? ["playback-progress"] : []),
       ]),
     ];
     if (!progressKinds.some((kind) => kind !== "decision-artifact")) {
       continue;
     }
 
-    const appDurationMs =
+    const sampledAppDurationMs =
       typeof previousProgressSample.appMonotonicMs === "number" &&
       typeof nextSample?.appMonotonicMs === "number"
         ? Math.max(
             0,
             nextSample.appMonotonicMs - previousProgressSample.appMonotonicMs,
+          )
+        : null;
+    const appProgressTimes = [
+      previousProgressSample.appMonotonicMs,
+      ...playbackCheckpoints.map((checkpoint) => checkpoint.appMonotonicMs),
+      nextSample?.appMonotonicMs,
+    ].filter((value) => typeof value === "number");
+    const appDurationMs =
+      appProgressTimes.length >= 2
+        ? Math.max(
+            ...appProgressTimes.slice(1).map((value, progressIndex) =>
+              Math.max(0, value - appProgressTimes[progressIndex]),
+            ),
           )
         : null;
     gaps.push({
@@ -18322,9 +18547,11 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
         (nextSample?.elapsedMs ?? transition.toElapsedMs) -
           previousProgressSample.elapsedMs,
       ),
+      exactPlaybackCheckpoints: playbackCheckpoints,
       fromAutonomyLabel: previousProgressSample.autonomy?.label ?? null,
       fromElapsedMs: previousProgressSample.elapsedMs,
       progressKinds,
+      sampledAppDurationMs,
       toAutonomyLabel: nextSample?.autonomy?.label ?? null,
       toElapsedMs: nextSample?.elapsedMs ?? transition.toElapsedMs,
     });
@@ -18332,6 +18559,79 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
   }
 
   return gaps;
+}
+
+function exactPlaybackProgressCheckpointsBetween(
+  samples,
+  afterAppMonotonicMs,
+  beforeAppMonotonicMs,
+) {
+  if (
+    typeof afterAppMonotonicMs !== "number" ||
+    typeof beforeAppMonotonicMs !== "number" ||
+    beforeAppMonotonicMs <= afterAppMonotonicMs
+  ) {
+    return [];
+  }
+
+  const completedInstances = new Map();
+  for (const sample of samples ?? []) {
+    const documentOffsetMs = sample.appDocumentOffsetMs ?? 0;
+    for (const completedTiming of sample.playback?.completedTimings ?? []) {
+      if (
+        !completedTiming?.key ||
+        typeof completedTiming.startedAtMs !== "number" ||
+        typeof completedTiming.completedAtMs !== "number" ||
+        completedTiming.completedAtMs < completedTiming.startedAtMs
+      ) {
+        continue;
+      }
+
+      const instanceIdentity = [
+        documentOffsetMs,
+        completedTiming.key,
+        completedTiming.startedAtMs,
+      ].join(":");
+      const existing = completedInstances.get(instanceIdentity);
+      if (
+        !existing ||
+        completedTiming.completedAtMs < existing.completedAtMs
+      ) {
+        completedInstances.set(instanceIdentity, {
+          ...completedTiming,
+          documentOffsetMs,
+        });
+      }
+    }
+  }
+
+  const checkpoints = [];
+  for (const completedTiming of completedInstances.values()) {
+    for (const [phase, rawAppMonotonicMs] of [
+      ["started", completedTiming.startedAtMs],
+      ["completed", completedTiming.completedAtMs],
+    ]) {
+      const appMonotonicMs =
+        completedTiming.documentOffsetMs + rawAppMonotonicMs;
+      if (
+        appMonotonicMs <= afterAppMonotonicMs ||
+        appMonotonicMs >= beforeAppMonotonicMs
+      ) {
+        continue;
+      }
+      checkpoints.push({
+        appMonotonicMs,
+        key: completedTiming.key,
+        kind: completedTiming.kind ?? null,
+        phase,
+        title: completedTiming.title ?? null,
+      });
+    }
+  }
+
+  return checkpoints.sort(
+    (left, right) => left.appMonotonicMs - right.appMonotonicMs,
+  );
 }
 
 function viableFirstAfternoonApproaches(sample) {
@@ -18465,6 +18765,9 @@ function classifyAutoplayObservationProgress(previous, next) {
   const progressKinds = [];
   const previousRouteProgress = previous.movement?.routeProgress ?? null;
   const nextRouteProgress = next.movement?.routeProgress ?? null;
+  const previousCompletedPlayback =
+    previous.playback?.completedTimings?.at(-1) ?? null;
+  const nextCompletedPlayback = next.playback?.completedTimings?.at(-1) ?? null;
   if (
     (previous.autonomy?.label ?? null) !== (next.autonomy?.label ?? null) ||
     ((!previous.activity?.busyLabel ||
@@ -18485,7 +18788,10 @@ function classifyAutoplayObservationProgress(previous, next) {
   if (
     previous.playback?.activeKey !== next.playback?.activeKey ||
     previous.playback?.activeTitle !== next.playback?.activeTitle ||
-    previous.playback?.justHappened !== next.playback?.justHappened
+    previous.playback?.justHappened !== next.playback?.justHappened ||
+    previousCompletedPlayback?.key !== nextCompletedPlayback?.key ||
+    previousCompletedPlayback?.completedAtMs !==
+      nextCompletedPlayback?.completedAtMs
   ) {
     progressKinds.push("playback-progress");
   }
