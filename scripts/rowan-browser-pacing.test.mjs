@@ -286,7 +286,6 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "assert",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
-    "AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
     "screencastFrameCapturedAtEpochMs",
@@ -298,7 +297,6 @@ test("proactive route history survives a delayed observer and rejects unproven w
     assert,
     0.1,
     2_000,
-    3_000,
     0.02,
     125,
     framePolicy.screencastFrameCapturedAtEpochMs,
@@ -1240,10 +1238,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
   const routeSegmentsPolicy = Function(
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
-    "AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments };`,
-  )(2_000, 3_000, 0.02);
+  )(2_000, 0.02);
   const screencastFrameCapturedAtEpochMs = (frame) =>
     typeof frame?.metadata?.timestamp === "number"
       ? frame.metadata.timestamp * 1_000
@@ -1271,7 +1268,6 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "assert",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
-    "AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
     "screencastFrameCapturedAtEpochMs",
@@ -1283,7 +1279,6 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     assert,
     0.1,
     2_000,
-    3_000,
     0.02,
     125,
     screencastFrameCapturedAtEpochMs,
@@ -1768,6 +1763,250 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   assert.ok(sparseSession.screencast.routeSampleArchive.length <= 16);
   assert.ok(sparseSession.screencast.routeRecorderRestarts.length <= 4);
   await sparseSession.stopAutoplayScreencast();
+    },
+  );
+
+  await t.test(
+    "bounded same-identity sparse cadence preserves opening rendered frames",
+    async () => {
+      const cadenceSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/sparse-cadence",
+        url: "http://127.0.0.1/",
+      });
+      cadenceSession.socket = { destroyed: false, writable: true };
+      cadenceSession.send = async () => ({});
+      await cadenceSession.startAutoplayScreencast();
+      const startedAt = cadenceSession.screencast.startedAtEpochMs;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const routeDurationMs = 5_040;
+      const sample = (
+        progress,
+        offsetMs,
+        {
+          generation = 2,
+          acceptedPaintProbe = paintProbe,
+          previousTickOffsetMs = null,
+          rejectedCount = 0,
+          routeOverrides = {},
+          tickCount,
+          unavailableCount = 0,
+        },
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: acceptedPaintProbe,
+        recorderGeneration: generation,
+        recorderParseErrorCount: 0,
+        recorderPreviousTickAtEpochMs:
+          previousTickOffsetMs === null
+            ? null
+            : startedAt + previousTickOffsetMs,
+        recorderRejectedCount: rejectedCount,
+        recorderTickCount: tickCount,
+        recorderUnavailableCount: unavailableCount,
+        route: {
+          active: true,
+          durationMs: routeDurationMs,
+          legal: true,
+          progress,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          spaceId: "street:south-quay",
+          target: { x: 17, y: 9 },
+          targetLocationId: "tea-house",
+          tilePath: [
+            { x: 3, y: 9 },
+            { x: 17, y: 9 },
+          ],
+          visualObstaclesClear: true,
+          worldPath: [
+            { x: 331, y: 688 },
+            { x: 1_338, y: 656 },
+          ],
+          ...routeOverrides,
+        },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.003, 0, { tickCount: 1 }),
+        sample(0.27, 1_627, {
+          previousTickOffsetMs: 0,
+          tickCount: 2,
+        }),
+        sample(0.594, 4_542, {
+          previousTickOffsetMs: 1_627,
+          tickCount: 3,
+        }),
+        sample(0.75, 5_200, {
+          previousTickOffsetMs: 4_542,
+          tickCount: 4,
+        }),
+      ];
+      const continuousSegments =
+        routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId: "tea-house",
+          samples: openingSamples,
+        });
+      assert.equal(continuousSegments.length, 1);
+      assert.equal(continuousSegments[0].samples.length, 4);
+      assert.equal(continuousSegments[0].stalledRecorderGapCount, 1);
+
+      const excessiveSparseOffsetMs =
+        1_627 +
+        Math.ceil(
+          (1 - 0.27) * routeDurationMs +
+            Math.max(250, routeDurationMs * 0.03),
+        ) +
+        1;
+      const boundaryFor = (candidate) =>
+        routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId: "tea-house",
+          samples: openingSamples.slice(0, 2).concat(candidate),
+        })[1]?.boundaryReasons ?? [];
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.594, 4_542, {
+            previousTickOffsetMs: 1_627,
+            routeOverrides: {
+              worldPath: [
+                { x: 331, y: 688 },
+                { x: 1_400, y: 700 },
+              ],
+            },
+            tickCount: 3,
+          }),
+        ),
+        ["sample-gap", "path-change"],
+      );
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.1, 4_542, {
+            previousTickOffsetMs: 1_627,
+            tickCount: 3,
+          }),
+        ),
+        ["sample-gap", "progress-reset"],
+      );
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.594, excessiveSparseOffsetMs, {
+            previousTickOffsetMs: 1_627,
+            tickCount: 3,
+          }),
+        ),
+        ["sample-gap"],
+        "A gap beyond remaining route duration plus timing tolerance must split.",
+      );
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.594, 4_542, {
+            generation: 3,
+            previousTickOffsetMs: 1_627,
+            tickCount: 3,
+          }),
+        ),
+        ["sample-gap"],
+      );
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.594, 4_542, {
+            acceptedPaintProbe: {
+              regions: [],
+              stableRegions: [],
+              viewport: paintProbe.viewport,
+            },
+            previousTickOffsetMs: 1_627,
+            tickCount: 3,
+          }),
+        ),
+        ["sample-gap"],
+      );
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.594, 4_542, {
+            previousTickOffsetMs: 3_000,
+            rejectedCount: 1,
+            tickCount: 4,
+          }),
+        ),
+        ["sample-gap"],
+      );
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.594, 4_542, {
+            previousTickOffsetMs: 3_000,
+            tickCount: 4,
+            unavailableCount: 1,
+          }),
+        ),
+        ["sample-gap"],
+      );
+      assert.deepEqual(
+        boundaryFor(
+          sample(0.95, 4_542, {
+            previousTickOffsetMs: 1_627,
+            tickCount: 3,
+          }),
+        ),
+        ["sample-gap"],
+        "Route progress that outruns elapsed time must not bridge a sparse gap.",
+      );
+
+      const frame = (sequence, offsetMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: { timestamp: (startedAt + offsetMs) / 1_000 },
+        sequence,
+      });
+      cadenceSession.screencast.routeFrameSampleCount = 1;
+      cadenceSession.screencast.routeFrameHistory.push(
+        frame(1, 800, "sparse-opening-position-a"),
+        frame(2, 4_800, "sparse-opening-position-b"),
+      );
+      cadenceSession.archiveAutoplayRouteFrames({
+        acceptedCount: openingSamples.length,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: openingSamples,
+      });
+      assert.equal(cadenceSession.screencast.routeFrameArchiveFrozen, false);
+      assert.equal(cadenceSession.screencast.routeFrameArchive.length, 2);
+      assert.equal(cadenceSession.screencast.routeSampleArchive.length, 4);
+      assert.equal(
+        cadenceSession.screencast.routeFrameOpeningSegment.stalledRecorderGapCount,
+        1,
+      );
+
+      const trajectory =
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+          expectedTargetLocationId: "tea-house",
+          frames: cadenceSession.autoplayRouteFrameHistory(),
+          label: "bounded sparse-cadence opening route",
+          recordedWindows: cadenceSession.autoplayRouteFrameWindows(),
+          samples: cadenceSession.autoplayRouteCaptureSamples(),
+          validateFrame: ({ frame: renderedFrame, paintProbe: acceptedPaintProbe }) => ({
+            buffer: Buffer.from(renderedFrame.data, "base64"),
+            height: 625,
+            paintProbe: acceptedPaintProbe,
+            textPaint: {},
+            width: 1365,
+          }),
+          validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+        });
+      assert.equal(trajectory.start.frame.sequence, 1);
+      assert.equal(trajectory.mid.frame.sequence, 2);
+      assert.equal(trajectory.start.afterProbe.route.progress, 0.27);
+      assert.equal(trajectory.mid.beforeProbe.route.progress, 0.594);
+      assert.equal(
+        cadenceSession.acceptAutoplayRouteRenderedFrameTrajectory(trajectory),
+        true,
+      );
+      await cadenceSession.stopAutoplayScreencast();
     },
   );
 

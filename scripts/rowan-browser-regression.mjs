@@ -101,7 +101,6 @@ const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
 const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
-const AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS = 3_000;
 const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
 const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
@@ -13552,6 +13551,17 @@ function autoplayRouteSamplesShowStalledRecorderContinuity(
   const durationMs = sample.route?.durationMs;
   const progressElapsedMs =
     (sample.route?.progress - previous.route?.progress) * durationMs;
+  const routeTimingToleranceMs =
+    typeof durationMs === "number" && Number.isFinite(durationMs)
+      ? Math.max(250, durationMs * 0.03)
+      : null;
+  const maximumContinuousGapMs =
+    routeTimingToleranceMs === null
+      ? null
+      : Math.max(
+          AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS,
+          (1 - previous.route.progress) * durationMs + routeTimingToleranceMs,
+        );
   const counterNames = [
     "recorderParseErrorCount",
     "recorderRejectedCount",
@@ -13559,12 +13569,12 @@ function autoplayRouteSamplesShowStalledRecorderContinuity(
   ];
   return Boolean(
     gapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
-      gapMs <= AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS &&
+      maximumContinuousGapMs !== null &&
+      gapMs <= maximumContinuousGapMs &&
       typeof monotonicGapMs === "number" &&
       Number.isFinite(monotonicGapMs) &&
       monotonicGapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
-      monotonicGapMs <=
-        AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS &&
+      monotonicGapMs <= maximumContinuousGapMs &&
       Math.abs(gapMs - monotonicGapMs) <= 250 &&
       Number.isInteger(previous.recorderGeneration) &&
       sample.recorderGeneration === previous.recorderGeneration &&
@@ -13580,8 +13590,8 @@ function autoplayRouteSamplesShowStalledRecorderContinuity(
       durationMs > 0 &&
       durationMs === previous.route?.durationMs &&
       progressElapsedMs > 0 &&
-      Math.abs(monotonicGapMs - progressElapsedMs) <=
-        Math.max(250, durationMs * 0.03)
+      progressElapsedMs <=
+        Math.min(gapMs, monotonicGapMs) + routeTimingToleranceMs
   );
 }
 
@@ -13630,6 +13640,8 @@ function buildAutoplayRouteCaptureSegments({
       previous &&
         !pathChanged &&
         !hudChanged &&
+        previousHudSignature !== null &&
+        hudSignature === previousHudSignature &&
         !progressReset &&
         autoplayRouteSamplesShowStalledRecorderContinuity(previous, sample),
     );
