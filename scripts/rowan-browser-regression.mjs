@@ -101,6 +101,7 @@ const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
 const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
+const AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS = 3_000;
 const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
 const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
@@ -3064,6 +3065,7 @@ class CdpSession {
         expectedTargetLocationId,
         generation,
         intervalId: null,
+        lastTickAtEpochMs: null,
         lastObservedRoute: null,
         parseErrorCount: 0,
         rejectedCount: 0,
@@ -3071,6 +3073,7 @@ class CdpSession {
         samples: [],
         startedAtEpochMs: Date.now(),
         status: "active",
+        tickCount: 0,
         unavailableCount: 0
       };
       const readPaintProbe = () => {
@@ -3191,6 +3194,9 @@ class CdpSession {
       const sample = () => {
         const capturedAtEpochMs = Date.now();
         const capturedAtMonotonicMs = performance.now();
+        const recorderPreviousTickAtEpochMs = state.lastTickAtEpochMs;
+        state.lastTickAtEpochMs = capturedAtEpochMs;
+        state.tickCount += 1;
         const script = document.querySelector("#ml-browser-movement-probe");
         if (!script) {
           state.unavailableCount += 1;
@@ -3231,6 +3237,11 @@ class CdpSession {
           capturedAtMonotonicMs,
           paintProbe: readPaintProbe(),
           recorderGeneration: generation,
+          recorderParseErrorCount: state.parseErrorCount,
+          recorderPreviousTickAtEpochMs,
+          recorderRejectedCount: state.rejectedCount,
+          recorderTickCount: state.tickCount,
+          recorderUnavailableCount: state.unavailableCount,
           route,
           source: "movement-probe-recorder"
         });
@@ -3281,6 +3292,7 @@ class CdpSession {
         acceptedCount: state.acceptedCount,
         expectedTargetLocationId: state.expectedTargetLocationId,
         generation: state.generation,
+        lastTickAtEpochMs: state.lastTickAtEpochMs,
         lastObservedRoute: state.lastObservedRoute,
         parseErrorCount: state.parseErrorCount,
         rejectedCount: state.rejectedCount,
@@ -3288,6 +3300,7 @@ class CdpSession {
         samples: state.samples,
         startedAtEpochMs: state.startedAtEpochMs,
         status: state.status,
+        tickCount: state.tickCount,
         unavailableCount: state.unavailableCount
       };
     })()`, label);
@@ -3423,6 +3436,7 @@ class CdpSession {
         acceptedCount: state.acceptedCount,
         expectedTargetLocationId: state.expectedTargetLocationId,
         generation: state.generation,
+        lastTickAtEpochMs: state.lastTickAtEpochMs,
         lastObservedRoute: state.lastObservedRoute,
         parseErrorCount: state.parseErrorCount,
         rejectedCount: state.rejectedCount,
@@ -3430,6 +3444,7 @@ class CdpSession {
         sampleCount: state.samples.length,
         startedAtEpochMs: state.startedAtEpochMs,
         status: state.status,
+        tickCount: state.tickCount,
         unavailableCount: state.unavailableCount
       };
     })()`, label);
@@ -13228,17 +13243,61 @@ function autoplayRouteSampleHudSignature(sample) {
 
 function autoplayRouteSamplePathSignature(sample) {
   const route = sample?.route;
-  const tilePathLength = Array.isArray(route?.tilePath)
-    ? route.tilePath.length
-    : (route?.tilePathLength ?? null);
-  const worldPathLength = Array.isArray(route?.worldPath)
-    ? route.worldPath.length
-    : (route?.worldPathLength ?? null);
   return JSON.stringify({
+    durationMs: route?.durationMs ?? null,
+    spaceId: route?.spaceId ?? null,
+    target: route?.target ?? null,
     targetLocationId: route?.targetLocationId ?? null,
-    tilePathLength,
-    worldPathLength,
+    tilePath: Array.isArray(route?.tilePath)
+      ? route.tilePath
+      : { length: route?.tilePathLength ?? null },
+    worldPath: Array.isArray(route?.worldPath)
+      ? route.worldPath
+      : { length: route?.worldPathLength ?? null },
   });
+}
+
+function autoplayRouteSamplesShowStalledRecorderContinuity(
+  previous,
+  sample,
+) {
+  const gapMs = sample.capturedAtEpochMs - previous.capturedAtEpochMs;
+  const monotonicGapMs =
+    sample.capturedAtMonotonicMs - previous.capturedAtMonotonicMs;
+  const durationMs = sample.route?.durationMs;
+  const progressElapsedMs =
+    (sample.route?.progress - previous.route?.progress) * durationMs;
+  const counterNames = [
+    "recorderParseErrorCount",
+    "recorderRejectedCount",
+    "recorderUnavailableCount",
+  ];
+  return Boolean(
+    gapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
+      gapMs <= AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS &&
+      typeof monotonicGapMs === "number" &&
+      Number.isFinite(monotonicGapMs) &&
+      monotonicGapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
+      monotonicGapMs <=
+        AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS &&
+      Math.abs(gapMs - monotonicGapMs) <= 250 &&
+      Number.isInteger(previous.recorderGeneration) &&
+      sample.recorderGeneration === previous.recorderGeneration &&
+      Number.isInteger(previous.recorderTickCount) &&
+      sample.recorderTickCount === previous.recorderTickCount + 1 &&
+      sample.recorderPreviousTickAtEpochMs === previous.capturedAtEpochMs &&
+      counterNames.every(
+        (name) =>
+          Number.isInteger(previous[name]) && sample[name] === previous[name],
+      ) &&
+      typeof durationMs === "number" &&
+      Number.isFinite(durationMs) &&
+      durationMs > 0 &&
+      durationMs === previous.route?.durationMs &&
+      progressElapsedMs > 0 &&
+      Math.abs(monotonicGapMs - progressElapsedMs) <=
+        Math.max(250, durationMs * 0.03)
+  );
 }
 
 function buildAutoplayRouteCaptureSegments({
@@ -13282,8 +13341,18 @@ function buildAutoplayRouteCaptureSegments({
         hudSignature &&
         hudSignature !== previousHudSignature,
     );
+    const stalledRecorderContinuity = Boolean(
+      previous &&
+        !pathChanged &&
+        !hudChanged &&
+        !progressReset &&
+        autoplayRouteSamplesShowStalledRecorderContinuity(previous, sample),
+    );
     const boundaryReasons = [
-      gapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS ? "sample-gap" : null,
+      gapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
+      !stalledRecorderContinuity
+        ? "sample-gap"
+        : null,
       progressReset ? "progress-reset" : null,
       pathChanged ? "path-change" : null,
       hudChanged ? "hud-change" : null,
@@ -13295,10 +13364,14 @@ function buildAutoplayRouteCaptureSegments({
         hudSignature,
         pathSignature: autoplayRouteSamplePathSignature(sample),
         samples: [sample],
+        stalledRecorderGapCount: 0,
       });
       continue;
     }
     current.samples.push(sample);
+    if (stalledRecorderContinuity) {
+      current.stalledRecorderGapCount += 1;
+    }
   }
 
   return segments;
@@ -13322,6 +13395,7 @@ function compactAutoplayRouteCaptureSegments(segments) {
       ),
     ],
     sampleCount: segment.samples.length,
+    stalledRecorderGapCount: segment.stalledRecorderGapCount ?? 0,
   }));
 }
 

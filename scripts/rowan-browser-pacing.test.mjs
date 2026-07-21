@@ -286,6 +286,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "assert",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
+    "AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
     "screencastFrameCapturedAtEpochMs",
@@ -297,6 +298,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     assert,
     0.1,
     2_000,
+    3_000,
     0.02,
     125,
     framePolicy.screencastFrameCapturedAtEpochMs,
@@ -1237,9 +1239,10 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
   const routeSegmentsPolicy = Function(
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
+    "AUTOPLAY_ROUTE_SEGMENT_MAX_STALLED_RECORDER_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments };`,
-  )(2_000, 0.02);
+  )(2_000, 3_000, 0.02);
   let proactiveRouteCaptureFixture = async () => null;
   const classStart = source.indexOf("class CdpSession {");
   const classEnd = source.indexOf(
@@ -1500,18 +1503,35 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   sparseSession.send = async () => ({});
   await sparseSession.startAutoplayScreencast();
   const sparseStartedAt = sparseSession.screencast.startedAtEpochMs;
-  const sparsePaintProbe = {
-    regions: [{ surface: "hud", text: "DAY 1 11:05" }],
-    stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
-    viewport: { height: 625, width: 1365 },
-  };
-  const sparseSample = (progress, offsetMs, recorderGeneration = 2) => ({
+  const sparseSample = (
+    progress,
+    offsetMs,
+    recorderGeneration = 2,
+    {
+      hud = "DAY 1 11:05",
+      previousTickOffsetMs = null,
+      tickCount = Math.max(1, Math.round(offsetMs / 50)),
+    } = {},
+  ) => ({
     capturedAtEpochMs: sparseStartedAt + offsetMs,
     capturedAtMonotonicMs: offsetMs,
-    paintProbe: sparsePaintProbe,
+    paintProbe: {
+      regions: [{ surface: "hud", text: hud }],
+      stableRegions: [{ surface: "hud", text: hud }],
+      viewport: { height: 625, width: 1365 },
+    },
     recorderGeneration,
+    recorderParseErrorCount: 0,
+    recorderPreviousTickAtEpochMs:
+      previousTickOffsetMs === null
+        ? null
+        : sparseStartedAt + previousTickOffsetMs,
+    recorderRejectedCount: 0,
+    recorderTickCount: tickCount,
+    recorderUnavailableCount: 0,
     route: {
       active: true,
+      durationMs: 5_000,
       legal: true,
       progress,
       reachesDestination: true,
@@ -1524,9 +1544,17 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     source: "movement-probe-recorder",
   });
   const sparsePeriodicSamples = [
-    sparseSample(0.004, 0, 1),
-    sparseSample(0.25, 850),
-    sparseSample(0.597, 1_700),
+    sparseSample(0.004, 0, 1, { tickCount: 1 }),
+    sparseSample(0.01, 100, 2, { tickCount: 1 }),
+    sparseSample(0.482, 2_471, 2, {
+      previousTickOffsetMs: 100,
+      tickCount: 2,
+    }),
+    sparseSample(0.764, 3_881, 2, {
+      hud: "DAY 1 11:23",
+      previousTickOffsetMs: 3_661,
+      tickCount: 5,
+    }),
   ];
   sparseSession.screencast.routeRecorderExpectedTargetLocationId =
     "tea-house";
@@ -1581,25 +1609,56 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     1,
     "The sparse CI fixture must begin with only one passive screencast frame.",
   );
-  const startBefore = sparseSample(0.01, 100);
-  const startAfter = sparseSample(0.08, 450);
-  const midBefore = sparseSample(0.25, 850);
-  const midAfter = sparseSample(0.38, 1_200);
+  const startBefore = sparsePeriodicSamples[1];
+  const startAfter = sparsePeriodicSamples[2];
+  const midBefore = sparseSample(0.6, 3_061, 2, {
+    previousTickOffsetMs: 2_471,
+    tickCount: 3,
+  });
+  const midAfter = sparseSample(0.72, 3_661, 2, {
+    previousTickOffsetMs: 3_061,
+    tickCount: 4,
+  });
   const recorderWithDirectBoundaries = {
-    acceptedCount: 6,
+    acceptedCount: 5,
     expectedTargetLocationId: "tea-house",
     generation: 2,
     restartReason: "execution-context-recorder-missing",
     samples: [
       ...sparsePeriodicSamples.slice(1),
-      startBefore,
-      startAfter,
       midBefore,
       midAfter,
     ].sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs),
   };
   rearmedRecorder = recorderWithDirectBoundaries;
   sparseSession.archiveAutoplayRouteFrames(recorderWithDirectBoundaries);
+  assert.equal(
+    sparseSession.screencast.routeFrameOpeningSegment.stalledRecorderGapCount,
+    1,
+    "A 2.371s gap may remain in the opening segment only when adjacent recorder ticks and route timing prove renderer starvation.",
+  );
+  const unprovenSparseGapSegments =
+    routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId: "tea-house",
+      samples: [
+        startBefore,
+        {
+          ...startAfter,
+          recorderRejectedCount: 1,
+        },
+      ],
+    });
+  assert.equal(unprovenSparseGapSegments.length, 2);
+  assert.deepEqual(unprovenSparseGapSegments[1].boundaryReasons, [
+    "sample-gap",
+  ]);
+  assert.equal(sparseSession.screencast.routeFrameObservedSegmentCount, 2);
+  assert.equal(sparseSession.screencast.routeFrameArchiveFrozen, true);
+  assert.equal(
+    sparseSession.screencast.routeFrameOpeningSegment.lastProgress,
+    0.72,
+    "The HUD-changed sample must end, not extend, the original opening segment.",
+  );
   assert.deepEqual(
     sparseSession.screencast.routeFrameOpeningSegment.recorderGenerations,
     [1, 2],
@@ -1617,20 +1676,20 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const sparseStartWindow = {
     afterProbe: startAfter,
     beforeProbe: startBefore,
-    candidateFrame: proactiveFrame(1_001, 225, "start-candidate-pixels"),
+    candidateFrame: proactiveFrame(1_001, 1_100, "start-candidate-pixels"),
     confirmationFrame: proactiveFrame(
       1_002,
-      350,
+      1_225,
       "start-confirmation-pixels",
     ),
   };
   const sparseMidWindow = {
     afterProbe: midAfter,
     beforeProbe: midBefore,
-    candidateFrame: proactiveFrame(1_003, 975, "mid-candidate-pixels"),
+    candidateFrame: proactiveFrame(1_003, 3_200, "mid-candidate-pixels"),
     confirmationFrame: proactiveFrame(
       1_004,
-      1_100,
+      3_325,
       "mid-confirmation-pixels",
     ),
   };
@@ -1657,11 +1716,11 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
   assert.equal(
     sparseSession.autoplayRouteFrameWindows()[0].afterProbe.route.progress,
-    0.08,
+    0.482,
   );
   assert.equal(
     sparseSession.autoplayRouteFrameWindows()[1].beforeProbe.route.progress,
-    0.25,
+    0.6,
   );
   assert.notEqual(
     sparseSession.autoplayRouteFrameWindows()[0].confirmationFrame.data,
