@@ -1470,6 +1470,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "compactAutoplayRouteCaptureSegments",
     "compactAutoplayRouteFrameWindowProbe",
     "CDP_WAIT_TIMEOUT_MS",
+    "isAutoplayFootholdRouteFrame",
     "screencastFrameIsBracketedByEpochProbes",
     "screencastFrameCapturedAtEpochMs",
     "sleep",
@@ -1512,6 +1513,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
     routeSegmentsPolicy.compactAutoplayRouteFrameWindowProbe,
     20,
+    routeSegmentsPolicy.isAutoplayFootholdRouteFrame,
     screencastFrameIsBracketedByEpochProbes,
     screencastFrameCapturedAtEpochMs,
     (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -2285,43 +2287,65 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         session,
       }) => {
         const captureIndex = proactiveCaptureCount;
+        assert.equal(captureIndex, 0);
         proactiveCaptureCount += 1;
-        if (captureIndex === 0) {
-          markFirstCaptureStarted();
-          await firstCaptureHeld;
-        }
-        const afterProbe =
-          captureIndex === 0 ? openingSamples[2] : openingSamples[4];
-        const baseSequence = 1_001 + captureIndex * 2;
-        const candidateCapturedAtEpochMs =
-          beforeProbe.capturedAtEpochMs + 20;
+        markFirstCaptureStarted();
+        await firstCaptureHeld;
+        const afterProbe = openingSamples[2];
         const recordedWindow = {
           afterProbe,
           beforeProbe,
-          candidateFrame: proactiveFrame(
-            baseSequence,
-            candidateCapturedAtEpochMs,
-            `candidate-${captureIndex}`,
-          ),
-          confirmationFrame: proactiveFrame(
-            baseSequence + 1,
-            candidateCapturedAtEpochMs + 125,
-            `confirmation-${captureIndex}`,
+          frame: proactiveFrame(
+            1_001,
+            beforeProbe.capturedAtEpochMs + 125,
+            "proactive-position",
           ),
         };
         const recorder = {
-          acceptedCount: captureIndex === 0 ? 3 : 5,
+          acceptedCount: 3,
           expectedTargetLocationId,
           generation: 2,
-          samples:
-            captureIndex === 0
-              ? openingSamples.slice(0, 3)
-              : openingSamples,
+          samples: openingSamples.slice(0, 3),
         };
         session.archiveAutoplayRouteFrames(recorder);
         return session.archiveAutoplayRouteFrameWindow({
           expectedTargetLocationId,
           recordedWindow,
+          recorder,
+        });
+      };
+      let resumedScreencastCaptureCount = 0;
+      startupSession.captureAutoplayScreencastRouteFrameWindow = async ({
+        afterSequence,
+        beforeProbe,
+        expectedTargetLocationId,
+      }) => {
+        assert.equal(afterSequence, 1_001);
+        resumedScreencastCaptureCount += 1;
+        const afterProbe = openingSamples[4];
+        const recorder = {
+          acceptedCount: 5,
+          expectedTargetLocationId,
+          generation: 2,
+          samples: openingSamples,
+        };
+        startupSession.archiveAutoplayRouteFrames(recorder);
+        return startupSession.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: {
+            afterProbe,
+            beforeProbe,
+            frame: {
+              data: Buffer.from("resumed-screencast-position").toString(
+                "base64",
+              ),
+              metadata: {
+                timestamp:
+                  (beforeProbe.capturedAtEpochMs + 125) / 1_000,
+              },
+              sequence: 1_002,
+            },
+          },
           recorder,
         });
       };
@@ -2364,10 +2388,12 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         releaseFirstCapture();
         await waitFor(
           () => startupSession.autoplayRouteFrameWindows().length === 2,
-          "The coalesced pipeline did not retain two proactive route windows.",
+          "The coalesced pipeline did not pair the screenshot with a resumed-screencast position.",
         );
 
         assert.equal(rearmCount, 1);
+        assert.equal(proactiveCaptureCount, 1);
+        assert.equal(resumedScreencastCaptureCount, 1);
         assert.equal(startupSession.screencast.routeFrameSampleError, null);
         assert.equal(startupSession.screencast.routeFrameWindowCaptureError, null);
         assert.equal(
@@ -2397,6 +2423,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             }),
             validateStableFramePair: () => ({}),
           });
+        assert.equal(trajectory.start.evidenceSource, "proactive-route-frame");
+        assert.equal(trajectory.mid.evidenceSource, "screencast-frame");
         assert.equal(trajectory.start.beforeProbe.route.progress, 0.244);
         assert.equal(trajectory.start.afterProbe.route.progress, 0.5);
         assert.equal(trajectory.mid.beforeProbe.route.progress, 0.75);
@@ -3287,7 +3315,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
-    "live recorder captures the original four-sample segment before later same-target routes",
+    "live recorder pairs one slow screenshot with a later resumed-screencast frame",
     async () => {
       const liveSession = new CdpSession({
         browser: null,
@@ -3372,42 +3400,52 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         expectedTargetLocationId,
         session,
       }) => {
-        const [beforeProbe, afterProbe] =
-          proactiveCaptureCount === 0
-            ? openingSamples.slice(0, 2)
-            : openingSamples.slice(2, 4);
-        const frame = (sequence, offsetMs, pixels) => ({
-          data: Buffer.from(pixels).toString("base64"),
+        assert.equal(proactiveCaptureCount, 0);
+        const [beforeProbe, afterProbe] = openingSamples.slice(0, 2);
+        const frame = {
+          data: Buffer.from("proactive-position").toString("base64"),
           metadata: {
             source: "proactive-route-screenshot",
-            timestamp: (startedAt + offsetMs) / 1_000,
+            timestamp: (startedAt + 135) / 1_000,
           },
-          sequence,
+          sequence: 2_001,
           source: "proactive-route-screenshot",
-        });
-        const baseSequence = 2_001 + proactiveCaptureCount * 2;
-        const beforeOffset =
-          beforeProbe.capturedAtEpochMs - startedAt;
+        };
         const captured = session.archiveAutoplayRouteFrameWindow({
           expectedTargetLocationId,
           recordedWindow: {
             afterProbe,
             beforeProbe,
-            candidateFrame: frame(
-              baseSequence,
-              beforeOffset + 10,
-              `candidate-${proactiveCaptureCount}`,
-            ),
-            confirmationFrame: frame(
-              baseSequence + 1,
-              beforeOffset + 135,
-              `confirmation-${proactiveCaptureCount}`,
-            ),
+            frame,
           },
-          recorder: stagedRecorders[proactiveCaptureCount],
+          recorder: stagedRecorders[0],
         });
         proactiveCaptureCount += 1;
         return captured;
+      };
+      let resumedScreencastCaptureCount = 0;
+      liveSession.captureAutoplayScreencastRouteFrameWindow = async ({
+        afterSequence,
+        expectedTargetLocationId,
+      }) => {
+        assert.equal(afterSequence, 2_001);
+        const [beforeProbe, afterProbe] = openingSamples.slice(2, 4);
+        resumedScreencastCaptureCount += 1;
+        return liveSession.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: {
+            afterProbe,
+            beforeProbe,
+            frame: {
+              data: Buffer.from("resumed-screencast-position").toString(
+                "base64",
+              ),
+              metadata: { timestamp: (startedAt + 435) / 1_000 },
+              sequence: 2_002,
+            },
+          },
+          recorder: stagedRecorders[1],
+        });
       };
 
       try {
@@ -3416,7 +3454,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           label: "ci-ordering-live-route",
         });
         assert.equal(recorderReadCount, 2);
-        assert.equal(proactiveCaptureCount, 2);
+        assert.equal(proactiveCaptureCount, 1);
+        assert.equal(resumedScreencastCaptureCount, 1);
         assert.equal(
           liveSession.screencast.routeFrameWindowRecorderStatus,
           "complete",
@@ -3429,8 +3468,46 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             0.1,
         );
         assert.notEqual(
-          liveSession.autoplayRouteFrameWindows()[0].confirmationFrame.data,
-          liveSession.autoplayRouteFrameWindows()[1].confirmationFrame.data,
+          liveSession.autoplayRouteFrameWindows()[0].frame.data,
+          liveSession.autoplayRouteFrameWindows()[1].frame.data,
+        );
+
+        let crossTransportPixelCheckCount = 0;
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: liveSession.autoplayRouteFrameHistory(),
+            label: "mixed-transport opening route",
+            recordedWindows: liveSession.autoplayRouteFrameWindows(),
+            samples: liveSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame: renderedFrame, paintProbe }) => ({
+              buffer: Buffer.from(renderedFrame.data, "base64"),
+              height:
+                renderedFrame.source === "proactive-route-screenshot"
+                  ? 375
+                  : 625,
+              paintProbe,
+              textPaint: { regionCount: 9, surfaces: ["hud"] },
+              width:
+                renderedFrame.source === "proactive-route-screenshot"
+                  ? 819
+                  : 1365,
+            }),
+            validateStableFramePair: () => {
+              crossTransportPixelCheckCount += 1;
+              return { hudPixelDifferenceRatio: 0 };
+            },
+          });
+        assert.equal(trajectory.start.evidenceSource, "proactive-route-frame");
+        assert.equal(trajectory.mid.evidenceSource, "screencast-frame");
+        assert.equal(crossTransportPixelCheckCount, 0);
+        assert.equal(
+          trajectory.mid.validated.textPaint.routeHudContinuityBasis,
+          "exact-route-and-hud-identity",
+        );
+        assert.equal(
+          liveSession.acceptAutoplayRouteRenderedFrameTrajectory(trajectory),
+          true,
         );
 
         liveSession.archiveAutoplayRouteFrames(laterRecorder);

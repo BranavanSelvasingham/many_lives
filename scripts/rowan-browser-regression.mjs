@@ -3817,10 +3817,14 @@ class CdpSession {
 
   acceptAutoplayRouteRenderedFrameTrajectory(trajectory) {
     const state = this.screencast;
+    const acceptedSources = new Set([
+      "proactive-route-frame",
+      "screencast-frame",
+    ]);
     if (
       !state ||
-      trajectory?.start?.evidenceSource !== "screencast-frame" ||
-      trajectory?.mid?.evidenceSource !== "screencast-frame"
+      !acceptedSources.has(trajectory?.start?.evidenceSource) ||
+      !acceptedSources.has(trajectory?.mid?.evidenceSource)
     ) {
       return false;
     }
@@ -3924,6 +3928,67 @@ class CdpSession {
         sourceFormat: "jpeg",
       },
     };
+  }
+
+  async captureAutoplayScreencastRouteFrameWindow({
+    afterSequence = this.autoplayScreencastSequence(),
+    beforeProbe,
+    expectedTargetLocationId,
+    label,
+  }) {
+    if (
+      !isAutoplayFootholdRouteFrame(
+        beforeProbe?.route,
+        expectedTargetLocationId,
+      )
+    ) {
+      this.recordAutoplayRouteFrameWindowRejection({
+        beforeProbe,
+        reason: "before-probe-not-active-legal-opening-route",
+      });
+      return null;
+    }
+    const frame = await this.waitForAutoplayScreencastFrame({
+      afterSequence,
+      minimumCapturedAtEpochMs:
+        beforeProbe.capturedAtEpochMs +
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+    });
+    const afterProbe = await this.sampleAutoplayRouteCaptureRecorder(
+      `${label}:after-route-sample`,
+    );
+    if (
+      !autoplayRouteCaptureWindowCoherent(
+        beforeProbe.route,
+        afterProbe?.route,
+        expectedTargetLocationId,
+      ) ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(beforeProbe, afterProbe)
+    ) {
+      this.recordAutoplayRouteFrameWindowRejection({
+        afterProbe,
+        beforeProbe,
+        frame,
+        reason: afterProbe
+          ? "after-probe-route-identity-changed"
+          : "after-probe-unavailable",
+      });
+      return null;
+    }
+    const recorder = await this.readOrRearmAutoplayRouteCaptureRecorder({
+      expectedTargetLocationId,
+      label: `${label}:recorder-read`,
+    });
+    this.archiveAutoplayRouteFrames(recorder);
+    return this.archiveAutoplayRouteFrameWindow({
+      expectedTargetLocationId,
+      recordedWindow: {
+        afterProbe,
+        beforeProbe,
+        frame,
+      },
+      recorder,
+    });
   }
 
   recordAutoplayRouteFrameWindowRejection({
@@ -4185,12 +4250,22 @@ class CdpSession {
         }
 
         state.routeFrameWindowCaptureAttemptCount += 1;
-        const captured = await captureAutoplayProactiveRouteFrameWindow({
-          beforeProbe: sample,
-          expectedTargetLocationId,
-          label: `${label}:window-${state.routeFrameWindowCaptureAttemptCount}`,
-          session: this,
-        });
+        const captureLabel = `${label}:window-${state.routeFrameWindowCaptureAttemptCount}`;
+        const captured = firstWindow
+          ? await this.captureAutoplayScreencastRouteFrameWindow({
+              afterSequence:
+                autoplayRecordedRouteWindowFrame(firstWindow)?.sequence ??
+                this.autoplayScreencastSequence(),
+              beforeProbe: sample,
+              expectedTargetLocationId,
+              label: captureLabel,
+            })
+          : await captureAutoplayProactiveRouteFrameWindow({
+              beforeProbe: sample,
+              expectedTargetLocationId,
+              label: captureLabel,
+              session: this,
+            });
         if (state.routeRenderedFrameEvidenceAccepted) {
           state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
           break;
@@ -15179,6 +15254,14 @@ function selectAutoplayRecordedRouteTrajectory({
       for (const midCandidate of candidateSet.candidates) {
         const midFrame =
           midCandidate.frame ?? midCandidate.confirmationFrame ?? null;
+        const midEvidenceSource =
+          midFrame?.source === "proactive-route-screenshot"
+            ? "proactive-route-frame"
+            : midCandidate.frame
+              ? "screencast-frame"
+              : "confirmed-window";
+        const sharesVisualTransport =
+          midEvidenceSource === start.evidenceSource;
         if (
           !midFrame ||
           midFrame.sequence <= start.frame.sequence ||
@@ -15193,13 +15276,14 @@ function selectAutoplayRecordedRouteTrajectory({
         }
         try {
           const mid = candidateSet.validate({
-            hudReference,
+            hudReference: sharesVisualTransport ? hudReference : null,
             label: `${label} route-mid`,
             recordedEvidence: midCandidate,
             validateFrame,
             validateStableFramePair,
           });
           if (
+            sharesVisualTransport &&
             ["proactive-route-frame", "screencast-frame"].includes(
               start.evidenceSource,
             ) &&
@@ -15220,6 +15304,24 @@ function selectAutoplayRecordedRouteTrajectory({
             mid.validated.textPaint = {
               ...mid.validated.textPaint,
               ...frameStability,
+            };
+          } else if (!sharesVisualTransport) {
+            const routeIdentity =
+              autoplayRouteCaptureSamplesShareExactIdentity(
+                start.beforeProbe,
+                mid.afterProbe,
+              );
+            assert.ok(
+              routeIdentity,
+              `${label}: mixed visual transports did not preserve exact route and HUD identity.`,
+            );
+            start.validated.textPaint = {
+              ...start.validated.textPaint,
+              routeHudContinuityBasis: "exact-route-and-hud-identity",
+            };
+            mid.validated.textPaint = {
+              ...mid.validated.textPaint,
+              routeHudContinuityBasis: "exact-route-and-hud-identity",
             };
           }
           assert.ok(
@@ -16133,7 +16235,9 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
           AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
         window.textPaint.maximumContainerGeometryDeltaCssPx <=
           AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
-        window.textPaint.hudPixelDifferenceRatio <= 0.006,
+        (window.textPaint.hudPixelDifferenceRatio <= 0.006 ||
+          window.textPaint.routeHudContinuityBasis ===
+            "exact-route-and-hud-identity"),
       `${evidence.openingWorldVariant}: ${label} did not validate complete visible text paint. Evidence: ${evidencePath}.`,
     );
   }
