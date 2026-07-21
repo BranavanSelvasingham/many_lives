@@ -101,6 +101,8 @@ const AUTOPLAY_ROUTE_FRAME_WINDOW_REJECTION_MAX_ENTRIES = 8;
 const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
+const AUTOPLAY_ROUTE_DIRECT_SCREENCAST_GRACE_MS = 2_500;
+const AUTOPLAY_ROUTE_NO_SCREENCAST_FALLBACK_GRACE_MS = 750;
 const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
 const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
@@ -111,6 +113,8 @@ const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
 const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
 const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 4;
+const AUTOPLAY_SCREENCAST_MAX_HEIGHT = 375;
+const AUTOPLAY_SCREENCAST_MAX_WIDTH = 819;
 const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS ?? "8000",
 );
@@ -1758,6 +1762,8 @@ class CdpSession {
               routeFrameWindowCapturePendingProgress:
                 this.screencast.routeFrameWindowCapturePendingSample?.route
                   ?.progress ?? null,
+              routeFrameWindowLastAttemptedSampleAtEpochMs:
+                this.screencast.routeFrameWindowLastAttemptedSampleAtEpochMs,
               routeFrameWindowCaptureStatus:
                 this.screencast.routeFrameWindowCaptureStatus,
               routeFrameWindowArchiveCount:
@@ -3292,6 +3298,7 @@ class CdpSession {
         intervalId: null,
         lastTickAtEpochMs: null,
         lastObservedRoute: null,
+        lastSampleStatus: "idle",
         parseErrorCount: 0,
         rejectedCount: 0,
         restartReason,
@@ -3425,6 +3432,7 @@ class CdpSession {
         const script = document.querySelector("#ml-browser-movement-probe");
         if (!script) {
           state.unavailableCount += 1;
+          state.lastSampleStatus = "probe-unavailable";
           return;
         }
         let route = null;
@@ -3432,6 +3440,7 @@ class CdpSession {
           route = JSON.parse(script.textContent || "null")?.playerRoute ?? null;
         } catch {
           state.parseErrorCount += 1;
+          state.lastSampleStatus = "parse-error";
           return;
         }
         state.lastObservedRoute = route
@@ -3455,6 +3464,9 @@ class CdpSession {
         );
         if (!acceptable) {
           state.rejectedCount += 1;
+          state.lastSampleStatus = route
+            ? "route-rejected"
+            : "route-unavailable";
           return;
         }
         state.samples.push({
@@ -3471,6 +3483,7 @@ class CdpSession {
           source: "movement-probe-recorder"
         });
         state.acceptedCount += 1;
+        state.lastSampleStatus = "accepted";
         if (state.samples.length > maxSnapshots) {
           state.samples.splice(0, state.samples.length - maxSnapshots);
         }
@@ -3519,6 +3532,7 @@ class CdpSession {
         generation: state.generation,
         lastTickAtEpochMs: state.lastTickAtEpochMs,
         lastObservedRoute: state.lastObservedRoute,
+        lastSampleStatus: state.lastSampleStatus,
         parseErrorCount: state.parseErrorCount,
         rejectedCount: state.rejectedCount,
         restartReason: state.restartReason,
@@ -3545,6 +3559,17 @@ class CdpSession {
         ? state.samples.at(-1) ?? null
         : null;
     })()`, label);
+  }
+
+  async classifyAutoplayRouteCaptureSampleFailure(
+    label = "autoplay-route-recorder-sample-failure",
+  ) {
+    try {
+      const recorder = await this.readAutoplayRouteCaptureRecorder(label);
+      return recorder?.lastSampleStatus ?? "recorder-missing";
+    } catch {
+      return "recorder-read-failed";
+    }
   }
 
   async readOrRearmAutoplayRouteCaptureRecorder({
@@ -3695,6 +3720,7 @@ class CdpSession {
       routeFrameWindowArchive: [],
       routeFrameWindowCaptureAttemptCount: 0,
       routeFrameWindowCaptureError: null,
+      routeFrameWindowLastAttemptedSampleAtEpochMs: null,
       routeFrameWindowCapturePendingSample: null,
       routeFrameWindowCapturePromise: null,
       routeFrameWindowCaptureStatus: "idle",
@@ -3735,6 +3761,8 @@ class CdpSession {
         {
           everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
           format: "png",
+          maxHeight: AUTOPLAY_SCREENCAST_MAX_HEIGHT,
+          maxWidth: AUTOPLAY_SCREENCAST_MAX_WIDTH,
         },
         { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
       );
@@ -3850,6 +3878,8 @@ class CdpSession {
           {
             everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
             format: "png",
+            maxHeight: AUTOPLAY_SCREENCAST_MAX_HEIGHT,
+            maxWidth: AUTOPLAY_SCREENCAST_MAX_WIDTH,
           },
           { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
         );
@@ -4063,6 +4093,11 @@ class CdpSession {
     const afterProbe = await this.sampleAutoplayRouteCaptureRecorder(
       `${label}:after-route-sample`,
     );
+    const afterProbeFailure = afterProbe
+      ? null
+      : await this.classifyAutoplayRouteCaptureSampleFailure(
+          `${label}:after-route-sample-failure`,
+        );
     if (
       !autoplayRouteCaptureWindowCoherent(
         beforeProbe.route,
@@ -4077,7 +4112,7 @@ class CdpSession {
         frame,
         reason: afterProbe
           ? "after-probe-route-identity-changed"
-          : "after-probe-unavailable",
+          : `after-probe-${afterProbeFailure}`,
       });
       return null;
     }
@@ -4292,6 +4327,50 @@ class CdpSession {
     ) {
       return state?.routeFrameWindowCapturePromise ?? Promise.resolve(null);
     }
+    const firstOpeningSample = state.routeSampleArchive[0] ?? beforeProbe;
+    const observedDirectScreencastRoute = state.routeFrameSampleCount > 0;
+    const directScreencastGraceMs = observedDirectScreencastRoute
+      ? AUTOPLAY_ROUTE_DIRECT_SCREENCAST_GRACE_MS
+      : AUTOPLAY_ROUTE_NO_SCREENCAST_FALLBACK_GRACE_MS;
+    const openingRouteSampleSpanMs = Math.max(
+      0,
+      beforeProbe.capturedAtEpochMs -
+        (firstOpeningSample?.capturedAtEpochMs ?? beforeProbe.capturedAtEpochMs),
+    );
+    if (
+      state.routeFrameWindowArchive.length === 0 &&
+      state.routeFrameArchive.length >= 2
+    ) {
+      state.routeFrameWindowCapturePendingSample = null;
+      state.routeFrameWindowCaptureStatus =
+        "waiting-for-direct-screencast-validation";
+      return Promise.resolve(state.routeFrameArchive.length);
+    }
+    if (
+      state.routeFrameWindowArchive.length === 0 &&
+      openingRouteSampleSpanMs < directScreencastGraceMs
+    ) {
+      const pendingSample = state.routeFrameWindowCapturePendingSample;
+      if (
+        !pendingSample ||
+        beforeProbe.capturedAtEpochMs > pendingSample.capturedAtEpochMs
+      ) {
+        state.routeFrameWindowCapturePendingSample = beforeProbe;
+      }
+      state.routeFrameWindowCaptureStatus =
+        "waiting-for-direct-screencast-evidence";
+      return Promise.resolve(state.routeFrameArchive.length);
+    }
+    if (
+      typeof state.routeFrameWindowLastAttemptedSampleAtEpochMs === "number" &&
+      beforeProbe.capturedAtEpochMs <=
+        state.routeFrameWindowLastAttemptedSampleAtEpochMs
+    ) {
+      state.routeFrameWindowCapturePendingSample = null;
+      state.routeFrameWindowCaptureStatus =
+        "waiting-for-fresh-opening-route-sample";
+      return Promise.resolve(state.routeFrameWindowArchive.length);
+    }
     const pendingSample = state.routeFrameWindowCapturePendingSample;
     if (
       !pendingSample ||
@@ -4342,6 +4421,16 @@ class CdpSession {
           }
           continue;
         }
+        if (
+          typeof state.routeFrameWindowLastAttemptedSampleAtEpochMs ===
+            "number" &&
+          sample.capturedAtEpochMs <=
+            state.routeFrameWindowLastAttemptedSampleAtEpochMs
+        ) {
+          state.routeFrameWindowCaptureStatus =
+            "waiting-for-fresh-opening-route-sample";
+          break;
+        }
         unavailableSampleCount = 0;
         const firstWindow = state.routeFrameWindowArchive[0] ?? null;
         if (
@@ -4353,6 +4442,8 @@ class CdpSession {
         }
 
         state.routeFrameWindowCaptureAttemptCount += 1;
+        state.routeFrameWindowLastAttemptedSampleAtEpochMs =
+          sample.capturedAtEpochMs;
         const captureLabel = `${label}:window-${state.routeFrameWindowCaptureAttemptCount}`;
         const captured = firstWindow
           ? await this.captureAutoplayScreencastRouteFrameWindow({
@@ -14945,6 +15036,11 @@ async function captureAutoplayProactiveRouteFrameWindow({
     const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
       `${label}:after-route-sample`,
     );
+    const afterProbeFailure = afterProbe
+      ? null
+      : await session.classifyAutoplayRouteCaptureSampleFailure(
+          `${label}:after-route-sample-failure`,
+        );
     if (
       !autoplayRouteCaptureWindowCoherent(
         beforeProbe.route,
@@ -14962,7 +15058,7 @@ async function captureAutoplayProactiveRouteFrameWindow({
         frame: capturedFrame,
         reason: afterProbe
           ? "after-probe-route-identity-changed"
-          : "after-probe-unavailable",
+          : `after-probe-${afterProbeFailure}`,
       });
       return null;
     }
