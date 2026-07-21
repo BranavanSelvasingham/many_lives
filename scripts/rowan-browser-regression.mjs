@@ -97,6 +97,7 @@ const AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES = 160;
 const AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS = 4;
 const AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES = 48;
 const AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS = 2;
+const AUTOPLAY_ROUTE_FRAME_WINDOW_REJECTION_MAX_ENTRIES = 8;
 const AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS = 160;
 const AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS = 50;
 const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
@@ -133,6 +134,8 @@ const AUTOPLAY_PACING_MIN_MEANINGFUL_BEATS = Number(
 const AUTOPLAY_FIRST_AFTERNOON_MIN_DURATION_MS = 180_000;
 const AUTOPLAY_FIRST_AFTERNOON_MAX_DURATION_MS = 300_000;
 const AUTOPLAY_FIRST_AFTERNOON_DURATION_TOLERANCE_MS = 250;
+const AUTOPLAY_FIRST_AFTERNOON_PRESENTATION_START_PREFIX =
+  "many-lives:street-first-afternoon-start:";
 const AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS = 2_000;
 const AUTOPLAY_DURABLE_DWELL_AUDIT_BEAT_KINDS = new Set([
   "action_complete",
@@ -1607,8 +1610,13 @@ class CdpSession {
                 this.screencast.routeFrameWindowArchive.map((window) => ({
                   after: window.afterProbe?.route?.progress ?? null,
                   before: window.beforeProbe?.route?.progress ?? null,
-                  frameSequence: window.confirmationFrame?.sequence ?? null,
+                  frameSequence:
+                    autoplayRecordedRouteWindowFrame(window)?.sequence ?? null,
                 })),
+              routeFrameWindowRejectedCount:
+                this.screencast.routeFrameWindowRejectedCount,
+              routeFrameWindowRejections:
+                this.screencast.routeFrameWindowRejections,
               routeFrameWindowRecorderError:
                 this.screencast.routeFrameWindowRecorderError,
               routeFrameWindowRecorderStatus:
@@ -1666,6 +1674,44 @@ class CdpSession {
     }
 
     return response?.result?.result?.value;
+  }
+
+  async resetAutoplayFirstAfternoonPresentationFloor(gameId) {
+    const storageKey =
+      `${AUTOPLAY_FIRST_AFTERNOON_PRESENTATION_START_PREFIX}${gameId}`;
+    const result = await this.evaluate(`(() => {
+      const storageKey = ${JSON.stringify(storageKey)};
+      try {
+        const previousStartedAtEpochMs = window.sessionStorage.getItem(storageKey);
+        window.sessionStorage.removeItem(storageKey);
+        return {
+          error: null,
+          previousStartedAtEpochMs,
+          storageKey,
+        };
+      } catch (error) {
+        return {
+          error: error instanceof Error ? error.message : String(error),
+          previousStartedAtEpochMs: null,
+          storageKey,
+        };
+      }
+    })()`);
+    assert.equal(
+      result?.error,
+      null,
+      `Could not isolate the live autoplay presentation floor from frozen harness setup: ${JSON.stringify(result)}.`,
+    );
+    assert.equal(result?.storageKey, storageKey);
+    this.recordCdpTransportEvent("autoplay-presentation-floor-reset", {
+      gameId,
+      removedFrozenStart: result.previousStartedAtEpochMs !== null,
+    });
+    return {
+      gameId,
+      removedFrozenStart: result.previousStartedAtEpochMs !== null,
+      storageKey,
+    };
   }
 
   async evaluateForRead(expression, label = "runtime-evaluate-read") {
@@ -3499,6 +3545,8 @@ class CdpSession {
       routeFrameWindowRecorderError: null,
       routeFrameWindowRecorderPromise: null,
       routeFrameWindowRecorderStatus: "idle",
+      routeFrameWindowRejectedCount: 0,
+      routeFrameWindowRejections: [],
       routeVisualCapturePauseCount: 0,
       routeVisualCapturePauseError: null,
       routeVisualCapturePaused: false,
@@ -3774,6 +3822,45 @@ class CdpSession {
     };
   }
 
+  recordAutoplayRouteFrameWindowRejection({
+    afterProbe = null,
+    beforeProbe = null,
+    frame = null,
+    reason,
+  }) {
+    const state = this.screencast;
+    if (!state) {
+      return null;
+    }
+    const rejection = {
+      after: compactAutoplayRouteFrameWindowProbe(afterProbe),
+      atEpochMs: Date.now(),
+      before: compactAutoplayRouteFrameWindowProbe(beforeProbe),
+      frame: frame
+        ? {
+            capturedAtEpochMs: screencastFrameCapturedAtEpochMs(frame),
+            sequence: frame.sequence ?? null,
+            source:
+              frame.source ?? frame.metadata?.source ?? "screencast",
+          }
+        : null,
+      reason,
+    };
+    state.routeFrameWindowRejectedCount += 1;
+    state.routeFrameWindowRejections.push(rejection);
+    if (
+      state.routeFrameWindowRejections.length >
+      AUTOPLAY_ROUTE_FRAME_WINDOW_REJECTION_MAX_ENTRIES
+    ) {
+      state.routeFrameWindowRejections.splice(
+        0,
+        state.routeFrameWindowRejections.length -
+          AUTOPLAY_ROUTE_FRAME_WINDOW_REJECTION_MAX_ENTRIES,
+      );
+    }
+    return rejection;
+  }
+
   archiveAutoplayRouteFrameWindow({
     expectedTargetLocationId,
     recordedWindow,
@@ -3783,6 +3870,16 @@ class CdpSession {
     if (!state || !recordedWindow || !recorder) {
       return null;
     }
+    const frame = autoplayRecordedRouteWindowFrame(recordedWindow);
+    const reject = (reason) => {
+      this.recordAutoplayRouteFrameWindowRejection({
+        afterProbe: recordedWindow.afterProbe,
+        beforeProbe: recordedWindow.beforeProbe,
+        frame,
+        reason,
+      });
+      return null;
+    };
     const openingSegment = buildAutoplayRouteCaptureSegments({
       expectedTargetLocationId,
       samples: [
@@ -3791,7 +3888,7 @@ class CdpSession {
       ],
     })[0];
     if (!openingSegment) {
-      return null;
+      return reject("opening-segment-unavailable");
     }
     const sampleBelongsToOpeningSegment = (sample) =>
       sample?.source === "movement-probe-recorder" &&
@@ -3800,38 +3897,66 @@ class CdpSession {
           candidate.capturedAtEpochMs === sample.capturedAtEpochMs &&
           candidate.route?.progress === sample.route?.progress,
       );
+    if (!sampleBelongsToOpeningSegment(recordedWindow.beforeProbe)) {
+      return reject("before-probe-outside-opening-segment");
+    }
+    if (!sampleBelongsToOpeningSegment(recordedWindow.afterProbe)) {
+      return reject("after-probe-outside-opening-segment");
+    }
     if (
-      !sampleBelongsToOpeningSegment(recordedWindow.beforeProbe) ||
-      !sampleBelongsToOpeningSegment(recordedWindow.afterProbe) ||
       !autoplayRouteCaptureWindowCoherent(
         recordedWindow.beforeProbe.route,
         recordedWindow.afterProbe.route,
         expectedTargetLocationId,
       ) ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(
+        recordedWindow.beforeProbe,
+        recordedWindow.afterProbe,
+      )
+    ) {
+      return reject("route-window-identity-changed");
+    }
+    if (!frame) {
+      return reject("visual-frame-unavailable");
+    }
+    if (
       !screencastFrameIsBracketedByEpochProbes(
+        frame,
+        recordedWindow.beforeProbe,
+        recordedWindow.afterProbe,
+      )
+    ) {
+      return reject("visual-frame-outside-probe-bracket");
+    }
+    if (
+      screencastFrameCapturedAtEpochMs(frame) <
+      recordedWindow.beforeProbe.capturedAtEpochMs +
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS
+    ) {
+      return reject("visual-frame-before-compositing-settle");
+    }
+    if (
+      recordedWindow.candidateFrame &&
+      recordedWindow.confirmationFrame &&
+      (!screencastFrameIsBracketedByEpochProbes(
         recordedWindow.candidateFrame,
         recordedWindow.beforeProbe,
         recordedWindow.afterProbe,
       ) ||
-      !screencastFrameIsBracketedByEpochProbes(
-        recordedWindow.confirmationFrame,
-        recordedWindow.beforeProbe,
-        recordedWindow.afterProbe,
-      ) ||
-      recordedWindow.confirmationFrame.sequence <=
-        recordedWindow.candidateFrame.sequence ||
-      screencastFrameCapturedAtEpochMs(recordedWindow.confirmationFrame) <
-        screencastFrameCapturedAtEpochMs(recordedWindow.candidateFrame) +
-          AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS
+        recordedWindow.confirmationFrame.sequence <=
+          recordedWindow.candidateFrame.sequence ||
+        screencastFrameCapturedAtEpochMs(recordedWindow.confirmationFrame) <
+          screencastFrameCapturedAtEpochMs(recordedWindow.candidateFrame) +
+            AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS)
     ) {
-      return null;
+      return reject("confirmed-window-invalid");
     }
     const existing = state.routeFrameWindowArchive;
     if (
       existing.some(
         (window) =>
-          window.confirmationFrame.sequence ===
-          recordedWindow.confirmationFrame.sequence,
+          autoplayRecordedRouteWindowFrame(window)?.sequence ===
+          frame.sequence,
       )
     ) {
       return recordedWindow;
@@ -3843,15 +3968,16 @@ class CdpSession {
           firstWindow.afterProbe.route.progress <
         AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
     ) {
-      return null;
+      return reject("route-progress-not-distinct");
     }
+    const firstFrame = autoplayRecordedRouteWindowFrame(firstWindow);
     if (
-      firstWindow &&
-      Buffer.from(firstWindow.confirmationFrame.data, "base64").equals(
-        Buffer.from(recordedWindow.confirmationFrame.data, "base64"),
+      firstFrame &&
+      Buffer.from(firstFrame.data, "base64").equals(
+        Buffer.from(frame.data, "base64"),
       )
     ) {
-      return null;
+      return reject("visual-frame-pixels-identical");
     }
     existing.push(recordedWindow);
     if (
@@ -3971,6 +4097,8 @@ class CdpSession {
         AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
       ) {
         state.routeFrameWindowCaptureStatus = "complete";
+      } else if (state.routeFrameWindowCaptureAttemptCount >= 4) {
+        state.routeFrameWindowCaptureStatus = "attempt-budget-exhausted";
       } else if (!state.active) {
         state.routeFrameWindowCaptureStatus = "stopped";
       }
@@ -13663,6 +13791,42 @@ function autoplayRouteSamplePathSignature(sample) {
   });
 }
 
+function autoplayRouteCaptureSamplesShareExactIdentity(before, after) {
+  const beforeHudSignature = autoplayRouteSampleHudSignature(before);
+  const afterHudSignature = autoplayRouteSampleHudSignature(after);
+  return Boolean(
+    Number.isInteger(before?.recorderGeneration) &&
+      after?.recorderGeneration === before.recorderGeneration &&
+      beforeHudSignature !== null &&
+      afterHudSignature === beforeHudSignature &&
+      autoplayRouteSamplePathSignature(after) ===
+        autoplayRouteSamplePathSignature(before),
+  );
+}
+
+function compactAutoplayRouteFrameWindowProbe(sample) {
+  if (!sample) {
+    return null;
+  }
+  return {
+    capturedAtEpochMs: sample.capturedAtEpochMs ?? null,
+    generation: sample.recorderGeneration ?? null,
+    hudSignature: autoplayRouteSampleHudSignature(sample),
+    pathSignature: autoplayRouteSamplePathSignature(sample),
+    route: {
+      active: sample.route?.active ?? null,
+      legal: sample.route?.legal ?? null,
+      progress: sample.route?.progress ?? null,
+      reachesDestination: sample.route?.reachesDestination ?? null,
+      sampledPointsLegal: sample.route?.sampledPointsLegal ?? null,
+      spaceId: sample.route?.spaceId ?? null,
+      targetLocationId: sample.route?.targetLocationId ?? null,
+      visualObstaclesClear: sample.route?.visualObstaclesClear ?? null,
+    },
+    source: sample.source ?? null,
+  };
+}
+
 function autoplayRouteSamplesShowStalledRecorderContinuity(
   previous,
   sample,
@@ -14415,15 +14579,16 @@ async function captureAutoplayProactiveRouteFrameWindow({
       expectedTargetLocationId,
     )
   ) {
+    session.recordAutoplayRouteFrameWindowRejection({
+      beforeProbe,
+      reason: "before-probe-not-active-legal-opening-route",
+    });
     return null;
   }
   return session.withAutoplayScreencastPausedForRouteCapture(async () => {
-    const candidateFrame = await session.captureAutoplayRouteVisualFrame({
-      minimumCapturedAtEpochMs: beforeProbe.capturedAtEpochMs,
-    });
-    const confirmationFrame = await session.captureAutoplayRouteVisualFrame({
+    const frame = await session.captureAutoplayRouteVisualFrame({
       minimumCapturedAtEpochMs:
-        screencastFrameCapturedAtEpochMs(candidateFrame) +
+        beforeProbe.capturedAtEpochMs +
         AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
     });
     const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
@@ -14434,8 +14599,17 @@ async function captureAutoplayProactiveRouteFrameWindow({
         beforeProbe.route,
         afterProbe?.route,
         expectedTargetLocationId,
-      )
+      ) ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(beforeProbe, afterProbe)
     ) {
+      session.recordAutoplayRouteFrameWindowRejection({
+        afterProbe,
+        beforeProbe,
+        frame,
+        reason: afterProbe
+          ? "after-probe-route-identity-changed"
+          : "after-probe-unavailable",
+      });
       return null;
     }
     const recorder =
@@ -14449,12 +14623,15 @@ async function captureAutoplayProactiveRouteFrameWindow({
       recordedWindow: {
         afterProbe,
         beforeProbe,
-        candidateFrame,
-        confirmationFrame,
+        frame,
       },
       recorder,
     });
   });
+}
+
+function autoplayRecordedRouteWindowFrame(recordedWindow) {
+  return recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null;
 }
 
 function recordedRouteWindowBelongsToOpeningSegment({
@@ -14462,6 +14639,7 @@ function recordedRouteWindowBelongsToOpeningSegment({
   openingSegment,
   recordedWindow,
 }) {
+  const frame = autoplayRecordedRouteWindowFrame(recordedWindow);
   const sampleBelongs = (sample) =>
     sample?.source === "movement-probe-recorder" &&
     openingSegment?.samples.some(
@@ -14477,16 +14655,33 @@ function recordedRouteWindowBelongsToOpeningSegment({
         recordedWindow.afterProbe.route,
         expectedTargetLocationId,
       ) &&
-      screencastFrameIsBracketedByEpochProbes(
-        recordedWindow.candidateFrame,
+      autoplayRouteCaptureSamplesShareExactIdentity(
         recordedWindow.beforeProbe,
         recordedWindow.afterProbe,
       ) &&
       screencastFrameIsBracketedByEpochProbes(
-        recordedWindow.confirmationFrame,
+        frame,
         recordedWindow.beforeProbe,
         recordedWindow.afterProbe,
-      ),
+      ) &&
+      screencastFrameCapturedAtEpochMs(frame) >=
+        recordedWindow.beforeProbe.capturedAtEpochMs +
+          AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS &&
+      (!recordedWindow.candidateFrame ||
+        !recordedWindow.confirmationFrame ||
+        (screencastFrameIsBracketedByEpochProbes(
+          recordedWindow.candidateFrame,
+          recordedWindow.beforeProbe,
+          recordedWindow.afterProbe,
+        ) &&
+          recordedWindow.confirmationFrame.sequence >
+            recordedWindow.candidateFrame.sequence &&
+          screencastFrameCapturedAtEpochMs(
+            recordedWindow.confirmationFrame,
+          ) >=
+            screencastFrameCapturedAtEpochMs(
+              recordedWindow.candidateFrame,
+            ) + AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS)),
   );
 }
 
@@ -14524,6 +14719,10 @@ function buildAutoplayRecordedRouteFrameCandidates({
           beforeProbe.route,
           afterProbe.route,
           expectedTargetLocationId,
+        ) ||
+        !autoplayRouteCaptureSamplesShareExactIdentity(
+          beforeProbe,
+          afterProbe,
         ) ||
         !screencastFrameIsBracketedByEpochProbes(
           frame,
@@ -14609,6 +14808,10 @@ function buildAutoplayRecordedRouteWindowCandidates({
         afterProbe.route,
         expectedTargetLocationId,
       ) ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(
+        beforeProbe,
+        afterProbe,
+      ) ||
       !screencastFrameIsBracketedByEpochProbes(
         candidateFrame,
         beforeProbe,
@@ -14632,12 +14835,19 @@ function buildAutoplayRecordedRouteWindowCandidates({
 
   return [
     ...new Map(
-      windows.map((window) => [window.confirmationFrame.sequence, window]),
+      windows.map((window) => [
+        autoplayRecordedRouteWindowFrame(window)?.sequence,
+        window,
+      ]),
     ).values(),
   ].sort(
     (left, right) =>
-      screencastFrameCapturedAtEpochMs(left.confirmationFrame) -
-      screencastFrameCapturedAtEpochMs(right.confirmationFrame),
+      screencastFrameCapturedAtEpochMs(
+        autoplayRecordedRouteWindowFrame(left),
+      ) -
+      screencastFrameCapturedAtEpochMs(
+        autoplayRecordedRouteWindowFrame(right),
+      ),
   );
 }
 
@@ -14648,6 +14858,14 @@ function validateAutoplayRecordedRouteWindow({
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
+  if (recordedWindow.frame) {
+    return validateAutoplayRecordedRouteFrame({
+      hudReference,
+      label,
+      recordedFrame: recordedWindow,
+      validateFrame,
+    });
+  }
   const paintProbe = requireStableAutoplayScreenshotPaintProbe(
     recordedWindow.beforeProbe.paintProbe,
     recordedWindow.afterProbe.paintProbe,
@@ -14723,7 +14941,10 @@ function validateAutoplayRecordedRouteFrame({
   return {
     afterProbe: recordedFrame.afterProbe,
     beforeProbe: recordedFrame.beforeProbe,
-    evidenceSource: "screencast-frame",
+    evidenceSource:
+      recordedFrame.frame?.source === "proactive-route-screenshot"
+        ? "proactive-route-frame"
+        : "screencast-frame",
     frame: recordedFrame.frame,
     validated: {
       ...validated,
@@ -14820,8 +15041,12 @@ function selectAutoplayRecordedRouteTrajectory({
             validateStableFramePair,
           });
           if (
-            start.evidenceSource === "screencast-frame" &&
-            mid.evidenceSource === "screencast-frame"
+            ["proactive-route-frame", "screencast-frame"].includes(
+              start.evidenceSource,
+            ) &&
+            ["proactive-route-frame", "screencast-frame"].includes(
+              mid.evidenceSource,
+            )
           ) {
             const frameStability = validateStableFramePair({
               afterBuffer: mid.validated.buffer,
@@ -15070,6 +15295,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   const trajectoryMilestones = [];
   const capturedMilestoneKeys = new Set();
   let autoplayScreencastStarted = false;
+  let presentationFloorReset = null;
   let visibleCopyAuditCount = 0;
   const captureFrozenMilestoneOnce = async (
     key,
@@ -15181,6 +15407,8 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
   );
   visibleCopyAuditCount += openingDom ? 1 : 0;
   await captureFrozenMilestoneOnce("opening", openingProbe, openingDom);
+  presentationFloorReset =
+    await session.resetAutoplayFirstAfternoonPresentationFloor(game.id);
 
   let screenshotPath = null;
   let completedProbe = null;
@@ -15494,6 +15722,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
         {
           ...pacingLedger,
           openingWorldVariant,
+          presentationFloorReset,
           screenshot: screenshotPath,
           status: "passed",
         },
@@ -15551,6 +15780,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
         playbackCardDwells: pacingLedger.playbackCardDwells,
         progressKinds: pacingLedger.progressKinds,
         progressionClicks: 0,
+        presentationFloorReset,
         trajectory: {
           consequence: completedProbe.firstAfternoon?.consequence ?? null,
           interactionNpcIds: [
@@ -15613,6 +15843,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
             ...partialLedger,
             failure: pacingFailure,
             openingWorldVariant,
+            presentationFloorReset,
             screenshot: completedProbe ? screenshotPath : null,
             status: "failed",
           },
@@ -17039,6 +17270,7 @@ function buildAutoplayObservationPacingLedger(samples) {
 
 function buildCumulativeAppMonotonicSamples(samples) {
   let completedSegmentMs = 0;
+  let firstDocumentStartedAtObserverElapsedMs = null;
   let previousRawAppMonotonicMs = null;
 
   return (samples ?? []).map((sample) => {
@@ -17051,16 +17283,50 @@ function buildCumulativeAppMonotonicSamples(samples) {
       };
     }
 
+    const documentStartedAtObserverElapsedMs =
+      typeof sample.elapsedMs === "number" &&
+      typeof sample.wallMonotonicMs === "number"
+        ? sample.elapsedMs - sample.wallMonotonicMs
+        : null;
+    if (
+      firstDocumentStartedAtObserverElapsedMs === null &&
+      typeof documentStartedAtObserverElapsedMs === "number"
+    ) {
+      firstDocumentStartedAtObserverElapsedMs =
+        documentStartedAtObserverElapsedMs;
+    }
+
+    let documentResetCompensationMs = 0;
     if (
       typeof previousRawAppMonotonicMs === "number" &&
       rawAppMonotonicMs < previousRawAppMonotonicMs
     ) {
-      completedSegmentMs += previousRawAppMonotonicMs;
+      const sampledSegmentEndMs =
+        completedSegmentMs + previousRawAppMonotonicMs;
+      const observedDocumentOffsetMs =
+        typeof documentStartedAtObserverElapsedMs === "number" &&
+        typeof firstDocumentStartedAtObserverElapsedMs === "number"
+          ? Math.max(
+              0,
+              documentStartedAtObserverElapsedMs -
+                firstDocumentStartedAtObserverElapsedMs,
+            )
+          : null;
+      completedSegmentMs = Math.max(
+        sampledSegmentEndMs,
+        observedDocumentOffsetMs ?? sampledSegmentEndMs,
+      );
+      documentResetCompensationMs = Math.max(
+        0,
+        completedSegmentMs - sampledSegmentEndMs,
+      );
     }
     previousRawAppMonotonicMs = rawAppMonotonicMs;
 
     return {
       ...sample,
+      appDocumentOffsetMs: completedSegmentMs,
+      appDocumentResetCompensationMs: documentResetCompensationMs,
       appMonotonicMs: completedSegmentMs + rawAppMonotonicMs,
       rawAppMonotonicMs,
     };

@@ -47,6 +47,19 @@ const pacingAssertionSource = source.slice(
   pacingAssertionStart,
   pacingAssertionEnd,
 );
+const cumulativeAppMonotonicStart = source.indexOf(
+  "function buildCumulativeAppMonotonicSamples(",
+);
+const cumulativeAppMonotonicEnd = source.indexOf(
+  "\nfunction ",
+  cumulativeAppMonotonicStart + 1,
+);
+const buildCumulativeAppMonotonicSamples = Function(
+  `return (${source.slice(
+    cumulativeAppMonotonicStart,
+    cumulativeAppMonotonicEnd,
+  )})`,
+)();
 
 test("first-afternoon readability uses full app-visible dwell", () => {
   assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
@@ -115,11 +128,67 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
 test("app-monotonic pacing survives a page clock reset", () => {
   assert.match(source, /buildCumulativeAppMonotonicSamples\(/);
   assert.match(source, /rawAppMonotonicMs/);
-  assert.match(source, /completedSegmentMs \+= previousRawAppMonotonicMs/);
+  assert.match(source, /sampledSegmentEndMs/);
+  assert.match(source, /observedDocumentOffsetMs/);
+  assert.match(
+    source,
+    /Math\.max\(\s*sampledSegmentEndMs,\s*observedDocumentOffsetMs \?\? sampledSegmentEndMs/,
+  );
   assert.match(source, /assertAutoplayAppMonotonicResetGuard\(\);/);
   assert.match(
     source,
     /\{ appMonotonicMs: 6_500, rawAppMonotonicMs: 500 \}/,
+  );
+});
+
+test("app-monotonic pacing recovers the loaded-runner document-reset interval", () => {
+  assert.ok(
+    cumulativeAppMonotonicStart >= 0 &&
+      cumulativeAppMonotonicEnd > cumulativeAppMonotonicStart,
+  );
+  const samples = buildCumulativeAppMonotonicSamples([
+    {
+      appMonotonicMs: 720,
+      elapsedMs: 910,
+      wallMonotonicMs: 720,
+    },
+    {
+      appMonotonicMs: 10_675.9,
+      elapsedMs: 11_570,
+      wallMonotonicMs: 10_675.9,
+    },
+    {
+      appMonotonicMs: 780.3,
+      elapsedMs: 22_954,
+      wallMonotonicMs: 780.3,
+    },
+    {
+      appMonotonicMs: 163_782.9,
+      elapsedMs: 186_280,
+      wallMonotonicMs: 163_782.9,
+    },
+  ]);
+
+  assert.equal(Math.round(samples[2].appMonotonicMs), 22_764);
+  assert.equal(
+    Math.round(samples[2].appDocumentResetCompensationMs),
+    11_308,
+  );
+  assert.equal(Math.round(samples[3].appMonotonicMs), 185_767);
+  assert.ok(samples[3].appMonotonicMs >= 180_000);
+  assert.match(
+    source,
+    /resetAutoplayFirstAfternoonPresentationFloor\(game\.id\)/,
+  );
+  assert.match(
+    source,
+    /sessionStorage\.removeItem\(storageKey\)/,
+  );
+  assert.ok(
+    source.indexOf(
+      "resetAutoplayFirstAfternoonPresentationFloor(game.id)",
+    ) < source.indexOf("const pacingStartedAt = Date.now()"),
+    "Frozen opening evidence must be removed from the floor before live pacing starts.",
   );
 });
 
@@ -292,6 +361,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "screencastFrameIsBracketedByEpochProbes",
     "requireStableAutoplayScreenshotPaintProbe",
     "assertAutoplayRouteHudContinuity",
+    "autoplayRecordedRouteWindowFrame",
     `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
@@ -306,6 +376,8 @@ test("proactive route history survives a delayed observer and rejects unproven w
       routeHudContinuityChecks += 1;
       return { routeHudContinuityPixelDifferenceRatio: 0 };
     },
+    (recordedWindow) =>
+      recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
   );
   assert.doesNotThrow(() =>
     routeCapture.assertAutoplayFootholdRouteCaptureGuard(),
@@ -378,6 +450,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     capturedAtEpochMs: capturedAtEpochMs + offsetMs,
     capturedAtMonotonicMs: 100 + offsetMs,
     paintProbe: samplePaintProbe,
+    recorderGeneration: 2,
     route: routeCapture.buildAutoplayFootholdRouteGuardFixture(
       progress,
       overrides,
@@ -548,6 +621,10 @@ test("proactive route history survives a delayed observer and rejects unproven w
   );
   const captureSource = source.slice(captureStart, captureEnd);
   const recordedSource = source.slice(recordedStart, recordedEnd);
+  const proactiveCaptureSource = source.slice(
+    source.indexOf("async function captureAutoplayProactiveRouteFrameWindow("),
+    recordedStart,
+  );
   const runStart = source.indexOf(
     "async function runAutoplayObservation(session, { game, openingWorldVariant })",
   );
@@ -618,9 +695,15 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "The proactive visual recorder must be watching before autoplay navigation can begin the opening route.",
   );
   assert.match(
-    source,
-    /const candidateFrame = await session\.captureAutoplayRouteVisualFrame\(\{\s*minimumCapturedAtEpochMs: beforeProbe\.capturedAtEpochMs,\s*\}\);/,
-    "The first real screenshot must be captured immediately inside the legal opening segment.",
+    proactiveCaptureSource,
+    /const frame = await session\.captureAutoplayRouteVisualFrame\(\{\s*minimumCapturedAtEpochMs:\s*beforeProbe\.capturedAtEpochMs \+\s*AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,/,
+    "The position screenshot must retain the compositing settle interval inside the legal opening segment.",
+  );
+  assert.equal(
+    (proactiveCaptureSource.match(/captureAutoplayRouteVisualFrame\(/g) ?? [])
+      .length,
+    1,
+    "Each proactive route position must consume one renderer screenshot.",
   );
   assert.match(runSource, /selectAutoplayRecordedRouteTrajectory\(/);
   assert.match(runSource, /startAutoplayRouteVisualWindowRecorder\(/);
@@ -1244,7 +1327,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const routeSegmentsPolicy = Function(
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, isAutoplayFootholdRouteFrame };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { autoplayRouteCaptureSamplesShareExactIdentity, buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, compactAutoplayRouteFrameWindowProbe, isAutoplayFootholdRouteFrame };`,
   )(2_000, 0.02);
   const screencastFrameCapturedAtEpochMs = (frame) =>
     typeof frame?.metadata?.timestamp === "number"
@@ -1279,6 +1362,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "screencastFrameIsBracketedByEpochProbes",
     "requireStableAutoplayScreenshotPaintProbe",
     "assertAutoplayRouteHudContinuity",
+    "autoplayRecordedRouteWindowFrame",
     `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
@@ -1290,6 +1374,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     screencastFrameIsBracketedByEpochProbes,
     (_before, after) => after,
     () => ({ routeHudContinuityPixelDifferenceRatio: 0 }),
+    (recordedWindow) =>
+      recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
   );
   const proactiveCaptureStart = source.indexOf(
     "async function captureAutoplayProactiveRouteFrameWindow(",
@@ -1303,6 +1389,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayRouteCaptureWindowCoherent",
     "isAutoplayFootholdRouteFrame",
     "screencastFrameCapturedAtEpochMs",
+    "autoplayRouteCaptureSamplesShareExactIdentity",
     `${source.slice(proactiveCaptureStart, proactiveCaptureEnd)}; return captureAutoplayProactiveRouteFrameWindow;`,
   )(
     125,
@@ -1318,6 +1405,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       afterRoute.progress >= beforeRoute.progress,
     routeSegmentsPolicy.isAutoplayFootholdRouteFrame,
     screencastFrameCapturedAtEpochMs,
+    routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactIdentity,
   );
   let proactiveRouteCaptureFixture = async () => null;
   const classStart = source.indexOf("class CdpSession {");
@@ -1336,6 +1424,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_RECORDER_MAX_FRAMES",
     "AUTOPLAY_ROUTE_FRAME_ARCHIVE_MAX_FRAMES",
     "AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS",
+    "AUTOPLAY_ROUTE_FRAME_WINDOW_REJECTION_MAX_ENTRIES",
     "AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS",
     "AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS",
     "AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS",
@@ -1343,9 +1432,12 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
     "PROBE_POLL_INTERVAL_MS",
     "autoplayRouteCaptureWindowCoherent",
+    "autoplayRouteCaptureSamplesShareExactIdentity",
+    "autoplayRecordedRouteWindowFrame",
     "buildAutoplayRouteCaptureSegments",
     "captureAutoplayProactiveRouteFrameWindow",
     "compactAutoplayRouteCaptureSegments",
+    "compactAutoplayRouteFrameWindowProbe",
     "CDP_WAIT_TIMEOUT_MS",
     "screencastFrameIsBracketedByEpochProbes",
     "screencastFrameCapturedAtEpochMs",
@@ -1363,6 +1455,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     16,
     8,
     2,
+    8,
     16,
     4,
     1,
@@ -1375,9 +1468,13 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       beforeRoute.targetLocationId === expectedTargetLocationId &&
       afterRoute.targetLocationId === expectedTargetLocationId &&
       afterRoute.progress >= beforeRoute.progress,
+    routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactIdentity,
+    (recordedWindow) =>
+      recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
     (options) => proactiveRouteCaptureFixture(options),
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
+    routeSegmentsPolicy.compactAutoplayRouteFrameWindowProbe,
     20,
     screencastFrameIsBracketedByEpochProbes,
     screencastFrameCapturedAtEpochMs,
@@ -2315,6 +2412,276 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
+    "single-frame positions recover after four loaded-runner window rejections",
+    async () => {
+      const loadedSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/loaded-route",
+        url: "http://127.0.0.1/",
+      });
+      loadedSession.socket = { destroyed: false, writable: true };
+      const commands = [];
+      loadedSession.send = async (method, params) => {
+        commands.push({ method, params });
+        return {};
+      };
+      await loadedSession.startAutoplayScreencast();
+      const startedAt = loadedSession.screencast.startedAtEpochMs;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const route = {
+        active: true,
+        durationMs: 5_040,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sample = (
+        progress,
+        offsetMs,
+        {
+          generation = 2,
+          previousOffsetMs = null,
+          tickCount,
+          routeOverrides = {},
+        } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe,
+        recorderGeneration: generation,
+        recorderParseErrorCount: 0,
+        recorderPreviousTickAtEpochMs:
+          previousOffsetMs === null ? null : startedAt + previousOffsetMs,
+        recorderRejectedCount: 522,
+        recorderTickCount: tickCount,
+        recorderUnavailableCount: 45,
+        route: { ...route, progress, ...routeOverrides },
+        source: "movement-probe-recorder",
+      });
+      const initialSamples = [
+        sample(0.004, 0, { tickCount: 1 }),
+        sample(0.25, 600, {
+          previousOffsetMs: 0,
+          tickCount: 2,
+        }),
+        sample(0.814, 3_500, {
+          previousOffsetMs: 600,
+          tickCount: 3,
+        }),
+      ];
+      const finalOpeningSample = sample(0.9, 4_500, {
+        previousOffsetMs: 3_500,
+        tickCount: 4,
+      });
+      const openingRecorder = {
+        acceptedCount: 21,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        rejectedCount: 522,
+        samples: [...initialSamples, finalOpeningSample],
+        unavailableCount: 45,
+      };
+      const frame = (sequence, offsetMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: {
+          source: "proactive-route-screenshot",
+          timestamp: (startedAt + offsetMs) / 1_000,
+        },
+        sequence,
+        source: "proactive-route-screenshot",
+      });
+      const arrivedProbe = sample(1, 5_500, {
+        previousOffsetMs: 4_500,
+        routeOverrides: { active: false },
+        tickCount: 5,
+      });
+
+      assert.equal(loadedSession.autoplayRouteFrameHistory().length, 0);
+      const initialSegments =
+        routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId: "tea-house",
+          samples: initialSamples,
+        });
+      assert.equal(initialSegments.length, 1);
+      assert.equal(initialSegments[0].samples.length, 3);
+      assert.equal(initialSegments[0].stalledRecorderGapCount, 1);
+      await assert.rejects(
+        loadedSession.captureAutoplayRouteVisualFrame({
+          minimumCapturedAtEpochMs: startedAt,
+        }),
+        /exclusive access to the CDP visual transport/,
+      );
+
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        assert.equal(
+          loadedSession.archiveAutoplayRouteFrameWindow({
+            expectedTargetLocationId: "tea-house",
+            recordedWindow: {
+              afterProbe: arrivedProbe,
+              beforeProbe: initialSamples[0],
+              candidateFrame: frame(
+                100 + attempt * 2,
+                300,
+                `legacy-candidate-${attempt}`,
+              ),
+              confirmationFrame: frame(
+                101 + attempt * 2,
+                425,
+                `legacy-confirmation-${attempt}`,
+              ),
+            },
+            recorder: {
+              ...openingRecorder,
+              samples: [...openingRecorder.samples, arrivedProbe],
+            },
+          }),
+          null,
+        );
+      }
+      loadedSession.screencast.routeFrameWindowCaptureAttemptCount = 4;
+      assert.equal(loadedSession.autoplayRouteFrameWindows().length, 0);
+      assert.equal(loadedSession.screencast.routeFrameWindowRejectedCount, 4);
+      assert.equal(loadedSession.screencast.routeFrameWindowRejections.length, 4);
+      assert.ok(
+        loadedSession.screencast.routeFrameWindowRejections.every(
+          (rejection) =>
+            rejection.reason === "after-probe-outside-opening-segment" &&
+            rejection.before.route.progress === 0.004 &&
+            rejection.after.route.active === false &&
+            rejection.frame.source === "proactive-route-screenshot",
+        ),
+      );
+
+      const afterSamples = [initialSamples[1], finalOpeningSample];
+      const renderedFrames = [
+        frame(201, 500, "loaded-route-position-start"),
+        frame(202, 4_000, "loaded-route-position-mid"),
+      ];
+      let visualCaptureCount = 0;
+      loadedSession.captureAutoplayRouteVisualFrame = async () => {
+        assert.equal(
+          loadedSession.screencast.routeVisualCaptureTransportStatus,
+          "paused-for-route-capture",
+        );
+        visualCaptureCount += 1;
+        return renderedFrames.shift();
+      };
+      loadedSession.sampleAutoplayRouteCaptureRecorder = async () =>
+        afterSamples.shift() ?? null;
+      loadedSession.readOrRearmAutoplayRouteCaptureRecorder = async () =>
+        openingRecorder;
+
+      try {
+        assert.ok(
+          await proactiveCapturePolicy({
+            beforeProbe: initialSamples[0],
+            expectedTargetLocationId: "tea-house",
+            label: "loaded-route:start",
+            session: loadedSession,
+          }),
+        );
+        assert.ok(
+          await proactiveCapturePolicy({
+            beforeProbe: initialSamples[2],
+            expectedTargetLocationId: "tea-house",
+            label: "loaded-route:mid",
+            session: loadedSession,
+          }),
+        );
+        assert.equal(visualCaptureCount, 2);
+        assert.equal(loadedSession.autoplayRouteFrameHistory().length, 0);
+        assert.equal(loadedSession.autoplayRouteFrameWindows().length, 2);
+        assert.ok(
+          loadedSession.autoplayRouteFrameWindows().every(
+            (recordedWindow) =>
+              recordedWindow.frame &&
+              !recordedWindow.candidateFrame &&
+              !recordedWindow.confirmationFrame,
+          ),
+        );
+        assert.equal(loadedSession.screencast.routeVisualCapturePauseCount, 2);
+        assert.equal(loadedSession.screencast.routeVisualCaptureResumeCount, 2);
+
+        let crossPositionPixelCheckCount = 0;
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: [],
+            label: "three-sample loaded opening route",
+            recordedWindows: loadedSession.autoplayRouteFrameWindows(),
+            samples: loadedSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame: positionFrame, paintProbe }) => ({
+              buffer: Buffer.from(positionFrame.data, "base64"),
+              height: 625,
+              paintProbe,
+              textPaint: { regionCount: 9, surfaces: ["hud"] },
+              width: 1365,
+            }),
+            validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+              crossPositionPixelCheckCount += 1;
+              assert.notDeepEqual(afterBuffer, beforeBuffer);
+              return { hudPixelDifferenceRatio: 0 };
+            },
+          });
+        assert.equal(trajectory.start.evidenceSource, "proactive-route-frame");
+        assert.equal(trajectory.mid.evidenceSource, "proactive-route-frame");
+        assert.equal(trajectory.start.beforeProbe.route.progress, 0.004);
+        assert.equal(trajectory.start.afterProbe.route.progress, 0.25);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.814);
+        assert.equal(trajectory.mid.afterProbe.route.progress, 0.9);
+        assert.equal(crossPositionPixelCheckCount, 1);
+
+        const generationChanged = sample(0.2, 550, {
+          generation: 3,
+          previousOffsetMs: 0,
+          tickCount: 2,
+        });
+        assert.equal(
+          loadedSession.archiveAutoplayRouteFrameWindow({
+            expectedTargetLocationId: "tea-house",
+            recordedWindow: {
+              afterProbe: generationChanged,
+              beforeProbe: initialSamples[0],
+              frame: frame(301, 500, "generation-changed-position"),
+            },
+            recorder: {
+              ...openingRecorder,
+              samples: [...openingRecorder.samples, generationChanged],
+            },
+          }),
+          null,
+        );
+        assert.equal(
+          loadedSession.screencast.routeFrameWindowRejections.at(-1).reason,
+          "route-window-identity-changed",
+        );
+        assert.ok(
+          loadedSession.screencast.routeFrameWindowRejections.length <= 8,
+        );
+      } finally {
+        await loadedSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
     "exclusive visual transport recovers five legal samples with zero screencast frames",
     async () => {
       const starvationSession = new CdpSession({
@@ -2457,19 +2824,18 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           "active",
         );
         assert.deepEqual(
-          commands.slice(0, 9).map((command) => command.method),
+          commands.slice(0, 7).map((command) => command.method),
           [
             "Page.startScreencast",
             "Page.stopScreencast",
             "Page.captureScreenshot",
-            "Page.captureScreenshot",
             "Page.startScreencast",
             "Page.stopScreencast",
-            "Page.captureScreenshot",
             "Page.captureScreenshot",
             "Page.startScreencast",
           ],
         );
+        assert.equal(screenshotCount, 2);
 
         const trajectory =
           recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
