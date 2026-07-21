@@ -1588,6 +1588,9 @@ class CdpSession {
                 this.screencast.routeFrameObservedSegmentCount,
               routeFrameOpeningSegment:
                 this.screencast.routeFrameOpeningSegment,
+              routeFrameSampleCount: this.screencast.routeFrameSampleCount,
+              routeFrameSampleError: this.screencast.routeFrameSampleError,
+              routeFrameSampleStatus: this.screencast.routeFrameSampleStatus,
               routeFrameWindowArchiveCount:
                 this.screencast.routeFrameWindowArchive.length,
               routeFrameWindowArchiveProgress:
@@ -3477,6 +3480,12 @@ class CdpSession {
       routeRecorderRearmPromise: null,
       routeFrameObservedSegmentCount: 0,
       routeFrameOpeningSegment: null,
+      routeFrameSampleCount: 0,
+      routeFrameSampleError: null,
+      routeFrameSampleLastAttemptAtEpochMs: null,
+      routeFrameSamplePending: false,
+      routeFrameSamplePromise: null,
+      routeFrameSampleStatus: "idle",
       routeSampleArchive: [],
       startedAtEpochMs: Date.now(),
       status: "starting",
@@ -3510,6 +3519,8 @@ class CdpSession {
     }
     state.active = false;
     state.status = "stopping";
+    state.routeFrameSamplePending = false;
+    await state.routeFrameSamplePromise?.catch(() => null);
     await state.routeFrameWindowRecorderPromise?.catch(() => null);
     for (const waiter of state.waiters.splice(0)) {
       clearTimeout(waiter.timeoutId);
@@ -3866,6 +3877,85 @@ class CdpSession {
     return state.routeFrameArchive.length;
   }
 
+  scheduleAutoplayRouteSampleFromScreencastFrame() {
+    const state = this.screencast;
+    const expectedTargetLocationId =
+      state?.routeRecorderExpectedTargetLocationId ?? null;
+    if (
+      !state?.active ||
+      !expectedTargetLocationId ||
+      state.routeFrameArchiveFrozen ||
+      state.routeFrameWindowArchive.length >=
+        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+    ) {
+      return;
+    }
+    state.routeFrameSamplePending = true;
+    if (state.routeFrameSamplePromise) {
+      return;
+    }
+    state.routeFrameSampleStatus = "sampling-rendered-frames";
+    state.routeFrameSamplePromise = (async () => {
+      while (
+        state.active &&
+        state.routeFrameSamplePending &&
+        !state.routeFrameArchiveFrozen &&
+        state.routeFrameWindowArchive.length <
+          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+      ) {
+        state.routeFrameSamplePending = false;
+        const remainingCadenceMs =
+          (state.routeFrameSampleLastAttemptAtEpochMs ?? -Infinity) +
+          AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS -
+          Date.now();
+        if (remainingCadenceMs > 0) {
+          await sleep(remainingCadenceMs);
+        }
+        state.routeFrameSampleLastAttemptAtEpochMs = Date.now();
+        let sample = await this.sampleAutoplayRouteCaptureRecorder(
+          "screencast-frame-route-sample",
+        );
+        if (!sample) {
+          const recorder = await this.readOrRearmAutoplayRouteCaptureRecorder({
+            expectedTargetLocationId,
+            label: "screencast-frame-route-recorder",
+          });
+          this.archiveAutoplayRouteFrames(recorder);
+          sample = await this.sampleAutoplayRouteCaptureRecorder(
+            "screencast-frame-route-sample-after-rearm",
+          );
+        }
+        if (!sample) {
+          continue;
+        }
+        state.routeFrameSampleCount += 1;
+        this.archiveAutoplayRouteFrames({
+          acceptedCount: state.routeFrameSampleCount,
+          expectedTargetLocationId,
+          samples: [sample],
+        });
+      }
+    })()
+      .catch((error) => {
+        state.routeFrameSampleError =
+          error instanceof Error ? error.message : String(error);
+        state.routeFrameSampleStatus = "failed";
+        this.recordCdpTransportEvent("route-frame-sample-failed", {
+          error: state.routeFrameSampleError,
+          expectedTargetLocationId,
+        });
+      })
+      .finally(() => {
+        state.routeFrameSamplePromise = null;
+        if (state.routeFrameSampleStatus !== "failed") {
+          state.routeFrameSampleStatus = state.active ? "waiting" : "stopped";
+        }
+        if (state.active && state.routeFrameSamplePending) {
+          this.scheduleAutoplayRouteSampleFromScreencastFrame();
+        }
+      });
+  }
+
   waitForAutoplayScreencastFrame({
     afterSequence,
     minimumCapturedAtEpochMs,
@@ -3979,6 +4069,7 @@ class CdpSession {
     ) {
       state.routeFrameHistory.shift();
     }
+    this.scheduleAutoplayRouteSampleFromScreencastFrame();
 
     for (const waiter of [...state.waiters]) {
       if (!waiter.matches(frame)) {
