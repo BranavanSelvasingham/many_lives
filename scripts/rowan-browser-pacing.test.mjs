@@ -2757,6 +2757,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             "paused-for-route-capture",
             "A renderer screenshot must never compete with the active screencast stream.",
           );
+          assert.equal(params.optimizeForSpeed, true);
           screenshotCount += 1;
           return {
             result: {

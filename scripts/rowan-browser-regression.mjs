@@ -3810,6 +3810,7 @@ class CdpSession {
         captureBeyondViewport: false,
         format: "png",
         fromSurface: true,
+        optimizeForSpeed: true,
       },
       { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
     );
