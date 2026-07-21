@@ -60,6 +60,14 @@ const buildCumulativeAppMonotonicSamples = Function(
     cumulativeAppMonotonicEnd,
   )})`,
 )();
+const sleepUntilEpochStart = source.indexOf("async function sleepUntilEpochMs(");
+const sleepUntilEpochEnd = source.indexOf(
+  "\nfunction ",
+  sleepUntilEpochStart + 1,
+);
+const sleepUntilEpochMs = Function(
+  `return (${source.slice(sleepUntilEpochStart, sleepUntilEpochEnd)})`,
+)();
 
 test("first-afternoon readability uses full app-visible dwell", () => {
   assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
@@ -189,6 +197,25 @@ test("app-monotonic pacing recovers the loaded-runner document-reset interval", 
       "resetAutoplayFirstAfternoonPresentationFloor(game.id)",
     ) < source.indexOf("const pacingStartedAt = Date.now()"),
     "Frozen opening evidence must be removed from the floor before live pacing starts.",
+  );
+});
+
+test("route compositing waits through an early timer wake-up", async () => {
+  assert.ok(sleepUntilEpochStart >= 0 && sleepUntilEpochEnd > sleepUntilEpochStart);
+  const clockSamples = [100, 224, 225];
+  const waits = [];
+
+  await sleepUntilEpochMs(225, {
+    now: () => clockSamples.shift() ?? 225,
+    sleepFor: async (durationMs) => {
+      waits.push(durationMs);
+    },
+  });
+
+  assert.deepEqual(waits, [125, 1]);
+  assert.match(
+    source,
+    /await sleepUntilEpochMs\(minimumCapturedAtEpochMs\)/,
   );
 });
 
@@ -1442,6 +1469,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "screencastFrameIsBracketedByEpochProbes",
     "screencastFrameCapturedAtEpochMs",
     "sleep",
+    "sleepUntilEpochMs",
     "withTimeout",
     `${source.slice(classStart, classEnd)}; return CdpSession;`,
   )(
@@ -1479,6 +1507,11 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     screencastFrameIsBracketedByEpochProbes,
     screencastFrameCapturedAtEpochMs,
     (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    (minimumEpochMs) =>
+      sleepUntilEpochMs(minimumEpochMs, {
+        sleepFor: (milliseconds) =>
+          new Promise((resolve) => setTimeout(resolve, milliseconds)),
+      }),
     (promise, timeoutMs, message) =>
       Promise.race([
         promise,

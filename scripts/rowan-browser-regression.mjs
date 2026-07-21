@@ -715,6 +715,17 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function sleepUntilEpochMs(
+  minimumEpochMs,
+  { now = Date.now, sleepFor = sleep } = {},
+) {
+  let currentEpochMs = now();
+  while (currentEpochMs < minimumEpochMs) {
+    await sleepFor(Math.max(1, minimumEpochMs - currentEpochMs));
+    currentEpochMs = now();
+  }
+}
+
 function withTimeout(promise, timeoutMs, message) {
   let timeout;
   const timeoutPromise = new Promise((_, reject) => {
@@ -3791,10 +3802,7 @@ class CdpSession {
       "paused-for-route-capture",
       "Proactive route screenshots require exclusive access to the CDP visual transport.",
     );
-    const remainingSettleMs = minimumCapturedAtEpochMs - Date.now();
-    if (remainingSettleMs > 0) {
-      await sleep(remainingSettleMs);
-    }
+    await sleepUntilEpochMs(minimumCapturedAtEpochMs);
     const requestedAtEpochMs = Date.now();
     const response = await this.send(
       "Page.captureScreenshot",
