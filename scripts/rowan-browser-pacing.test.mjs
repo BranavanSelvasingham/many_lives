@@ -4431,6 +4431,17 @@ test("streaming conversation growth keeps following a readable exchange", () => 
   );
 });
 
+test("streaming overlay rebuilds retain the last coherent camera probe", () => {
+  assert.match(
+    overlayDomStateSource,
+    /browserCameraProbeJson: browserCameraProbe\?\.textContent \?\? null/,
+  );
+  assert.match(
+    overlayDomStateSource,
+    /if \(browserCameraProbe && state\.browserCameraProbeJson !== null\) \{\s*browserCameraProbe\.textContent = state\.browserCameraProbeJson;/,
+  );
+});
+
 test("scheduled NPC evidence retains intermediate settled watch probes", () => {
   assert.match(
     source,

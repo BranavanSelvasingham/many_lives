@@ -1,5 +1,6 @@
 export type OverlayRenderState = {
   activeFieldKey: string | null;
+  browserCameraProbeJson: string | null;
   commandRailConversationVisible: boolean;
   commandRailNearBottom: boolean;
   commandRailScrollTop: number | null;
@@ -51,6 +52,9 @@ export function captureOverlayRenderState(
   const commandRail = root.querySelector<HTMLElement>(
     '[data-preserve-scroll="command-rail"]',
   );
+  const browserCameraProbe = root.querySelector<HTMLScriptElement>(
+    "#ml-browser-camera-probe",
+  );
   const transcript = root.querySelector<HTMLElement>(
     '[data-chat-transcript="true"]',
   );
@@ -81,6 +85,7 @@ export function captureOverlayRenderState(
       activeField && root.contains(activeField)
         ? (activeField.dataset.overlayFieldKey ?? null)
         : null,
+    browserCameraProbeJson: browserCameraProbe?.textContent ?? null,
     commandRailConversationVisible: commandRail
       ? isCommandRailConversationVisible(commandRail)
       : false,
@@ -117,6 +122,13 @@ export function restoreOverlayRenderState(
   root: HTMLDivElement,
   state: OverlayRenderState,
 ) {
+  const browserCameraProbe = root.querySelector<HTMLScriptElement>(
+    "#ml-browser-camera-probe",
+  );
+  if (browserCameraProbe && state.browserCameraProbeJson !== null) {
+    browserCameraProbe.textContent = state.browserCameraProbeJson;
+  }
+
   root
     .querySelectorAll<
       HTMLInputElement | HTMLTextAreaElement
