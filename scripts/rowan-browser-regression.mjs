@@ -1308,6 +1308,112 @@ function requireStableAutoplayScreenshotPaintProbe(before, after, label) {
   };
 }
 
+function matchStableAutoplayPaintContainerGeometry(
+  beforeRegions,
+  afterRegions,
+  label,
+) {
+  assert.equal(
+    afterRegions.length,
+    beforeRegions.length,
+    `${label}: visible HUD container count changed during route capture (${beforeRegions.length} before, ${afterRegions.length} after).`,
+  );
+  const unmatchedAfter = [...afterRegions];
+  let maximumGeometryDeltaCssPx = 0;
+  const stableRegions = beforeRegions.map((beforeRegion) => {
+    const candidates = unmatchedAfter
+      .map((afterRegion, index) => ({
+        afterRegion,
+        delta: maximumRectGeometryDelta(beforeRegion.rect, afterRegion.rect),
+        index,
+      }))
+      .filter(({ afterRegion }) => afterRegion.surface === beforeRegion.surface)
+      .sort((left, right) => left.delta - right.delta);
+    assert.ok(
+      candidates.length > 0,
+      `${label}: a visible HUD container disappeared during route capture.`,
+    );
+    const [{ afterRegion, delta, index }] = candidates;
+    assert.ok(
+      delta <= AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX,
+      `${label}: visible HUD container geometry drifted by ${delta.toFixed(3)} CSS px.`,
+    );
+    unmatchedAfter.splice(index, 1);
+    maximumGeometryDeltaCssPx = Math.max(maximumGeometryDeltaCssPx, delta);
+    return {
+      ...afterRegion,
+      rect: { ...afterRegion.rect },
+    };
+  });
+  return { maximumGeometryDeltaCssPx, stableRegions };
+}
+
+function requireStableAutoplayRouteWindowPaintProbe(before, after, label) {
+  assert.deepEqual(
+    after.viewport,
+    before.viewport,
+    `${label}: viewport changed during route capture.`,
+  );
+  const beforeHudText = before.regions.filter(
+    (region) => region.surface === "hud",
+  );
+  const afterHudText = after.regions.filter(
+    (region) => region.surface === "hud",
+  );
+  assert.equal(
+    afterHudText.length,
+    beforeHudText.length,
+    `${label}: visible HUD text-run count changed during route capture (${beforeHudText.length} before, ${afterHudText.length} after).`,
+  );
+  const nonHudText = matchStableAutoplayPaintRegions(
+    before.regions.filter((region) => region.surface !== "hud"),
+    after.regions.filter((region) => region.surface !== "hud"),
+    label,
+    "non-HUD visible",
+  );
+  const nonHudContainers = matchStableAutoplayPaintRegions(
+    (before.stableRegions ?? []).filter(
+      (region) => region.surface !== "hud",
+    ),
+    (after.stableRegions ?? []).filter(
+      (region) => region.surface !== "hud",
+    ),
+    label,
+    "non-HUD container",
+  );
+  const hudContainers = matchStableAutoplayPaintContainerGeometry(
+    (before.stableRegions ?? []).filter(
+      (region) => region.surface === "hud",
+    ),
+    (after.stableRegions ?? []).filter(
+      (region) => region.surface === "hud",
+    ),
+    label,
+  );
+  const regions = [...afterHudText, ...nonHudText.stableRegions];
+  assert.ok(
+    regions.length >= 8,
+    `${label}: expected complete visible HUD, dock, and rail text geometry.`,
+  );
+  assert.ok(
+    hudContainers.stableRegions.length > 0,
+    `${label}: stable HUD container geometry was unavailable.`,
+  );
+  return {
+    maximumContainerGeometryDeltaCssPx: Math.max(
+      nonHudContainers.maximumGeometryDeltaCssPx,
+      hudContainers.maximumGeometryDeltaCssPx,
+    ),
+    maximumTextGeometryDeltaCssPx: nonHudText.maximumGeometryDeltaCssPx,
+    regions,
+    stableRegions: [
+      ...hudContainers.stableRegions,
+      ...nonHudContainers.stableRegions,
+    ],
+    viewport: after.viewport,
+  };
+}
+
 function shouldValidateGameplayScreenshotPaint(targetPath) {
   const label = path.basename(targetPath);
   return !/(?:overlay|panel|camera|rowan-click)/i.test(label);
@@ -4079,10 +4185,7 @@ class CdpSession {
         recordedWindow.afterProbe.route,
         expectedTargetLocationId,
       ) ||
-      !autoplayRouteCaptureSamplesShareExactIdentity(
-        recordedWindow.beforeProbe,
-        recordedWindow.afterProbe,
-      )
+      !autoplayRecordedRouteWindowSharesAdmissibleIdentity(recordedWindow)
     ) {
       return reject("route-window-identity-changed");
     }
@@ -13975,16 +14078,42 @@ function autoplayRouteSamplePathSignature(sample) {
   });
 }
 
+function autoplayRouteCaptureSamplesShareExactRouteIdentity(before, after) {
+  return Boolean(
+    Number.isInteger(before?.recorderGeneration) &&
+      after?.recorderGeneration === before.recorderGeneration &&
+      autoplayRouteSamplePathSignature(after) ===
+        autoplayRouteSamplePathSignature(before),
+  );
+}
+
 function autoplayRouteCaptureSamplesShareExactIdentity(before, after) {
   const beforeHudSignature = autoplayRouteSampleHudSignature(before);
   const afterHudSignature = autoplayRouteSampleHudSignature(after);
   return Boolean(
-    Number.isInteger(before?.recorderGeneration) &&
-      after?.recorderGeneration === before.recorderGeneration &&
+    autoplayRouteCaptureSamplesShareExactRouteIdentity(before, after) &&
       beforeHudSignature !== null &&
-      afterHudSignature === beforeHudSignature &&
-      autoplayRouteSamplePathSignature(after) ===
-        autoplayRouteSamplePathSignature(before),
+      afterHudSignature === beforeHudSignature,
+  );
+}
+
+function autoplayRecordedRouteWindowSharesAdmissibleIdentity(recordedWindow) {
+  if (
+    autoplayRouteCaptureSamplesShareExactIdentity(
+      recordedWindow?.beforeProbe,
+      recordedWindow?.afterProbe,
+    )
+  ) {
+    return true;
+  }
+  const frame = recordedWindow?.frame ?? null;
+  return Boolean(
+    frame?.source === "proactive-route-screenshot" &&
+      autoplayRouteCaptureSamplesShareExactRouteIdentity(
+        recordedWindow?.beforeProbe,
+        recordedWindow?.afterProbe,
+      ) &&
+      autoplayRouteSampleHudSignature(recordedWindow?.afterProbe) !== null,
   );
 }
 
@@ -14023,10 +14152,7 @@ function autoplayRouteCaptureWindowOpeningMembership({
         recordedWindow.afterProbe.route,
         expectedTargetLocationId,
       ) &&
-      autoplayRouteCaptureSamplesShareExactIdentity(
-        recordedWindow.beforeProbe,
-        recordedWindow.afterProbe,
-      ),
+      autoplayRecordedRouteWindowSharesAdmissibleIdentity(recordedWindow),
   );
   return {
     afterBelongs,
@@ -14148,15 +14274,9 @@ function buildAutoplayRouteCaptureSegments({
     );
     const previousHudSignature = autoplayRouteSampleHudSignature(previous);
     const hudSignature = autoplayRouteSampleHudSignature(sample);
-    const hudChanged = Boolean(
-      previousHudSignature &&
-        hudSignature &&
-        hudSignature !== previousHudSignature,
-    );
     const stalledRecorderContinuity = Boolean(
       previous &&
         !pathChanged &&
-        !hudChanged &&
         previousHudSignature !== null &&
         hudSignature === previousHudSignature &&
         !progressReset &&
@@ -14169,7 +14289,6 @@ function buildAutoplayRouteCaptureSegments({
         : null,
       progressReset ? "progress-reset" : null,
       pathChanged ? "path-change" : null,
-      hudChanged ? "hud-change" : null,
     ].filter(Boolean);
 
     if (!current || boundaryReasons.length > 0) {
@@ -14832,7 +14951,10 @@ async function captureAutoplayProactiveRouteFrameWindow({
         afterProbe?.route,
         expectedTargetLocationId,
       ) ||
-      !autoplayRouteCaptureSamplesShareExactIdentity(beforeProbe, afterProbe)
+      !autoplayRouteCaptureSamplesShareExactRouteIdentity(
+        beforeProbe,
+        afterProbe,
+      )
     ) {
       session.recordAutoplayRouteFrameWindowRejection({
         afterProbe,
@@ -14889,10 +15011,7 @@ function recordedRouteWindowBelongsToOpeningSegment({
         recordedWindow.afterProbe.route,
         expectedTargetLocationId,
       ) &&
-      autoplayRouteCaptureSamplesShareExactIdentity(
-        recordedWindow.beforeProbe,
-        recordedWindow.afterProbe,
-      ) &&
+      autoplayRecordedRouteWindowSharesAdmissibleIdentity(recordedWindow) &&
       screencastFrameIsBracketedByEpochProbes(
         frame,
         recordedWindow.beforeProbe,
@@ -15153,11 +15272,21 @@ function validateAutoplayRecordedRouteFrame({
   recordedFrame,
   validateFrame = validateAutoplayScreencastFrame,
 }) {
-  const paintProbe = requireStableAutoplayScreenshotPaintProbe(
-    recordedFrame.beforeProbe.paintProbe,
-    recordedFrame.afterProbe.paintProbe,
-    label,
+  const exactIdentity = autoplayRouteCaptureSamplesShareExactIdentity(
+    recordedFrame.beforeProbe,
+    recordedFrame.afterProbe,
   );
+  const paintProbe = exactIdentity
+    ? requireStableAutoplayScreenshotPaintProbe(
+        recordedFrame.beforeProbe.paintProbe,
+        recordedFrame.afterProbe.paintProbe,
+        label,
+      )
+    : requireStableAutoplayRouteWindowPaintProbe(
+        recordedFrame.beforeProbe.paintProbe,
+        recordedFrame.afterProbe.paintProbe,
+        `${label} route-window paint`,
+      );
   const validated = validateFrame({
     frame: recordedFrame.frame,
     label,
@@ -15185,6 +15314,12 @@ function validateAutoplayRecordedRouteFrame({
       textPaint: {
         ...validated.textPaint,
         ...hudContinuity,
+        ...(!exactIdentity
+          ? {
+              routeWindowPaintProbeBasis:
+                "stable-hud-containers-and-frame-adjacent-text",
+            }
+          : {}),
       },
     },
   };
@@ -15262,8 +15397,21 @@ function selectAutoplayRecordedRouteTrajectory({
               : "confirmed-window";
         const sharesVisualTransport =
           midEvidenceSource === start.evidenceSource;
+        const sharesExactRouteIdentity =
+          autoplayRouteCaptureSamplesShareExactRouteIdentity(
+            start.afterProbe,
+            midCandidate.beforeProbe,
+          );
+        const sharesExactHudIdentity =
+          autoplayRouteCaptureSamplesShareExactIdentity(
+            start.afterProbe,
+            midCandidate.beforeProbe,
+          );
+        const compareHudPixels =
+          sharesVisualTransport && sharesExactHudIdentity;
         if (
           !midFrame ||
+          !sharesExactRouteIdentity ||
           midFrame.sequence <= start.frame.sequence ||
           screencastFrameCapturedAtEpochMs(midFrame) <
             screencastFrameCapturedAtEpochMs(start.frame) +
@@ -15276,14 +15424,14 @@ function selectAutoplayRecordedRouteTrajectory({
         }
         try {
           const mid = candidateSet.validate({
-            hudReference: sharesVisualTransport ? hudReference : null,
+            hudReference: compareHudPixels ? hudReference : null,
             label: `${label} route-mid`,
             recordedEvidence: midCandidate,
             validateFrame,
             validateStableFramePair,
           });
           if (
-            sharesVisualTransport &&
+            compareHudPixels &&
             ["proactive-route-frame", "screencast-frame"].includes(
               start.evidenceSource,
             ) &&
@@ -15305,23 +15453,28 @@ function selectAutoplayRecordedRouteTrajectory({
               ...mid.validated.textPaint,
               ...frameStability,
             };
-          } else if (!sharesVisualTransport) {
-            const routeIdentity =
-              autoplayRouteCaptureSamplesShareExactIdentity(
-                start.beforeProbe,
-                mid.afterProbe,
+          } else if (!compareHudPixels) {
+            const continuityPaintProbe =
+              requireStableAutoplayRouteWindowPaintProbe(
+                start.validated.paintProbe,
+                mid.validated.paintProbe,
+                `${label} opening route HUD continuity`,
               );
-            assert.ok(
-              routeIdentity,
-              `${label}: mixed visual transports did not preserve exact route and HUD identity.`,
-            );
+            const routeHudContinuity = {
+              routeHudContinuityBasis:
+                "exact-route-identity-and-per-frame-hud-paint",
+              routeHudContinuityMaximumContainerGeometryDeltaCssPx:
+                continuityPaintProbe.maximumContainerGeometryDeltaCssPx,
+              routeHudContinuityMaximumTextGeometryDeltaCssPx:
+                continuityPaintProbe.maximumTextGeometryDeltaCssPx,
+            };
             start.validated.textPaint = {
               ...start.validated.textPaint,
-              routeHudContinuityBasis: "exact-route-and-hud-identity",
+              ...routeHudContinuity,
             };
             mid.validated.textPaint = {
               ...mid.validated.textPaint,
-              routeHudContinuityBasis: "exact-route-and-hud-identity",
+              ...routeHudContinuity,
             };
           }
           assert.ok(
@@ -16237,7 +16390,7 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
           AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
         (window.textPaint.hudPixelDifferenceRatio <= 0.006 ||
           window.textPaint.routeHudContinuityBasis ===
-            "exact-route-and-hud-identity"),
+            "exact-route-identity-and-per-frame-hud-paint"),
       `${evidence.openingWorldVariant}: ${label} did not validate complete visible text paint. Evidence: ${evidencePath}.`,
     );
   }
@@ -16259,7 +16412,9 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
   );
   assert.ok(
     routeMidWindow.textPaint.routeHudContinuityPixelDifferenceRatio <=
-      AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO,
+      AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO ||
+      routeMidWindow.textPaint.routeHudContinuityBasis ===
+        "exact-route-identity-and-per-frame-hud-paint",
     `${evidence.openingWorldVariant}: route-mid HUD diverged from its accepted route-start HUD. Evidence: ${evidencePath}.`,
   );
   for (const [label, route] of [

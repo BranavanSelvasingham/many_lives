@@ -387,6 +387,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "screencastFrameCapturedAtEpochMs",
     "screencastFrameIsBracketedByEpochProbes",
     "requireStableAutoplayScreenshotPaintProbe",
+    "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
     `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
@@ -398,6 +399,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     125,
     framePolicy.screencastFrameCapturedAtEpochMs,
     framePolicy.screencastFrameIsBracketedByEpochProbes,
+    (_before, after) => after,
     (_before, after) => after,
     () => {
       routeHudContinuityChecks += 1;
@@ -541,7 +543,18 @@ test("proactive route history survives a delayed observer and rejects unproven w
   assert.ok(segments[1].boundaryReasons.includes("sample-gap"));
   assert.ok(segments[1].boundaryReasons.includes("progress-reset"));
   assert.ok(segments[1].boundaryReasons.includes("path-change"));
-  assert.ok(segments[1].boundaryReasons.includes("hud-change"));
+  assert.ok(!segments[1].boundaryReasons.includes("hud-change"));
+  assert.equal(
+    routeCapture.buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId: "tea-house",
+      samples: [
+        routeSample(0.48, 700),
+        routeSample(0.62, 900, {}, laterPaintProbe),
+      ],
+    }).length,
+    1,
+    "A legitimate in-route HUD update must not split one unchanged legal path.",
+  );
   assert.throws(
     () =>
       routeCapture.selectAutoplayRecordedRouteTrajectory({
@@ -797,7 +810,7 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
   const paintPolicy = Function(
     "assert",
     "AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX",
-    `${source.slice(paintPolicyStart, paintPolicyEnd)}; return { requireStableAutoplayScreenshotPaintProbe };`,
+    `${source.slice(paintPolicyStart, paintPolicyEnd)}; return { requireStableAutoplayRouteWindowPaintProbe, requireStableAutoplayScreenshotPaintProbe };`,
   )(assert, 0.75);
   const cleanHudPixels = Buffer.alloc(100 * 50 * 3, 18);
   const fillHudRect = (pixels, { bottom, left, right, top }, value) => {
@@ -979,6 +992,51 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
         "shifted money chip fixture",
       ),
     /text geometry drifted/,
+  );
+  const changedHudProbe = paintProbe();
+  changedHudProbe.regions[1] = textRegion("hud", "11:23", 10, 20);
+  changedHudProbe.regions[5] = textRegion("hud", "46 ENERGY", 47, 58);
+  changedHudProbe.stableRegions[1] = {
+    ...changedHudProbe.stableRegions[1],
+    text: "11:23 LATE MORNING",
+  };
+  changedHudProbe.stableRegions[3] = {
+    ...changedHudProbe.stableRegions[3],
+    text: "46 ENERGY",
+  };
+  const changedHudPaint =
+    paintPolicy.requireStableAutoplayRouteWindowPaintProbe(
+      paintProbe(),
+      changedHudProbe,
+      "moving route HUD fixture",
+    );
+  assert.ok(
+    changedHudPaint.regions.some((region) => region.text === "11:23"),
+  );
+  const changedRailProbe = paintProbe();
+  changedRailProbe.regions[7] = textRegion("rail", "Someone else", 70, 85);
+  assert.throws(
+    () =>
+      paintPolicy.requireStableAutoplayRouteWindowPaintProbe(
+        paintProbe(),
+        changedRailProbe,
+        "changed rail fixture",
+      ),
+    /non-HUD visible text content changed/,
+  );
+  const shiftedHudContainerProbe = paintProbe();
+  shiftedHudContainerProbe.stableRegions[1] = {
+    ...shiftedHudContainerProbe.stableRegions[1],
+    rect: { bottom: 10, left: 12, right: 32, top: 1 },
+  };
+  assert.throws(
+    () =>
+      paintPolicy.requireStableAutoplayRouteWindowPaintProbe(
+        paintProbe(),
+        shiftedHudContainerProbe,
+        "shifted HUD container fixture",
+      ),
+    /HUD container geometry drifted/,
   );
   const paintProbes = [
     paintProbe(),
@@ -1354,7 +1412,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const routeSegmentsPolicy = Function(
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { autoplayRouteCaptureSamplesShareExactIdentity, autoplayRouteCaptureWindowOpeningMembership, buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, compactAutoplayRouteFrameWindowProbe, isAutoplayFootholdRouteFrame };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { autoplayRecordedRouteWindowSharesAdmissibleIdentity, autoplayRouteCaptureSamplesShareExactIdentity, autoplayRouteCaptureSamplesShareExactRouteIdentity, autoplayRouteCaptureWindowOpeningMembership, buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, compactAutoplayRouteFrameWindowProbe, isAutoplayFootholdRouteFrame };`,
   )(2_000, 0.02);
   const screencastFrameCapturedAtEpochMs = (frame) =>
     typeof frame?.metadata?.timestamp === "number"
@@ -1388,6 +1446,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "screencastFrameCapturedAtEpochMs",
     "screencastFrameIsBracketedByEpochProbes",
     "requireStableAutoplayScreenshotPaintProbe",
+    "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
     `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { selectAutoplayRecordedRouteTrajectory };`,
@@ -1399,6 +1458,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     125,
     screencastFrameCapturedAtEpochMs,
     screencastFrameIsBracketedByEpochProbes,
+    (_before, after) => after,
     (_before, after) => after,
     () => ({ routeHudContinuityPixelDifferenceRatio: 0 }),
     (recordedWindow) =>
@@ -1417,6 +1477,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "isAutoplayFootholdRouteFrame",
     "screencastFrameCapturedAtEpochMs",
     "autoplayRouteCaptureSamplesShareExactIdentity",
+    "autoplayRouteCaptureSamplesShareExactRouteIdentity",
     `${source.slice(proactiveCaptureStart, proactiveCaptureEnd)}; return captureAutoplayProactiveRouteFrameWindow;`,
   )(
     125,
@@ -1433,6 +1494,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.isAutoplayFootholdRouteFrame,
     screencastFrameCapturedAtEpochMs,
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactIdentity,
+    routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactRouteIdentity,
   );
   let proactiveRouteCaptureFixture = async () => null;
   const classStart = source.indexOf("class CdpSession {");
@@ -1463,6 +1525,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "PROBE_POLL_INTERVAL_MS",
     "autoplayRouteCaptureWindowCoherent",
     "autoplayRouteCaptureSamplesShareExactIdentity",
+    "autoplayRouteCaptureSamplesShareExactRouteIdentity",
+    "autoplayRecordedRouteWindowSharesAdmissibleIdentity",
     "autoplayRouteCaptureWindowOpeningMembership",
     "autoplayRecordedRouteWindowFrame",
     "buildAutoplayRouteCaptureSegments",
@@ -1505,6 +1569,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       afterRoute.targetLocationId === expectedTargetLocationId &&
       afterRoute.progress >= beforeRoute.progress,
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactIdentity,
+    routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactRouteIdentity,
+    routeSegmentsPolicy.autoplayRecordedRouteWindowSharesAdmissibleIdentity,
     routeSegmentsPolicy.autoplayRouteCaptureWindowOpeningMembership,
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
@@ -1857,12 +1923,12 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   assert.deepEqual(unprovenSparseGapSegments[1].boundaryReasons, [
     "sample-gap",
   ]);
-  assert.equal(sparseSession.screencast.routeFrameObservedSegmentCount, 2);
-  assert.equal(sparseSession.screencast.routeFrameArchiveFrozen, true);
+  assert.equal(sparseSession.screencast.routeFrameObservedSegmentCount, 1);
+  assert.equal(sparseSession.screencast.routeFrameArchiveFrozen, false);
   assert.equal(
     sparseSession.screencast.routeFrameOpeningSegment.lastProgress,
-    0.72,
-    "The HUD-changed sample must end, not extend, the original opening segment.",
+    0.764,
+    "A HUD clock update must extend the unchanged legal route segment.",
   );
   assert.deepEqual(
     sparseSession.screencast.routeFrameOpeningSegment.recorderGenerations,
@@ -2868,9 +2934,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       const openingSamples = [
         sample(0.003, 0),
         sample(0.18, 900),
-        sample(0.27, 1_600),
-        sample(0.4, 2_400),
-        sample(0.704, 3_521),
+        sample(0.73, 1_600, { hud: "DAY 1 11:23" }),
+        sample(0.86, 2_400, { hud: "DAY 1 11:23" }),
+        sample(0.95, 3_521, { hud: "DAY 1 11:23" }),
       ];
       const recorder = {
         acceptedCount: 21,
@@ -2967,9 +3033,17 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             },
           });
         assert.equal(trajectory.start.beforeProbe.route.progress, 0.003);
-        assert.equal(trajectory.start.afterProbe.route.progress, 0.27);
-        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.4);
-        assert.equal(trajectory.mid.afterProbe.route.progress, 0.704);
+        assert.equal(trajectory.start.afterProbe.route.progress, 0.73);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.86);
+        assert.equal(trajectory.mid.afterProbe.route.progress, 0.95);
+        assert.equal(
+          trajectory.start.validated.textPaint.routeWindowPaintProbeBasis,
+          "stable-hud-containers-and-frame-adjacent-text",
+        );
+        assert.match(
+          trajectory.start.validated.paintProbe.regions[0].text,
+          /11:23/,
+        );
         assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
 
         const laterSamples = [
@@ -3016,7 +3090,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(starvationSession.screencast.routeSampleArchive.length, 5);
         assert.equal(
           starvationSession.screencast.routeFrameOpeningSegment.lastProgress,
-          0.704,
+          0.95,
         );
         assert.equal(
           starvationSession.archiveAutoplayRouteFrameWindow({
@@ -3354,10 +3428,10 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         source: "movement-probe-recorder",
       });
       const openingSamples = [
-        sample(0.268, 0),
-        sample(0.42, 200),
-        sample(0.64, 300),
-        sample(0.863, 500),
+        sample(0.003, 0),
+        sample(0.73, 200, { hud: "DAY 1 11:23" }),
+        sample(0.86, 300, { hud: "DAY 1 11:23" }),
+        sample(0.95, 500, { hud: "DAY 1 11:23" }),
       ];
       const recorder = (samples) => ({
         acceptedCount: samples.length,
@@ -3501,9 +3575,17 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(trajectory.start.evidenceSource, "proactive-route-frame");
         assert.equal(trajectory.mid.evidenceSource, "screencast-frame");
         assert.equal(crossTransportPixelCheckCount, 0);
+        assert.equal(trajectory.start.beforeProbe.route.progress, 0.003);
+        assert.equal(trajectory.start.afterProbe.route.progress, 0.73);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.86);
+        assert.equal(trajectory.mid.afterProbe.route.progress, 0.95);
+        assert.equal(
+          trajectory.start.validated.textPaint.routeWindowPaintProbeBasis,
+          "stable-hud-containers-and-frame-adjacent-text",
+        );
         assert.equal(
           trajectory.mid.validated.textPaint.routeHudContinuityBasis,
-          "exact-route-and-hud-identity",
+          "exact-route-identity-and-per-frame-hud-paint",
         );
         assert.equal(
           liveSession.acceptAutoplayRouteRenderedFrameTrajectory(trajectory),
@@ -3515,7 +3597,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(liveSession.screencast.routeSampleArchive.length, 4);
         assert.equal(
           liveSession.screencast.routeFrameOpeningSegment.lastProgress,
-          0.863,
+          0.95,
         );
         assert.equal(liveSession.autoplayRouteFrameWindows().length, 2);
       } finally {
