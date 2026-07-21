@@ -3898,17 +3898,18 @@ class CdpSession {
     if (!openingSegment) {
       return reject("opening-segment-unavailable");
     }
-    const sampleBelongsToOpeningSegment = (sample) =>
-      sample?.source === "movement-probe-recorder" &&
-      openingSegment.samples.some(
-        (candidate) =>
-          candidate.capturedAtEpochMs === sample.capturedAtEpochMs &&
-          candidate.route?.progress === sample.route?.progress,
-      );
-    if (!sampleBelongsToOpeningSegment(recordedWindow.beforeProbe)) {
+    const openingMembership = autoplayRouteCaptureWindowOpeningMembership({
+      expectedTargetLocationId,
+      openingSegment,
+      recordedWindow,
+    });
+    if (!openingMembership.beforeBelongs) {
       return reject("before-probe-outside-opening-segment");
     }
-    if (!sampleBelongsToOpeningSegment(recordedWindow.afterProbe)) {
+    if (
+      !openingMembership.afterBelongs &&
+      !openingMembership.exclusiveCaptureGapExtension
+    ) {
       return reject("after-probe-outside-opening-segment");
     }
     if (
@@ -3942,6 +3943,10 @@ class CdpSession {
         AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS
     ) {
       return reject("visual-frame-before-compositing-settle");
+    }
+    if (openingMembership.exclusiveCaptureGapExtension) {
+      recordedWindow.openingSegmentExtension =
+        "exclusive-route-capture-gap";
     }
     if (
       recordedWindow.candidateFrame &&
@@ -13812,6 +13817,53 @@ function autoplayRouteCaptureSamplesShareExactIdentity(before, after) {
   );
 }
 
+function autoplayRouteCaptureWindowOpeningMembership({
+  expectedTargetLocationId,
+  openingSegment,
+  recordedWindow,
+}) {
+  const sampleBelongs = (sample) =>
+    sample?.source === "movement-probe-recorder" &&
+    openingSegment?.samples.some(
+      (candidate) =>
+        candidate.capturedAtEpochMs === sample.capturedAtEpochMs &&
+        candidate.route?.progress === sample.route?.progress,
+    );
+  const beforeBelongs = Boolean(sampleBelongs(recordedWindow?.beforeProbe));
+  const afterBelongs = Boolean(sampleBelongs(recordedWindow?.afterProbe));
+  const frame =
+    recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null;
+  const lastOpeningSample = openingSegment?.samples.at(-1) ?? null;
+  const beforeIsLastOpeningSample = Boolean(
+    lastOpeningSample &&
+      recordedWindow?.beforeProbe?.capturedAtEpochMs ===
+        lastOpeningSample.capturedAtEpochMs &&
+      recordedWindow.beforeProbe.route?.progress ===
+        lastOpeningSample.route?.progress,
+  );
+  const exclusiveCaptureGapExtension = Boolean(
+    beforeBelongs &&
+      !afterBelongs &&
+      beforeIsLastOpeningSample &&
+      recordedWindow?.afterProbe?.source === "movement-probe-recorder" &&
+      frame?.source === "proactive-route-screenshot" &&
+      autoplayRouteCaptureWindowCoherent(
+        recordedWindow.beforeProbe.route,
+        recordedWindow.afterProbe.route,
+        expectedTargetLocationId,
+      ) &&
+      autoplayRouteCaptureSamplesShareExactIdentity(
+        recordedWindow.beforeProbe,
+        recordedWindow.afterProbe,
+      ),
+  );
+  return {
+    afterBelongs,
+    beforeBelongs,
+    exclusiveCaptureGapExtension,
+  };
+}
+
 function compactAutoplayRouteFrameWindowProbe(sample) {
   if (!sample) {
     return null;
@@ -14648,16 +14700,15 @@ function recordedRouteWindowBelongsToOpeningSegment({
   recordedWindow,
 }) {
   const frame = autoplayRecordedRouteWindowFrame(recordedWindow);
-  const sampleBelongs = (sample) =>
-    sample?.source === "movement-probe-recorder" &&
-    openingSegment?.samples.some(
-      (candidate) =>
-        candidate.capturedAtEpochMs === sample.capturedAtEpochMs &&
-        candidate.route?.progress === sample.route?.progress,
-    );
+  const openingMembership = autoplayRouteCaptureWindowOpeningMembership({
+    expectedTargetLocationId,
+    openingSegment,
+    recordedWindow,
+  });
   return Boolean(
-    sampleBelongs(recordedWindow?.beforeProbe) &&
-      sampleBelongs(recordedWindow?.afterProbe) &&
+    openingMembership.beforeBelongs &&
+      (openingMembership.afterBelongs ||
+        openingMembership.exclusiveCaptureGapExtension) &&
       autoplayRouteCaptureWindowCoherent(
         recordedWindow.beforeProbe.route,
         recordedWindow.afterProbe.route,

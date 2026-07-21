@@ -1354,7 +1354,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const routeSegmentsPolicy = Function(
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { autoplayRouteCaptureSamplesShareExactIdentity, buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, compactAutoplayRouteFrameWindowProbe, isAutoplayFootholdRouteFrame };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { autoplayRouteCaptureSamplesShareExactIdentity, autoplayRouteCaptureWindowOpeningMembership, buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, compactAutoplayRouteFrameWindowProbe, isAutoplayFootholdRouteFrame };`,
   )(2_000, 0.02);
   const screencastFrameCapturedAtEpochMs = (frame) =>
     typeof frame?.metadata?.timestamp === "number"
@@ -1460,6 +1460,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "PROBE_POLL_INTERVAL_MS",
     "autoplayRouteCaptureWindowCoherent",
     "autoplayRouteCaptureSamplesShareExactIdentity",
+    "autoplayRouteCaptureWindowOpeningMembership",
     "autoplayRecordedRouteWindowFrame",
     "buildAutoplayRouteCaptureSegments",
     "captureAutoplayProactiveRouteFrameWindow",
@@ -1497,6 +1498,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       afterRoute.targetLocationId === expectedTargetLocationId &&
       afterRoute.progress >= beforeRoute.progress,
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactIdentity,
+    routeSegmentsPolicy.autoplayRouteCaptureWindowOpeningMembership,
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
@@ -2602,10 +2604,26 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         ),
       );
 
-      const afterSamples = [initialSamples[1], finalOpeningSample];
+      const captureGapAfter = sample(0.905, 7_080, {
+        previousOffsetMs: 4_500,
+        tickCount: 5,
+      });
+      const captureGapRecorder = {
+        ...openingRecorder,
+        samples: [...openingRecorder.samples, captureGapAfter],
+      };
+      assert.equal(
+        routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId: "tea-house",
+          samples: captureGapRecorder.samples,
+        }).length,
+        2,
+        "The synthetic screenshot delay must split the recorder segment without changing route identity.",
+      );
+      const afterSamples = [initialSamples[1], captureGapAfter];
       const renderedFrames = [
         frame(201, 500, "loaded-route-position-start"),
-        frame(202, 4_000, "loaded-route-position-mid"),
+        frame(202, 4_700, "loaded-route-position-mid"),
       ];
       let visualCaptureCount = 0;
       loadedSession.captureAutoplayRouteVisualFrame = async () => {
@@ -2619,7 +2637,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       loadedSession.sampleAutoplayRouteCaptureRecorder = async () =>
         afterSamples.shift() ?? null;
       loadedSession.readOrRearmAutoplayRouteCaptureRecorder = async () =>
-        openingRecorder;
+        captureGapRecorder;
 
       try {
         assert.ok(
@@ -2632,7 +2650,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         );
         assert.ok(
           await proactiveCapturePolicy({
-            beforeProbe: initialSamples[2],
+            beforeProbe: finalOpeningSample,
             expectedTargetLocationId: "tea-house",
             label: "loaded-route:mid",
             session: loadedSession,
@@ -2641,6 +2659,11 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(visualCaptureCount, 2);
         assert.equal(loadedSession.autoplayRouteFrameHistory().length, 0);
         assert.equal(loadedSession.autoplayRouteFrameWindows().length, 2);
+        assert.equal(
+          loadedSession.autoplayRouteFrameWindows()[1]
+            .openingSegmentExtension,
+          "exclusive-route-capture-gap",
+        );
         assert.ok(
           loadedSession.autoplayRouteFrameWindows().every(
             (recordedWindow) =>
@@ -2677,8 +2700,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(trajectory.mid.evidenceSource, "proactive-route-frame");
         assert.equal(trajectory.start.beforeProbe.route.progress, 0.004);
         assert.equal(trajectory.start.afterProbe.route.progress, 0.25);
-        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.814);
-        assert.equal(trajectory.mid.afterProbe.route.progress, 0.9);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.9);
+        assert.equal(trajectory.mid.afterProbe.route.progress, 0.905);
         assert.equal(crossPositionPixelCheckCount, 1);
 
         const generationChanged = sample(0.2, 550, {
