@@ -591,6 +591,11 @@ test("proactive route history survives a delayed observer and rejects unproven w
     source,
     /async captureAutoplayRouteVisualFrame[\s\S]*Page\.captureScreenshot/,
   );
+  assert.match(
+    source,
+    /withAutoplayScreencastPausedForRouteCapture[\s\S]*Page\.stopScreencast[\s\S]*Page\.startScreencast/,
+    "Proactive screenshots must own the CDP visual transport instead of competing with the active screencast.",
+  );
   assert.match(source, /Page\.screencastFrameAck/);
   assert.match(source, /Page\.stopScreencast/);
   assert.match(
@@ -1239,7 +1244,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const routeSegmentsPolicy = Function(
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, isAutoplayFootholdRouteFrame };`,
   )(2_000, 0.02);
   const screencastFrameCapturedAtEpochMs = (frame) =>
     typeof frame?.metadata?.timestamp === "number"
@@ -1285,6 +1290,34 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     screencastFrameIsBracketedByEpochProbes,
     (_before, after) => after,
     () => ({ routeHudContinuityPixelDifferenceRatio: 0 }),
+  );
+  const proactiveCaptureStart = source.indexOf(
+    "async function captureAutoplayProactiveRouteFrameWindow(",
+  );
+  const proactiveCaptureEnd = source.indexOf(
+    "\nfunction recordedRouteWindowBelongsToOpeningSegment(",
+    proactiveCaptureStart,
+  );
+  const proactiveCapturePolicy = Function(
+    "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
+    "autoplayRouteCaptureWindowCoherent",
+    "isAutoplayFootholdRouteFrame",
+    "screencastFrameCapturedAtEpochMs",
+    `${source.slice(proactiveCaptureStart, proactiveCaptureEnd)}; return captureAutoplayProactiveRouteFrameWindow;`,
+  )(
+    125,
+    (beforeRoute, afterRoute, expectedTargetLocationId) =>
+      routeSegmentsPolicy.isAutoplayFootholdRouteFrame(
+        beforeRoute,
+        expectedTargetLocationId,
+      ) &&
+      routeSegmentsPolicy.isAutoplayFootholdRouteFrame(
+        afterRoute,
+        expectedTargetLocationId,
+      ) &&
+      afterRoute.progress >= beforeRoute.progress,
+    routeSegmentsPolicy.isAutoplayFootholdRouteFrame,
+    screencastFrameCapturedAtEpochMs,
   );
   let proactiveRouteCaptureFixture = async () => null;
   const classStart = source.indexOf("class CdpSession {");
@@ -2277,6 +2310,266 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         releaseFirstCapture();
         proactiveRouteCaptureFixture = async () => null;
         await startupSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
+    "exclusive visual transport recovers five legal samples with zero screencast frames",
+    async () => {
+      const starvationSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/starved-route",
+        url: "http://127.0.0.1/",
+      });
+      starvationSession.socket = { destroyed: false, writable: true };
+      const commands = [];
+      let screenshotCount = 0;
+      starvationSession.send = async (method, params) => {
+        commands.push({ method, params });
+        if (method === "Page.captureScreenshot") {
+          assert.equal(
+            starvationSession.screencast.routeVisualCaptureTransportStatus,
+            "paused-for-route-capture",
+            "A renderer screenshot must never compete with the active screencast stream.",
+          );
+          screenshotCount += 1;
+          return {
+            result: {
+              data: Buffer.from(
+                `starved-opening-rendered-position-${screenshotCount}`,
+              ).toString("base64"),
+            },
+          };
+        }
+        return {};
+      };
+
+      await starvationSession.startAutoplayScreencast();
+      const startedAt = starvationSession.screencast.startedAtEpochMs;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const sample = (
+        progress,
+        offsetMs,
+        {
+          generation = 2,
+          hud = "DAY 1 11:05",
+          routeOverrides = {},
+        } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          ...paintProbe,
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+        },
+        recorderGeneration: generation,
+        recorderParseErrorCount: 0,
+        recorderRejectedCount: 522,
+        recorderTickCount: Math.max(1, Math.round(offsetMs / 25)),
+        recorderUnavailableCount: 45,
+        route: {
+          active: true,
+          durationMs: 5_040,
+          legal: true,
+          progress,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          spaceId: "street:south-quay",
+          target: { x: 17, y: 9 },
+          targetLocationId: "tea-house",
+          tilePath: [
+            { x: 3, y: 9 },
+            { x: 17, y: 9 },
+          ],
+          visualObstaclesClear: true,
+          worldPath: [
+            { x: 331, y: 688 },
+            { x: 1_338, y: 656 },
+          ],
+          ...routeOverrides,
+        },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.003, 0),
+        sample(0.18, 900),
+        sample(0.27, 1_600),
+        sample(0.4, 2_400),
+        sample(0.704, 3_521),
+      ];
+      const recorder = {
+        acceptedCount: 21,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        rejectedCount: 522,
+        samples: openingSamples,
+        unavailableCount: 45,
+      };
+      const afterSamples = [openingSamples[2], openingSamples[4]];
+      starvationSession.sampleAutoplayRouteCaptureRecorder = async () =>
+        afterSamples.shift() ?? null;
+      starvationSession.readOrRearmAutoplayRouteCaptureRecorder = async () =>
+        recorder;
+
+      try {
+        assert.equal(starvationSession.autoplayRouteFrameHistory().length, 0);
+        assert.ok(
+          await proactiveCapturePolicy({
+            beforeProbe: openingSamples[0],
+            expectedTargetLocationId: "tea-house",
+            label: "zero-frame-starvation:start",
+            session: starvationSession,
+          }),
+        );
+        assert.ok(
+          await proactiveCapturePolicy({
+            beforeProbe: openingSamples[3],
+            expectedTargetLocationId: "tea-house",
+            label: "zero-frame-starvation:mid",
+            session: starvationSession,
+          }),
+        );
+
+        assert.equal(starvationSession.screencast.routeFrameArchive.length, 0);
+        assert.equal(
+          starvationSession.screencast.routeFrameArchivedSampleCount,
+          5,
+        );
+        assert.equal(starvationSession.screencast.routeSampleArchive.length, 5);
+        assert.equal(starvationSession.autoplayRouteFrameWindows().length, 2);
+        assert.equal(
+          starvationSession.screencast.routeVisualCapturePauseCount,
+          2,
+        );
+        assert.equal(
+          starvationSession.screencast.routeVisualCaptureResumeCount,
+          2,
+        );
+        assert.equal(
+          starvationSession.screencast.routeVisualCaptureTransportStatus,
+          "active",
+        );
+        assert.deepEqual(
+          commands.slice(0, 9).map((command) => command.method),
+          [
+            "Page.startScreencast",
+            "Page.stopScreencast",
+            "Page.captureScreenshot",
+            "Page.captureScreenshot",
+            "Page.startScreencast",
+            "Page.stopScreencast",
+            "Page.captureScreenshot",
+            "Page.captureScreenshot",
+            "Page.startScreencast",
+          ],
+        );
+
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: starvationSession.autoplayRouteFrameHistory(),
+            label: "five-sample zero-frame opening route",
+            recordedWindows: starvationSession.autoplayRouteFrameWindows(),
+            samples: starvationSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
+              buffer: Buffer.from(frame.data, "base64"),
+              height: 625,
+              paintProbe: framePaintProbe,
+              textPaint: {},
+              width: 1365,
+            }),
+            validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+              assert.notDeepEqual(afterBuffer, beforeBuffer);
+              return { hudPixelDifferenceRatio: 0 };
+            },
+          });
+        assert.equal(trajectory.start.beforeProbe.route.progress, 0.003);
+        assert.equal(trajectory.start.afterProbe.route.progress, 0.27);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.4);
+        assert.equal(trajectory.mid.afterProbe.route.progress, 0.704);
+        assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
+
+        const laterSamples = [
+          sample(0.1, 7_000, {
+            hud: "DAY 1 11:25",
+            routeOverrides: {
+              durationMs: 840,
+              spaceId: "interior:tea-house",
+              tilePath: [
+                { x: 7, y: 4 },
+                { x: 8, y: 3 },
+              ],
+              worldPath: [
+                { x: 396, y: 236 },
+                { x: 436, y: 196 },
+              ],
+            },
+          }),
+          sample(0.4, 7_200, {
+            hud: "DAY 1 11:25",
+            routeOverrides: {
+              durationMs: 840,
+              spaceId: "interior:tea-house",
+              tilePath: [
+                { x: 7, y: 4 },
+                { x: 8, y: 3 },
+              ],
+              worldPath: [
+                { x: 396, y: 236 },
+                { x: 436, y: 196 },
+              ],
+            },
+          }),
+        ];
+        starvationSession.archiveAutoplayRouteFrames({
+          ...recorder,
+          acceptedCount: 23,
+          samples: [...openingSamples, ...laterSamples],
+        });
+        assert.equal(
+          starvationSession.screencast.routeFrameArchiveFrozen,
+          true,
+        );
+        assert.equal(starvationSession.screencast.routeSampleArchive.length, 5);
+        assert.equal(
+          starvationSession.screencast.routeFrameOpeningSegment.lastProgress,
+          0.704,
+        );
+        assert.equal(
+          starvationSession.archiveAutoplayRouteFrameWindow({
+            expectedTargetLocationId: "tea-house",
+            recordedWindow: {
+              afterProbe: laterSamples[1],
+              beforeProbe: laterSamples[0],
+              candidateFrame: {
+                data: Buffer.from("later-candidate").toString("base64"),
+                metadata: { timestamp: (startedAt + 7_025) / 1_000 },
+                sequence: 101,
+              },
+              confirmationFrame: {
+                data: Buffer.from("later-confirmation").toString("base64"),
+                metadata: { timestamp: (startedAt + 7_150) / 1_000 },
+                sequence: 102,
+              },
+            },
+            recorder: {
+              ...recorder,
+              samples: [...openingSamples, ...laterSamples],
+            },
+          }),
+          null,
+          "A later same-target route must not enter the frozen opening archive.",
+        );
+        assert.equal(starvationSession.autoplayRouteFrameWindows().length, 2);
+      } finally {
+        await starvationSession.stopAutoplayScreencast();
       }
     },
   );

@@ -1613,6 +1613,16 @@ class CdpSession {
                 this.screencast.routeFrameWindowRecorderError,
               routeFrameWindowRecorderStatus:
                 this.screencast.routeFrameWindowRecorderStatus,
+              routeVisualCapturePauseCount:
+                this.screencast.routeVisualCapturePauseCount,
+              routeVisualCapturePauseError:
+                this.screencast.routeVisualCapturePauseError,
+              routeVisualCaptureResumeCount:
+                this.screencast.routeVisualCaptureResumeCount,
+              routeVisualCaptureResumeError:
+                this.screencast.routeVisualCaptureResumeError,
+              routeVisualCaptureTransportStatus:
+                this.screencast.routeVisualCaptureTransportStatus,
               routeRecorderExpectedTargetLocationId:
                 this.screencast.routeRecorderExpectedTargetLocationId,
               routeRecorderGeneration:
@@ -3489,6 +3499,12 @@ class CdpSession {
       routeFrameWindowRecorderError: null,
       routeFrameWindowRecorderPromise: null,
       routeFrameWindowRecorderStatus: "idle",
+      routeVisualCapturePauseCount: 0,
+      routeVisualCapturePauseError: null,
+      routeVisualCapturePaused: false,
+      routeVisualCaptureResumeCount: 0,
+      routeVisualCaptureResumeError: null,
+      routeVisualCaptureTransportStatus: "starting",
       routeRecorderExpectedTargetLocationId: null,
       routeRecorderGeneration: 0,
       routeRecorderRestartCount: 0,
@@ -3520,6 +3536,7 @@ class CdpSession {
       );
       state.active = true;
       state.status = "active";
+      state.routeVisualCaptureTransportStatus = "active";
     } catch (error) {
       if (this.screencast === state) {
         this.screencast = null;
@@ -3549,7 +3566,11 @@ class CdpSession {
       );
     }
     try {
-      if (!this.socket?.destroyed && this.socket?.writable) {
+      if (
+        !this.socket?.destroyed &&
+        this.socket?.writable &&
+        state.routeVisualCaptureTransportStatus !== "stopped"
+      ) {
         await this.send(
           "Page.stopScreencast",
           {},
@@ -3558,10 +3579,106 @@ class CdpSession {
       }
     } finally {
       state.status = "stopped";
+      state.routeVisualCapturePaused = false;
+      state.routeVisualCaptureTransportStatus = "stopped";
       if (this.screencast === state) {
         this.screencast = null;
       }
     }
+  }
+
+  async withAutoplayScreencastPausedForRouteCapture(capture) {
+    const state = this.screencast;
+    assert.ok(
+      state && state.active && state.status === "active",
+      "Autoplay screencast is not active for an exclusive route visual capture.",
+    );
+    assert.equal(
+      state.routeVisualCapturePaused,
+      false,
+      "Autoplay route visual capture already owns the screencast transport.",
+    );
+    assert.equal(
+      typeof capture,
+      "function",
+      "Autoplay route visual capture requires a capture callback.",
+    );
+
+    state.routeVisualCapturePaused = true;
+    state.routeVisualCapturePauseError = null;
+    state.routeVisualCaptureResumeError = null;
+    state.routeVisualCaptureTransportStatus = "pausing";
+    try {
+      await this.send(
+        "Page.stopScreencast",
+        {},
+        { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+      );
+      state.routeVisualCapturePauseCount += 1;
+      state.routeVisualCaptureTransportStatus = "paused-for-route-capture";
+    } catch (error) {
+      state.routeVisualCapturePauseError =
+        error instanceof Error ? error.message : String(error);
+      state.routeVisualCapturePaused = false;
+      state.routeVisualCaptureTransportStatus = "active";
+      throw error;
+    }
+
+    let captureError = null;
+    let captured;
+    try {
+      captured = await capture();
+    } catch (error) {
+      captureError = error;
+    }
+
+    let resumeError = null;
+    try {
+      if (
+        state.active &&
+        state.status === "active" &&
+        !this.socket?.destroyed &&
+        this.socket?.writable
+      ) {
+        state.routeVisualCaptureTransportStatus = "resuming";
+        await this.send(
+          "Page.startScreencast",
+          {
+            everyNthFrame: AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME,
+            format: "png",
+          },
+          { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+        );
+        state.routeVisualCaptureResumeCount += 1;
+        state.routeVisualCaptureTransportStatus = "active";
+      } else {
+        state.routeVisualCaptureTransportStatus = "stopped";
+      }
+    } catch (error) {
+      resumeError = error;
+      state.routeVisualCaptureResumeError =
+        error instanceof Error ? error.message : String(error);
+      state.routeVisualCaptureTransportStatus = "resume-failed";
+    } finally {
+      state.routeVisualCapturePaused = false;
+    }
+
+    if (captureError) {
+      if (resumeError) {
+        this.recordCdpTransportEvent("route-capture-screencast-resume-failed", {
+          captureError:
+            captureError instanceof Error
+              ? captureError.message
+              : String(captureError),
+          resumeError: state.routeVisualCaptureResumeError,
+        });
+      }
+      throw captureError;
+    }
+    if (resumeError) {
+      throw resumeError;
+    }
+    return captured;
   }
 
   autoplayScreencastSequence() {
@@ -3620,6 +3737,11 @@ class CdpSession {
     assert.ok(
       state && ["starting", "active"].includes(state.status),
       "Autoplay screencast is not active for a route visual capture.",
+    );
+    assert.equal(
+      state.routeVisualCaptureTransportStatus,
+      "paused-for-route-capture",
+      "Proactive route screenshots require exclusive access to the CDP visual transport.",
     );
     const remainingSettleMs = minimumCapturedAtEpochMs - Date.now();
     if (remainingSettleMs > 0) {
@@ -14295,41 +14417,43 @@ async function captureAutoplayProactiveRouteFrameWindow({
   ) {
     return null;
   }
-  const candidateFrame = await session.captureAutoplayRouteVisualFrame({
-    minimumCapturedAtEpochMs: beforeProbe.capturedAtEpochMs,
-  });
-  const confirmationFrame = await session.captureAutoplayRouteVisualFrame({
-    minimumCapturedAtEpochMs:
-      screencastFrameCapturedAtEpochMs(candidateFrame) +
-      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
-  });
-  const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
-    `${label}:after-route-sample`,
-  );
-  if (
-    !autoplayRouteCaptureWindowCoherent(
-      beforeProbe.route,
-      afterProbe?.route,
-      expectedTargetLocationId,
-    )
-  ) {
-    return null;
-  }
-  const recorder =
-    await session.readOrRearmAutoplayRouteCaptureRecorder({
-      expectedTargetLocationId,
-      label: `${label}:recorder-read`,
+  return session.withAutoplayScreencastPausedForRouteCapture(async () => {
+    const candidateFrame = await session.captureAutoplayRouteVisualFrame({
+      minimumCapturedAtEpochMs: beforeProbe.capturedAtEpochMs,
     });
-  session.archiveAutoplayRouteFrames(recorder);
-  return session.archiveAutoplayRouteFrameWindow({
-    expectedTargetLocationId,
-    recordedWindow: {
-      afterProbe,
-      beforeProbe,
-      candidateFrame,
-      confirmationFrame,
-    },
-    recorder,
+    const confirmationFrame = await session.captureAutoplayRouteVisualFrame({
+      minimumCapturedAtEpochMs:
+        screencastFrameCapturedAtEpochMs(candidateFrame) +
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+    });
+    const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
+      `${label}:after-route-sample`,
+    );
+    if (
+      !autoplayRouteCaptureWindowCoherent(
+        beforeProbe.route,
+        afterProbe?.route,
+        expectedTargetLocationId,
+      )
+    ) {
+      return null;
+    }
+    const recorder =
+      await session.readOrRearmAutoplayRouteCaptureRecorder({
+        expectedTargetLocationId,
+        label: `${label}:recorder-read`,
+      });
+    session.archiveAutoplayRouteFrames(recorder);
+    return session.archiveAutoplayRouteFrameWindow({
+      expectedTargetLocationId,
+      recordedWindow: {
+        afterProbe,
+        beforeProbe,
+        candidateFrame,
+        confirmationFrame,
+      },
+      recorder,
+    });
   });
 }
 
