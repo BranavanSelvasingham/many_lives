@@ -112,7 +112,7 @@ const AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH = 640;
 const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
 const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
-const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 4;
+const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 2;
 const AUTOPLAY_SCREENCAST_MAX_HEIGHT = 375;
 const AUTOPLAY_SCREENCAST_MAX_WIDTH = 819;
 const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = Number(
@@ -4339,11 +4339,13 @@ class CdpSession {
     );
     if (
       state.routeFrameWindowArchive.length === 0 &&
-      state.routeFrameArchive.length >= 2
+      state.routeFrameArchive.length >= 1
     ) {
       state.routeFrameWindowCapturePendingSample = null;
       state.routeFrameWindowCaptureStatus =
-        "waiting-for-direct-screencast-validation";
+        state.routeFrameArchive.length >= 2
+          ? "waiting-for-direct-screencast-validation"
+          : "waiting-for-second-direct-screencast-frame";
       return Promise.resolve(state.routeFrameArchive.length);
     }
     if (
