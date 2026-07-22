@@ -403,7 +403,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
-    `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
+    `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, autoplayRecordedRouteWindowsHaveDistinctProgress, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
@@ -499,6 +499,23 @@ test("proactive route history survives a delayed observer and rejects unproven w
     ),
     source: "movement-probe-recorder",
   });
+  const sharedAfterProbe = routeSample(0.386, 2_095);
+  assert.equal(
+    routeCapture.autoplayRecordedRouteWindowsHaveDistinctProgress(
+      {
+        afterProbe: sharedAfterProbe,
+        beforeProbe: routeSample(0.003, 0),
+        frame: { capturedAtEpochMs: capturedAtEpochMs + 1_052 },
+      },
+      {
+        afterProbe: sharedAfterProbe,
+        beforeProbe: routeSample(0.003, 1_027),
+        frame: { capturedAtEpochMs: capturedAtEpochMs + 2_084 },
+      },
+    ),
+    true,
+    "Distinct rendered positions must remain valid when CI brackets both frames with one shared after-probe.",
+  );
   const screencastFrame = (sequence, offsetMs) => ({
     data: `active-route-png-${sequence}`,
     metadata: { timestamp: (capturedAtEpochMs + offsetMs) / 1_000 },
