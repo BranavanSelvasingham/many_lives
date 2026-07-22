@@ -122,6 +122,7 @@ function buildSteps() {
       "scripts/client-visual-reconciliation.test.mjs",
       "scripts/rowan-browser-pacing.test.mjs",
       "scripts/run-sim-dev.test.mjs",
+      "scripts/visual-game-camera-settle.test.mjs",
       "scripts/visual-game-smoke-startup.test.mjs",
       "scripts/visual-scene-anchor-regression.test.mjs",
     ]),

@@ -4155,10 +4155,17 @@ function renderDynamicScene(
     getOverlaySceneViewport(runtimeState),
     now,
   );
-  syncBrowserCameraProbe(objects.overlayDom, runtimeState, camera, sceneViewport, {
-    cameraFollowPixel,
-    playerPixel,
-  });
+  syncBrowserCameraProbe(
+    objects.overlayDom,
+    runtimeState,
+    camera,
+    sceneViewport,
+    now,
+    {
+      cameraFollowPixel,
+      playerPixel,
+    },
+  );
   if (
     now - runtimeState.lastBrowserMovementProbeSyncAt >=
     BROWSER_MOVEMENT_PROBE_SYNC_INTERVAL_MS
@@ -8366,6 +8373,7 @@ function syncBrowserCameraProbe(
   runtimeState: RuntimeState,
   camera: PhaserType.Cameras.Scene2D.Camera,
   sceneViewport: SceneViewport,
+  renderedAtMs: number,
   points?: {
     cameraFollowPixel: Point;
     playerPixel: Point;
@@ -8429,6 +8437,7 @@ function syncBrowserCameraProbe(
       y: Math.round(sceneViewport.y / runtimeState.renderScale),
     },
     renderScale: Number(runtimeState.renderScale.toFixed(4)),
+    renderedAtMs: Number(renderedAtMs.toFixed(2)),
     scroll: {
       x: Number(camera.scrollX.toFixed(2)),
       y: Number(camera.scrollY.toFixed(2)),

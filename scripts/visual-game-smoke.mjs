@@ -13,6 +13,10 @@ import {
   closeChildProcess,
   waitForChildProcessReady,
 } from "./visual-game-smoke-startup.mjs";
+import {
+  cameraScrollDistance,
+  waitForStableCameraProbes,
+} from "./visual-game-camera-settle.mjs";
 
 const DEFAULT_WEB_BASE =
   process.env.MANY_LIVES_WEB_BASE_URL ?? "http://127.0.0.1:3001";
@@ -412,6 +416,22 @@ class CdpSession {
     await this.send("Emulation.setTouchEmulationEnabled", {
       enabled: width < 600,
     });
+  }
+
+  async waitForAnimationFrames(frameCount = 2) {
+    const count = Math.max(1, Math.floor(frameCount));
+    return this.evaluate(`new Promise((resolve) => {
+      let remaining = ${count};
+      const onFrame = () => {
+        remaining -= 1;
+        if (remaining <= 0) {
+          resolve(true);
+          return;
+        }
+        requestAnimationFrame(onFrame);
+      };
+      requestAnimationFrame(onFrame);
+    })`);
   }
 
   async evaluate(expression) {
@@ -4640,13 +4660,6 @@ function assertExpandedRailScroll(page, label) {
   );
 }
 
-function cameraScrollDistance(first, second) {
-  return Math.hypot(
-    (second?.scroll?.x ?? 0) - (first?.scroll?.x ?? 0),
-    (second?.scroll?.y ?? 0) - (first?.scroll?.y ?? 0),
-  );
-}
-
 function cameraPointDistance(first, second) {
   return Math.hypot(
     (second?.x ?? 0) - (first?.x ?? 0),
@@ -6227,6 +6240,17 @@ async function waitForInteriorCameraProbe(session) {
   );
 }
 
+async function waitForInteriorCameraSettle(session, initialProbe) {
+  return waitForStableCameraProbes({
+    initialProbe,
+    isEligible: (probe) =>
+      probe?.activeSpaceKind === "interior" && cameraProbeInRange(probe),
+    readProbe: () => session.readCameraProbe(),
+    timeoutMs: APP_READY_TIMEOUT_MS,
+    waitForFrame: () => session.waitForAnimationFrames(2),
+  });
+}
+
 async function runInteriorCameraCheck(session) {
   const gameId = await createInteriorCameraGame();
   await session.setViewport(INTERIOR_CAMERA_VIEWPORT);
@@ -6235,10 +6259,10 @@ async function runInteriorCameraCheck(session) {
   );
   await session.waitForAppReady();
   const initial = await waitForInteriorCameraProbe(session);
-  await sleep(800);
-  const settled = await session.readCameraProbe();
-  await sleep(800);
-  const settledAgain = await session.readCameraProbe();
+  const { settled, settledAgain } = await waitForInteriorCameraSettle(
+    session,
+    initial,
+  );
 
   assert.equal(
     settled.activeSpaceId,
