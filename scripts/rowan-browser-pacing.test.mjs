@@ -939,7 +939,7 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
     `${source.slice(genericCaptureStart, genericCaptureEnd)}; return acquireAutoplayScreencastFrameWindow;`,
   )(
     assert,
-    3,
+    4,
     125,
     framePolicy.cdpProbeCapturedAtEpochMs,
     paintPolicy.requireStableAutoplayScreenshotPaintProbe,
@@ -1232,6 +1232,8 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
     { data: "attempt-2-confirmation", metadata: { timestamp: (epoch + 1_970) / 1_000 }, sequence: 4 },
     { data: "attempt-3", metadata: { timestamp: (epoch + 2_140) / 1_000 }, sequence: 5 },
     { data: "attempt-3-confirmation", metadata: { timestamp: (epoch + 2_270) / 1_000 }, sequence: 6 },
+    { data: "attempt-4", metadata: { timestamp: (epoch + 2_440) / 1_000 }, sequence: 7 },
+    { data: "attempt-4-confirmation", metadata: { timestamp: (epoch + 2_570) / 1_000 }, sequence: 8 },
   ];
   const persistentProbes = [
     probe(1_400),
@@ -1239,6 +1241,8 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
     probe(1_700),
     null,
     probe(2_000),
+    null,
+    probe(2_300),
     null,
   ];
   const persistentValidatedSequences = [];
@@ -1255,7 +1259,7 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
       validateFrame: validateProbeRetryFrame(persistentValidatedSequences),
       validateStableFramePair: () => ({}),
     }),
-    /current-state probe was unavailable after frame capture on attempt 3\/3/,
+    /current-state probe was unavailable after frame capture on attempt 4\/4/,
   );
   await assert.rejects(
     acquireFrame({
@@ -1273,7 +1277,7 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
         }),
       },
     }),
-    /current-state probe was unavailable before frame capture on attempt 3\/3\. CDP diagnostics: \{"pendingRequests":\[\],"socket":\{"writable":true\}\}/,
+    /current-state probe was unavailable before frame capture on attempt 4\/4\. CDP diagnostics: \{"pendingRequests":\[\],"socket":\{"writable":true\}\}/,
   );
   assert.deepEqual(
     persistentValidatedSequences,
@@ -1281,6 +1285,30 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
     "Persistent unbracketed pixels must never be validated.",
   );
 
+  const staleProbeSequence = [
+    probe(210), probe(500),
+    probe(610), probe(900),
+    probe(1_010), probe(1_300),
+    probe(1_410), probe(1_700),
+  ];
+  const staleFrames = [
+    [200, 330],
+    [600, 730],
+    [1_000, 1_130],
+    [1_400, 1_530],
+  ].flatMap(([candidate, confirmation], index) => [
+    {
+      data: `stale-${index + 1}`,
+      metadata: { timestamp: (epoch + candidate) / 1_000 },
+      sequence: index * 2 + 1,
+    },
+    {
+      data: `stale-${index + 1}-confirmation`,
+      metadata: { timestamp: (epoch + confirmation) / 1_000 },
+      sequence: index * 2 + 2,
+    },
+  ]);
+  let staleSequence = 0;
   await assert.rejects(
     acquireFrame({
       initialProbe: probe(200),
@@ -1288,64 +1316,98 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
       isInitialProbeCoherent: (initial, before) =>
         initial.state === before.state,
       label: "stale live milestone",
-      readProbe: async () => probe(210),
+      readProbe: async () => staleProbeSequence.shift(),
       session: {
-        autoplayScreencastSequence: () => 2,
-        readScreenshotPaintProbe: session.readScreenshotPaintProbe,
-        waitForAutoplayScreencastFrame: (() => {
-          const staleFrames = [
-            {
-              data: "stale",
-              metadata: { timestamp: (epoch + 205) / 1_000 },
-              sequence: 3,
-            },
-            {
-              data: "stale-confirmation",
-              metadata: { timestamp: (epoch + 330) / 1_000 },
-              sequence: 4,
-            },
-          ];
-          return async () => staleFrames.shift();
-        })(),
+        autoplayScreencastSequence: () => staleSequence,
+        readScreenshotPaintProbe: async () => paintProbe(),
+        waitForAutoplayScreencastFrame: async () => {
+          const frame = staleFrames.shift();
+          assert.ok(frame, "Expected a stale screencast frame fixture.");
+          staleSequence = frame.sequence;
+          return frame;
+        },
       },
       validateFrame: () => assert.fail("stale pixels must not be validated"),
     }),
     /timestamp was outside its current-state probe window/,
   );
 
+  const boundaryFrames = [
+    { data: "boundary", metadata: { timestamp: (epoch + 440) / 1_000 }, sequence: 1 },
+    { data: "boundary-confirmation", metadata: { timestamp: (epoch + 570) / 1_000 }, sequence: 2 },
+    { data: "arrival", metadata: { timestamp: (epoch + 740) / 1_000 }, sequence: 3 },
+    { data: "arrival-confirmation", metadata: { timestamp: (epoch + 870) / 1_000 }, sequence: 4 },
+  ];
+  const boundaryProbes = [
+    probe(310),
+    probe(600, "arrival"),
+    probe(610, "arrival"),
+    probe(900, "arrival"),
+  ];
+  const boundaryValidatedSequences = [];
+  const recoveredBoundaryCapture = await acquireFrame({
+    initialProbe: probe(300),
+    isCaptureWindowCoherent: (before, after) => before.state === after.state,
+    isInitialProbeCoherent: (_initial, before) =>
+      before.state === "conversation" || before.state === "arrival",
+    label: "transient live milestone state boundary",
+    readProbe: async () => boundaryProbes.shift(),
+    session: buildProbeRetrySession(boundaryFrames),
+    validateFrame: validateProbeRetryFrame(boundaryValidatedSequences),
+    validateStableFramePair: () => ({}),
+  });
+  assert.equal(recoveredBoundaryCapture.frame.sequence, 4);
+  assert.equal(recoveredBoundaryCapture.beforeProbe.state, "arrival");
+  assert.equal(recoveredBoundaryCapture.afterProbe.state, "arrival");
+  assert.deepEqual(
+    boundaryValidatedSequences,
+    [3, 4],
+    "Pixels that crossed the route-arrival boundary must never be validated.",
+  );
+
+  const persistentBoundaryFrames = [
+    [1_040, 1_170],
+    [1_440, 1_570],
+    [1_840, 1_970],
+    [2_240, 2_370],
+  ].flatMap(([candidate, confirmation], index) => [
+    {
+      data: `boundary-${index + 1}`,
+      metadata: { timestamp: (epoch + candidate) / 1_000 },
+      sequence: index * 2 + 1,
+    },
+    {
+      data: `boundary-${index + 1}-confirmation`,
+      metadata: { timestamp: (epoch + confirmation) / 1_000 },
+      sequence: index * 2 + 2,
+    },
+  ]);
+  const persistentBoundaryProbes = [
+    probe(910), probe(1_300, "arrival"),
+    probe(1_310), probe(1_700, "arrival"),
+    probe(1_710), probe(2_100, "arrival"),
+    probe(2_110), probe(2_500, "arrival"),
+  ];
+  const persistentBoundaryValidatedSequences = [];
   await assert.rejects(
     acquireFrame({
-      initialProbe: probe(300),
+      initialProbe: probe(900),
       isCaptureWindowCoherent: (before, after) => before.state === after.state,
-      isInitialProbeCoherent: (initial, before) =>
-        initial.state === before.state,
-      label: "mismatched live milestone",
-      readProbe: (() => {
-        const mismatched = [probe(310), probe(330, "arrival")];
-        return async () => mismatched.shift();
-      })(),
-      session: {
-        autoplayScreencastSequence: () => 3,
-        readScreenshotPaintProbe: session.readScreenshotPaintProbe,
-        waitForAutoplayScreencastFrame: (() => {
-          const mismatchedFrames = [
-            {
-              data: "wrong-state",
-              metadata: { timestamp: (epoch + 320) / 1_000 },
-              sequence: 4,
-            },
-            {
-              data: "wrong-state-confirmation",
-              metadata: { timestamp: (epoch + 445) / 1_000 },
-              sequence: 5,
-            },
-          ];
-          return async () => mismatchedFrames.shift();
-        })(),
-      },
-      validateFrame: () => assert.fail("mismatched pixels must not be validated"),
+      isInitialProbeCoherent: () => true,
+      label: "persistent live milestone state boundary",
+      readProbe: async () => persistentBoundaryProbes.shift(),
+      session: buildProbeRetrySession(persistentBoundaryFrames),
+      validateFrame: validateProbeRetryFrame(
+        persistentBoundaryValidatedSequences,
+      ),
+      validateStableFramePair: () => ({}),
     }),
-    /not bracketed by one coherent current state/,
+    /not bracketed by one coherent current state\. Candidate: .* Confirmation:/,
+  );
+  assert.deepEqual(
+    persistentBoundaryValidatedSequences,
+    [],
+    "Persistent state-boundary pixels must never be validated.",
   );
 
   const runStart = source.indexOf("async function runAutoplayObservation(");

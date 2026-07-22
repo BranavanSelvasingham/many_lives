@@ -107,7 +107,7 @@ const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
 const AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE = 0.6;
 const AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT = 360;
 const AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH = 640;
-const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 3;
+const AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS = 4;
 const AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS = 5_000;
 const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
 const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 2;
@@ -14967,29 +14967,28 @@ async function acquireAutoplayScreencastFrameWindow({
       }
       break;
     }
-    assert.ok(
-      isCaptureWindowCoherent(beforeProbe, afterProbe),
-      `${label}: screencast frame was not bracketed by one coherent current state. Before: ${JSON.stringify(beforeProbe)}. After: ${JSON.stringify(afterProbe)}.`,
-    );
-    assert.ok(
-      screencastFrameIsBracketedByEpochProbes(frame, beforeProbe, afterProbe),
-      `${label}: screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(frame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
-    );
-    assert.ok(
-      screencastFrameCapturedAtEpochMs(frame) >=
-        minimumCandidateCapturedAtEpochMs,
-      `${label}: candidate screencast frame did not retain the ${AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS}ms compositing settle interval.`,
-    );
-    assert.ok(
-      screencastFrameIsBracketedByEpochProbes(
-        confirmationFrame,
-        beforeProbe,
-        afterProbe,
-      ),
-      `${label}: confirmation screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(confirmationFrame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
-    );
-
     try {
+      assert.ok(
+        isCaptureWindowCoherent(beforeProbe, afterProbe),
+        `${label}: screencast frame was not bracketed by one coherent current state. Candidate: ${screencastFrameCapturedAtEpochMs(frame)}. Confirmation: ${screencastFrameCapturedAtEpochMs(confirmationFrame)}. Before: ${JSON.stringify(beforeProbe)}. After: ${JSON.stringify(afterProbe)}.`,
+      );
+      assert.ok(
+        screencastFrameIsBracketedByEpochProbes(frame, beforeProbe, afterProbe),
+        `${label}: screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(frame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
+      );
+      assert.ok(
+        screencastFrameCapturedAtEpochMs(frame) >=
+          minimumCandidateCapturedAtEpochMs,
+        `${label}: candidate screencast frame did not retain the ${AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS}ms compositing settle interval.`,
+      );
+      assert.ok(
+        screencastFrameIsBracketedByEpochProbes(
+          confirmationFrame,
+          beforeProbe,
+          afterProbe,
+        ),
+        `${label}: confirmation screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(confirmationFrame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
+      );
       const paintProbe = requireStableAutoplayScreenshotPaintProbe(
         paintProbeBefore,
         paintProbeAfter,
@@ -15114,17 +15113,12 @@ async function captureAutoplayLiveTrajectoryMilestone({
       autoplayLiveMilestoneMatches(key, beforeProbe, openingWorldVariant) &&
       autoplayLiveMilestoneMatches(key, afterProbe, openingWorldVariant) &&
       autoplayMilestoneCaptureWindowCoherent(
-        probe,
+        beforeProbe,
         beforeProbe,
         afterProbe,
       ),
-    isInitialProbeCoherent: (initial, beforeProbe) =>
-      autoplayLiveMilestoneMatches(key, beforeProbe, openingWorldVariant) &&
-      autoplayMilestoneCaptureWindowCoherent(
-        initial,
-        beforeProbe,
-        beforeProbe,
-      ),
+    isInitialProbeCoherent: (_initial, beforeProbe) =>
+      autoplayLiveMilestoneMatches(key, beforeProbe, openingWorldVariant),
     label,
     readProbe: async (probeLabel) =>
       acceptedAutoplayPacingProbe(
