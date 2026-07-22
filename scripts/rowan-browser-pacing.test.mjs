@@ -394,6 +394,8 @@ test("proactive route history survives a delayed observer and rejects unproven w
   const routeCapture = Function(
     "assert",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    "AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS",
+    "AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS",
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
@@ -403,10 +405,12 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
-    `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, autoplayRecordedRouteWindowsHaveDistinctProgress, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
+    `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
+    0.02,
+    50,
     2_000,
     0.02,
     125,
@@ -515,6 +519,128 @@ test("proactive route history survives a delayed observer and rejects unproven w
     ),
     true,
     "Distinct rendered positions must remain valid when CI brackets both frames with one shared after-probe.",
+  );
+  const sparseOpeningSamples = [
+    routeSample(0.003, 0),
+    routeSample(0.15, 1_000),
+    routeSample(0.35, 3_000),
+    routeSample(0.657, 5_000),
+  ];
+  const sparseOpeningFrames = [
+    {
+      data: "sparse-opening-start",
+      metadata: { timestamp: (capturedAtEpochMs + 72) / 1_000 },
+      sequence: 8,
+    },
+    {
+      data: "sparse-opening-mid",
+      metadata: { timestamp: (capturedAtEpochMs + 3_276) / 1_000 },
+      sequence: 9,
+    },
+  ];
+  const sparseOpeningTrajectory =
+    routeCapture.selectAutoplayRecordedRouteTrajectory({
+      expectedTargetLocationId: "tea-house",
+      frames: sparseOpeningFrames,
+      label: "sparse constrained-runner opening frames",
+      samples: sparseOpeningSamples,
+      validateFrame: ({ frame, paintProbe: acceptedPaintProbe }) => ({
+        buffer: Buffer.from(frame.data),
+        height: 625,
+        paintProbe: acceptedPaintProbe,
+        textPaint: {},
+        width: 1365,
+      }),
+      validateStableFramePair: () => ({}),
+    });
+  assert.equal(sparseOpeningTrajectory.start.frame.sequence, 8);
+  assert.equal(sparseOpeningTrajectory.mid.frame.sequence, 9);
+  assert.equal(
+    sparseOpeningTrajectory.start.validated.textPaint.openingFrameGraceMs,
+    72,
+  );
+  const sparseOpeningEvidenceWindow = {
+    before: {
+      capturedAtEpochMs,
+      progress: 0.003,
+    },
+    frame: {
+      capturedAtEpochMs: capturedAtEpochMs + 72,
+    },
+    textPaint: {
+      openingFrameGraceMinimumMs: 50,
+      openingFrameGraceMs: 72,
+    },
+  };
+  assert.equal(
+    routeCapture.autoplayRouteCaptureWindowRetainsCompositingSettle(
+      sparseOpeningEvidenceWindow,
+      { allowOpeningFrameGrace: true },
+    ),
+    true,
+    "The final evidence invariant must accept the same bounded opening grace as candidate selection.",
+  );
+  assert.equal(
+    routeCapture.autoplayRouteCaptureWindowRetainsCompositingSettle(
+      sparseOpeningEvidenceWindow,
+    ),
+    false,
+    "Only route-start evidence may use the bounded opening grace.",
+  );
+  assert.equal(
+    routeCapture.autoplayRouteCaptureWindowRetainsCompositingSettle(
+      {
+        ...sparseOpeningEvidenceWindow,
+        before: {
+          ...sparseOpeningEvidenceWindow.before,
+          progress: 0.03,
+        },
+      },
+      { allowOpeningFrameGrace: true },
+    ),
+    false,
+    "Opening grace must remain limited to a near-zero legal route position.",
+  );
+  assert.equal(
+    routeCapture.autoplayRouteCaptureWindowRetainsCompositingSettle(
+      {
+        ...sparseOpeningEvidenceWindow,
+        frame: {
+          capturedAtEpochMs: capturedAtEpochMs + 42,
+        },
+        textPaint: {
+          ...sparseOpeningEvidenceWindow.textPaint,
+          openingFrameGraceMs: 42,
+        },
+      },
+      { allowOpeningFrameGrace: true },
+    ),
+    false,
+    "Opening grace must still retain at least three render frames of compositing settle.",
+  );
+  assert.throws(
+    () =>
+      routeCapture.selectAutoplayRecordedRouteTrajectory({
+        expectedTargetLocationId: "tea-house",
+        frames: [
+          {
+            ...sparseOpeningFrames[0],
+            metadata: { timestamp: (capturedAtEpochMs + 42) / 1_000 },
+          },
+          sparseOpeningFrames[1],
+        ],
+        label: "unsettled sparse opening frame",
+        samples: sparseOpeningSamples,
+        validateFrame: ({ frame, paintProbe: acceptedPaintProbe }) => ({
+          buffer: Buffer.from(frame.data),
+          height: 625,
+          paintProbe: acceptedPaintProbe,
+          textPaint: {},
+          width: 1365,
+        }),
+        validateStableFramePair: () => ({}),
+      }),
+    /did not contain two distinct legal rendered positions/,
   );
   const screencastFrame = (sequence, offsetMs) => ({
     data: `active-route-png-${sequence}`,
@@ -642,7 +768,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
     framePolicy.screencastFrameCapturedAtEpochMs(trajectory.mid.frame) <=
       trajectory.mid.afterProbe.capturedAtEpochMs,
   );
-  assert.equal(routeHudContinuityChecks, 1);
+  assert.equal(routeHudContinuityChecks, 2);
 
   for (const [label, rejectedSamples] of [
     ["absent", []],
@@ -1548,6 +1674,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const recordedRoutePolicy = Function(
     "assert",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    "AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS",
+    "AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS",
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
@@ -1557,10 +1685,12 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { selectAutoplayRecordedRouteTrajectory };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayRouteCaptureWindowRetainsCompositingSettle, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
+    0.02,
+    50,
     2_000,
     0.02,
     125,

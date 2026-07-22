@@ -104,6 +104,8 @@ const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
 const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
 const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
+const AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS = 0.02;
+const AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS = 50;
 const AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE = 0.6;
 const AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT = 360;
 const AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH = 640;
@@ -15288,6 +15290,32 @@ function recordedRouteWindowBelongsToOpeningSegment({
   );
 }
 
+function autoplayRouteCaptureWindowRetainsCompositingSettle(
+  window,
+  { allowOpeningFrameGrace = false } = {},
+) {
+  const frameSettleMs =
+    Number(window?.frame?.capturedAtEpochMs) -
+    Number(window?.before?.capturedAtEpochMs);
+  if (!Number.isFinite(frameSettleMs)) {
+    return false;
+  }
+  if (frameSettleMs >= AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS) {
+    return true;
+  }
+  const openingFrameGraceMs = window?.textPaint?.openingFrameGraceMs;
+  return Boolean(
+    allowOpeningFrameGrace &&
+      Number(window?.before?.progress) <=
+        AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS &&
+      typeof openingFrameGraceMs === "number" &&
+      openingFrameGraceMs >= AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS &&
+      Math.abs(openingFrameGraceMs - frameSettleMs) <= 0.5 &&
+      window?.textPaint?.openingFrameGraceMinimumMs ===
+        AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS,
+  );
+}
+
 function buildAutoplayRecordedRouteFrameCandidates({
   expectedTargetLocationId,
   frames,
@@ -15305,13 +15333,27 @@ function buildAutoplayRecordedRouteFrameCandidates({
       if (capturedAtEpochMs === null) {
         return null;
       }
-      const beforeProbe = legalSamples
+      const settledBeforeProbe = legalSamples
         .filter(
           (sample) =>
             sample.capturedAtEpochMs <=
             capturedAtEpochMs - AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
         )
         .at(-1);
+      const openingProbe = legalSamples[0] ?? null;
+      const openingFrameSettleMs = openingProbe
+        ? capturedAtEpochMs - openingProbe.capturedAtEpochMs
+        : null;
+      const usesOpeningFrameGrace = Boolean(
+        !settledBeforeProbe &&
+          openingProbe &&
+          Number(openingProbe.route?.progress) <=
+            AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS &&
+          openingFrameSettleMs >=
+            AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS,
+      );
+      const beforeProbe = settledBeforeProbe ??
+        (usesOpeningFrameGrace ? openingProbe : null);
       const afterProbe = legalSamples.find(
         (sample) => sample.capturedAtEpochMs >= capturedAtEpochMs,
       );
@@ -15335,7 +15377,14 @@ function buildAutoplayRecordedRouteFrameCandidates({
       ) {
         return null;
       }
-      return { afterProbe, beforeProbe, frame };
+      return {
+        afterProbe,
+        beforeProbe,
+        frame,
+        openingFrameGraceMs: usesOpeningFrameGrace
+          ? openingFrameSettleMs
+          : null,
+      };
     })
     .filter(Boolean)
     .sort(
@@ -15564,6 +15613,13 @@ function validateAutoplayRecordedRouteFrame({
       textPaint: {
         ...validated.textPaint,
         ...hudContinuity,
+        ...(typeof recordedFrame.openingFrameGraceMs === "number"
+          ? {
+              openingFrameGraceMs: recordedFrame.openingFrameGraceMs,
+              openingFrameGraceMinimumMs:
+                AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS,
+            }
+          : {}),
         ...(!exactIdentity
           ? {
               routeWindowPaintProbeBasis:
@@ -16691,8 +16747,9 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
       `${evidence.openingWorldVariant}: ${label} is missing a usable asynchronous visual frame. Evidence: ${evidencePath}.`,
     );
     assert.ok(
-      window.frame.capturedAtEpochMs - window.before.capturedAtEpochMs >=
-        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      autoplayRouteCaptureWindowRetainsCompositingSettle(window, {
+        allowOpeningFrameGrace: label === "route-start",
+      }),
       `${evidence.openingWorldVariant}: ${label} frame did not retain the bounded compositing settle interval. Evidence: ${evidencePath}.`,
     );
     assert.ok(
