@@ -5753,6 +5753,105 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("rejects a wrench purchase when route-time world evolution resolves the pump before arrival", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame(
+      "game-projects-pump-resolution-before-tool-plan",
+    );
+
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-mara",
+    });
+    world = await enterRepairStall(engine, world);
+
+    const pumpProblem = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    expect(pumpProblem).toBeDefined();
+    if (!pumpProblem) {
+      return;
+    }
+
+    world.player.money = 26;
+    world.player.energy = 80;
+    world.player.knownLocationIds = [
+      ...new Set([...world.player.knownLocationIds, "courtyard", "repair-stall"]),
+    ];
+    pumpProblem.discovered = true;
+    pumpProblem.escalationLevel = 2;
+    pumpProblem.status = "active";
+    pumpProblem.urgency = 5;
+    setTestClock(world, 17, 20);
+    world = await engine.tick(world, 0);
+
+    const executionWorld = structuredClone(world);
+    const planningStartMoney = world.player.money;
+    const planningStartPump = structuredClone(
+      world.problems.find((problem) => problem.id === "problem-pump"),
+    );
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+
+    expect(world.clock.totalMinutes).toBeLessThan(17 * 60 + 30);
+    expect(world.player.money).toBe(planningStartMoney);
+    expect(
+      world.player.inventory.some((item) => item.id === "item-wrench"),
+    ).toBe(false);
+    const planningEndPump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    expect(planningEndPump?.status).toBe("active");
+    expect(planningEndPump?.resolvedAt).toBe(planningStartPump?.resolvedAt);
+    expect(planningEndPump?.resolvedByNpcId).toBe(
+      planningStartPump?.resolvedByNpcId,
+    );
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.find(
+        (option) =>
+          option.status === "selected" &&
+          (option.actionId === "buy:item-wrench" ||
+            option.actionId === "move:courtyard" ||
+            option.pressureId === "tool:item-wrench:problem-pump" ||
+            option.pressureId === "problem:problem-pump"),
+      ),
+    ).toBeUndefined();
+    expect(world.rowanAutonomy.planningTrace?.rejected).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionId: "buy:item-wrench",
+          reason: expect.stringMatching(/projected arrival|resolves.*before/i),
+          status: "rejected",
+        }),
+      ]),
+    );
+
+    let traveledWorld = await exitToStreet(engine, executionWorld);
+    traveledWorld = await engine.runCommand(traveledWorld, {
+      type: "move_to",
+      x: 3,
+      y: 11,
+    });
+    expect(traveledWorld.clock.totalMinutes).toBeGreaterThanOrEqual(17 * 60 + 30);
+    expect(
+      traveledWorld.problems.find((problem) => problem.id === "problem-pump"),
+    ).toMatchObject({ resolvedByNpcId: "npc-mara", status: "resolved" });
+
+    const moneyBeforeRejectedSolve = traveledWorld.player.money;
+    traveledWorld = await engine.runCommand(traveledWorld, {
+      type: "act",
+      actionId: "solve:problem-pump",
+    });
+    expect(traveledWorld.player.money).toBe(moneyBeforeRejectedSolve);
+    expect(traveledWorld.availableActions.map((action) => action.id)).not.toContain(
+      "solve:problem-pump",
+    );
+  });
+
   it("clears a legacy no-trace objective move when passive world advancement invalidates its inferred target", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame(

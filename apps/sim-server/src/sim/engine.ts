@@ -3283,9 +3283,7 @@ function pendingObjectiveMoveActionReferenceStillLive(
     return false;
   }
 
-  const preview = previewWorldAtLocation(world, targetLocationId, {
-    projectArrival: reference.actionId.startsWith("talk:"),
-  });
+  const preview = previewWorldAtLocation(world, targetLocationId);
   return buildAvailableActions(preview).some(
     (action) => action.id === reference.actionId && !action.disabled,
   );
@@ -5119,6 +5117,8 @@ function buildObjectivePlanningTrace(
     selectedActionId,
   );
   const unavailableNpcRejected = unavailableNpcObjectiveTraceOptions(world);
+  const unavailableProblemRejected =
+    unavailableProjectedProblemTraceOptions(world);
 
   return {
     blockers: objectivePlanningBlockers(world),
@@ -5131,6 +5131,7 @@ function buildObjectivePlanningTrace(
     providerAttempt: acceptedRecommendation?.providerAttempt,
     rejected: dedupePlanningTraceOptions([
       ...unavailableNpcRejected,
+      ...unavailableProblemRejected,
       ...staleActionRejected,
       ...rejected,
     ]).slice(0, 5),
@@ -5369,6 +5370,66 @@ function unavailableNpcObjectiveTraceOptions(
     });
 }
 
+function unavailableProjectedProblemTraceOptions(
+  world: StreetGameState,
+): RowanPlanningTraceOption[] {
+  return urgentKnownProblems(world).flatMap<RowanPlanningTraceOption>(
+    (problem) => {
+      if (hasRequiredProblemItem(world, problem)) {
+        if (projectedProblemSolveIsLegal(world, problem)) {
+          return [];
+        }
+
+        return [
+          {
+            actionId: `solve:${problem.id}`,
+            label: `Solve ${problem.title.toLowerCase()}`,
+            planKey: `projected-problem-unavailable|solve|${problem.id}`,
+            pressureId: `problem:${problem.id}`,
+            pressureKind: "problem" as const,
+            pressureLabel: `${problem.title} is predicted to resolve before arrival`,
+            provenance: "live-pressure" as const,
+            rationale: `${problem.title} is active now, but the passive world keeps moving during Rowan's route.`,
+            reason:
+              "Rejected because passive world projection resolves the problem before route-derived arrival.",
+            score: 0,
+            status: "rejected" as const,
+            targetLocationId: problem.locationId,
+          },
+        ];
+      }
+
+      const toolSourceLocationId = toolSourceLocationIdForProblem(problem);
+      if (
+        !toolSourceLocationId ||
+        !knowsToolSourceForProblem(world, problem) ||
+        !canBuyRequiredProblemTool(world, problem) ||
+        projectedToolPurchaseStillUseful(world, problem)
+      ) {
+        return [];
+      }
+
+      return [
+        {
+          actionId: "buy:item-wrench",
+          label: "Buy old wrench",
+          planKey: `projected-problem-unavailable|tool|${problem.id}`,
+          pressureId: `tool:${problem.requiredItemId}:${problem.id}`,
+          pressureKind: "tool" as const,
+          pressureLabel: `${problem.title} is predicted to resolve before the tool can help`,
+          provenance: "live-pressure" as const,
+          rationale: `${problem.title} is active now, but buying its tool only matters if the repair remains legal after both routes.`,
+          reason:
+            "Rejected because passive world projection resolves the problem before route-derived arrival after the purchase.",
+          score: 0,
+          status: "rejected" as const,
+          targetLocationId: toolSourceLocationId,
+        },
+      ];
+    },
+  );
+}
+
 function objectivePredicateActionIsLegal(
   world: StreetGameState,
   actionId: string,
@@ -5384,9 +5445,7 @@ function objectivePredicateActionIsLegal(
     return false;
   }
 
-  const preview = previewWorldAtLocation(world, targetLocationId, {
-    projectArrival: actionId.startsWith("talk:"),
-  });
+  const preview = previewWorldAtLocation(world, targetLocationId);
   return buildAvailableActions(preview).some(
     (action) =>
       action.id === actionId &&
@@ -5491,9 +5550,7 @@ function buildProjectedDestinationFollowUpTraceSteps(
     return [];
   }
 
-  const preview = previewWorldAtLocation(world, selected.targetLocationId, {
-    projectArrival: Boolean(selected.npcId),
-  });
+  const preview = previewWorldAtLocation(world, selected.targetLocationId);
 
   if (selected.npcId) {
     const npc = npcById(preview, selected.npcId);
@@ -5660,15 +5717,19 @@ function buildLiveProblemFollowUpTraceSteps(
       steps.push(purchaseStep);
     }
 
-    const repairPreview = previewWorldAtLocation(world, problem.locationId);
-    if (!hasItem(repairPreview, "item-wrench")) {
-      repairPreview.player.inventory.push({
+    const purchasePreview = previewWorldAtLocation(world, "repair-stall");
+    if (!hasItem(purchasePreview, "item-wrench")) {
+      purchasePreview.player.inventory.push({
         id: "item-wrench",
         name: "Old wrench",
         description:
           "Trace preview only: assumes the selected buy action succeeds before the follow-up solve is reconsidered.",
       });
     }
+    const repairPreview = previewWorldAtLocation(
+      purchasePreview,
+      problem.locationId,
+    );
 
     const repairLocation = findLocation(repairPreview, problem.locationId);
     if (repairLocation) {
@@ -5733,9 +5794,7 @@ function traceLegalActionStepAtLocation(
   rationale: string,
   overrides: Partial<RowanPlanningTraceStep> = {},
 ): RowanPlanningTraceStep | undefined {
-  const preview = previewWorldAtLocation(world, locationId, {
-    projectArrival: actionId.startsWith("talk:"),
-  });
+  const preview = previewWorldAtLocation(world, locationId);
   const action = buildAvailableActions(preview).find(
     (candidate) => candidate.id === actionId,
   );
@@ -5967,9 +6026,7 @@ function legalActionBackingAtLocation(
   actionId: string,
   source: RowanPlanningTraceLegalBacking["source"],
 ): RowanPlanningTraceLegalBacking | undefined {
-  const preview = previewWorldAtLocation(world, locationId, {
-    projectArrival: actionId.startsWith("talk:"),
-  });
+  const preview = previewWorldAtLocation(world, locationId);
   const action = buildAvailableActions(preview).find(
     (candidate) =>
       candidate.id === actionId &&
@@ -6102,9 +6159,7 @@ function buildObjectiveAgentPlanCandidates(
   const candidates: ObjectivePlan[] = [];
 
   for (const location of objectiveCandidateLocations(world, objective)) {
-    const preview = previewWorldAtLocation(world, location.id, {
-      projectArrival: true,
-    });
+    const preview = previewWorldAtLocation(world, location.id);
     const actions = buildAvailableActions(preview);
 
     for (const action of actions) {
@@ -6566,6 +6621,9 @@ function buildObjectivePlanningPressures(
 
     for (const problem of urgentKnownProblems(world)) {
       if (hasRequiredProblemItem(world, problem)) {
+        if (!projectedProblemSolveIsLegal(world, problem)) {
+          continue;
+        }
         pushPressure({
           actionId: `solve:${problem.id}`,
           id: `problem:${problem.id}`,
@@ -6582,7 +6640,8 @@ function buildObjectivePlanningPressures(
       if (
         toolSourceLocationId &&
         knowsToolSourceForProblem(world, problem) &&
-        canBuyRequiredProblemTool(world, problem)
+        canBuyRequiredProblemTool(world, problem) &&
+        projectedToolPurchaseStillUseful(world, problem)
       ) {
         pushPressure({
           actionId: "buy:item-wrench",
@@ -6593,6 +6652,10 @@ function buildObjectivePlanningPressures(
           rationale: `${problem.title} is blocked by a known tool source, so Rowan should get the tool before returning.`,
           targetLocationId: toolSourceLocationId,
         });
+        continue;
+      }
+
+      if (!previewProblemRemainsActiveAtArrival(world, problem)) {
         continue;
       }
 
@@ -6641,6 +6704,14 @@ function objectivePlanningPressureFromPredicate(
   }
 
   if (
+    outcome.actionId &&
+    targetLocationId !== world.player.currentLocationId &&
+    !objectivePredicateActionIsLegal(world, outcome.actionId)
+  ) {
+    return undefined;
+  }
+
+  if (
     !outcome.actionId &&
     !outcome.npcId &&
     targetLocationId === world.player.currentLocationId
@@ -6676,6 +6747,114 @@ function canBuyRequiredProblemTool(
 
 function canBuyWrench(world: StreetGameState) {
   return world.player.money >= 8 && !hasItem(world, "item-wrench");
+}
+
+const projectedProblemStateCache = new WeakMap<
+  StreetGameState,
+  Map<string, { active: boolean; solveLegal: boolean }>
+>();
+const projectedToolUsefulnessCache = new WeakMap<
+  StreetGameState,
+  Map<string, boolean>
+>();
+
+function projectedProblemCacheKey(
+  world: StreetGameState,
+  problem: ProblemState,
+) {
+  const currentProblem = problemById(world, problem.id) ?? problem;
+  return [
+    problem.id,
+    world.clock.totalMinutes,
+    world.activeSpaceId,
+    world.player.currentLocationId,
+    world.player.x,
+    world.player.y,
+    world.player.money,
+    world.player.energy,
+    world.player.inventory.map((item) => item.id).sort().join(","),
+    `${currentProblem.status}:${currentProblem.discovered}:${currentProblem.urgency}:${currentProblem.escalationLevel ?? ""}`,
+    world.npcs.map((npc) => `${npc.id}:${npc.currentLocationId}`).join(","),
+  ].join("|");
+}
+
+function projectedProblemState(
+  world: StreetGameState,
+  problem: ProblemState,
+) {
+  const cacheKey = projectedProblemCacheKey(world, problem);
+  const cache = projectedProblemStateCache.get(world) ?? new Map();
+  projectedProblemStateCache.set(world, cache);
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const preview = previewWorldAtLocation(world, problem.locationId);
+  const projectedProblem = problemById(preview, problem.id);
+  const state = {
+    active: projectedProblem?.status === "active",
+    solveLegal: buildAvailableActions(preview).some(
+      (action) => action.id === `solve:${problem.id}` && !action.disabled,
+    ),
+  };
+  cache.set(cacheKey, state);
+  return state;
+}
+
+function projectedProblemSolveIsLegal(
+  world: StreetGameState,
+  problem: ProblemState,
+) {
+  return projectedProblemState(world, problem).solveLegal;
+}
+
+function previewProblemRemainsActiveAtArrival(
+  world: StreetGameState,
+  problem: ProblemState,
+) {
+  return projectedProblemState(world, problem).active;
+}
+
+function projectedToolPurchaseStillUseful(
+  world: StreetGameState,
+  problem: ProblemState,
+) {
+  const cacheKey = projectedProblemCacheKey(world, problem);
+  const cache = projectedToolUsefulnessCache.get(world) ?? new Map();
+  projectedToolUsefulnessCache.set(world, cache);
+  const cached = cache.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const toolSourceLocationId = toolSourceLocationIdForProblem(problem);
+  if (!toolSourceLocationId || !problem.requiredItemId) {
+    cache.set(cacheKey, false);
+    return false;
+  }
+
+  const purchasePreview = previewWorldAtLocation(world, toolSourceLocationId);
+  const purchaseAction = buildAvailableActions(purchasePreview).find(
+    (action) => action.id === `buy:${problem.requiredItemId}`,
+  );
+  if (!purchaseAction || purchaseAction.disabled) {
+    cache.set(cacheKey, false);
+    return false;
+  }
+
+  if (!hasItem(purchasePreview, problem.requiredItemId)) {
+    purchasePreview.player.inventory.push({
+      id: problem.requiredItemId,
+      name: "Projected required tool",
+      description:
+        "Arrival projection only: the authoritative purchase still requires execution-time validation.",
+    });
+  }
+
+  const useful = projectedProblemSolveIsLegal(purchasePreview, problem);
+  cache.set(cacheKey, useful);
+  return useful;
 }
 
 function currentOpenPredicateActionId(world: StreetGameState) {
@@ -6892,7 +7071,8 @@ function planTargetsUrgentLivePressure(
         problem.requiredItemId === "item-wrench" &&
         !hasRequiredProblemItem(world, problem) &&
         knowsToolSourceForProblem(world, problem) &&
-        toolSourceLocationIdForProblem(problem) === plan.targetLocationId,
+        toolSourceLocationIdForProblem(problem) === plan.targetLocationId &&
+        projectedToolPurchaseStillUseful(world, problem),
     );
   }
 
@@ -6901,7 +7081,8 @@ function planTargetsUrgentLivePressure(
     if (
       problem &&
       urgentKnownProblems(world).some((entry) => entry.id === problem.id) &&
-      (kind === "inspect" || kind === "solve")
+      (kind === "inspect" || kind === "solve") &&
+      previewProblemRemainsActiveAtArrival(world, problem)
     ) {
       return true;
     }
@@ -6924,7 +7105,8 @@ function planTargetsUrgentLivePressure(
           (problem) =>
             toolSourceLocationIdForProblem(problem) === plan.targetLocationId &&
             !hasRequiredProblemItem(world, problem) &&
-            knowsToolSourceForProblem(world, problem),
+            knowsToolSourceForProblem(world, problem) &&
+            projectedToolPurchaseStillUseful(world, problem),
         )),
   );
 }
@@ -7194,9 +7376,7 @@ function objectivePredicateMoveIntentForLocation(
       continue;
     }
 
-    const preview = previewWorldAtLocation(world, location.id, {
-      projectArrival: Boolean(outcome.npcId),
-    });
+    const preview = previewWorldAtLocation(world, location.id);
     const actionLegal =
       outcome.actionId &&
       buildAvailableActions(preview).some(
@@ -7248,7 +7428,13 @@ function livePressureMoveIntentForLocation(
 ): Pick<ObjectivePlan, "actionId" | "rationale"> | undefined {
   const problem = highestPressureProblemForLocation(world, location.id);
   if (problem) {
+    if (!previewProblemRemainsActiveAtArrival(world, problem)) {
+      return undefined;
+    }
     if (hasRequiredProblemItem(world, problem)) {
+      if (!projectedProblemSolveIsLegal(world, problem)) {
+        return undefined;
+      }
       return {
         actionId: `solve:${problem.id}`,
         rationale: `${problem.title} is live and urgent, so Rowan should deal with it before it spreads further.`,
@@ -7272,7 +7458,8 @@ function livePressureMoveIntentForLocation(
     (candidate) =>
       toolSourceLocationIdForProblem(candidate) === location.id &&
       !hasRequiredProblemItem(world, candidate) &&
-      knowsToolSourceForProblem(world, candidate),
+      knowsToolSourceForProblem(world, candidate) &&
+      projectedToolPurchaseStillUseful(world, candidate),
   );
   if (!toolProblem) {
     return undefined;
@@ -7569,7 +7756,8 @@ function scoreLiveProblemPressureForAction(
         candidate.requiredItemId === "item-wrench" &&
         !hasRequiredProblemItem(world, candidate) &&
         knowsToolSourceForProblem(world, candidate) &&
-        toolSourceLocationIdForProblem(candidate) === targetLocationId,
+        toolSourceLocationIdForProblem(candidate) === targetLocationId &&
+        projectedToolPurchaseStillUseful(world, candidate),
     );
     return problem ? 56 + problemPressure(problem) * 7 : 0;
   }
@@ -7625,7 +7813,13 @@ function scoreLiveProblemPressureForMove(
   locationId: string,
 ) {
   const problem = highestPressureProblemForLocation(world, locationId);
-  if (problem) {
+  if (problem && previewProblemRemainsActiveAtArrival(world, problem)) {
+    if (
+      hasRequiredProblemItem(world, problem) &&
+      !projectedProblemSolveIsLegal(world, problem)
+    ) {
+      return 0;
+    }
     return hasRequiredProblemItem(world, problem)
       ? 54 + problemPressure(problem) * 6
       : 8 + problemPressure(problem);
@@ -7635,7 +7829,8 @@ function scoreLiveProblemPressureForMove(
     (candidate) =>
       toolSourceLocationIdForProblem(candidate) === locationId &&
       !hasRequiredProblemItem(world, candidate) &&
-      knowsToolSourceForProblem(world, candidate),
+      knowsToolSourceForProblem(world, candidate) &&
+      projectedToolPurchaseStillUseful(world, candidate),
   );
 
   return toolProblem ? 48 + problemPressure(toolProblem) * 7 : 0;
@@ -8029,7 +8224,6 @@ function latestConversationLineOrder(lines: { id: string }[]) {
 function previewWorldAtLocation(
   world: StreetGameState,
   locationId: string,
-  options: { projectArrival?: boolean } = {},
 ) {
   const preview = cloneWorld(world);
   const location = findLocation(preview, locationId);
@@ -8037,19 +8231,7 @@ function previewWorldAtLocation(
     return preview;
   }
 
-  const projectedArrivalMinutes = options.projectArrival
-    ? world.clock.totalMinutes +
-      projectedTravelMinutesToLocation(world, locationId)
-    : preview.clock.totalMinutes;
-  if (
-    options.projectArrival &&
-    projectedArrivalMinutes > preview.clock.totalMinutes
-  ) {
-    preview.clock.totalMinutes = projectedArrivalMinutes;
-    updateClock(preview.clock);
-    preview.currentTime = isoFor(preview.clock.totalMinutes);
-    updateNpcLocations(preview);
-  }
+  advanceWorld(preview, projectedTravelMinutesToLocation(world, locationId));
 
   const spaceId = activeLocationActionSpaceId(preview, location.id);
   const space = spaceById(preview, spaceId);
@@ -8076,6 +8258,24 @@ function canAutoPlanAction(
     locationId !== world.player.currentLocationId
   ) {
     return false;
+  }
+
+  if (action.id === "buy:item-wrench") {
+    const toolProblems = urgentKnownProblems(world).filter(
+      (problem) =>
+        problem.requiredItemId === "item-wrench" &&
+        !hasRequiredProblemItem(world, problem) &&
+        knowsToolSourceForProblem(world, problem) &&
+        toolSourceLocationIdForProblem(problem) === locationId,
+    );
+    if (
+      toolProblems.length > 0 &&
+      !toolProblems.some((problem) =>
+        projectedToolPurchaseStillUseful(world, problem),
+      )
+    ) {
+      return false;
+    }
   }
 
   if (action.kind !== "talk") {
@@ -10380,22 +10580,67 @@ function projectedTravelMinutesToLocation(
   }
 
   const current = currentLocation(world);
-  const space = activeSpace(world);
-  const origin =
-    space.kind === "interior" && current
-      ? { x: current.entryX, y: current.entryY }
-      : world.player;
-  const distance =
-    Math.abs(origin.x - target.entryX) + Math.abs(origin.y - target.entryY);
-  const interiorEntryMinutes =
-    activeLocationActionSpaceId(world, locationId) !== STREET_SPACE_ID &&
-    activeSpaceId(world) !== activeLocationActionSpaceId(world, locationId)
-      ? 1
+  const currentSpace = activeSpace(world);
+  const targetSpaceId = activeLocationActionSpaceId(world, locationId);
+  if (current?.id === target.id && currentSpace.id === targetSpaceId) {
+    return 0;
+  }
+
+  const streetSpace = spaceById(world, STREET_SPACE_ID);
+  if (!streetSpace) {
+    return 0;
+  }
+
+  let transitionMinutes = 0;
+  let streetOrigin: GridPoint = world.player;
+  if (currentSpace.kind === "interior") {
+    const exitPortal = currentSpace.portals.find(
+      (portal) => portal.toSpaceId === STREET_SPACE_ID,
+    );
+    const routeToExit = exitPortal
+      ? findWalkableRoute(currentSpace.tiles, world.player, exitPortal.from)
+      : undefined;
+    const exitDistance = routeToExit?.reached
+      ? Math.max(routeToExit.path.length - 1, 0)
       : 0;
+    transitionMinutes +=
+      (exitDistance > 0
+        ? movementMinutesForDistance(exitDistance, currentSpace.kind)
+        : 0) + 1;
+    streetOrigin =
+      exitPortal?.to ??
+      (current ? { x: current.entryX, y: current.entryY } : world.player);
+  }
+
+  let streetTarget: GridPoint = {
+    x: target.entryX,
+    y: target.entryY,
+  };
+  if (targetSpaceId !== STREET_SPACE_ID) {
+    const entryPortal = streetSpace.portals.find(
+      (portal) =>
+        portal.toSpaceId === targetSpaceId && portal.locationId === locationId,
+    );
+    streetTarget = entryPortal?.from ?? streetTarget;
+    transitionMinutes += 1;
+  }
+
+  const streetRoute = findWalkableRoute(
+    streetSpace.tiles,
+    streetOrigin,
+    streetTarget,
+  );
+  const streetDistance = streetRoute.reached
+    ? Math.max(streetRoute.path.length - 1, 0)
+    : Math.abs(streetOrigin.x - streetTarget.x) +
+      Math.abs(streetOrigin.y - streetTarget.y);
+
   return Math.max(
     0,
-    (distance > 0 ? movementMinutesForDistance(distance, "street") : 0) +
-      interiorEntryMinutes,
+    transitionMinutes +
+      (streetDistance > 0
+        ? movementMinutesForDistance(streetDistance, "street")
+        : 0),
   );
 }
 
