@@ -38,7 +38,7 @@ export const ROWAN_WATCH_PRESENTATION_TIMING_MS = {
     waiting: 9_800,
   },
   durableCard: 3_400,
-  movementMax: 8_000,
+  movementMax: 6_500,
   movementPerTile: 420,
   semanticCard: 2_800,
   timePassageCard: 4_500,

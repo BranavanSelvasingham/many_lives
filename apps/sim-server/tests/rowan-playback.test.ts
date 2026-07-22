@@ -576,6 +576,7 @@ describe("Rowan playback helpers", () => {
         waiting: 9_800,
       },
       durableCard: 3_400,
+      movementMax: 6_500,
       movementPerTile: 420,
       semanticCard: 2_800,
       timePassageCard: 4_500,
