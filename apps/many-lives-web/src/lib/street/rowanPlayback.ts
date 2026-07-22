@@ -67,6 +67,67 @@ type AutoContinueBeatTiming = {
   startedAtMs: number;
 };
 
+export function buildStreetGameSyncKey(game: StreetGameState) {
+  return [
+    game.id,
+    game.currentTime,
+    game.activeSpaceId ?? "",
+    game.player.spaceId ?? "",
+    game.player.x,
+    game.player.y,
+    game.player.currentLocationId ?? "",
+    game.player.money,
+    game.player.energy,
+    game.player.objective?.routeKey ?? "",
+    game.player.objective?.text ?? "",
+    game.player.objective?.progress?.label ?? "",
+    game.firstAfternoon?.planSettledAt ?? "",
+    game.firstAfternoon?.teaShiftStage ?? "",
+    game.firstAfternoon?.completedAt ?? "",
+    game.firstAfternoon?.leadFieldNote?.createdAt ?? "",
+    game.firstAfternoon?.leadFieldNote?.evidence ?? "",
+    game.firstAfternoon?.fieldNote?.createdAt ?? "",
+    game.firstAfternoon?.fieldNote?.evidence ?? "",
+    ...(game.cityEvents ?? []).map((event) =>
+      [
+        event.id,
+        event.status,
+        event.progress ?? "",
+        event.updatedAt,
+      ].join(":"),
+    ),
+    game.rowanAutonomy.key,
+    game.rowanAutonomy.label,
+    game.rowanAutonomy.intent?.reason ?? "",
+    game.rowanAutonomy.intent?.signals?.join("|") ?? "",
+    game.rowanAutonomy.mode,
+    game.rowanAutonomy.stepKind,
+    game.rowanAutonomy.targetLocationId ?? "",
+    game.activeConversation?.threadId ?? "",
+    game.activeConversation?.updatedAt ?? "",
+    game.activeConversation?.decision ?? "",
+    game.activeConversation?.objectiveText ?? "",
+    game.activeConversation?.lines.length ?? 0,
+    ...game.jobs.map((job) =>
+      [
+        job.id,
+        job.accepted ? "1" : "0",
+        job.completed ? "1" : "0",
+        job.missed ? "1" : "0",
+      ].join(":"),
+    ),
+  ].join("|");
+}
+
+export function autoplayAdvanceMadeVisibleProgress(
+  previousGame: StreetGameState,
+  nextGame: StreetGameState,
+) {
+  return (
+    buildStreetGameSyncKey(previousGame) !== buildStreetGameSyncKey(nextGame)
+  );
+}
+
 export function reconcileAutoContinueBeatTiming(
   current: AutoContinueBeatTiming | null,
   key: string,

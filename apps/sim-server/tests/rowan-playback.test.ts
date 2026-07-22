@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   alignRowanPlaybackWithGame,
   appendRowanPlaybackBeats,
+  autoplayAdvanceMadeVisibleProgress,
   buildRowanRailViewModel,
   completeActiveRowanPlaybackBeat,
   createEmptyRowanPlaybackState,
@@ -1172,6 +1173,33 @@ describe("Rowan playback helpers", () => {
     expect(remainingAutoplayDelayMs(3_400, 1_000, 1_420)).toBe(2_980);
     expect(remainingAutoplayDelayMs(3_400, 1_000, 4_500)).toBe(0);
     expect(remainingAutoplayDelayMs(3_400, null, 4_500)).toBe(3_400);
+  });
+
+  it("retries autoplay when a successful response makes no visible progress", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    const world = await engine.createGame("rowan-playback-autoplay-progress");
+    const hiddenOnlyUpdate = structuredClone(world);
+    hiddenOnlyUpdate.player.pendingObjectiveMove = {
+      objectiveText: world.player.objective?.text ?? "Find a foothold",
+      preparedAt: world.currentTime,
+      rationale: "Hold the same visible decision for confirmation.",
+      targetLocationId: "tea-house",
+    };
+
+    expect(
+      autoplayAdvanceMadeVisibleProgress(
+        asWebGame(world),
+        asWebGame(hiddenOnlyUpdate),
+      ),
+    ).toBe(false);
+
+    const entered = await engine.runCommand(world, {
+      actionId: "enter:boarding-house",
+      type: "act",
+    });
+    expect(
+      autoplayAdvanceMadeVisibleProgress(asWebGame(world), asWebGame(entered)),
+    ).toBe(true);
   });
 
   it("records exact browser playback dwell timing when a card completes", () => {

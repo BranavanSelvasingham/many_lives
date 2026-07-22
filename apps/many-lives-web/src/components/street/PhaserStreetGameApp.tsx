@@ -155,7 +155,9 @@ import {
 import {
   alignRowanPlaybackWithGame,
   appendRowanPlaybackBeats,
+  autoplayAdvanceMadeVisibleProgress,
   buildRowanRailViewModel,
+  buildStreetGameSyncKey,
   completeActiveRowanPlaybackBeat,
   createEmptyRowanPlaybackState,
   deriveRowanPlaybackBeats,
@@ -205,6 +207,7 @@ import {
   type CameraEdgeState,
   type CameraGestureState,
 } from "@/lib/street/runtimeCamera";
+import { shouldSkipUrlCleanupGameReload } from "@/lib/street/sessionIdentity";
 import {
   CELL,
   KENNEY_TILE,
@@ -361,58 +364,6 @@ function isPostFirstAfternoonHandoffReorientation(game: StreetGameState) {
       objective.updatedAt === acknowledgementAt &&
       objective.progress.completed < objective.progress.total,
   );
-}
-
-function buildGameSyncKey(game: StreetGameState) {
-  return [
-    game.id,
-    game.currentTime,
-    game.activeSpaceId ?? "",
-    game.player.spaceId ?? "",
-    game.player.x,
-    game.player.y,
-    game.player.currentLocationId ?? "",
-    game.player.money,
-    game.player.energy,
-    game.player.objective?.routeKey ?? "",
-    game.player.objective?.text ?? "",
-    game.player.objective?.progress?.label ?? "",
-    game.firstAfternoon?.planSettledAt ?? "",
-    game.firstAfternoon?.teaShiftStage ?? "",
-    game.firstAfternoon?.completedAt ?? "",
-    game.firstAfternoon?.leadFieldNote?.createdAt ?? "",
-    game.firstAfternoon?.leadFieldNote?.evidence ?? "",
-    game.firstAfternoon?.fieldNote?.createdAt ?? "",
-    game.firstAfternoon?.fieldNote?.evidence ?? "",
-    ...(game.cityEvents ?? []).map((event) =>
-      [
-        event.id,
-        event.status,
-        event.progress ?? "",
-        event.updatedAt,
-      ].join(":"),
-    ),
-    game.rowanAutonomy.key,
-    game.rowanAutonomy.label,
-    game.rowanAutonomy.intent?.reason ?? "",
-    game.rowanAutonomy.intent?.signals?.join("|") ?? "",
-    game.rowanAutonomy.mode,
-    game.rowanAutonomy.stepKind,
-    game.rowanAutonomy.targetLocationId ?? "",
-    game.activeConversation?.threadId ?? "",
-    game.activeConversation?.updatedAt ?? "",
-    game.activeConversation?.decision ?? "",
-    game.activeConversation?.objectiveText ?? "",
-    game.activeConversation?.lines.length ?? 0,
-    ...game.jobs.map((job) =>
-      [
-        job.id,
-        job.accepted ? "1" : "0",
-        job.completed ? "1" : "0",
-        job.missed ? "1" : "0",
-      ].join(":"),
-    ),
-  ].join("|");
 }
 
 function shouldDeferPlayerPositionUpdate(
@@ -1221,7 +1172,7 @@ export function PhaserStreetGameApp() {
       }
 
       const previousGame = gameRef.current;
-      const nextSyncKey = buildGameSyncKey(nextGame);
+      const nextSyncKey = buildStreetGameSyncKey(nextGame);
       const pendingVisualGameUpdate = pendingVisualGameUpdateRef.current;
       if (
         pendingVisualGameUpdate &&
@@ -1234,7 +1185,7 @@ export function PhaserStreetGameApp() {
       if (
         previousGame &&
         previousGame.id === nextGame.id &&
-        buildGameSyncKey(previousGame) === nextSyncKey &&
+        buildStreetGameSyncKey(previousGame) === nextSyncKey &&
         !optimisticPlayerRef.current
       ) {
         return true;
@@ -1346,19 +1297,18 @@ export function PhaserStreetGameApp() {
   );
 
   const loadGame = useCallback(async (options: LoadGameOptions = {}) => {
-    const requestId = nextRequestId();
     const shouldCreateFreshGame = forceFreshGame || options.forceNew === true;
     const promptedStoredGameId = options.resumeStoredGameId?.trim() || null;
-    if (
-      !requestedGameId &&
-      !shouldCreateFreshGame &&
-      !promptedStoredGameId &&
-      urlCleanupGameIdRef.current &&
-      gameRef.current?.id === urlCleanupGameIdRef.current
-    ) {
+    if (shouldSkipUrlCleanupGameReload({
+      activeGameId: gameRef.current?.id ?? null,
+      cleanupGameId: urlCleanupGameIdRef.current,
+      explicitGameRequest: shouldCreateFreshGame || Boolean(promptedStoredGameId),
+      requestedGameId,
+    })) {
       urlCleanupGameIdRef.current = null;
       return;
     }
+    const requestId = nextRequestId();
 
     const storageBackedStoredGameId =
       requestedGameId || shouldCreateFreshGame || promptedStoredGameId
@@ -1577,14 +1527,18 @@ export function PhaserStreetGameApp() {
       ? `Following Rowan: ${rowanAutonomy.label}...`
       : "Continuing Rowan's plan...";
 
-    return runWithBusy(busyCopy, async () => {
+    let madeVisibleProgress = false;
+    const requestSucceeded = await runWithBusy(busyCopy, async () => {
       const requestId = nextRequestId();
       const nextGame = await advanceStreetObjective(activeGame.id, {
         allowTimeSkip: true,
         confirmMove: options.confirmedByUser ?? false,
       });
-      applyGameUpdate(nextGame, requestId);
+      madeVisibleProgress =
+        autoplayAdvanceMadeVisibleProgress(activeGame, nextGame) &&
+        applyGameUpdate(nextGame, requestId);
     });
+    return requestSucceeded && madeVisibleProgress;
   }, [applyGameUpdate, nextRequestId, runWithBusy]);
 
   useEffect(() => {

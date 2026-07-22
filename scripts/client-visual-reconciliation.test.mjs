@@ -11,6 +11,20 @@ const applyGameUpdateSource = source.slice(
   source.indexOf("  const applyGameUpdate = useCallback("),
   source.indexOf("  const loadGame = useCallback("),
 );
+const loadGameSource = source.slice(
+  source.indexOf("  const loadGame = useCallback("),
+  source.indexOf(
+    "  const handleResumeStoredGame",
+    source.indexOf("  const loadGame = useCallback("),
+  ),
+);
+const advanceObjectiveSource = source.slice(
+  source.indexOf("  const handleAdvanceObjective = useCallback("),
+  source.indexOf(
+    "  useEffect(() => {",
+    source.indexOf("  const handleAdvanceObjective = useCallback("),
+  ),
+);
 const optimisticCleanupCalls = [
   "setOptimisticPlayerPosition(",
   "setOptimisticPlayerLocationId(",
@@ -73,7 +87,31 @@ test("the 900ms observer cannot deduplicate stale optimistic render state", () =
   assert.match(source, /const BOUND_GAME_REFRESH_MS = 900;/);
   assert.match(
     applyGameUpdateSource,
-    /buildGameSyncKey\(previousGame\) === nextSyncKey &&\s*!optimisticPlayerRef\.current/,
+    /buildStreetGameSyncKey\(previousGame\) === nextSyncKey &&\s*!optimisticPlayerRef\.current/,
+  );
+});
+
+test("fresh URL cleanup cannot issue a newer stale reload request", () => {
+  const cleanupGuard = loadGameSource.indexOf(
+    "shouldSkipUrlCleanupGameReload({",
+  );
+  const requestId = loadGameSource.indexOf("const requestId = nextRequestId();");
+
+  assert.ok(cleanupGuard >= 0, "fresh URL cleanup guard is missing");
+  assert.ok(
+    requestId > cleanupGuard,
+    "request IDs must be allocated after URL cleanup exits",
+  );
+});
+
+test("autoplay only consumes an accepted visibly advancing response", () => {
+  assert.match(
+    advanceObjectiveSource,
+    /autoplayAdvanceMadeVisibleProgress\(activeGame, nextGame\) &&\s*applyGameUpdate\(nextGame, requestId\)/,
+  );
+  assert.match(
+    advanceObjectiveSource,
+    /return requestSucceeded && madeVisibleProgress;/,
   );
 });
 
