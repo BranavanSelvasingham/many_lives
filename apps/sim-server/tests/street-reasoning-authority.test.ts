@@ -3310,6 +3310,20 @@ describe("street reasoning authority", () => {
       expect(prompt).not.toContain('"nextSteps"');
       expect(prompt).not.toContain('"trail"');
     }
+
+    expect(interpretPrompt).toContain("authorityAtClose");
+    expect(interpretPrompt).toContain('"day":1');
+    expect(interpretPrompt).toContain('"hour":11');
+    expect(interpretPrompt).toContain('"role":"boarding keeper"');
+    expect(interpretPrompt).toContain("scheduledPlaces");
+    expect(interpretPrompt).toContain("currentWorkWindows");
+    expect(interpretPrompt).toContain("availableLegalActions");
+    expect(interpretPrompt).toContain(
+      "A clock time without an explicit future day means the current day",
+    );
+    expect(interpretPrompt).toContain(
+      "Do not assign another place's prices, room terms, appointments, or operating responsibilities",
+    );
   });
 
   it("does not let poisoned trail text dominate deterministic dialogue selection", () => {

@@ -3,6 +3,7 @@ import { MockAIProvider } from "../src/ai/mockProvider.js";
 import type {
   StreetAutonomousLineRequest,
   StreetConversationInterpretationRequest,
+  StreetConversationInterpretationResult,
   StreetPlanningRequest,
   StreetPlanningResult,
 } from "../src/ai/provider.js";
@@ -62,11 +63,16 @@ const FIRST_AFTERNOON_COMPLETION_SUMMARY_TAIL =
 const GENERIC_COMPLETED_OBJECTIVE_RATIONALE =
   "This objective is complete. Set a new direction when Rowan is ready to keep going.";
 
-function setTestClock(world: StreetGameState, hour: number, minute = 0) {
-  world.clock.day = 1;
+function setTestClock(
+  world: StreetGameState,
+  hour: number,
+  minute = 0,
+  day = 1,
+) {
+  world.clock.day = day;
   world.clock.hour = hour;
   world.clock.minute = minute;
-  world.clock.totalMinutes = hour * 60 + minute;
+  world.clock.totalMinutes = (day - 1) * 24 * 60 + hour * 60 + minute;
   world.clock.label = hour >= 12 ? "Afternoon" : "Morning";
 }
 
@@ -184,6 +190,42 @@ class StaleClosedApproachLiveAIProvider extends LiveDialogueAIProvider {
   }
 }
 
+class ConversationClaimLiveAIProvider extends LiveDialogueAIProvider {
+  readonly interpretationRequests: StreetConversationInterpretationRequest[] = [];
+
+  constructor(
+    private readonly adaReply: string,
+    private readonly interpretation: StreetConversationInterpretationResult,
+  ) {
+    super();
+  }
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    if (input.npcId !== "npc-ada") {
+      return super.generateStreetReply(input);
+    }
+
+    this.replyRequests.push(input);
+    return {
+      followupThought: "Ada is answering through the live provider.",
+      reply: this.adaReply,
+    };
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ) {
+    this.interpretationRequests.push(input);
+    const runtime = input.game.aiRuntime;
+    if (runtime) {
+      runtime.tasks.interpretStreetConversation.successes += 1;
+      runtime.totalSuccesses += 1;
+      runtime.status = "live";
+    }
+    return this.interpretation;
+  }
+}
+
 class ThinAdaLiveAIProvider extends LiveDialogueAIProvider {
   override async generateStreetReply(input: StreetDialogueRequest) {
     if (input.npcId === "npc-ada") {
@@ -265,6 +307,37 @@ class VagueThenGroundedMaraLiveAIProvider extends LiveDialogueAIProvider {
   ) {
     this.interpretationRequests.push(input);
     return super.interpretStreetConversation(input);
+  }
+}
+
+class InvalidThenGroundedMaraLiveAIProvider extends LiveDialogueAIProvider {
+  readonly invalidReply =
+    "The room can hold. I will meet you at one in the morning.";
+  readonly groundingConversationSnapshots: string[] = [];
+  private maraReplyCount = 0;
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    if (input.npcId !== "npc-mara") {
+      return super.generateStreetReply(input);
+    }
+
+    this.replyRequests.push(input);
+    this.maraReplyCount += 1;
+    if (this.maraReplyCount === 1) {
+      return {
+        followupThought: "Mara is making a stale promise.",
+        reply: this.invalidReply,
+      };
+    }
+
+    this.groundingConversationSnapshots.push(
+      input.game.conversations.map((entry) => entry.text).join(" "),
+    );
+    return {
+      followupThought: "Mara is grounding the live lead.",
+      reply:
+        "Ask Ada at Kettle & Lamp about lunch work before the rush fills the counter, or deal with the leaking Morrow Yard pump. Both are live.",
+    };
   }
 }
 
@@ -432,6 +505,50 @@ function placePlayerAt(world: StreetGameState, locationId: string) {
   world.player.currentLocationId = location.id;
   world.player.x = location.entryX;
   world.player.y = location.entryY;
+}
+
+async function prepareAdaConversationClaimWorld(
+  engine: SimulationEngine,
+  gameId: string,
+  options: {
+    day?: number;
+    hour: number;
+    minute: number;
+    teaWindow: "current" | "missed";
+  },
+) {
+  let world = await engine.createGame(gameId);
+  world = await enterTeaHouse(engine, world);
+  setTestClock(
+    world,
+    options.hour,
+    options.minute,
+    options.day ?? 1,
+  );
+
+  const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+  expect(teaJob).toBeDefined();
+  if (!teaJob) {
+    throw new Error("Missing tea job for conversation claim scenario");
+  }
+  teaJob.accepted = false;
+  teaJob.completed = false;
+  teaJob.discovered = true;
+  teaJob.missed = options.teaWindow === "missed";
+  teaJob.missedAt = teaJob.missed ? world.currentTime : undefined;
+
+  if ((options.day ?? 1) > 1) {
+    world.firstAfternoon ??= {};
+    world.firstAfternoon.completedAt = "2026-03-21T16:24:00.000Z";
+    world.firstAfternoon.completionAcknowledgedAt =
+      "2026-03-21T16:24:00.000Z";
+  }
+
+  return engine.runCommand(world, {
+    type: "wait",
+    minutes: 0,
+    silent: true,
+  });
 }
 
 async function refreshPendingMoveAutonomy(
@@ -2594,6 +2711,76 @@ describe("SimulationEngine street slice", () => {
 
     expect(provider.interpretationRequests.length).toBeGreaterThan(0);
     expect(world.rowanAutonomy.detail).toMatch(/Ada|Kettle & Lamp|lunch/i);
+  });
+
+  it("rejects an invalid initial reply before a route-grounding follow-up can observe or persist it", async () => {
+    const provider = new InvalidThenGroundedMaraLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-vague-then-grounded-mara");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) => nextWorld.activeConversation?.npcId === "npc-mara",
+      10,
+    );
+
+    const conversationTrace = world.activeConversation?.planningTrace;
+    const downstreamState = JSON.stringify({
+      activeConversation: world.activeConversation,
+      conversations: world.conversations,
+      feed: world.feed,
+      memories: world.player.memories,
+      npc: world.npcs.find((entry) => entry.id === "npc-mara"),
+      objective: world.player.objective,
+      thread: world.conversationThreads["npc-mara"],
+    });
+
+    expect(
+      provider.replyRequests.filter((request) => request.npcId === "npc-mara"),
+    ).toHaveLength(2);
+    expect(provider.groundingConversationSnapshots).toHaveLength(1);
+    expect(provider.groundingConversationSnapshots[0]).not.toContain(
+      provider.invalidReply,
+    );
+    expect(downstreamState).not.toContain(provider.invalidReply);
+    expect(downstreamState).not.toContain("Mara is making a stale promise.");
+    expect(
+      world.activeConversation?.lines
+        .filter((line) => line.speaker === "npc")
+        .at(-1)?.text,
+    ).toMatch(/Ada at Kettle & Lamp.*lunch work/i);
+    expect(world.aiRuntime?.tasks.generateStreetReply.fallbacks).toBe(1);
+    expect(world.aiRuntime?.totalFallbacks).toBe(1);
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation reply proposed a commitment for a time that had already passed.",
+    );
+    expect(conversationTrace).toMatchObject({
+      providerAttempt: {
+        outcome: "fallback",
+        reasonCode: "policy-fallback",
+        task: "generateStreetReply",
+      },
+      selectedRecommendation: {
+        advisory: false,
+        sourceKind: "deterministic-fallback",
+      },
+    });
+    expect(world.rowanAutonomy.autoContinue).toBe(true);
+    expect(world.rowanAutonomy.stepKind).not.toBe("blocked");
+
+    world = await advanceUntil(
+      engine,
+      world,
+      (nextWorld) =>
+        !nextWorld.activeConversation &&
+        nextWorld.rowanAutonomy.targetLocationId === "tea-house",
+      12,
+    );
+
+    expect(world.rowanAutonomy.targetLocationId).toBe("tea-house");
+    expect(world.rowanAutonomy.autoContinue).toBe(true);
+    expect(world.rowanAutonomy.stepKind).not.toBe("blocked");
   });
 
   it("accepts an affirmative live Mara follow-up as visible lead evidence", async () => {
@@ -7552,6 +7739,338 @@ describe("SimulationEngine street slice", () => {
         "Conversation reply reused a completed or closed approach.",
         "Conversation interpretation reused a completed or closed approach.",
       ]),
+    );
+  });
+
+  it("accepts eight at night as a future commitment at 10:24", async () => {
+    const validReply =
+      "The cup-and-counter shift pays fourteen coins. Eight at night works for a follow-up; I'll be here then.";
+    const validObjective =
+      "Return at eight at night for Ada's work follow-up.";
+    const provider = new ConversationClaimLiveAIProvider(validReply, {
+      decision: "return at eight at night for Ada's work follow-up.",
+      memoryKind: "job",
+      memoryText:
+        "Ada confirmed that eight at night works for a work follow-up.",
+      objectiveText: validObjective,
+      summary: "Ada arranged a future work follow-up at eight at night.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-ada-eight-at-night-control",
+      { hour: 10, minute: 24, teaWindow: "current" },
+    );
+    world.player.objective = undefined;
+    const fallbackCountBefore = world.aiRuntime?.totalFallbacks ?? 0;
+    expect(world.clock).toMatchObject({ hour: 10, minute: 24 });
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "When should I come back for the work follow-up?",
+    });
+
+    expect(world.clock).toMatchObject({ hour: 10, minute: 25 });
+    expect(
+      world.conversations
+        .filter((entry) => entry.npcId === "npc-ada" && entry.speaker === "npc")
+        .at(-1)?.text,
+    ).toBe(validReply);
+    expect(world.activeConversation?.objectiveText).toBe(validObjective);
+    expect(world.player.memories.map((entry) => entry.text)).toContain(
+      "Ada confirmed that eight at night works for a work follow-up.",
+    );
+    expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(fallbackCountBefore);
+    expect(world.aiRuntime?.fallbackReasons.join(" ")).not.toMatch(
+      /time that had already passed/i,
+    );
+  });
+
+  it("rejects eight in the morning as a past commitment at 10:24", async () => {
+    const invalidReply =
+      "The cup-and-counter shift pays fourteen coins. Eight in the morning works for a follow-up; I'll be here then.";
+    const invalidObjective =
+      "Return at eight in the morning for Ada's work follow-up.";
+    const provider = new ConversationClaimLiveAIProvider(invalidReply, {
+      decision: "return at eight in the morning for Ada's work follow-up.",
+      memoryKind: "job",
+      memoryText:
+        "Ada confirmed that eight in the morning works for a work follow-up.",
+      objectiveText: invalidObjective,
+      summary:
+        "Ada arranged an already-past work follow-up at eight in the morning.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-ada-eight-in-morning-control",
+      { hour: 10, minute: 24, teaWindow: "current" },
+    );
+    world.player.objective = undefined;
+    expect(world.clock).toMatchObject({ hour: 10, minute: 24 });
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "When should I come back for the work follow-up?",
+    });
+
+    const downstreamState = JSON.stringify({
+      activeConversation: world.activeConversation,
+      conversations: world.conversations.filter(
+        (entry) => entry.speaker === "npc",
+      ),
+      feed: world.feed,
+      memories: world.player.memories,
+      thread: world.conversationThreads["npc-ada"],
+    });
+    expect(world.clock).toMatchObject({ hour: 10, minute: 25 });
+    expect(downstreamState).not.toContain(invalidReply);
+    expect(downstreamState).not.toContain(invalidObjective);
+    expect(world.activeConversation?.objectiveText).toBeUndefined();
+    expect(world.activeConversation?.decision).toMatch(
+      /cup-and-counter shift.*validated action.*window is open/i,
+    );
+    expect(world.aiRuntime?.tasks.generateStreetReply.fallbacks).toBe(1);
+    expect(world.aiRuntime?.tasks.interpretStreetConversation.fallbacks).toBe(
+      1,
+    );
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation reply proposed a commitment for a time that had already passed.",
+    );
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation interpretation proposed a commitment for a time that had already passed.",
+    );
+  });
+
+  it("rejects Day 2 Ada room terms and an already-past 8am arrangement before state mutation", async () => {
+    const invalidReply =
+      "Yep, ten coins for tonight, and eight in the morning works. I'll be here by eight, tidy and ready. If anything changes, I'll let you know quickly.";
+    const invalidObjective =
+      "Confirm tonight's room cost with Ada and arrange 8am tidy-up.";
+    const provider = new ConversationClaimLiveAIProvider(invalidReply, {
+      decision: invalidObjective,
+      memoryKind: "self",
+      memoryText:
+        "Ada confirmed Rowan's room price and promised an eight-in-the-morning tidy-up.",
+      objectiveText: invalidObjective,
+      summary:
+        "Ada set the Morrow House room terms and confirmed the morning appointment.",
+    });
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-rev-20260722-01-day-two-ada",
+      {
+        day: 2,
+        hour: 10,
+        minute: 24,
+        teaWindow: "missed",
+      },
+    );
+    const objectiveBefore = world.player.objective?.text;
+
+    expect(world.clock).toMatchObject({ day: 2, hour: 10, minute: 24 });
+    expect(world.player.currentLocationId).toBe("tea-house");
+    expect(world.npcs.find((npc) => npc.id === "npc-ada")).toMatchObject({
+      currentLocationId: "tea-house",
+      role: "tea house owner",
+    });
+    expect(
+      world.jobs.find((job) => job.id === "job-tea-shift"),
+    ).toMatchObject({ missed: true });
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "Can you confirm the Morrow House room cost and the tidy-up time?",
+    });
+
+    const generatedStateText = [
+      ...world.conversations
+        .filter((entry) => entry.speaker === "npc")
+        .map((entry) => entry.text),
+      ...world.player.memories.map((entry) => entry.text),
+      ...world.feed.map((entry) => entry.text),
+      world.activeConversation?.decision,
+      world.activeConversation?.objectiveText,
+      world.conversationThreads["npc-ada"]?.decision,
+      world.conversationThreads["npc-ada"]?.objectiveText,
+      world.conversationThreads["npc-ada"]?.summary,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    expect(provider.interpretationRequests).toHaveLength(1);
+    expect(world.player.objective?.text).toBe(objectiveBefore);
+    expect(world.activeConversation?.objectiveText).toBeUndefined();
+    expect(world.activeConversation?.decision).toMatch(
+      /unconfirmed terms.*current legal options/i,
+    );
+    expect(world.activeConversation?.planningTrace).toMatchObject({
+      providerAttempt: {
+        outcome: "fallback",
+        reasonCode: "policy-fallback",
+        task: "interpretStreetConversation",
+      },
+      selectedRecommendation: {
+        advisory: false,
+        sourceKind: "deterministic-fallback",
+      },
+    });
+    expect(generatedStateText).not.toContain(invalidReply);
+    expect(generatedStateText).not.toContain(invalidObjective);
+    expect(generatedStateText).not.toMatch(
+      /ada (?:confirmed|set).*room|eight-in-the-morning tidy-up/i,
+    );
+    expect(
+      world.conversations
+        .filter((entry) => entry.npcId === "npc-ada" && entry.speaker === "npc")
+        .at(-1)?.text,
+    ).toMatch(/work window is no longer open/i);
+    expect(world.aiRuntime?.fallbackReasons).toEqual(
+      expect.arrayContaining([
+        "Conversation reply assigned responsibility outside the current NPC profile.",
+        "Conversation reply proposed a commitment for a time that had already passed.",
+        "Conversation interpretation assigned responsibility outside the current NPC profile.",
+        "Conversation interpretation proposed a commitment for a time that had already passed.",
+      ]),
+    );
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.player.objective?.text).toBe(objectiveBefore);
+    expect(world.rowanAutonomy.autoContinue).toBe(true);
+    expect(world.rowanAutonomy.stepKind).not.toBe("blocked");
+  });
+
+  it("rejects room responsibility assigned to Ada even without a time claim", async () => {
+    const provider = new ConversationClaimLiveAIProvider(
+      "The cup-and-counter window is open now and pays fourteen coins.",
+      {
+        decision: "confirm the Morrow House room terms with Ada.",
+        objectiveText: "Confirm the Morrow House room terms with Ada.",
+        summary: "Ada took responsibility for Rowan's boarding terms.",
+      },
+    );
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-ada-wrong-role-interpretation",
+      { hour: 12, minute: 15, teaWindow: "current" },
+    );
+    const objectiveBefore = world.player.objective?.text;
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "What work can you actually offer here?",
+    });
+
+    const visibleState = JSON.stringify({
+      feed: world.feed,
+      memories: world.player.memories,
+      objective: world.player.objective,
+      thread: world.conversationThreads["npc-ada"],
+    });
+    expect(world.player.objective?.text).toBe(objectiveBefore);
+    expect(world.activeConversation?.objectiveText).toBeUndefined();
+    expect(visibleState).not.toMatch(/room terms with Ada|boarding terms/i);
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation interpretation assigned responsibility outside the current NPC profile.",
+    );
+    expect(world.aiRuntime?.fallbackReasons.join(" ")).not.toMatch(
+      /time that had already passed/i,
+    );
+  });
+
+  it("rejects an already-past appointment even when Ada has current work", async () => {
+    const provider = new ConversationClaimLiveAIProvider(
+      "The cup-and-counter shift is open now and pays fourteen coins.",
+      {
+        decision: "arrange an 8am start for Ada's current shift.",
+        objectiveText: "Meet Ada at 8am for the cup-and-counter shift.",
+        summary: "Ada's current work became an eight-in-the-morning appointment.",
+      },
+    );
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-ada-past-time-interpretation",
+      { hour: 10, minute: 24, teaWindow: "current" },
+    );
+    const objectiveBefore = world.player.objective?.text;
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "Is there work that is genuinely open now?",
+    });
+
+    expect(world.player.objective?.text).toBe(objectiveBefore);
+    expect(world.activeConversation?.objectiveText).toBeUndefined();
+    expect(world.activeConversation?.decision).toMatch(
+      /cup-and-counter shift.*validated action.*window is open/i,
+    );
+    expect(
+      JSON.stringify({
+        feed: world.feed,
+        memories: world.player.memories,
+        thread: world.conversationThreads["npc-ada"],
+      }),
+    ).not.toMatch(/8am|eight-in-the-morning appointment/i);
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation interpretation proposed a commitment for a time that had already passed.",
+    );
+    expect(world.aiRuntime?.fallbackReasons.join(" ")).not.toMatch(
+      /outside the current NPC profile/i,
+    );
+  });
+
+  it("accepts Ada's current fact-grounded work update", async () => {
+    const validObjective = "Take the cup-and-counter shift at Kettle & Lamp.";
+    const provider = new ConversationClaimLiveAIProvider(
+      "I can offer the cup-and-counter shift here now. It pays fourteen coins and the window stays open until 3pm.",
+      {
+        decision: "take Ada's current cup-and-counter shift while it is open.",
+        memoryKind: "job",
+        memoryText:
+          "Ada confirmed that the current cup-and-counter shift pays fourteen coins.",
+        objectiveText: validObjective,
+        summary: "Ada offered Rowan current work at Kettle & Lamp.",
+      },
+    );
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-ada-valid-current-work-interpretation",
+      { hour: 12, minute: 15, teaWindow: "current" },
+    );
+    const fallbackCountBefore = world.aiRuntime?.totalFallbacks ?? 0;
+    const objectiveBefore = world.player.objective?.text;
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "What work can you actually offer right now?",
+    });
+
+    expect(world.activeConversation?.objectiveText).toBe(validObjective);
+    expect(world.player.objective?.text).toBe(objectiveBefore);
+    expect(world.player.objective?.routeKey).toBe("first-afternoon");
+    expect(world.player.memories.map((entry) => entry.text)).toContain(
+      "Ada confirmed that the current cup-and-counter shift pays fourteen coins.",
+    );
+    expect(world.feed.map((entry) => entry.text).join(" ")).toContain(
+      validObjective,
+    );
+    expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(fallbackCountBefore);
+    expect(world.availableActions.map((action) => action.id)).toContain(
+      "accept:job-tea-shift",
     );
   });
 });

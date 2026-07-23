@@ -213,6 +213,10 @@ type ConversationResolution = {
   summary?: string;
 };
 
+type ConversationReply = Awaited<
+  ReturnType<AIProvider["generateStreetReply"]>
+>;
+
 type ConversationLoopOptions = {
   addFallbackFeed?: boolean;
   maxAutonomousFollowups?: number;
@@ -447,24 +451,29 @@ function providerAttemptFromTaskDelta(
     return undefined;
   }
 
-  if (current.successes > previous.successes) {
+  const recordedSuccess = current.successes > previous.successes;
+  const recordedFallback = current.fallbacks > previous.fallbacks;
+  if (recordedFallback) {
+    return {
+      model: runtime.model,
+      outcome: "fallback",
+      provider: runtime.provider,
+      reasonCode:
+        recordedSuccess ||
+        current.lastFallbackReason?.startsWith("Conversation ") ||
+        current.lastFallbackReason?.includes("scaffold-required")
+          ? "policy-fallback"
+          : "provider-fallback",
+      task,
+    };
+  }
+
+  if (recordedSuccess) {
     return {
       model: runtime.model,
       outcome: "accepted",
       provider: runtime.provider,
       reasonCode: "accepted-live-recommendation",
-      task,
-    };
-  }
-
-  if (current.fallbacks > previous.fallbacks) {
-    return {
-      model: runtime.model,
-      outcome: "fallback",
-      provider: runtime.provider,
-      reasonCode: current.lastFallbackReason?.includes("scaffold-required")
-        ? "policy-fallback"
-        : "provider-fallback",
       task,
     };
   }
@@ -3506,6 +3515,22 @@ function sanitizeConversationResolutionForVisibleEvidence(
   resolution: ConversationResolution,
   closingReply: string,
 ): ConversationResolution {
+  const claimPolicyIssues = conversationClaimPolicyIssues(world, npc, [
+    resolution.decision,
+    resolution.memoryText,
+    resolution.npcImpression,
+    resolution.objectiveText,
+    resolution.summary,
+  ]);
+  if (claimPolicyIssues.length > 0) {
+    recordConversationClaimPolicyFallbacks(
+      world,
+      "interpretStreetConversation",
+      claimPolicyIssues,
+    );
+    return buildRejectedConversationResolution(world, npc);
+  }
+
   const currentStateResolution = sanitizeConversationResolutionForCurrentState(
     world,
     npc,
@@ -3888,6 +3913,47 @@ function conversationTextReusesUnavailableApproach(
     return false;
   }
 
+  const reusesUnavailableJob = world.jobs.some((job) => {
+    if (jobWindowOpen(world, job)) {
+      return false;
+    }
+
+    const titleTerms = normalizeConversationClaimText(job.title)
+      .split(/[^a-z0-9]+/)
+      .filter(
+        (term) =>
+          term.length >= 4 &&
+          !["current", "shift", "work", "worker"].includes(term),
+      );
+    const location = findLocation(world, job.locationId);
+    const normalizedLocationName = location
+      ? normalizeConversationClaimText(location.name)
+      : "";
+    const mentionsJob =
+      titleTerms.some((term) =>
+        new RegExp(`\\b${escapeConversationClaimPattern(term)}\\b`).test(
+          normalized,
+        ),
+      ) ||
+      (normalizedLocationName.length > 0 &&
+        normalized.includes(normalizedLocationName) &&
+        /\b(?:job|shift|work)\b/.test(normalized));
+    if (!mentionsJob) {
+      return false;
+    }
+
+    const acknowledgesClosure =
+      /\b(?:already|cannot|can't|closed|complete|completed|done|finished|gone|missed|moved on|no longer|old|over|settled)\b/.test(
+        normalized,
+      );
+    const rejectsApproach =
+      /\b(?:do not|don't|leave|stop)\b/.test(normalized);
+    return !acknowledgesClosure && !rejectsApproach;
+  });
+  if (reusesUnavailableJob) {
+    return true;
+  }
+
   const teaJob = jobById(world, "job-tea-shift");
   const teaApproachUnavailable = Boolean(
     teaJob && !jobWindowOpen(world, teaJob),
@@ -3937,6 +4003,315 @@ function conversationTextReusesUnavailableApproach(
         (!acknowledgesPumpClosure ||
           (prescribesPumpApproach && !rejectsPumpApproach))),
   );
+}
+
+const CLOCK_WORD_HOURS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+};
+
+function normalizeConversationClaimText(text: string) {
+  return text
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function conversationClaimSentence(text: string, index: number) {
+  const sentenceStart = Math.max(
+    text.lastIndexOf(".", index - 1),
+    text.lastIndexOf("!", index - 1),
+    text.lastIndexOf("?", index - 1),
+    text.lastIndexOf(";", index - 1),
+  );
+  const followingStops = [".", "!", "?", ";"]
+    .map((stop) => text.indexOf(stop, index))
+    .filter((position) => position >= 0);
+  const sentenceEnd =
+    followingStops.length > 0 ? Math.min(...followingStops) : text.length;
+  return text.slice(sentenceStart + 1, sentenceEnd);
+}
+
+function conversationTextCreatesPastCommitment(
+  world: StreetGameState,
+  text: string | undefined,
+) {
+  if (!text) {
+    return false;
+  }
+
+  const normalized = normalizeConversationClaimText(text);
+  const currentMinuteOfDay = world.clock.hour * 60 + world.clock.minute;
+  const references: Array<{ hour: number; index: number; minute: number }> = [];
+  const meridiemPattern =
+    /\b(\d{1,2})(?::([0-5]\d))?\s*(a\.?m\.?|p\.?m\.?)\b/g;
+  for (const match of normalized.matchAll(meridiemPattern)) {
+    const rawHour = Number(match[1]);
+    if (rawHour < 1 || rawHour > 12) {
+      continue;
+    }
+    const isPm = match[3]?.startsWith("p");
+    references.push({
+      hour: rawHour % 12 + (isPm ? 12 : 0),
+      index: match.index,
+      minute: Number(match[2] ?? 0),
+    });
+  }
+
+  const wordHourPattern =
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(?:(?:at|in)\s+(?:the\s+)?)?(morning|afternoon|evening|night)\b/g;
+  for (const match of normalized.matchAll(wordHourPattern)) {
+    const rawHour = CLOCK_WORD_HOURS[match[1]];
+    const period = match[2];
+    const hour =
+      period === "morning"
+        ? rawHour % 12
+        : period === "night"
+          ? rawHour === 12
+            ? 0
+            : rawHour + 12
+          : rawHour % 12 + 12;
+    references.push({
+      hour,
+      index: match.index,
+      minute: 0,
+    });
+  }
+
+  return references.some((reference) => {
+    const referencedMinute = reference.hour * 60 + reference.minute;
+    if (referencedMinute >= currentMinuteOfDay) {
+      return false;
+    }
+
+    const sentence = conversationClaimSentence(normalized, reference.index);
+    const explicitlyFuture =
+      /\b(?:tomorrow|next (?:day|morning|afternoon|evening|night))\b/.test(
+        sentence,
+      ) ||
+      new RegExp(`\\bday\\s+${world.clock.day + 1}\\b`).test(sentence);
+    const acknowledgesPast =
+      /\b(?:already|earlier|had|has passed|missed|no longer|was|were)\b/.test(
+        sentence,
+      );
+    const makesCommitment =
+      /\b(?:agree|appointment|arrange|be here|book|by|come|confirm|meet|plan|ready|return|schedule|show up|start|tidy|will|works)\b/.test(
+        sentence,
+      );
+
+    return makesCommitment && !explicitlyFuture && !acknowledgesPast;
+  });
+}
+
+function conversationTextMentionsAccommodationTerms(text: string) {
+  return /\b(?:bed (?:for|tonight)|board(?:ing)? terms?|check[- ]?in|coins? for tonight|lodg(?:e|ing|er)|rent|room (?:cost|price|rate|terms?)|stay(?:ing)? (?:here|tonight)|tonight'?s (?:bed|room))\b/.test(
+    text,
+  );
+}
+
+function npcHasAccommodationAuthority(
+  world: StreetGameState,
+  npc: NpcState,
+) {
+  const homeLocationIds = new Set(
+    world.locations
+      .filter((location) => location.type === "home")
+      .map((location) => location.id),
+  );
+  const affiliatedWithHome =
+    homeLocationIds.has(npc.currentLocationId) ||
+    npc.schedule.some((stop) => homeLocationIds.has(stop.locationId));
+  if (!affiliatedWithHome) {
+    return false;
+  }
+
+  const profile = normalizeConversationClaimText(
+    [
+      npc.role,
+      npc.summary,
+      npc.narrative.backstory,
+      npc.narrative.context,
+      npc.narrative.objective,
+      npc.currentObjective,
+      npc.currentConcern,
+    ].join(" "),
+  );
+  return /\b(?:board(?:ing)?|host|keeper|landlord|lodg(?:e|ing)|rent|room|stay)\b/.test(
+    profile,
+  );
+}
+
+function escapeConversationClaimPattern(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function conversationTextAssignsUnsupportedResponsibility(
+  world: StreetGameState,
+  npc: NpcState,
+  text: string | undefined,
+) {
+  if (!text || npcHasAccommodationAuthority(world, npc)) {
+    return false;
+  }
+
+  const normalized = normalizeConversationClaimText(text);
+  const latestPlayerLine = [...world.conversations]
+    .reverse()
+    .find((entry) => entry.npcId === npc.id && entry.speaker === "player")
+    ?.text;
+  const exchange = normalizeConversationClaimText(
+    `${latestPlayerLine ?? ""} ${normalized}`,
+  );
+  if (!conversationTextMentionsAccommodationTerms(exchange)) {
+    return false;
+  }
+
+  const npcName = escapeConversationClaimPattern(npc.name.toLowerCase());
+  const normalizedMentionsAccommodation =
+    conversationTextMentionsAccommodationTerms(normalized);
+  const firstPersonAuthorityClaim =
+    normalizedMentionsAccommodation &&
+    (/\b(?:i|we)(?:'ll| am| are| can| charge| confirm| have| offer| will)\b/.test(
+      normalized,
+    ) ||
+      /\b(?:my|our)\b/.test(normalized));
+  const namesResponsiblePerson = world.npcs.some(
+    (candidate) =>
+      candidate.id !== npc.id &&
+      npcHasAccommodationAuthority(world, candidate) &&
+      new RegExp(
+        `\\b${escapeConversationClaimPattern(candidate.name.toLowerCase())}\\b`,
+      ).test(normalized),
+  );
+  const directAgreementClaim =
+    normalizedMentionsAccommodation &&
+    /\b(?:agree|arrange|confirm|cost|price|rate|terms?|works|yep|yes)\b/.test(
+      normalized,
+    );
+  const assignsNpcInObjective = new RegExp(
+    `(?:\\b(?:ask|arrange|confirm|pay|settle)\\b[^.!?;]{0,80}\\b(?:with|through)\\s+${npcName}\\b|\\b${npcName}\\b[^.!?;]{0,80}\\b(?:arrange|confirm|set|terms?)\\b)`,
+  ).test(normalized);
+
+  return (
+    firstPersonAuthorityClaim ||
+    assignsNpcInObjective ||
+    (directAgreementClaim && !namesResponsiblePerson)
+  );
+}
+
+type ConversationClaimPolicyIssue = "past-commitment" | "responsibility";
+
+function conversationClaimPolicyIssues(
+  world: StreetGameState,
+  npc: NpcState,
+  texts: Array<string | undefined>,
+) {
+  const issues = new Set<ConversationClaimPolicyIssue>();
+  for (const text of texts) {
+    if (conversationTextAssignsUnsupportedResponsibility(world, npc, text)) {
+      issues.add("responsibility");
+    }
+    if (conversationTextCreatesPastCommitment(world, text)) {
+      issues.add("past-commitment");
+    }
+  }
+  return [...issues];
+}
+
+function recordConversationClaimPolicyFallbacks(
+  world: StreetGameState,
+  task: "generateStreetReply" | "interpretStreetConversation",
+  issues: ConversationClaimPolicyIssue[],
+) {
+  const subject =
+    task === "generateStreetReply"
+      ? "Conversation reply"
+      : "Conversation interpretation";
+  for (const issue of issues) {
+    recordAIRuntimePolicyFallback(
+      world,
+      task,
+      issue === "responsibility"
+        ? `${subject} assigned responsibility outside the current NPC profile.`
+        : `${subject} proposed a commitment for a time that had already passed.`,
+    );
+  }
+}
+
+function buildGroundedConversationReplyFallback(
+  world: StreetGameState,
+  npc: NpcState,
+) {
+  const ownedJobs = world.jobs.filter((job) => job.giverNpcId === npc.id);
+  const openJob = ownedJobs.find((job) => jobWindowOpen(world, job));
+  if (openJob) {
+    const location = findLocation(world, openJob.locationId);
+    return {
+      followupThought: `${npc.name} is keeping the answer on a current responsibility.`,
+      reply: `What I can confirm is ${openJob.title.toLowerCase()} at ${location?.name ?? "this place"}. That window is open until ${formatHour(openJob.endHour)}.`,
+    };
+  }
+
+  const closedJob = ownedJobs.find(
+    (job) => job.discovered && !jobWindowOpen(world, job),
+  );
+  if (closedJob) {
+    return {
+      followupThought: `${npc.name} is keeping the answer on current state.`,
+      reply: `I can speak for ${closedJob.title.toLowerCase()}, but that work window is no longer open.`,
+    };
+  }
+
+  const location = findLocation(world, npc.currentLocationId);
+  const activeSchedule = resolveNpcSchedule(
+    npc.schedule,
+    world.clock.totalMinutes,
+  ).active;
+  const placeName =
+    findLocation(world, activeSchedule?.stop.locationId ?? "")?.name ??
+    location?.name ??
+    world.districtName;
+  return {
+    followupThought: `${npc.name} is separating a real answer from an unsupported promise.`,
+    reply: `I can only confirm what belongs to my work as ${npc.role} here at ${placeName}. I cannot make a different arrangement from here.`,
+  };
+}
+
+function buildRejectedConversationResolution(
+  world: StreetGameState,
+  npc: NpcState,
+): ConversationResolution {
+  const ownedOpenJob = world.jobs.find(
+    (job) => job.giverNpcId === npc.id && jobWindowOpen(world, job),
+  );
+  const legalJobAction = ownedOpenJob
+    ? world.availableActions.find(
+        (action) =>
+          !action.disabled &&
+          (action.id === `accept:${ownedOpenJob.id}` ||
+            action.id === `work:${ownedOpenJob.id}` ||
+            action.id === `resume:${ownedOpenJob.id}`),
+      )
+    : undefined;
+
+  return {
+    decision:
+      ownedOpenJob && legalJobAction
+        ? `keep ${ownedOpenJob.title.toLowerCase()} as a current option, but choose it only through the validated action while its window is open.`
+        : "leave the unconfirmed terms out of Rowan's plans and take the next move from the current legal options.",
+    summary: `${npc.name}'s exchange did not establish a new feasible commitment, so Rowan kept the current objective.`,
+  };
 }
 
 function buildCurrentStateConversationAdvice(
@@ -4069,6 +4444,52 @@ function sanitizeConversationResolutionForCurrentState(
   };
 }
 
+function sanitizeConversationReplyForCurrentState(
+  world: StreetGameState,
+  npc: NpcState,
+  candidate: ConversationReply,
+): {
+  reply: ConversationReply;
+  usedPolicyFallback: boolean;
+} {
+  const reusesUnavailableApproach = conversationTextReusesUnavailableApproach(
+    world,
+    candidate.reply,
+  );
+  const claimPolicyIssues = conversationClaimPolicyIssues(world, npc, [
+    candidate.reply,
+  ]);
+  let reply = candidate;
+
+  if (reusesUnavailableApproach) {
+    const advice = buildCurrentStateConversationAdvice(world, npc);
+    reply = {
+      followupThought: advice.followupThought,
+      reply: advice.reply,
+    };
+    recordAIRuntimePolicyFallback(
+      world,
+      "generateStreetReply",
+      "Conversation reply reused a completed or closed approach.",
+    );
+  }
+
+  if (claimPolicyIssues.length > 0) {
+    reply = buildGroundedConversationReplyFallback(world, npc);
+    recordConversationClaimPolicyFallbacks(
+      world,
+      "generateStreetReply",
+      claimPolicyIssues,
+    );
+  }
+
+  return {
+    reply,
+    usedPolicyFallback:
+      reusesUnavailableApproach || claimPolicyIssues.length > 0,
+  };
+}
+
 async function performConversationTurn(
   world: StreetGameState,
   npc: NpcState,
@@ -4102,10 +4523,14 @@ async function performConversationTurn(
     npcId: npc.id,
     playerText: text,
   });
-  let reply =
+  let sanitizedReply = sanitizeConversationReplyForCurrentState(
+    world,
+    npc,
     aiProvider.name === "openai"
       ? generatedReply
-      : buildObjectiveScriptedReply(world, npc, text) ?? generatedReply;
+      : buildObjectiveScriptedReply(world, npc, text) ?? generatedReply,
+  );
+  let reply = sanitizedReply.reply;
   let groundingFollowupTopics = new Set<string>();
   const groundingPolicy = objectiveRouteConversationGroundingPolicy(
     world,
@@ -4141,7 +4566,12 @@ async function performConversationTurn(
       npcId: npc.id,
       playerText: groundingFollowup,
     });
-    reply = groundingReply;
+    sanitizedReply = sanitizeConversationReplyForCurrentState(
+      world,
+      npc,
+      groundingReply,
+    );
+    reply = sanitizedReply.reply;
 
     if (
       !objectiveRouteTextGroundsConversationPolicy(
@@ -4160,24 +4590,14 @@ async function performConversationTurn(
       )
     ) {
       reply = groundingPolicy.fallbackReply;
-      recordAIRuntimePolicyFallback(
-        world,
-        "generateStreetReply",
-        groundingPolicy.fallbackReason,
-      );
+      if (!sanitizedReply.usedPolicyFallback) {
+        recordAIRuntimePolicyFallback(
+          world,
+          "generateStreetReply",
+          groundingPolicy.fallbackReason,
+        );
+      }
     }
-  }
-  if (conversationTextReusesUnavailableApproach(world, reply.reply)) {
-    const advice = buildCurrentStateConversationAdvice(world, npc);
-    reply = {
-      followupThought: advice.followupThought,
-      reply: advice.reply,
-    };
-    recordAIRuntimePolicyFallback(
-      world,
-      "generateStreetReply",
-      "Conversation reply reused a completed or closed approach.",
-    );
   }
   const replyTopics = detectConversationTopics(reply.reply);
   const topics = new Set<string>([
