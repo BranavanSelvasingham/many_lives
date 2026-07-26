@@ -337,6 +337,17 @@ test("autoplay observer budget preserves strict app-visible pacing evidence", ()
   );
 });
 
+test("inhabit gameplay keeps enough bounded time for constrained CI runners", () => {
+  assert.match(
+    source,
+    /MANY_LIVES_BROWSER_INHABIT_GAMEPLAY_TIMEOUT_MS \?\? "840000"/,
+  );
+  assert.match(
+    source,
+    /runBrowserPhase\(\s*"inhabit-gameplay",\s*INHABIT_GAMEPLAY_TIMEOUT_MS,/,
+  );
+});
+
 test("opening map evidence is frozen before zero-click pacing begins", () => {
   const runStart = source.indexOf(
     "async function runAutoplayObservation(session, { game, openingWorldVariant })",
