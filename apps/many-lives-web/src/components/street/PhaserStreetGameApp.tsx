@@ -197,6 +197,9 @@ import {
   adjustCameraZoom,
   beginCameraGesture,
   finishCameraGesture,
+  getCameraVisibleWorldFrame,
+  getInteriorCameraRestingScroll,
+  getInteriorCameraScrollRange,
   getRuntimeCameraAnchorXRatio,
   getRuntimeCameraAnchorYRatio,
   getTargetSceneZoom,
@@ -206,6 +209,7 @@ import {
   type CameraEdgeName,
   type CameraEdgeState,
   type CameraGestureState,
+  type CameraSafeFrame,
 } from "@/lib/street/runtimeCamera";
 import { shouldSkipUrlCleanupGameReload } from "@/lib/street/sessionIdentity";
 import {
@@ -917,6 +921,15 @@ type CameraProjectionState = {
     top: number;
     width: number;
   };
+};
+
+type WorldBounds = {
+  bottom: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+  width: number;
 };
 
 type RuntimeState = {
@@ -3295,7 +3308,11 @@ function renderStaticScene(
       : (getPlayableVisualScene(runtimeState.snapshot.game)?.backgroundColor ??
         "#111d23"),
   );
-  camera.setBounds(0, 0, world.width, world.height);
+  if (runtimeState.indices.activeSpace) {
+    camera.removeBounds();
+  } else {
+    camera.setBounds(0, 0, world.width, world.height);
+  }
   camera.setViewport(
     sceneViewport.x,
     sceneViewport.y,
@@ -3389,8 +3406,18 @@ function renderInteriorSpace(
 ) {
   const { structureDetailLayer, structureLayer, terrainLayer } = objects;
   const palette = interiorSpacePalette(space);
+  const interiorWorld = getWorldBoundsForRuntime({
+    map: space,
+    viewport: space,
+    visualScene: null,
+  });
 
   const roomOrigin = mapTileToWorldOrigin(0, 0);
+  terrainLayer.fillStyle(
+    space.id === "interior:boarding-house" ? 0x4b3e34 : palette.wall,
+    1,
+  );
+  terrainLayer.fillRect(0, 0, interiorWorld.width, interiorWorld.height);
   terrainLayer.fillStyle(palette.wall, 1);
   terrainLayer.fillRect(
     roomOrigin.x,
@@ -3497,27 +3524,71 @@ function drawBoardingHouseInteriorAtmosphere(
   const roomOrigin = mapTileToWorldOrigin(0, 0);
   const roomWidth = space.width * CELL;
   const roomHeight = space.height * CELL;
-  const parlorCenter = mapTileToWorldCenter(6, 5);
 
-  layer.fillStyle(0x1a1009, 0.16);
-  layer.fillRoundedRect(
-    roomOrigin.x + CELL * 1.15,
-    roomOrigin.y + CELL * 1.22,
-    roomWidth - CELL * 2.3,
-    roomHeight - CELL * 2.3,
-    18,
+  layer.lineStyle(5, 0x2a211a, 0.52);
+  layer.strokeRoundedRect(
+    roomOrigin.x - 4,
+    roomOrigin.y - 4,
+    roomWidth + 8,
+    roomHeight + 8,
+    10,
   );
 
-  layer.fillStyle(0xf2cf91, 0.12);
-  layer.fillCircle(parlorCenter.x, parlorCenter.y, CELL * 2.15);
-  layer.fillStyle(0xffe2a4, 0.08);
-  layer.fillCircle(parlorCenter.x - CELL * 1.25, parlorCenter.y, CELL * 1.2);
-
+  drawBoardingHousePerimeterPanels(layer, space);
   drawBoardingHouseWindow(layer, 2.1, 0.26, 1.2);
   drawBoardingHouseWindow(layer, 8.5, 0.26, 1.2);
   drawBoardingHouseWallPanels(layer, space);
   drawBoardingHouseNoticeboard(layer);
   drawBoardingHouseHearth(layer);
+  drawBoardingHouseLocalLamp(layer, 4.35, 3.72);
+  drawBoardingHouseLocalLamp(layer, 8.15, 3.72);
+  drawBoardingHouseWallClock(layer);
+  drawBoardingHouseCoatRail(layer);
+  drawBoardingHousePictureFrames(layer);
+}
+
+function drawBoardingHousePerimeterPanels(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  const world = getWorldBoundsForRuntime({
+    map: space,
+    viewport: space,
+    visualScene: null,
+  });
+  const roomOrigin = mapTileToWorldOrigin(0, 0);
+  const roomRight = roomOrigin.x + space.width * CELL;
+  const roomBottom = roomOrigin.y + space.height * CELL;
+  const marginWidth = Math.max(world.width - roomRight, 0);
+  const panelInset = Math.min(CELL * 0.28, marginWidth * 0.18);
+  const panelWidth = Math.max(marginWidth - panelInset * 2, 12);
+
+  layer.lineStyle(1.4, 0xb39569, 0.21);
+  for (
+    let panelY = roomOrigin.y + CELL * 0.35;
+    panelY < roomBottom - CELL * 0.7;
+    panelY += CELL * 1.52
+  ) {
+    layer.strokeRoundedRect(
+      roomRight + panelInset,
+      panelY,
+      panelWidth,
+      CELL * 1.05,
+      5,
+    );
+  }
+  layer.lineStyle(1.5, 0x2d241d, 0.34);
+  layer.lineBetween(
+    roomRight + 5,
+    roomOrigin.y,
+    roomRight + 5,
+    roomBottom,
+  );
+  drawBoardingHouseLocalLamp(
+    layer,
+    space.width + marginWidth / CELL / 2 - 0.5,
+    space.height / 2 - 0.5,
+  );
 }
 
 function drawBoardingHouseWindow(
@@ -3569,6 +3640,13 @@ function drawBoardingHouseNoticeboard(layer: PhaserType.GameObjects.Graphics) {
 
 function drawBoardingHouseHearth(layer: PhaserType.GameObjects.Graphics) {
   const origin = mapTileToWorldOrigin(1.24, 4.1);
+  layer.fillStyle(0xf0c47d, 0.08);
+  layer.fillEllipse(
+    origin.x + CELL * 0.34,
+    origin.y + CELL * 0.82,
+    CELL * 0.92,
+    CELL * 0.72,
+  );
   layer.fillStyle(0x22150e, 0.55);
   layer.fillRoundedRect(origin.x, origin.y, CELL * 0.68, CELL * 1.3, 7);
   layer.fillStyle(0x6f5140, 0.8);
@@ -3577,6 +3655,87 @@ function drawBoardingHouseHearth(layer: PhaserType.GameObjects.Graphics) {
   layer.fillEllipse(origin.x + 15, origin.y + 27, 13, 19);
   layer.fillStyle(0xf2c06b, 0.56);
   layer.fillEllipse(origin.x + 16, origin.y + 31, 8, 12);
+}
+
+function drawBoardingHouseLocalLamp(
+  layer: PhaserType.GameObjects.Graphics,
+  tileX: number,
+  tileY: number,
+) {
+  const center = mapTileToWorldCenter(tileX, tileY);
+  layer.fillStyle(0xf0cf8c, 0.075);
+  layer.fillEllipse(center.x, center.y + 7, CELL * 0.86, CELL * 0.56);
+  layer.fillStyle(0x3a291a, 0.82);
+  layer.fillRoundedRect(center.x - 2, center.y - 8, 4, 13, 2);
+  layer.fillStyle(0xd5ad68, 0.88);
+  layer.fillRoundedRect(center.x - 7, center.y - 11, 14, 7, 3);
+  layer.fillStyle(0xffdda0, 0.9);
+  layer.fillCircle(center.x, center.y - 7, 2.4);
+}
+
+function drawBoardingHouseWallClock(layer: PhaserType.GameObjects.Graphics) {
+  const center = mapTileToWorldCenter(6, 0.42);
+  layer.fillStyle(0x281b12, 0.72);
+  layer.fillCircle(center.x, center.y, 9.5);
+  layer.fillStyle(0xe7d6ac, 0.86);
+  layer.fillCircle(center.x, center.y, 7);
+  layer.lineStyle(1.2, 0x5b4430, 0.88);
+  layer.lineBetween(center.x, center.y, center.x, center.y - 4);
+  layer.lineBetween(center.x, center.y, center.x + 3.4, center.y + 1.6);
+}
+
+function drawBoardingHouseCoatRail(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(7.75, 8.5);
+  layer.lineStyle(3, 0x4b3422, 0.72);
+  layer.lineBetween(origin.x, origin.y, origin.x + CELL * 1.45, origin.y);
+  for (let index = 0; index < 4; index += 1) {
+    const hookX = origin.x + 7 + index * 14;
+    layer.fillStyle(0xd4aa68, 0.78);
+    layer.fillCircle(hookX, origin.y + 1, 2.4);
+    layer.lineStyle(1.2, 0x4b3422, 0.72);
+    layer.lineBetween(hookX, origin.y + 2, hookX - 2, origin.y + 8);
+  }
+}
+
+function drawBoardingHousePictureFrames(
+  layer: PhaserType.GameObjects.Graphics,
+) {
+  const frames = [
+    { height: 19, tileX: 3.85, width: 27 },
+    { height: 17, tileX: 7.2, width: 23 },
+  ];
+  for (const frame of frames) {
+    const origin = mapTileToWorldOrigin(frame.tileX, 0.32);
+    layer.fillStyle(0x2d2118, 0.76);
+    layer.fillRoundedRect(
+      origin.x,
+      origin.y,
+      frame.width,
+      frame.height,
+      3,
+    );
+    layer.fillStyle(0xb99a66, 0.58);
+    layer.fillRoundedRect(
+      origin.x + 3,
+      origin.y + 3,
+      frame.width - 6,
+      frame.height - 6,
+      2,
+    );
+    layer.lineStyle(1, 0x6f805f, 0.52);
+    layer.lineBetween(
+      origin.x + 6,
+      origin.y + frame.height - 6,
+      origin.x + frame.width / 2,
+      origin.y + 7,
+    );
+    layer.lineBetween(
+      origin.x + frame.width / 2,
+      origin.y + 7,
+      origin.x + frame.width - 5,
+      origin.y + frame.height - 6,
+    );
+  }
 }
 
 function drawTeaHouseShiftState(
@@ -3830,6 +3989,36 @@ function drawBoardingHouseInteriorObjectDetail(
     return;
   }
 
+  if (object.kind === "wall") {
+    const verticalWall =
+      object.id.endsWith("-wall-east") || object.id.endsWith("-wall-west");
+    layer.lineStyle(1.2, 0xb89a6d, 0.2);
+    if (verticalWall) {
+      for (
+        let panelY = rect.y + CELL * 0.4;
+        panelY < rect.y + rect.height - CELL * 0.8;
+        panelY += CELL * 1.55
+      ) {
+        layer.strokeRoundedRect(
+          rect.x + 7,
+          panelY,
+          rect.width - 14,
+          CELL * 1.08,
+          4,
+        );
+      }
+      return;
+    }
+
+    layer.lineBetween(
+      rect.x + CELL * 0.35,
+      rect.y + rect.height - 8,
+      rect.x + rect.width - CELL * 0.35,
+      rect.y + rect.height - 8,
+    );
+    return;
+  }
+
   if (object.kind === "bed") {
     layer.fillStyle(0xe6d7bf, 0.88);
     layer.fillRoundedRect(rect.x + 8, rect.y + 8, 20, rect.height - 16, 5);
@@ -3879,10 +4068,14 @@ function interiorObjectStyle(object: SpaceObject) {
     case "wall":
       return {
         alpha: 1,
-        fill: 0x354648,
+        fill: object.id.startsWith("boarding-house-")
+          ? 0x5f5144
+          : 0x354648,
         inset: 0,
         radius: 0,
-        stroke: 0x233134,
+        stroke: object.id.startsWith("boarding-house-")
+          ? 0x332820
+          : 0x233134,
       };
     case "counter":
       return {
@@ -3954,7 +4147,7 @@ function drawInteriorSpaceLabels(
   const labels: PhaserType.GameObjects.GameObject[] = [];
   const titleOrigin =
     space.id === "interior:boarding-house"
-      ? mapTileToWorldCenter(space.width / 2 + 1.15, 0.86)
+      ? mapTileToWorldCenter(space.width / 2 + 1.15, 1.61)
       : mapTileToWorldOrigin(1, 1);
   labels.push(
     scene.add
@@ -4119,13 +4312,54 @@ function renderDynamicScene(
     playerPixel,
     mapAgencyCue,
   );
+  const interiorTitleWorldBounds = getInteriorTitleWorldBounds(
+    objects,
+    runtimeState,
+  );
+  const interiorCompositionBounds = runtimeState.indices.activeSpace
+    ? {
+        bottom: Math.max(
+          playerPixel.y,
+          interiorTitleWorldBounds?.bottom ?? playerPixel.y,
+        ),
+        left: Math.min(
+          playerPixel.x,
+          interiorTitleWorldBounds?.left ?? playerPixel.x,
+        ),
+        right: Math.max(
+          playerPixel.x,
+          interiorTitleWorldBounds?.right ?? playerPixel.x,
+        ),
+        top: Math.min(
+          playerPixel.y,
+          interiorTitleWorldBounds?.top ?? playerPixel.y,
+        ),
+      }
+    : null;
+  const cameraSafeFrame = getRuntimeInteriorCameraSafeFrame(
+    objects.overlayDom,
+    runtimeState,
+    sceneViewport,
+    {
+      cameraWorldView: {
+        left: camera.worldView.x,
+        width: camera.worldView.width,
+      },
+      trackedWorldPoints: [cameraFollowPixel, playerPixel],
+    },
+  );
+  const interiorCameraPoint = runtimeState.indices.activeSpace
+    ? playerPixel
+    : cameraFollowPixel;
   const cameraBlockedEdges = updateCamera(
     camera,
     runtimeState,
     sceneViewport,
-    cameraFollowPixel,
+    interiorCameraPoint,
     world,
     now,
+    cameraSafeFrame,
+    interiorCompositionBounds,
   );
   const effectiveZoom = Math.max(camera.zoom, 0.001);
   const visibleWidth = sceneViewport.width / effectiveZoom;
@@ -4163,6 +4397,8 @@ function renderDynamicScene(
     now,
     {
       cameraFollowPixel,
+      cameraSafeFrame,
+      interiorTitleWorldBounds,
       playerPixel,
     },
   );
@@ -8376,6 +8612,8 @@ function syncBrowserCameraProbe(
   renderedAtMs: number,
   points?: {
     cameraFollowPixel: Point;
+    cameraSafeFrame: CameraSafeFrame | null;
+    interiorTitleWorldBounds: WorldBounds | null;
     playerPixel: Point;
   },
 ) {
@@ -8388,21 +8626,70 @@ function syncBrowserCameraProbe(
   const effectiveZoom = Math.max(camera.zoom, 0.001);
   const visibleWidth = sceneViewport.width / effectiveZoom;
   const visibleHeight = sceneViewport.height / effectiveZoom;
+  const visibleFrame = runtimeState.indices.activeSpace
+    ? getCameraVisibleWorldFrame(
+        points?.cameraSafeFrame ?? {
+          height: sceneViewport.height,
+          width: sceneViewport.width,
+          x: 0,
+          y: 0,
+        },
+        effectiveZoom,
+        {
+          x: (camera.width - camera.worldView.width) / 2,
+          y: (camera.height - camera.worldView.height) / 2,
+        },
+        {
+          x: camera.worldView.width / Math.max(camera.width, 1),
+          y: camera.worldView.height / Math.max(camera.height, 1),
+        },
+      )
+    : null;
   const world = getWorldBounds(runtimeState.snapshot);
-  const scrollRange = isCompactViewport(runtimeState.snapshot.viewport)
-    ? getCompactCameraScrollRange({
-        map: runtimeState.indices.activeSpace ?? runtimeState.snapshot.game?.map,
+  const cameraCompositionBounds =
+    runtimeState.indices.activeSpace && points
+      ? {
+          bottom: Math.max(
+            points.playerPixel.y,
+            points.interiorTitleWorldBounds?.bottom ?? points.playerPixel.y,
+          ),
+          left: Math.min(
+            points.playerPixel.x,
+            points.interiorTitleWorldBounds?.left ?? points.playerPixel.x,
+          ),
+          right: Math.max(
+            points.playerPixel.x,
+            points.interiorTitleWorldBounds?.right ?? points.playerPixel.x,
+          ),
+          top: Math.min(
+            points.playerPixel.y,
+            points.interiorTitleWorldBounds?.top ?? points.playerPixel.y,
+          ),
+        }
+      : null;
+  const scrollRange = runtimeState.indices.activeSpace
+    ? getInteriorCameraScrollRange({
+        compositionBounds: cameraCompositionBounds,
+        focusPoint: points?.playerPixel,
+        map: runtimeState.indices.activeSpace,
+        visibleFrame,
         visibleHeight,
         visibleWidth,
-        visualScene: runtimeState.indices.visualScene,
-        world,
       })
-    : {
-        maxX: Math.max(world.width - visibleWidth, 0),
-        maxY: Math.max(world.height - visibleHeight, 0),
-        minX: 0,
-        minY: 0,
-      };
+    : isCompactViewport(runtimeState.snapshot.viewport)
+      ? getCompactCameraScrollRange({
+          map: runtimeState.snapshot.game?.map,
+          visibleHeight,
+          visibleWidth,
+          visualScene: runtimeState.indices.visualScene,
+          world,
+        })
+      : {
+          maxX: Math.max(world.width - visibleWidth, 0),
+          maxY: Math.max(world.height - visibleHeight, 0),
+          minX: 0,
+          minY: 0,
+        };
 
   probe.textContent = JSON.stringify({
     activeSpaceId: runtimeState.indices.activeSpaceId,
@@ -8412,6 +8699,16 @@ function syncBrowserCameraProbe(
       y: Number(runtimeState.cameraOffset.y.toFixed(2)),
     },
     dragging: runtimeState.cameraGesture?.dragging === true,
+    interiorTitleWorldBounds: points?.interiorTitleWorldBounds
+      ? {
+          bottom: Number(points.interiorTitleWorldBounds.bottom.toFixed(2)),
+          height: Number(points.interiorTitleWorldBounds.height.toFixed(2)),
+          left: Number(points.interiorTitleWorldBounds.left.toFixed(2)),
+          right: Number(points.interiorTitleWorldBounds.right.toFixed(2)),
+          top: Number(points.interiorTitleWorldBounds.top.toFixed(2)),
+          width: Number(points.interiorTitleWorldBounds.width.toFixed(2)),
+        }
+      : null,
     followWorldPoint: points
       ? {
           x: Number(points.cameraFollowPixel.x.toFixed(2)),
@@ -8438,6 +8735,36 @@ function syncBrowserCameraProbe(
     },
     renderScale: Number(runtimeState.renderScale.toFixed(4)),
     renderedAtMs: Number(renderedAtMs.toFixed(2)),
+    renderedWorldView: {
+      bottom: Number(camera.worldView.bottom.toFixed(2)),
+      height: Number(camera.worldView.height.toFixed(2)),
+      left: Number(camera.worldView.left.toFixed(2)),
+      right: Number(camera.worldView.right.toFixed(2)),
+      top: Number(camera.worldView.top.toFixed(2)),
+      width: Number(camera.worldView.width.toFixed(2)),
+    },
+    safeFrameCss: points?.cameraSafeFrame
+      ? {
+          height: Number(
+            (points.cameraSafeFrame.height / runtimeState.renderScale).toFixed(
+              2,
+            ),
+          ),
+          width: Number(
+            (points.cameraSafeFrame.width / runtimeState.renderScale).toFixed(
+              2,
+            ),
+          ),
+          x: Number(
+            (sceneViewport.x / runtimeState.renderScale +
+              points.cameraSafeFrame.x / runtimeState.renderScale).toFixed(2),
+          ),
+          y: Number(
+            (sceneViewport.y / runtimeState.renderScale +
+              points.cameraSafeFrame.y / runtimeState.renderScale).toFixed(2),
+          ),
+        }
+      : null,
     scroll: {
       x: Number(camera.scrollX.toFixed(2)),
       y: Number(camera.scrollY.toFixed(2)),
@@ -8693,6 +9020,107 @@ function getRuntimeSceneViewport(runtimeState: RuntimeState): SceneViewport {
   );
 }
 
+function getRuntimeInteriorCameraSafeFrame(
+  root: HTMLElement,
+  runtimeState: RuntimeState,
+  sceneViewport: SceneViewport,
+  options?: {
+    cameraWorldView: {
+      left: number;
+      width: number;
+    };
+    trackedWorldPoints: Point[];
+  },
+): CameraSafeFrame | null {
+  if (
+    !runtimeState.indices.activeSpace ||
+    !isCompactViewport(runtimeState.snapshot.viewport)
+  ) {
+    return null;
+  }
+
+  const renderScale = Math.max(runtimeState.renderScale, 0.001);
+  const sceneCss = {
+    bottom:
+      (sceneViewport.y + sceneViewport.height) / renderScale,
+    left: sceneViewport.x / renderScale,
+    right: (sceneViewport.x + sceneViewport.width) / renderScale,
+    top: sceneViewport.y / renderScale,
+  };
+  const focusXs = options
+    ? options.trackedWorldPoints.map(
+        (point) =>
+          sceneCss.left +
+          ((point.x - options.cameraWorldView.left) /
+            Math.max(options.cameraWorldView.width, 0.001)) *
+            (sceneCss.right - sceneCss.left),
+      )
+    : [(sceneCss.left + sceneCss.right) / 2];
+  let unobscuredBottom = sceneCss.bottom;
+
+  for (const selector of [".ml-right-stack", ".ml-dock"]) {
+    const blocker = root.querySelector<HTMLElement>(selector);
+    if (!blocker) {
+      continue;
+    }
+    const rect = blocker.getBoundingClientRect();
+    const coversTrackedPoint = focusXs.some(
+      (focusX) => rect.left <= focusX && rect.right >= focusX,
+    );
+    const overlapsScene =
+      rect.bottom > sceneCss.top &&
+      rect.top < sceneCss.bottom &&
+      rect.right > sceneCss.left &&
+      rect.left < sceneCss.right;
+    if (coversTrackedPoint && overlapsScene) {
+      unobscuredBottom = Math.min(
+        unobscuredBottom,
+        Math.max(rect.top, sceneCss.top),
+      );
+    }
+  }
+
+  const safeHeight = clamp(
+    (unobscuredBottom - sceneCss.top) * renderScale,
+    0,
+    sceneViewport.height,
+  );
+  if (safeHeight >= sceneViewport.height - 1) {
+    return null;
+  }
+
+  return {
+    height: safeHeight,
+    width: sceneViewport.width,
+    x: 0,
+    y: 0,
+  };
+}
+
+function getInteriorTitleWorldBounds(
+  objects: RuntimeObjects,
+  runtimeState: RuntimeState,
+): WorldBounds | null {
+  if (!runtimeState.indices.activeSpace) {
+    return null;
+  }
+  const title = objects.mapLabels[0] as
+    | PhaserType.GameObjects.Text
+    | undefined;
+  if (!title || typeof title.getBounds !== "function") {
+    return null;
+  }
+  const bounds = title.getBounds();
+  return {
+    bottom: bounds.y + bounds.height,
+    height: bounds.height,
+    left: bounds.x,
+    right: bounds.x + bounds.width,
+    top: bounds.y,
+    width: bounds.width,
+  };
+}
+
 function getRuntimeCameraGestureViewport(
   runtimeState: RuntimeState,
 ): SceneViewport {
@@ -8732,6 +9160,7 @@ function resetRuntimeCameraForGame(
   const targetZoom = getTargetSceneZoom(runtimeState, sceneViewport, world);
   const visibleWidth = sceneViewport.width / Math.max(targetZoom, 0.001);
   const visibleHeight = sceneViewport.height / Math.max(targetZoom, 0.001);
+  const camera = objects.scene.cameras.main.setZoom(targetZoom);
   const playerPixel = playerTileToWorld(
     {
       x: runtimeState.snapshot.optimisticPlayerPosition?.x ?? game.player.x,
@@ -8740,13 +9169,69 @@ function resetRuntimeCameraForGame(
     runtimeState.indices,
     game,
   );
+  const cameraSafeFrame = getRuntimeInteriorCameraSafeFrame(
+    objects.overlayDom,
+    runtimeState,
+    sceneViewport,
+  );
+  const visibleFrame = cameraSafeFrame
+    ? getCameraVisibleWorldFrame(
+        cameraSafeFrame,
+        targetZoom,
+        {
+          x: (camera.width - camera.worldView.width) / 2,
+          y: (camera.height - camera.worldView.height) / 2,
+        },
+        {
+          x: camera.worldView.width / Math.max(camera.width, 1),
+          y: camera.worldView.height / Math.max(camera.height, 1),
+        },
+      )
+    : null;
+  const interiorTitleWorldBounds = getInteriorTitleWorldBounds(
+    objects,
+    runtimeState,
+  );
+  const interiorCompositionBounds = runtimeState.indices.activeSpace
+    ? {
+        bottom: Math.max(
+          playerPixel.y,
+          interiorTitleWorldBounds?.bottom ?? playerPixel.y,
+        ),
+        left: Math.min(
+          playerPixel.x,
+          interiorTitleWorldBounds?.left ?? playerPixel.x,
+        ),
+        right: Math.max(
+          playerPixel.x,
+          interiorTitleWorldBounds?.right ?? playerPixel.x,
+        ),
+        top: Math.min(
+          playerPixel.y,
+          interiorTitleWorldBounds?.top ?? playerPixel.y,
+        ),
+      }
+    : null;
   let minScrollX = 0;
   let maxScrollX = Math.max(world.width - visibleWidth, 0);
   let minScrollY = 0;
   let maxScrollY = Math.max(world.height - visibleHeight, 0);
-  if (isCompactViewport(runtimeState.snapshot.viewport)) {
+  if (runtimeState.indices.activeSpace) {
+    const range = getInteriorCameraScrollRange({
+      compositionBounds: interiorCompositionBounds,
+      focusPoint: playerPixel,
+      map: runtimeState.indices.activeSpace,
+      visibleFrame,
+      visibleHeight,
+      visibleWidth,
+    });
+    minScrollX = range.minX;
+    maxScrollX = range.maxX;
+    minScrollY = range.minY;
+    maxScrollY = range.maxY;
+  } else if (isCompactViewport(runtimeState.snapshot.viewport)) {
     const range = getCompactCameraScrollRange({
-      map: runtimeState.indices.activeSpace ?? game.map,
+      map: game.map,
       visibleHeight,
       visibleWidth,
       visualScene: runtimeState.indices.visualScene,
@@ -8758,22 +9243,31 @@ function resetRuntimeCameraForGame(
     maxScrollY = range.maxY;
   }
 
-  objects.scene.cameras.main
-    .setZoom(targetZoom)
-    .setScroll(
-      clamp(
-        playerPixel.x -
-          visibleWidth * getRuntimeCameraAnchorXRatio(runtimeState),
-        minScrollX,
-        maxScrollX,
-      ),
-      clamp(
-        playerPixel.y -
-          visibleHeight * getRuntimeCameraAnchorYRatio(runtimeState),
-        minScrollY,
-        maxScrollY,
-      ),
+  let initialScrollX: number;
+  let initialScrollY: number;
+  if (runtimeState.indices.activeSpace && visibleFrame) {
+    const restingScroll = getInteriorCameraRestingScroll(
+      visibleFrame,
+      playerPixel,
+      interiorCompositionBounds,
     );
+    initialScrollX = restingScroll.x;
+    initialScrollY = restingScroll.y;
+  } else if (runtimeState.indices.activeSpace) {
+    initialScrollX = (minScrollX + maxScrollX) / 2;
+    initialScrollY = (minScrollY + maxScrollY) / 2;
+  } else {
+    initialScrollX =
+      playerPixel.x -
+      visibleWidth * getRuntimeCameraAnchorXRatio(runtimeState);
+    initialScrollY =
+        playerPixel.y -
+      visibleHeight * getRuntimeCameraAnchorYRatio(runtimeState);
+  }
+  initialScrollX = clamp(initialScrollX, minScrollX, maxScrollX);
+  initialScrollY = clamp(initialScrollY, minScrollY, maxScrollY);
+
+  camera.setScroll(initialScrollX, initialScrollY);
 }
 
 function syncRuntimeRenderScale(

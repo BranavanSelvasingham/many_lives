@@ -1796,6 +1796,219 @@ function assertScreenshotVisualIntegrity(buffer, page, viewport, label) {
   return { hudChipDiagnostics, largestNearBlackComponent, uiTextDiagnostics };
 }
 
+function assertBoardingHouseInteriorCompositionPixels(
+  buffer,
+  page,
+  viewport,
+  label,
+) {
+  const image = decodePngPixels(buffer);
+  const scene = page.sceneViewportCss;
+  assert.ok(scene, `${label}: missing scene viewport for interior composition.`);
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  const sceneBottom = scene.y + scene.height;
+  const overlayTop = Math.min(
+    page.rightStack?.y ?? sceneBottom,
+    page.dockRoot?.y ?? sceneBottom,
+  );
+  const sample = {
+    bottom: Math.min(sceneBottom - 12, overlayTop - 12),
+    left: scene.x + 12,
+    right: scene.x + scene.width - 12,
+    top: scene.y + 12,
+  };
+  assert.ok(
+    sample.bottom - sample.top >= Math.min(260, scene.height * 0.42),
+    `${label}: overlays leave too little unobscured room for composition analysis: ${JSON.stringify(sample)}.`,
+  );
+
+  const columnCount = 8;
+  const columns = Array.from({ length: columnCount }, () => ({
+    authored: 0,
+    sampled: 0,
+  }));
+  const sampleStep = Math.max(1, Math.floor(Math.min(scaleX, scaleY)));
+  let authoredPixels = 0;
+  let sampledPixels = 0;
+  for (
+    let sourceY = Math.floor(sample.top * scaleY);
+    sourceY < Math.ceil(sample.bottom * scaleY);
+    sourceY += sampleStep
+  ) {
+    for (
+      let sourceX = Math.floor(sample.left * scaleX);
+      sourceX < Math.ceil(sample.right * scaleX);
+      sourceX += sampleStep
+    ) {
+      const offset = (sourceY * image.width + sourceX) * image.channels;
+      const red = image.pixels[offset];
+      const green = image.pixels[offset + 1] ?? red;
+      const blue = image.pixels[offset + 2] ?? red;
+      const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+      const authored =
+        luminance >= 50 &&
+        red >= green * 1.05 &&
+        green >= blue * 1.04;
+      const cssX = sourceX / scaleX;
+      const columnIndex = clamp(
+        Math.floor(
+          ((cssX - sample.left) / (sample.right - sample.left)) * columnCount,
+        ),
+        0,
+        columnCount - 1,
+      );
+      columns[columnIndex].sampled += 1;
+      sampledPixels += 1;
+      if (authored) {
+        columns[columnIndex].authored += 1;
+        authoredPixels += 1;
+      }
+    }
+  }
+
+  const authoredFraction = authoredPixels / Math.max(sampledPixels, 1);
+  const columnFractions = columns.map((column) =>
+    Number((column.authored / Math.max(column.sampled, 1)).toFixed(3)),
+  );
+  assert.ok(
+    authoredFraction >= 0.68,
+    `${label}: authored boarding-house material covers only ${authoredFraction.toFixed(3)} of the unobscured room; expected at least 0.68. Columns: ${JSON.stringify(columnFractions)}.`,
+  );
+  assert.ok(
+    columnFractions.every((fraction) => fraction >= 0.24),
+    `${label}: the interior contains an unexplained empty/dark vertical band. Authored material by column: ${JSON.stringify(columnFractions)}.`,
+  );
+
+  const warmWash = findLargestWarmWashComponent(image, sample, scaleX, scaleY);
+  const maximumWashWidth = scene.width * 0.26;
+  const maximumWashHeight = (sample.bottom - sample.top) * 0.08;
+  const warmWashAspectRatio =
+    warmWash.width / Math.max(warmWash.height, 1);
+  assert.ok(
+    warmWash.width < maximumWashWidth ||
+      warmWash.height < maximumWashHeight ||
+      warmWash.areaFraction < 0.015 ||
+      warmWashAspectRatio > 4 ||
+      warmWash.fillRatio > 0.9,
+    `${label}: an oversized low-detail warm wash still dominates the room: ${JSON.stringify({
+      ...warmWash,
+      maximumWashHeight: Number(maximumWashHeight.toFixed(1)),
+      maximumWashWidth: Number(maximumWashWidth.toFixed(1)),
+      warmWashAspectRatio: Number(warmWashAspectRatio.toFixed(2)),
+    })}.`,
+  );
+
+  return {
+    authoredFraction: Number(authoredFraction.toFixed(3)),
+    columnFractions,
+    sample,
+    warmWash,
+  };
+}
+
+function findLargestWarmWashComponent(image, sample, scaleX, scaleY) {
+  const width = Math.max(1, Math.floor(sample.right - sample.left));
+  const height = Math.max(1, Math.floor(sample.bottom - sample.top));
+  const mask = new Uint8Array(width * height);
+  const visited = new Uint8Array(width * height);
+  const queue = new Int32Array(width * height);
+
+  for (let y = 0; y < height; y += 1) {
+    const sourceY = clamp(
+      Math.floor((sample.top + y + 0.5) * scaleY),
+      0,
+      image.height - 1,
+    );
+    for (let x = 0; x < width; x += 1) {
+      const sourceX = clamp(
+        Math.floor((sample.left + x + 0.5) * scaleX),
+        0,
+        image.width - 1,
+      );
+      const offset = (sourceY * image.width + sourceX) * image.channels;
+      const red = image.pixels[offset];
+      const green = image.pixels[offset + 1] ?? red;
+      const blue = image.pixels[offset + 2] ?? red;
+      mask[y * width + x] =
+        red >= 171 &&
+        green >= 149 &&
+        blue >= 112 &&
+        red - green >= 15 &&
+        red - green <= 36 &&
+        green - blue >= 30 &&
+        green - blue <= 50
+          ? 1
+          : 0;
+    }
+  }
+
+  let largest = {
+    area: 0,
+    areaFraction: 0,
+    bottom: 0,
+    height: 0,
+    fillRatio: 0,
+    left: 0,
+    right: 0,
+    top: 0,
+    width: 0,
+  };
+  for (let index = 0; index < mask.length; index += 1) {
+    if (!mask[index] || visited[index]) {
+      continue;
+    }
+    let head = 0;
+    let tail = 0;
+    let area = 0;
+    let left = width;
+    let right = 0;
+    let top = height;
+    let bottom = 0;
+    queue[tail++] = index;
+    visited[index] = 1;
+    while (head < tail) {
+      const current = queue[head++];
+      const x = current % width;
+      const y = Math.floor(current / width);
+      area += 1;
+      left = Math.min(left, x);
+      right = Math.max(right, x + 1);
+      top = Math.min(top, y);
+      bottom = Math.max(bottom, y + 1);
+      const neighbors = [
+        x > 0 ? current - 1 : -1,
+        x + 1 < width ? current + 1 : -1,
+        y > 0 ? current - width : -1,
+        y + 1 < height ? current + width : -1,
+      ];
+      for (const neighbor of neighbors) {
+        if (neighbor >= 0 && mask[neighbor] && !visited[neighbor]) {
+          visited[neighbor] = 1;
+          queue[tail++] = neighbor;
+        }
+      }
+    }
+    if (area > largest.area) {
+      largest = {
+        area,
+        areaFraction: Number((area / (width * height)).toFixed(4)),
+        bottom: sample.top + bottom,
+        height: bottom - top,
+        fillRatio: Number(
+          (area / Math.max((right - left) * (bottom - top), 1)).toFixed(4),
+        ),
+        left: sample.left + left,
+        right: sample.left + right,
+        top: sample.top + top,
+        width: right - left,
+      };
+    }
+  }
+
+  return largest;
+}
+
 async function captureValidatedScreenshot({
   expectedHudText,
   label,
@@ -2294,6 +2507,9 @@ async function assertBoardingHouseInteriorVisualGuard() {
     readFile(STREET_APP_PATH, "utf8"),
     readFile(VISUAL_SMOKE_PATH, "utf8"),
   ]);
+  const atmosphereSource = streetSource.match(
+    /function drawBoardingHouseInteriorAtmosphere[\s\S]*?\n}\n\nfunction drawBoardingHouseWindow/,
+  )?.[0];
 
   assert.ok(
     streetSource.includes("function drawBoardingHouseInteriorAtmosphere") &&
@@ -2305,6 +2521,15 @@ async function assertBoardingHouseInteriorVisualGuard() {
       streetSource.includes('object.id.startsWith("boarding-house-")'),
     "Morrow House furniture must keep boarding-house-specific readable object details.",
   );
+  assert.ok(
+    atmosphereSource,
+    "Could not isolate the Morrow House atmosphere pass for visual-noise validation.",
+  );
+  assert.doesNotMatch(
+    atmosphereSource,
+    /fillCircle\([^;]*CELL\s*\*\s*(?:1\.[2-9]|[2-9])/,
+    "Morrow House atmosphere must not restore a room-dominating translucent circle.",
+  );
   assert.match(
     streetSource,
     /space\.id === "interior:boarding-house"[\s\S]*?fontSize:[\s\S]*?"14px"[\s\S]*?setOrigin\([\s\S]*?0\.5/,
@@ -2313,8 +2538,12 @@ async function assertBoardingHouseInteriorVisualGuard() {
   assert.ok(
     smokeSource.includes("runInteriorCameraCheck") &&
       smokeSource.includes("interior-camera.png") &&
+      smokeSource.includes("interior-camera-mobile.png") &&
+      smokeSource.includes("assertBoardingHouseInteriorCompositionPixels") &&
+      smokeSource.includes("assertInteriorCameraPointsUnobscured") &&
+      smokeSource.includes("assertInteriorTitleInsideScene") &&
       smokeSource.includes("assertBoardingHouseInteriorVisualGuard"),
-    "Visual smoke must keep a screenshot-backed interior camera check plus the Morrow House visual guard.",
+    "Visual smoke must keep compact/mobile screenshots plus pixel-backed and geometry-backed Morrow House checks.",
   );
 }
 
@@ -4667,6 +4896,163 @@ function cameraPointDistance(first, second) {
   );
 }
 
+function projectCameraWorldPoint(camera, worldPoint) {
+  const scene = camera?.sceneViewportCss;
+  const worldView = camera?.renderedWorldView;
+  assert.ok(scene, "Camera projection is missing the CSS scene viewport.");
+  assert.ok(
+    worldView &&
+      Number.isFinite(worldView.width) &&
+      worldView.width > 0 &&
+      Number.isFinite(worldView.height) &&
+      worldView.height > 0,
+    `Camera projection has invalid rendered world view ${JSON.stringify(worldView)}.`,
+  );
+  assert.ok(worldPoint, "Camera projection is missing a world point.");
+  return {
+    x:
+      scene.x +
+      ((worldPoint.x - worldView.left) / worldView.width) * scene.width,
+    y:
+      scene.y +
+      ((worldPoint.y - worldView.top) / worldView.height) * scene.height,
+  };
+}
+
+function normalizePageRect(rect) {
+  if (!rect) {
+    return null;
+  }
+  return {
+    bottom: rect.bottom ?? rect.y + rect.height,
+    left: rect.left ?? rect.x,
+    right: rect.right ?? rect.x + rect.width,
+    top: rect.top ?? rect.y,
+  };
+}
+
+function getUnobscuredSceneBoundsAtX(page, x) {
+  const scene = normalizePageRect(page.sceneViewportCss);
+  assert.ok(scene, "Unobscured scene geometry is missing the scene viewport.");
+  let bottom = scene.bottom;
+  for (const blocker of [page.rightStack, page.dockRoot]
+    .map(normalizePageRect)
+    .filter(Boolean)) {
+    const overlapsScene =
+      blocker.bottom > scene.top &&
+      blocker.top < scene.bottom &&
+      blocker.right > scene.left &&
+      blocker.left < scene.right;
+    if (
+      overlapsScene &&
+      x >= blocker.left - 0.5 &&
+      x <= blocker.right + 0.5
+    ) {
+      bottom = Math.min(bottom, Math.max(blocker.top, scene.top));
+    }
+  }
+  return {
+    ...scene,
+    bottom,
+  };
+}
+
+function assertInteriorCameraPointsUnobscured(page, camera, label) {
+  const diagnostics = {};
+  for (const [name, worldPoint] of [
+    ["player", camera.playerWorldPoint],
+    ["follow", camera.followWorldPoint],
+  ]) {
+    const screenPoint = projectCameraWorldPoint(camera, worldPoint);
+    const visible = getUnobscuredSceneBoundsAtX(page, screenPoint.x);
+    const horizontalMargin = 12;
+    const verticalMargin = 24;
+    assert.ok(
+      screenPoint.x >= visible.left + horizontalMargin &&
+        screenPoint.x <= visible.right - horizontalMargin &&
+        screenPoint.y >= visible.top + verticalMargin &&
+        screenPoint.y <= visible.bottom - verticalMargin,
+      `${label}: ${name} point is not inside the unobscured scene region: ${JSON.stringify({
+        camera: {
+          renderedWorldView: camera.renderedWorldView,
+          safeFrameCss: camera.safeFrameCss,
+          scroll: camera.scroll,
+          scrollRange: camera.scrollRange,
+        },
+        screenPoint,
+        visible,
+        worldPoint,
+      })}.`,
+    );
+    diagnostics[name] = {
+      screenPoint: {
+        x: Number(screenPoint.x.toFixed(2)),
+        y: Number(screenPoint.y.toFixed(2)),
+      },
+      visible,
+      worldPoint,
+    };
+  }
+
+  const safeFrame = normalizePageRect(camera.safeFrameCss);
+  if (safeFrame) {
+    const expected = Object.values(diagnostics).reduce(
+      (combined, point) => ({
+        ...combined,
+        bottom: Math.min(combined.bottom, point.visible.bottom),
+      }),
+      normalizePageRect(page.sceneViewportCss),
+    );
+    assert.ok(
+      Math.abs(safeFrame.top - expected.top) <= 2 &&
+        Math.abs(safeFrame.bottom - expected.bottom) <= 2,
+      `${label}: camera safe frame does not match the live overlay occlusion: ${JSON.stringify({
+        expected,
+        safeFrame,
+      })}.`,
+    );
+  }
+
+  return diagnostics;
+}
+
+function assertInteriorTitleInsideScene(camera, label) {
+  const bounds = camera.interiorTitleWorldBounds;
+  assert.ok(bounds, `${label}: missing Morrow House title world bounds.`);
+  const topLeft = projectCameraWorldPoint(camera, {
+    x: bounds.left,
+    y: bounds.top,
+  });
+  const bottomRight = projectCameraWorldPoint(camera, {
+    x: bounds.right,
+    y: bounds.bottom,
+  });
+  const scene = normalizePageRect(camera.sceneViewportCss);
+  const margin = 3;
+  assert.ok(
+    topLeft.x >= scene.left + margin &&
+      bottomRight.x <= scene.right - margin &&
+      topLeft.y >= scene.top + margin &&
+      bottomRight.y <= scene.bottom - margin,
+    `${label}: Morrow House title is clipped by the camera viewport: ${JSON.stringify({
+      projected: {
+        bottom: bottomRight.y,
+        left: topLeft.x,
+        right: bottomRight.x,
+        top: topLeft.y,
+      },
+      scene,
+      worldBounds: bounds,
+    })}.`,
+  );
+  return {
+    bottom: Number(bottomRight.y.toFixed(2)),
+    left: Number(topLeft.x.toFixed(2)),
+    right: Number(bottomRight.x.toFixed(2)),
+    top: Number(topLeft.y.toFixed(2)),
+  };
+}
+
 async function settleCameraAtEdge(
   session,
   edge,
@@ -6297,7 +6683,24 @@ async function runInteriorCameraCheck(session) {
 
   const screenshotPath = path.join(OUTPUT_DIR, "interior-camera.png");
   const interiorPage = await session.inspectPage();
-  await captureValidatedScreenshot({
+  assertOverlayGeometry(
+    interiorPage,
+    INTERIOR_CAMERA_VIEWPORT,
+    "interior camera",
+    interiorPage.visibleTimeChips,
+    "interior:boarding-house",
+  );
+  assertBoundedVisualHierarchy(interiorPage, "interior camera");
+  const compactPointVisibility = assertInteriorCameraPointsUnobscured(
+    interiorPage,
+    settledAgain,
+    "interior camera",
+  );
+  const compactTitleBounds = assertInteriorTitleInsideScene(
+    settledAgain,
+    "interior camera",
+  );
+  const compactCapture = await captureValidatedScreenshot({
     expectedHudText: interiorPage.visibleTimeChips,
     label: "interior camera",
     page: interiorPage,
@@ -6305,6 +6708,12 @@ async function runInteriorCameraCheck(session) {
     targetPath: screenshotPath,
     viewport: INTERIOR_CAMERA_VIEWPORT,
   });
+  const compactComposition = assertBoardingHouseInteriorCompositionPixels(
+    compactCapture.screenshot,
+    interiorPage,
+    INTERIOR_CAMERA_VIEWPORT,
+    "interior camera",
+  );
 
   const interiorSettleOptions = { attempts: 8, settleMs: 90 };
   const eastEdge = await settleCameraAtEdge(
@@ -6371,10 +6780,71 @@ async function runInteriorCameraCheck(session) {
     )}, north ${northEdge.scroll.y.toFixed(1)}.`,
   );
 
+  const mobileViewport = VIEWPORTS.find(
+    (viewport) => viewport.name === "mobile",
+  );
+  assert.ok(mobileViewport, "Interior camera check is missing the mobile viewport.");
+  await session.setViewport(mobileViewport);
+  await session.navigate(
+    `${activeWebBase}/?freezeAutoplay=1&readyCheck=interior-camera-mobile-${Date.now()}&gameId=${gameId}`,
+  );
+  await session.waitForAppReady();
+  const mobileInitial = await waitForInteriorCameraProbe(session);
+  const {
+    settled: mobileSettled,
+    settledAgain: mobileSettledAgain,
+  } = await waitForInteriorCameraSettle(session, mobileInitial);
+  const mobilePage = await session.inspectPage();
+  assertOverlayGeometry(
+    mobilePage,
+    mobileViewport,
+    "interior camera mobile",
+    mobilePage.visibleTimeChips,
+    "interior:boarding-house",
+  );
+  assertBoundedVisualHierarchy(mobilePage, "interior camera mobile");
+  const mobilePointVisibility = assertInteriorCameraPointsUnobscured(
+    mobilePage,
+    mobileSettledAgain,
+    "interior camera mobile",
+  );
+  const mobileTitleBounds = assertInteriorTitleInsideScene(
+    mobileSettledAgain,
+    "interior camera mobile",
+  );
+  const mobileScreenshotPath = path.join(
+    OUTPUT_DIR,
+    "interior-camera-mobile.png",
+  );
+  const mobileCapture = await captureValidatedScreenshot({
+    expectedHudText: mobilePage.visibleTimeChips,
+    label: "interior camera mobile",
+    page: mobilePage,
+    session,
+    targetPath: mobileScreenshotPath,
+    viewport: mobileViewport,
+  });
+  const mobileComposition = assertBoardingHouseInteriorCompositionPixels(
+    mobileCapture.screenshot,
+    mobilePage,
+    mobileViewport,
+    "interior camera mobile",
+  );
+
   return {
+    compactComposition,
+    compactPointVisibility,
+    compactTitleBounds,
     eastEdge,
     gameId,
     initial,
+    mobileComposition,
+    mobileInitial,
+    mobilePointVisibility,
+    mobileScreenshotPath,
+    mobileSettled,
+    mobileSettledAgain,
+    mobileTitleBounds,
     northEdge,
     screenshotPath,
     settled,
@@ -6487,6 +6957,7 @@ async function main() {
         `[many-lives] Mobile after pan: ${path.join(OUTPUT_DIR, "mobile-after-pan.png")}`,
         `[many-lives] Mobile after west pan: ${path.join(OUTPUT_DIR, "mobile-after-pan-west.png")}`,
         `[many-lives] Interior camera: ${path.join(OUTPUT_DIR, "interior-camera.png")}`,
+        `[many-lives] Interior camera mobile: ${path.join(OUTPUT_DIR, "interior-camera-mobile.png")}`,
         `[many-lives] Summary: ${summaryPath}`,
         "",
       ].join("\n"),

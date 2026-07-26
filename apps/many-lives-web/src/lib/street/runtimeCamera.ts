@@ -4,6 +4,7 @@ import type { Point } from "@/lib/street/navigation";
 import {
   CELL,
   getCompactCameraScrollRange,
+  getMapWorldOrigin,
   getWorldBoundsForRuntime,
   type MapSize,
 } from "@/lib/street/runtimeGeometry";
@@ -24,6 +25,7 @@ const CAMERA_OFFSET_RETURN_DELAY_MS = 30_000;
 const CAMERA_OFFSET_RETURN_LERP = 0.003;
 const CAMERA_RECENT_INTERACTION_LERP = 0.68;
 const CAMERA_USER_ZOOM_LERP = 0.16;
+const INTERIOR_COMPOSITION_CLEARANCE = CELL * 0.4;
 const PLAYER_CAMERA_LERP = 0.08;
 const COMPACT_CAMERA_ANCHOR_Y_INTERACTIVE_RATIO = 0.5;
 const COMPACT_CAMERA_ANCHOR_Y_WATCH_RATIO = 0.48;
@@ -47,6 +49,8 @@ export type CameraPanResult = {
   blockedEdges: CameraEdgeState;
   didMove: boolean;
 };
+
+export type CameraSafeFrame = SceneViewport;
 
 export type RuntimeCameraState = {
   cameraGesture: CameraGestureState | null;
@@ -76,6 +80,8 @@ export function updateCamera(
   playerPixel: Point,
   world: MapSize,
   now: number,
+  safeFrame: CameraSafeFrame | null = null,
+  compositionBounds: CameraWorldBounds | null = null,
 ) {
   relaxCameraOffset(runtimeState, viewport, now);
   const blockedEdges = createEmptyCameraEdgeState();
@@ -112,7 +118,40 @@ export function updateCamera(
   let maxScrollX = Math.max(world.width - visibleWidth, 0);
   let minScrollY = 0;
   let maxScrollY = Math.max(world.height - visibleHeight, 0);
-  if (isCompactViewport(runtimeState.snapshot.viewport)) {
+  const resolvedSafeFrame = safeFrame ?? {
+    height: viewport.height,
+    width: viewport.width,
+    x: 0,
+    y: 0,
+  };
+  const interiorVisibleFrame = runtimeState.indices.activeSpace
+    ? getCameraVisibleWorldFrame(
+        resolvedSafeFrame,
+        effectiveZoom,
+        {
+          x: (camera.width - camera.worldView.width) / 2,
+          y: (camera.height - camera.worldView.height) / 2,
+        },
+        {
+          x: camera.worldView.width / Math.max(camera.width, 1),
+          y: camera.worldView.height / Math.max(camera.height, 1),
+        },
+      )
+    : null;
+  if (runtimeState.indices.activeSpace) {
+    const range = getInteriorCameraScrollRange({
+      compositionBounds,
+      focusPoint: playerPixel,
+      map: runtimeState.indices.activeSpace,
+      visibleFrame: interiorVisibleFrame,
+      visibleHeight,
+      visibleWidth,
+    });
+    minScrollX = range.minX;
+    maxScrollX = range.maxX;
+    minScrollY = range.minY;
+    maxScrollY = range.maxY;
+  } else if (isCompactViewport(runtimeState.snapshot.viewport)) {
     const range = getCompactCameraScrollRange({
       map: getRuntimeCameraMap(runtimeState),
       visibleHeight,
@@ -135,7 +174,29 @@ export function updateCamera(
   let targetScrollX = camera.scrollX;
   let targetScrollY = camera.scrollY;
 
-  if (isInteriorSpace || isExploring) {
+  if (isInteriorSpace && !isExploring) {
+    if (interiorVisibleFrame) {
+      const restingScroll = getInteriorCameraRestingScroll(
+        interiorVisibleFrame,
+        playerPixel,
+        compositionBounds,
+      );
+      targetScrollX = restingScroll.x;
+      targetScrollY = restingScroll.y;
+    } else {
+      targetScrollX = (minScrollX + maxScrollX) / 2;
+      targetScrollY = (minScrollY + maxScrollY) / 2;
+    }
+  } else if (isInteriorSpace) {
+    targetScrollX =
+      playerPixel.x -
+      (interiorVisibleFrame!.left + interiorVisibleFrame!.right) / 2 -
+      runtimeState.cameraOffset.x / effectiveZoom;
+    targetScrollY =
+      playerPixel.y -
+      (interiorVisibleFrame!.top + interiorVisibleFrame!.bottom) / 2 -
+      runtimeState.cameraOffset.y / effectiveZoom;
+  } else if (isExploring) {
     targetScrollX = playerPixel.x - anchorX;
     targetScrollY = playerPixel.y - anchorY;
   } else {
@@ -170,16 +231,36 @@ export function updateCamera(
   targetScrollY = clamp(targetScrollY, minScrollY, maxScrollY);
 
   if (isExploring && hasBlockedCameraEdge(blockedEdges)) {
-    runtimeState.cameraOffset = clampCameraOffset(runtimeState, viewport, {
-      x:
-        (playerPixel.x -
-          targetScrollX -
-          visibleWidth * getRuntimeCameraAnchorXRatio(runtimeState)) *
-        effectiveZoom,
-      y:
-        (playerPixel.y - targetScrollY - visibleHeight * anchorYRatio) *
-        effectiveZoom,
-    });
+    runtimeState.cameraOffset = clampCameraOffset(
+      runtimeState,
+      viewport,
+      isInteriorSpace
+        ? {
+            x:
+              (playerPixel.x -
+                (interiorVisibleFrame!.left + interiorVisibleFrame!.right) /
+                  2 -
+                targetScrollX) *
+              effectiveZoom,
+            y:
+              (playerPixel.y -
+                (interiorVisibleFrame!.top + interiorVisibleFrame!.bottom) / 2 -
+                targetScrollY) *
+              effectiveZoom,
+          }
+        : {
+            x:
+              (playerPixel.x -
+                targetScrollX -
+                visibleWidth * getRuntimeCameraAnchorXRatio(runtimeState)) *
+              effectiveZoom,
+            y:
+              (playerPixel.y -
+                targetScrollY -
+                visibleHeight * anchorYRatio) *
+              effectiveZoom,
+          },
+    );
   }
 
   const scrollGap = Math.hypot(
@@ -394,6 +475,168 @@ export function getTargetSceneZoom(
     getSceneZoom(viewport, world, runtimeState.snapshot.viewport) *
     runtimeState.cameraZoomFactor
   );
+}
+
+export function getInteriorCameraScrollRange({
+  compositionBounds,
+  focusPoint,
+  map,
+  visibleFrame,
+  visibleHeight,
+  visibleWidth,
+}: {
+  compositionBounds?: CameraWorldBounds | null;
+  focusPoint?: Point | null;
+  map: MapSize;
+  visibleFrame?: CameraVisibleWorldFrame | null;
+  visibleHeight: number;
+  visibleWidth: number;
+}) {
+  const origin = getMapWorldOrigin();
+  const frame = visibleFrame ?? {
+    bottom: visibleHeight,
+    left: 0,
+    right: visibleWidth,
+    top: 0,
+  };
+  const contentLeft = Math.min(
+    origin.x,
+    compositionBounds?.left ?? origin.x,
+  );
+  const contentRight = Math.max(
+    origin.x + map.width * CELL,
+    compositionBounds
+      ? compositionBounds.right + INTERIOR_COMPOSITION_CLEARANCE
+      : origin.x,
+  );
+  const contentTop = Math.min(
+    origin.y,
+    compositionBounds?.top ?? origin.y,
+  );
+  const contentBottom = Math.max(
+    origin.y + map.height * CELL,
+    compositionBounds
+      ? compositionBounds.bottom + INTERIOR_COMPOSITION_CLEARANCE
+      : origin.y,
+  );
+  const horizontal = getInteriorAxisScrollRange(
+    contentLeft,
+    contentRight - contentLeft,
+    frame.left,
+    frame.right,
+  );
+  const vertical = getInteriorAxisScrollRange(
+    contentTop,
+    contentBottom - contentTop,
+    frame.top,
+    frame.bottom,
+  );
+  if (focusPoint) {
+    const restingScroll = getInteriorCameraRestingScroll(
+      frame,
+      focusPoint,
+      compositionBounds,
+    );
+    horizontal.min = Math.min(horizontal.min, restingScroll.x);
+    horizontal.max = Math.max(horizontal.max, restingScroll.x);
+    vertical.min = Math.min(vertical.min, restingScroll.y);
+    vertical.max = Math.max(vertical.max, restingScroll.y);
+  }
+
+  return {
+    maxX: horizontal.max,
+    maxY: vertical.max,
+    minX: horizontal.min,
+    minY: vertical.min,
+  };
+}
+
+function getInteriorAxisScrollRange(
+  contentStart: number,
+  contentSize: number,
+  frameStart: number,
+  frameEnd: number,
+) {
+  const frameSize = frameEnd - frameStart;
+  if (frameSize >= contentSize) {
+    const centeredScroll =
+      contentStart + contentSize / 2 - (frameStart + frameEnd) / 2;
+    return { max: centeredScroll, min: centeredScroll };
+  }
+
+  return {
+    max: contentStart + contentSize - frameEnd,
+    min: contentStart - frameStart,
+  };
+}
+
+export type CameraVisibleWorldFrame = {
+  bottom: number;
+  left: number;
+  right: number;
+  top: number;
+};
+
+export type CameraWorldBounds = {
+  bottom: number;
+  left: number;
+  right: number;
+  top: number;
+};
+
+export function getInteriorCameraRestingScroll(
+  frame: CameraVisibleWorldFrame,
+  focusPoint: Point,
+  compositionBounds: CameraWorldBounds | null = null,
+) {
+  const horizontalFocus = compositionBounds
+    ? (Math.min(focusPoint.x, compositionBounds.left) +
+        Math.max(focusPoint.x, compositionBounds.right)) /
+      2
+    : focusPoint.x;
+  const frameHeight = frame.bottom - frame.top;
+  const preferredScrollY =
+    focusPoint.y - (frame.top + frameHeight * 0.72);
+  let restingScrollY = preferredScrollY;
+  if (compositionBounds) {
+    const contentTop = Math.min(focusPoint.y, compositionBounds.top);
+    const contentBottom = Math.max(focusPoint.y, compositionBounds.bottom);
+    const minScrollY =
+      contentBottom - (frame.bottom - frameHeight * 0.1);
+    const maxScrollY = contentTop - (frame.top + frameHeight * 0.01);
+    restingScrollY =
+      minScrollY <= maxScrollY
+        ? clamp(preferredScrollY, minScrollY, maxScrollY)
+        : (contentTop + contentBottom - frame.top - frame.bottom) / 2;
+  }
+
+  return {
+    x: horizontalFocus - (frame.left + frame.right) / 2,
+    y: restingScrollY,
+  };
+}
+
+export function getCameraVisibleWorldFrame(
+  safeFrame: CameraSafeFrame,
+  zoom: number,
+  worldViewOffset: Point = { x: 0, y: 0 },
+  worldUnitsPerPixel: Point | null = null,
+): CameraVisibleWorldFrame {
+  const effectiveZoom = Math.max(zoom, 0.001);
+  const scale = worldUnitsPerPixel ?? {
+    x: 1 / effectiveZoom,
+    y: 1 / effectiveZoom,
+  };
+  return {
+    bottom:
+      worldViewOffset.y +
+      (safeFrame.y + safeFrame.height) * scale.y,
+    left: worldViewOffset.x + safeFrame.x * scale.x,
+    right:
+      worldViewOffset.x +
+      (safeFrame.x + safeFrame.width) * scale.x,
+    top: worldViewOffset.y + safeFrame.y * scale.y,
+  };
 }
 
 function relaxCameraOffset(
