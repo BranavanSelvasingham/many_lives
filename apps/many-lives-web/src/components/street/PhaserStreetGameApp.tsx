@@ -7720,6 +7720,8 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
       visualEventCues: runtimeState.visualEventCues,
     },
   });
+  const browserVisualHierarchyProbeJson =
+    serializeBrowserVisualHierarchyProbe(runtimeState, null);
   const dockActiveTab = focusPanel ?? "actions";
   const clockLabel = formatClock(game.currentTime);
   const todoCounterLabel =
@@ -8065,7 +8067,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 browserMovementDiagnostics,
               ).replace(/</g, "\\u003c")}</script>
               <script id="ml-browser-map-agency-probe" type="application/json">null</script>
-              <script id="ml-browser-visual-hierarchy-probe" type="application/json">null</script>
+              <script id="ml-browser-visual-hierarchy-probe" type="application/json">${browserVisualHierarchyProbeJson}</script>
               <script id="ml-browser-npc-presence-probe" type="application/json">${npcPresenceProbeJson}</script>
               <script id="ml-browser-camera-probe" type="application/json">{}</script>
             </div>
@@ -8576,6 +8578,18 @@ function syncBrowserVisualHierarchyProbe(
     return;
   }
 
+  probe.textContent = serializeBrowserVisualHierarchyProbe(
+    runtimeState,
+    cue,
+    options,
+  );
+}
+
+function serializeBrowserVisualHierarchyProbe(
+  runtimeState: RuntimeState,
+  cue: MapAgencyCue | null,
+  options: { targetLabelVisible?: boolean } = {},
+) {
   const hasTarget = Boolean(cue?.targetWorld);
   const hasRoute = hasTarget
     ? Boolean(
@@ -8589,19 +8603,21 @@ function syncBrowserVisualHierarchyProbe(
       )
     : isRuntimePlayerMotionActive(runtimeState, getRuntimeNow());
 
-  probe.textContent = JSON.stringify({
-    contextualCues:
-      hasTarget || hasRoute
-        ? [hasTarget ? "route-target" : "active-route"]
+  return JSON.stringify(
+    {
+      contextualCues:
+        hasTarget || hasRoute
+          ? [hasTarget ? "route-target" : "active-route"]
+          : [],
+      hasRoute,
+      hasTarget,
+      intentLabelVisible: false,
+      persistentIdentityTreatments: runtimeState.objects?.playerTitle.visible
+        ? ["you-label"]
         : [],
-    hasRoute,
-    hasTarget,
-    intentLabelVisible: false,
-    persistentIdentityTreatments: runtimeState.objects?.playerTitle.visible
-      ? ["you-label"]
-      : [],
-    targetLabelVisible: options.targetLabelVisible ?? false,
-  }).replace(/</g, "\\u003c");
+      targetLabelVisible: options.targetLabelVisible ?? false,
+    },
+  ).replace(/</g, "\\u003c");
 }
 
 function syncBrowserCameraProbe(

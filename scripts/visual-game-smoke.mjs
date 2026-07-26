@@ -2539,11 +2539,20 @@ async function assertBoardingHouseInteriorVisualGuard() {
     smokeSource.includes("runInteriorCameraCheck") &&
       smokeSource.includes("interior-camera.png") &&
       smokeSource.includes("interior-camera-mobile.png") &&
+      smokeSource.includes("waitForVisualHierarchyPage") &&
       smokeSource.includes("assertBoardingHouseInteriorCompositionPixels") &&
       smokeSource.includes("assertInteriorCameraPointsUnobscured") &&
       smokeSource.includes("assertInteriorTitleInsideScene") &&
       smokeSource.includes("assertBoardingHouseInteriorVisualGuard"),
-    "Visual smoke must keep compact/mobile screenshots plus pixel-backed and geometry-backed Morrow House checks.",
+    "Visual smoke must wait for the hierarchy probe and keep compact/mobile screenshots plus pixel-backed and geometry-backed Morrow House checks.",
+  );
+  assert.ok(
+    streetSource.includes("browserVisualHierarchyProbeJson") &&
+      streetSource.includes("serializeBrowserVisualHierarchyProbe") &&
+      !streetSource.includes(
+        '<script id="ml-browser-visual-hierarchy-probe" type="application/json">null</script>',
+      ),
+    "Overlay refreshes must initialize the visual hierarchy probe instead of recreating a transient null value.",
   );
 }
 
@@ -6637,6 +6646,43 @@ async function waitForInteriorCameraSettle(session, initialProbe) {
   });
 }
 
+async function waitForVisualHierarchyPage(session, label) {
+  let attempts = 0;
+  let lastError = null;
+  let lastPage = null;
+
+  try {
+    return await waitFor(
+      async () => {
+        attempts += 1;
+        try {
+          lastPage = await session.inspectPage();
+          return lastPage?.visualHierarchy ? lastPage : false;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+          return false;
+        }
+      },
+      APP_READY_TIMEOUT_MS,
+      `${label}: timed out waiting for the visual hierarchy probe.`,
+    );
+  } catch (error) {
+    throw new Error(
+      `${error.message} Attempts: ${attempts}. Last state: ${JSON.stringify({
+        cameraActiveSpaceId: lastPage?.cameraActiveSpaceId ?? null,
+        cameraActiveSpaceKind: lastPage?.cameraActiveSpaceKind ?? null,
+        hasCanvas: Boolean(lastPage?.canvas),
+        hasFrameworkOverlay: lastPage?.hasFrameworkOverlay ?? null,
+        lastError,
+        rootClass: lastPage?.rootClass ?? null,
+        title: lastPage?.title ?? null,
+        url: lastPage?.url ?? null,
+      })}`,
+      { cause: error },
+    );
+  }
+}
+
 async function runInteriorCameraCheck(session) {
   const gameId = await createInteriorCameraGame();
   await session.setViewport(INTERIOR_CAMERA_VIEWPORT);
@@ -6682,7 +6728,10 @@ async function runInteriorCameraCheck(session) {
   );
 
   const screenshotPath = path.join(OUTPUT_DIR, "interior-camera.png");
-  const interiorPage = await session.inspectPage();
+  const interiorPage = await waitForVisualHierarchyPage(
+    session,
+    "interior camera",
+  );
   assertOverlayGeometry(
     interiorPage,
     INTERIOR_CAMERA_VIEWPORT,
@@ -6794,7 +6843,10 @@ async function runInteriorCameraCheck(session) {
     settled: mobileSettled,
     settledAgain: mobileSettledAgain,
   } = await waitForInteriorCameraSettle(session, mobileInitial);
-  const mobilePage = await session.inspectPage();
+  const mobilePage = await waitForVisualHierarchyPage(
+    session,
+    "interior camera mobile",
+  );
   assertOverlayGeometry(
     mobilePage,
     mobileViewport,
