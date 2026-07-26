@@ -14563,6 +14563,106 @@ function buildAutoplayRouteCaptureSegments({
   return segments;
 }
 
+function buildAutoplayOpeningRouteEvidence({
+  expectedTargetLocationId,
+  samples,
+}) {
+  const segments = buildAutoplayRouteCaptureSegments({
+    expectedTargetLocationId,
+    samples,
+  });
+  const openingSegment = segments[0] ?? null;
+  if (!openingSegment) {
+    return {
+      fragmentCount: 0,
+      openingSegment: null,
+      samples: [],
+      segments,
+    };
+  }
+
+  const fragments = [openingSegment];
+  for (const segment of segments.slice(1)) {
+    const previous = fragments.at(-1)?.samples.at(-1) ?? null;
+    const next = segment.samples[0] ?? null;
+    const gapMs =
+      typeof previous?.capturedAtEpochMs === "number" &&
+      typeof next?.capturedAtEpochMs === "number"
+        ? next.capturedAtEpochMs - previous.capturedAtEpochMs
+        : null;
+    const monotonicGapMs =
+      typeof previous?.capturedAtMonotonicMs === "number" &&
+      typeof next?.capturedAtMonotonicMs === "number"
+        ? next.capturedAtMonotonicMs - previous.capturedAtMonotonicMs
+        : null;
+    const durationMs = previous?.route?.durationMs;
+    const previousProgress = previous?.route?.progress;
+    const nextProgress = next?.route?.progress;
+    const routeTimingToleranceMs =
+      typeof durationMs === "number" && Number.isFinite(durationMs)
+        ? Math.max(250, durationMs * 0.03)
+        : null;
+    const maximumContinuousGapMs =
+      routeTimingToleranceMs !== null &&
+      typeof previousProgress === "number" &&
+      Number.isFinite(previousProgress)
+        ? Math.max(
+            AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS,
+            (1 - previousProgress) * durationMs +
+              routeTimingToleranceMs,
+          )
+        : null;
+    const progressElapsedMs =
+      typeof nextProgress === "number" &&
+      typeof previousProgress === "number" &&
+      typeof durationMs === "number"
+        ? (nextProgress - previousProgress) * durationMs
+        : null;
+    const canExtendOpeningEvidence = Boolean(
+      segment.boundaryReasons.length === 1 &&
+        segment.boundaryReasons[0] === "sample-gap" &&
+        autoplayRouteCaptureSamplesShareExactIdentity(previous, next) &&
+        next?.route?.durationMs === durationMs &&
+        typeof nextProgress === "number" &&
+        typeof previousProgress === "number" &&
+        nextProgress >= previousProgress &&
+        typeof gapMs === "number" &&
+        gapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
+        maximumContinuousGapMs !== null &&
+        gapMs <= maximumContinuousGapMs &&
+        typeof monotonicGapMs === "number" &&
+        monotonicGapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
+        monotonicGapMs <= maximumContinuousGapMs &&
+        Math.abs(gapMs - monotonicGapMs) <= 250 &&
+        typeof progressElapsedMs === "number" &&
+        progressElapsedMs >= 0 &&
+        progressElapsedMs <=
+          Math.min(gapMs, monotonicGapMs) + routeTimingToleranceMs
+    );
+    if (!canExtendOpeningEvidence) {
+      break;
+    }
+    fragments.push(segment);
+  }
+
+  const openingSamples = fragments.flatMap((segment) => segment.samples);
+  return {
+    fragmentCount: fragments.length,
+    openingSegment: {
+      ...openingSegment,
+      evidenceFragmentCount: fragments.length,
+      samples: openingSamples,
+      stalledRecorderGapCount: fragments.reduce(
+        (total, segment) =>
+          total + (segment.stalledRecorderGapCount ?? 0),
+        fragments.length - 1,
+      ),
+    },
+    samples: openingSamples,
+    segments,
+  };
+}
+
 function compactAutoplayRouteCaptureSegments(segments) {
   return (segments ?? []).map((segment, index) => ({
     boundaryReasons: segment.boundaryReasons,
@@ -15319,12 +15419,15 @@ function autoplayRouteCaptureWindowRetainsCompositingSettle(
 function buildAutoplayRecordedRouteFrameCandidates({
   expectedTargetLocationId,
   frames,
+  openingSegment: suppliedOpeningSegment = null,
   samples,
 }) {
-  const openingSegment = buildAutoplayRouteCaptureSegments({
-    expectedTargetLocationId,
-    samples,
-  })[0];
+  const openingSegment =
+    suppliedOpeningSegment ??
+    buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId,
+      samples,
+    })[0];
   const legalSamples = openingSegment?.samples ?? [];
 
   return (frames ?? [])
@@ -15397,13 +15500,16 @@ function buildAutoplayRecordedRouteFrameCandidates({
 function buildAutoplayRecordedRouteWindowCandidates({
   expectedTargetLocationId,
   frames,
+  openingSegment: suppliedOpeningSegment = null,
   recordedWindows = [],
   samples,
 }) {
-  const openingSegment = buildAutoplayRouteCaptureSegments({
-    expectedTargetLocationId,
-    samples,
-  })[0];
+  const openingSegment =
+    suppliedOpeningSegment ??
+    buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId,
+      samples,
+    })[0];
   const legalSamples = openingSegment?.samples ?? [];
   const eligibleFrames = (frames ?? [])
     .filter(
@@ -15704,16 +15810,17 @@ function selectAutoplayRecordedRouteTrajectory({
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
-  const segments = buildAutoplayRouteCaptureSegments({
+  const openingEvidence = buildAutoplayOpeningRouteEvidence({
     expectedTargetLocationId,
     samples,
   });
-  const openingSegment = segments[0] ?? null;
+  const { openingSegment, segments } = openingEvidence;
   const candidateSets = [
     {
       candidates: buildAutoplayRecordedRouteFrameCandidates({
         expectedTargetLocationId,
         frames,
+        openingSegment,
         samples: openingSegment?.samples ?? [],
       }),
       validate: ({ recordedEvidence, ...options }) =>
@@ -15726,6 +15833,7 @@ function selectAutoplayRecordedRouteTrajectory({
       candidates: buildAutoplayRecordedRouteWindowCandidates({
         expectedTargetLocationId,
         frames,
+        openingSegment,
         recordedWindows,
         samples: openingSegment?.samples ?? [],
       }),
@@ -15880,10 +15988,11 @@ function selectAutoplayRecordedRouteTrajectory({
   const directFrameCandidateCount = buildAutoplayRecordedRouteFrameCandidates({
     expectedTargetLocationId,
     frames,
+    openingSegment,
     samples: openingSegment?.samples ?? [],
   }).length;
   throw new Error(
-    `${label}: opening route segment did not contain two distinct legal rendered positions. Segments: ${segments.length}. Opening samples: ${openingSegment?.samples.length ?? 0}. Opening frames: ${openingFrameCount}. Direct frame candidates: ${directFrameCandidateCount}. Proactive windows: ${recordedWindows.length}. Historical frames: ${(frames ?? []).length}.`,
+    `${label}: opening route evidence did not contain two distinct legal rendered positions. Segments: ${segments.length}. Opening evidence fragments: ${openingEvidence.fragmentCount}. Opening evidence samples: ${openingSegment?.samples.length ?? 0}. Opening frames: ${openingFrameCount}. Direct frame candidates: ${directFrameCandidateCount}. Proactive windows: ${recordedWindows.length}. Historical frames: ${(frames ?? []).length}.`,
   );
 }
 

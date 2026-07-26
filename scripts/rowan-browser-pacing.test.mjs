@@ -721,7 +721,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
         validateFrame,
         validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
       }),
-    /opening route segment did not contain two distinct legal rendered positions/,
+    /opening route evidence did not contain two distinct legal rendered positions/,
   );
   assert.throws(
     () =>
@@ -738,7 +738,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
         validateFrame,
         validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
       }),
-    /opening route segment did not contain two distinct legal rendered positions/,
+    /opening route evidence did not contain two distinct legal rendered positions/,
   );
   const trajectory = routeCapture.selectAutoplayRecordedRouteTrajectory({
     expectedTargetLocationId: "tea-house",
@@ -804,7 +804,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
           validateFrame,
           validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
         }),
-      /opening route segment did not contain two distinct legal rendered positions/,
+      /opening route evidence did not contain two distinct legal rendered positions/,
     );
   }
 
@@ -1646,7 +1646,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const routeSegmentsPolicy = Function(
     "AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS",
     "AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { autoplayRecordedRouteWindowSharesAdmissibleIdentity, autoplayRouteCaptureSamplesShareExactIdentity, autoplayRouteCaptureSamplesShareExactRouteIdentity, autoplayRouteCaptureWindowOpeningMembership, buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, compactAutoplayRouteFrameWindowProbe, isAutoplayFootholdRouteFrame };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}; return { autoplayRecordedRouteWindowSharesAdmissibleIdentity, autoplayRouteCaptureSamplesShareExactIdentity, autoplayRouteCaptureSamplesShareExactRouteIdentity, autoplayRouteCaptureWindowOpeningMembership, buildAutoplayOpeningRouteEvidence, buildAutoplayRouteCaptureSegments, compactAutoplayRouteCaptureSegments, compactAutoplayRouteFrameWindowProbe, isAutoplayFootholdRouteFrame };`,
   )(2_000, 0.02);
   const screencastFrameCapturedAtEpochMs = (frame) =>
     typeof frame?.metadata?.timestamp === "number"
@@ -2503,6 +2503,197 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         true,
       );
       await cadenceSession.stopAutoplayScreencast();
+    },
+  );
+
+  await t.test(
+    "opening evidence joins only bounded same-identity startup fragments",
+    () => {
+      const startedAt = 1_750_000_000_000;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const route = {
+        active: true,
+        durationMs: 5_040,
+        legal: true,
+        progress: 0,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sample = (
+        progress,
+        offsetMs,
+        {
+          generation = 2,
+          hud = "DAY 1 11:05",
+          previousOffsetMs = null,
+          routeOverrides = {},
+          tickCount,
+          unavailableCount = 0,
+        } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          ...paintProbe,
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+        },
+        recorderGeneration: generation,
+        recorderParseErrorCount: 0,
+        recorderPreviousTickAtEpochMs:
+          previousOffsetMs === null
+            ? null
+            : startedAt + previousOffsetMs,
+        recorderRejectedCount: 0,
+        recorderTickCount: tickCount,
+        recorderUnavailableCount: unavailableCount,
+        route: { ...route, progress, ...routeOverrides },
+        source: "movement-probe-recorder",
+      });
+      const fragmentedSamples = [
+        sample(0.003, 0, { tickCount: 1 }),
+        sample(0.008, 2_200, {
+          previousOffsetMs: 0,
+          tickCount: 2,
+          unavailableCount: 1,
+        }),
+        sample(0.6, 3_500, {
+          previousOffsetMs: 2_200,
+          tickCount: 3,
+          unavailableCount: 1,
+        }),
+        sample(0.954, 4_800, {
+          previousOffsetMs: 3_500,
+          tickCount: 4,
+          unavailableCount: 1,
+        }),
+      ];
+      const rawSegments =
+        routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId: "tea-house",
+          samples: fragmentedSamples,
+        });
+      assert.equal(rawSegments.length, 2);
+      assert.deepEqual(rawSegments[1].boundaryReasons, ["sample-gap"]);
+
+      const openingEvidence =
+        routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence({
+          expectedTargetLocationId: "tea-house",
+          samples: fragmentedSamples,
+        });
+      assert.equal(openingEvidence.fragmentCount, 2);
+      assert.equal(openingEvidence.openingSegment.samples.length, 4);
+
+      const frame = (sequence, offsetMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: { timestamp: (startedAt + offsetMs) / 1_000 },
+        sequence,
+      });
+      const trajectory =
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+          expectedTargetLocationId: "tea-house",
+          frames: [
+            frame(1, 100, "startup-route-position-a"),
+            frame(2, 3_650, "startup-route-position-b"),
+          ],
+          label: "startup-starved opening route",
+          samples: fragmentedSamples,
+          validateFrame: ({
+            frame: renderedFrame,
+            paintProbe: acceptedPaintProbe,
+          }) => ({
+            buffer: Buffer.from(renderedFrame.data, "base64"),
+            height: 625,
+            paintProbe: acceptedPaintProbe,
+            textPaint: {},
+            width: 1365,
+          }),
+          validateStableFramePair: () => ({
+            hudPixelDifferenceRatio: 0,
+          }),
+        });
+      assert.equal(trajectory.start.frame.sequence, 1);
+      assert.equal(trajectory.mid.frame.sequence, 2);
+
+      const fragmentCountFor = (replacement) =>
+        routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence({
+          expectedTargetLocationId: "tea-house",
+          samples: [fragmentedSamples[0], replacement],
+        }).fragmentCount;
+      assert.equal(
+        fragmentCountFor(
+          sample(0.008, 2_200, {
+            previousOffsetMs: 0,
+            routeOverrides: {
+              worldPath: [
+                { x: 331, y: 688 },
+                { x: 1_400, y: 700 },
+              ],
+            },
+            tickCount: 2,
+            unavailableCount: 1,
+          }),
+        ),
+        1,
+      );
+      assert.equal(
+        fragmentCountFor(
+          sample(0.008, 2_200, {
+            hud: "DAY 1 11:10",
+            previousOffsetMs: 0,
+            tickCount: 2,
+            unavailableCount: 1,
+          }),
+        ),
+        1,
+      );
+      assert.equal(
+        fragmentCountFor(
+          sample(0, 2_200, {
+            previousOffsetMs: 0,
+            tickCount: 2,
+            unavailableCount: 1,
+          }),
+        ),
+        1,
+      );
+      assert.equal(
+        fragmentCountFor(
+          sample(0.008, 6_000, {
+            previousOffsetMs: 0,
+            tickCount: 2,
+            unavailableCount: 1,
+          }),
+        ),
+        1,
+      );
+      assert.equal(
+        fragmentCountFor(
+          sample(0.008, 2_200, {
+            generation: 3,
+            previousOffsetMs: 0,
+            tickCount: 2,
+            unavailableCount: 1,
+          }),
+        ),
+        1,
+      );
     },
   );
 
