@@ -1782,6 +1782,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayRecordedRouteWindowSharesAdmissibleIdentity",
     "autoplayRouteCaptureWindowOpeningMembership",
     "autoplayRecordedRouteWindowFrame",
+    "buildAutoplayOpeningRouteEvidence",
     "buildAutoplayRouteCaptureSegments",
     "captureAutoplayProactiveRouteFrameWindow",
     "compactAutoplayRouteCaptureSegments",
@@ -1831,6 +1832,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.autoplayRouteCaptureWindowOpeningMembership,
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
+    routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
     (options) => proactiveRouteCaptureFixture(options),
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
@@ -2610,6 +2612,42 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         });
       assert.equal(openingEvidence.fragmentCount, 2);
       assert.equal(openingEvidence.openingSegment.samples.length, 4);
+
+      const incrementalArchive = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/fragmented-opening-route",
+        url: "http://127.0.0.1/",
+      });
+      incrementalArchive.screencast = {
+        routeFrameArchive: [],
+        routeFrameArchiveFrozen: false,
+        routeFrameArchivedLastSampleAtEpochMs: null,
+        routeFrameArchivedSampleCount: 0,
+        routeFrameHistory: [],
+        routeFrameObservedSegmentCount: 0,
+        routeFrameOpeningSegment: null,
+        routeSampleArchive: [],
+      };
+      incrementalArchive.archiveAutoplayRouteFrames({
+        expectedTargetLocationId: "tea-house",
+        samples: fragmentedSamples.slice(0, 1),
+      });
+      incrementalArchive.archiveAutoplayRouteFrames({
+        expectedTargetLocationId: "tea-house",
+        samples: fragmentedSamples,
+      });
+      assert.equal(incrementalArchive.screencast.routeFrameArchiveFrozen, false);
+      assert.equal(incrementalArchive.screencast.routeSampleArchive.length, 4);
+      assert.equal(
+        incrementalArchive.screencast.routeFrameOpeningSegment.lastProgress,
+        0.954,
+      );
+      assert.equal(
+        incrementalArchive.screencast.routeFrameObservedSegmentCount,
+        2,
+      );
 
       const frame = (sequence, offsetMs, pixels) => ({
         data: Buffer.from(pixels).toString("base64"),

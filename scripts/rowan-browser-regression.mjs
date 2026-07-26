@@ -4797,15 +4797,16 @@ class CdpSession {
         ),
       ).values(),
     ];
-    const segments = buildAutoplayRouteCaptureSegments({
+    const openingEvidence = buildAutoplayOpeningRouteEvidence({
       expectedTargetLocationId: recorder.expectedTargetLocationId,
       samples: combinedSamples,
     });
-    const openingSegment = segments[0] ?? null;
+    const { openingSegment, segments } = openingEvidence;
     const samples = openingSegment?.samples ?? [];
     const firstSampleAtEpochMs = samples[0]?.capturedAtEpochMs ?? null;
     const lastSampleAtEpochMs = samples.at(-1)?.capturedAtEpochMs ?? null;
-    state.routeFrameArchiveFrozen = segments.length > 1;
+    state.routeFrameArchiveFrozen =
+      segments.length > openingEvidence.fragmentCount;
     state.routeFrameObservedSegmentCount = segments.length;
     state.routeFrameOpeningSegment = compactAutoplayRouteCaptureSegments(
       openingSegment ? [openingSegment] : [],
