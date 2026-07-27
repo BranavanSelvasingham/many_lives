@@ -2032,6 +2032,188 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   await archiveSession.stopAutoplayScreencast();
 
   await t.test(
+    "a bounded route-tail frame survives slow CI screencast cadence",
+    async () => {
+      const tailSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/route-tail",
+        url: "http://127.0.0.1/",
+      });
+      tailSession.socket = { destroyed: false, writable: true };
+      tailSession.send = async () => ({});
+      await tailSession.startAutoplayScreencast();
+      const startedAt = tailSession.screencast.startedAtEpochMs;
+      const samples = [
+        [0.005, 0],
+        [0.14, 200],
+        [0.28, 400],
+        [0.42, 600],
+        [0.56, 800],
+        [0.7, 1_000],
+        [0.852, 1_200],
+      ].map(([progress, offsetMs], index) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+          stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+          viewport: { height: 625, width: 1365 },
+        },
+        recorderGeneration: 2,
+        recorderParseErrorCount: 0,
+        recorderRejectedCount: 0,
+        recorderTickCount: index + 1,
+        recorderUnavailableCount: 0,
+        route: {
+          active: true,
+          durationMs: 5_040,
+          legal: true,
+          progress,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          spaceId: "street:south-quay",
+          target: { x: 17, y: 9 },
+          targetLocationId: "tea-house",
+          tilePath: [
+            { x: 3, y: 9 },
+            { x: 17, y: 9 },
+          ],
+          visualObstaclesClear: true,
+          worldPath: [
+            { x: 331, y: 688 },
+            { x: 1_338, y: 656 },
+          ],
+        },
+        source: "movement-probe-recorder",
+      }));
+      const addFrame = (sequence, offsetMs, pixels) => {
+        tailSession.handleAutoplayScreencastFrame({
+          data: Buffer.from(pixels).toString("base64"),
+          metadata: { timestamp: (startedAt + offsetMs) / 1_000 },
+          sessionId: sequence,
+        });
+      };
+      addFrame(41, 500, "route-middle");
+      tailSession.screencast.routeRecorderExpectedTargetLocationId =
+        "tea-house";
+      tailSession.archiveAutoplayRouteFrames({
+        acceptedCount: samples.length,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples,
+      });
+      assert.equal(
+        tailSession.screencast.routeFrameArchive.length,
+        1,
+        "The initial recorder read must reproduce the single-frame CI archive.",
+      );
+
+      addFrame(42, 1_215, "route-tail");
+      assert.equal(
+        tailSession.screencast.routeFrameArchive.length,
+        2,
+        "A bounded tail frame arriving after the recorder read must update the durable archive immediately.",
+      );
+      addFrame(43, 1_400, "too-late");
+      const routeMiddleFrame =
+        tailSession.screencast.routeFrameHistory[0];
+      const tooLateFrame = tailSession.screencast.routeFrameHistory[2];
+
+      addFrame(44, 5_000, "later-route");
+      const laterSamples = [0.1, 0.4].map((progress, index) => ({
+        ...samples[index],
+        capturedAtEpochMs: startedAt + 5_000 + index * 100,
+        capturedAtMonotonicMs: 5_000 + index * 100,
+        paintProbe: {
+          ...samples[index].paintProbe,
+          regions: [{ surface: "hud", text: "DAY 1 11:25" }],
+          stableRegions: [{ surface: "hud", text: "DAY 1 11:25" }],
+        },
+        route: {
+          ...samples[index].route,
+          durationMs: 840,
+          progress,
+          spaceId: "interior:tea-house",
+          target: { x: 8, y: 3 },
+          tilePath: [
+            { x: 7, y: 4 },
+            { x: 8, y: 3 },
+          ],
+          worldPath: [
+            { x: 396, y: 236 },
+            { x: 436, y: 196 },
+          ],
+        },
+      }));
+      tailSession.archiveAutoplayRouteFrames({
+        acceptedCount: samples.length + laterSamples.length,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: [...samples, ...laterSamples],
+      });
+      assert.deepEqual(
+        tailSession.screencast.routeFrameArchive.map((frame) =>
+          Buffer.from(frame.data, "base64").toString(),
+        ),
+        ["route-middle", "route-tail"],
+        "Only the frame inside the legal sample span and the 15ms route-tail frame should survive archival.",
+      );
+      assert.equal(tailSession.screencast.routeFrameArchiveFrozen, true);
+      assert.equal(
+        tailSession.screencast.routeFrameHistory.length,
+        1,
+        "Later route churn must be allowed to evict the generic ring without losing the durable opening frames.",
+      );
+
+      const validateFrame = ({ frame, paintProbe: framePaintProbe }) => ({
+        buffer: Buffer.from(frame.data, "base64"),
+        height: 375,
+        paintProbe: framePaintProbe,
+        textPaint: {},
+        width: 819,
+      });
+      const trajectory =
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+          expectedTargetLocationId: "tea-house",
+          frames: tailSession.autoplayRouteFrameHistory(),
+          label: "bounded route-tail",
+          samples: tailSession.autoplayRouteCaptureSamples(),
+          validateFrame,
+          validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+            assert.notDeepEqual(afterBuffer, beforeBuffer);
+            return { hudPixelDifferenceRatio: 0 };
+          },
+        });
+      assert.equal(trajectory.start.frame.sequence, 1);
+      assert.equal(trajectory.mid.frame.sequence, 2);
+      assert.equal(
+        trajectory.mid.validated.textPaint.routeTailFrameGraceMs,
+        15,
+      );
+      assert.equal(
+        trajectory.mid.validated.textPaint.routeTailFrameGraceMaximumMs,
+        125,
+      );
+
+      assert.throws(
+        () =>
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: [routeMiddleFrame, tooLateFrame],
+            label: "late route-tail",
+            samples,
+            validateFrame,
+            validateStableFramePair: () => ({}),
+          }),
+        /opening route evidence did not contain two distinct legal rendered positions/,
+        "A frame beyond both the 125ms tail bound and remaining legal route time must stay rejected.",
+      );
+      await tailSession.stopAutoplayScreencast();
+    },
+  );
+
+  await t.test(
     "short opening routes archive two truthful visual windows despite sparse screencast timing",
     async () => {
   const sparseSession = new CdpSession({

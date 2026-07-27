@@ -4805,6 +4805,23 @@ class CdpSession {
     const samples = openingSegment?.samples ?? [];
     const firstSampleAtEpochMs = samples[0]?.capturedAtEpochMs ?? null;
     const lastSampleAtEpochMs = samples.at(-1)?.capturedAtEpochMs ?? null;
+    const lastSample = samples.at(-1) ?? null;
+    const routeDurationMs = Number(lastSample?.route?.durationMs);
+    const routeProgress = Number(lastSample?.route?.progress);
+    const remainingRouteMs =
+      Number.isFinite(routeDurationMs) &&
+      routeDurationMs > 0 &&
+      Number.isFinite(routeProgress)
+        ? routeDurationMs * Math.max(0, 1 - routeProgress)
+        : 0;
+    const tailFrameGraceMs = Math.min(
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      remainingRouteMs,
+    );
+    const lastAdmissibleFrameAtEpochMs =
+      lastSampleAtEpochMs === null
+        ? null
+        : lastSampleAtEpochMs + tailFrameGraceMs;
     state.routeFrameArchiveFrozen =
       segments.length > openingEvidence.fragmentCount;
     state.routeFrameObservedSegmentCount = segments.length;
@@ -4827,7 +4844,7 @@ class CdpSession {
       if (
         capturedAtEpochMs === null ||
         capturedAtEpochMs < firstSampleAtEpochMs ||
-        capturedAtEpochMs > lastSampleAtEpochMs ||
+        capturedAtEpochMs > lastAdmissibleFrameAtEpochMs ||
         archivedSequences.has(frame.sequence)
       ) {
         continue;
@@ -5052,6 +5069,16 @@ class CdpSession {
           oldestAcceptedRouteFrameEpochMs)
     ) {
       state.routeFrameHistory.shift();
+    }
+    if (
+      state.routeRecorderExpectedTargetLocationId &&
+      state.routeSampleArchive.length > 0
+    ) {
+      this.archiveAutoplayRouteFrames({
+        expectedTargetLocationId:
+          state.routeRecorderExpectedTargetLocationId,
+        samples: state.routeSampleArchive,
+      });
     }
     this.scheduleAutoplayRouteSampleFromScreencastFrame();
 
@@ -15445,6 +15472,7 @@ function buildAutoplayRecordedRouteFrameCandidates({
         )
         .at(-1);
       const openingProbe = legalSamples[0] ?? null;
+      const closingProbe = legalSamples.at(-1) ?? null;
       const openingFrameSettleMs = openingProbe
         ? capturedAtEpochMs - openingProbe.capturedAtEpochMs
         : null;
@@ -15456,11 +15484,46 @@ function buildAutoplayRecordedRouteFrameCandidates({
           openingFrameSettleMs >=
             AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS,
       );
-      const beforeProbe = settledBeforeProbe ??
-        (usesOpeningFrameGrace ? openingProbe : null);
-      const afterProbe = legalSamples.find(
+      const bracketedAfterProbe = legalSamples.find(
         (sample) => sample.capturedAtEpochMs >= capturedAtEpochMs,
       );
+      const closingRouteDurationMs = Number(
+        closingProbe?.route?.durationMs,
+      );
+      const closingRouteProgress = Number(closingProbe?.route?.progress);
+      const tailFrameGraceMs = closingProbe
+        ? capturedAtEpochMs - closingProbe.capturedAtEpochMs
+        : null;
+      const remainingRouteMs =
+        Number.isFinite(closingRouteDurationMs) &&
+        closingRouteDurationMs > 0 &&
+        Number.isFinite(closingRouteProgress)
+          ? closingRouteDurationMs *
+            Math.max(0, 1 - closingRouteProgress)
+          : 0;
+      const usesTailFrameGrace = Boolean(
+        !bracketedAfterProbe &&
+          settledBeforeProbe &&
+          closingProbe &&
+          typeof tailFrameGraceMs === "number" &&
+          tailFrameGraceMs > 0 &&
+          tailFrameGraceMs <=
+            Math.min(
+              AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+              remainingRouteMs,
+            ) &&
+          autoplayRouteCaptureSamplesShareExactIdentity(
+            settledBeforeProbe,
+            closingProbe,
+          ),
+      );
+      const beforeProbe = usesTailFrameGrace
+        ? settledBeforeProbe
+        : settledBeforeProbe ??
+          (usesOpeningFrameGrace ? openingProbe : null);
+      const afterProbe = usesTailFrameGrace
+        ? closingProbe
+        : bracketedAfterProbe;
       if (
         !beforeProbe ||
         !afterProbe ||
@@ -15473,11 +15536,12 @@ function buildAutoplayRecordedRouteFrameCandidates({
           beforeProbe,
           afterProbe,
         ) ||
-        !screencastFrameIsBracketedByEpochProbes(
-          frame,
-          beforeProbe,
-          afterProbe,
-        )
+        (!usesTailFrameGrace &&
+          !screencastFrameIsBracketedByEpochProbes(
+            frame,
+            beforeProbe,
+            afterProbe,
+          ))
       ) {
         return null;
       }
@@ -15487,6 +15551,9 @@ function buildAutoplayRecordedRouteFrameCandidates({
         frame,
         openingFrameGraceMs: usesOpeningFrameGrace
           ? openingFrameSettleMs
+          : null,
+        routeTailFrameGraceMs: usesTailFrameGrace
+          ? tailFrameGraceMs
           : null,
       };
     })
@@ -15727,6 +15794,14 @@ function validateAutoplayRecordedRouteFrame({
                 AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS,
             }
           : {}),
+        ...(typeof recordedFrame.routeTailFrameGraceMs === "number"
+          ? {
+              routeTailFrameGraceMaximumMs:
+                AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+              routeTailFrameGraceMs:
+                recordedFrame.routeTailFrameGraceMs,
+            }
+          : {}),
         ...(!exactIdentity
           ? {
               routeWindowPaintProbeBasis:
@@ -15763,6 +15838,18 @@ function autoplayRecordedRouteWindowsHaveDistinctProgress(
     const capturedAtEpochMs = frameCapturedAtEpochMs(
       window?.frame ?? window?.confirmationFrame,
     );
+    const routeTailFrameGraceMs =
+      window?.routeTailFrameGraceMs ??
+      window?.textPaint?.routeTailFrameGraceMs;
+    if (
+      typeof routeTailFrameGraceMs === "number" &&
+      Number.isFinite(afterProgress) &&
+      capturedAtEpochMs > afterAtEpochMs &&
+      capturedAtEpochMs - afterAtEpochMs ===
+        routeTailFrameGraceMs
+    ) {
+      return afterProgress;
+    }
     if (
       ![
         beforeProgress,
