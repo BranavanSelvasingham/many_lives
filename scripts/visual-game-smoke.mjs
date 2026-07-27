@@ -63,6 +63,10 @@ const STREET_VISUAL_SCENE_RENDERER_PATH = path.join(
   ROOT,
   "apps/many-lives-web/src/components/street/streetVisualSceneRenderer.ts",
 );
+const SOUTH_QUAY_V2_DOCUMENT_PATH = path.join(
+  ROOT,
+  "apps/many-lives-web/src/lib/street/visual-scene-documents/southQuayV2Document.ts",
+);
 const RUNTIME_CAMERA_PATH = path.join(
   ROOT,
   "apps/many-lives-web/src/lib/street/runtimeCamera.ts",
@@ -101,6 +105,35 @@ const KETTLE_LAMP_LANDMARK_BOUNDS = {
   minX: 1138,
   minY: 324,
 };
+const EAST_WATERFRONT_MOORING_BAYS = [
+  {
+    anchorX: 1718,
+    anchorY: 488,
+    bottom: 530,
+    id: "north",
+    left: 1592,
+    right: 1768,
+    top: 446,
+  },
+  {
+    anchorX: 1718,
+    anchorY: 765,
+    bottom: 800,
+    id: "middle",
+    left: 1624,
+    right: 1768,
+    top: 730,
+  },
+  {
+    anchorX: 1718,
+    anchorY: 1014,
+    bottom: 1056,
+    id: "south",
+    left: 1576,
+    right: 1768,
+    top: 976,
+  },
+];
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|starting|weighing|continuing|carrying the conversation)/i;
@@ -108,6 +141,7 @@ const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
 let activeWebBase = DEFAULT_WEB_BASE;
 const screenshotCaptureRetries = [];
 const screenshotPixelDiagnostics = [];
+const eastWaterfrontCompositionDiagnostics = [];
 
 const VIEWPORTS = [
   { height: 720, name: "desktop", width: 1280 },
@@ -1796,6 +1830,196 @@ function assertScreenshotVisualIntegrity(buffer, page, viewport, label) {
   return { hudChipDiagnostics, largestNearBlackComponent, uiTextDiagnostics };
 }
 
+function assertEastWaterfrontCompositionPixels(
+  buffer,
+  camera,
+  page,
+  viewport,
+  label,
+) {
+  const image = decodePngPixels(buffer);
+  const scene = page.sceneViewportCss;
+  const worldView = camera?.renderedWorldView;
+  assert.ok(scene && worldView, `${label}: missing camera geometry for waterfront validation.`);
+
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  const blockers = [page.rightStack, page.dockRoot]
+    .map(normalizePageRect)
+    .filter(Boolean);
+  const diagnostics = [];
+
+  for (const bay of EAST_WATERFRONT_MOORING_BAYS) {
+    const cssRect = {
+      bottom:
+        scene.y +
+        ((bay.bottom - worldView.top) / worldView.height) * scene.height,
+      left:
+        scene.x +
+        ((bay.left - worldView.left) / worldView.width) * scene.width,
+      right:
+        scene.x +
+        ((bay.right - worldView.left) / worldView.width) * scene.width,
+      top:
+        scene.y +
+        ((bay.top - worldView.top) / worldView.height) * scene.height,
+    };
+    const sample = {
+      bottom: Math.min(cssRect.bottom, scene.y + scene.height),
+      left: Math.max(cssRect.left, scene.x),
+      right: Math.min(cssRect.right, scene.x + scene.width),
+      top: Math.max(cssRect.top, scene.y),
+    };
+    if (sample.right - sample.left < 24 || sample.bottom - sample.top < 18) {
+      continue;
+    }
+    const anchor = {
+      x:
+        scene.x +
+        ((bay.anchorX - worldView.left) / worldView.width) * scene.width,
+      y:
+        scene.y +
+        ((bay.anchorY - worldView.top) / worldView.height) * scene.height,
+    };
+    if (
+      anchor.x < scene.x ||
+      anchor.x > scene.x + scene.width ||
+      anchor.y < scene.y ||
+      anchor.y > scene.y + scene.height ||
+      blockers.some(
+        (blocker) =>
+          anchor.x >= blocker.left &&
+          anchor.x <= blocker.right &&
+          anchor.y >= blocker.top &&
+          anchor.y <= blocker.bottom,
+      )
+    ) {
+      continue;
+    }
+
+    const warmBins = new Uint16Array(4);
+    let darkHardwarePixels = 0;
+    let maximumLuminance = 0;
+    let minimumLuminance = 255;
+    let sampledPixels = 0;
+    let warmMaterialPixels = 0;
+
+    for (
+      let sourceY = Math.floor(sample.top * scaleY);
+      sourceY < Math.ceil(sample.bottom * scaleY);
+      sourceY += 1
+    ) {
+      for (
+        let sourceX = Math.floor(sample.left * scaleX);
+        sourceX < Math.ceil(sample.right * scaleX);
+        sourceX += 1
+      ) {
+        const cssX = (sourceX + 0.5) / scaleX;
+        const cssY = (sourceY + 0.5) / scaleY;
+        if (
+          blockers.some(
+            (blocker) =>
+              cssX >= blocker.left &&
+              cssX <= blocker.right &&
+              cssY >= blocker.top &&
+              cssY <= blocker.bottom,
+          )
+        ) {
+          continue;
+        }
+
+        const offset = (sourceY * image.width + sourceX) * image.channels;
+        const red = image.pixels[offset];
+        const green = image.pixels[offset + 1] ?? red;
+        const blue = image.pixels[offset + 2] ?? red;
+        const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        const warmMaterial =
+          red >= 135 &&
+          red <= 210 &&
+          red - green >= 16 &&
+          red - green <= 44 &&
+          green - blue >= 24 &&
+          green - blue <= 58;
+        const darkHardware =
+          red >= 52 &&
+          red <= 124 &&
+          green >= 42 &&
+          green <= 104 &&
+          blue >= 32 &&
+          blue <= 88 &&
+          red - green >= 4 &&
+          red - green <= 28 &&
+          green - blue >= 2 &&
+          green - blue <= 26;
+
+        sampledPixels += 1;
+        minimumLuminance = Math.min(minimumLuminance, luminance);
+        maximumLuminance = Math.max(maximumLuminance, luminance);
+        if (warmMaterial) {
+          warmMaterialPixels += 1;
+          const relativeX =
+            sample.right > sample.left
+              ? (cssX - sample.left) / (sample.right - sample.left)
+              : 0;
+          warmBins[
+            clamp(Math.floor(relativeX * warmBins.length), 0, warmBins.length - 1)
+          ] += 1;
+        }
+        if (darkHardware) {
+          darkHardwarePixels += 1;
+        }
+      }
+    }
+
+    if (sampledPixels < 100) {
+      continue;
+    }
+
+    const warmMaterialFraction = warmMaterialPixels / sampledPixels;
+    const minimumWarmPixelsPerBin = Math.max(
+      4,
+      Math.floor(sampledPixels * 0.006),
+    );
+    const activeWarmBins = [...warmBins].filter(
+      (count) => count >= minimumWarmPixelsPerBin,
+    ).length;
+    const luminanceRange = maximumLuminance - minimumLuminance;
+    const minimumDarkHardwarePixels = Math.max(
+      6,
+      Math.floor(sampledPixels * 0.003),
+    );
+
+    assert.ok(
+      warmMaterialFraction >= 0.16 && activeWarmBins >= 3,
+      `${label}: ${bay.id} east-waterfront bay lacks a broad authored dock material (${warmMaterialFraction.toFixed(3)} warm fraction, ${activeWarmBins}/4 active horizontal bands).`,
+    );
+    assert.ok(
+      darkHardwarePixels >= minimumDarkHardwarePixels,
+      `${label}: ${bay.id} east-waterfront bay lacks readable mooring hardware (${darkHardwarePixels} pixels, expected >= ${minimumDarkHardwarePixels}).`,
+    );
+    assert.ok(
+      luminanceRange >= 48,
+      `${label}: ${bay.id} east-waterfront bay is visually flat (${luminanceRange.toFixed(1)} luminance range).`,
+    );
+
+    diagnostics.push({
+      activeWarmBins,
+      bay: bay.id,
+      darkHardwarePixels,
+      luminanceRange: Number(luminanceRange.toFixed(1)),
+      sample,
+      warmMaterialFraction: Number(warmMaterialFraction.toFixed(3)),
+    });
+  }
+
+  assert.ok(
+    diagnostics.length >= 1,
+    `${label}: no unobscured east-waterfront mooring bay was available for screenshot validation.`,
+  );
+  eastWaterfrontCompositionDiagnostics.push({ bays: diagnostics, label });
+  return diagnostics;
+}
+
 function assertBoardingHouseInteriorCompositionPixels(
   buffer,
   page,
@@ -2340,6 +2564,7 @@ async function assertCameraPanContractGuard() {
   const [
     streetSource,
     visualSceneRendererSource,
+    southQuayV2DocumentSource,
     cameraSource,
     geometrySource,
     viewportSource,
@@ -2347,6 +2572,7 @@ async function assertCameraPanContractGuard() {
   ] = await Promise.all([
       readFile(STREET_APP_PATH, "utf8"),
       readFile(STREET_VISUAL_SCENE_RENDERER_PATH, "utf8"),
+      readFile(SOUTH_QUAY_V2_DOCUMENT_PATH, "utf8"),
       readFile(RUNTIME_CAMERA_PATH, "utf8"),
       readFile(RUNTIME_GEOMETRY_PATH, "utf8"),
       readFile(RUNTIME_VIEWPORT_PATH, "utf8"),
@@ -2489,6 +2715,20 @@ async function assertCameraPanContractGuard() {
   assert.ok(
     visualSceneRendererSource.includes("drawHarborBuoy("),
     "Harbor ambient life must render the east-water cue as an authored buoy, not a stray bright dot.",
+  );
+  assert.ok(
+    southQuayV2DocumentSource.includes('"id": "east-channel-mooring-bays"') &&
+      southQuayV2DocumentSource.includes(
+        '"id": "surface-east-channel-quay-wall"',
+      ) &&
+      southQuayV2DocumentSource.match(
+        /"id": "surface-east-channel-(?:north|middle|south)-bay"/g,
+      )?.length === 3 &&
+      visualSceneRendererSource.includes(
+        "cluster.rect.height > cluster.rect.width * 1.5",
+      ) &&
+      smokeSource.includes("assertEastWaterfrontCompositionPixels"),
+    "The east waterfront must retain its authored asymmetric mooring bays, vertical quay treatment, and pixel-backed regression.",
   );
   assert.ok(
     streetSource.includes("function drawInteriorPlayerRouteLane") &&
@@ -6170,7 +6410,7 @@ async function runViewportCheck(session, viewport) {
       expectedHudText,
     );
     assertBoundedVisualHierarchy(eastPanPage, `${viewport.name} east pan`);
-    await captureValidatedScreenshot({
+    const eastPanCapture = await captureValidatedScreenshot({
       expectedHudText,
       label: `${viewport.name} east pan`,
       page: eastPanPage,
@@ -6178,6 +6418,15 @@ async function runViewportCheck(session, viewport) {
       targetPath: eastPanScreenshotPath,
       viewport,
     });
+    if (viewport.name === "mobile" || viewport.name === "phone-boundary") {
+      assertEastWaterfrontCompositionPixels(
+        eastPanCapture.screenshot,
+        eastEdge,
+        eastPanCapture.page,
+        viewport,
+        `${viewport.name} east pan`,
+      );
+    }
 
     southEdge = await settleCameraAtEdge(session, "south", eastEdge);
     assertSameCameraSpace(
@@ -6217,7 +6466,7 @@ async function runViewportCheck(session, viewport) {
       expectedHudText,
     );
     assertBoundedVisualHierarchy(southPanPage, `${viewport.name} south pan`);
-    await captureValidatedScreenshot({
+    const southPanCapture = await captureValidatedScreenshot({
       expectedHudText,
       label: `${viewport.name} south pan`,
       page: southPanPage,
@@ -6225,6 +6474,15 @@ async function runViewportCheck(session, viewport) {
       targetPath: southPanScreenshotPath,
       viewport,
     });
+    if (viewport.name === "mobile" || viewport.name === "phone-boundary") {
+      assertEastWaterfrontCompositionPixels(
+        southPanCapture.screenshot,
+        southEdge,
+        southPanCapture.page,
+        viewport,
+        `${viewport.name} south pan`,
+      );
+    }
   }
 
   return {
@@ -6979,6 +7237,7 @@ async function main() {
       `${JSON.stringify(
         {
           afterHoursNpcAvailability,
+          eastWaterfrontCompositionDiagnostics,
           freshAutoplayStart,
           freshAutoplayOptOut,
           outputDir: OUTPUT_DIR,

@@ -95,6 +95,10 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       { "zoneId": "surface-square-border", "kind": "square_border" },
       { "zoneId": "surface-square-center", "kind": "square_center" },
       { "zoneId": "surface-morrow-yard", "kind": "courtyard_ground" },
+      { "zoneId": "surface-east-channel-north-bay", "kind": "dock_apron" },
+      { "zoneId": "surface-east-channel-middle-bay", "kind": "dock_apron" },
+      { "zoneId": "surface-east-channel-south-bay", "kind": "dock_apron" },
+      { "zoneId": "surface-east-channel-quay-wall", "kind": "quay_wall" },
       { "zoneId": "surface-pilgrim-dock", "kind": "dock_apron" },
       { "zoneId": "surface-pilgrim-quay-wall", "kind": "quay_wall" }
     ],
@@ -1136,6 +1140,32 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       }
     },
     {
+      "id": "east-channel-mooring-bays",
+      "kind": "harbor_mooring",
+      "locationId": "moss-pier",
+      "points": [
+        {
+          "x": 1718,
+          "y": 488
+        },
+        {
+          "x": 1718,
+          "y": 765
+        },
+        {
+          "x": 1718,
+          "y": 1014
+        }
+      ],
+      "rect": {
+        "x": 1576,
+        "y": 446,
+        "width": 192,
+        "height": 610,
+        "radius": 12
+      }
+    },
+    {
       "id": "repair-stall-workshop-stock",
       "kind": "workshop_stock",
       "locationId": "repair-stall",
@@ -1261,6 +1291,30 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "kind": "courtyard_ground",
       "emphasis": "high",
       "rect": { "x": 146, "y": 858, "width": 360, "height": 246, "radius": 26 }
+    },
+    {
+      "id": "surface-east-channel-north-bay",
+      "kind": "dock_apron",
+      "emphasis": "medium",
+      "rect": { "x": 1592, "y": 446, "width": 176, "height": 84, "radius": 10 }
+    },
+    {
+      "id": "surface-east-channel-middle-bay",
+      "kind": "dock_apron",
+      "emphasis": "medium",
+      "rect": { "x": 1624, "y": 730, "width": 144, "height": 70, "radius": 10 }
+    },
+    {
+      "id": "surface-east-channel-south-bay",
+      "kind": "dock_apron",
+      "emphasis": "medium",
+      "rect": { "x": 1576, "y": 976, "width": 192, "height": 80, "radius": 10 }
+    },
+    {
+      "id": "surface-east-channel-quay-wall",
+      "kind": "quay_wall",
+      "emphasis": "high",
+      "rect": { "x": 1744, "y": 206, "width": 28, "height": 850, "radius": 8 }
     },
     {
       "id": "surface-pilgrim-dock",
@@ -2948,12 +3002,12 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 34,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 9
       },
       {
         "col": 35,
-        "kind": "grass",
+        "kind": "walkway",
         "row": 9
       },
       {
@@ -3298,12 +3352,12 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 34,
-        "kind": "trees",
+        "kind": "walkway",
         "row": 15
       },
       {
         "col": 35,
-        "kind": "grass",
+        "kind": "walkway",
         "row": 15
       },
       {
@@ -3373,12 +3427,12 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 34,
-        "kind": "bushes",
+        "kind": "walkway",
         "row": 16
       },
       {
         "col": 35,
-        "kind": "grass",
+        "kind": "walkway",
         "row": 16
       },
       {
@@ -3703,12 +3757,12 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       },
       {
         "col": 34,
-        "kind": "trees",
+        "kind": "walkway",
         "row": 20
       },
       {
         "col": 35,
-        "kind": "grass",
+        "kind": "walkway",
         "row": 20
       },
       {

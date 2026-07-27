@@ -1645,7 +1645,8 @@ function drawSurfaceZones(
           layer.lineBetween(x, rect.y + 8, x, rect.y + rect.height - 8);
         }
         break;
-      case "quay_wall":
+      case "quay_wall": {
+        const isVertical = rect.height > rect.width;
         layer.fillStyle(0x5f625f, 1);
         layer.fillRoundedRect(
           rect.x,
@@ -1655,12 +1656,37 @@ function drawSurfaceZones(
           rect.radius ?? 8,
         );
         layer.fillStyle(0x8f846f, 0.34);
-        layer.fillRect(rect.x, rect.y, rect.width, 10);
+        if (isVertical) {
+          layer.fillRect(
+            rect.x + rect.width - 9,
+            rect.y,
+            9,
+            rect.height,
+          );
+        } else {
+          layer.fillRect(rect.x, rect.y, rect.width, 10);
+        }
         layer.lineStyle(1, 0x4a4d4a, 0.28);
-        for (let x = rect.x + 22; x < rect.x + rect.width - 22; x += 34) {
-          layer.lineBetween(x, rect.y + 12, x, rect.y + rect.height - 4);
+        if (isVertical) {
+          for (
+            let y = rect.y + 24;
+            y < rect.y + rect.height - 22;
+            y += 38
+          ) {
+            layer.lineBetween(
+              rect.x + 4,
+              y,
+              rect.x + rect.width - 4,
+              y,
+            );
+          }
+        } else {
+          for (let x = rect.x + 22; x < rect.x + rect.width - 22; x += 34) {
+            layer.lineBetween(x, rect.y + 12, x, rect.y + rect.height - 4);
+          }
         }
         break;
+      }
       case "deep_water":
         layer.fillStyle(0x245c77, 1);
         layer.fillRect(rect.x, rect.y, rect.width, rect.height);
@@ -3954,6 +3980,18 @@ function drawHarborMooringCluster(
     drawBollard(layer, mooringPoint.x, mooringPoint.y);
     drawRopeCoil(layer, mooringPoint.x + 18, mooringPoint.y + 8);
   }
+
+  if (cluster.rect.height > cluster.rect.width * 1.5) {
+    const edgeX = cluster.rect.x + cluster.rect.width - 12;
+    const points = cluster.points ?? [];
+    for (const mooringPoint of [points[0], points.at(-1)]) {
+      if (mooringPoint) {
+        drawDockLadder(layer, edgeX, mooringPoint.y + 28);
+      }
+    }
+    return;
+  }
+
   drawDockLadder(layer, cluster.rect.x + 112, cluster.rect.y + 24);
   drawCrateStack(
     layer,
