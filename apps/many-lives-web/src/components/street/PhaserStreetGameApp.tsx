@@ -3535,6 +3535,7 @@ function drawBoardingHouseInteriorAtmosphere(
   );
 
   drawBoardingHousePerimeterPanels(layer, space);
+  drawBoardingHouseFloorboards(layer, space);
   drawBoardingHouseWindow(layer, 2.1, 0.26, 1.2);
   drawBoardingHouseWindow(layer, 8.5, 0.26, 1.2);
   drawBoardingHouseWallPanels(layer, space);
@@ -3589,6 +3590,36 @@ function drawBoardingHousePerimeterPanels(
     space.width + marginWidth / CELL / 2 - 0.5,
     space.height / 2 - 0.5,
   );
+}
+
+function drawBoardingHouseFloorboards(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  const roomOrigin = mapTileToWorldOrigin(0, 0);
+  const roomRight = roomOrigin.x + space.width * CELL;
+
+  for (let row = 1; row < space.height; row += 1) {
+    const seamY = roomOrigin.y + row * CELL;
+    layer.lineStyle(2.2, 0x6c5034, 0.34);
+    layer.lineBetween(roomOrigin.x, seamY, roomRight, seamY);
+    layer.lineStyle(1, 0xe4c99b, 0.11);
+    layer.lineBetween(roomOrigin.x, seamY + 2.2, roomRight, seamY + 2.2);
+  }
+
+  layer.lineStyle(1.2, 0x6c5034, 0.22);
+  for (let row = 1; row < space.height - 1; row += 1) {
+    const rowTop = roomOrigin.y + row * CELL;
+    const firstJoin = row % 2 === 0 ? 1.35 : 2.45;
+    for (
+      let tileX = firstJoin;
+      tileX < space.width - 1;
+      tileX += 2.2
+    ) {
+      const joinX = roomOrigin.x + tileX * CELL;
+      layer.lineBetween(joinX, rowTop + 7, joinX, rowTop + CELL - 7);
+    }
+  }
 }
 
 function drawBoardingHouseWindow(
