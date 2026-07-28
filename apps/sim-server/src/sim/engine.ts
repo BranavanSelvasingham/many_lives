@@ -7079,15 +7079,28 @@ function buildObjectivePlanningPressures(
         continue;
       }
 
-      pushPressure({
-        actionId: `inspect:${problem.id}`,
-        id: `problem:${problem.id}:inspect`,
-        kind: "problem",
-        label: `${problem.title} needs a reachable next read`,
-        priority: 78 + problemPressure(problem) * 7,
-        rationale: `${problem.title} is urgent, but the fix is still blocked; inspect the site instead of pretending the tool exists.`,
-        targetLocationId: problem.locationId,
-      });
+      const toolLead = problemToolLeadAtCurrentLocation(world, problem);
+      if (toolLead) {
+        pushPressure({
+          actionId: `talk:${toolLead.id}`,
+          id: `tool:${problem.requiredItemId}:${problem.id}:lead:${toolLead.id}`,
+          kind: "tool",
+          label: `${problem.title} needs a reachable tool lead`,
+          npcId: toolLead.id,
+          priority: 78 + problemPressure(problem) * 7,
+          rationale: `${problem.title} is urgent, but Rowan does not know the tool source; ask a present person whose existing conversation can reveal it.`,
+          targetLocationId: world.player.currentLocationId,
+        });
+      } else if (world.player.currentLocationId !== problem.locationId) {
+        pushPressure({
+          id: `problem:${problem.id}:return`,
+          kind: "problem",
+          label: `${problem.title} is still changing at the site`,
+          priority: 78 + problemPressure(problem) * 7,
+          rationale: `${problem.title} is urgent and still active; route back to the live problem without claiming another inspection or a tool Rowan does not have.`,
+          targetLocationId: problem.locationId,
+        });
+      }
     }
   }
 
@@ -7707,9 +7720,25 @@ function objectivePlanForActionAtLocation(
     npcId: npc?.id,
     rationale: objectivePlanRationale(world, location, action, npc, objective),
     score: 0,
-    speech: npc ? buildAutonomousSpeech(world, npc, objective) : undefined,
+    speech: npc ? buildObjectivePlanSpeech(world, npc, objective) : undefined,
     targetLocationId: location.id,
   };
+}
+
+function buildObjectivePlanSpeech(
+  world: StreetGameState,
+  npc: NpcState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+) {
+  const toolLeadProblem = urgentKnownProblems(world).find(
+    (problem) =>
+      problemToolLeadAtCurrentLocation(world, problem)?.id === npc.id,
+  );
+  if (toolLeadProblem) {
+    return `The ${toolLeadProblem.title.toLowerCase()} needs the right tool, but I do not know where to find one. Do you know a reachable source?`;
+  }
+
+  return buildAutonomousSpeech(world, npc, objective);
 }
 
 function objectiveMoveIntentForLocation(
@@ -8368,6 +8397,135 @@ function knowsToolSourceForProblem(
       (entry) => /\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(entry.text),
     )
   );
+}
+
+function objectiveExposesActionableProblemToolSource(
+  world: StreetGameState,
+  problem: ProblemState,
+  toolSourceLocationId: string,
+) {
+  if (!problem.requiredItemId) {
+    return false;
+  }
+
+  const sourceActionId = `buy:${problem.requiredItemId}`;
+  const objective = world.player.objective;
+  return Boolean(
+    objective &&
+      (objective.outcomes.some(
+        (outcome) =>
+          outcome.status !== "met" &&
+          outcome.status !== "failed" &&
+          outcome.actionId === sourceActionId &&
+          outcome.targetLocationId === toolSourceLocationId,
+      ) ||
+        objective.trail.some(
+          (step) =>
+            !step.done &&
+            step.actionId === sourceActionId &&
+            step.targetLocationId === toolSourceLocationId,
+        )),
+  );
+}
+
+function conversationResolutionWasAlreadyApplied(
+  world: StreetGameState,
+  npcId: string,
+  resolution: ConversationResolution,
+) {
+  const thread = world.conversationThreads[npcId];
+  if (!thread) {
+    return false;
+  }
+
+  const appliedResolution = new Set(
+    [thread.decision, thread.objectiveText, thread.summary]
+      .filter((value): value is string => Boolean(value))
+      .map((value) => value.trim().toLowerCase()),
+  );
+  return [resolution.decision, resolution.objectiveText, resolution.summary]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => value.trim().toLowerCase())
+    .some((value) => appliedResolution.has(value));
+}
+
+function problemToolLeadAtCurrentLocation(
+  world: StreetGameState,
+  problem: ProblemState,
+) {
+  const toolSourceLocationId = toolSourceLocationIdForProblem(problem);
+  const toolSourceLocation = toolSourceLocationId
+    ? findLocation(world, toolSourceLocationId)
+    : undefined;
+  if (
+    !problem.requiredItemId ||
+    !toolSourceLocation ||
+    hasRequiredProblemItem(world, problem) ||
+    knowsToolSourceForProblem(world, problem) ||
+    objectiveExposesActionableProblemToolSource(
+      world,
+      problem,
+      toolSourceLocation.id,
+    ) ||
+    !canBuyRequiredProblemTool(world, problem) ||
+    !projectedToolPurchaseStillUseful(world, problem)
+  ) {
+    return undefined;
+  }
+
+  const legalTalkNpcIds = new Set(
+    buildAvailableActions(world)
+      .filter((action) => action.kind === "talk" && !action.disabled)
+      .map((action) => extractActionTargetId(action.id))
+      .filter((npcId): npcId is string => Boolean(npcId)),
+  );
+  const sourceCues = [
+    toolSourceLocation.id,
+    toolSourceLocation.name,
+    toolSourceLocation.shortLabel,
+  ]
+    .map((cue) => cue.toLowerCase())
+    .filter(Boolean);
+  const leadObjective = {
+    focus: "help" as ObjectiveFocus,
+    routeKey: `problem-${problem.id}-tool-lead`,
+    text: `Find a reachable source for the tool needed to fix ${problem.title}.`,
+  };
+
+  for (const npc of world.npcs) {
+    if (
+      npc.currentLocationId !== world.player.currentLocationId ||
+      (!npc.known && !world.player.knownNpcIds.includes(npc.id)) ||
+      !legalTalkNpcIds.has(npc.id)
+    ) {
+      continue;
+    }
+
+    const resolution = deriveConversationResolution(
+      world,
+      npc,
+      leadObjective,
+      "",
+      new Set(["help", "tool"]),
+    );
+    if (conversationResolutionWasAlreadyApplied(world, npc.id, resolution)) {
+      continue;
+    }
+    const resolutionText = [
+      resolution.decision,
+      resolution.memoryText,
+      resolution.objectiveText,
+      resolution.summary,
+    ]
+      .filter((value): value is string => Boolean(value))
+      .join(" ")
+      .toLowerCase();
+    if (sourceCues.some((cue) => resolutionText.includes(cue))) {
+      return npc;
+    }
+  }
+
+  return undefined;
 }
 
 function buildObjectiveWaitPlans(

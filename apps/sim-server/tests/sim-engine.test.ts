@@ -4204,6 +4204,299 @@ describe("SimulationEngine street slice", () => {
     );
   });
 
+  it("asks a legal local source when an urgent problem's tool source is still unknown", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-unknown-pump-tool-source-recovery");
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+
+    expect(pump).toBeDefined();
+    expect(teaJob).toBeDefined();
+    expect(mara).toBeDefined();
+    if (!pump || !teaJob || !mara) {
+      return;
+    }
+
+    setTestClock(world, 16, 4);
+    world.currentTime = "2026-03-21T16:04:00.000Z";
+    world.activeSpaceId = STREET_SPACE_ID;
+    world.player.spaceId = STREET_SPACE_ID;
+    placePlayerAt(world, "courtyard");
+    world.player.money = 12;
+    world.player.energy = 30;
+    world.player.inventory = [];
+    world.player.knownLocationIds = [
+      "boarding-house",
+      "courtyard",
+      "tea-house",
+    ];
+    world.player.knownNpcIds = ["npc-mara", "npc-ada"];
+    world.player.memories = world.player.memories.filter(
+      (memory) => !/\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(memory.text),
+    );
+    world.player.activeJobId = undefined;
+    world.player.pendingObjectiveMove = undefined;
+    world.activeConversation = undefined;
+    world.firstAfternoon = {
+      approachesKnownAt: "2026-03-21T11:03:00.000Z",
+      leadFieldNote: {
+        createdAt: "2026-03-21T11:03:00.000Z",
+        evidence:
+          "Asked Ada at Kettle & Lamp before the lunch rush; she offered the cup-and-counter shift.",
+        learned:
+          "Mara's Kettle & Lamp lead was real, but the lunch shift has now been missed.",
+        memory:
+          "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
+        next: "Find a legal recovery from the live state.",
+      },
+      teaShiftStage: "rush",
+    };
+    world.conversations.push({
+      id: "conversation-mara-room-terms",
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "I understand what tonight's room requires.",
+      threadId: "thread-mara-room-terms",
+      time: "2026-03-21T10:58:00.000Z",
+    });
+    world.conversations.push({
+      id: "conversation-ada-missed-shift-evidence",
+      locationId: "tea-house",
+      npcId: "npc-ada",
+      speaker: "npc",
+      speakerName: "Ada",
+      text: "The cup-and-counter work is real, but the lunch window will not wait.",
+      threadId: "thread-ada-missed-shift-evidence",
+      time: "2026-03-21T11:03:00.000Z",
+    });
+
+    mara.currentLocationId = "courtyard";
+    mara.currentSpaceId = STREET_SPACE_ID;
+    mara.known = true;
+
+    teaJob.accepted = false;
+    teaJob.completed = false;
+    teaJob.discovered = true;
+    teaJob.missed = true;
+    teaJob.missedAt = world.currentTime;
+
+    pump.discovered = true;
+    pump.escalatedAt = world.currentTime;
+    pump.escalationLevel = 2;
+    pump.status = "active";
+    pump.urgency = 5;
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "work",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "work-lead-tea",
+          label: "Tea-house work lead confirmed",
+          status: "met",
+          urgency: 4,
+          npcId: "npc-ada",
+          targetLocationId: "tea-house",
+        },
+        {
+          authority: "predicate",
+          blockers: ["Cup-and-counter shift was missed."],
+          id: "work-commit",
+          label: "Paid work committed",
+          status: "failed",
+          targetLocationId: "tea-house",
+          urgency: 3,
+        },
+        {
+          authority: "predicate",
+          blockers: ["Cup-and-counter shift was missed."],
+          id: "work-finish",
+          label: "Paid work finished",
+          status: "failed",
+          targetLocationId: "tea-house",
+          urgency: 2,
+        },
+        {
+          authority: "predicate",
+          blockers: ["Paid work has not turned into breathing room yet."],
+          evidence: "$12 on hand",
+          id: "work-pay",
+          label: "Pay turned into breathing room",
+          status: "blocked",
+          urgency: 1,
+        },
+      ],
+      progress: {
+        completed: 1,
+        label: "1/4 outcomes met",
+        total: 4,
+      },
+      routeKey: "work-tea",
+      source: "dynamic",
+      text: "Secure paid work at Kettle & Lamp and follow through.",
+      trail: [
+        {
+          actionId: "work:job-tea-shift",
+          detail: "Finishing the rush matters more than saying yes to it.",
+          done: false,
+          id: "work-finish",
+          targetLocationId: "tea-house",
+          title: "Finish the tea-house shift cleanly.",
+        },
+        {
+          detail: "Work only matters if it buys more than the next hour.",
+          done: false,
+          id: "work-pay",
+          title: "Turn the pay into breathing room.",
+        },
+      ],
+    };
+    const poisonedObjective = structuredClone(world.player.objective);
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+    world.player.objective = poisonedObjective;
+
+    expect(world.player.knownLocationIds).not.toContain("repair-stall");
+    expect(world.player.knownNpcIds).not.toContain("npc-jo");
+    expect(world.player.objective).toMatchObject({
+      focus: "work",
+      outcomes: [
+        { id: "work-lead-tea", status: "met" },
+        { id: "work-commit", status: "failed" },
+        { id: "work-finish", status: "failed" },
+        { id: "work-pay", status: "blocked" },
+      ],
+      routeKey: "work-tea",
+      trail: expect.arrayContaining([
+        expect.objectContaining({
+          actionId: "work:job-tea-shift",
+          id: "work-finish",
+        }),
+      ]),
+    });
+    expect(actionById(world, "talk:npc-mara")).toBeDefined();
+    expect(actionById(world, "talk:npc-mara")?.disabled).not.toBe(true);
+    expect(actionById(world, "solve:problem-pump")).toMatchObject({
+      disabled: true,
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.rowanAutonomy.stepKind).not.toBe("blocked");
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(world.activeConversation?.planningTrace).toMatchObject({
+      selectedActionId: "conversation:close:npc-mara",
+      selectedLegalBacking: {
+        actionId: "conversation:close:npc-mara",
+        locationId: "courtyard",
+        source: "conversation-resolution",
+      },
+      selectedPressureId: "conversation:npc-mara",
+      selectedRecommendation: {
+        rationale: expect.stringMatching(/Mercer Repairs.*wrench.*pump/i),
+        validationStatus: "conversation-resolution",
+      },
+    });
+    expect(
+      [...world.conversations]
+        .reverse()
+        .find(
+          (entry) => entry.npcId === "npc-mara" && entry.speaker === "player",
+        )?.text,
+    ).toMatch(/pump.*tool|tool.*pump/i);
+    expect(world.player.objective).toMatchObject({
+      focus: "tool",
+      text: "Buy a wrench and fix the pump.",
+    });
+    expect(world.player.knownLocationIds).not.toContain("repair-stall");
+    expect(world.player.knownNpcIds).not.toContain("npc-jo");
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.player.objective).toMatchObject({
+      focus: "tool",
+      outcomes: expect.arrayContaining([
+        expect.objectContaining({
+          actionId: "buy:item-wrench",
+          status: "blocked",
+          targetLocationId: "repair-stall",
+        }),
+      ]),
+    });
+
+    setTestClock(world, 15, 8);
+    world.currentTime = "2026-03-21T15:08:00.000Z";
+    placePlayerAt(world, "courtyard");
+    world.player.energy = 66;
+    world.player.knownLocationIds = ["boarding-house", "courtyard"];
+    world.player.knownNpcIds = ["npc-mara"];
+    world.player.memories = world.player.memories.filter(
+      (memory) => !/\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(memory.text),
+    );
+    mara.currentLocationId = "courtyard";
+    mara.currentSpaceId = STREET_SPACE_ID;
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.player.knownLocationIds).toEqual([
+      "boarding-house",
+      "courtyard",
+    ]);
+    expect(world.player.knownNpcIds).toEqual(["npc-mara"]);
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "move:repair-stall",
+      autoContinue: true,
+      stepKind: "move",
+      targetLocationId: "repair-stall",
+      planningTrace: {
+        plannerIntent: {
+          actionId: "buy:item-wrench",
+          rationale: expect.stringMatching(/repair|wrench|tool/i),
+          targetLocationId: "repair-stall",
+        },
+        selectedActionId: "move:repair-stall",
+        selectedLegalBacking: {
+          actionId: "buy:item-wrench",
+          locationId: "repair-stall",
+          source: "destination-preview-legal-action",
+        },
+      },
+    });
+    expect(world.rowanAutonomy.npcId).toBeUndefined();
+    expect(world.rowanAutonomy.planningTrace?.selectedPressureId).not.toBe(
+      "tool:item-wrench:problem-pump:lead:npc-mara",
+    );
+    expect(world.rowanAutonomy.planningTrace?.selectedRecommendation).toMatchObject({
+      accepted: true,
+      validationStatus: "simulator-validated",
+    });
+    expect(world.rowanAutonomy.actionId).not.toBe("talk:npc-mara");
+    expect(world.rowanAutonomy.actionId).not.toBe("work:job-tea-shift");
+    expect(world.player.knownNpcIds).not.toContain("npc-jo");
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("lets escalated live pressure redirect a stale home route to a legal tool plan", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-agent-pressure-over-home-route");
