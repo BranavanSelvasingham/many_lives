@@ -231,6 +231,57 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+function isLoopbackWebBase(baseUrl) {
+  const hostname = new URL(baseUrl).hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]"
+  );
+}
+
+function shouldRunResponsiveDecisionArtifactCheck(baseUrl) {
+  return isLoopbackWebBase(baseUrl);
+}
+
+function responsiveDecisionArtifactSkipSummary(baseUrl) {
+  return {
+    reason: "external-web-base",
+    skipped: true,
+    webBase: baseUrl,
+  };
+}
+
+function assertResponsiveDecisionArtifactModeContract() {
+  for (const baseUrl of [
+    "http://127.0.0.1:3001",
+    "http://localhost:3001",
+    "http://[::1]:3001",
+  ]) {
+    assert.equal(
+      shouldRunResponsiveDecisionArtifactCheck(baseUrl),
+      true,
+      `${baseUrl} must retain the deterministic responsive decision regression.`,
+    );
+  }
+
+  for (const baseUrl of [
+    "https://manylives-sim.branavan.com",
+    "https://preview.example.test",
+  ]) {
+    assert.equal(
+      shouldRunResponsiveDecisionArtifactCheck(baseUrl),
+      false,
+      `${baseUrl} must not couple remote visual capture to deterministic decision copy.`,
+    );
+    assert.deepEqual(responsiveDecisionArtifactSkipSummary(baseUrl), {
+      reason: "external-web-base",
+      skipped: true,
+      webBase: baseUrl,
+    });
+  }
+}
+
 function requiresComputedCompactEdge(viewport) {
   return (viewport.deviceScaleFactor ?? 1) > 1;
 }
@@ -7895,6 +7946,7 @@ async function main() {
   assertGroundedNearMorrowEntryAgencyGuard();
   assertVisibleDecisionCopyCompactionContractGuard();
   assertDecisionArtifactReadabilityWaitRegression();
+  assertResponsiveDecisionArtifactModeContract();
   if (RUN_RESPONSIVE_DECISION_GUARD_ONLY) {
     process.stdout.write(
       "[many-lives] Responsive decision readability guard passed.\n",
@@ -7926,10 +7978,22 @@ async function main() {
     process.stdout.write("[many-lives] Checking fresh autoplay opt-out behavior...\n");
     freshAutoplayOptOut = await runFreshAutoplayOptOutCheck(session);
     process.stdout.write("[many-lives] Finished fresh autoplay opt-out behavior.\n");
-    process.stdout.write("[many-lives] Checking responsive decision callback...\n");
-    responsiveDecisionArtifact =
-      await runResponsiveDecisionArtifactCheck(session);
-    process.stdout.write("[many-lives] Finished responsive decision callback.\n");
+    if (shouldRunResponsiveDecisionArtifactCheck(activeWebBase)) {
+      process.stdout.write(
+        "[many-lives] Checking responsive decision callback...\n",
+      );
+      responsiveDecisionArtifact =
+        await runResponsiveDecisionArtifactCheck(session);
+      process.stdout.write(
+        "[many-lives] Finished responsive decision callback.\n",
+      );
+    } else {
+      process.stdout.write(
+        `[many-lives] Skipping deterministic responsive decision callback for external base ${activeWebBase}.\n`,
+      );
+      responsiveDecisionArtifact =
+        responsiveDecisionArtifactSkipSummary(activeWebBase);
+    }
     for (const viewport of ACTIVE_VIEWPORTS) {
       process.stdout.write(`[many-lives] Checking ${viewport.name} viewport...\n`);
       results.push({
