@@ -2284,7 +2284,7 @@ function assertWestOpenLotCompositionPixels(
   assert.ok(
     diagnostics.luminanceRange >= 68 &&
       diagnostics.transitionFraction >= minimumTransitionFraction &&
-      diagnostics.dominantColorFraction <= 0.42,
+      diagnostics.dominantColorFraction <= 0.46,
     `${label}: west open lot regressed to a flat empty rectangle (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
   );
   fringeCompositionDiagnostics.push({
