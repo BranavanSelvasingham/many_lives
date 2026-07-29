@@ -182,6 +182,8 @@ const SIM_WORK_PLAYBACK_EXTRA_WAIT_MS = 15_000;
 const SIM_WORK_PLAYBACK_STALL_GRACE_MS = 5_000;
 const SIM_WORK_PLAYBACK_VISUAL_ACTIVE_GRACE_MS = 2_000;
 const SIM_WORK_PLAYBACK_PROGRESS_EPSILON = 0.002;
+const VISUAL_MOVE_SETTLEMENT_REQUIRED_STABLE_SAMPLES = 3;
+const VISUAL_MOVE_SETTLEMENT_MIN_STABLE_MS = 500;
 const RUN_SIM_WAIT_GUARD_ONLY =
   process.env.MANY_LIVES_BROWSER_SIM_WAIT_GUARD_ONLY === "1";
 const RUN_AUTOPLAY_OBSERVATIONS_ONLY =
@@ -3133,8 +3135,19 @@ class CdpSession {
   }
 
   async waitForVisualMoveSettlement(previousGame, nextGame) {
+    return this.waitForStableNonMovementGame(nextGame, {
+      label: "visual movement",
+      previousGame,
+    });
+  }
+
+  async waitForStableNonMovementGame(
+    game,
+    { label = "browser capture", previousGame = null } = {},
+  ) {
     const startedAt = Date.now();
     let lastProbe = null;
+    let settlementProgress = null;
 
     while (Date.now() - startedAt < SIM_WAIT_TIMEOUT_MS) {
       try {
@@ -3142,11 +3155,13 @@ class CdpSession {
         if (probe) {
           lastProbe = probe;
         }
-        if (
-          browserProbeMatchesGameCoreSnapshot(probe, nextGame) &&
-          probe?.movement?.playerRoute?.active !== true &&
-          probe?.visualPlayer?.isMovingToServerState !== true
-        ) {
+        settlementProgress = recordVisualMoveSettlementProgress({
+          elapsedMs: Date.now() - startedAt,
+          game,
+          probe,
+          progress: settlementProgress,
+        });
+        if (settlementProgress.settled) {
           return probe;
         }
       } catch {}
@@ -3155,11 +3170,15 @@ class CdpSession {
     }
 
     throw new Error(
-      `Timed out waiting for visual movement to settle from ${previousGame.player.x},${previousGame.player.y} to ${nextGame.player.x},${nextGame.player.y}. Last probe: ${JSON.stringify(
+      `Timed out waiting for ${label} to remain free of an active route or staged visual move${
+        previousGame
+          ? ` from ${previousGame.player.x},${previousGame.player.y} to ${game.player.x},${game.player.y}`
+          : ""
+      }. Last probe: ${JSON.stringify(
         compactBrowserProbeForWait(lastProbe),
         null,
         2,
-      )}`,
+      )}. Settlement progress: ${JSON.stringify(settlementProgress)}`,
     );
   }
 
@@ -6888,6 +6907,11 @@ function assertBrowserProbeMatchesGame(label, game, probe, options = {}) {
   );
   assertProbeAuditability(label, game, probe);
   if (!options.allowVisualMove) {
+    assert.notEqual(
+      probe.movement?.playerRoute?.active ?? false,
+      true,
+      `${label}: browser still has an active player route during a settled capture.`,
+    );
     assert.equal(
       probe.visualPlayer?.isMovingToServerState ?? false,
       false,
@@ -6982,6 +7006,102 @@ function browserProbeHasPendingPlayback(probe) {
       probe?.playback?.activeKind ||
       (probe?.playback?.queuedCount ?? 0) > 0,
   );
+}
+
+function recordVisualMoveSettlementProgress({
+  elapsedMs,
+  game,
+  matchesGame = (candidate, expectedGame) =>
+    browserProbeMatchesGameSnapshot(candidate, expectedGame) ||
+    browserProbeMatchesProgressiveSnapshot(candidate, expectedGame),
+  minimumStableMs = VISUAL_MOVE_SETTLEMENT_MIN_STABLE_MS,
+  probe,
+  progress = null,
+  requiredStableSamples = VISUAL_MOVE_SETTLEMENT_REQUIRED_STABLE_SAMPLES,
+}) {
+  const previous = progress ?? {
+    candidateIdentity: null,
+    firstSettledElapsedMs: null,
+    lastResetReason: null,
+    movementRestartCount: 0,
+    settled: false,
+    stableSampleCount: 0,
+  };
+  const routeActive = probe?.movement?.playerRoute?.active === true;
+  const visualMoveActive =
+    probe?.visualPlayer?.isMovingToServerState === true;
+  const matchingGame = matchesGame(probe, game);
+
+  if (!matchingGame || routeActive || visualMoveActive) {
+    const resetReason = !matchingGame
+      ? "game-snapshot-mismatch"
+      : routeActive
+        ? "active-route"
+        : "staged-visual-move";
+    return {
+      candidateIdentity: null,
+      firstSettledElapsedMs: null,
+      lastResetReason: resetReason,
+      movementRestartCount:
+        previous.movementRestartCount +
+        (previous.stableSampleCount > 0 &&
+        (routeActive || visualMoveActive)
+          ? 1
+          : 0),
+      settled: false,
+      stableSampleCount: 0,
+    };
+  }
+
+  const candidateIdentity = JSON.stringify({
+    activeConversationNpcId: probe?.activeConversation?.npcId ?? null,
+    autonomy: {
+      actionId: probe?.autonomy?.actionId ?? null,
+      label: probe?.autonomy?.label ?? null,
+      mode: probe?.autonomy?.mode ?? null,
+      stepKind: probe?.autonomy?.stepKind ?? null,
+      targetLocationId: probe?.autonomy?.targetLocationId ?? null,
+    },
+    clock: probe?.clock?.iso ?? null,
+    gameId: probe?.gameId ?? null,
+    location: {
+      id: probe?.location?.id ?? null,
+      spaceId: probe?.location?.spaceId ?? null,
+      x: probe?.location?.x ?? null,
+      y: probe?.location?.y ?? null,
+    },
+    playback: {
+      activeKind: probe?.playback?.activeKind ?? null,
+      queuedCount: probe?.playback?.queuedCount ?? 0,
+    },
+    visualTarget: {
+      x: probe?.visualPlayer?.targetX ?? null,
+      y: probe?.visualPlayer?.targetY ?? null,
+    },
+    watchMode: {
+      frozen: probe?.watchMode?.frozen ?? false,
+      pendingPlayback: probe?.watchMode?.pendingPlayback ?? false,
+      status: probe?.watchMode?.status ?? null,
+    },
+  });
+  const sameCandidate = previous.candidateIdentity === candidateIdentity;
+  const firstSettledElapsedMs = sameCandidate
+    ? previous.firstSettledElapsedMs
+    : elapsedMs;
+  const stableSampleCount = sameCandidate
+    ? previous.stableSampleCount + 1
+    : 1;
+
+  return {
+    candidateIdentity,
+    firstSettledElapsedMs,
+    lastResetReason: sameCandidate ? previous.lastResetReason : null,
+    movementRestartCount: previous.movementRestartCount,
+    settled:
+      stableSampleCount >= requiredStableSamples &&
+      elapsedMs - firstSettledElapsedMs >= minimumStableMs,
+    stableSampleCount,
+  };
 }
 
 function createStagedWorkPlaybackWaitProgress() {
@@ -14137,7 +14257,10 @@ function buildTimelineEntry({
 }
 
 async function captureBrowserState({ game, index, label, session }) {
-  const initialProbe = await session.waitForGame(game);
+  await session.waitForGame(game);
+  const initialProbe = await session.waitForStableNonMovementGame(game, {
+    label: `${label} capture`,
+  });
   assertBrowserProbeMatchesGame(label, game, initialProbe, {
     allowPendingPlayback: true,
   });

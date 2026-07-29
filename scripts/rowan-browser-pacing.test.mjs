@@ -68,6 +68,19 @@ const sleepUntilEpochEnd = source.indexOf(
 const sleepUntilEpochMs = Function(
   `return (${source.slice(sleepUntilEpochStart, sleepUntilEpochEnd)})`,
 )();
+const visualMoveSettlementStart = source.indexOf(
+  "function recordVisualMoveSettlementProgress(",
+);
+const visualMoveSettlementEnd = source.indexOf(
+  "\nfunction ",
+  visualMoveSettlementStart + 1,
+);
+const recordVisualMoveSettlementProgress = Function(
+  `return (${source.slice(
+    visualMoveSettlementStart,
+    visualMoveSettlementEnd,
+  )})`,
+)();
 
 test("first-afternoon readability uses full app-visible dwell", () => {
   assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
@@ -5292,6 +5305,130 @@ test("browser evidence waits for readable rail geometry", () => {
   assert.match(source, /commandRail\.rect\?\.height >= 120/);
   assert.match(source, /assertRailReadabilityStateRegression\(\)/);
   assert.match(source, /await session\.waitForVisualMoveSettlement\(/);
+});
+
+test("visual move settlement survives a transient false probe and rejects restarted movement", () => {
+  assert.ok(
+    visualMoveSettlementStart >= 0 &&
+      visualMoveSettlementEnd > visualMoveSettlementStart,
+  );
+  const game = { id: "game-settlement" };
+  const matchesGame = (probe, expectedGame) =>
+    probe?.gameId === expectedGame.id;
+  const settledProbe = {
+    activeConversation: null,
+    autonomy: {
+      actionId: "talk:npc-mara",
+      label: "Talk to Mara",
+      mode: "acting",
+      stepKind: "talk",
+      targetLocationId: "boarding-house",
+    },
+    clock: { iso: "2026-03-21T11:02:00.000Z" },
+    gameId: game.id,
+    location: {
+      id: "boarding-house",
+      spaceId: "interior:boarding-house",
+      x: 5,
+      y: 5,
+    },
+    movement: { playerRoute: null },
+    playback: { activeKind: "talk", queuedCount: 1 },
+    visualPlayer: {
+      isMovingToServerState: false,
+      targetX: 5,
+      targetY: 5,
+    },
+    watchMode: {
+      frozen: true,
+      pendingPlayback: true,
+      status: "frozen",
+    },
+  };
+  const activeRouteProbe = {
+    ...settledProbe,
+    movement: {
+      playerRoute: {
+        active: true,
+        progress: 0.861,
+        target: { x: 5, y: 5 },
+        targetLocationId: "boarding-house",
+      },
+    },
+    visualPlayer: {
+      ...settledProbe.visualPlayer,
+      isMovingToServerState: true,
+    },
+  };
+  const record = (progress, probe, elapsedMs) =>
+    recordVisualMoveSettlementProgress({
+      elapsedMs,
+      game,
+      matchesGame,
+      minimumStableMs: 500,
+      probe,
+      progress,
+      requiredStableSamples: 3,
+    });
+
+  let progress = record(null, activeRouteProbe, 0);
+  progress = record(progress, settledProbe, 250);
+  assert.equal(
+    progress.settled,
+    false,
+    "One transient non-moving probe must not settle the route.",
+  );
+  progress = record(progress, activeRouteProbe, 500);
+  assert.equal(progress.stableSampleCount, 0);
+  assert.equal(progress.movementRestartCount, 1);
+  progress = record(progress, settledProbe, 750);
+  progress = record(progress, settledProbe, 1_000);
+  progress = record(progress, settledProbe, 1_250);
+  assert.equal(
+    progress.settled,
+    true,
+    "The same pending playback identity should settle after three route-free samples spanning 500ms.",
+  );
+
+  let captureRevalidation = record(null, activeRouteProbe, 0);
+  captureRevalidation = record(
+    captureRevalidation,
+    settledProbe,
+    250,
+  );
+  captureRevalidation = record(
+    captureRevalidation,
+    settledProbe,
+    500,
+  );
+  assert.equal(
+    captureRevalidation.settled,
+    false,
+    "A route that restarts before capture must remain unsettled without a full stable window.",
+  );
+
+  let neverStable = null;
+  for (let elapsedMs = 0; elapsedMs <= 15_000; elapsedMs += 250) {
+    neverStable = record(
+      neverStable,
+      elapsedMs % 500 === 0 ? activeRouteProbe : settledProbe,
+      elapsedMs,
+    );
+    assert.equal(
+      neverStable.settled,
+      false,
+      "Alternating active and transient settled probes must never pass.",
+    );
+  }
+
+  assert.match(
+    source,
+    /await session\.waitForStableNonMovementGame\(game,/,
+  );
+  assert.match(
+    source,
+    /probe\.movement\?\.playerRoute\?\.active \?\? false/,
+  );
 });
 
 test("conversation capture settles the expected beat independently of a newer streaming follow-up", () => {
