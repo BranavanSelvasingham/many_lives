@@ -159,6 +159,48 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
   );
 });
 
+test("delayed auto-continue polling splits only on proven follow-through", () => {
+  assert.match(source, /exactAutoContinueProgressCheckpointsBetween\(/);
+  assert.match(source, /exactAutoContinueCheckpoints: autoContinueCheckpoints/);
+  assert.match(
+    source,
+    /probe\.timing\.autoContinue\.startedAtMs \?\? null/,
+  );
+  assert.match(source, /key: probe\.autonomy\.key \?\? null/);
+  assert.match(
+    source,
+    /autoContinue\.startedAtMs \+ autoContinue\.intendedDelayMs/,
+  );
+  assert.match(
+    source,
+    /documentOffsetMs \+ rawFireAtMs/,
+  );
+  assert.match(
+    source,
+    /autoContinue\.elapsedMs < autoContinue\.intendedDelayMs/,
+  );
+  assert.match(
+    source,
+    /autoContinue\.key\.endsWith\(`:\$\{autonomyKey\}`\)/,
+  );
+  assert.match(source, /sample\?\.movement\?\.routeActive/);
+  assert.match(source, /evidence: "state-backed-auto-continue"/);
+  assert.match(source, /15300\.2ms sampled pacing failure/);
+  assert.match(source, /10_992\.4/);
+  assert.match(source, /originating document offset/);
+  assert.match(source, /Timer start evidence alone/);
+  assert.match(source, /Stale scheduler identity/);
+  assert.match(source, /Cosmetic follow-through copy/);
+  assert.match(
+    source,
+    /A true 24-second product-visible silence must still fail/,
+  );
+  assert.match(
+    source,
+    /One early playback checkpoint must not excuse a later 22-second silence/,
+  );
+});
+
 test("app-monotonic pacing survives a page clock reset", () => {
   assert.match(source, /buildCumulativeAppMonotonicSamples\(/);
   assert.match(source, /rawAppMonotonicMs/);

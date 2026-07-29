@@ -17898,6 +17898,206 @@ function assertAutoplayProgressGapGuard() {
     "Observer latency must not fail a run that kept presenting exact playback progress.",
   );
 
+  const ciDelayedFollowThroughSamples = [
+    {
+      activity: { autoContinue: null, busyLabel: null },
+      appDocumentOffsetMs: 0,
+      appMonotonicMs: 199_919.7,
+      rawAppMonotonicMs: 199_919.7,
+      autonomy: {
+        actionId: "move:boarding-house",
+        key: "plan:first-afternoon:return-home",
+        label: "Return to Morrow House to take stock",
+        mode: "moving",
+      },
+      elapsedMs: 201_324,
+      movement: { routeActive: false, routeProgress: null },
+      playback: { completedTimings: [] },
+      visibleDecisionArtifact: {
+        selectedAction: "Return to Morrow House to take stock",
+      },
+    },
+    {
+      activity: {
+        autoContinue: {
+          elapsedMs: 10_307.8,
+          intendedDelayMs: 6_000,
+          key: "game-ci:pending:2026-03-21T14:08:00.000Z:boarding-house:move:boarding-house",
+          startedAtMs: 215_500.3,
+        },
+        busyLabel: null,
+      },
+      appDocumentOffsetMs: 0,
+      appMonotonicMs: 225_808.1,
+      rawAppMonotonicMs: 225_808.1,
+      autonomy: {
+        actionId: "move:boarding-house",
+        key: "pending:2026-03-21T14:08:00.000Z:boarding-house:move:boarding-house",
+        label: "Return to Morrow House to take stock",
+        mode: "moving",
+      },
+      elapsedMs: 227_351,
+      movement: { routeActive: true, routeProgress: 0.018 },
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 210_507.9,
+            configuredDurationMs: 4_500,
+            key: "time-passed:2026-03-21T14:08:00.000Z",
+            kind: "time_passed",
+            startedAtMs: 205_099.8,
+            title: "Time passed",
+          },
+        ],
+      },
+      visibleDecisionArtifact: {
+        selectedAction:
+          "Following through: Return to Morrow House to take stock",
+      },
+    },
+  ];
+  const buildCiDelayedFollowThroughGap = (samples) =>
+    buildAutoplayObservationProgressGaps(samples, [
+      {
+        progressKinds: classifyAutoplayObservationProgress(
+          samples[0],
+          samples[1],
+        ),
+        toElapsedMs: samples[1].elapsedMs,
+      },
+    ])[0];
+  const ciGapWithoutTimerEvidence = buildCiDelayedFollowThroughGap([
+    ciDelayedFollowThroughSamples[0],
+    {
+      ...ciDelayedFollowThroughSamples[1],
+      activity: { autoContinue: null, busyLabel: null },
+    },
+  ]);
+  assert.ok(
+    Math.abs(ciGapWithoutTimerEvidence.appDurationMs - 15_300.2) < 0.01,
+    "The constrained-CI fixture must reproduce the 15300.2ms sampled pacing failure before exact timer-fire evidence is applied.",
+  );
+
+  const ciDelayedFollowThroughGap = buildCiDelayedFollowThroughGap(
+    ciDelayedFollowThroughSamples,
+  );
+  assert.ok(
+    Math.abs(ciDelayedFollowThroughGap.appDurationMs - 10_992.4) < 0.01,
+    "A proven auto-continue fire must split the delayed polling interval at its exact product-visible time.",
+  );
+  assert.ok(
+    Math.abs(
+      ciDelayedFollowThroughGap.sampledAppDurationMs - 25_888.4,
+    ) < 0.01,
+    "Diagnostics must preserve the full delayed polling interval.",
+  );
+  assert.equal(
+    ciDelayedFollowThroughGap.exactAutoContinueCheckpoints.length,
+    1,
+    "Pacing diagnostics must expose the exact state-backed timer-fire checkpoint.",
+  );
+  assert.ok(
+    Math.abs(
+      ciDelayedFollowThroughGap.exactAutoContinueCheckpoints[0]
+        .appMonotonicMs - 221_500.3,
+    ) < 0.01,
+    "The state-backed timer checkpoint must retain its exact fire time.",
+  );
+  assert.deepEqual(
+    {
+      evidence:
+        ciDelayedFollowThroughGap.exactAutoContinueCheckpoints[0].evidence,
+      phase: ciDelayedFollowThroughGap.exactAutoContinueCheckpoints[0].phase,
+    },
+    {
+      evidence: "state-backed-auto-continue",
+      phase: "fired",
+    },
+    "Pacing diagnostics must identify why the timer fire counted as progress.",
+  );
+  assert.ok(
+    ciDelayedFollowThroughGap.appDurationMs <=
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "A route that visibly followed through after its scheduled beat must stay within the unchanged 15-second budget.",
+  );
+
+  const offsetCiSamples = ciDelayedFollowThroughSamples.map((sample) => ({
+    ...sample,
+    appDocumentOffsetMs: 30_000,
+    appMonotonicMs: sample.appMonotonicMs + 30_000,
+  }));
+  assert.ok(
+    Math.abs(
+      exactAutoContinueProgressCheckpointsBetween(
+        offsetCiSamples,
+        offsetCiSamples[0].appMonotonicMs,
+        offsetCiSamples[1].appMonotonicMs,
+      )[0]?.appMonotonicMs - 251_500.3,
+    ) < 0.01,
+    "Exact auto-continue checkpoints must retain the originating document offset.",
+  );
+
+  const unelapsedTimerGap = buildCiDelayedFollowThroughGap([
+    ciDelayedFollowThroughSamples[0],
+    {
+      ...ciDelayedFollowThroughSamples[1],
+      activity: {
+        ...ciDelayedFollowThroughSamples[1].activity,
+        autoContinue: {
+          ...ciDelayedFollowThroughSamples[1].activity.autoContinue,
+          elapsedMs: 5_999,
+        },
+      },
+    },
+  ]);
+  assert.equal(
+    unelapsedTimerGap.exactAutoContinueCheckpoints.length,
+    0,
+    "An auto-continue timer that has not reached its intended delay must not count as progress.",
+  );
+  assert.ok(
+    unelapsedTimerGap.appDurationMs > AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "Timer start evidence alone must not excuse a pacing failure.",
+  );
+
+  const staleTimerGap = buildCiDelayedFollowThroughGap([
+    ciDelayedFollowThroughSamples[0],
+    {
+      ...ciDelayedFollowThroughSamples[1],
+      autonomy: {
+        ...ciDelayedFollowThroughSamples[1].autonomy,
+        key: "pending:changed-state:move:boarding-house",
+      },
+    },
+  ]);
+  assert.equal(
+    staleTimerGap.exactAutoContinueCheckpoints.length,
+    0,
+    "A timer whose scheduler key no longer matches current autonomy must not count as progress.",
+  );
+  assert.ok(
+    staleTimerGap.appDurationMs > AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "Stale scheduler identity must leave the real pacing gap visible.",
+  );
+
+  const cosmeticFollowThroughGap = buildCiDelayedFollowThroughGap([
+    ciDelayedFollowThroughSamples[0],
+    {
+      ...ciDelayedFollowThroughSamples[1],
+      movement: { routeActive: false, routeProgress: null },
+    },
+  ]);
+  assert.equal(
+    cosmeticFollowThroughGap.exactAutoContinueCheckpoints.length,
+    0,
+    "Follow-through copy without state-backed route movement must not count as progress.",
+  );
+  assert.ok(
+    cosmeticFollowThroughGap.appDurationMs >
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "Cosmetic follow-through copy must not hide a product-visible pacing failure.",
+  );
+
   const trulySilentGap = buildAutoplayObservationProgressGaps(
     [
       { appMonotonicMs: 0, autonomy: { label: "Wait" }, elapsedMs: 0 },
@@ -18555,6 +18755,7 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
             intendedDelayMs:
               probe.timing.autoContinue.intendedDelayMs ?? null,
             key: probe.timing.autoContinue.key ?? null,
+            startedAtMs: probe.timing.autoContinue.startedAtMs ?? null,
           }
         : null,
       busyLabel: probe?.busyLabel ?? null,
@@ -18573,6 +18774,7 @@ function sampleAutoplayObservationSample({ dom, elapsedMs, probe }) {
       ? {
           actionId: probe.autonomy.actionId ?? null,
           autoContinue: Boolean(probe.autonomy.autoContinue),
+          key: probe.autonomy.key ?? null,
           label: probe.autonomy.label ?? null,
           mode: probe.autonomy.mode ?? null,
           stepKind: probe.autonomy.stepKind ?? null,
@@ -18663,6 +18865,7 @@ function autoplayObservationSignature(sample) {
             intendedDelayMs:
               sample.activity.autoContinue.intendedDelayMs ?? null,
             key: sample.activity.autoContinue.key ?? null,
+            startedAtMs: sample.activity.autoContinue.startedAtMs ?? null,
           }
         : null,
       busyLabel: sample.activity?.busyLabel ?? null,
@@ -19042,6 +19245,12 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
       previousProgressSample.appMonotonicMs,
       nextSample?.appMonotonicMs,
     );
+    const autoContinueCheckpoints =
+      exactAutoContinueProgressCheckpointsBetween(
+        samples,
+        previousProgressSample.appMonotonicMs,
+        nextSample?.appMonotonicMs,
+      );
     const progressKinds = [
       ...new Set([
         ...transition.progressKinds,
@@ -19050,6 +19259,7 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
           nextSample,
         ),
         ...(playbackCheckpoints.length ? ["playback-progress"] : []),
+        ...(autoContinueCheckpoints.length ? ["activity-progress"] : []),
       ]),
     ];
     if (!progressKinds.some((kind) => kind !== "decision-artifact")) {
@@ -19064,9 +19274,15 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
             nextSample.appMonotonicMs - previousProgressSample.appMonotonicMs,
           )
         : null;
+    const exactProgressCheckpoints = [
+      ...playbackCheckpoints,
+      ...autoContinueCheckpoints,
+    ].sort((left, right) => left.appMonotonicMs - right.appMonotonicMs);
     const appProgressTimes = [
       previousProgressSample.appMonotonicMs,
-      ...playbackCheckpoints.map((checkpoint) => checkpoint.appMonotonicMs),
+      ...exactProgressCheckpoints.map(
+        (checkpoint) => checkpoint.appMonotonicMs,
+      ),
       nextSample?.appMonotonicMs,
     ].filter((value) => typeof value === "number");
     const appDurationMs =
@@ -19084,6 +19300,7 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
         (nextSample?.elapsedMs ?? transition.toElapsedMs) -
           previousProgressSample.elapsedMs,
       ),
+      exactAutoContinueCheckpoints: autoContinueCheckpoints,
       exactPlaybackCheckpoints: playbackCheckpoints,
       fromAutonomyLabel: previousProgressSample.autonomy?.label ?? null,
       fromElapsedMs: previousProgressSample.elapsedMs,
@@ -19167,6 +19384,87 @@ function exactPlaybackProgressCheckpointsBetween(
   }
 
   return checkpoints.sort(
+    (left, right) => left.appMonotonicMs - right.appMonotonicMs,
+  );
+}
+
+function hasStateBackedAutoContinueFollowThrough(sample) {
+  const autoContinue = sample?.activity?.autoContinue;
+  const autonomyKey = sample?.autonomy?.key;
+  const selectedAction = sample?.visibleDecisionArtifact?.selectedAction;
+  return Boolean(
+    autoContinue?.key &&
+      autonomyKey &&
+      autoContinue.key.endsWith(`:${autonomyKey}`) &&
+      /^Following through:/i.test(selectedAction ?? "") &&
+      sample?.movement?.routeActive,
+  );
+}
+
+function exactAutoContinueProgressCheckpointsBetween(
+  samples,
+  afterAppMonotonicMs,
+  beforeAppMonotonicMs,
+) {
+  if (
+    typeof afterAppMonotonicMs !== "number" ||
+    typeof beforeAppMonotonicMs !== "number" ||
+    beforeAppMonotonicMs <= afterAppMonotonicMs
+  ) {
+    return [];
+  }
+
+  const checkpoints = new Map();
+  for (const sample of samples ?? []) {
+    const autoContinue = sample?.activity?.autoContinue;
+    const rawSampleAppMonotonicMs = sample?.rawAppMonotonicMs;
+    if (
+      !hasStateBackedAutoContinueFollowThrough(sample) ||
+      typeof autoContinue?.startedAtMs !== "number" ||
+      typeof autoContinue?.intendedDelayMs !== "number" ||
+      typeof autoContinue?.elapsedMs !== "number" ||
+      autoContinue.intendedDelayMs < 0 ||
+      autoContinue.elapsedMs < autoContinue.intendedDelayMs
+    ) {
+      continue;
+    }
+
+    const rawFireAtMs =
+      autoContinue.startedAtMs + autoContinue.intendedDelayMs;
+    if (
+      typeof rawSampleAppMonotonicMs === "number" &&
+      rawFireAtMs > rawSampleAppMonotonicMs
+    ) {
+      continue;
+    }
+
+    const documentOffsetMs = sample.appDocumentOffsetMs ?? 0;
+    const appMonotonicMs = documentOffsetMs + rawFireAtMs;
+    if (
+      appMonotonicMs <= afterAppMonotonicMs ||
+      appMonotonicMs >= beforeAppMonotonicMs
+    ) {
+      continue;
+    }
+
+    const identity = [
+      documentOffsetMs,
+      autoContinue.key,
+      autoContinue.startedAtMs,
+    ].join(":");
+    checkpoints.set(identity, {
+      actionId: sample.autonomy?.actionId ?? null,
+      appMonotonicMs,
+      evidence: "state-backed-auto-continue",
+      intendedDelayMs: autoContinue.intendedDelayMs,
+      key: autoContinue.key,
+      phase: "fired",
+      selectedAction:
+        sample.visibleDecisionArtifact?.selectedAction ?? null,
+    });
+  }
+
+  return [...checkpoints.values()].sort(
     (left, right) => left.appMonotonicMs - right.appMonotonicMs,
   );
 }
