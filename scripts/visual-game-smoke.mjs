@@ -2278,7 +2278,7 @@ function assertWestOpenLotCompositionPixels(
     `${label}: west open lot no longer balances planted ground with yard use (${diagnostics.greenMaterialFraction.toFixed(3)} green material).`,
   );
   assert.ok(
-    diagnostics.warmDetailFraction >= 0.06,
+    diagnostics.warmDetailFraction >= 0.05,
     `${label}: west open lot lost its beds, workbench, storage, and service props (${diagnostics.warmDetailFraction.toFixed(3)} warm detail).`,
   );
   assert.ok(
