@@ -116,25 +116,25 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "id": "fringe-north-west-town",
       "edge": "north",
       "kind": "neighbor_facade",
-      "rect": { "x": 0, "y": 0, "width": 700, "height": 108, "radius": 0 }
+      "rect": { "x": 0, "y": 0, "width": 700, "height": 192, "radius": 0 }
     },
     {
       "id": "fringe-north-east-town",
       "edge": "north",
       "kind": "neighbor_facade",
-      "rect": { "x": 700, "y": 0, "width": 1072, "height": 108, "radius": 0 }
+      "rect": { "x": 700, "y": 0, "width": 1072, "height": 192, "radius": 0 }
     },
     {
       "id": "fringe-west-neighbors",
       "edge": "west",
       "kind": "neighbor_facade",
-      "rect": { "x": 0, "y": 108, "width": 96, "height": 612, "radius": 0 }
+      "rect": { "x": 0, "y": 108, "width": 124, "height": 612, "radius": 0 }
     },
     {
       "id": "fringe-west-side-street",
       "edge": "west",
       "kind": "side_street",
-      "rect": { "x": 0, "y": 720, "width": 112, "height": 500, "radius": 0 }
+      "rect": { "x": 0, "y": 720, "width": 132, "height": 500, "radius": 0 }
     },
     {
       "id": "fringe-east-channel",
@@ -1186,7 +1186,10 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "kind": "yard_service",
       "locationId": "courtyard",
       "points": [
-        { "x": 226, "y": 948 }
+        { "x": 226, "y": 890 },
+        { "x": 364, "y": 884 },
+        { "x": 286, "y": 1030 },
+        { "x": 424, "y": 1018 }
       ],
       "rect": {
         "x": 172,

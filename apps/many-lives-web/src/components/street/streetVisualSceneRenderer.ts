@@ -1594,7 +1594,7 @@ function drawSurfaceZones(
         );
         break;
       case "courtyard_ground":
-        layer.fillStyle(0x7d9164, 0.34);
+        layer.fillStyle(0x71865d, 0.78);
         layer.fillRoundedRect(
           rect.x,
           rect.y,
@@ -1602,7 +1602,7 @@ function drawSurfaceZones(
           rect.height,
           rect.radius ?? 18,
         );
-        layer.lineStyle(2, 0x4f6146, 0.2);
+        layer.lineStyle(2, 0x43543d, 0.42);
         layer.strokeRoundedRect(
           rect.x + 2,
           rect.y + 2,
@@ -1610,7 +1610,7 @@ function drawSurfaceZones(
           rect.height - 4,
           rect.radius ?? 18,
         );
-        layer.fillStyle(0x97a979, 0.11);
+        layer.fillStyle(0x91a66d, 0.22);
         layer.fillRoundedRect(
           rect.x + 16,
           rect.y + 16,
@@ -1618,17 +1618,43 @@ function drawSurfaceZones(
           rect.height - 32,
           16,
         );
-        layer.fillStyle(0xd3c49f, 0.14);
+        layer.fillStyle(0xb6aa8c, 0.5);
         layer.fillRoundedRect(
-          rect.x + rect.width / 2 - 28,
-          rect.y + 52,
-          56,
-          rect.height - 110,
+          rect.x + rect.width * 0.43,
+          rect.y + 18,
+          48,
+          rect.height - 36,
+          14,
+        );
+        layer.fillStyle(0xd8ccb0, 0.34);
+        for (let y = rect.y + 32; y < rect.y + rect.height - 24; y += 34) {
+          layer.fillRoundedRect(
+            rect.x + rect.width * 0.43 + (Math.round(y) % 3) * 3,
+            y,
+            48,
+            15,
+            7,
+          );
+        }
+        layer.fillStyle(0x526a46, 0.34);
+        layer.fillRoundedRect(
+          rect.x + 22,
+          rect.y + rect.height * 0.58,
+          rect.width * 0.31,
+          rect.height * 0.24,
+          12,
+        );
+        layer.fillStyle(0x947650, 0.42);
+        layer.fillRoundedRect(
+          rect.x + rect.width * 0.68,
+          rect.y + rect.height * 0.18,
+          rect.width * 0.24,
+          rect.height * 0.3,
           10,
         );
-        layer.lineStyle(1.4, 0xd6e3ac, 0.1);
-        for (let y = rect.y + 24; y < rect.y + rect.height - 18; y += 22) {
-          layer.lineBetween(rect.x + 24, y, rect.x + rect.width - 28, y - 8);
+        layer.lineStyle(1.4, 0xc8dda0, 0.24);
+        for (let y = rect.y + 26; y < rect.y + rect.height - 18; y += 24) {
+          layer.lineBetween(rect.x + 20, y, rect.x + rect.width - 24, y - 7);
         }
         break;
       case "dock_apron":
@@ -2601,7 +2627,7 @@ function drawNeighborFacadeZone(
   rect: VisualRect,
   edge: "east" | "north" | "south" | "west",
 ) {
-  layer.fillStyle(0x1a2a31, 1);
+  layer.fillStyle(0x17252b, 1);
   layer.fillRoundedRect(
     rect.x,
     rect.y,
@@ -2609,16 +2635,182 @@ function drawNeighborFacadeZone(
     rect.height,
     rect.radius ?? 16,
   );
-  layer.fillStyle(0x24363f, 0.9);
-  layer.fillRect(rect.x, rect.y + 8, rect.width, 18);
-  layer.lineStyle(1, 0x334852, 0.26);
-  for (let x = rect.x + 20; x < rect.x + rect.width - 20; x += 48) {
-    layer.lineBetween(x, rect.y + 28, x, rect.y + rect.height - 14);
-  }
+
   if (edge === "north") {
-    layer.fillStyle(0x4a4d4d, 0.16);
-    layer.fillRect(rect.x + 16, rect.y + rect.height - 26, rect.width - 32, 12);
+    drawNorthNeighborRow(layer, rect);
+    return;
   }
+
+  const facadePalettes = [
+    { accent: 0xb88b5c, roof: 0x25343a, wall: 0x4d5c5d },
+    { accent: 0x7ea09a, roof: 0x2f3032, wall: 0x5b5048 },
+    { accent: 0xc09a65, roof: 0x26373d, wall: 0x40565a },
+  ];
+  let bayIndex = 0;
+  for (let y = rect.y + 8; y < rect.y + rect.height - 8; y += 148) {
+    const height = Math.min(138, rect.y + rect.height - y - 6);
+    const palette = facadePalettes[bayIndex % facadePalettes.length];
+    layer.fillStyle(palette.wall, 0.98);
+    layer.fillRoundedRect(rect.x + 5, y, rect.width - 10, height, 6);
+    layer.fillStyle(palette.roof, 1);
+    layer.fillRect(rect.x + 2, y, rect.width - 4, 16);
+    layer.fillStyle(palette.accent, 0.74);
+    layer.fillRect(rect.x + rect.width - 13, y + 18, 8, height - 24);
+    drawFringeWindow(
+      layer,
+      rect.x + rect.width * 0.46,
+      y + 46,
+      bayIndex % 3 === 0,
+    );
+    drawFringeServiceDoor(layer, rect.x + 20, y + height - 47, 36, 43);
+    layer.lineStyle(1.2, 0xd2c096, 0.24);
+    for (let seamY = y + 26; seamY < y + height - 12; seamY += 22) {
+      layer.lineBetween(
+        rect.x + 10,
+        seamY,
+        rect.x + rect.width - 12,
+        seamY - 3,
+      );
+    }
+    bayIndex += 1;
+  }
+}
+
+function drawNorthNeighborRow(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  const facadePalettes = [
+    { accent: 0xc19562, roof: 0x29343a, wall: 0x526466 },
+    { accent: 0x7fa09a, roof: 0x332f31, wall: 0x65564d },
+    { accent: 0xd0aa6d, roof: 0x26363b, wall: 0x455c60 },
+    { accent: 0xa8795d, roof: 0x30343a, wall: 0x5c6260 },
+  ];
+  const bayCount = Math.max(2, Math.round(rect.width / 176));
+  const bayWidth = rect.width / bayCount;
+  for (let bayIndex = 0; bayIndex < bayCount; bayIndex += 1) {
+    const x = rect.x + bayIndex * bayWidth + 4;
+    const width = bayWidth;
+    const palette = facadePalettes[bayIndex % facadePalettes.length];
+    const roofLift = (bayIndex % 3) * 8;
+    const facadeY = rect.y + 26 + roofLift;
+    const facadeHeight = rect.height - 38 - roofLift;
+
+    layer.fillStyle(0x0d171b, 0.38);
+    layer.fillRoundedRect(x + 9, facadeY + 12, width - 4, facadeHeight, 6);
+    layer.fillStyle(palette.wall, 0.98);
+    layer.fillRoundedRect(x, facadeY, width - 8, facadeHeight, 5);
+    layer.fillStyle(palette.roof, 1);
+    layer.fillRect(x - 3, facadeY - 12, width - 2, 20);
+    layer.fillStyle(palette.accent, 0.78);
+    layer.fillRect(x + 8, facadeY + 10, width - 24, 7);
+    layer.fillStyle(0x1b292f, 0.95);
+    layer.fillRect(x + 16, rect.y + 4 + roofLift, 18, 24);
+    layer.fillStyle(0xa97d52, 0.62);
+    layer.fillRect(x + 19, rect.y + 2 + roofLift, 12, 5);
+
+    const windowY = facadeY + 38;
+    drawFringeWindow(layer, x + 34, windowY, bayIndex % 2 === 0);
+    if (width >= 166) {
+      drawFringeWindow(
+        layer,
+        x + width - 54,
+        windowY + (bayIndex % 2) * 5,
+        bayIndex % 3 === 1,
+      );
+    }
+    if (bayIndex % 2 === 0) {
+      drawFringeServiceDoor(
+        layer,
+        x + width - 48,
+        facadeY + facadeHeight - 51,
+        34,
+        47,
+      );
+    } else {
+      layer.fillStyle(0x243a3d, 0.92);
+      layer.fillRoundedRect(
+        x + 18,
+        facadeY + facadeHeight - 37,
+        width - 40,
+        31,
+        5,
+      );
+      layer.lineStyle(1.2, 0xb58e5f, 0.38);
+      for (
+        let shutterX = x + 28;
+        shutterX < x + width - 24;
+        shutterX += 18
+      ) {
+        layer.lineBetween(
+          shutterX,
+          facadeY + facadeHeight - 34,
+          shutterX,
+          facadeY + facadeHeight - 9,
+        );
+      }
+    }
+
+    layer.fillStyle(0x273e32, 0.96);
+    layer.fillRoundedRect(
+      x + 12,
+      rect.y + rect.height - 18,
+      Math.max(24, width - 32),
+      12,
+      6,
+    );
+    layer.fillStyle(0x71915c, 0.9);
+    for (
+      let planterX = x + 24;
+      planterX < x + width - 22;
+      planterX += 34
+    ) {
+      layer.fillCircle(
+        planterX,
+        rect.y + rect.height - 21 - (bayIndex % 2) * 2,
+        8,
+      );
+    }
+
+  }
+
+  layer.fillStyle(0x7e725f, 0.92);
+  layer.fillRect(rect.x, rect.y + rect.height - 6, rect.width, 6);
+  layer.fillStyle(0xe4d0a4, 0.22);
+  layer.fillRect(rect.x, rect.y + rect.height - 6, rect.width, 2);
+}
+
+function drawFringeWindow(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  lit: boolean,
+) {
+  layer.fillStyle(0x18292f, 0.96);
+  layer.fillRoundedRect(x - 17, y - 14, 34, 28, 4);
+  layer.fillStyle(lit ? 0xe8bd72 : 0x7fa5a5, lit ? 0.82 : 0.54);
+  layer.fillRoundedRect(x - 13, y - 10, 26, 20, 3);
+  layer.lineStyle(1.2, 0xe1d2ae, 0.42);
+  layer.lineBetween(x, y - 9, x, y + 9);
+  layer.lineBetween(x - 12, y, x + 12, y);
+  layer.fillStyle(0xf8dfa2, lit ? 0.18 : 0.07);
+  layer.fillEllipse(x - 4, y - 4, 14, 7);
+}
+
+function drawFringeServiceDoor(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  layer.fillStyle(0x23353a, 0.98);
+  layer.fillRoundedRect(x, y, width, height, 5);
+  layer.fillStyle(0x9a7652, 0.62);
+  layer.fillRect(x + 6, y + 7, width - 12, 5);
+  layer.fillCircle(x + width - 8, y + height * 0.56, 2);
+  layer.fillStyle(0x131f24, 0.34);
+  layer.fillRect(x, y + height - 7, width, 7);
 }
 
 function drawAlleyZone(
@@ -2652,7 +2844,7 @@ function drawSideStreetZone(
   rect: VisualRect,
   edge: "east" | "north" | "south" | "west",
 ) {
-  layer.fillStyle(0x1b2a32, 1);
+  layer.fillStyle(0x344248, 1);
   layer.fillRoundedRect(
     rect.x,
     rect.y,
@@ -2660,18 +2852,52 @@ function drawSideStreetZone(
     rect.height,
     rect.radius ?? 16,
   );
-  layer.fillStyle(0x2a3942, 0.26);
-  for (let y = rect.y + 18; y < rect.y + rect.height - 18; y += 36) {
-    layer.fillRect(rect.x + 14, y, rect.width - 28, 8);
+  layer.fillStyle(0x556167, 0.54);
+  for (let y = rect.y + 14; y < rect.y + rect.height - 14; y += 32) {
+    layer.fillRoundedRect(rect.x + 10, y, rect.width - 20, 18, 5);
+    layer.lineStyle(1, 0x89908c, 0.18);
+    layer.lineBetween(rect.x + 14, y + 4, rect.x + rect.width - 14, y + 2);
   }
   if (edge === "east" || edge === "west") {
-    layer.fillStyle(0x23343d, 0.8);
+    layer.fillStyle(0x252f34, 0.88);
     layer.fillRect(
-      rect.x + rect.width / 2 - 18,
-      rect.y + 22,
-      36,
-      rect.height - 44,
+      rect.x + rect.width * 0.46,
+      rect.y + 12,
+      18,
+      rect.height - 24,
     );
+    layer.lineStyle(2, 0xd4c392, 0.26);
+    for (let y = rect.y + 30; y < rect.y + rect.height - 20; y += 54) {
+      layer.lineBetween(
+        rect.x + rect.width * 0.46 + 5,
+        y,
+        rect.x + rect.width * 0.46 + 13,
+        y + 22,
+      );
+    }
+    const curbX = edge === "west" ? rect.x + rect.width - 15 : rect.x + 7;
+    layer.fillStyle(0xb3a484, 0.78);
+    layer.fillRect(curbX, rect.y + 8, 8, rect.height - 16);
+    layer.fillStyle(0xeee0bd, 0.2);
+    layer.fillRect(curbX, rect.y + 8, 2, rect.height - 16);
+    layer.fillStyle(0x17252a, 0.56);
+    for (let y = rect.y + 44; y < rect.y + rect.height - 24; y += 92) {
+      layer.fillRoundedRect(
+        edge === "west" ? rect.x + 10 : rect.x + rect.width - 40,
+        y,
+        28,
+        42,
+        5,
+      );
+      layer.fillStyle(0xaa7e4f, 0.68);
+      layer.fillRect(
+        edge === "west" ? rect.x + 15 : rect.x + rect.width - 35,
+        y + 8,
+        18,
+        5,
+      );
+      layer.fillStyle(0x17252a, 0.56);
+    }
   }
 }
 
@@ -3696,11 +3922,47 @@ function drawV2CourtyardPersonality(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
 ) {
-  drawPump(layer, rect.x + 78, rect.y + 92);
-  drawLaundryLine(layer, rect.x + 124, rect.y + 48, rect.x + rect.width - 42);
-  drawBarrel(layer, rect.x + rect.width - 56, rect.y + rect.height - 44);
-  drawCrateStack(layer, rect.x + rect.width - 92, rect.y + rect.height - 40);
-  layer.fillStyle(0xd8c49a, 0.18);
+  layer.fillStyle(0x56493b, 0.76);
+  layer.fillRoundedRect(
+    rect.x + rect.width - 94,
+    rect.y + 24,
+    72,
+    78,
+    8,
+  );
+  layer.fillStyle(0x74604b, 0.94);
+  layer.fillRoundedRect(
+    rect.x + rect.width - 88,
+    rect.y + 30,
+    60,
+    66,
+    6,
+  );
+  layer.fillStyle(0x2d3a39, 0.92);
+  layer.fillRect(rect.x + rect.width - 82, rect.y + 48, 48, 10);
+  layer.lineStyle(1.3, 0xd7bd87, 0.42);
+  for (
+    let plankY = rect.y + 36;
+    plankY < rect.y + 92;
+    plankY += 14
+  ) {
+    layer.lineBetween(
+      rect.x + rect.width - 84,
+      plankY,
+      rect.x + rect.width - 32,
+      plankY - 2,
+    );
+  }
+
+  drawRaisedGardenBed(layer, rect.x + 24, rect.y + rect.height - 86, 104, 48);
+  drawRaisedGardenBed(
+    layer,
+    rect.x + rect.width - 144,
+    rect.y + rect.height - 72,
+    92,
+    38,
+  );
+  layer.fillStyle(0xd8c49a, 0.32);
   layer.fillRoundedRect(
     rect.x + 28,
     rect.y + rect.height - 42,
@@ -3708,6 +3970,50 @@ function drawV2CourtyardPersonality(
     10,
     5,
   );
+  layer.fillStyle(0xf0dfba, 0.2);
+  for (let x = rect.x + 42; x < rect.x + rect.width - 42; x += 46) {
+    layer.fillEllipse(x, rect.y + rect.height - 38, 24, 8);
+  }
+}
+
+function drawRaisedGardenBed(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+) {
+  layer.fillStyle(0x6b4e32, 0.96);
+  layer.fillRoundedRect(x, y, width, height, 7);
+  layer.fillStyle(0x33291f, 0.9);
+  layer.fillRoundedRect(x + 7, y + 7, width - 14, height - 14, 5);
+  layer.lineStyle(1.4, 0xd0a66c, 0.54);
+  layer.strokeRoundedRect(x + 2, y + 2, width - 4, height - 4, 6);
+  for (let plantX = x + 18; plantX < x + width - 10; plantX += 24) {
+    layer.fillStyle(0x436a39, 0.96);
+    layer.fillCircle(plantX, y + height * 0.48, 7);
+    layer.fillStyle(0x85a866, 0.82);
+    layer.fillCircle(plantX + 5, y + height * 0.42, 5);
+  }
+}
+
+function drawYardWorkBench(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+) {
+  layer.fillStyle(0x765335, 0.98);
+  layer.fillRoundedRect(x - 38, y - 10, 76, 15, 5);
+  layer.fillRect(x - 29, y + 2, 7, 28);
+  layer.fillRect(x + 22, y + 2, 7, 28);
+  layer.fillStyle(0xb68a57, 0.72);
+  layer.fillRect(x - 31, y - 7, 62, 4);
+  layer.fillStyle(0x39474a, 0.94);
+  layer.fillRoundedRect(x - 22, y - 22, 20, 11, 3);
+  layer.fillStyle(0xbf8c50, 0.94);
+  layer.fillCircle(x + 18, y - 15, 7);
+  layer.lineStyle(2, 0x343d3f, 0.84);
+  layer.lineBetween(x + 7, y - 18, x + 30, y - 24);
 }
 
 function drawSaggingRope(
@@ -3951,8 +4257,21 @@ function drawYardServiceCluster(
   layer: PhaserType.GameObjects.Graphics,
   cluster: VisualScene["propClusters"][number],
 ) {
-  const [pumpPoint = { x: cluster.rect.x + 54, y: cluster.rect.y + 56 }] =
-    cluster.points ?? [];
+  const [
+    pumpPoint = { x: cluster.rect.x + 54, y: cluster.rect.y + 56 },
+    workBenchPoint = {
+      x: cluster.rect.x + cluster.rect.width * 0.64,
+      y: cluster.rect.y + 52,
+    },
+    gardenPoint = {
+      x: cluster.rect.x + cluster.rect.width * 0.42,
+      y: cluster.rect.y + cluster.rect.height - 42,
+    },
+    storagePoint = {
+      x: cluster.rect.x + cluster.rect.width - 42,
+      y: cluster.rect.y + cluster.rect.height - 38,
+    },
+  ] = cluster.points ?? [];
   drawPump(layer, pumpPoint.x, pumpPoint.y);
   drawLaundryLine(
     layer,
@@ -3960,15 +4279,20 @@ function drawYardServiceCluster(
     cluster.rect.y + 18,
     cluster.rect.x + cluster.rect.width - 26,
   );
-  drawCrateStack(
+  drawYardWorkBench(layer, workBenchPoint.x, workBenchPoint.y);
+  drawRaisedGardenBed(
     layer,
-    cluster.rect.x + cluster.rect.width - 44,
-    cluster.rect.y + cluster.rect.height - 30,
+    gardenPoint.x - 42,
+    gardenPoint.y - 20,
+    84,
+    38,
   );
-  drawBarrel(
+  drawCrateStack(layer, storagePoint.x, storagePoint.y);
+  drawBarrel(layer, storagePoint.x - 42, storagePoint.y + 5);
+  drawAuthoredPlanter(
     layer,
-    cluster.rect.x + cluster.rect.width / 2,
-    cluster.rect.y + cluster.rect.height - 34,
+    cluster.rect.x + cluster.rect.width - 28,
+    cluster.rect.y + 52,
   );
 }
 

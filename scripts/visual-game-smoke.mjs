@@ -134,6 +134,18 @@ const EAST_WATERFRONT_MOORING_BAYS = [
     top: 976,
   },
 ];
+const NORTH_FRINGE_WORLD_REGION = {
+  bottom: 190,
+  left: 96,
+  right: 680,
+  top: 18,
+};
+const WEST_OPEN_LOT_WORLD_REGION = {
+  bottom: 1094,
+  left: 150,
+  right: 500,
+  top: 862,
+};
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|starting|weighing|continuing|carrying the conversation)/i;
@@ -142,6 +154,7 @@ let activeWebBase = DEFAULT_WEB_BASE;
 const screenshotCaptureRetries = [];
 const screenshotPixelDiagnostics = [];
 const eastWaterfrontCompositionDiagnostics = [];
+const fringeCompositionDiagnostics = [];
 const interiorIdentityDiagnostics = [];
 
 const VIEWPORTS = [
@@ -176,6 +189,15 @@ const RESPONSIVE_DECISION_VIEWPORT_NAMES = new Set([
   "codex-retina-compact",
   "codex-screenshot-tall",
   "codex-retina-tall",
+]);
+const NORTH_FRINGE_VIEWPORT_NAMES = new Set([
+  "mobile",
+  "codex-compact",
+  "codex-retina-compact",
+]);
+const WEST_OPEN_LOT_VIEWPORT_NAMES = new Set([
+  "codex-compact",
+  "codex-retina-compact",
 ]);
 const INTERIOR_CAMERA_VIEWPORT = {
   deviceScaleFactor: 2,
@@ -2021,6 +2043,257 @@ function assertEastWaterfrontCompositionPixels(
   return diagnostics;
 }
 
+function sampleWorldCompositionRegion(
+  buffer,
+  camera,
+  page,
+  viewport,
+  worldRegion,
+  label,
+) {
+  const image = decodePngPixels(buffer);
+  const scene = page.sceneViewportCss;
+  const worldView = camera?.renderedWorldView;
+  assert.ok(
+    scene && worldView,
+    `${label}: missing camera geometry for fringe composition validation.`,
+  );
+
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  const blockers = [page.rightStack, page.dockRoot]
+    .map(normalizePageRect)
+    .filter(Boolean);
+  const cssRect = {
+    bottom:
+      scene.y +
+      ((worldRegion.bottom - worldView.top) / worldView.height) * scene.height,
+    left:
+      scene.x +
+      ((worldRegion.left - worldView.left) / worldView.width) * scene.width,
+    right:
+      scene.x +
+      ((worldRegion.right - worldView.left) / worldView.width) * scene.width,
+    top:
+      scene.y +
+      ((worldRegion.top - worldView.top) / worldView.height) * scene.height,
+  };
+  const sample = {
+    bottom: Math.min(cssRect.bottom, scene.y + scene.height),
+    left: Math.max(cssRect.left, scene.x),
+    right: Math.min(cssRect.right, scene.x + scene.width),
+    top: Math.max(cssRect.top, scene.y),
+  };
+  assert.ok(
+    sample.right - sample.left >= 36 && sample.bottom - sample.top >= 24,
+    `${label}: authored fringe sample is not visibly available (${JSON.stringify(sample)}).`,
+  );
+
+  const colorBins = new Map();
+  let darkMaterialPixels = 0;
+  let greenMaterialPixels = 0;
+  let maximumLuminance = 0;
+  let minimumLuminance = 255;
+  let paleVoidPixels = 0;
+  let sampledPixels = 0;
+  let transitionPixels = 0;
+  let warmDetailPixels = 0;
+
+  for (
+    let sourceY = Math.floor(sample.top * scaleY);
+    sourceY < Math.ceil(sample.bottom * scaleY);
+    sourceY += 1
+  ) {
+    let previousColor = null;
+    for (
+      let sourceX = Math.floor(sample.left * scaleX);
+      sourceX < Math.ceil(sample.right * scaleX);
+      sourceX += 1
+    ) {
+      const cssX = (sourceX + 0.5) / scaleX;
+      const cssY = (sourceY + 0.5) / scaleY;
+      if (
+        blockers.some(
+          (blocker) =>
+            cssX >= blocker.left &&
+            cssX <= blocker.right &&
+            cssY >= blocker.top &&
+            cssY <= blocker.bottom,
+        )
+      ) {
+        previousColor = null;
+        continue;
+      }
+
+      const offset = (sourceY * image.width + sourceX) * image.channels;
+      const red = image.pixels[offset];
+      const green = image.pixels[offset + 1] ?? red;
+      const blue = image.pixels[offset + 2] ?? red;
+      const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+      const binKey = `${red >> 4}:${green >> 4}:${blue >> 4}`;
+
+      sampledPixels += 1;
+      minimumLuminance = Math.min(minimumLuminance, luminance);
+      maximumLuminance = Math.max(maximumLuminance, luminance);
+      colorBins.set(binKey, (colorBins.get(binKey) ?? 0) + 1);
+      if (
+        red >= 188 &&
+        green >= 178 &&
+        blue >= 154 &&
+        Math.max(red, green, blue) - Math.min(red, green, blue) <= 58
+      ) {
+        paleVoidPixels += 1;
+      }
+      if (
+        luminance >= 38 &&
+        luminance <= 148 &&
+        Math.max(red, green, blue) - Math.min(red, green, blue) <= 78
+      ) {
+        darkMaterialPixels += 1;
+      }
+      if (
+        green >= 62 &&
+        green <= 180 &&
+        green - red >= 7 &&
+        green - blue >= 10
+      ) {
+        greenMaterialPixels += 1;
+      }
+      if (
+        red >= 112 &&
+        green >= 67 &&
+        blue <= 166 &&
+        red - blue >= 20 &&
+        red - green >= 5
+      ) {
+        warmDetailPixels += 1;
+      }
+      if (
+        previousColor &&
+        Math.abs(red - previousColor.red) +
+          Math.abs(green - previousColor.green) +
+          Math.abs(blue - previousColor.blue) >=
+          42
+      ) {
+        transitionPixels += 1;
+      }
+      previousColor = { blue, green, red };
+    }
+  }
+
+  assert.ok(
+    sampledPixels >= 800,
+    `${label}: too few unobscured pixels were available (${sampledPixels}).`,
+  );
+  const minimumBinPixels = Math.max(6, Math.floor(sampledPixels * 0.002));
+  const activeColorBins = [...colorBins.values()].filter(
+    (count) => count >= minimumBinPixels,
+  ).length;
+  const dominantColorFraction =
+    Math.max(...colorBins.values()) / sampledPixels;
+  return {
+    activeColorBins,
+    darkMaterialFraction: darkMaterialPixels / sampledPixels,
+    dominantColorFraction,
+    greenMaterialFraction: greenMaterialPixels / sampledPixels,
+    luminanceRange: maximumLuminance - minimumLuminance,
+    paleVoidFraction: paleVoidPixels / sampledPixels,
+    sample,
+    sampledPixels,
+    transitionFraction: transitionPixels / sampledPixels,
+    warmDetailFraction: warmDetailPixels / sampledPixels,
+  };
+}
+
+function assertNorthFringeCompositionPixels(
+  buffer,
+  camera,
+  page,
+  viewport,
+  label,
+) {
+  const diagnostics = sampleWorldCompositionRegion(
+    buffer,
+    camera,
+    page,
+    viewport,
+    NORTH_FRINGE_WORLD_REGION,
+    label,
+  );
+  const minimumTransitionFraction =
+    0.018 / (viewport.deviceScaleFactor ?? 1);
+  assert.ok(
+    diagnostics.activeColorBins >= 14,
+    `${label}: north fringe lacks material variety (${diagnostics.activeColorBins} active bins).`,
+  );
+  assert.ok(
+    diagnostics.darkMaterialFraction >= 0.34,
+    `${label}: north fringe lacks a broad neighboring-facade read (${diagnostics.darkMaterialFraction.toFixed(3)} dark material).`,
+  );
+  assert.ok(
+    diagnostics.warmDetailFraction >= 0.012,
+    `${label}: north fringe lost its windows, doors, and warm service details (${diagnostics.warmDetailFraction.toFixed(3)} warm detail).`,
+  );
+  assert.ok(
+    diagnostics.paleVoidFraction <= 0.22,
+    `${label}: north fringe regressed to pale unfinished slabs (${diagnostics.paleVoidFraction.toFixed(3)} pale fraction).`,
+  );
+  assert.ok(
+    diagnostics.luminanceRange >= 72 &&
+      diagnostics.transitionFraction >= minimumTransitionFraction &&
+      diagnostics.dominantColorFraction <= 0.46,
+    `${label}: north fringe is visually flat (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
+  );
+  fringeCompositionDiagnostics.push({
+    ...diagnostics,
+    label,
+    region: "north-fringe",
+  });
+}
+
+function assertWestOpenLotCompositionPixels(
+  buffer,
+  camera,
+  page,
+  viewport,
+  label,
+) {
+  const diagnostics = sampleWorldCompositionRegion(
+    buffer,
+    camera,
+    page,
+    viewport,
+    WEST_OPEN_LOT_WORLD_REGION,
+    label,
+  );
+  const minimumTransitionFraction =
+    0.022 / (viewport.deviceScaleFactor ?? 1);
+  assert.ok(
+    diagnostics.activeColorBins >= 16,
+    `${label}: west open lot lacks authored material variety (${diagnostics.activeColorBins} active bins).`,
+  );
+  assert.ok(
+    diagnostics.greenMaterialFraction >= 0.12 &&
+      diagnostics.greenMaterialFraction <= 0.7,
+    `${label}: west open lot no longer balances planted ground with yard use (${diagnostics.greenMaterialFraction.toFixed(3)} green material).`,
+  );
+  assert.ok(
+    diagnostics.warmDetailFraction >= 0.06,
+    `${label}: west open lot lost its beds, workbench, storage, and service props (${diagnostics.warmDetailFraction.toFixed(3)} warm detail).`,
+  );
+  assert.ok(
+    diagnostics.luminanceRange >= 68 &&
+      diagnostics.transitionFraction >= minimumTransitionFraction &&
+      diagnostics.dominantColorFraction <= 0.42,
+    `${label}: west open lot regressed to a flat empty rectangle (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
+  );
+  fringeCompositionDiagnostics.push({
+    ...diagnostics,
+    label,
+    region: "west-open-lot",
+  });
+}
+
 function assertBoardingHouseInteriorCompositionPixels(
   buffer,
   page,
@@ -2913,6 +3186,18 @@ async function assertCameraPanContractGuard() {
       ) &&
       smokeSource.includes("assertEastWaterfrontCompositionPixels"),
     "The east waterfront must retain its authored asymmetric mooring bays, vertical quay treatment, and pixel-backed regression.",
+  );
+  assert.ok(
+    southQuayV2DocumentSource.includes('"id": "fringe-north-west-town"') &&
+      southQuayV2DocumentSource.includes('"id": "fringe-west-side-street"') &&
+      southQuayV2DocumentSource.includes(
+        '"id": "courtyard-morrow-yard-service"',
+      ) &&
+      visualSceneRendererSource.includes("drawNorthNeighborRow") &&
+      visualSceneRendererSource.includes("drawRaisedGardenBed") &&
+      smokeSource.includes("assertNorthFringeCompositionPixels") &&
+      smokeSource.includes("assertWestOpenLotCompositionPixels"),
+    "The north/west edge must retain its authored neighbor row, working yard composition, and pixel-backed fringe regressions.",
   );
   assert.ok(
     streetSource.includes("function drawInteriorPlayerRouteLane") &&
@@ -6528,7 +6813,7 @@ async function runViewportCheck(session, viewport) {
     expectedHudText,
   );
   assertBoundedVisualHierarchy(westPanPage, `${viewport.name} west pan`);
-  await captureValidatedScreenshot({
+  const westPanCapture = await captureValidatedScreenshot({
     expectedHudText,
     label: `${viewport.name} west pan`,
     page: westPanPage,
@@ -6536,6 +6821,15 @@ async function runViewportCheck(session, viewport) {
     targetPath: westPanScreenshotPath,
     viewport,
   });
+  if (WEST_OPEN_LOT_VIEWPORT_NAMES.has(viewport.name)) {
+    assertWestOpenLotCompositionPixels(
+      westPanCapture.screenshot,
+      panAtWestEdge,
+      westPanCapture.page,
+      viewport,
+      `${viewport.name} west pan`,
+    );
+  }
 
   let northEdge = null;
   let eastEdge = null;
@@ -6596,7 +6890,7 @@ async function runViewportCheck(session, viewport) {
       expectedHudText,
     );
     assertBoundedVisualHierarchy(northPanPage, `${viewport.name} north pan`);
-    await captureValidatedScreenshot({
+    const northPanCapture = await captureValidatedScreenshot({
       expectedHudText,
       label: `${viewport.name} north pan`,
       page: northPanPage,
@@ -6604,6 +6898,15 @@ async function runViewportCheck(session, viewport) {
       targetPath: northPanScreenshotPath,
       viewport,
     });
+    if (NORTH_FRINGE_VIEWPORT_NAMES.has(viewport.name)) {
+      assertNorthFringeCompositionPixels(
+        northPanCapture.screenshot,
+        northEdge,
+        northPanCapture.page,
+        viewport,
+        `${viewport.name} north pan`,
+      );
+    }
 
     eastEdge = await settleCameraAtEdge(session, "east", northEdge);
     assertSameCameraSpace(
@@ -7667,6 +7970,7 @@ async function main() {
           afterHoursNpcAvailability,
           authoredInteriorIdentity,
           eastWaterfrontCompositionDiagnostics,
+          fringeCompositionDiagnostics,
           freshAutoplayStart,
           freshAutoplayOptOut,
           outputDir: OUTPUT_DIR,
