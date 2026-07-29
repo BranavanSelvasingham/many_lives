@@ -4420,6 +4420,270 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
+    "archived opening frames survive direct window budget exhaustion",
+    async () => {
+      const archivePromotionSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/archive-promotion-route",
+        url: "http://127.0.0.1/",
+      });
+      archivePromotionSession.socket = { destroyed: false, writable: true };
+      archivePromotionSession.send = async () => ({});
+      await archivePromotionSession.startAutoplayScreencast();
+      try {
+        const startedAt =
+          archivePromotionSession.screencast.startedAtEpochMs;
+        const paintProbe = {
+          regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+          stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+          viewport: { height: 625, width: 1365 },
+        };
+        const sample = (progress, offsetMs) => ({
+          capturedAtEpochMs: startedAt + offsetMs,
+          capturedAtMonotonicMs: offsetMs,
+          paintProbe,
+          recorderGeneration: 2,
+          route: {
+            active: true,
+            durationMs: 5_040,
+            legal: true,
+            progress,
+            reachesDestination: true,
+            sampledPointsLegal: true,
+            spaceId: "street:south-quay",
+            target: { x: 17, y: 9 },
+            targetLocationId: "tea-house",
+            tilePath: [
+              { x: 3, y: 9 },
+              { x: 17, y: 9 },
+            ],
+            visualObstaclesClear: true,
+            worldPath: [
+              { x: 331, y: 688 },
+              { x: 1_338, y: 656 },
+            ],
+          },
+          source: "movement-probe-recorder",
+        });
+        const openingSamples = [
+          sample(0.286, 0),
+          sample(0.5, 1_080),
+          sample(0.72, 2_160),
+          sample(0.929, 3_249),
+        ];
+        const frame = (sequence, offsetMs, pixels) => ({
+          data: Buffer.from(pixels).toString("base64"),
+          metadata: { timestamp: (startedAt + offsetMs) / 1_000 },
+          sequence,
+        });
+        const archivedFrames = [
+          frame(1, 68, "opening-route-rendered-at-progress-0286"),
+          frame(2, 3_280, "opening-route-rendered-at-progress-0929"),
+        ];
+        archivePromotionSession.screencast.routeFrameHistory.push(
+          ...archivedFrames,
+        );
+        archivePromotionSession.archiveAutoplayRouteFrames({
+          acceptedCount: openingSamples.length,
+          expectedTargetLocationId: "tea-house",
+          generation: 2,
+          samples: openingSamples,
+        });
+        archivePromotionSession.screencast.routeFrameWindowCaptureAttemptCount =
+          1;
+        archivePromotionSession.screencast.routeFrameWindowCaptureStatus =
+          "dense-route-rearm-complete-awaiting-direct-validation";
+        archivePromotionSession.recordAutoplayRouteFrameWindowRejection({
+          beforeProbe: openingSamples.at(-1),
+          reason: "opening-route-frame-budget-exhausted",
+        });
+
+        assert.equal(
+          archivePromotionSession.autoplayRouteArchivedFrames().length,
+          2,
+        );
+        assert.equal(
+          archivePromotionSession.autoplayRouteFrameWindows().length,
+          0,
+        );
+        const selectionOptions = {
+          expectedTargetLocationId: "tea-house",
+          frames: archivePromotionSession.autoplayRouteFrameHistory(),
+          label: "CI archive promotion opening route",
+          recordedWindows:
+            archivePromotionSession.autoplayRouteFrameWindows(),
+          samples: archivePromotionSession.autoplayRouteCaptureSamples(),
+          validateFrame: ({ frame: renderedFrame, paintProbe: framePaint }) => ({
+            buffer: Buffer.from(renderedFrame.data, "base64"),
+            height: 625,
+            paintProbe: framePaint,
+            textPaint: {},
+            width: 1365,
+          }),
+          validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+            assert.notDeepEqual(afterBuffer, beforeBuffer);
+            return { hudPixelDifferenceRatio: 0 };
+          },
+        };
+        assert.throws(
+          () =>
+            recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory(
+              selectionOptions,
+            ),
+          /Direct frame candidates: 1\. Archived frame candidates: 0\./,
+        );
+
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            ...selectionOptions,
+            archivedFrames:
+              archivePromotionSession.autoplayRouteArchivedFrames(),
+          });
+        assert.equal(trajectory.start.frame.sequence, 1);
+        assert.equal(trajectory.mid.frame.sequence, 2);
+        assert.equal(trajectory.start.beforeProbe.route.progress, 0.286);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.929);
+        assert.equal(
+          trajectory.start.validated.textPaint.routeFrameEvidenceBasis,
+          "archived-screencast-frame-matched-to-legal-route-sample",
+        );
+        assert.equal(
+          trajectory.mid.validated.textPaint.routeFrameEvidenceBasis,
+          "archived-screencast-frame-matched-to-legal-route-sample",
+        );
+        assert.equal(
+          trajectory.mid.beforeProbe.route.progress -
+            trajectory.start.afterProbe.route.progress,
+          0.643,
+        );
+        assert.equal(
+          archivePromotionSession.acceptAutoplayRouteRenderedFrameTrajectory(
+            trajectory,
+          ),
+          true,
+        );
+      } finally {
+        await archivePromotionSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
+    "archive promotion rejects stale, mismatched, and one-frame evidence",
+    () => {
+      const startedAt = Date.now();
+      const sample = (
+        progress,
+        offsetMs,
+        { hud = "DAY 1 11:05", path = "opening" } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+          viewport: { height: 625, width: 1365 },
+        },
+        recorderGeneration: 2,
+        route: {
+          active: true,
+          durationMs: path === "opening" ? 5_040 : 840,
+          legal: true,
+          progress,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          spaceId:
+            path === "opening" ? "street:south-quay" : "interior:tea-house",
+          target: path === "opening" ? { x: 17, y: 9 } : { x: 8, y: 3 },
+          targetLocationId: "tea-house",
+          tilePath:
+            path === "opening"
+              ? [
+                  { x: 3, y: 9 },
+                  { x: 17, y: 9 },
+                ]
+              : [
+                  { x: 7, y: 4 },
+                  { x: 8, y: 3 },
+                ],
+          visualObstaclesClear: true,
+          worldPath:
+            path === "opening"
+              ? [
+                  { x: 331, y: 688 },
+                  { x: 1_338, y: 656 },
+                ]
+              : [
+                  { x: 396, y: 236 },
+                  { x: 436, y: 196 },
+                ],
+        },
+        source: "movement-probe-recorder",
+      });
+      const frame = (sequence, offsetMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: { timestamp: (startedAt + offsetMs) / 1_000 },
+        sequence,
+      });
+      const openingSamples = [
+        sample(0.286, 0),
+        sample(0.5, 1_080),
+        sample(0.72, 2_160),
+        sample(0.929, 3_249),
+      ];
+      const firstFrame = frame(1, 68, "first-legal-rendered-frame");
+      const select = ({ archivedFrames, samples = openingSamples }) =>
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+          archivedFrames,
+          expectedTargetLocationId: "tea-house",
+          frames: [],
+          label: "strict archive promotion",
+          samples,
+          validateFrame: ({ frame: renderedFrame, paintProbe }) => ({
+            buffer: Buffer.from(renderedFrame.data, "base64"),
+            paintProbe,
+            textPaint: {},
+          }),
+          validateStableFramePair: () => ({}),
+        });
+
+      assert.throws(
+        () => select({ archivedFrames: [firstFrame] }),
+        /did not contain two distinct legal rendered positions/,
+      );
+      assert.throws(
+        () =>
+          select({
+            archivedFrames: [
+              firstFrame,
+              frame(2, 5_000, "stale-rendered-frame"),
+            ],
+          }),
+        /Archived frame candidates: 1\./,
+      );
+      assert.throws(
+        () =>
+          select({
+            archivedFrames: [
+              firstFrame,
+              frame(2, 2_268, "mismatched-route-rendered-frame"),
+            ],
+            samples: [
+              ...openingSamples.slice(0, 2),
+              sample(0.1, 2_200, {
+                hud: "DAY 1 11:25",
+                path: "later",
+              }),
+            ],
+          }),
+        /Archived frame candidates: 1\./,
+      );
+    },
+  );
+
+  await t.test(
     "two archived opening frames supersede a hung screenshot fallback",
     { skip: "Opening-route screenshot fallback was removed." },
     async () => {

@@ -4097,6 +4097,10 @@ class CdpSession {
     ].sort((left, right) => left.sequence - right.sequence);
   }
 
+  autoplayRouteArchivedFrames() {
+    return [...(this.screencast?.routeFrameArchive ?? [])];
+  }
+
   autoplayRouteCaptureSamples(recorder = null) {
     const archivedSamples = this.screencast?.routeSampleArchive ?? [];
     if (archivedSamples.length > 0) {
@@ -15565,6 +15569,93 @@ function buildAutoplayRecordedRouteFrameCandidates({
     );
 }
 
+function buildAutoplayArchivedRouteFrameCandidates({
+  archivedFrames,
+  expectedTargetLocationId,
+  openingSegment: suppliedOpeningSegment = null,
+  samples,
+}) {
+  const openingSegment =
+    suppliedOpeningSegment ??
+    buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId,
+      samples,
+    })[0];
+  const legalSamples = openingSegment?.samples ?? [];
+  const openingProbe = legalSamples[0] ?? null;
+  const closingProbe = legalSamples.at(-1) ?? null;
+  if (
+    !openingProbe ||
+    !closingProbe ||
+    !autoplayRouteCaptureSamplesShareExactIdentity(
+      openingProbe,
+      closingProbe,
+    )
+  ) {
+    return [];
+  }
+
+  const closingRouteDurationMs = Number(closingProbe.route?.durationMs);
+  const closingRouteProgress = Number(closingProbe.route?.progress);
+  const remainingRouteMs =
+    Number.isFinite(closingRouteDurationMs) &&
+    closingRouteDurationMs > 0 &&
+    Number.isFinite(closingRouteProgress)
+      ? closingRouteDurationMs * Math.max(0, 1 - closingRouteProgress)
+      : 0;
+  const lastAdmissibleFrameAtEpochMs =
+    closingProbe.capturedAtEpochMs +
+    Math.min(AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS, remainingRouteMs);
+
+  return [
+    ...new Map(
+      (archivedFrames ?? [])
+        .map((frame) => {
+          const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+          if (
+            !Number.isInteger(frame?.sequence) ||
+            capturedAtEpochMs === null ||
+            capturedAtEpochMs < openingProbe.capturedAtEpochMs ||
+            capturedAtEpochMs > lastAdmissibleFrameAtEpochMs
+          ) {
+            return null;
+          }
+          const matchedProbe = legalSamples
+            .filter(
+              (sample) =>
+                sample.capturedAtEpochMs <= capturedAtEpochMs &&
+                capturedAtEpochMs - sample.capturedAtEpochMs <=
+                  AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
+                isAutoplayFootholdRouteFrame(
+                  sample.route,
+                  expectedTargetLocationId,
+                ) &&
+                autoplayRouteCaptureSamplesShareExactIdentity(
+                  openingProbe,
+                  sample,
+                ),
+            )
+            .at(-1);
+          if (!matchedProbe) {
+            return null;
+          }
+          return {
+            afterProbe: matchedProbe,
+            archivedFramePromotion: true,
+            beforeProbe: matchedProbe,
+            frame,
+          };
+        })
+        .filter(Boolean)
+        .map((candidate) => [candidate.frame.sequence, candidate]),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      screencastFrameCapturedAtEpochMs(left.frame) -
+      screencastFrameCapturedAtEpochMs(right.frame),
+  );
+}
+
 function buildAutoplayRecordedRouteWindowCandidates({
   expectedTargetLocationId,
   frames,
@@ -15802,6 +15893,12 @@ function validateAutoplayRecordedRouteFrame({
                 recordedFrame.routeTailFrameGraceMs,
             }
           : {}),
+        ...(recordedFrame.archivedFramePromotion
+          ? {
+              routeFrameEvidenceBasis:
+                "archived-screencast-frame-matched-to-legal-route-sample",
+            }
+          : {}),
         ...(!exactIdentity
           ? {
               routeWindowPaintProbeBasis:
@@ -15890,6 +15987,7 @@ function autoplayRecordedRouteWindowsHaveDistinctProgress(
 }
 
 function selectAutoplayRecordedRouteTrajectory({
+  archivedFrames = [],
   expectedTargetLocationId,
   frames,
   label,
@@ -15908,6 +16006,19 @@ function selectAutoplayRecordedRouteTrajectory({
       candidates: buildAutoplayRecordedRouteFrameCandidates({
         expectedTargetLocationId,
         frames,
+        openingSegment,
+        samples: openingSegment?.samples ?? [],
+      }),
+      validate: ({ recordedEvidence, ...options }) =>
+        validateAutoplayRecordedRouteFrame({
+          ...options,
+          recordedFrame: recordedEvidence,
+        }),
+    },
+    {
+      candidates: buildAutoplayArchivedRouteFrameCandidates({
+        archivedFrames,
+        expectedTargetLocationId,
         openingSegment,
         samples: openingSegment?.samples ?? [],
       }),
@@ -16079,8 +16190,15 @@ function selectAutoplayRecordedRouteTrajectory({
     openingSegment,
     samples: openingSegment?.samples ?? [],
   }).length;
+  const archivedFrameCandidateCount =
+    buildAutoplayArchivedRouteFrameCandidates({
+      archivedFrames,
+      expectedTargetLocationId,
+      openingSegment,
+      samples: openingSegment?.samples ?? [],
+    }).length;
   throw new Error(
-    `${label}: opening route evidence did not contain two distinct legal rendered positions. Segments: ${segments.length}. Opening evidence fragments: ${openingEvidence.fragmentCount}. Opening evidence samples: ${openingSegment?.samples.length ?? 0}. Opening frames: ${openingFrameCount}. Direct frame candidates: ${directFrameCandidateCount}. Proactive windows: ${recordedWindows.length}. Historical frames: ${(frames ?? []).length}.`,
+    `${label}: opening route evidence did not contain two distinct legal rendered positions. Segments: ${segments.length}. Opening evidence fragments: ${openingEvidence.fragmentCount}. Opening evidence samples: ${openingSegment?.samples.length ?? 0}. Opening frames: ${openingFrameCount}. Direct frame candidates: ${directFrameCandidateCount}. Archived frame candidates: ${archivedFrameCandidateCount}. Proactive windows: ${recordedWindows.length}. Historical frames: ${(frames ?? []).length}.`,
   );
 }
 
@@ -16102,6 +16220,7 @@ async function waitForAutoplayRecordedRouteTrajectory({
         });
       session.archiveAutoplayRouteFrames(lastRecorder);
       const trajectory = selectAutoplayRecordedRouteTrajectory({
+        archivedFrames: session.autoplayRouteArchivedFrames(),
         expectedTargetLocationId,
         frames: session.autoplayRouteFrameHistory(),
         label,
