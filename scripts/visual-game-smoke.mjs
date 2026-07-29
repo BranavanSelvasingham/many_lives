@@ -142,6 +142,7 @@ let activeWebBase = DEFAULT_WEB_BASE;
 const screenshotCaptureRetries = [];
 const screenshotPixelDiagnostics = [];
 const eastWaterfrontCompositionDiagnostics = [];
+const interiorIdentityDiagnostics = [];
 
 const VIEWPORTS = [
   { height: 720, name: "desktop", width: 1280 },
@@ -2131,6 +2132,189 @@ function assertBoardingHouseInteriorCompositionPixels(
   };
 }
 
+function assertAuthoredInteriorIdentityPixels(
+  buffer,
+  page,
+  viewport,
+  role,
+  label,
+) {
+  const image = decodePngPixels(buffer);
+  const scene = normalizePageRect(page.sceneViewportCss);
+  assert.ok(scene, `${label}: missing scene viewport for interior identity.`);
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  const visibleAtCenter = getUnobscuredSceneBoundsAtX(
+    page,
+    (scene.left + scene.right) / 2,
+  );
+  const sample = {
+    bottom: visibleAtCenter.bottom - 12,
+    left: scene.left + 12,
+    right: scene.right - 12,
+    top: scene.top + 12,
+  };
+  assert.ok(
+    sample.bottom - sample.top >=
+      Math.min(220, (scene.bottom - scene.top) * 0.36),
+    `${label}: overlays leave too little room for interior identity analysis: ${JSON.stringify({
+      dockRoot: page.dockRoot,
+      rightStack: page.rightStack,
+      sample,
+      scene,
+      visibleAtCenter,
+    })}.`,
+  );
+
+  const quantizedColors = new Map();
+  const luminances = [];
+  const sampleStep = Math.max(1, Math.floor(Math.min(scaleX, scaleY)));
+  let coolMetalPixels = 0;
+  let darkHardwarePixels = 0;
+  let detailTransitions = 0;
+  let goldAccentPixels = 0;
+  let rustAccentPixels = 0;
+  let sampledPixels = 0;
+  let warmMaterialPixels = 0;
+
+  for (
+    let sourceY = Math.floor(sample.top * scaleY);
+    sourceY < Math.ceil(sample.bottom * scaleY);
+    sourceY += sampleStep
+  ) {
+    for (
+      let sourceX = Math.floor(sample.left * scaleX);
+      sourceX < Math.ceil(sample.right * scaleX);
+      sourceX += sampleStep
+    ) {
+      const offset = (sourceY * image.width + sourceX) * image.channels;
+      const red = image.pixels[offset];
+      const green = image.pixels[offset + 1] ?? red;
+      const blue = image.pixels[offset + 2] ?? red;
+      const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+      const colorKey = `${Math.floor(red / 24)}:${Math.floor(green / 24)}:${Math.floor(blue / 24)}`;
+      quantizedColors.set(colorKey, (quantizedColors.get(colorKey) ?? 0) + 1);
+      luminances.push(luminance);
+      sampledPixels += 1;
+
+      if (
+        red >= green * 1.07 &&
+        green >= blue * 1.06 &&
+        luminance >= 48
+      ) {
+        warmMaterialPixels += 1;
+      }
+      if (
+        green >= red * 0.92 &&
+        blue >= red * 0.88 &&
+        Math.abs(green - blue) <= 34 &&
+        luminance >= 45 &&
+        luminance <= 205
+      ) {
+        coolMetalPixels += 1;
+      }
+      if (luminance <= 72) {
+        darkHardwarePixels += 1;
+      }
+      if (red >= 165 && green >= 105 && green >= blue * 1.22) {
+        goldAccentPixels += 1;
+      }
+      if (red >= green * 1.16 && green >= blue * 1.04 && luminance >= 62) {
+        rustAccentPixels += 1;
+      }
+
+      const compareX = sourceX + sampleStep * 2;
+      if (compareX < Math.ceil(sample.right * scaleX)) {
+        const compareOffset =
+          (sourceY * image.width + compareX) * image.channels;
+        const compareRed = image.pixels[compareOffset];
+        const compareGreen = image.pixels[compareOffset + 1] ?? compareRed;
+        const compareBlue = image.pixels[compareOffset + 2] ?? compareRed;
+        const compareLuminance =
+          compareRed * 0.2126 +
+          compareGreen * 0.7152 +
+          compareBlue * 0.0722;
+        if (Math.abs(luminance - compareLuminance) >= 18) {
+          detailTransitions += 1;
+        }
+      }
+    }
+  }
+
+  luminances.sort((left, right) => left - right);
+  const lowLuminance =
+    luminances[Math.floor(luminances.length * 0.03)] ?? 0;
+  const highLuminance =
+    luminances[Math.floor(luminances.length * 0.97)] ?? 0;
+  const luminanceRange = highLuminance - lowLuminance;
+  const minimumColorBinPixels = Math.max(
+    3,
+    Math.floor(sampledPixels * 0.0015),
+  );
+  const activeColorBins = [...quantizedColors.values()].filter(
+    (count) => count >= minimumColorBinPixels,
+  ).length;
+  const dominantColorFraction =
+    Math.max(...quantizedColors.values()) / Math.max(sampledPixels, 1);
+  const detailTransitionFraction =
+    detailTransitions / Math.max(sampledPixels, 1);
+  const fractions = {
+    coolMetal: coolMetalPixels / Math.max(sampledPixels, 1),
+    darkHardware: darkHardwarePixels / Math.max(sampledPixels, 1),
+    goldAccent: goldAccentPixels / Math.max(sampledPixels, 1),
+    rustAccent: rustAccentPixels / Math.max(sampledPixels, 1),
+    warmMaterial: warmMaterialPixels / Math.max(sampledPixels, 1),
+  };
+
+  assert.ok(
+    activeColorBins >= 12 && dominantColorFraction <= 0.58,
+    `${label}: the room is visually flat or dominated by a generic slab (${activeColorBins} active color bins, ${dominantColorFraction.toFixed(3)} dominant fraction).`,
+  );
+  assert.ok(
+    luminanceRange >= 58 && detailTransitionFraction >= 0.018,
+    `${label}: the room lacks authored material contrast/detail (${luminanceRange.toFixed(1)} luminance range, ${detailTransitionFraction.toFixed(3)} transition fraction).`,
+  );
+  assert.ok(
+    fractions.darkHardware >= 0.018,
+    `${label}: the room lacks readable dark fixtures/hardware (${fractions.darkHardware.toFixed(3)} fraction).`,
+  );
+
+  if (role === "tea-house") {
+    assert.ok(
+      fractions.warmMaterial >= 0.16 && fractions.goldAccent >= 0.01,
+      `${label}: Kettle & Lamp lacks broad warm service material and tea-light accents: ${JSON.stringify(fractions)}.`,
+    );
+  } else {
+    assert.equal(
+      role,
+      "repair-stall",
+      `${label}: unsupported interior identity role ${role}.`,
+    );
+    assert.ok(
+      fractions.coolMetal >= 0.18 && fractions.rustAccent >= 0.008,
+      `${label}: Mercer Repairs lacks broad cool metal material and rust/parts accents: ${JSON.stringify(fractions)}.`,
+    );
+  }
+
+  const diagnostics = {
+    activeColorBins,
+    detailTransitionFraction: Number(detailTransitionFraction.toFixed(3)),
+    dominantColorFraction: Number(dominantColorFraction.toFixed(3)),
+    fractions: Object.fromEntries(
+      Object.entries(fractions).map(([key, value]) => [
+        key,
+        Number(value.toFixed(3)),
+      ]),
+    ),
+    label,
+    luminanceRange: Number(luminanceRange.toFixed(1)),
+    role,
+    sample,
+  };
+  interiorIdentityDiagnostics.push(diagnostics);
+  return diagnostics;
+}
+
 function findLargestWarmWashComponent(image, sample, scaleX, scaleY) {
   const width = Math.max(1, Math.floor(sample.right - sample.left));
   const height = Math.max(1, Math.floor(sample.bottom - sample.top));
@@ -2742,49 +2926,84 @@ async function assertCameraPanContractGuard() {
   );
 }
 
-async function assertBoardingHouseInteriorVisualGuard() {
+async function assertAuthoredInteriorVisualGuard() {
   const [streetSource, smokeSource] = await Promise.all([
     readFile(STREET_APP_PATH, "utf8"),
     readFile(VISUAL_SMOKE_PATH, "utf8"),
   ]);
-  const atmosphereSource = streetSource.match(
+  const boardingAtmosphereSource = streetSource.match(
     /function drawBoardingHouseInteriorAtmosphere[\s\S]*?\n}\n\nfunction drawBoardingHouseWindow/,
+  )?.[0];
+  const teaHouseAtmosphereSource = streetSource.match(
+    /function drawTeaHouseInteriorAtmosphere[\s\S]*?\n}\n\nfunction drawTeaHouseWindow/,
+  )?.[0];
+  const repairStallAtmosphereSource = streetSource.match(
+    /function drawRepairStallInteriorAtmosphere[\s\S]*?\n}\n\nfunction drawRepairPartsBins/,
   )?.[0];
 
   assert.ok(
     streetSource.includes("function drawBoardingHouseInteriorAtmosphere") &&
-      streetSource.includes('space.id !== "interior:boarding-house"'),
+      streetSource.includes(
+        'space.id === "interior:boarding-house"',
+      ),
     "Morrow House must keep a boarding-house-specific interior atmosphere pass.",
   );
   assert.ok(
     streetSource.includes("function drawBoardingHouseInteriorObjectDetail") &&
-      streetSource.includes('object.id.startsWith("boarding-house-")'),
+      streetSource.includes(
+        'object.id.startsWith("boarding-house-")',
+      ),
     "Morrow House furniture must keep boarding-house-specific readable object details.",
   );
   assert.ok(
-    atmosphereSource,
+    boardingAtmosphereSource,
     "Could not isolate the Morrow House atmosphere pass for visual-noise validation.",
   );
   assert.doesNotMatch(
-    atmosphereSource,
+    boardingAtmosphereSource,
     /fillCircle\([^;]*CELL\s*\*\s*(?:1\.[2-9]|[2-9])/,
     "Morrow House atmosphere must not restore a room-dominating translucent circle.",
   );
+  assert.ok(
+    teaHouseAtmosphereSource &&
+      streetSource.includes("function drawTeaHouseInteriorObjectDetail") &&
+      streetSource.includes('space.id === "interior:tea-house"') &&
+      streetSource.includes('object.id.startsWith("tea-house-")'),
+    "Kettle & Lamp must keep tea-house-specific atmosphere and furniture detail passes.",
+  );
+  assert.ok(
+    repairStallAtmosphereSource &&
+      streetSource.includes("function drawRepairStallInteriorObjectDetail") &&
+      streetSource.includes('space.id === "interior:repair-stall"') &&
+      streetSource.includes('object.id.startsWith("repair-stall-")'),
+    "Mercer Repairs must keep workshop-specific atmosphere and furniture detail passes.",
+  );
+  assert.doesNotMatch(
+    `${teaHouseAtmosphereSource}\n${repairStallAtmosphereSource}`,
+    /fill(?:Circle|Ellipse)\([^;]*CELL\s*\*\s*(?:1\.[5-9]|[2-9])/,
+    "Authored cafe/workshop atmosphere must not restore room-dominating translucent halos.",
+  );
   assert.match(
     streetSource,
-    /space\.id === "interior:boarding-house"[\s\S]*?fontSize:[\s\S]*?"14px"[\s\S]*?setOrigin\([\s\S]*?0\.5/,
-    "The Morrow House title must stay smaller and centered so it does not crop at first interior framing.",
+    /function drawInteriorSpaceLabels[\s\S]*?fontFamily: "Inter, sans-serif"[\s\S]*?fontSize: "8px"[\s\S]*?setOrigin\(0\.5\)/,
+    "Interior titles must remain compact, crisp, and centered secondary labels.",
   );
   assert.ok(
     smokeSource.includes("runInteriorCameraCheck") &&
       smokeSource.includes("interior-camera.png") &&
       smokeSource.includes("interior-camera-mobile.png") &&
+      smokeSource.includes("runAuthoredInteriorIdentityCheck") &&
+      smokeSource.includes("tea-house-interior-desktop.png") &&
+      smokeSource.includes("tea-house-interior-mobile.png") &&
+      smokeSource.includes("repair-stall-interior-desktop.png") &&
+      smokeSource.includes("repair-stall-interior-mobile.png") &&
       smokeSource.includes("waitForVisualHierarchyPage") &&
       smokeSource.includes("assertBoardingHouseInteriorCompositionPixels") &&
+      smokeSource.includes("assertAuthoredInteriorIdentityPixels") &&
       smokeSource.includes("assertInteriorCameraPointsUnobscured") &&
       smokeSource.includes("assertInteriorTitleInsideScene") &&
-      smokeSource.includes("assertBoardingHouseInteriorVisualGuard"),
-    "Visual smoke must wait for the hierarchy probe and keep compact/mobile screenshots plus pixel-backed and geometry-backed Morrow House checks.",
+      smokeSource.includes("assertAuthoredInteriorVisualGuard"),
+    "Visual smoke must keep desktop/mobile screenshots plus pixel-backed and geometry-backed checks for all authored interiors.",
   );
   assert.ok(
     streetSource.includes("browserVisualHierarchyProbeJson") &&
@@ -5267,7 +5486,7 @@ function assertInteriorCameraPointsUnobscured(page, camera, label) {
 
 function assertInteriorTitleInsideScene(camera, label) {
   const bounds = camera.interiorTitleWorldBounds;
-  assert.ok(bounds, `${label}: missing Morrow House title world bounds.`);
+  assert.ok(bounds, `${label}: missing interior title world bounds.`);
   const topLeft = projectCameraWorldPoint(camera, {
     x: bounds.left,
     y: bounds.top,
@@ -5283,7 +5502,7 @@ function assertInteriorTitleInsideScene(camera, label) {
       bottomRight.x <= scene.right - margin &&
       topLeft.y >= scene.top + margin &&
       bottomRight.y <= scene.bottom - margin,
-    `${label}: Morrow House title is clipped by the camera viewport: ${JSON.stringify({
+    `${label}: interior title is clipped by the camera viewport: ${JSON.stringify({
       projected: {
         bottom: bottomRight.y,
         left: topLeft.x,
@@ -5294,11 +5513,26 @@ function assertInteriorTitleInsideScene(camera, label) {
       worldBounds: bounds,
     })}.`,
   );
+  const projectedWidth = bottomRight.x - topLeft.x;
+  const projectedHeight = bottomRight.y - topLeft.y;
+  const sceneWidth = scene.right - scene.left;
+  assert.ok(
+    projectedWidth <= sceneWidth * 0.46 && projectedHeight <= 34,
+    `${label}: interior title dominates the room instead of acting as a secondary orientation label: ${JSON.stringify({
+      projectedHeight,
+      projectedWidth,
+      scene,
+      sceneWidth,
+      worldBounds: bounds,
+    })}.`,
+  );
   return {
     bottom: Number(bottomRight.y.toFixed(2)),
+    height: Number(projectedHeight.toFixed(2)),
     left: Number(topLeft.x.toFixed(2)),
     right: Number(bottomRight.x.toFixed(2)),
     top: Number(topLeft.y.toFixed(2)),
+    width: Number(projectedWidth.toFixed(2)),
   };
 }
 
@@ -6783,6 +7017,195 @@ async function createInteriorCameraGame() {
   return gameId;
 }
 
+const AUTHORED_INTERIOR_CASES = [
+  {
+    enterActionId: "enter:tea-house",
+    locationId: "tea-house",
+    moveTo: { x: 6, y: 4 },
+    name: "Kettle & Lamp",
+    role: "tea-house",
+    spaceId: "interior:tea-house",
+  },
+  {
+    enterActionId: "enter:repair-stall",
+    locationId: "repair-stall",
+    moveTo: { x: 16, y: 9 },
+    name: "Mercer Repairs",
+    role: "repair-stall",
+    spaceId: "interior:repair-stall",
+  },
+];
+
+async function createAuthoredInteriorGame(interiorCase) {
+  const gameId = await createSmokeGame(
+    activeWebBase,
+    `${interiorCase.name} identity check`,
+  );
+  const moved = await fetchJson(`${activeWebBase}/sim/game/${gameId}/command`, {
+    body: JSON.stringify({
+      type: "move_to",
+      x: interiorCase.moveTo.x,
+      y: interiorCase.moveTo.y,
+    }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  assert.equal(
+    moved?.game?.player?.currentLocationId,
+    interiorCase.locationId,
+    `${interiorCase.name} identity check could not reach its exterior portal.`,
+  );
+  assert.ok(
+    moved?.game?.availableActions?.some(
+      (action) => action.id === interiorCase.enterActionId,
+    ),
+    `${interiorCase.name} identity check did not expose its legal enter action.`,
+  );
+
+  const entered = await fetchJson(`${activeWebBase}/sim/game/${gameId}/command`, {
+    body: JSON.stringify({
+      actionId: interiorCase.enterActionId,
+      type: "act",
+    }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  assert.equal(
+    entered?.game?.activeSpaceId,
+    interiorCase.spaceId,
+    `${interiorCase.name} identity check loaded the wrong interior.`,
+  );
+  return gameId;
+}
+
+async function captureAuthoredInteriorIdentity(
+  session,
+  interiorCase,
+  gameId,
+  viewport,
+) {
+  const viewportRole = viewport.name === "mobile" ? "mobile" : "desktop";
+  const label = `${interiorCase.name} interior ${viewportRole}`;
+  await session.setViewport(viewport);
+  await session.navigate(
+    `${activeWebBase}/?freezeAutoplay=1&readyCheck=${interiorCase.role}-interior-${viewportRole}-${Date.now()}&gameId=${gameId}`,
+  );
+  await session.waitForAppReady();
+  const initial = await waitForInteriorCameraProbe(session);
+  const { settled, settledAgain } = await waitForInteriorCameraSettle(
+    session,
+    initial,
+  );
+  assert.equal(
+    settledAgain.activeSpaceId,
+    interiorCase.spaceId,
+    `${label}: browser loaded the wrong active interior.`,
+  );
+  assert.ok(
+    cameraProbeInRange(settled) && cameraProbeInRange(settledAgain),
+    `${label}: interior camera settled outside its legal range.`,
+  );
+  assert.ok(
+    cameraScrollDistance(settled, settledAgain) <= 2,
+    `${label}: interior camera drifted after settling.`,
+  );
+
+  const page = await waitForVisualHierarchyPage(session, label);
+  assertOverlayGeometry(
+    page,
+    viewport,
+    label,
+    page.visibleTimeChips,
+    interiorCase.spaceId,
+  );
+  assertBoundedVisualHierarchy(page, label);
+  const pointVisibility = assertInteriorCameraPointsUnobscured(
+    page,
+    settledAgain,
+    label,
+  );
+  const titleBounds = assertInteriorTitleInsideScene(settledAgain, label);
+  const screenshotPath = path.join(
+    OUTPUT_DIR,
+    `${interiorCase.role}-interior-${viewportRole}.png`,
+  );
+  const capture = await captureValidatedScreenshot({
+    expectedHudText: page.visibleTimeChips,
+    label,
+    page,
+    session,
+    targetPath: screenshotPath,
+    viewport,
+  });
+  const composition = assertAuthoredInteriorIdentityPixels(
+    capture.screenshot,
+    page,
+    viewport,
+    interiorCase.role,
+    label,
+  );
+
+  return {
+    composition,
+    initial,
+    pointVisibility,
+    screenshotPath,
+    settled,
+    settledAgain,
+    titleBounds,
+    viewport,
+  };
+}
+
+async function runAuthoredInteriorIdentityCheck(session) {
+  const desktopViewport = VIEWPORTS.find(
+    (viewport) => viewport.name === "desktop",
+  );
+  const mobileViewport = VIEWPORTS.find(
+    (viewport) => viewport.name === "mobile",
+  );
+  assert.ok(
+    desktopViewport && mobileViewport,
+    "Authored interior identity check requires desktop and mobile viewports.",
+  );
+
+  const results = {};
+  for (const interiorCase of AUTHORED_INTERIOR_CASES) {
+    const gameId = await createAuthoredInteriorGame(interiorCase);
+    results[interiorCase.role] = {
+      desktop: await captureAuthoredInteriorIdentity(
+        session,
+        interiorCase,
+        gameId,
+        desktopViewport,
+      ),
+      gameId,
+      mobile: await captureAuthoredInteriorIdentity(
+        session,
+        interiorCase,
+        gameId,
+        mobileViewport,
+      ),
+      name: interiorCase.name,
+      spaceId: interiorCase.spaceId,
+    };
+  }
+
+  const teaProfile = results["tea-house"].desktop.composition.fractions;
+  const repairProfile =
+    results["repair-stall"].desktop.composition.fractions;
+  assert.ok(
+    teaProfile.warmMaterial >= repairProfile.warmMaterial + 0.05 &&
+      repairProfile.coolMetal >= teaProfile.coolMetal + 0.05,
+    `Kettle & Lamp and Mercer Repairs do not read as materially distinct rooms: ${JSON.stringify({
+      repairProfile,
+      teaProfile,
+    })}.`,
+  );
+
+  return results;
+}
+
 async function runAfterHoursNpcAvailabilityCheck(session) {
   const viewport = VIEWPORTS[0];
   const gameId = await createSmokeGame(
@@ -7178,12 +7601,13 @@ async function main() {
   await assertAmbientScaleGuard();
   await assertWatchModeFeelGuard();
   await assertCameraPanContractGuard();
-  await assertBoardingHouseInteriorVisualGuard();
+  await assertAuthoredInteriorVisualGuard();
   const webServer = await ensureStack();
   const devtoolsPort = await findFreePort();
   const session = await launchBrowser(devtoolsPort);
   const results = [];
   let afterHoursNpcAvailability = null;
+  let authoredInteriorIdentity = null;
   let freshAutoplayStart = null;
   let freshAutoplayOptOut = null;
   let interiorCamera = null;
@@ -7221,6 +7645,10 @@ async function main() {
     process.stdout.write("[many-lives] Checking interior camera behavior...\n");
     interiorCamera = await runInteriorCameraCheck(session);
     process.stdout.write("[many-lives] Finished interior camera behavior.\n");
+    process.stdout.write("[many-lives] Checking authored interior identity...\n");
+    authoredInteriorIdentity =
+      await runAuthoredInteriorIdentityCheck(session);
+    process.stdout.write("[many-lives] Finished authored interior identity.\n");
 
     const unexpectedPageErrors = filterExpectedStoredGamePageErrors(
       session.pageErrors,
@@ -7237,11 +7665,13 @@ async function main() {
       `${JSON.stringify(
         {
           afterHoursNpcAvailability,
+          authoredInteriorIdentity,
           eastWaterfrontCompositionDiagnostics,
           freshAutoplayStart,
           freshAutoplayOptOut,
           outputDir: OUTPUT_DIR,
           interiorCamera,
+          interiorIdentityDiagnostics,
           responsiveDecisionArtifact,
           results,
           screenshotCaptureRetries,
@@ -7269,6 +7699,10 @@ async function main() {
         `[many-lives] Mobile after west pan: ${path.join(OUTPUT_DIR, "mobile-after-pan-west.png")}`,
         `[many-lives] Interior camera: ${path.join(OUTPUT_DIR, "interior-camera.png")}`,
         `[many-lives] Interior camera mobile: ${path.join(OUTPUT_DIR, "interior-camera-mobile.png")}`,
+        `[many-lives] Kettle & Lamp interior desktop: ${path.join(OUTPUT_DIR, "tea-house-interior-desktop.png")}`,
+        `[many-lives] Kettle & Lamp interior mobile: ${path.join(OUTPUT_DIR, "tea-house-interior-mobile.png")}`,
+        `[many-lives] Mercer Repairs interior desktop: ${path.join(OUTPUT_DIR, "repair-stall-interior-desktop.png")}`,
+        `[many-lives] Mercer Repairs interior mobile: ${path.join(OUTPUT_DIR, "repair-stall-interior-mobile.png")}`,
         `[many-lives] Summary: ${summaryPath}`,
         "",
       ].join("\n"),

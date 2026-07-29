@@ -3497,6 +3497,26 @@ function interiorSpacePalette(space: SpaceDefinition) {
     };
   }
 
+  if (space.id === "interior:tea-house") {
+    return {
+      floor: 0xb9825f,
+      floorAlternate: 0xaa7254,
+      floorHighlight: 0xf7d9a2,
+      floorHighlightAlpha: 0.1,
+      wall: 0x4d3635,
+    };
+  }
+
+  if (space.id === "interior:repair-stall") {
+    return {
+      floor: 0x7e8078,
+      floorAlternate: 0x71746f,
+      floorHighlight: 0xd1d4c6,
+      floorHighlightAlpha: 0.07,
+      wall: 0x303b3c,
+    };
+  }
+
   return {
     floor: 0xc2baa3,
     floorAlternate: 0xb9b19b,
@@ -3510,11 +3530,13 @@ function drawInteriorSpaceAtmosphere(
   layer: PhaserType.GameObjects.Graphics,
   space: SpaceDefinition,
 ) {
-  if (space.id !== "interior:boarding-house") {
-    return;
+  if (space.id === "interior:boarding-house") {
+    drawBoardingHouseInteriorAtmosphere(layer, space);
+  } else if (space.id === "interior:tea-house") {
+    drawTeaHouseInteriorAtmosphere(layer, space);
+  } else if (space.id === "interior:repair-stall") {
+    drawRepairStallInteriorAtmosphere(layer, space);
   }
-
-  drawBoardingHouseInteriorAtmosphere(layer, space);
 }
 
 function drawBoardingHouseInteriorAtmosphere(
@@ -3769,6 +3791,274 @@ function drawBoardingHousePictureFrames(
   }
 }
 
+function drawTeaHouseInteriorAtmosphere(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  const roomOrigin = mapTileToWorldOrigin(0, 0);
+  const roomRight = roomOrigin.x + space.width * CELL;
+  const roomBottom = roomOrigin.y + space.height * CELL;
+
+  layer.lineStyle(5, 0x2a1d1c, 0.66);
+  layer.strokeRoundedRect(
+    roomOrigin.x - 4,
+    roomOrigin.y - 4,
+    space.width * CELL + 8,
+    space.height * CELL + 8,
+    10,
+  );
+
+  layer.lineStyle(1.2, 0x6e4538, 0.24);
+  for (let x = roomOrigin.x + CELL; x < roomRight; x += CELL) {
+    layer.lineBetween(x, roomOrigin.y + CELL, x, roomBottom - CELL);
+  }
+  layer.lineStyle(1.5, 0xf0c982, 0.12);
+  for (let y = roomOrigin.y + CELL * 1.5; y < roomBottom - CELL; y += CELL) {
+    layer.lineBetween(roomOrigin.x + CELL, y, roomRight - CELL, y);
+  }
+
+  drawTeaHouseWindow(layer, 2.1, 0.3, 1.55);
+  drawTeaHouseWindow(layer, 5.2, 0.3, 1.55);
+  drawTeaHouseWindow(layer, 8.2, 0.3, 1.35);
+  drawTeaHouseCupShelf(layer);
+  drawTeaHouseMenuBoard(layer);
+  drawTeaHousePendant(layer, 4, 2.15);
+  drawTeaHousePendant(layer, 6, 4.15);
+  drawTeaHousePendant(layer, 4, 6.15);
+
+  for (const table of [
+    { x: 4, y: 3 },
+    { x: 6, y: 5 },
+    { x: 4, y: 7 },
+  ]) {
+    drawTeaHouseChair(layer, table.x - 1.22, table.y + 0.2, 1);
+    drawTeaHouseChair(layer, table.x + 1.22, table.y + 0.2, -1);
+  }
+}
+
+function drawTeaHouseWindow(
+  layer: PhaserType.GameObjects.Graphics,
+  tileX: number,
+  tileY: number,
+  widthTiles: number,
+) {
+  const origin = mapTileToWorldOrigin(tileX, tileY);
+  const width = widthTiles * CELL;
+  layer.fillStyle(0x211819, 0.82);
+  layer.fillRoundedRect(origin.x - 3, origin.y - 2, width + 6, 22, 5);
+  layer.fillStyle(0xf3c77c, 0.72);
+  layer.fillRoundedRect(origin.x, origin.y, width, 17, 4);
+  layer.fillStyle(0xffe7b1, 0.28);
+  layer.fillRoundedRect(origin.x + 3, origin.y + 3, width - 6, 4, 2);
+  layer.lineStyle(1.2, 0x6f4234, 0.72);
+  layer.lineBetween(
+    origin.x + width / 2,
+    origin.y + 1,
+    origin.x + width / 2,
+    origin.y + 16,
+  );
+}
+
+function drawTeaHouseCupShelf(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(1.35, 1.38);
+  layer.fillStyle(0x2d1d1a, 0.86);
+  layer.fillRoundedRect(origin.x, origin.y, CELL * 3.1, 8, 3);
+  layer.lineStyle(2, 0xe0b76f, 0.7);
+  layer.lineBetween(
+    origin.x + 7,
+    origin.y + 10,
+    origin.x + CELL * 3.1 - 7,
+    origin.y + 10,
+  );
+  for (let index = 0; index < 7; index += 1) {
+    const cupX = origin.x + 10 + index * 12;
+    layer.fillStyle(index % 3 === 1 ? 0xb95f51 : 0xf1ddaf, 0.9);
+    layer.fillRoundedRect(cupX, origin.y - 7, 8, 8, 2);
+    layer.lineStyle(1, 0xf8ebca, 0.46);
+    layer.strokeCircle(cupX + 8, origin.y - 3, 2.4);
+  }
+}
+
+function drawTeaHouseMenuBoard(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(10.15, 1.15);
+  layer.fillStyle(0x171c1a, 0.94);
+  layer.fillRoundedRect(origin.x, origin.y, CELL * 1.8, CELL * 0.62, 5);
+  layer.lineStyle(1.6, 0xc89b5c, 0.78);
+  layer.strokeRoundedRect(
+    origin.x + 2,
+    origin.y + 2,
+    CELL * 1.8 - 4,
+    CELL * 0.62 - 4,
+    4,
+  );
+  layer.lineStyle(1.2, 0xf1dfb2, 0.68);
+  layer.lineBetween(origin.x + 9, origin.y + 8, origin.x + 38, origin.y + 8);
+  layer.lineBetween(origin.x + 9, origin.y + 13, origin.x + 46, origin.y + 13);
+}
+
+function drawTeaHousePendant(
+  layer: PhaserType.GameObjects.Graphics,
+  tileX: number,
+  tileY: number,
+) {
+  const center = mapTileToWorldCenter(tileX, tileY);
+  layer.lineStyle(1.5, 0x342321, 0.82);
+  layer.lineBetween(center.x, center.y - 18, center.x, center.y - 7);
+  layer.fillStyle(0x704436, 0.94);
+  layer.fillTriangle(
+    center.x - 8,
+    center.y - 7,
+    center.x + 8,
+    center.y - 7,
+    center.x + 5,
+    center.y,
+  );
+  layer.fillStyle(0xffd98c, 0.92);
+  layer.fillCircle(center.x, center.y - 1, 3.2);
+}
+
+function drawTeaHouseChair(
+  layer: PhaserType.GameObjects.Graphics,
+  tileX: number,
+  tileY: number,
+  facing: 1 | -1,
+) {
+  const center = mapTileToWorldCenter(tileX, tileY);
+  const x = center.x + facing * 2;
+  layer.fillStyle(0x2b1d1b, 0.24);
+  layer.fillEllipse(x + facing * 2, center.y + 8, 16, 7);
+  layer.fillStyle(0x6f4435, 0.9);
+  layer.fillRoundedRect(x - 7, center.y - 6, 14, 11, 4);
+  layer.lineStyle(2.2, 0x3b2822, 0.8);
+  layer.lineBetween(x - 5, center.y + 3, x - 5, center.y + 10);
+  layer.lineBetween(x + 5, center.y + 3, x + 5, center.y + 10);
+}
+
+function drawRepairStallInteriorAtmosphere(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  const roomOrigin = mapTileToWorldOrigin(0, 0);
+  const roomRight = roomOrigin.x + space.width * CELL;
+  const roomBottom = roomOrigin.y + space.height * CELL;
+
+  layer.lineStyle(5, 0x192426, 0.76);
+  layer.strokeRoundedRect(
+    roomOrigin.x - 4,
+    roomOrigin.y - 4,
+    space.width * CELL + 8,
+    space.height * CELL + 8,
+    8,
+  );
+
+  layer.lineStyle(1.1, 0x343c3b, 0.38);
+  for (let x = roomOrigin.x + CELL; x < roomRight; x += CELL * 2) {
+    layer.lineBetween(x, roomOrigin.y + CELL, x, roomBottom - CELL);
+  }
+  for (let y = roomOrigin.y + CELL; y < roomBottom; y += CELL * 2) {
+    layer.lineBetween(roomOrigin.x + CELL, y, roomRight - CELL, y);
+  }
+
+  drawRepairPartsBins(layer);
+  drawRepairPegboard(layer);
+  drawRepairPipeRun(layer, space);
+  drawRepairTaskLamp(layer);
+  drawRepairFloorHardware(layer);
+}
+
+function drawRepairPartsBins(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(1.3, 1.18);
+  layer.fillStyle(0x20292a, 0.92);
+  layer.fillRoundedRect(origin.x, origin.y, CELL * 3.8, CELL * 0.9, 5);
+  for (let row = 0; row < 2; row += 1) {
+    for (let column = 0; column < 6; column += 1) {
+      const x = origin.x + 7 + column * 18;
+      const y = origin.y + 6 + row * 11;
+      layer.fillStyle(
+        (column + row) % 3 === 0 ? 0xa66c43 : 0x64777a,
+        0.88,
+      );
+      layer.fillRoundedRect(x, y, 14, 8, 2);
+      layer.fillStyle(0xd6c294, 0.72);
+      layer.fillRect(x + 4, y + 3, 6, 1.5);
+    }
+  }
+}
+
+function drawRepairPegboard(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(7.15, 1.08);
+  layer.fillStyle(0x6f5c45, 0.82);
+  layer.fillRoundedRect(origin.x, origin.y, CELL * 3.35, CELL * 0.92, 5);
+  for (let row = 0; row < 3; row += 1) {
+    for (let column = 0; column < 10; column += 1) {
+      layer.fillStyle(0x2b3434, 0.56);
+      layer.fillCircle(
+        origin.x + 7 + column * 10,
+        origin.y + 7 + row * 8,
+        1.1,
+      );
+    }
+  }
+  layer.lineStyle(2.2, 0xd4b36f, 0.88);
+  layer.lineBetween(origin.x + 18, origin.y + 8, origin.x + 14, origin.y + 24);
+  layer.lineBetween(origin.x + 51, origin.y + 7, origin.x + 51, origin.y + 23);
+  layer.lineStyle(2.2, 0xb8c1b6, 0.82);
+  layer.strokeCircle(origin.x + 77, origin.y + 15, 7);
+  layer.lineBetween(origin.x + 82, origin.y + 20, origin.x + 90, origin.y + 27);
+}
+
+function drawRepairPipeRun(
+  layer: PhaserType.GameObjects.Graphics,
+  space: SpaceDefinition,
+) {
+  const start = mapTileToWorldOrigin(0.7, 1.05);
+  const end = mapTileToWorldOrigin(space.width - 1.15, 1.05);
+  layer.lineStyle(4, 0x758486, 0.72);
+  layer.lineBetween(start.x, start.y, end.x, end.y);
+  layer.lineStyle(1.2, 0xc6d0c7, 0.42);
+  layer.lineBetween(start.x, start.y - 1, end.x, end.y - 1);
+  for (let x = start.x + 26; x < end.x; x += 58) {
+    layer.fillStyle(0x283234, 0.9);
+    layer.fillCircle(x, start.y, 4.2);
+    layer.fillStyle(0x9aa7a4, 0.76);
+    layer.fillCircle(x, start.y, 2.1);
+  }
+}
+
+function drawRepairTaskLamp(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(8.1, 1.55);
+  layer.lineStyle(2.2, 0x283133, 0.88);
+  layer.lineBetween(origin.x, origin.y, origin.x + 18, origin.y + 13);
+  layer.fillStyle(0xc69a52, 0.92);
+  layer.fillTriangle(
+    origin.x + 13,
+    origin.y + 11,
+    origin.x + 27,
+    origin.y + 11,
+    origin.x + 24,
+    origin.y + 21,
+  );
+  layer.fillStyle(0xf4d689, 0.88);
+  layer.fillCircle(origin.x + 21, origin.y + 16, 3);
+}
+
+function drawRepairFloorHardware(layer: PhaserType.GameObjects.Graphics) {
+  const hardware = [
+    { color: 0xa66c43, x: 6.25, y: 6.72 },
+    { color: 0xb4bcb4, x: 7.05, y: 6.35 },
+    { color: 0xd0a45d, x: 8.2, y: 7.22 },
+  ];
+  for (const item of hardware) {
+    const center = mapTileToWorldCenter(item.x, item.y);
+    layer.fillStyle(0x202829, 0.3);
+    layer.fillCircle(center.x + 1.5, center.y + 1.5, 6.5);
+    layer.lineStyle(2.4, item.color, 0.82);
+    layer.strokeCircle(center.x, center.y, 5);
+    layer.fillStyle(0x2c3738, 0.86);
+    layer.fillCircle(center.x, center.y, 2);
+  }
+}
+
 function drawTeaHouseShiftState(
   layer: PhaserType.GameObjects.Graphics,
   space: SpaceDefinition,
@@ -3959,7 +4249,7 @@ function drawInteriorObject(
     );
   }
 
-  drawBoardingHouseInteriorObjectDetail(layer, object, rect);
+  drawInteriorObjectDetail(layer, object, rect);
 }
 
 function drawInteriorRug(
@@ -3993,21 +4283,41 @@ function drawInteriorRug(
   }
 
   const isOilMat = /oil|repair/i.test(`${object.id} ${object.label ?? ""}`);
-  const fill = isOilMat ? 0x5e5747 : 0x9a7b55;
-  const stroke = isOilMat ? 0x292a25 : 0x70563b;
-  const thread = isOilMat ? 0x8a8069 : 0xc5aa77;
-  const alpha = isOilMat ? 0.34 : 0.38;
+  const fill = isOilMat ? 0x3d4845 : 0x9a7b55;
+  const stroke = isOilMat ? 0x1f2928 : 0x70563b;
+  const thread = isOilMat ? 0x75817b : 0xc5aa77;
+  const alpha = isOilMat ? 0.84 : 0.38;
 
   layer.fillStyle(fill, alpha);
   layer.fillRoundedRect(x, y, width, height, 9);
-  layer.lineStyle(1.2, stroke, 0.28);
+  layer.lineStyle(isOilMat ? 2 : 1.2, stroke, isOilMat ? 0.72 : 0.28);
   layer.strokeRoundedRect(x, y, width, height, 9);
 
   const stripeCount = Math.max(2, Math.floor(height / 20));
   for (let index = 1; index <= stripeCount; index += 1) {
     const stripeY = y + (height / (stripeCount + 1)) * index;
-    layer.lineStyle(1, thread, 0.16);
+    layer.lineStyle(isOilMat ? 1.6 : 1, thread, isOilMat ? 0.44 : 0.16);
     layer.lineBetween(x + 7, stripeY, x + width - 7, stripeY);
+  }
+
+  if (isOilMat) {
+    layer.fillStyle(0x171e1d, 0.64);
+    layer.fillEllipse(x + width * 0.66, y + height * 0.68, 15, 7);
+    layer.fillEllipse(x + width * 0.36, y + height * 0.31, 9, 5);
+  }
+}
+
+function drawInteriorObjectDetail(
+  layer: PhaserType.GameObjects.Graphics,
+  object: SpaceObject,
+  rect: { height: number; width: number; x: number; y: number },
+) {
+  if (object.id.startsWith("boarding-house-")) {
+    drawBoardingHouseInteriorObjectDetail(layer, object, rect);
+  } else if (object.id.startsWith("tea-house-")) {
+    drawTeaHouseInteriorObjectDetail(layer, object, rect);
+  } else if (object.id.startsWith("repair-stall-")) {
+    drawRepairStallInteriorObjectDetail(layer, object, rect);
   }
 }
 
@@ -4016,10 +4326,6 @@ function drawBoardingHouseInteriorObjectDetail(
   object: SpaceObject,
   rect: { height: number; width: number; x: number; y: number },
 ) {
-  if (!object.id.startsWith("boarding-house-")) {
-    return;
-  }
-
   if (object.kind === "wall") {
     const verticalWall =
       object.id.endsWith("-wall-east") || object.id.endsWith("-wall-west");
@@ -4094,35 +4400,238 @@ function drawBoardingHouseInteriorObjectDetail(
   }
 }
 
+function drawTeaHouseInteriorObjectDetail(
+  layer: PhaserType.GameObjects.Graphics,
+  object: SpaceObject,
+  rect: { height: number; width: number; x: number; y: number },
+) {
+  if (object.kind === "wall") {
+    layer.lineStyle(2, 0xc18a5f, 0.34);
+    layer.lineBetween(
+      rect.x + 6,
+      rect.y + rect.height - 7,
+      rect.x + rect.width - 6,
+      rect.y + rect.height - 7,
+    );
+    return;
+  }
+
+  if (object.kind === "counter") {
+    layer.fillStyle(0x3b2521, 0.28);
+    layer.fillRoundedRect(
+      rect.x + 8,
+      rect.y + rect.height - 14,
+      rect.width - 16,
+      7,
+      3,
+    );
+    layer.lineStyle(1.4, 0xe2b36d, 0.58);
+    for (let x = rect.x + 18; x < rect.x + rect.width - 12; x += 22) {
+      layer.lineBetween(x, rect.y + 10, x, rect.y + rect.height - 10);
+    }
+    if (object.id === "tea-house-counter") {
+      for (let index = 0; index < 4; index += 1) {
+        drawCafeCup(
+          layer,
+          rect.x + 25 + index * 24,
+          rect.y + 9,
+          false,
+        );
+      }
+      layer.fillStyle(0xc58a52, 0.88);
+      layer.fillRoundedRect(
+        rect.x + rect.width - 52,
+        rect.y + 5,
+        34,
+        12,
+        4,
+      );
+    }
+    return;
+  }
+
+  if (object.kind === "table") {
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    drawCafeCup(layer, centerX - 14, centerY - 5, false);
+    drawCafeCup(layer, centerX + 14, centerY - 5, false);
+    layer.fillStyle(0x2d1d1a, 0.24);
+    layer.fillEllipse(centerX + 1, centerY + 6, 20, 8);
+    layer.fillStyle(0xc87555, 0.92);
+    layer.fillEllipse(centerX, centerY + 2, 17, 9);
+    layer.lineStyle(1.3, 0xf0d39b, 0.52);
+    layer.strokeEllipse(centerX, centerY + 2, 17, 9);
+    return;
+  }
+
+  if (object.kind === "stove") {
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    layer.fillStyle(0x20282a, 0.92);
+    layer.fillRoundedRect(
+      rect.x + 9,
+      rect.y + 8,
+      rect.width - 18,
+      rect.height - 16,
+      5,
+    );
+    layer.lineStyle(2, 0xaeb4a7, 0.72);
+    layer.strokeCircle(rect.x + 20, centerY, 8);
+    layer.strokeCircle(rect.x + rect.width - 20, centerY, 8);
+    layer.fillStyle(0xd2a45e, 0.94);
+    layer.fillEllipse(centerX, centerY - 4, 22, 16);
+    layer.lineStyle(2.2, 0x4a3328, 0.9);
+    layer.strokeCircle(centerX, centerY - 11, 10);
+    layer.lineBetween(centerX + 10, centerY - 6, centerX + 21, centerY - 12);
+    layer.lineStyle(1.3, 0xf8e9c8, 0.68);
+    layer.lineBetween(centerX - 5, centerY - 19, centerX, centerY - 26);
+    layer.lineBetween(centerX, centerY - 26, centerX - 3, centerY - 32);
+  }
+}
+
+function drawRepairStallInteriorObjectDetail(
+  layer: PhaserType.GameObjects.Graphics,
+  object: SpaceObject,
+  rect: { height: number; width: number; x: number; y: number },
+) {
+  if (object.kind === "wall") {
+    layer.lineStyle(2, 0x738184, 0.34);
+    layer.lineBetween(
+      rect.x + 6,
+      rect.y + rect.height - 7,
+      rect.x + rect.width - 6,
+      rect.y + rect.height - 7,
+    );
+    return;
+  }
+
+  if (object.kind === "counter") {
+    layer.fillStyle(0x2b3535, 0.82);
+    for (let x = rect.x + 10; x < rect.x + rect.width - 8; x += 23) {
+      layer.fillRoundedRect(x, rect.y + 10, 18, rect.height - 20, 3);
+      layer.fillStyle(0xc29b5c, 0.82);
+      layer.fillRect(x + 6, rect.y + 15, 6, 2);
+      layer.fillStyle(0x2b3535, 0.82);
+    }
+    layer.lineStyle(2.2, 0xbfc6bd, 0.64);
+    layer.lineBetween(
+      rect.x + 8,
+      rect.y + 7,
+      rect.x + rect.width - 8,
+      rect.y + 7,
+    );
+    return;
+  }
+
+  if (object.kind === "workbench") {
+    layer.lineStyle(2, 0xaeb9b2, 0.58);
+    layer.lineBetween(
+      rect.x + 10,
+      rect.y + 14,
+      rect.x + rect.width - 10,
+      rect.y + 14,
+    );
+    layer.fillStyle(0xc6844f, 0.92);
+    layer.fillRoundedRect(rect.x + 11, rect.y + 19, 20, 12, 3);
+    layer.fillStyle(0x303c3e, 0.92);
+    layer.fillRoundedRect(rect.x + 16, rect.y + 15, 10, 24, 3);
+    layer.lineStyle(2.4, 0xd4b36f, 0.82);
+    layer.lineBetween(
+      rect.x + rect.width - 24,
+      rect.y + 21,
+      rect.x + rect.width - 37,
+      rect.y + 40,
+    );
+    layer.lineStyle(2, 0xb9c3bc, 0.82);
+    layer.strokeCircle(
+      rect.x + rect.width - 20,
+      rect.y + rect.height - 20,
+      9,
+    );
+    layer.strokeCircle(
+      rect.x + rect.width - 20,
+      rect.y + rect.height - 20,
+      3,
+    );
+    return;
+  }
+
+  if (object.kind === "shelf") {
+    layer.lineStyle(2.4, 0x20292a, 0.82);
+    for (let y = rect.y + 15; y < rect.y + rect.height - 7; y += 19) {
+      layer.lineBetween(rect.x + 7, y, rect.x + rect.width - 7, y);
+      layer.fillStyle(0xa66c43, 0.88);
+      layer.fillRoundedRect(rect.x + 9, y - 10, 13, 9, 2);
+      layer.fillStyle(0x7d9596, 0.86);
+      layer.fillRoundedRect(rect.x + 23, y - 9, 10, 8, 2);
+    }
+    return;
+  }
+
+  if (object.kind === "bench") {
+    layer.lineStyle(2, 0x3c4646, 0.72);
+    layer.lineBetween(
+      rect.x + 11,
+      rect.y + 12,
+      rect.x + rect.width - 11,
+      rect.y + 12,
+    );
+    layer.lineBetween(
+      rect.x + 11,
+      rect.y + rect.height - 12,
+      rect.x + rect.width - 11,
+      rect.y + rect.height - 12,
+    );
+    layer.fillStyle(0xc7a15d, 0.82);
+    layer.fillCircle(rect.x + 15, rect.y + 15, 2.2);
+    layer.fillCircle(rect.x + rect.width - 15, rect.y + 15, 2.2);
+  }
+}
+
 function interiorObjectStyle(object: SpaceObject) {
+  const teaHouseObject = object.id.startsWith("tea-house-");
+  const repairStallObject = object.id.startsWith("repair-stall-");
+
   switch (object.kind) {
     case "wall":
       return {
         alpha: 1,
         fill: object.id.startsWith("boarding-house-")
           ? 0x5f5144
+          : teaHouseObject
+            ? 0x533838
+            : repairStallObject
+              ? 0x334143
           : 0x354648,
         inset: 0,
         radius: 0,
         stroke: object.id.startsWith("boarding-house-")
           ? 0x332820
+          : teaHouseObject
+            ? 0x2f2020
+            : repairStallObject
+              ? 0x1f292a
           : 0x233134,
       };
     case "counter":
       return {
         alpha: 0.96,
-        fill: 0x7a6043,
+        fill: teaHouseObject
+          ? 0x89553e
+          : repairStallObject
+            ? 0x556163
+            : 0x7a6043,
         inset: 3,
         radius: 8,
-        stroke: 0x513d2c,
+        stroke: repairStallObject ? 0x283334 : 0x513d2c,
       };
     case "table":
       return {
         alpha: 0.96,
-        fill: 0x8f6b48,
+        fill: teaHouseObject ? 0x8f513d : 0x8f6b48,
         inset: 5,
         radius: 10,
-        stroke: 0x5f452f,
+        stroke: teaHouseObject ? 0x4e2d29 : 0x5f452f,
       };
     case "bed":
       return {
@@ -4137,15 +4646,15 @@ function interiorObjectStyle(object: SpaceObject) {
     case "desk":
       return {
         alpha: 0.96,
-        fill: 0x66513d,
+        fill: repairStallObject ? 0x4e5958 : 0x66513d,
         inset: 4,
         radius: 7,
-        stroke: 0x3e3024,
+        stroke: repairStallObject ? 0x252e2f : 0x3e3024,
       };
     case "stove":
       return {
         alpha: 0.95,
-        fill: 0x4f5b5d,
+        fill: teaHouseObject ? 0x3f4c4d : 0x4f5b5d,
         inset: 4,
         radius: 7,
         stroke: 0x2f3a3c,
@@ -4153,10 +4662,10 @@ function interiorObjectStyle(object: SpaceObject) {
     case "bench":
       return {
         alpha: 0.94,
-        fill: 0x9b7a50,
+        fill: repairStallObject ? 0x697372 : 0x9b7a50,
         inset: 6,
         radius: 7,
-        stroke: 0x60472f,
+        stroke: repairStallObject ? 0x303a3b : 0x60472f,
       };
     case "rug":
     case "chair":
@@ -4179,46 +4688,25 @@ function drawInteriorSpaceLabels(
   const titleOrigin =
     space.id === "interior:boarding-house"
       ? mapTileToWorldCenter(space.width / 2 + 1.15, 1.61)
-      : mapTileToWorldOrigin(1, 1);
+      : mapTileToWorldCenter(space.width / 2, 1.42);
   labels.push(
     scene.add
       .text(
         titleOrigin.x,
-        space.id === "interior:boarding-house"
-          ? titleOrigin.y
-          : titleOrigin.y + CELL * 0.12,
+        titleOrigin.y,
         space.name,
         {
-        align: "left",
-        color: "#f3ead2",
-        fontFamily: "Georgia, serif",
-        fontSize: space.id === "interior:boarding-house" ? "14px" : "20px",
-        fontStyle: "700",
-        letterSpacing: space.id === "interior:boarding-house" ? 0.8 : 1.4,
-        shadow: {
-          blur: 4,
-          color: "#000000",
-          fill: true,
-          offsetX: 0,
-          offsetY: 1,
-        },
+          align: "center",
+          color: "#f4e5bf",
+          fontFamily: "Inter, sans-serif",
+          fontSize: "8px",
+          fontStyle: "700",
+          letterSpacing: 1,
         },
       )
-      .setOrigin(
-        space.id === "interior:boarding-house" ? 0.5 : 0,
-        space.id === "interior:boarding-house" ? 0.5 : 0,
-      )
-      .setPadding(
-        space.id === "interior:boarding-house" ? 9 : 0,
-        space.id === "interior:boarding-house" ? 3 : 0,
-        space.id === "interior:boarding-house" ? 9 : 0,
-        space.id === "interior:boarding-house" ? 4 : 0,
-      )
-      .setBackgroundColor(
-        space.id === "interior:boarding-house"
-          ? "rgba(43, 33, 21, 0.52)"
-          : "rgba(0, 0, 0, 0)",
-      )
+      .setOrigin(0.5)
+      .setPadding(6, 2, 6, 3)
+      .setBackgroundColor("rgba(25, 28, 26, 0.72)")
       .setDepth(40),
   );
 
