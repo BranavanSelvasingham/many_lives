@@ -74,6 +74,32 @@ const buildCumulativeAppMonotonicSamples = Function(
     cumulativeAppMonotonicEnd,
   )})`,
 )();
+const playbackCardDwellAuditStart = source.indexOf(
+  "function buildAutoplayPlaybackCardDwellAudit(",
+);
+const playbackCardDwellAuditEnd = source.indexOf(
+  "\nfunction ",
+  playbackCardDwellAuditStart + 1,
+);
+const buildAutoplayPlaybackCardDwellAudit = Function(
+  "AUTOPLAY_DWELL_AUDIT_BEAT_KINDS",
+  "AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS",
+  `return (${source.slice(
+    playbackCardDwellAuditStart,
+    playbackCardDwellAuditEnd,
+  )})`,
+)(
+  new Set([
+    "action_complete",
+    "action_start",
+    "city_beat",
+    "objective_shift",
+    "rest",
+    "thread_landed",
+    "time_passed",
+  ]),
+  2_000,
+);
 const sleepUntilEpochStart = source.indexOf("async function sleepUntilEpochMs(");
 const sleepUntilEpochEnd = source.indexOf(
   "\nfunction ",
@@ -387,7 +413,15 @@ test("first-afternoon runtime floor keeps real elapsed time across reloads", () 
   );
   assert.match(
     rowanPlaybackSource,
-    /intendedDelayMs < current\.intendedDelayMs[\s\S]*\? nowMs[\s\S]*: current\.startedAtMs/,
+    /return \{\s*\.\.\.current,\s*intendedDelayMs,\s*\};/,
+  );
+  assert.doesNotMatch(
+    rowanPlaybackSource,
+    /intendedDelayMs < current\.intendedDelayMs[\s\S]*\? nowMs/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /restartOnDelayContraction:\s*game\.rowanAutonomy\?\.actionId === "reflect:first-afternoon"[\s\S]*presentationElapsedMs <[\s\S]*ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS/,
   );
 });
 
@@ -5784,11 +5818,36 @@ test("semantic playback cards have measured browser dwell evidence", () => {
     /ledger\.minimumPlaybackCardDwellMs >=\s*AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS/,
   );
   assert.match(source, /interruptedPlaybackCardDwells:/);
+  assert.match(source, /activePlaybackCardsAtEnd:/);
+  assert.match(source, /evidence: "active-terminal-card"/);
   assert.match(source, /assertAutoplayPlaybackCardDwellResetGuard\(\);/);
   assert.match(source, /rawAppMonotonicMs < activeCard\.lastRawAppMonotonicMs/);
   assert.match(
     source,
     /activeCard\.lastAppMonotonicMs - activeCard\.startedAtMs/,
+  );
+});
+
+test("an active terminal semantic card is not reported as completed before its floor", () => {
+  const audit = buildAutoplayPlaybackCardDwellAudit([
+    {
+      appMonotonicMs: 275_687.8,
+      playback: {
+        activeDurationMs: 2_800,
+        activeKey: "objective-shift:rest-home",
+        activeKind: "objective_shift",
+        activeStartedAtMs: 275_121.4,
+        activeTitle: "Objective shifted",
+      },
+      rawAppMonotonicMs: 275_687.8,
+    },
+  ]);
+
+  assert.deepEqual(audit.dwells, []);
+  assert.equal(audit.activeAtEnd.length, 1);
+  assert.equal(audit.activeAtEnd[0].key, "objective-shift:rest-home");
+  assert.ok(
+    Math.abs(audit.activeAtEnd[0].observedAppDurationMs - 566.4) < 0.001,
   );
 });
 

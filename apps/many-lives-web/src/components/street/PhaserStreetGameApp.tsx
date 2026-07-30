@@ -171,6 +171,7 @@ import {
   railCopyRepeatsDecisionAction,
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
+  ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS,
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
   rowanWatchAutonomyDelayForState,
   rowanWatchDelayForFirstAfternoonFloor,
@@ -1696,6 +1697,13 @@ export function PhaserStreetGameApp() {
       autoContinueKey,
       intendedDelayMs,
       timingNowMs,
+      {
+        restartOnDelayContraction:
+          game.rowanAutonomy?.actionId === "reflect:first-afternoon" &&
+          presentationElapsedMs !== undefined &&
+          presentationElapsedMs <
+            ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS,
+      },
     );
     if (autoContinueBeatStartedRef.current !== beatTiming) {
       autoContinueBeatStartedRef.current = beatTiming;

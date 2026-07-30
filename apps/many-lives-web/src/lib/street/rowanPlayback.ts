@@ -139,6 +139,9 @@ export function reconcileAutoContinueBeatTiming(
   key: string,
   intendedDelayMs: number,
   nowMs: number,
+  {
+    restartOnDelayContraction = false,
+  }: { restartOnDelayContraction?: boolean } = {},
 ): AutoContinueBeatTiming {
   if (!current || current.key !== key) {
     return { intendedDelayMs, key, startedAtMs: nowMs };
@@ -146,14 +149,20 @@ export function reconcileAutoContinueBeatTiming(
   if (current.intendedDelayMs === intendedDelayMs) {
     return current;
   }
+  if (
+    restartOnDelayContraction &&
+    intendedDelayMs < current.intendedDelayMs
+  ) {
+    return {
+      ...current,
+      intendedDelayMs,
+      startedAtMs: nowMs,
+    };
+  }
 
   return {
     ...current,
     intendedDelayMs,
-    startedAtMs:
-      intendedDelayMs < current.intendedDelayMs
-        ? nowMs
-        : current.startedAtMs,
   };
 }
 

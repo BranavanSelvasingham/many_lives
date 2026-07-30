@@ -309,6 +309,7 @@ describe("Rowan playback helpers", () => {
       pendingFloorTiming.key,
       10_000,
       176_000,
+      { restartOnDelayContraction: true },
     );
     expect(postFloorTiming).toEqual({
       intendedDelayMs: 10_000,
@@ -322,6 +323,37 @@ describe("Rowan playback helpers", () => {
         176_000,
       ),
     ).toBe(10_000);
+    const progressivelyConstrainedTiming = [
+      [5_690, 154_267],
+      [5_129, 158_038],
+      [4_840, 161_700],
+      [2_790, 182_940],
+    ].reduce(
+      (timing, [intendedDelayMs, nowMs]) =>
+        reconcileAutoContinueBeatTiming(
+          timing,
+          "enter-morrow-house",
+          intendedDelayMs,
+          nowMs,
+        ),
+      {
+        intendedDelayMs: 6_200,
+        key: "enter-morrow-house",
+        startedAtMs: 150_554,
+      },
+    );
+    expect(progressivelyConstrainedTiming).toEqual({
+      intendedDelayMs: 2_790,
+      key: "enter-morrow-house",
+      startedAtMs: 150_554,
+    });
+    expect(
+      remainingAutoplayDelayMs(
+        progressivelyConstrainedTiming.intendedDelayMs,
+        progressivelyConstrainedTiming.startedAtMs,
+        182_940,
+      ),
+    ).toBe(0);
     const transcriptGrowthTiming = reconcileAutoContinueBeatTiming(
       pendingFloorTiming,
       pendingFloorTiming.key,

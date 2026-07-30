@@ -17026,6 +17026,8 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
           pacingLedger.firstAfternoonCompletedElapsedMs,
         firstInteractionElapsedMs: pacingLedger.firstInteractionElapsedMs,
         idleGapLimitMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+        activePlaybackCardsAtEnd:
+          pacingLedger.activePlaybackCardsAtEnd,
         maxInAppGapMs: pacingLedger.maxInAppGapMs,
         maxObserverGapMs: pacingLedger.maxIdleGapMs,
         meaningfulBeatCount: pacingLedger.meaningfulBeatCount,
@@ -18564,6 +18566,35 @@ function assertAutoplayPlaybackCardDwellResetGuard() {
     "A semantic card still visible at the natural stop must retain its measured dwell.",
   );
 
+  const activeTerminalAudit = buildAutoplayPlaybackCardDwellAudit([
+    {
+      appMonotonicMs: 275_687.8,
+      playback: {
+        activeDurationMs: 2_800,
+        activeKey: "objective-shift:rest-home",
+        activeKind: "objective_shift",
+        activeStartedAtMs: 275_121.4,
+        activeTitle: "Objective shifted",
+      },
+      rawAppMonotonicMs: 275_687.8,
+    },
+  ]);
+  assert.deepEqual(
+    activeTerminalAudit.dwells,
+    [],
+    "A terminal card sampled before its visible floor must not be reported as a completed dwell.",
+  );
+  assert.equal(
+    activeTerminalAudit.activeAtEnd[0]?.key,
+    "objective-shift:rest-home",
+  );
+  assert.ok(
+    Math.abs(
+      activeTerminalAudit.activeAtEnd[0]?.observedAppDurationMs - 566.4,
+    ) < 0.001,
+    "The active terminal-card audit must preserve its observed partial dwell.",
+  );
+
   const lateSampleAudit = buildAutoplayPlaybackCardDwellAudit([
     {
       appMonotonicMs: 126_094.8,
@@ -19011,6 +19042,7 @@ function buildAutoplayObservationPacingLedger(samples) {
 
   return {
     approachSamples,
+    activePlaybackCardsAtEnd: playbackCardDwellAudit.activeAtEnd,
     firstDecisionAppElapsedMs:
       decisionSample && typeof firstAppMonotonicMs === "number" &&
       typeof decisionSample.appMonotonicMs === "number"
@@ -19134,6 +19166,7 @@ function buildCumulativeAppMonotonicSamples(samples) {
 function buildAutoplayPlaybackCardDwellAudit(samples) {
   const exactDwells = new Map();
   const sampledDwells = [];
+  const activeAtEnd = [];
   const interrupted = [];
   let activeCard = null;
 
@@ -19245,24 +19278,36 @@ function buildAutoplayPlaybackCardDwellAudit(samples) {
     activeCard &&
     typeof activeCard.lastAppMonotonicMs === "number"
   ) {
-    sampledDwells.push({
-      appDurationMs: Math.max(
-        0,
-        activeCard.lastAppMonotonicMs - activeCard.startedAtMs,
-      ),
-      configuredDurationMs: activeCard.configuredDurationMs,
-      evidence: "sampled-terminal-card",
-      key: activeCard.key,
-      kind: activeCard.kind,
-      title: activeCard.title,
-    });
+    const observedAppDurationMs = Math.max(
+      0,
+      activeCard.lastAppMonotonicMs - activeCard.startedAtMs,
+    );
+    if (observedAppDurationMs >= AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS) {
+      sampledDwells.push({
+        appDurationMs: observedAppDurationMs,
+        configuredDurationMs: activeCard.configuredDurationMs,
+        evidence: "sampled-terminal-card",
+        key: activeCard.key,
+        kind: activeCard.kind,
+        title: activeCard.title,
+      });
+    } else {
+      activeAtEnd.push({
+        configuredDurationMs: activeCard.configuredDurationMs,
+        evidence: "active-terminal-card",
+        key: activeCard.key,
+        kind: activeCard.kind,
+        observedAppDurationMs,
+        title: activeCard.title,
+      });
+    }
   }
 
   const dwells = [
     ...sampledDwells.filter((entry) => !exactDwells.has(entry.key)),
     ...exactDwells.values(),
   ];
-  return { dwells, interrupted };
+  return { activeAtEnd, dwells, interrupted };
 }
 
 function buildAutoplayObservationProgressGaps(samples, transitions) {
@@ -19759,7 +19804,14 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
       typeof ledger.minimumPlaybackCardDwellMs === "number" &&
       ledger.minimumPlaybackCardDwellMs >=
         AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS,
-    `Fresh autoplay semantic playback cards must remain visible for at least ${AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS}ms app-monotonic. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(ledger.playbackCardDwells, null, 2)}`,
+    `Fresh autoplay semantic playback cards must remain visible for at least ${AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS}ms app-monotonic. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+      {
+        activePlaybackCardsAtEnd: ledger.activePlaybackCardsAtEnd,
+        playbackCardDwells: ledger.playbackCardDwells,
+      },
+      null,
+      2,
+    )}`,
   );
   assert.ok(
     ledger.firstDecisionElapsedMs !== null &&
