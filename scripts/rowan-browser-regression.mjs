@@ -17947,6 +17947,173 @@ function assertAutoplayProgressGapGuard() {
     "Observer latency must not fail a run that kept presenting exact playback progress.",
   );
 
+  const stateBackedEndpointSamples = [
+    {
+      appDocumentOffsetMs: 0,
+      appMonotonicMs: 210_103,
+      autonomy: {
+        actionId: "move:boarding-house",
+        key: "pending:return-home",
+        label: "Return to Morrow House to take stock",
+      },
+      clock: { totalMinutes: 848 },
+      elapsedMs: 211_322,
+      location: {
+        id: "courtyard",
+        spaceId: "street:south-quay",
+      },
+      movement: { routeActive: false, routeProgress: null },
+      playback: {
+        activeKey: "arrive:2026-03-21T13:08:00.000Z:courtyard",
+        activeKind: "arrive",
+        activeStartedAtMs: 205_201.5,
+        activeTitle: "Arrived at Morrow Yard",
+        completedTimings: [
+          {
+            completedAtMs: 208_857.2,
+            key: "arrive:2026-03-21T13:08:00.000Z:courtyard",
+            kind: "arrive",
+            locationId: "courtyard",
+            startedAtMs: 205_201.5,
+            title: "Arrived at Morrow Yard",
+          },
+        ],
+      },
+    },
+    {
+      appDocumentOffsetMs: 0,
+      appMonotonicMs: 225_354.1,
+      autonomy: {
+        actionId: "reflect:first-afternoon",
+        key: "plan:first-afternoon:take-stock",
+        label: "Take stock",
+      },
+      clock: { totalMinutes: 853 },
+      elapsedMs: 225_600,
+      location: {
+        id: "boarding-house",
+        spaceId: "interior:boarding-house",
+      },
+      movement: { routeActive: false, routeProgress: null },
+      playback: {
+        activeKey: "time-passed:2026-03-21T14:08:00.000Z",
+        activeKind: "time_passed",
+        completedTimings: [
+          {
+            completedAtMs: 221_642.9,
+            key: "arrive:2026-03-21T13:08:00.000Z:courtyard",
+            kind: "arrive",
+            locationId: "courtyard",
+            startedAtMs: 205_201.5,
+            title: "Arrived at Morrow Yard",
+          },
+        ],
+      },
+    },
+  ];
+  const buildStateBackedEndpointGap = (samples) =>
+    buildAutoplayObservationProgressGaps(samples, [
+      {
+        progressKinds: classifyAutoplayObservationProgress(
+          samples[0],
+          samples[1],
+        ),
+        toElapsedMs: samples[1].elapsedMs,
+      },
+    ])[0];
+  const stateBackedEndpointGap = buildStateBackedEndpointGap(
+    stateBackedEndpointSamples,
+  );
+  assert.ok(
+    Math.abs(stateBackedEndpointGap.sampledAppDurationMs - 15_251.1) < 0.01,
+    "The endpoint fixture must reproduce the exact 15251.1ms sampled app gap.",
+  );
+  assert.equal(
+    stateBackedEndpointGap.durationMs,
+    14_278,
+    "The endpoint fixture must retain the shorter observer interval without using it as product timing.",
+  );
+  assert.deepEqual(
+    stateBackedEndpointGap.exactStateBackedPlaybackCheckpoints.map(
+      ({
+        appMonotonicMs,
+        evidence,
+        fromLocationId,
+        phase,
+        toLocationId,
+      }) => ({
+        appMonotonicMs,
+        evidence,
+        fromLocationId,
+        phase,
+        toLocationId,
+      }),
+    ),
+    [
+      {
+        appMonotonicMs: 221_642.9,
+        evidence: "state-backed-playback-completion-revision",
+        fromLocationId: "courtyard",
+        phase: "completed-revision",
+        toLocationId: "boarding-house",
+      },
+    ],
+    "The ledger must preserve the exact location-backed playback completion that occurred between slow endpoint samples.",
+  );
+  assert.ok(
+    Math.abs(stateBackedEndpointGap.appDurationMs - 11_539.9) < 0.01,
+    "The exact intermediate completion must split the endpoint interval at browser-monotonic time.",
+  );
+  assert.ok(
+    stateBackedEndpointGap.appDurationMs <=
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "Proven intermediate state-backed progress must pass the unchanged 15-second product-visible budget.",
+  );
+
+  const unprovenEndpointGap = buildStateBackedEndpointGap([
+    stateBackedEndpointSamples[0],
+    {
+      ...stateBackedEndpointSamples[1],
+      playback: {
+        ...stateBackedEndpointSamples[1].playback,
+        completedTimings:
+          stateBackedEndpointSamples[0].playback.completedTimings,
+      },
+    },
+  ]);
+  assert.deepEqual(
+    unprovenEndpointGap.exactStateBackedPlaybackCheckpoints,
+    [],
+    "Endpoint state changes without an exact intermediate timing must not invent a pacing checkpoint.",
+  );
+  assert.ok(
+    unprovenEndpointGap.durationMs < AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS &&
+      unprovenEndpointGap.appDurationMs >
+        AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "An unproven over-budget app gap must still fail even when observer polling returned sooner.",
+  );
+
+  const mismatchedActiveIdentityGap = buildStateBackedEndpointGap([
+    {
+      ...stateBackedEndpointSamples[0],
+      playback: {
+        ...stateBackedEndpointSamples[0].playback,
+        activeKey: "arrive:unrelated-location",
+      },
+    },
+    stateBackedEndpointSamples[1],
+  ]);
+  assert.deepEqual(
+    mismatchedActiveIdentityGap.exactStateBackedPlaybackCheckpoints,
+    [],
+    "A revised completion without matching prior active playback identity must not count as visible progress.",
+  );
+  assert.ok(
+    mismatchedActiveIdentityGap.appDurationMs >
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "Location change plus a revised completion must remain over budget when the prior sample did not prove that playback instance was visible.",
+  );
+
   const ciDelayedFollowThroughSamples = [
     {
       activity: { autoContinue: null, busyLabel: null },
@@ -19343,6 +19510,13 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
         previousProgressSample.appMonotonicMs,
         nextSample?.appMonotonicMs,
       );
+    const stateBackedPlaybackCheckpoints =
+      exactStateBackedPlaybackRevisionCheckpointsBetween(
+        previousProgressSample,
+        nextSample,
+        previousProgressSample.appMonotonicMs,
+        nextSample?.appMonotonicMs,
+      );
     const progressKinds = [
       ...new Set([
         ...transition.progressKinds,
@@ -19369,6 +19543,7 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
     const exactProgressCheckpoints = [
       ...playbackCheckpoints,
       ...autoContinueCheckpoints,
+      ...stateBackedPlaybackCheckpoints,
     ].sort((left, right) => left.appMonotonicMs - right.appMonotonicMs);
     const appProgressTimes = [
       previousProgressSample.appMonotonicMs,
@@ -19394,6 +19569,7 @@ function buildAutoplayObservationProgressGaps(samples, transitions) {
       ),
       exactAutoContinueCheckpoints: autoContinueCheckpoints,
       exactPlaybackCheckpoints: playbackCheckpoints,
+      exactStateBackedPlaybackCheckpoints: stateBackedPlaybackCheckpoints,
       fromAutonomyLabel: previousProgressSample.autonomy?.label ?? null,
       fromElapsedMs: previousProgressSample.elapsedMs,
       progressKinds,
@@ -19473,6 +19649,117 @@ function exactPlaybackProgressCheckpointsBetween(
         title: completedTiming.title ?? null,
       });
     }
+  }
+
+  return checkpoints.sort(
+    (left, right) => left.appMonotonicMs - right.appMonotonicMs,
+  );
+}
+
+function exactStateBackedPlaybackRevisionCheckpointsBetween(
+  previous,
+  next,
+  afterAppMonotonicMs,
+  beforeAppMonotonicMs,
+) {
+  const previousLocationId = previous?.location?.id ?? null;
+  const nextLocationId = next?.location?.id ?? null;
+  if (
+    typeof afterAppMonotonicMs !== "number" ||
+    typeof beforeAppMonotonicMs !== "number" ||
+    beforeAppMonotonicMs <= afterAppMonotonicMs ||
+    !previousLocationId ||
+    !nextLocationId ||
+    (previousLocationId === nextLocationId &&
+      previous?.location?.spaceId === next?.location?.spaceId)
+  ) {
+    return [];
+  }
+
+  const previousDocumentOffsetMs = previous.appDocumentOffsetMs ?? 0;
+  const nextDocumentOffsetMs = next.appDocumentOffsetMs ?? 0;
+  if (previousDocumentOffsetMs !== nextDocumentOffsetMs) {
+    return [];
+  }
+
+  const timingIdentityToleranceMs = 0.01;
+  const previousCompletions = [];
+  for (const timing of previous.playback?.completedTimings ?? []) {
+    if (
+      timing?.key &&
+      timing.kind === "arrive" &&
+      timing.locationId === previousLocationId &&
+      typeof timing.startedAtMs === "number" &&
+      typeof timing.completedAtMs === "number" &&
+      timing.completedAtMs >= timing.startedAtMs
+    ) {
+      previousCompletions.push(timing);
+    }
+  }
+
+  const checkpoints = [];
+  for (const timing of next.playback?.completedTimings ?? []) {
+    if (
+      !timing?.key ||
+      timing.kind !== "arrive" ||
+      timing.locationId !== previousLocationId ||
+      typeof timing.startedAtMs !== "number" ||
+      typeof timing.completedAtMs !== "number" ||
+      timing.completedAtMs < timing.startedAtMs
+    ) {
+      continue;
+    }
+    const previousTiming = previousCompletions.find(
+      (candidate) =>
+        candidate.key === timing.key &&
+        Math.abs(candidate.startedAtMs - timing.startedAtMs) <=
+          timingIdentityToleranceMs,
+    );
+    const previousCompletedAtMs = previousTiming?.completedAtMs;
+    const previousActivelyDisplayedSameInstance =
+      previous.playback?.activeKey === timing.key &&
+      previous.playback?.activeKind === "arrive" &&
+      typeof previous.playback?.activeStartedAtMs === "number" &&
+      Math.abs(
+        previous.playback.activeStartedAtMs - timing.startedAtMs,
+      ) <= timingIdentityToleranceMs;
+    const nextStillDisplaysSameInstance =
+      next.playback?.activeKey === timing.key &&
+      next.playback?.activeKind === "arrive" &&
+      typeof next.playback?.activeStartedAtMs === "number" &&
+      Math.abs(next.playback.activeStartedAtMs - timing.startedAtMs) <=
+        timingIdentityToleranceMs;
+    if (
+      typeof previousCompletedAtMs !== "number" ||
+      !previousActivelyDisplayedSameInstance ||
+      nextStillDisplaysSameInstance ||
+      previousDocumentOffsetMs + previousCompletedAtMs >
+        afterAppMonotonicMs ||
+      timing.completedAtMs <= previousCompletedAtMs
+    ) {
+      continue;
+    }
+
+    const appMonotonicMs =
+      nextDocumentOffsetMs + timing.completedAtMs;
+    if (
+      appMonotonicMs <= afterAppMonotonicMs ||
+      appMonotonicMs >= beforeAppMonotonicMs
+    ) {
+      continue;
+    }
+    checkpoints.push({
+      appMonotonicMs,
+      evidence: "state-backed-playback-completion-revision",
+      fromLocationId: previousLocationId,
+      key: timing.key,
+      kind: timing.kind,
+      phase: "completed-revision",
+      previousCompletedAtMs:
+        nextDocumentOffsetMs + previousCompletedAtMs,
+      title: timing.title ?? null,
+      toLocationId: nextLocationId,
+    });
   }
 
   return checkpoints.sort(
