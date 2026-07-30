@@ -15823,6 +15823,219 @@ function buildAutoplayArchivedRouteFrameCandidates({
   );
 }
 
+function buildAutoplayScreencastRouteFrameCandidates({
+  archivedFrames,
+  expectedTargetLocationId,
+  frames,
+  openingSegment = null,
+  samples,
+}) {
+  const candidatesBySequence = new Map();
+  const candidates = [
+    ...buildAutoplayRecordedRouteFrameCandidates({
+      expectedTargetLocationId,
+      frames,
+      openingSegment,
+      samples,
+    }),
+    ...buildAutoplayArchivedRouteFrameCandidates({
+      archivedFrames,
+      expectedTargetLocationId,
+      openingSegment,
+      samples,
+    }),
+  ];
+  for (const candidate of candidates) {
+    if (!candidatesBySequence.has(candidate.frame.sequence)) {
+      candidatesBySequence.set(candidate.frame.sequence, candidate);
+    }
+  }
+  return [...candidatesBySequence.values()].sort(
+    (left, right) =>
+      screencastFrameCapturedAtEpochMs(left.frame) -
+      screencastFrameCapturedAtEpochMs(right.frame),
+  );
+}
+
+function assertAutoplayScreencastRouteFrameCandidateMergeGuard() {
+  const paintProbe = {
+    capturedAtEpochMs: 1_785_450_275_000,
+    regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+    stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+    viewport: { height: 768, width: 1_365 },
+  };
+  const routeAt = (progress, overrides = {}) =>
+    buildAutoplayFootholdRouteGuardFixture(progress, {
+      durationMs: 1_000,
+      spaceId: "street",
+      target: { x: 1_024, y: 512 },
+      targetLocationId: "repair-stall",
+      tilePath: [
+        { x: 10, y: 5 },
+        { x: 11, y: 5 },
+      ],
+      worldPath: [
+        { x: 960, y: 512 },
+        { x: 1_024, y: 512 },
+      ],
+      ...overrides,
+    });
+  const sampleAt = (
+    capturedAtEpochMs,
+    progress,
+    hudText,
+    overrides = {},
+  ) => ({
+    capturedAtEpochMs,
+    paintProbe: {
+      ...paintProbe,
+      capturedAtEpochMs,
+      regions: [{ surface: "hud", text: hudText }],
+      stableRegions: [{ surface: "hud", text: hudText }],
+    },
+    recorderGeneration: 2,
+    route: routeAt(progress),
+    source: "movement-probe-recorder",
+    ...overrides,
+  });
+  const baseEpochMs = 1_785_450_275_000;
+  const samples = [
+    sampleAt(baseEpochMs, 0.05, "DAY 1 11:05"),
+    sampleAt(baseEpochMs + 200, 0.15, "DAY 1 11:05"),
+    sampleAt(baseEpochMs + 400, 0.5, "DAY 1 11:05"),
+    sampleAt(baseEpochMs + 550, 0.6, "DAY 1 11:05", {
+      recorderGeneration: 3,
+    }),
+    sampleAt(baseEpochMs + 700, 0.7, "DAY 1 11:05"),
+  ];
+  const frameAt = (capturedAtEpochMs, sequence, data) => ({
+    data: Buffer.from(data).toString("base64"),
+    metadata: { timestamp: capturedAtEpochMs / 1_000 },
+    sequence,
+  });
+  const frames = [
+    frameAt(baseEpochMs + 200, 662, "direct-position"),
+    frameAt(baseEpochMs + 550, 664, "archived-position"),
+  ];
+  const directCandidates = buildAutoplayRecordedRouteFrameCandidates({
+    expectedTargetLocationId: "repair-stall",
+    frames,
+    samples,
+  });
+  const archivedCandidates = buildAutoplayArchivedRouteFrameCandidates({
+    archivedFrames: [frames[1]],
+    expectedTargetLocationId: "repair-stall",
+    samples,
+  });
+  const candidates = buildAutoplayScreencastRouteFrameCandidates({
+    archivedFrames: [frames[1]],
+    expectedTargetLocationId: "repair-stall",
+    frames,
+    samples,
+  });
+  assert.deepEqual(
+    directCandidates.map((candidate) => candidate.frame.sequence),
+    [662],
+    "The fixture must retain one strictly bracketed direct candidate.",
+  );
+  assert.deepEqual(
+    archivedCandidates.map((candidate) => candidate.frame.sequence),
+    [664],
+    "The fixture must retain one strict archived candidate.",
+  );
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.frame.sequence),
+    [662, 664],
+    "Strict direct and archived candidates must share one ordered screencast pool.",
+  );
+  assert.equal(
+    autoplayRecordedRouteWindowsHaveDistinctProgress(
+      candidates[0],
+      candidates[1],
+    ),
+    true,
+    "The merged strict candidates must retain distinct route progress.",
+  );
+  assert.notEqual(
+    candidates[0].frame.data,
+    candidates[1].frame.data,
+    "The merged strict candidates must retain distinct frame payloads.",
+  );
+
+  const duplicateCandidates = buildAutoplayScreencastRouteFrameCandidates({
+    archivedFrames: [frames[0]],
+    expectedTargetLocationId: "repair-stall",
+    frames: [frames[0]],
+    samples,
+  });
+  assert.equal(
+    duplicateCandidates.length,
+    1,
+    "The same screencast sequence must not appear twice after merging.",
+  );
+
+  const staleFrame = frameAt(
+    samples.at(-1).capturedAtEpochMs +
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS +
+      1,
+    666,
+    "stale-position",
+  );
+  assert.equal(
+    buildAutoplayScreencastRouteFrameCandidates({
+      archivedFrames: [staleFrame],
+      expectedTargetLocationId: "repair-stall",
+      frames: [staleFrame],
+      samples,
+    }).length,
+    0,
+    "A frame beyond the existing route-tail allowance must remain unproven.",
+  );
+
+  const mismatchedSamples = samples.map((sample, index) =>
+    index === samples.length - 1
+      ? {
+          ...sample,
+          recorderGeneration: sample.recorderGeneration + 1,
+        }
+      : sample,
+  );
+  assert.equal(
+    buildAutoplayScreencastRouteFrameCandidates({
+      archivedFrames: [frames[1]],
+      expectedTargetLocationId: "repair-stall",
+      frames: [frames[1]],
+      samples: mismatchedSamples,
+    }).length,
+    0,
+    "A generation-mismatched candidate must remain unproven.",
+  );
+
+  const sameProgressSamples = samples.map((sample, index) =>
+    index === 2
+      ? {
+          ...sample,
+          route: routeAt(samples[1].route.progress),
+        }
+      : sample,
+  );
+  const sameProgressCandidates =
+    buildAutoplayScreencastRouteFrameCandidates({
+      archivedFrames: [frames[1]],
+      expectedTargetLocationId: "repair-stall",
+      frames,
+      samples: sameProgressSamples,
+    });
+  assert.equal(
+    autoplayRecordedRouteWindowsHaveDistinctProgress(
+      sameProgressCandidates[0],
+      sameProgressCandidates[1],
+    ),
+    false,
+    "Merged candidates at the same route progress must not form a pair.",
+  );
+}
+
 function buildAutoplayRecordedRouteWindowCandidates({
   expectedTargetLocationId,
   frames,
@@ -16170,22 +16383,10 @@ function selectAutoplayRecordedRouteTrajectory({
   const { openingSegment, segments } = openingEvidence;
   const candidateSets = [
     {
-      candidates: buildAutoplayRecordedRouteFrameCandidates({
-        expectedTargetLocationId,
-        frames,
-        openingSegment,
-        samples: openingSegment?.samples ?? [],
-      }),
-      validate: ({ recordedEvidence, ...options }) =>
-        validateAutoplayRecordedRouteFrame({
-          ...options,
-          recordedFrame: recordedEvidence,
-        }),
-    },
-    {
-      candidates: buildAutoplayArchivedRouteFrameCandidates({
+      candidates: buildAutoplayScreencastRouteFrameCandidates({
         archivedFrames,
         expectedTargetLocationId,
+        frames,
         openingSegment,
         samples: openingSegment?.samples ?? [],
       }),
@@ -23734,6 +23935,7 @@ async function main() {
   assertAutoplayAppMonotonicResetGuard();
   assertAutoplayPlaybackCardDwellResetGuard();
   assertAutoplayFootholdRouteCaptureGuard();
+  assertAutoplayScreencastRouteFrameCandidateMergeGuard();
   assertVisibleImplementationLanguageGuardRegression();
   assertAutoplayNullProbeRetryGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
