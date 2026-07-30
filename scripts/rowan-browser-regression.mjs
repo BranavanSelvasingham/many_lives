@@ -15761,11 +15761,44 @@ function buildAutoplayArchivedRouteFrameCandidates({
           if (!matchedProbe) {
             return null;
           }
+          const settledBeforeProbe = legalSamples
+            .filter(
+              (sample) =>
+                sample.capturedAtEpochMs <=
+                  capturedAtEpochMs -
+                    AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS &&
+                autoplayRouteCaptureSamplesShareExactIdentity(
+                  sample,
+                  matchedProbe,
+                ),
+            )
+            .at(-1);
+          const openingFrameGraceMs =
+            capturedAtEpochMs - openingProbe.capturedAtEpochMs;
+          const usesOpeningFrameGrace = Boolean(
+            !settledBeforeProbe &&
+              Number(openingProbe.route?.progress) <=
+                AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS &&
+              Number(matchedProbe.route?.progress) <=
+                AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS &&
+              openingFrameGraceMs >=
+                AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS &&
+              openingFrameGraceMs <
+                AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+          );
+          if (!settledBeforeProbe && !usesOpeningFrameGrace) {
+            return null;
+          }
           return {
             afterProbe: matchedProbe,
             archivedFramePromotion: true,
-            beforeProbe: matchedProbe,
+            beforeProbe: usesOpeningFrameGrace
+              ? openingProbe
+              : settledBeforeProbe,
             frame,
+            openingFrameGraceMs: usesOpeningFrameGrace
+              ? openingFrameGraceMs
+              : null,
           };
         })
         .filter(Boolean)

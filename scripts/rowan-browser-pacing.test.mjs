@@ -722,6 +722,102 @@ test("proactive route history survives a delayed observer and rejects unproven w
       }),
     /did not contain two distinct legal rendered positions/,
   );
+  const constrainedRunnerOpeningAtEpochMs = 1_785_425_623_361;
+  const constrainedRunnerSample = (progress, sampleAtEpochMs) => ({
+    ...routeSample(progress, 0),
+    capturedAtEpochMs: sampleAtEpochMs,
+    capturedAtMonotonicMs:
+      sampleAtEpochMs - constrainedRunnerOpeningAtEpochMs,
+  });
+  const routeHudContinuityChecksBeforeConstrainedRunner =
+    routeHudContinuityChecks;
+  const constrainedRunnerArchivedTrajectory =
+    routeCapture.selectAutoplayRecordedRouteTrajectory({
+      archivedFrames: [
+        {
+          data: "ci-archived-opening-route-start",
+          metadata: { timestamp: 1_785_425_623.412167 },
+          sequence: 702,
+        },
+        {
+          data: "ci-archived-opening-route-mid",
+          metadata: { timestamp: 1_785_425_625.747765 },
+          sequence: 704,
+        },
+      ],
+      expectedTargetLocationId: "tea-house",
+      frames: [],
+      label: "exact constrained-runner archived opening frames",
+      samples: [
+        constrainedRunnerSample(0.006, constrainedRunnerOpeningAtEpochMs),
+        constrainedRunnerSample(0.3, 1_785_425_624_861),
+        constrainedRunnerSample(0.48, 1_785_425_625_561),
+        constrainedRunnerSample(0.535, 1_785_425_625_722),
+        constrainedRunnerSample(0.56, 1_785_425_625_800),
+      ],
+      validateFrame: ({ frame, paintProbe: acceptedPaintProbe }) => ({
+        buffer: Buffer.from(frame.data),
+        height: 625,
+        paintProbe: acceptedPaintProbe,
+        textPaint: {},
+        width: 1365,
+      }),
+      validateStableFramePair: () => ({}),
+    });
+  const constrainedRunnerWindow = (capture) => ({
+    before: {
+      capturedAtEpochMs: capture.beforeProbe.capturedAtEpochMs,
+      progress: capture.beforeProbe.route.progress,
+    },
+    frame: {
+      capturedAtEpochMs:
+        framePolicy.screencastFrameCapturedAtEpochMs(capture.frame),
+    },
+    textPaint: capture.validated.textPaint,
+  });
+  assert.equal(constrainedRunnerArchivedTrajectory.start.frame.sequence, 702);
+  assert.ok(
+    Math.abs(
+      constrainedRunnerArchivedTrajectory.start.validated.textPaint
+        .openingFrameGraceMs - 51.167,
+    ) < 0.001,
+  );
+  assert.equal(
+    constrainedRunnerArchivedTrajectory.start.validated.textPaint
+      .openingFrameGraceMinimumMs,
+    50,
+  );
+  assert.equal(
+    routeCapture.autoplayRouteCaptureWindowRetainsCompositingSettle(
+      constrainedRunnerWindow(constrainedRunnerArchivedTrajectory.start),
+      { allowOpeningFrameGrace: true },
+    ),
+    true,
+    "Archived route-start promotion must retain the same bounded opening grace accepted during candidate selection.",
+  );
+  assert.equal(constrainedRunnerArchivedTrajectory.mid.frame.sequence, 704);
+  assert.equal(
+    constrainedRunnerArchivedTrajectory.mid.beforeProbe.route.progress,
+    0.48,
+  );
+  assert.equal(
+    constrainedRunnerArchivedTrajectory.mid.validated.textPaint
+      .openingFrameGraceMs,
+    undefined,
+  );
+  assert.equal(
+    routeCapture.autoplayRouteCaptureWindowRetainsCompositingSettle(
+      constrainedRunnerWindow(constrainedRunnerArchivedTrajectory.mid),
+    ),
+    true,
+    "A non-opening archived frame must retain the full compositing settle interval.",
+  );
+  assert.equal(
+    routeHudContinuityChecks,
+    routeHudContinuityChecksBeforeConstrainedRunner + 1,
+  );
+  routeHudContinuityChecks =
+    routeHudContinuityChecksBeforeConstrainedRunner;
   const screencastFrame = (sequence, offsetMs) => ({
     data: `active-route-png-${sequence}`,
     metadata: { timestamp: (capturedAtEpochMs + offsetMs) / 1_000 },
@@ -4885,7 +4981,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           source: "movement-probe-recorder",
         });
         const openingSamples = [
-          sample(0.286, 0),
+          sample(0.006, 0),
           sample(0.5, 1_080),
           sample(0.72, 2_160),
           sample(0.929, 3_249),
@@ -4927,7 +5023,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         );
         const selectionOptions = {
           expectedTargetLocationId: "tea-house",
-          frames: archivePromotionSession.autoplayRouteFrameHistory(),
+          frames: [],
           label: "CI archive promotion opening route",
           recordedWindows:
             archivePromotionSession.autoplayRouteFrameWindows(),
@@ -4949,7 +5045,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory(
               selectionOptions,
             ),
-          /Direct frame candidates: 1\. Archived frame candidates: 0\./,
+          /Direct frame candidates: 0\. Archived frame candidates: 0\./,
         );
 
         const trajectory =
@@ -4960,8 +5056,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           });
         assert.equal(trajectory.start.frame.sequence, 1);
         assert.equal(trajectory.mid.frame.sequence, 2);
-        assert.equal(trajectory.start.beforeProbe.route.progress, 0.286);
-        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.929);
+        assert.equal(trajectory.start.beforeProbe.route.progress, 0.006);
+        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.72);
         assert.equal(
           trajectory.start.validated.textPaint.routeFrameEvidenceBasis,
           "archived-screencast-frame-matched-to-legal-route-sample",
@@ -4973,7 +5069,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(
           trajectory.mid.beforeProbe.route.progress -
             trajectory.start.afterProbe.route.progress,
-          0.643,
+          0.714,
         );
         assert.equal(
           archivePromotionSession.acceptAutoplayRouteRenderedFrameTrajectory(
@@ -5045,7 +5141,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         sequence,
       });
       const openingSamples = [
-        sample(0.286, 0),
+        sample(0.006, 0),
         sample(0.5, 1_080),
         sample(0.72, 2_160),
         sample(0.929, 3_249),
