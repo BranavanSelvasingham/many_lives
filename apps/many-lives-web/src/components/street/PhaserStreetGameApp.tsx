@@ -174,6 +174,7 @@ import {
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
   rowanWatchAutonomyDelayForState,
   rowanWatchDelayForFirstAfternoonFloor,
+  rowanWatchFirstAfternoonPacedDurationMs,
   rowanWatchFirstAfternoonPresentationElapsedMs,
   settleCompletedMovePlayback,
   startNextRowanPlaybackBeat,
@@ -320,11 +321,16 @@ function autoContinueDelayMsForBeat(
     !game.activeConversation?.lines.length
       ? baseDelay
       : Math.max(baseDelay, estimateLiveConversationBeatMs(game) + 900);
+  const minimumDelayMs =
+    autonomy.layer === "conversation" && game.activeConversation?.lines.length
+      ? estimateLiveConversationBeatMs(game) + 900
+      : undefined;
 
   return rowanWatchDelayForFirstAfternoonFloor(
     game,
     transcriptAwareDelay,
     presentationElapsedMs,
+    { minimumDelayMs },
   );
 }
 
@@ -1211,18 +1217,17 @@ export function PhaserStreetGameApp() {
         clearOptimisticPlayerMove();
       }
 
+      const presentationElapsedMs =
+        firstAfternoonPresentationStartRef.current?.gameId === nextGame.id
+          ? rowanWatchFirstAfternoonPresentationElapsedMs(
+              firstAfternoonPresentationStartRef.current.startedAtEpochMs,
+              Date.now(),
+            )
+          : undefined;
       const nextPlaybackBeats =
         previousGame && previousGame.id === nextGame.id
           ? deriveRowanPlaybackBeats(previousGame, nextGame, {
-              presentationElapsedMs:
-                firstAfternoonPresentationStartRef.current?.gameId ===
-                nextGame.id
-                  ? rowanWatchFirstAfternoonPresentationElapsedMs(
-                      firstAfternoonPresentationStartRef.current
-                        .startedAtEpochMs,
-                      Date.now(),
-                    )
-                  : undefined,
+              presentationElapsedMs,
               watchMode: rowanWatchModeEnabled,
             })
           : [];
@@ -1243,12 +1248,24 @@ export function PhaserStreetGameApp() {
           previousGame.player,
           visualTarget,
         );
-        const transitionMs = estimateDeferredPlayerMoveMs(
-          previousGame,
-          nextGame,
-          visualRoute,
-          { watchMode: rowanWatchModeEnabled },
-        );
+        const transitionMs = rowanWatchModeEnabled
+          ? rowanWatchFirstAfternoonPacedDurationMs(
+              nextGame,
+              estimateDeferredPlayerMoveMs(
+                previousGame,
+                nextGame,
+                visualRoute,
+                { watchMode: true },
+              ),
+              presentationElapsedMs,
+              { minimumDurationMs: 2_400 },
+            )
+          : estimateDeferredPlayerMoveMs(
+              previousGame,
+              nextGame,
+              visualRoute,
+              { watchMode: false },
+            );
         const deferredPlaybackBeats = nextPlaybackBeats.map((beat) =>
           beat.kind === "move" ? { ...beat, durationMs: transitionMs } : beat,
         );

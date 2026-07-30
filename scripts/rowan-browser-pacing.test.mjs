@@ -391,6 +391,41 @@ test("first-afternoon runtime floor keeps real elapsed time across reloads", () 
   );
 });
 
+test("first-afternoon runtime catches up from state-derived pacing pressure", () => {
+  assert.match(
+    rowanPlaybackSource,
+    /ROWAN_WATCH_FIRST_AFTERNOON_PACING_TARGET_MS = 270_000/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /const progress = game\.player\.objective\?\.progress/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /progressRatio \*[\s\S]*ROWAN_WATCH_FIRST_AFTERNOON_PACING_TARGET_MS/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /ROWAN_WATCH_FIRST_AFTERNOON_MIN_SEMANTIC_DWELL_MS = 2_000/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /beat\.kind === "thread_line"[\s\S]*\? readableDurationMs/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /minimumDelayMs =[\s\S]*estimateLiveConversationBeatMs\(game\) \+ 900/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /rowanWatchFirstAfternoonPacedDurationMs\([\s\S]*estimateDeferredPlayerMoveMs\([\s\S]*minimumDurationMs: 2_400/,
+  );
+  assert.doesNotMatch(
+    rowanPlaybackSource,
+    /noticed-pump|problem-pump.*PACING_TARGET/,
+  );
+});
+
 test("autoplay observer budget preserves strict app-visible pacing evidence", () => {
   assert.match(
     source,

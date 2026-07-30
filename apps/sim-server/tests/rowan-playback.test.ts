@@ -14,12 +14,15 @@ import {
   ROWAN_PLAYBACK_TIMING_MS,
   ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS,
   ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS,
+  ROWAN_WATCH_FIRST_AFTERNOON_MIN_SEMANTIC_DWELL_MS,
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
   readOrCreateRowanWatchFirstAfternoonPresentationStart,
   reconcileAutoContinueBeatTiming,
   railCopyRepeatsDecisionAction,
   rowanWatchDelayForFirstAfternoonFloor,
   rowanWatchFirstAfternoonFloorBeatDurations,
+  rowanWatchFirstAfternoonPacedDurationMs,
+  rowanWatchFirstAfternoonPacingEnvelope,
   rowanWatchFirstAfternoonPresentationElapsedMs,
   rowanWatchAutonomyDelayForState,
   settleCompletedMovePlayback,
@@ -56,6 +59,21 @@ function setClock(
   world.currentTime = `2026-03-21T${String(hour).padStart(2, "0")}:${String(
     minute,
   ).padStart(2, "0")}:00.000Z`;
+}
+
+function setObjectiveProgress(
+  world: StreetGameState,
+  completed: number,
+  total: number,
+) {
+  if (!world.player.objective) {
+    throw new Error("Expected a current objective for playback pacing");
+  }
+  world.player.objective.progress = {
+    completed,
+    label: `${completed}/${total} outcomes met`,
+    total,
+  };
 }
 
 describe("Rowan playback helpers", () => {
@@ -193,6 +211,7 @@ describe("Rowan playback helpers", () => {
   it("keeps reload-safe floor beats and the final delay within one three-minute budget", () => {
     const world = seedStreetGame("rowan-playback-first-afternoon-floor");
     world.rowanAutonomy.actionId = "reflect:first-afternoon";
+    setObjectiveProgress(world, 3, 4);
     world.firstAfternoon = {
       ...world.firstAfternoon,
       completedAt: undefined,
@@ -327,7 +346,7 @@ describe("Rowan playback helpers", () => {
         10_000,
         slowPresentationElapsedMs,
       ),
-    ).toBe(10_000);
+    ).toBe(4_500);
 
     world.firstAfternoon!.completedAt = "2026-03-21T14:14:00.000Z";
     expect(
@@ -337,6 +356,89 @@ describe("Rowan playback helpers", () => {
         presentationElapsedAfterReload,
       ),
     ).toBe(10_000);
+  });
+
+  it("compresses only sustained state-derived first-afternoon pacing pressure", () => {
+    const world = seedStreetGame("rowan-playback-pacing-envelope");
+    setObjectiveProgress(world, 2, 4);
+
+    expect(
+      rowanWatchFirstAfternoonPacingEnvelope(asWebGame(world), 118_000),
+    ).toMatchObject({ delayScale: 1, progressRatio: 0.5 });
+    expect(
+      rowanWatchFirstAfternoonPacedDurationMs(
+        asWebGame(world),
+        6_200,
+        132_000,
+      ),
+    ).toBe(6_200);
+
+    const constrainedEnvelope = rowanWatchFirstAfternoonPacingEnvelope(
+      asWebGame(world),
+      172_000,
+    );
+    expect(constrainedEnvelope.progressRatio).toBe(0.5);
+    expect(constrainedEnvelope.expectedElapsedMs).toBe(144_000);
+    expect(constrainedEnvelope.delayScale).toBeCloseTo(0.4867, 3);
+    expect(
+      rowanWatchFirstAfternoonPacedDurationMs(
+        asWebGame(world),
+        6_200,
+        172_000,
+      ),
+    ).toBe(3_017);
+    expect(
+      rowanWatchFirstAfternoonPacedDurationMs(
+        asWebGame(world),
+        2_800,
+        190_000,
+      ),
+    ).toBe(ROWAN_WATCH_FIRST_AFTERNOON_MIN_SEMANTIC_DWELL_MS);
+
+    setObjectiveProgress(world, 3, 4);
+    expect(
+      rowanWatchFirstAfternoonPacedDurationMs(
+        asWebGame(world),
+        6_200,
+        155_000,
+      ),
+    ).toBe(6_200);
+    expect(
+      rowanWatchFirstAfternoonPacedDurationMs(
+        asWebGame(world),
+        6_200,
+        226_000,
+      ),
+    ).toBeLessThan(6_200);
+
+    const transcriptMinimumMs = 9_600;
+    expect(
+      rowanWatchDelayForFirstAfternoonFloor(
+        asWebGame(world),
+        10_800,
+        260_000,
+        { minimumDelayMs: transcriptMinimumMs },
+      ),
+    ).toBe(transcriptMinimumMs);
+
+    const clonedWorld = structuredClone(world);
+    expect(
+      rowanWatchFirstAfternoonPacingEnvelope(
+        asWebGame(clonedWorld),
+        226_000,
+      ),
+    ).toEqual(
+      rowanWatchFirstAfternoonPacingEnvelope(asWebGame(world), 226_000),
+    );
+
+    const unrelatedObjective = structuredClone(world);
+    unrelatedObjective.firstAfternoon = undefined;
+    expect(
+      rowanWatchFirstAfternoonPacingEnvelope(
+        asWebGame(unrelatedObjective),
+        260_000,
+      ),
+    ).toMatchObject({ delayScale: 1, progressRatio: 0.75 });
   });
 
   it("derives move and arrival beats from a real location change", async () => {

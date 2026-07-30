@@ -53,8 +53,14 @@ export const ROWAN_WATCH_COMPLEX_PROBLEM_TIMING_MS = {
 } as const;
 
 export const ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS = 182_000;
+export const ROWAN_WATCH_FIRST_AFTERNOON_PACING_TARGET_MS = 270_000;
+export const ROWAN_WATCH_FIRST_AFTERNOON_MIN_SEMANTIC_DWELL_MS = 2_000;
 export const ROWAN_WATCH_FIRST_AFTERNOON_PRESENTATION_START_PREFIX =
   "many-lives:street-first-afternoon-start:";
+const ROWAN_WATCH_FIRST_AFTERNOON_PACING_HEADSTART_MS = 18_000;
+const ROWAN_WATCH_FIRST_AFTERNOON_PACING_START_MS = 120_000;
+const ROWAN_WATCH_FIRST_AFTERNOON_PACING_PRESSURE_WINDOW_MS = 30_000;
+const ROWAN_WATCH_FIRST_AFTERNOON_MIN_DELAY_SCALE = 0.45;
 
 type RowanWatchPresentationStartStorage = {
   getItem(key: string): string | null;
@@ -187,21 +193,102 @@ export function rowanWatchFirstAfternoonPresentationElapsedMs(
   return nowEpochMs - startedAtEpochMs;
 }
 
+export function rowanWatchFirstAfternoonPacingEnvelope(
+  game: StreetGameState,
+  presentationElapsedMs: number | undefined,
+) {
+  const progress = game.player.objective?.progress;
+  const completedOutcomes = progress?.completed ?? 0;
+  const totalOutcomes = progress?.total ?? 0;
+  const progressRatio =
+    totalOutcomes > 0
+      ? clamp(completedOutcomes / totalOutcomes, 0, 1)
+      : undefined;
+  const pacingActive =
+    game.firstAfternoon !== undefined &&
+    presentationElapsedMs !== undefined &&
+    Number.isFinite(presentationElapsedMs) &&
+    presentationElapsedMs >= ROWAN_WATCH_FIRST_AFTERNOON_PACING_START_MS &&
+    !game.firstAfternoon?.completedAt &&
+    progressRatio !== undefined &&
+    progressRatio > 0 &&
+    progressRatio < 1;
+
+  if (!pacingActive) {
+    return {
+      delayScale: 1,
+      expectedElapsedMs: undefined,
+      progressRatio,
+    };
+  }
+
+  const expectedElapsedMs =
+    ROWAN_WATCH_FIRST_AFTERNOON_PACING_HEADSTART_MS +
+    progressRatio *
+      (ROWAN_WATCH_FIRST_AFTERNOON_PACING_TARGET_MS -
+        ROWAN_WATCH_FIRST_AFTERNOON_PACING_HEADSTART_MS);
+  const pressure = clamp(
+    (presentationElapsedMs - expectedElapsedMs) /
+      ROWAN_WATCH_FIRST_AFTERNOON_PACING_PRESSURE_WINDOW_MS,
+    0,
+    1,
+  );
+
+  return {
+    delayScale:
+      1 - pressure * (1 - ROWAN_WATCH_FIRST_AFTERNOON_MIN_DELAY_SCALE),
+    expectedElapsedMs,
+    progressRatio,
+  };
+}
+
+export function rowanWatchFirstAfternoonPacedDurationMs(
+  game: StreetGameState,
+  configuredDurationMs: number,
+  presentationElapsedMs: number | undefined,
+  {
+    minimumDurationMs = ROWAN_WATCH_FIRST_AFTERNOON_MIN_SEMANTIC_DWELL_MS,
+  }: { minimumDurationMs?: number } = {},
+) {
+  const { delayScale } = rowanWatchFirstAfternoonPacingEnvelope(
+    game,
+    presentationElapsedMs,
+  );
+  if (delayScale >= 1) {
+    return configuredDurationMs;
+  }
+
+  return Math.min(
+    configuredDurationMs,
+    Math.max(
+      minimumDurationMs,
+      Math.round(configuredDurationMs * delayScale),
+    ),
+  );
+}
+
 export function rowanWatchDelayForFirstAfternoonFloor(
   game: StreetGameState,
   baseDelayMs: number,
   presentationElapsedMs: number | undefined,
+  options: { minimumDelayMs?: number } = {},
 ) {
+  const pacedBaseDelayMs = rowanWatchFirstAfternoonPacedDurationMs(
+    game,
+    baseDelayMs,
+    presentationElapsedMs,
+    { minimumDurationMs: options.minimumDelayMs },
+  );
   const takeStockPending = Boolean(
     !game.firstAfternoon?.completedAt &&
       game.rowanAutonomy?.actionId === "reflect:first-afternoon",
   );
   if (!takeStockPending || presentationElapsedMs === undefined) {
-    return baseDelayMs;
+    return pacedBaseDelayMs;
   }
 
   return Math.max(
-    baseDelayMs,
+    pacedBaseDelayMs,
     ROWAN_WATCH_FIRST_AFTERNOON_MIN_PRESENTATION_MS -
       Math.max(0, presentationElapsedMs),
   );
@@ -956,7 +1043,13 @@ export function deriveRowanPlaybackBeats(
     }
   }
 
-  return watchMode ? applyWatchPresentationTiming(beats) : beats;
+  return watchMode
+    ? applyWatchPresentationTiming(
+        beats,
+        nextGame,
+        presentationElapsedMs,
+      )
+    : beats;
 }
 
 const DURABLE_WATCH_BEAT_KINDS = new Set<RowanPlaybackBeatKind>([
@@ -966,7 +1059,11 @@ const DURABLE_WATCH_BEAT_KINDS = new Set<RowanPlaybackBeatKind>([
   "thread_landed",
 ]);
 
-function applyWatchPresentationTiming(beats: RowanPlaybackBeat[]) {
+function applyWatchPresentationTiming(
+  beats: RowanPlaybackBeat[],
+  game: StreetGameState,
+  presentationElapsedMs: number | undefined,
+) {
   return beats.map((beat) => {
     if (beat.kind === "move") {
       return beat;
@@ -978,9 +1075,17 @@ function applyWatchPresentationTiming(beats: RowanPlaybackBeat[]) {
         : DURABLE_WATCH_BEAT_KINDS.has(beat.kind)
           ? ROWAN_WATCH_PRESENTATION_TIMING_MS.durableCard
           : ROWAN_WATCH_PRESENTATION_TIMING_MS.semanticCard;
+    const readableDurationMs = Math.max(beat.durationMs, minimumDurationMs);
     return {
       ...beat,
-      durationMs: Math.max(beat.durationMs, minimumDurationMs),
+      durationMs:
+        beat.kind === "thread_line"
+          ? readableDurationMs
+          : rowanWatchFirstAfternoonPacedDurationMs(
+              game,
+              readableDurationMs,
+              presentationElapsedMs,
+            ),
     };
   });
 }
