@@ -46,6 +46,64 @@ const inspectionSource = String.raw`
         .sort(),
     ]),
   );
+  const rectContainsPoint = (rect, point) =>
+    Boolean(
+      rect &&
+      point &&
+      point.x >= rect.x &&
+      point.x <= rect.x + rect.width &&
+      point.y >= rect.y &&
+      point.y <= rect.y + rect.height
+    );
+  const rectContainsRect = (outer, inner) =>
+    Boolean(
+      outer &&
+      inner &&
+      inner.x >= outer.x &&
+      inner.y >= outer.y &&
+      inner.x + inner.width <= outer.x + outer.width &&
+      inner.y + inner.height <= outer.y + outer.height
+    );
+  const secondaryLandmarkAlignment = [
+    {
+      clusterId: "courtyard-morrow-yard-service",
+      locationId: "courtyard",
+      surfaceId: "surface-morrow-yard",
+    },
+    {
+      clusterId: "moss-pier-first-morning-mooring",
+      locationId: "moss-pier",
+      surfaceId: "surface-pilgrim-dock",
+    },
+  ].map(({ clusterId, locationId, surfaceId }) => {
+    const intent = contract.landmarkIntents.find(
+      (candidate) => candidate.locationId === locationId,
+    );
+    const landmark = authoredScene.landmarks.find(
+      (candidate) => candidate.locationId === locationId,
+    );
+    const anchors = authoredScene.locationAnchors[locationId];
+    const cluster = authoredScene.propClusters.find(
+      (candidate) => candidate.id === clusterId,
+    );
+    const surface = authoredScene.surfaceZones.find(
+      (candidate) => candidate.id === surfaceId,
+    );
+    const endpoint = anchors?.[intent?.routeEndpoint];
+    return {
+      clusterContained: rectContainsRect(landmark?.rect, cluster?.rect),
+      endpointInsideLandmark: rectContainsPoint(landmark?.rect, endpoint),
+      highlightContainsLandmark: rectContainsRect(
+        anchors?.highlight,
+        landmark?.rect,
+      ),
+      locationId,
+      surfaceContained: rectContainsRect(landmark?.rect, surface?.rect),
+    };
+  });
+  const eastChannelMooring = authoredScene.propClusters.find(
+    (cluster) => cluster.id === "east-channel-mooring-bays",
+  );
   const routeEndpoints = contract.landmarkIntents.map((intent) => {
     const anchors = authoredScene.locationAnchors[intent.locationId];
     const endpoint = anchors?.[intent.routeEndpoint];
@@ -150,6 +208,7 @@ const inspectionSource = String.raw`
     contractDiagnostics: collectSouthQuayVisualContractDiagnostics(authoredScene),
     contractRevision: contract.revision,
     contractSource: contract.source,
+    eastChannelMooring,
     expectedRevision: SOUTH_QUAY_VISUAL_CONTRACT_REVISION,
     expectedSource: SOUTH_QUAY_VISUAL_CONTRACT_SOURCE,
     fringeEdges: [...new Set(authoredScene.fringeZones.map((zone) => zone.edge))].sort(),
@@ -161,6 +220,7 @@ const inspectionSource = String.raw`
     routeEndpoints,
     runtimeDiagnostics,
     schemaVersion: contract.schemaVersion,
+    secondaryLandmarkAlignment,
     surfaceIds: authoredScene.surfaceZones.map((zone) => zone.id).sort(),
     surfaceKinds: [...new Set(authoredScene.surfaceZones.map((zone) => zone.kind))].sort(),
     validOverrideAccepted:
@@ -275,4 +335,38 @@ test("contract route endpoints and named NPC stands stay aligned", () => {
       `${check.npcId} detached from ${check.locationId} stand`,
     );
   }
+});
+
+test("secondary landmark footprints contain their endpoints and authored props", () => {
+  assert.deepEqual(evidence.secondaryLandmarkAlignment, [
+    {
+      clusterContained: true,
+      endpointInsideLandmark: true,
+      highlightContainsLandmark: true,
+      locationId: "courtyard",
+      surfaceContained: true,
+    },
+    {
+      clusterContained: true,
+      endpointInsideLandmark: true,
+      highlightContainsLandmark: true,
+      locationId: "moss-pier",
+      surfaceContained: true,
+    },
+  ]);
+});
+
+test("Pilgrim Slip realignment preserves the authored east-channel mooring bays", () => {
+  assert.deepEqual(evidence.eastChannelMooring?.rect, {
+    height: 610,
+    radius: 12,
+    width: 192,
+    x: 1576,
+    y: 446,
+  });
+  assert.deepEqual(evidence.eastChannelMooring?.points, [
+    { x: 1718, y: 488 },
+    { x: 1718, y: 765 },
+    { x: 1718, y: 1014 },
+  ]);
 });

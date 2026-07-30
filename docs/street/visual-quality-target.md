@@ -46,7 +46,7 @@ South Quay reaches the visual target state only when all active rows are
 | ID | Surface | Current status | Target evidence |
 | --- | --- | --- | --- |
 | `VQ-01` | Core exterior landmarks: Morrow House, Kettle & Lamp, Quay Square | `CANDIDATE` | Desktop, tablet, phone, and high-DPR screenshots show distinct silhouettes, materials, entrances, and props before labels. |
-| `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `OPEN` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
+| `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `CANDIDATE` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
 | `VQ-03` | Morrow House interior | `CANDIDATE` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clear actors, and unobscured portal/action areas. |
 | `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `CANDIDATE` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |

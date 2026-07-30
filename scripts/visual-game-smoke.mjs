@@ -146,6 +146,18 @@ const WEST_OPEN_LOT_WORLD_REGION = {
   right: 500,
   top: 862,
 };
+const MORROW_YARD_WORLD_REGION = {
+  bottom: 1104,
+  left: 146,
+  right: 506,
+  top: 858,
+};
+const PILGRIM_SLIP_WORLD_REGION = {
+  bottom: 1227,
+  left: 1013,
+  right: 1673,
+  top: 1007,
+};
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|starting|weighing|continuing|carrying the conversation)/i;
@@ -156,6 +168,7 @@ const screenshotPixelDiagnostics = [];
 const eastWaterfrontCompositionDiagnostics = [];
 const fringeCompositionDiagnostics = [];
 const interiorIdentityDiagnostics = [];
+const secondaryLandmarkCompositionDiagnostics = [];
 
 const VIEWPORTS = [
   { height: 720, name: "desktop", width: 1280 },
@@ -2015,16 +2028,26 @@ function assertEastWaterfrontCompositionPixels(
           green - blue >= 24 &&
           green - blue <= 58;
         const darkHardware =
-          red >= 52 &&
-          red <= 124 &&
-          green >= 42 &&
-          green <= 104 &&
-          blue >= 32 &&
-          blue <= 88 &&
-          red - green >= 4 &&
-          red - green <= 28 &&
-          green - blue >= 2 &&
-          green - blue <= 26;
+          (red >= 52 &&
+            red <= 124 &&
+            green >= 42 &&
+            green <= 104 &&
+            blue >= 32 &&
+            blue <= 88 &&
+            red - green >= 4 &&
+            red - green <= 28 &&
+            green - blue >= 2 &&
+            green - blue <= 26) ||
+          (red >= 48 &&
+            red <= 150 &&
+            green >= 58 &&
+            green <= 160 &&
+            blue >= 64 &&
+            blue <= 170 &&
+            green - red >= 3 &&
+            blue - red >= 7 &&
+            blue - green >= -5 &&
+            blue - green <= 28);
 
         sampledPixels += 1;
         minimumLuminance = Math.min(minimumLuminance, luminance);
@@ -2112,7 +2135,7 @@ function sampleWorldCompositionRegion(
 
   const scaleX = image.width / viewport.width;
   const scaleY = image.height / viewport.height;
-  const blockers = [page.rightStack, page.dockRoot]
+  const blockers = [page.rightStack, page.dock ?? page.dockRoot]
     .map(normalizePageRect)
     .filter(Boolean);
   const cssRect = {
@@ -2142,6 +2165,7 @@ function sampleWorldCompositionRegion(
 
   const colorBins = new Map();
   let darkMaterialPixels = 0;
+  let coolUtilityPixels = 0;
   let greenMaterialPixels = 0;
   let maximumLuminance = 0;
   let minimumLuminance = 255;
@@ -2149,6 +2173,7 @@ function sampleWorldCompositionRegion(
   let sampledPixels = 0;
   let transitionPixels = 0;
   let warmDetailPixels = 0;
+  let waterMaterialPixels = 0;
 
   for (
     let sourceY = Math.floor(sample.top * scaleY);
@@ -2203,6 +2228,15 @@ function sampleWorldCompositionRegion(
         darkMaterialPixels += 1;
       }
       if (
+        red >= 62 &&
+        red <= 176 &&
+        green >= red - 2 &&
+        blue >= red + 7 &&
+        blue - red <= 58
+      ) {
+        coolUtilityPixels += 1;
+      }
+      if (
         green >= 62 &&
         green <= 180 &&
         green - red >= 7 &&
@@ -2218,6 +2252,16 @@ function sampleWorldCompositionRegion(
         red - green >= 5
       ) {
         warmDetailPixels += 1;
+      }
+      if (
+        red <= 98 &&
+        green >= 58 &&
+        green <= 154 &&
+        blue >= 82 &&
+        blue - red >= 24 &&
+        blue - green >= 8
+      ) {
+        waterMaterialPixels += 1;
       }
       if (
         previousColor &&
@@ -2244,6 +2288,7 @@ function sampleWorldCompositionRegion(
     Math.max(...colorBins.values()) / sampledPixels;
   return {
     activeColorBins,
+    coolUtilityFraction: coolUtilityPixels / sampledPixels,
     darkMaterialFraction: darkMaterialPixels / sampledPixels,
     dominantColorFraction,
     greenMaterialFraction: greenMaterialPixels / sampledPixels,
@@ -2253,6 +2298,7 @@ function sampleWorldCompositionRegion(
     sampledPixels,
     transitionFraction: transitionPixels / sampledPixels,
     warmDetailFraction: warmDetailPixels / sampledPixels,
+    waterMaterialFraction: waterMaterialPixels / sampledPixels,
   };
 }
 
@@ -2324,9 +2370,9 @@ function assertWestOpenLotCompositionPixels(
     `${label}: west open lot lacks authored material variety (${diagnostics.activeColorBins} active bins).`,
   );
   assert.ok(
-    diagnostics.greenMaterialFraction >= 0.12 &&
+    diagnostics.greenMaterialFraction >= 0.045 &&
       diagnostics.greenMaterialFraction <= 0.7,
-    `${label}: west open lot no longer balances planted ground with yard use (${diagnostics.greenMaterialFraction.toFixed(3)} green material).`,
+    `${label}: west open lot no longer preserves restrained planted ground around the working yard (${diagnostics.greenMaterialFraction.toFixed(3)} green material).`,
   );
   assert.ok(
     diagnostics.warmDetailFraction >= 0.05,
@@ -2342,6 +2388,94 @@ function assertWestOpenLotCompositionPixels(
     ...diagnostics,
     label,
     region: "west-open-lot",
+  });
+}
+
+function assertMorrowYardCompositionPixels(
+  buffer,
+  camera,
+  page,
+  viewport,
+  label,
+) {
+  const diagnostics = sampleWorldCompositionRegion(
+    buffer,
+    camera,
+    page,
+    viewport,
+    MORROW_YARD_WORLD_REGION,
+    label,
+  );
+  const minimumTransitionFraction =
+    0.018 / (viewport.deviceScaleFactor ?? 1);
+  assert.ok(
+    diagnostics.activeColorBins >= 16 &&
+      diagnostics.dominantColorFraction <= 0.48,
+    `${label}: Morrow Yard regressed to a flat generic ground slab (${diagnostics.activeColorBins} active bins, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
+  );
+  assert.ok(
+    diagnostics.greenMaterialFraction >= 0.035 &&
+      diagnostics.greenMaterialFraction <= 0.38,
+    `${label}: Morrow Yard no longer balances a restrained planted strip with dominant service hardstanding (${diagnostics.greenMaterialFraction.toFixed(3)} green material).`,
+  );
+  assert.ok(
+    diagnostics.coolUtilityFraction >= 0.018 &&
+      diagnostics.warmDetailFraction >= 0.06,
+    `${label}: Morrow Yard lost readable pump, wash, laundry, workbench, or storage cues (${diagnostics.coolUtilityFraction.toFixed(3)} cool utility, ${diagnostics.warmDetailFraction.toFixed(3)} warm detail).`,
+  );
+  assert.ok(
+    diagnostics.luminanceRange >= 64 &&
+      diagnostics.transitionFraction >= minimumTransitionFraction,
+    `${label}: Morrow Yard lacks authored service-yard contrast/detail (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions).`,
+  );
+  secondaryLandmarkCompositionDiagnostics.push({
+    ...diagnostics,
+    label,
+    region: "morrow-yard",
+  });
+}
+
+function assertPilgrimSlipCompositionPixels(
+  buffer,
+  camera,
+  page,
+  viewport,
+  label,
+) {
+  const diagnostics = sampleWorldCompositionRegion(
+    buffer,
+    camera,
+    page,
+    viewport,
+    PILGRIM_SLIP_WORLD_REGION,
+    label,
+  );
+  const minimumTransitionFraction =
+    0.016 / (viewport.deviceScaleFactor ?? 1);
+  assert.ok(
+    diagnostics.activeColorBins >= 16 &&
+      diagnostics.dominantColorFraction <= 0.5,
+    `${label}: Pilgrim Slip regressed to a featureless dock slab (${diagnostics.activeColorBins} active bins, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
+  );
+  assert.ok(
+    diagnostics.warmDetailFraction >= 0.16 &&
+      diagnostics.waterMaterialFraction >= 0.08,
+    `${label}: Pilgrim Slip lost its timber deck or visible water-contact channels (${diagnostics.warmDetailFraction.toFixed(3)} timber detail, ${diagnostics.waterMaterialFraction.toFixed(3)} water material).`,
+  );
+  assert.ok(
+    diagnostics.darkMaterialFraction >= 0.1 &&
+      diagnostics.coolUtilityFraction >= 0.012,
+    `${label}: Pilgrim Slip lost readable mooring and ladder hardware (${diagnostics.darkMaterialFraction.toFixed(3)} dark hardware/material, ${diagnostics.coolUtilityFraction.toFixed(3)} cool utility).`,
+  );
+  assert.ok(
+    diagnostics.luminanceRange >= 62 &&
+      diagnostics.transitionFraction >= minimumTransitionFraction,
+    `${label}: Pilgrim Slip lacks authored harbor contrast/detail (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions).`,
+  );
+  secondaryLandmarkCompositionDiagnostics.push({
+    ...diagnostics,
+    label,
+    region: "pilgrim-slip",
   });
 }
 
@@ -3249,6 +3383,20 @@ async function assertCameraPanContractGuard() {
       smokeSource.includes("assertNorthFringeCompositionPixels") &&
       smokeSource.includes("assertWestOpenLotCompositionPixels"),
     "The north/west edge must retain its authored neighbor row, working yard composition, and pixel-backed fringe regressions.",
+  );
+  assert.ok(
+    visualSceneRendererSource.includes("function drawPilgrimSlipHeroArt") &&
+      visualSceneRendererSource.includes("function drawV2CourtyardPersonality") &&
+      visualSceneRendererSource.includes("function drawYardServiceCluster") &&
+      visualSceneRendererSource.includes("function drawLaundryLine") &&
+      smokeSource.includes("assertMorrowYardCompositionPixels") &&
+      smokeSource.includes("assertPilgrimSlipCompositionPixels") &&
+      smokeSource.includes("secondary-landmarks-desktop.png") &&
+      smokeSource.includes("morrow-yard-codex-compact.png") &&
+      smokeSource.includes("morrow-yard-route-compact-tall.png") &&
+      smokeSource.includes("pilgrim-slip-route-compact-tall.png") &&
+      smokeSource.includes("runSecondaryLandmarkRouteIdentityCheck"),
+    "Secondary landmarks must keep dedicated service-yard and harbor-slip rendering, pixel-backed identity checks, and deterministic evidence captures.",
   );
   assert.ok(
     streetSource.includes("function drawInteriorPlayerRouteLane") &&
@@ -6555,7 +6703,9 @@ async function runViewportCheck(session, viewport) {
   assertBoundedVisualHierarchy(page, `${viewport.name} collapsed`);
 
   const screenshotPath = path.join(OUTPUT_DIR, `${viewport.name}.png`);
-  await captureValidatedScreenshot({
+  const initialCamera = await session.readCameraProbe();
+  assert.ok(initialCamera, `${viewport.name}: missing initial camera probe.`);
+  const initialCapture = await captureValidatedScreenshot({
     expectedHudText,
     label: `${viewport.name} initial`,
     page,
@@ -6563,6 +6713,28 @@ async function runViewportCheck(session, viewport) {
     targetPath: screenshotPath,
     viewport,
   });
+  let secondaryLandmarksScreenshotPath = null;
+  if (viewport.name === "desktop") {
+    assertMorrowYardCompositionPixels(
+      initialCapture.screenshot,
+      initialCamera,
+      initialCapture.page,
+      viewport,
+      "desktop Morrow Yard",
+    );
+    assertPilgrimSlipCompositionPixels(
+      initialCapture.screenshot,
+      initialCamera,
+      initialCapture.page,
+      viewport,
+      "desktop Pilgrim Slip",
+    );
+    secondaryLandmarksScreenshotPath = path.join(
+      OUTPUT_DIR,
+      "secondary-landmarks-desktop.png",
+    );
+    await writeFile(secondaryLandmarksScreenshotPath, initialCapture.screenshot);
+  }
 
   const mapAgency = await session.waitForMapAgencyProbe(viewport);
   assert.ok(mapAgency?.intent, `${viewport.name}: missing in-map agency cue.`);
@@ -6881,6 +7053,21 @@ async function runViewportCheck(session, viewport) {
       `${viewport.name} west pan`,
     );
   }
+  let morrowYardScreenshotPath = null;
+  if (viewport.name === "codex-compact") {
+    assertMorrowYardCompositionPixels(
+      westPanCapture.screenshot,
+      panAtWestEdge,
+      westPanCapture.page,
+      viewport,
+      `${viewport.name} Morrow Yard`,
+    );
+    morrowYardScreenshotPath = path.join(
+      OUTPUT_DIR,
+      `morrow-yard-${viewport.name}.png`,
+    );
+    await writeFile(morrowYardScreenshotPath, westPanCapture.screenshot);
+  }
 
   let northEdge = null;
   let eastEdge = null;
@@ -7077,6 +7264,7 @@ async function runViewportCheck(session, viewport) {
     eventCues: browserProbe.visualEventCues ?? [],
     mapAgency,
     page,
+    morrowYardScreenshotPath,
     playerLocationGeometry:
       browserProbe.movement?.playerLocationGeometry ?? null,
     scheduledNpcVisualCues:
@@ -7104,6 +7292,7 @@ async function runViewportCheck(session, viewport) {
     northPanScreenshotPath,
     panScreenshotPath,
     screenshotPath,
+    secondaryLandmarksScreenshotPath,
     southPanScreenshotPath,
     expandedRailScreenshotPath,
     expandedDecisionArtifact,
@@ -7389,6 +7578,166 @@ const AUTHORED_INTERIOR_CASES = [
     spaceId: "interior:repair-stall",
   },
 ];
+
+const SECONDARY_LANDMARK_ROUTE_CASES = [
+  {
+    locationId: "courtyard",
+    moveTo: { x: 3, y: 12 },
+    name: "Morrow Yard",
+    screenshotName: "morrow-yard-route-compact-tall.png",
+    worldRegion: MORROW_YARD_WORLD_REGION,
+  },
+  {
+    locationId: "moss-pier",
+    moveTo: { x: 18, y: 14 },
+    name: "Pilgrim Slip",
+    screenshotName: "pilgrim-slip-route-compact-tall.png",
+    worldRegion: PILGRIM_SLIP_WORLD_REGION,
+  },
+];
+
+async function createSecondaryLandmarkRouteGame(landmarkCase) {
+  const gameId = await createSmokeGame(
+    activeWebBase,
+    `${landmarkCase.name} route identity check`,
+  );
+  const moved = await fetchJson(`${activeWebBase}/sim/game/${gameId}/command`, {
+    body: JSON.stringify({
+      type: "move_to",
+      x: landmarkCase.moveTo.x,
+      y: landmarkCase.moveTo.y,
+    }),
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  assert.equal(
+    moved?.game?.player?.currentLocationId,
+    landmarkCase.locationId,
+    `${landmarkCase.name} route identity check could not reach its authored endpoint.`,
+  );
+  assert.equal(
+    moved?.game?.activeSpaceId,
+    "street:south-quay",
+    `${landmarkCase.name} route identity check left the South Quay street.`,
+  );
+  return gameId;
+}
+
+async function captureSecondaryLandmarkRouteIdentity(
+  session,
+  landmarkCase,
+  gameId,
+  viewport,
+) {
+  const label = `${landmarkCase.name} route compact tall`;
+  await session.setViewport(viewport);
+  await session.navigate(
+    `${activeWebBase}/?freezeAutoplay=1&readyCheck=${landmarkCase.locationId}-route-compact-tall-${Date.now()}&gameId=${gameId}`,
+  );
+  await session.waitForAppReady();
+  const initial = await waitFor(
+    async () => {
+      try {
+        const probe = await session.readCameraProbe();
+        return probe?.activeSpaceKind === "street" &&
+          cameraProbeInRange(probe)
+          ? probe
+          : false;
+      } catch {
+        return false;
+      }
+    },
+    APP_READY_TIMEOUT_MS,
+    `${label}: timed out waiting for the South Quay camera.`,
+  );
+  const { settled, settledAgain } = await waitForStableCameraProbes({
+    initialProbe: initial,
+    isEligible: (probe) =>
+      probe?.activeSpaceKind === "street" && cameraProbeInRange(probe),
+    readProbe: () => session.readCameraProbe(),
+    timeoutMs: APP_READY_TIMEOUT_MS,
+    waitForFrame: () => session.waitForAnimationFrames(2),
+  });
+  const playerPoint = settledAgain.playerWorldPoint;
+  assert.ok(
+    playerPoint.x >= landmarkCase.worldRegion.left &&
+      playerPoint.x <= landmarkCase.worldRegion.right &&
+      playerPoint.y >= landmarkCase.worldRegion.top &&
+      playerPoint.y <= landmarkCase.worldRegion.bottom,
+    `${label}: Rowan's rendered route endpoint is outside the authored landmark footprint: ${JSON.stringify(playerPoint)}.`,
+  );
+  const framed = await settleCameraAtEdge(session, "south", settledAgain);
+  assertSameCameraSpace(
+    viewport,
+    settledAgain,
+    framed,
+    `${landmarkCase.name} route/south framing`,
+  );
+
+  const page = await waitForVisualHierarchyPage(session, label);
+  assertOverlayGeometry(page, viewport, label, page.visibleTimeChips);
+  assertBoundedVisualHierarchy(page, label);
+  const screenshotPath = path.join(OUTPUT_DIR, landmarkCase.screenshotName);
+  const capture = await captureValidatedScreenshot({
+    expectedHudText: page.visibleTimeChips,
+    label,
+    page,
+    session,
+    targetPath: screenshotPath,
+    viewport,
+  });
+  if (landmarkCase.locationId === "courtyard") {
+    assertMorrowYardCompositionPixels(
+      capture.screenshot,
+      framed,
+      capture.page,
+      viewport,
+      label,
+    );
+  } else {
+    assertPilgrimSlipCompositionPixels(
+      capture.screenshot,
+      framed,
+      capture.page,
+      viewport,
+      label,
+    );
+  }
+
+  return {
+    gameId,
+    framed,
+    initial,
+    locationId: landmarkCase.locationId,
+    playerPoint,
+    screenshotPath,
+    settled,
+    settledAgain,
+  };
+}
+
+async function runSecondaryLandmarkRouteIdentityCheck(session) {
+  const compactTallViewport = VIEWPORTS.find(
+    (viewport) => viewport.name === "codex-screenshot-tall",
+  );
+  assert.ok(
+    compactTallViewport,
+    "Secondary landmark route identity check requires the tall compact viewport.",
+  );
+
+  const results = {};
+  for (const landmarkCase of SECONDARY_LANDMARK_ROUTE_CASES) {
+    const gameId = await createSecondaryLandmarkRouteGame(landmarkCase);
+    results[landmarkCase.locationId] =
+      await captureSecondaryLandmarkRouteIdentity(
+        session,
+        landmarkCase,
+        gameId,
+        compactTallViewport,
+      );
+  }
+  return results;
+}
 
 async function createAuthoredInteriorGame(interiorCase) {
   const gameId = await createSmokeGame(
@@ -7967,6 +8316,7 @@ async function main() {
   let freshAutoplayOptOut = null;
   let interiorCamera = null;
   let responsiveDecisionArtifact = null;
+  let secondaryLandmarkRouteIdentity = null;
   let storedGameChoice = null;
   const summaryPath = path.join(OUTPUT_DIR, "summary.json");
   let visualError = null;
@@ -8006,6 +8356,14 @@ async function main() {
     afterHoursNpcAvailability =
       await runAfterHoursNpcAvailabilityCheck(session);
     process.stdout.write("[many-lives] Finished after-hours NPC availability.\n");
+    process.stdout.write(
+      "[many-lives] Checking secondary landmark route identity...\n",
+    );
+    secondaryLandmarkRouteIdentity =
+      await runSecondaryLandmarkRouteIdentityCheck(session);
+    process.stdout.write(
+      "[many-lives] Finished secondary landmark route identity.\n",
+    );
     process.stdout.write("[many-lives] Checking stored-run prompt behavior...\n");
     storedGameChoice = await runStoredGameChoiceCheck(session);
     process.stdout.write("[many-lives] Finished stored-run prompt behavior.\n");
@@ -8044,6 +8402,8 @@ async function main() {
           results,
           screenshotCaptureRetries,
           screenshotPixelDiagnostics,
+          secondaryLandmarkCompositionDiagnostics,
+          secondaryLandmarkRouteIdentity,
           storedGameChoice,
           webBase: activeWebBase,
         },
@@ -8071,6 +8431,10 @@ async function main() {
         `[many-lives] Kettle & Lamp interior mobile: ${path.join(OUTPUT_DIR, "tea-house-interior-mobile.png")}`,
         `[many-lives] Mercer Repairs interior desktop: ${path.join(OUTPUT_DIR, "repair-stall-interior-desktop.png")}`,
         `[many-lives] Mercer Repairs interior mobile: ${path.join(OUTPUT_DIR, "repair-stall-interior-mobile.png")}`,
+        `[many-lives] Secondary landmarks desktop: ${path.join(OUTPUT_DIR, "secondary-landmarks-desktop.png")}`,
+        `[many-lives] Morrow Yard compact: ${path.join(OUTPUT_DIR, "morrow-yard-codex-compact.png")}`,
+        `[many-lives] Morrow Yard route compact tall: ${path.join(OUTPUT_DIR, "morrow-yard-route-compact-tall.png")}`,
+        `[many-lives] Pilgrim Slip route compact tall: ${path.join(OUTPUT_DIR, "pilgrim-slip-route-compact-tall.png")}`,
         `[many-lives] Summary: ${summaryPath}`,
         "",
       ].join("\n"),

@@ -26,6 +26,12 @@ type AuthoredVisualSceneObjects = {
   terrainLayer: PhaserType.GameObjects.Graphics;
 };
 
+const PILGRIM_SLIP_EAST_CHANNEL_CLEARANCE = 97;
+
+function getPilgrimSlipRenderedWidth(rect: VisualRect) {
+  return Math.max(320, rect.width - PILGRIM_SLIP_EAST_CHANNEL_CLEARANCE);
+}
+
 export function visualSceneTextureKey(sceneId: string) {
   return `visual-scene-${sceneId}-reference`;
 }
@@ -148,6 +154,8 @@ function drawV2LandmarkCastShadows(
 ) {
   for (const landmark of visualScene.landmarks) {
     const { rect } = landmark;
+    const renderedWidth =
+      landmark.style === "dock" ? getPilgrimSlipRenderedWidth(rect) : rect.width;
     const shadowAlpha =
       landmark.style === "square"
         ? 0.06
@@ -165,7 +173,7 @@ function drawV2LandmarkCastShadows(
     layer.fillRoundedRect(
       rect.x + offsetX,
       rect.y + offsetY,
-      rect.width,
+      renderedWidth,
       rect.height,
       rect.radius ?? 20,
     );
@@ -174,7 +182,7 @@ function drawV2LandmarkCastShadows(
     layer.fillEllipse(
       rect.x + rect.width / 2 + offsetX * 1.5,
       rect.y + rect.height + offsetY * 0.82,
-      rect.width * 0.92,
+      renderedWidth * 0.92,
       Math.max(24, rect.height * 0.15),
     );
   }
@@ -487,12 +495,13 @@ function drawV2QuayMaterialDepth(
   }
 
   const { rect } = pier;
+  const renderedWidth = getPilgrimSlipRenderedWidth(rect);
   const waterlineY = Math.max(rect.y + 18, water.rect.y);
   layer.fillStyle(0x071116, 0.11);
   layer.fillRoundedRect(
     rect.x - 16,
     waterlineY - 10,
-    rect.width + 32,
+    renderedWidth + 32,
     24,
     8,
   );
@@ -500,15 +509,15 @@ function drawV2QuayMaterialDepth(
   layer.lineBetween(
     rect.x + 20,
     waterlineY - 14,
-    rect.x + rect.width - 20,
+    rect.x + renderedWidth - 20,
     waterlineY - 10,
   );
   layer.lineStyle(1.3, 0x4f3a29, 0.18);
-  for (let x = rect.x + 34; x < rect.x + rect.width - 26; x += 36) {
+  for (let x = rect.x + 34; x < rect.x + renderedWidth - 26; x += 36) {
     layer.lineBetween(x, rect.y + 18, x + 8, rect.y + rect.height - 22);
   }
   layer.fillStyle(0xdff7fb, 0.055);
-  for (let x = rect.x + 44; x < rect.x + rect.width - 34; x += 86) {
+  for (let x = rect.x + 44; x < rect.x + renderedWidth - 34; x += 86) {
     layer.fillEllipse(x, waterlineY + 18, 48, 6);
   }
 }
@@ -566,11 +575,12 @@ function drawV2MacroCompositionPass(
   }
 
   if (freightYard && pier) {
+    const pierRenderedWidth = getPilgrimSlipRenderedWidth(pier.rect);
     layer.fillStyle(0x28444a, 0.05);
     layer.fillRoundedRect(
       freightYard.rect.x - 64,
       freightYard.rect.y + freightYard.rect.height - 18,
-      pier.rect.x + pier.rect.width - freightYard.rect.x + 72,
+      pier.rect.x + pierRenderedWidth - freightYard.rect.x + 72,
       Math.max(
         102,
         pier.rect.y - freightYard.rect.y - freightYard.rect.height + 64,
@@ -581,7 +591,7 @@ function drawV2MacroCompositionPass(
     layer.fillRoundedRect(
       freightYard.rect.x - 26,
       freightYard.rect.y + freightYard.rect.height + 28,
-      Math.max(420, pier.rect.width + 60),
+      Math.max(420, pierRenderedWidth + 60),
       28,
       14,
     );
@@ -633,6 +643,7 @@ function drawV2ComposedPavingPass(
     });
   }
   if (freightYard && pier) {
+    const pierRenderedWidth = getPilgrimSlipRenderedWidth(pier.rect);
     pavingBands.push({
       x: freightYard.rect.x - 42,
       y: Math.min(
@@ -640,7 +651,7 @@ function drawV2ComposedPavingPass(
         pier.rect.y - 76,
       ),
       width: Math.max(
-        pier.rect.x + pier.rect.width - freightYard.rect.x + 30,
+        pier.rect.x + pierRenderedWidth - freightYard.rect.x + 30,
         420,
       ),
       height: 92,
@@ -757,10 +768,11 @@ function drawV2DockGroundWear(
 
   if (pier) {
     const { rect } = pier;
+    const renderedWidth = getPilgrimSlipRenderedWidth(rect);
     layer.fillStyle(0x2e5e63, 0.09);
-    layer.fillRoundedRect(rect.x - 18, rect.y - 18, rect.width + 36, 26, 8);
+    layer.fillRoundedRect(rect.x - 18, rect.y - 18, renderedWidth + 36, 26, 8);
     layer.lineStyle(2, 0xefe0b8, 0.2);
-    for (let x = rect.x + 22; x < rect.x + rect.width - 18; x += 54) {
+    for (let x = rect.x + 22; x < rect.x + renderedWidth - 18; x += 54) {
       layer.lineBetween(x, rect.y - 8, x + 18, rect.y - 4);
     }
   }
@@ -802,8 +814,105 @@ function drawV2LandmarkStructureArt(
       continue;
     }
 
+    if (role === "harbor_slip") {
+      drawPilgrimSlipHeroArt(layer, landmark.rect);
+      continue;
+    }
+
     drawV2GenericLandmarkArt(layer, landmark, role);
   }
+}
+
+function drawPilgrimSlipHeroArt(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  const harborWidth = getPilgrimSlipRenderedWidth(rect);
+  const harborRight = rect.x + harborWidth;
+  const deck = {
+    x: rect.x + 12,
+    y: rect.y + 12,
+    width: harborWidth - 24,
+    height: 94,
+  };
+  const fingers = [
+    { x: rect.x + 54, width: 116 },
+    { x: rect.x + 300, width: 118 },
+    { x: harborRight - 130, width: 112 },
+  ];
+
+  layer.fillStyle(0x1f5870, 0.96);
+  layer.fillRoundedRect(
+    rect.x + 16,
+    rect.y + 82,
+    harborWidth - 32,
+    rect.height - 94,
+    14,
+  );
+  layer.fillStyle(0x2b6d87, 0.9);
+  for (let y = rect.y + 104; y < rect.y + rect.height - 10; y += 28) {
+    layer.fillRoundedRect(rect.x + 24, y, harborWidth - 48, 7, 4);
+  }
+  layer.lineStyle(1.6, 0x9bd3db, 0.24);
+  for (let y = rect.y + 116; y < rect.y + rect.height - 8; y += 36) {
+    layer.lineBetween(rect.x + 28, y, harborRight - 30, y + 4);
+  }
+
+  layer.fillStyle(0x936f49, 1);
+  layer.fillRoundedRect(deck.x, deck.y, deck.width, deck.height, 14);
+  for (const finger of fingers) {
+    layer.fillRoundedRect(
+      finger.x,
+      deck.y + 68,
+      finger.width,
+      rect.height - 92,
+      10,
+    );
+  }
+
+  layer.fillStyle(0xb18b5a, 0.9);
+  layer.fillRoundedRect(
+    deck.x + 8,
+    deck.y + 8,
+    deck.width - 16,
+    12,
+    6,
+  );
+  layer.lineStyle(2, 0x5e432e, 0.42);
+  for (let x = deck.x + 20; x < deck.x + deck.width - 16; x += 30) {
+    layer.lineBetween(x, deck.y + 7, x, deck.y + deck.height - 7);
+  }
+  for (const finger of fingers) {
+    for (
+      let y = deck.y + 82;
+      y < rect.y + rect.height - 12;
+      y += 24
+    ) {
+      layer.lineBetween(
+        finger.x + 8,
+        y,
+        finger.x + finger.width - 8,
+        y,
+      );
+    }
+  }
+
+  layer.fillStyle(0x4a3b31, 0.98);
+  layer.fillRoundedRect(
+    deck.x,
+    deck.y + deck.height - 10,
+    deck.width,
+    14,
+    5,
+  );
+  layer.fillStyle(0xd0b27b, 0.36);
+  layer.fillRoundedRect(
+    deck.x + 14,
+    deck.y + deck.height - 8,
+    deck.width - 28,
+    4,
+    2,
+  );
 }
 
 function drawTeaHouseHeroArt(
@@ -1594,7 +1703,7 @@ function drawSurfaceZones(
         );
         break;
       case "courtyard_ground":
-        layer.fillStyle(0x71865d, 0.78);
+        layer.fillStyle(0x817b6b, 0.98);
         layer.fillRoundedRect(
           rect.x,
           rect.y,
@@ -1602,7 +1711,7 @@ function drawSurfaceZones(
           rect.height,
           rect.radius ?? 18,
         );
-        layer.lineStyle(2, 0x43543d, 0.42);
+        layer.lineStyle(4, 0x4f4b43, 0.72);
         layer.strokeRoundedRect(
           rect.x + 2,
           rect.y + 2,
@@ -1610,52 +1719,60 @@ function drawSurfaceZones(
           rect.height - 4,
           rect.radius ?? 18,
         );
-        layer.fillStyle(0x91a66d, 0.22);
+        layer.fillStyle(0xa9a08a, 0.76);
         layer.fillRoundedRect(
-          rect.x + 16,
-          rect.y + 16,
-          rect.width - 32,
-          rect.height - 32,
-          16,
-        );
-        layer.fillStyle(0xb6aa8c, 0.5);
-        layer.fillRoundedRect(
-          rect.x + rect.width * 0.43,
-          rect.y + 18,
-          48,
-          rect.height - 36,
+          rect.x + 14,
+          rect.y + 14,
+          rect.width - 28,
+          rect.height - 28,
           14,
         );
-        layer.fillStyle(0xd8ccb0, 0.34);
-        for (let y = rect.y + 32; y < rect.y + rect.height - 24; y += 34) {
-          layer.fillRoundedRect(
-            rect.x + rect.width * 0.43 + (Math.round(y) % 3) * 3,
-            y,
-            48,
-            15,
-            7,
-          );
+        layer.lineStyle(1.4, 0x756d5d, 0.42);
+        for (let y = rect.y + 28; y < rect.y + rect.height - 20; y += 28) {
+          for (let x = rect.x + 24; x < rect.x + rect.width - 18; x += 46) {
+            const offset = Math.round((y - rect.y) / 28) % 2 === 0 ? 0 : 18;
+            layer.lineBetween(
+              x + offset,
+              y,
+              Math.min(x + offset + 30, rect.x + rect.width - 18),
+              y - 2,
+            );
+          }
         }
-        layer.fillStyle(0x526a46, 0.34);
+        layer.fillStyle(0x6c7069, 0.86);
         layer.fillRoundedRect(
-          rect.x + 22,
-          rect.y + rect.height * 0.58,
-          rect.width * 0.31,
-          rect.height * 0.24,
-          12,
-        );
-        layer.fillStyle(0x947650, 0.42);
-        layer.fillRoundedRect(
-          rect.x + rect.width * 0.68,
-          rect.y + rect.height * 0.18,
-          rect.width * 0.24,
-          rect.height * 0.3,
+          rect.x + rect.width * 0.42,
+          rect.y + 16,
+          34,
+          rect.height - 32,
           10,
         );
-        layer.lineStyle(1.4, 0xc8dda0, 0.24);
-        for (let y = rect.y + 26; y < rect.y + rect.height - 18; y += 24) {
-          layer.lineBetween(rect.x + 20, y, rect.x + rect.width - 24, y - 7);
+        layer.fillStyle(0xc9c0a9, 0.7);
+        for (let y = rect.y + 27; y < rect.y + rect.height - 22; y += 31) {
+          layer.fillRoundedRect(
+            rect.x + rect.width * 0.42 + 5,
+            y,
+            24,
+            10,
+            4,
+          );
         }
+        layer.fillStyle(0x496746, 0.88);
+        layer.fillRoundedRect(
+          rect.x + 20,
+          rect.y + rect.height - 48,
+          rect.width * 0.28,
+          28,
+          8,
+        );
+        layer.fillStyle(0x80664b, 0.84);
+        layer.fillRoundedRect(
+          rect.x + rect.width - 102,
+          rect.y + 20,
+          82,
+          54,
+          8,
+        );
         break;
       case "dock_apron":
         layer.fillStyle(0xb69f7a, 0.98);
@@ -3844,40 +3961,15 @@ function drawV2PierPersonality(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
 ) {
-  layer.fillStyle(0x071116, 0.16);
-  layer.fillRoundedRect(
-    rect.x + 18,
-    rect.y + rect.height - 16,
-    rect.width - 36,
-    26,
-    8,
-  );
-  layer.fillStyle(0x1b3944, 0.18);
-  layer.fillRoundedRect(
-    rect.x + 20,
-    rect.y + rect.height - 5,
-    rect.width - 40,
-    13,
-    6,
-  );
-  layer.lineStyle(2, 0xd6bc82, 0.26);
-  for (let x = rect.x + 28; x < rect.x + rect.width - 24; x += 38) {
-    layer.lineBetween(x, rect.y + 24, x, rect.y + rect.height - 18);
-    layer.lineStyle(1.6, 0xf3d39a, 0.1);
-    layer.lineBetween(x + 7, rect.y + 28, x + 7, rect.y + rect.height - 24);
-    layer.lineStyle(2, 0xd6bc82, 0.26);
-  }
-
+  const harborRight = rect.x + getPilgrimSlipRenderedWidth(rect);
   const bollards = [
-    { x: rect.x + 48, y: rect.y + 38 },
-    { x: rect.x + 136, y: rect.y + 54 },
-    { x: rect.x + rect.width - 138, y: rect.y + 46 },
-    { x: rect.x + rect.width - 52, y: rect.y + 68 },
+    { x: rect.x + 66, y: rect.y + 58 },
+    { x: rect.x + 202, y: rect.y + 72 },
+    { x: harborRight - 188, y: rect.y + 60 },
+    { x: harborRight - 48, y: rect.y + 76 },
   ];
   for (const bollard of bollards) {
     drawBollard(layer, bollard.x, bollard.y);
-    layer.fillStyle(0xd8bf7a, 0.08);
-    layer.fillEllipse(bollard.x, bollard.y + 34, 18, 38);
   }
   drawSaggingRope(
     layer,
@@ -3893,28 +3985,29 @@ function drawV2PierPersonality(
     bollards[3].x,
     bollards[3].y,
   );
-  drawRopeCoil(layer, rect.x + rect.width - 94, rect.y + 100);
-  drawDockLadder(layer, rect.x + 116, rect.y + rect.height - 32);
+  drawRopeCoil(layer, harborRight - 100, rect.y + 102);
+  drawDockLadder(layer, rect.x + 160, rect.y + rect.height - 54);
+  drawDockLadder(layer, harborRight - 112, rect.y + rect.height - 50);
   drawAuthoredBoat(
     layer,
-    rect.x + rect.width - 106,
-    rect.y + rect.height - 42,
+    rect.x + 236,
+    rect.y + rect.height - 34,
+    0.04,
+    1.08,
+  );
+  drawAuthoredBoat(
+    layer,
+    harborRight - 182,
+    rect.y + rect.height - 38,
     -0.08,
-    0.72,
+    0.94,
   );
   layer.lineStyle(2, 0xcdb68a, 0.45);
   layer.lineBetween(
-    rect.x + rect.width - 132,
-    rect.y + rect.height - 45,
-    rect.x + rect.width - 94,
-    rect.y + 103,
-  );
-  layer.fillStyle(0xf4e3b6, 0.08);
-  layer.fillEllipse(
-    rect.x + rect.width - 110,
-    rect.y + rect.height - 20,
-    62,
-    12,
+    harborRight - 208,
+    rect.y + rect.height - 38,
+    harborRight - 100,
+    rect.y + 102,
   );
 }
 
@@ -3922,6 +4015,21 @@ function drawV2CourtyardPersonality(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
 ) {
+  layer.fillStyle(0x4e4a42, 0.94);
+  layer.fillRoundedRect(rect.x + 12, rect.y + 10, rect.width - 24, 12, 5);
+  layer.fillRoundedRect(rect.x + 10, rect.y + 18, 12, rect.height - 36, 5);
+  layer.fillRoundedRect(
+    rect.x + rect.width - 22,
+    rect.y + 18,
+    12,
+    rect.height - 36,
+    5,
+  );
+  layer.fillStyle(0xbda77c, 0.34);
+  for (let x = rect.x + 30; x < rect.x + rect.width - 22; x += 32) {
+    layer.fillRoundedRect(x, rect.y + 13, 18, 4, 2);
+  }
+
   layer.fillStyle(0x56493b, 0.76);
   layer.fillRoundedRect(
     rect.x + rect.width - 94,
@@ -3954,26 +4062,33 @@ function drawV2CourtyardPersonality(
     );
   }
 
-  drawRaisedGardenBed(layer, rect.x + 24, rect.y + rect.height - 86, 104, 48);
-  drawRaisedGardenBed(
-    layer,
-    rect.x + rect.width - 144,
-    rect.y + rect.height - 72,
-    92,
-    38,
-  );
-  layer.fillStyle(0xd8c49a, 0.32);
+  layer.fillStyle(0x4e5c5d, 0.98);
   layer.fillRoundedRect(
-    rect.x + 28,
-    rect.y + rect.height - 42,
-    rect.width - 56,
-    10,
-    5,
+    rect.x + 34,
+    rect.y + rect.height - 78,
+    88,
+    34,
+    8,
   );
-  layer.fillStyle(0xf0dfba, 0.2);
-  for (let x = rect.x + 42; x < rect.x + rect.width - 42; x += 46) {
-    layer.fillEllipse(x, rect.y + rect.height - 38, 24, 8);
-  }
+  layer.fillStyle(0x9aa6a3, 0.8);
+  layer.fillRoundedRect(
+    rect.x + 40,
+    rect.y + rect.height - 72,
+    76,
+    19,
+    6,
+  );
+  layer.fillStyle(0x2f464c, 0.62);
+  layer.fillRoundedRect(
+    rect.x + 48,
+    rect.y + rect.height - 68,
+    60,
+    10,
+    4,
+  );
+  layer.fillStyle(0xc4b184, 0.72);
+  layer.fillCircle(rect.x + 48, rect.y + rect.height - 44, 8);
+  layer.fillCircle(rect.x + 70, rect.y + rect.height - 44, 8);
 }
 
 function drawRaisedGardenBed(
@@ -4263,7 +4378,7 @@ function drawYardServiceCluster(
       x: cluster.rect.x + cluster.rect.width * 0.64,
       y: cluster.rect.y + 52,
     },
-    gardenPoint = {
+    washPoint = {
       x: cluster.rect.x + cluster.rect.width * 0.42,
       y: cluster.rect.y + cluster.rect.height - 42,
     },
@@ -4273,26 +4388,49 @@ function drawYardServiceCluster(
     },
   ] = cluster.points ?? [];
   drawPump(layer, pumpPoint.x, pumpPoint.y);
+  layer.fillStyle(0x697476, 0.96);
+  layer.fillRoundedRect(pumpPoint.x - 30, pumpPoint.y + 20, 60, 12, 5);
+  layer.fillStyle(0xb8c1b9, 0.56);
+  layer.fillRoundedRect(pumpPoint.x - 23, pumpPoint.y + 22, 46, 5, 3);
   drawLaundryLine(
     layer,
-    cluster.rect.x + 82,
-    cluster.rect.y + 18,
-    cluster.rect.x + cluster.rect.width - 26,
+    cluster.rect.x + 56,
+    cluster.rect.y + 30,
+    cluster.rect.x + cluster.rect.width - 30,
   );
   drawYardWorkBench(layer, workBenchPoint.x, workBenchPoint.y);
-  drawRaisedGardenBed(
-    layer,
-    gardenPoint.x - 42,
-    gardenPoint.y - 20,
+  layer.fillStyle(0x6d7471, 0.98);
+  layer.fillRoundedRect(
+    washPoint.x - 42,
+    washPoint.y - 18,
     84,
-    38,
+    36,
+    8,
+  );
+  layer.fillStyle(0xbcc2b5, 0.72);
+  layer.fillRoundedRect(
+    washPoint.x - 34,
+    washPoint.y - 12,
+    68,
+    18,
+    6,
+  );
+  layer.fillStyle(0x345766, 0.72);
+  layer.fillRoundedRect(
+    washPoint.x - 28,
+    washPoint.y - 8,
+    56,
+    9,
+    4,
   );
   drawCrateStack(layer, storagePoint.x, storagePoint.y);
   drawBarrel(layer, storagePoint.x - 42, storagePoint.y + 5);
-  drawAuthoredPlanter(
+  drawRaisedGardenBed(
     layer,
-    cluster.rect.x + cluster.rect.width - 28,
-    cluster.rect.y + 52,
+    cluster.rect.x + cluster.rect.width - 76,
+    cluster.rect.y + 72,
+    58,
+    28,
   );
 }
 
@@ -5056,16 +5194,22 @@ function drawLaundryLine(
   y: number,
   endX: number,
 ) {
-  layer.lineStyle(1.6, 0x665548, 0.34);
+  layer.fillStyle(0x55493f, 0.96);
+  layer.fillRoundedRect(startX - 4, y - 9, 7, 62, 3);
+  layer.fillRoundedRect(endX - 3, y - 5, 7, 58, 3);
+  layer.lineStyle(2.4, 0x665548, 0.82);
   layer.lineBetween(startX, y, endX, y + 4);
   const spacing = (endX - startX) / 5;
   for (let index = 0; index < 4; index += 1) {
     const pegX = startX + spacing * (index + 0.7);
     const pegY = y + 1 + index * 0.2;
-    layer.lineStyle(1.2, 0x8d7657, 0.28);
-    layer.lineBetween(pegX, pegY, pegX, pegY + 7);
-    layer.fillStyle(0xd4c39b, 0.16);
-    layer.fillRoundedRect(pegX - 2.5, pegY + 6, 5, 2.4, 1.2);
+    const clothColors = [0xe4d6b7, 0xb9c8c0, 0xc88f75, 0xd8c79a];
+    layer.lineStyle(1.4, 0x8d7657, 0.72);
+    layer.lineBetween(pegX, pegY, pegX, pegY + 8);
+    layer.fillStyle(clothColors[index], 0.96);
+    layer.fillRoundedRect(pegX - 13, pegY + 7, 26, 24 + (index % 2) * 7, 4);
+    layer.fillStyle(0xffffff, 0.16);
+    layer.fillRoundedRect(pegX - 9, pegY + 10, 13, 4, 2);
   }
 }
 
@@ -5076,9 +5220,9 @@ function drawBollard(
 ) {
   layer.fillStyle(0x000000, 0.12);
   layer.fillEllipse(x, y + 12, 18, 6);
-  layer.fillStyle(0x5b4d43, 1);
+  layer.fillStyle(0x52666b, 1);
   layer.fillRoundedRect(x - 8, y - 8, 16, 22, 6);
-  layer.fillStyle(0xc6a873, 0.88);
+  layer.fillStyle(0xaebfba, 0.9);
   layer.fillRoundedRect(x - 8, y - 10, 16, 5, 2);
 }
 
@@ -5097,7 +5241,7 @@ function drawDockLadder(
   x: number,
   y: number,
 ) {
-  layer.lineStyle(3, 0x61727a, 0.84);
+  layer.lineStyle(4, 0x86a6ac, 0.94);
   layer.lineBetween(x - 6, y - 18, x - 6, y + 26);
   layer.lineBetween(x + 6, y - 18, x + 6, y + 26);
   for (let rungY = y - 10; rungY <= y + 20; rungY += 8) {

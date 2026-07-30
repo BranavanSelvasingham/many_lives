@@ -593,11 +593,11 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "id": "landmark-v2-moss-pier",
       "locationId": "moss-pier",
       "rect": {
-        "height": 180,
+        "height": 220,
         "radius": 16,
-        "width": 450,
-        "x": 688,
-        "y": 1060
+        "width": 660,
+        "x": 1013,
+        "y": 1007
       },
       "style": "dock"
     },
@@ -1323,13 +1323,13 @@ const SOUTH_QUAY_V2_DOCUMENT = {
       "id": "surface-pilgrim-dock",
       "kind": "dock_apron",
       "emphasis": "high",
-      "rect": { "x": 688, "y": 1060, "width": 450, "height": 180, "radius": 16 }
+      "rect": { "x": 1013, "y": 1007, "width": 563, "height": 104, "radius": 16 }
     },
     {
       "id": "surface-pilgrim-quay-wall",
       "kind": "quay_wall",
       "emphasis": "high",
-      "rect": { "x": 1008, "y": 1038, "width": 684, "height": 36, "radius": 10 }
+      "rect": { "x": 1008, "y": 1090, "width": 568, "height": 36, "radius": 10 }
     }
   ],
   "waterRegions": [
