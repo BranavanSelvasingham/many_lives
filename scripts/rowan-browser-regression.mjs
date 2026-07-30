@@ -4559,7 +4559,6 @@ class CdpSession {
       await this.rearmAutoplayScreencastForRouteCapture(
         `${label}:dense-opening-route-stream`,
       );
-      state.routeFrameWindowCapturePendingSample = null;
       let unavailableSampleCount = 0;
       while (
         state.active &&
@@ -16654,6 +16653,9 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
       expectedTargetLocationId: expectedRouteTarget,
       label: `${openingWorldVariant}:autoplay:route-visual-window-recorder`,
     });
+    await session.rearmAutoplayScreencastForRouteCapture(
+      `${openingWorldVariant}:autoplay:route-dense-stream-prearm`,
+    );
     const pacingStartedAt = Date.now();
     await session.navigate(url);
     const startProbe = await waitFor(
