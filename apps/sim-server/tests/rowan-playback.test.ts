@@ -17,6 +17,7 @@ import {
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
   readOrCreateRowanWatchFirstAfternoonPresentationStart,
   reconcileAutoContinueBeatTiming,
+  railCopyRepeatsDecisionAction,
   rowanWatchDelayForFirstAfternoonFloor,
   rowanWatchFirstAfternoonFloorBeatDurations,
   rowanWatchFirstAfternoonPresentationElapsedMs,
@@ -1340,9 +1341,25 @@ describe("Rowan playback helpers", () => {
     expect(railView.now.title).toBe("A room for tonight");
     expect(railView.peekLabel).toBe("First morning in South Quay");
     expect(railView.statusLabel).toBe("Ready");
+    expect(railView.now.decisionArtifact?.selectedAction).toBe(
+      "Enter Morrow House",
+    );
     expect(railView.next?.title).toBe("Ask Mara how to keep tonight's room.");
 
     const insideMorrow = await enterMorrowHouse(engine, world);
+    const readyToTalkRailView = buildRowanRailViewModel({
+      conversationReplayActive: false,
+      fallbackThought: "Rowan is ready to ask Mara about the room.",
+      game: asWebGame(insideMorrow),
+      playback: createEmptyRowanPlaybackState(),
+      quietStatusLabel: insideMorrow.currentScene.title,
+      watchMode: true,
+    });
+    expect(readyToTalkRailView.now.decisionArtifact?.selectedAction).toBe(
+      "Talk to Mara",
+    );
+    expect(readyToTalkRailView.next).toBeNull();
+
     const liveConversation = await engine.runCommand(insideMorrow, {
       type: "act",
       actionId: "talk:npc-mara",
@@ -1358,6 +1375,38 @@ describe("Rowan playback helpers", () => {
     expect(liveRailView.useConversationTranscript).toBe(true);
     expect(liveRailView.statusLabel).toBe("Live conversation");
     expect(liveRailView.shouldAutoOpen).toBe(true);
+  });
+
+  it("deduplicates semantically equivalent decision, next, and watch copy", () => {
+    expect(
+      railCopyRepeatsDecisionAction({
+        actionId: "talk:npc-mara",
+        copy: "Ask Mara how to keep tonight's room.",
+        selectedAction: "Talk to Mara",
+      }),
+    ).toBe(true);
+    expect(
+      railCopyRepeatsDecisionAction({
+        actionId: "talk:npc-mara",
+        copy: "Rowan is starting the next conversation automatically.",
+        selectedAction: "Talk to Mara",
+      }),
+    ).toBe(true);
+    expect(
+      railCopyRepeatsDecisionAction({
+        actionId: "talk:npc-mara",
+        copy: "Ask Nia where the block is about to jam.",
+        selectedAction: "Talk to Mara",
+      }),
+    ).toBe(false);
+    expect(
+      railCopyRepeatsDecisionAction({
+        actionId: "exit:boarding-house",
+        copy:
+          "Rowan is stepping back into South Quay toward Kettle & Lamp automatically.",
+        selectedAction: "Exit to South Quay",
+      }),
+    ).toBe(false);
   });
 
   it("shows the finish state once Rowan is already home and the first afternoon is done", async () => {

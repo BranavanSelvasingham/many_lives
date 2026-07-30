@@ -167,6 +167,7 @@ import {
   markActiveRowanPlaybackBeatStarted,
   readOrCreateRowanWatchFirstAfternoonPresentationStart,
   reconcileAutoContinueBeatTiming,
+  railCopyRepeatsDecisionAction,
   remainingAutoplayDelayMs,
   ROWAN_PLAYBACK_TIMING_MS,
   ROWAN_WATCH_PRESENTATION_TIMING_MS,
@@ -3006,18 +3007,18 @@ function createRuntimeObjects(
   playerRig.avatar.setScale(1.06);
 
   const playerTitle = scene.add
-    .text(0, -47, "ROWAN", {
+    .text(0, -43, "ROWAN", {
       align: "center",
-      color: "#f6deb0",
+      color: "#f1ddb7",
       fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
-      fontSize: "11px",
+      fontSize: "8px",
       fontStyle: "700",
-      letterSpacing: 2,
+      letterSpacing: 0.8,
     })
-    .setBackgroundColor("rgba(31, 25, 17, 0.96)")
+    .setBackgroundColor("rgba(31, 25, 17, 0.5)")
     .setOrigin(0.5, 0.5);
-  playerTitle.setPadding(8, 4, 8, 4);
-  playerTitle.setStroke("#0a1116", 2);
+  playerTitle.setPadding(3, 1, 3, 1);
+  playerTitle.setStroke("#0a1116", 1);
 
   const playerContainer = scene.add
     .container(0, 0, [playerRig.avatar, playerTitle])
@@ -4784,7 +4785,7 @@ function renderDynamicScene(
   objects.playerTitle.setX(playerLabelOffsetX);
   objects.playerTitle
     .setVisible(true)
-    .setAlpha(usingAuthoredVisualScene ? 0.96 : 0.84);
+    .setAlpha(usingAuthoredVisualScene ? 0.76 : 0.68);
   poseCharacterRig(objects.playerRig, {
     facing: playerAnimation.facing,
     now,
@@ -5411,15 +5412,16 @@ function createNpcMarker(
   const label = scene.add
     .text(0, 24, npc.name, {
       align: "center",
-      color: "#eef5f7",
+      color: "#e5eef1",
       fontFamily: '"Avenir Next", "Nunito Sans", ui-sans-serif, sans-serif',
-      fontSize: "12px",
-      fontStyle: "700",
+      fontSize: "9px",
+      fontStyle: "600",
     })
-    .setBackgroundColor("rgba(8, 14, 19, 0.9)")
-    .setAlpha(0.96)
+    .setBackgroundColor("rgba(8, 14, 19, 0.54)")
+    .setAlpha(0.76)
     .setOrigin(0.5, 0);
-  label.setPadding(6, 3, 6, 3);
+  label.setPadding(3, 1, 3, 1);
+  label.setStroke("#071015", 1);
 
   const container = scene.add.container(0, 0, [rig.avatar, label]).setDepth(40);
 
@@ -5525,22 +5527,18 @@ function updateNpcMarkers(
       )
       .setVisible(true);
     marker.label
-      .setText(
-        showScheduledCueLabel && scheduledCueDetail
-          ? `${animatedNpc.npc.name}\n${scheduledCueDetail}`
-          : animatedNpc.npc.name,
-      )
+      .setText(animatedNpc.npc.name)
       .setX(interiorLabelOffsetX)
       .setY(interiorLabelOffsetY)
       .setVisible(showLabel)
       .setAlpha(
         usingAuthoredVisualScene
           ? highlight || inLiveConversation
-            ? 0.98
+            ? 0.88
             : isTalkable
-              ? 0.88
-              : 0.8
-          : 0.96,
+              ? 0.74
+              : 0.66
+          : 0.76,
       );
     poseCharacterRig(marker.rig, {
       facing: animatedNpc.facing,
@@ -5558,11 +5556,11 @@ function updateNpcMarkers(
             ? "#fff0c3"
             : showScheduledCueLabel && scheduledCue && usingAuthoredVisualScene
               ? "#f7e6bd"
-            : isTalkable && usingAuthoredVisualScene
-              ? "#f6e4bb"
-              : animatedNpc.npc.known
-                ? personality.labelColor
-                : "#eef5f7",
+              : isTalkable && usingAuthoredVisualScene
+                ? "#f6e4bb"
+                : animatedNpc.npc.known
+                  ? personality.labelColor
+                  : "#eef5f7",
       )
       .setBackgroundColor(
         highlight
@@ -5576,10 +5574,10 @@ function updateNpcMarkers(
                 0.94,
               )
             : showScheduledCueLabel && scheduledCue && usingAuthoredVisualScene
-              ? "rgba(28, 35, 34, 0.9)"
-            : isTalkable && usingAuthoredVisualScene
-              ? "rgba(37, 31, 21, 0.92)"
-              : personality.labelBackground,
+              ? "rgba(28, 35, 34, 0.74)"
+              : isTalkable && usingAuthoredVisualScene
+                ? "rgba(37, 31, 21, 0.76)"
+                : personality.labelBackground,
       );
     marker.rig.torso.setFillStyle(
       highlight
@@ -7953,7 +7951,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           targetLocation: primaryContinueTargetLocation,
           targetNpc: primaryContinueTargetNpc,
         });
-  const watchModePassiveStatusCopy =
+  const watchModePassiveStatusCandidate =
     watchModeProgressionControlsSuppressed &&
     (rowanAutonomy.autoContinue ||
       firstAfternoonCompletionCanAdvance ||
@@ -7969,6 +7967,15 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           primaryContinueCopy,
         })
       : "";
+  const watchModePassiveStatusCopy =
+    rowanRail.now.decisionArtifact &&
+    railCopyRepeatsDecisionAction({
+      actionId: rowanAutonomy.actionId,
+      copy: watchModePassiveStatusCandidate,
+      selectedAction: rowanRail.now.decisionArtifact.selectedAction,
+    })
+      ? ""
+      : watchModePassiveStatusCandidate;
   const conversationEntry = selectedNpc
     ? {
         id: `conversation-${selectedNpc.id}`,
@@ -9134,6 +9141,34 @@ function serializeBrowserVisualHierarchyProbe(
       persistentIdentityTreatments: runtimeState.objects?.playerTitle.visible
         ? ["you-label"]
         : [],
+      actorLabels: {
+        npcs: runtimeState.objects
+          ? [...runtimeState.objects.npcMarkers.values()]
+              .filter((marker) => marker.label.visible)
+              .map((marker) => ({
+                alpha: roundBrowserNumber(marker.label.alpha),
+                height: roundBrowserNumber(marker.label.displayHeight),
+                lineCount: marker.label.text.split("\n").length,
+                text: marker.label.text,
+                width: roundBrowserNumber(marker.label.displayWidth),
+              }))
+          : [],
+        rowan:
+          runtimeState.objects?.playerTitle.visible
+            ? {
+                alpha: roundBrowserNumber(runtimeState.objects.playerTitle.alpha),
+                height: roundBrowserNumber(
+                  runtimeState.objects.playerTitle.displayHeight,
+                ),
+                lineCount:
+                  runtimeState.objects.playerTitle.text.split("\n").length,
+                text: runtimeState.objects.playerTitle.text,
+                width: roundBrowserNumber(
+                  runtimeState.objects.playerTitle.displayWidth,
+                ),
+              }
+            : null,
+      },
       targetLabelVisible: options.targetLabelVisible ?? false,
     },
   ).replace(/</g, "\\u003c");

@@ -626,10 +626,14 @@ class CdpSession {
             const bodyText = document.body?.innerText ?? "";
             const root = document.querySelector(".ml-root");
             const compactPrimaryAction = document.querySelector(".ml-compact-primary-action");
+            const visibleDecisionArtifact = document.querySelector(
+              "[data-visible-decision-artifact='true']",
+            );
             return {
               bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 900),
               compactPrimaryActionText: compactPrimaryAction?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
               hasRowanText: bodyText.includes("Rowan"),
+              hasVisibleDecisionArtifact: Boolean(visibleDecisionArtifact),
               hasWatchAction:
                 bodyText.includes("Continue watching") ||
                 bodyText.includes("Watch Rowan begin") ||
@@ -641,7 +645,8 @@ class CdpSession {
 
           return Boolean(
             lastState?.hasRowanText &&
-              lastState.hasWatchAction &&
+              (lastState.hasWatchAction ||
+                lastState.hasVisibleDecisionArtifact) &&
               lastState.rootClass.includes("is-watch-mode"),
           );
         } catch (error) {
@@ -675,6 +680,13 @@ class CdpSession {
       );
       const decisionArtifact = decisionArtifacts[0] ?? null;
       const decisionDetails = document.querySelector("[data-decision-details='true']");
+      const decisionChoice = decisionArtifact?.querySelector(
+        "[data-decision-field='choice'] p",
+      );
+      const nextStoryCard = document.querySelector(
+        "[data-rowan-story-card='next']",
+      );
+      const passiveWatchStatus = document.querySelector(".ml-autoplay-note");
       const text = document.body.innerText || "";
       const isVisibleEnabled = (element) => {
         if (!element) {
@@ -1102,6 +1114,14 @@ class CdpSession {
         decisionDetailsOpen: decisionDetails?.open ?? null,
         decisionFieldCounts,
         decisionFieldGeometry,
+        railNarrative: {
+          decisionChoice:
+            decisionChoice?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          next:
+            nextStoryCard?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          passiveWatchStatus:
+            passiveWatchStatus?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+        },
         hasFrameworkOverlay:
           text.includes("Unhandled Runtime Error") ||
           text.includes("Application error") ||
@@ -5618,6 +5638,28 @@ function assertBoundedVisualHierarchy(
     `${label}: Rowan's persistent identity should be the single actor-attached YOU label.`,
   );
   assert.equal(
+    hierarchy.actorLabels?.rowan?.lineCount,
+    1,
+    `${label}: Rowan identity must remain a single-line actor annotation: ${JSON.stringify(hierarchy)}.`,
+  );
+  assert.ok(
+    (hierarchy.actorLabels?.rowan?.width ?? Infinity) <= 60 &&
+      (hierarchy.actorLabels?.rowan?.height ?? Infinity) <= 18 &&
+      (hierarchy.actorLabels?.rowan?.alpha ?? Infinity) <= 0.82,
+    `${label}: Rowan identity plaque is visually dominant: ${JSON.stringify(hierarchy.actorLabels?.rowan)}.`,
+  );
+  for (const npcLabel of hierarchy.actorLabels?.npcs ?? []) {
+    assert.equal(
+      npcLabel.lineCount,
+      1,
+      `${label}: NPC identity and contextual cue are stacked: ${JSON.stringify(npcLabel)}.`,
+    );
+    assert.ok(
+      npcLabel.width <= 100 && npcLabel.height <= 20 && npcLabel.alpha <= 0.9,
+      `${label}: NPC identity plaque is visually dominant: ${JSON.stringify(npcLabel)}.`,
+    );
+  }
+  assert.equal(
     hierarchy.intentLabelVisible,
     false,
     `${label}: the old player intent label is still visible beside the route/target cue.`,
@@ -5630,12 +5672,48 @@ function assertBoundedVisualHierarchy(
   }
 }
 
+function assertNoDecisionActionRailDuplication(page, label) {
+  const decisionChoice = page.railNarrative?.decisionChoice?.trim() ?? "";
+  if (!decisionChoice) {
+    return;
+  }
+
+  const normalizedChoice = decisionChoice.toLowerCase();
+  const target = normalizedChoice.match(
+    /\b(?:talk to|ask|speak with)\s+([a-z][a-z'-]*)/i,
+  )?.[1];
+  const candidates = [
+    ["passive watch status", page.railNarrative?.passiveWatchStatus],
+    ["Next card", page.railNarrative?.next],
+  ];
+  for (const [surface, copy] of candidates) {
+    const normalizedCopy = copy?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+    if (!normalizedCopy) {
+      continue;
+    }
+    const repeatsExactAction =
+      normalizedCopy.includes(normalizedChoice) ||
+      (target &&
+        normalizedCopy.includes(target.toLowerCase()) &&
+        /\b(?:ask|talk|speak|conversation)\b/i.test(normalizedCopy));
+    const repeatsGenericConversation =
+      /\b(?:talk|ask|speak)\b/i.test(normalizedChoice) &&
+      /\bnext conversation automatically\b/i.test(normalizedCopy);
+    assert.equal(
+      Boolean(repeatsExactAction || repeatsGenericConversation),
+      false,
+      `${label}: ${surface} repeats the decision action "${decisionChoice}": ${copy}`,
+    );
+  }
+}
+
 function assertDecisionHierarchy(page, label, artifactPayload) {
   assert.equal(
     page.decisionArtifactCount,
     1,
     `${label}: aim/choice/rationale summary is repeated in ${page.decisionArtifactCount} decision artifacts.`,
   );
+  assertNoDecisionActionRailDuplication(page, label);
   for (const field of ["aim", "choice", "rationale"]) {
     assert.equal(
       page.decisionFieldCounts[field],

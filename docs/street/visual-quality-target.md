@@ -46,13 +46,13 @@ South Quay reaches the visual target state only when all active rows are
 | ID | Surface | Current status | Target evidence |
 | --- | --- | --- | --- |
 | `VQ-01` | Core exterior landmarks: Morrow House, Kettle & Lamp, Quay Square | `CANDIDATE` | Desktop, tablet, phone, and high-DPR screenshots show distinct silhouettes, materials, entrances, and props before labels. |
-| `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `CANDIDATE` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
+| `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `VERIFIED` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
 | `VQ-03` | Morrow House interior | `CANDIDATE` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clear actors, and unobscured portal/action areas. |
 | `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `CANDIDATE` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `CANDIDATE` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
 | `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
-| `VQ-08` | Labels, cues, and scene-to-rail balance | `OPEN` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
+| `VQ-08` | Labels, cues, and scene-to-rail balance | `CANDIDATE` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `CANDIDATE` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `OPEN` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 

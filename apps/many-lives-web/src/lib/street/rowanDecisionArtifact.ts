@@ -117,22 +117,28 @@ export function buildRowanVisibleDecisionArtifactFromState({
         : undefined,
     44,
   );
+  const nextCheck = nextCheckForTrace(
+    planningTrace,
+    selectedStep,
+    selectedAction,
+  );
+  const rationaleDetail =
+    liveRecommendationRationale(planningTrace) ??
+    selectedOption?.rationale ??
+    selectedStep?.rationale ??
+    (completedObjective ? autonomyDetail : autonomyReason) ??
+    (completedObjective ? autonomyReason : autonomyDetail) ??
+    activeConversationDecision;
+  const followUpAlreadyLeadsNextCheck = decisionTextStartsWithLead(
+    nextCheck,
+    selectedFollowUpLabel,
+  );
   const rationaleBase = compactDecisionText(
-    selectedFollowUpLabel
-      ? `${selectedFollowUpLabel}: ${
-          liveRecommendationRationale(planningTrace) ??
-          selectedOption?.rationale ??
-          selectedStep?.rationale ??
-          (completedObjective ? autonomyDetail : autonomyReason) ??
-          (completedObjective ? autonomyReason : autonomyDetail) ??
-          activeConversationDecision
-        }`
-      : liveRecommendationRationale(planningTrace) ??
-          selectedOption?.rationale ??
-          selectedStep?.rationale ??
-          (completedObjective ? autonomyDetail : autonomyReason) ??
-          (completedObjective ? autonomyReason : autonomyDetail) ??
-          activeConversationDecision,
+    selectedFollowUpLabel &&
+      rationaleDetail &&
+      !followUpAlreadyLeadsNextCheck
+      ? `${selectedFollowUpLabel}: ${rationaleDetail}`
+      : (rationaleDetail ?? selectedFollowUpLabel),
     132,
   );
   const rationale =
@@ -157,11 +163,6 @@ export function buildRowanVisibleDecisionArtifactFromState({
     planningTrace,
     selectedOption,
     selectedStep,
-  );
-  const nextCheck = nextCheckForTrace(
-    planningTrace,
-    selectedStep,
-    selectedAction,
   );
   const considered = uniqueCompact(
     [
@@ -213,6 +214,30 @@ export function buildRowanVisibleDecisionArtifactFromState({
       travelPhase,
     ),
   };
+}
+
+function decisionTextStartsWithLead(
+  text: string,
+  lead: string | undefined,
+) {
+  if (!text || !lead) {
+    return false;
+  }
+
+  const normalizedText = normalizeDecisionLead(text);
+  const normalizedLead = normalizeDecisionLead(lead);
+  return Boolean(
+    normalizedLead &&
+      (normalizedText === normalizedLead ||
+        normalizedText.startsWith(`${normalizedLead} `)),
+  );
+}
+
+function normalizeDecisionLead(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }
 
 function objectiveIsComplete(game: StreetGameState) {

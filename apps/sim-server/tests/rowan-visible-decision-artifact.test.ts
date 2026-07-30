@@ -2,6 +2,101 @@ import { describe, expect, it } from "vitest";
 import { buildRowanVisibleDecisionArtifactFromState } from "../../many-lives-web/src/lib/street/rowanDecisionArtifact.js";
 
 describe("Rowan visible decision artifact", () => {
+  it("does not repeat a selected follow-up lead across next check and rationale", () => {
+    const artifact = buildRowanVisibleDecisionArtifactFromState({
+      autonomyActionId: "enter:boarding-house",
+      autonomyDetail:
+        "Rowan enters Morrow House so he can ask Mara what tonight's room requires.",
+      autonomyLabel: "Enter Morrow House",
+      autonomyReason:
+        "Ask what the room costs and what would make tonight's bed real.",
+      objectiveText:
+        "Make Rowan's first afternoon count: understand the room and find a foothold.",
+      planningTrace: {
+        blockers: [],
+        considered: [
+          {
+            actionId: "enter:boarding-house",
+            label: "Talk to Mara",
+            matchedOutcomeId: "room-terms",
+            planKey: "settle-room",
+            pressureId: "room-terms",
+            pressureKind: "objective",
+            pressureLabel: "Room terms understood",
+            provenance: "objective-predicate" as const,
+            rationale:
+              "Ask what the room costs and what would make tonight's bed real.",
+            score: 9,
+            status: "selected" as const,
+            targetLocationId: "boarding-house",
+          },
+        ],
+        nextSteps: [
+          {
+            actionId: "enter:boarding-house",
+            kind: "act",
+            label: "Enter Morrow House",
+            legal: true,
+            rationale: "Reach Mara inside the boarding house.",
+            targetLocationId: "boarding-house",
+            validation: "Morrow House is available to enter.",
+          },
+          {
+            actionId: "talk:npc-mara",
+            kind: "talk",
+            label: "Talk to Mara",
+            legal: true,
+            npcId: "npc-mara",
+            rationale:
+              "After reaching Morrow House, see whether the conversation is still available before Rowan asks.",
+            targetLocationId: "boarding-house",
+            validation: "Mara must still be available inside.",
+          },
+        ],
+        outcomes: [
+          {
+            blockers: ["Rowan has not spoken to Mara yet."],
+            id: "room-terms",
+            label: "Room terms understood",
+            status: "blocked",
+            urgency: 9,
+          },
+        ],
+        rejected: [],
+        selectedActionId: "enter:boarding-house",
+        selectedLabel: "Enter Morrow House",
+        selectedLegalBacking: {
+          actionId: "enter:boarding-house",
+          locationId: "boarding-house",
+          source: "current-legal-action-surface",
+        },
+        selectedMatchedOutcomeId: "room-terms",
+        selectedPlanKey: "settle-room",
+        selectedPressureId: "room-terms",
+        selectedPressureKind: "objective",
+        selectedPressureLabel: "Room terms understood",
+        selectedRecommendation: {
+          accepted: true,
+          advisory: true,
+          sourceKind: "deterministic-fallback",
+          validationStatus: "simulator-validated",
+        },
+        selectedTargetLocationId: "boarding-house",
+      },
+    });
+
+    expect(artifact?.selectedAction).toBe("Enter Morrow House");
+    expect(artifact?.nextCheck).toMatch(/^Talk to Mara:/);
+    expect(artifact?.nextCheck?.length).toBeGreaterThan(40);
+    expect(artifact?.rationale).toBe(
+      "Ask what the room costs and what would make tonight's bed real.",
+    );
+    expect(artifact?.rationale).not.toMatch(/^Talk to Mara\b/i);
+    expect(artifact?.sourceSummary).toBe(
+      "Built-in recommendation, checked before acting",
+    );
+  });
+
   it("uses completed-objective detail for card rationale while preserving short banner reason", () => {
     const shortReason =
       "First afternoon complete: Rowan has a bed, pay, Ada's trust, and a real lead for tomorrow.";

@@ -175,6 +175,7 @@ export function buildRowanStoryCardHtml(
     <div
       class="ml-rowan-story-card ${primary ? "is-primary" : ""}"
       data-rowan-directive="${primary ? "true" : "false"}"
+      data-rowan-story-card="${escapeHtml(kicker.toLowerCase())}"
       data-tone="${escapeHtml(card.tone)}"
     >
       <div class="ml-kicker">${escapeHtml(kicker)}</div>

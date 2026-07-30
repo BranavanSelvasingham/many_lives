@@ -355,6 +355,12 @@ export type RowanRailViewModel = {
   useConversationTranscript: boolean;
 };
 
+type RailDecisionCopy = {
+  actionId?: string;
+  copy: string | null | undefined;
+  selectedAction: string | null | undefined;
+};
+
 type BuildRowanRailViewModelOptions = {
   conversationReplayActive: boolean;
   fallbackThought: string;
@@ -1119,7 +1125,7 @@ export function buildRowanRailViewModel({
     : openingBeat
       ? openingNowCard
       : autonomyCard;
-  const nextCard =
+  const candidateNextCard =
     activeNowBeat?.kind === "thread_line"
       ? null
       : activeNowBeat
@@ -1127,6 +1133,11 @@ export function buildRowanRailViewModel({
         : openingBeat
           ? openingNextCard
           : buildObjectiveNextRailCard(game, autonomyCard);
+  const nextCard =
+    candidateNextCard &&
+    railCardRepeatsDecisionAction(game, nowCard, candidateNextCard)
+      ? null
+      : candidateNextCard;
   const statusLabel = useConversationTranscript
     ? "Live conversation"
     : activeBeat
@@ -1275,6 +1286,154 @@ function buildObjectiveNextRailCard(
   }
 
   return nextCard;
+}
+
+function railCardRepeatsDecisionAction(
+  game: StreetGameState,
+  nowCard: RowanRailCard,
+  candidate: RowanRailCard,
+) {
+  const selectedAction = nowCard.decisionArtifact?.selectedAction;
+  if (!selectedAction) {
+    return false;
+  }
+
+  return [candidate.title, candidate.detail].some((copy) =>
+    railCopyRepeatsDecisionAction({
+      actionId: game.rowanAutonomy?.actionId,
+      copy,
+      selectedAction,
+    }),
+  );
+}
+
+const RAIL_ACTION_TOKEN_STOP_WORDS = new Set([
+  "a",
+  "again",
+  "an",
+  "and",
+  "automatically",
+  "be",
+  "carry",
+  "carrying",
+  "continue",
+  "continuing",
+  "conversation",
+  "do",
+  "for",
+  "from",
+  "go",
+  "going",
+  "he",
+  "her",
+  "him",
+  "how",
+  "in",
+  "is",
+  "it",
+  "next",
+  "now",
+  "of",
+  "on",
+  "rowan",
+  "start",
+  "starting",
+  "step",
+  "the",
+  "this",
+  "through",
+  "to",
+  "toward",
+  "towards",
+  "with",
+]);
+
+export function railCopyRepeatsDecisionAction({
+  actionId,
+  copy,
+  selectedAction,
+}: RailDecisionCopy) {
+  const normalizedCopy = normalizeText(copy);
+  const normalizedAction = normalizeText(selectedAction);
+  if (!normalizedCopy || !normalizedAction) {
+    return false;
+  }
+  if (
+    normalizedCopy === normalizedAction ||
+    normalizedCopy.includes(normalizedAction) ||
+    normalizedAction.includes(normalizedCopy)
+  ) {
+    return true;
+  }
+
+  const selectedKind = railActionKind(actionId, normalizedAction);
+  const copyKind = railActionKind(undefined, normalizedCopy);
+  if (!selectedKind || selectedKind !== copyKind) {
+    return false;
+  }
+  if (
+    copyKind === "movement" &&
+    /\b(?:toward|towards|then|before)\b/i.test(normalizedCopy)
+  ) {
+    return false;
+  }
+
+  const selectedTargets = railActionTargetTokens(
+    `${normalizedAction} ${actionId ?? ""}`,
+  );
+  const copyTargets = railActionTargetTokens(normalizedCopy);
+  if (copyTargets.length === 0) {
+    return true;
+  }
+
+  return copyTargets.some((token) => selectedTargets.includes(token));
+}
+
+function railActionKind(actionId: string | undefined, text: string) {
+  const source = `${actionId ?? ""} ${text}`;
+  if (
+    /\b(?:talk|ask|speak|conversation)\b/i.test(source) ||
+    /\b(?:finish|close)\s+with\b/i.test(source)
+  ) {
+    return "conversation";
+  }
+  if (/\b(?:move|walk|head|enter|exit|step|route|travel)\b/i.test(source)) {
+    return "movement";
+  }
+  if (/\b(?:wait|clock|pause)\b/i.test(source)) {
+    return "waiting";
+  }
+  if (/\b(?:work|shift|repair|serve)\b/i.test(source)) {
+    return "work";
+  }
+  if (/\b(?:rest|sleep|recover)\b/i.test(source)) {
+    return "rest";
+  }
+  if (/\b(?:reflect|review|record|take stock)\b/i.test(source)) {
+    return "reflect";
+  }
+  return null;
+}
+
+function railActionTargetTokens(text: string) {
+  return [
+    ...new Set(
+      text
+        .replace(/(?:talk|move):npc-/gi, " ")
+        .replace(/(?:enter|exit|move|work|wait|reflect):/gi, " ")
+        .replace(/[^a-z0-9]+/gi, " ")
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(
+          (token) =>
+            token.length >= 3 &&
+            !RAIL_ACTION_TOKEN_STOP_WORDS.has(token) &&
+            !/^(?:ask|talk|speak|walk|head|enter|exit|move|wait|work|rest|reflect|automatic)$/.test(
+              token,
+            ),
+        ),
+    ),
+  ];
 }
 
 function statusLabelForBeat(beat: RowanPlaybackBeat) {
