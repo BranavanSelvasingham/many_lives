@@ -198,6 +198,9 @@ const VIEWPORTS = [
   },
 ];
 const RESPONSIVE_DECISION_VIEWPORT_NAMES = new Set([
+  "desktop",
+  "mobile",
+  "tablet-portrait",
   "codex-compact",
   "codex-retina-compact",
   "codex-screenshot-tall",
@@ -680,6 +683,12 @@ class CdpSession {
       );
       const decisionArtifact = decisionArtifacts[0] ?? null;
       const decisionDetails = document.querySelector("[data-decision-details='true']");
+      const liveConversationWorkspace = document.querySelector(
+        "[data-live-conversation-workspace='true']",
+      );
+      const liveConversationTranscript = document.querySelector(
+        "[data-live-conversation-thread='true'] .ml-chat-transcript",
+      );
       const decisionChoice = decisionArtifact?.querySelector(
         "[data-decision-field='choice'] p",
       );
@@ -808,6 +817,30 @@ class CdpSession {
           y: visible.top,
         };
       };
+      const meaningfulConversationBubbles = Array.from(
+        liveConversationTranscript?.querySelectorAll(".ml-chat-bubble") ?? [],
+      ).filter(
+        (bubble) =>
+          (bubble.textContent?.replace(/\\s+/g, " ").trim() ?? "").length > 0,
+      );
+      const latestMeaningfulConversationBubble =
+        meaningfulConversationBubbles.at(-1) ?? null;
+      const latestMeaningfulConversationBubbleRect =
+        latestMeaningfulConversationBubble?.getBoundingClientRect() ?? null;
+      const latestMeaningfulConversationBubbleVisibleRect =
+        visibleRectFor(latestMeaningfulConversationBubble);
+      const latestMeaningfulConversationBubbleFullyVisible = Boolean(
+        latestMeaningfulConversationBubbleRect &&
+          latestMeaningfulConversationBubbleVisibleRect &&
+          latestMeaningfulConversationBubbleVisibleRect.left <=
+            latestMeaningfulConversationBubbleRect.left + 1 &&
+          latestMeaningfulConversationBubbleVisibleRect.right >=
+            latestMeaningfulConversationBubbleRect.right - 1 &&
+          latestMeaningfulConversationBubbleVisibleRect.top <=
+            latestMeaningfulConversationBubbleRect.top + 1 &&
+          latestMeaningfulConversationBubbleVisibleRect.bottom >=
+            latestMeaningfulConversationBubbleRect.bottom - 1,
+      );
       const computedVisualStyle = (element) => {
         if (!element) {
           return null;
@@ -938,7 +971,7 @@ class CdpSession {
           return runs;
         });
       const decisionFieldCounts = Object.fromEntries(
-        ["aim", "choice", "rationale", "next-check"].map((field) => [
+        ["aim", "signals", "choice", "rationale", "next-check", "options"].map((field) => [
           field,
           document.querySelectorAll(
             "[data-rail-root='rowan'] [data-decision-field='" + field + "']",
@@ -946,7 +979,7 @@ class CdpSession {
         ]),
       );
       const decisionFieldGeometry = Object.fromEntries(
-        ["aim", "choice", "rationale", "next-check"].map((field) => {
+        ["aim", "signals", "choice", "rationale", "next-check", "options"].map((field) => {
           const element = decisionArtifact?.querySelector(
             "[data-decision-field='" + field + "']",
           );
@@ -1114,6 +1147,32 @@ class CdpSession {
         decisionDetailsOpen: decisionDetails?.open ?? null,
         decisionFieldCounts,
         decisionFieldGeometry,
+        latestMeaningfulConversationBubble:
+          latestMeaningfulConversationBubbleRect
+            ? {
+                fullyVisible: latestMeaningfulConversationBubbleFullyVisible,
+                rect: rectData(latestMeaningfulConversationBubbleRect),
+                text:
+                  latestMeaningfulConversationBubble?.textContent
+                    ?.replace(/\\s+/g, " ")
+                    .trim() ?? "",
+                visibleRect: rectData(
+                  latestMeaningfulConversationBubbleVisibleRect,
+                ),
+              }
+            : null,
+        liveConversationTranscript: liveConversationTranscript
+          ? {
+              clientHeight: liveConversationTranscript.clientHeight,
+              overflowY: window.getComputedStyle(liveConversationTranscript)
+                .overflowY,
+              scrollHeight: liveConversationTranscript.scrollHeight,
+              scrollTop: liveConversationTranscript.scrollTop,
+            }
+          : null,
+        liveConversationWorkspace: liveConversationWorkspace
+          ? rectData(liveConversationWorkspace.getBoundingClientRect())
+          : null,
         railNarrative: {
           decisionChoice:
             decisionChoice?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
@@ -4719,6 +4778,66 @@ function assertVisibleDecisionArtifactDom(
   );
 }
 
+function assertLiveConversationDecisionAndBubbleReadable(page, label) {
+  assert.ok(
+    page.liveConversationWorkspace,
+    `${label}: missing the bounded live conversation workspace.`,
+  );
+  assert.equal(
+    page.decisionArtifactCount,
+    1,
+    `${label}: live conversation must render exactly one current decision artifact.`,
+  );
+  for (const field of [
+    "aim",
+    "signals",
+    "choice",
+    "rationale",
+    "next-check",
+    "options",
+  ]) {
+    const count = page.decisionFieldCounts?.[field] ?? 0;
+    if (field === "signals" || field === "next-check" || field === "options") {
+      if (count === 0) {
+        continue;
+      }
+    }
+    assert.equal(
+      count,
+      1,
+      `${label}: live decision field ${field} must occur exactly once.`,
+    );
+    assert.ok(
+      page.decisionFieldGeometry?.[field]?.fullyVisible,
+      `${label}: live decision field ${field} is clipped: ${JSON.stringify(
+        page.decisionFieldGeometry?.[field],
+      )}.`,
+    );
+  }
+  assert.ok(
+    page.liveConversationTranscript?.clientHeight >= 72,
+    `${label}: live transcript has no readable viewport: ${JSON.stringify(
+      page.liveConversationTranscript,
+    )}.`,
+  );
+  assert.match(
+    page.liveConversationTranscript?.overflowY ?? "",
+    /auto|scroll/,
+    `${label}: live transcript is not independently scrollable.`,
+  );
+  assert.ok(
+    page.latestMeaningfulConversationBubble?.text,
+    `${label}: live transcript has no meaningful conversation bubble.`,
+  );
+  assert.equal(
+    page.latestMeaningfulConversationBubble?.fullyVisible,
+    true,
+    `${label}: latest meaningful conversation bubble is clipped: ${JSON.stringify(
+      page.latestMeaningfulConversationBubble,
+    )}.`,
+  );
+}
+
 function selectedVisibleDecisionArtifactPayload(probe) {
   return (
     probe?.rail?.visibleDecisionArtifact ??
@@ -5731,6 +5850,24 @@ function assertDecisionHierarchy(page, label, artifactPayload) {
       artifactPayload?.considered?.length ||
       artifactPayload?.passedOver?.length,
   );
+  if (page.liveConversationWorkspace) {
+    assert.equal(
+      page.decisionDetailsOpen,
+      null,
+      `${label}: compact live decision must not duplicate deeper evidence in a second control.`,
+    );
+    assert.equal(
+      page.decisionFieldCounts.signals,
+      artifactPayload?.constraints?.length ? 1 : 0,
+      `${label}: compact live decision signals must appear exactly once when supplied.`,
+    );
+    assert.equal(
+      page.decisionFieldCounts.options,
+      artifactPayload?.considered?.length ? 1 : 0,
+      `${label}: compact live decision options must appear exactly once when supplied.`,
+    );
+    return;
+  }
   assert.equal(
     page.decisionDetailsOpen,
     hasDeeperEvidence ? false : null,
@@ -5906,6 +6043,26 @@ function assertSceneVisibilityGeometry(
 }
 
 function assertExpandedRailScroll(page, label) {
+  if (page.liveConversationWorkspace) {
+    assert.ok(
+      page.liveConversationTranscript,
+      `${label}: live conversation has no internal transcript scroller.`,
+    );
+    assert.match(
+      page.liveConversationTranscript.overflowY,
+      /auto|scroll/,
+      `${label}: live transcript overflow is ${page.liveConversationTranscript.overflowY}, not internally scrollable.`,
+    );
+    assert.ok(
+      page.liveConversationTranscript.clientHeight > 0 &&
+        page.liveConversationTranscript.scrollHeight >=
+          page.liveConversationTranscript.clientHeight,
+      `${label}: live transcript scroller has invalid dimensions ${JSON.stringify(
+        page.liveConversationTranscript,
+      )}.`,
+    );
+    return;
+  }
   assert.ok(page.commandRail, `${label}: expanded rail has no internal scroller.`);
   assert.match(
     page.commandRail.overflowY,
@@ -6270,6 +6427,14 @@ async function runFreshAutoplayStartCheck(session) {
 
         return continuedText && !stillOpeningCta;
       },
+      assertSettledPage: ({ page, probe }) => {
+        if (probe?.activeConversation?.npcId) {
+          assertLiveConversationDecisionAndBubbleReadable(
+            page,
+            "fresh autoplay live conversation",
+          );
+        }
+      },
       timeoutMs: AUTOPLAY_START_TIMEOUT_MS,
     },
   );
@@ -6302,6 +6467,10 @@ async function runFreshAutoplayStartCheck(session) {
   );
   assertNoWatchModeReplyAffordances(page, "fresh autoplay");
   if (continuedProbe.activeConversation?.npcId) {
+    assertLiveConversationDecisionAndBubbleReadable(
+      page,
+      "fresh autoplay live conversation",
+    );
     assert.match(
       page.bodyText,
       /Rowan (?:replies automatically|is replying automatically|will answer automatically|is carrying the conversation)/i,
@@ -6607,6 +6776,10 @@ async function runResponsiveDecisionArtifactCheck(session) {
             page,
             `${viewport.name} long Mara responsive decision`,
           );
+          assertLiveConversationDecisionAndBubbleReadable(
+            page,
+            `${viewport.name} long Mara responsive decision`,
+          );
           assertOverlayGeometry(
             page,
             viewport,
@@ -6645,6 +6818,10 @@ async function runResponsiveDecisionArtifactCheck(session) {
       readablePayload,
     );
     assertDecisionFieldsFullyVisible(
+      page,
+      `${viewport.name} long Mara responsive decision`,
+    );
+    assertLiveConversationDecisionAndBubbleReadable(
       page,
       `${viewport.name} long Mara responsive decision`,
     );

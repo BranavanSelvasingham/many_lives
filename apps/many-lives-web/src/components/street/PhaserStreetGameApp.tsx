@@ -24,6 +24,7 @@ import {
 } from "@/components/street/streetFormatting";
 import {
   buildFirstAfternoonFieldNoteHtml,
+  buildCompactVisibleDecisionArtifactHtml,
   buildJournalTabHtml,
   buildLoadingHtml,
   buildMindTabHtml,
@@ -8111,6 +8112,25 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
           willAutostart: false,
         })
       : "";
+  const liveConversationWorkspaceHtml =
+    showConversationRail && rowanRail.now.decisionArtifact
+      ? `
+        <div
+          class="ml-live-conversation-workspace"
+          data-live-conversation-workspace="true"
+        >
+          <div class="ml-live-conversation-decision">
+            ${buildCompactVisibleDecisionArtifactHtml(rowanRail.now.decisionArtifact)}
+          </div>
+          <div
+            class="ml-live-conversation-thread"
+            data-live-conversation-thread="true"
+          >
+            ${conversationRailHtml}
+          </div>
+        </div>
+      `
+      : "";
   const availableActionsForRail =
     watchModeProgressionControlsSuppressed
       ? []
@@ -8376,7 +8396,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             }
           </div>
           <div
-            class="ml-command-rail"
+            class="ml-command-rail ${liveConversationWorkspaceHtml ? "is-live-conversation" : ""}"
             data-preserve-scroll="command-rail"
             data-preserve-scroll-key="${escapeHtml(
               commandRailPreserveScrollKey,
@@ -8384,7 +8404,17 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
             data-rail-root="rowan"
           >
             <div class="ml-command-rail-body">
-              ${buildRowanStoryCardHtml("Now", rowanRail.now, true)}
+              ${liveConversationWorkspaceHtml}
+              ${buildRowanStoryCardHtml(
+                "Now",
+                liveConversationWorkspaceHtml
+                  ? {
+                      ...rowanRail.now,
+                      decisionArtifact: null,
+                    }
+                  : rowanRail.now,
+                true,
+              )}
               ${firstAfternoonFieldNoteHtml}
               ${
                 showPrimaryContinue
@@ -8418,7 +8448,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                   : ""
               }
 
-              ${conversationRailHtml}
+              ${liveConversationWorkspaceHtml ? "" : conversationRailHtml}
 
               ${
                 rowanRail.justHappened

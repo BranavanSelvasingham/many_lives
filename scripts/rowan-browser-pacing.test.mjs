@@ -21,6 +21,20 @@ const streetRuntimeSource = await readFile(
   ),
   "utf8",
 );
+const streetOverlayHtmlSource = await readFile(
+  new URL(
+    "../apps/many-lives-web/src/components/street/streetOverlayHtml.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const streetOverlayStylesSource = await readFile(
+  new URL(
+    "../apps/many-lives-web/src/lib/street/streetOverlayStyles.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const rowanPlaybackSource = await readFile(
   new URL(
     "../apps/many-lives-web/src/lib/street/rowanPlayback.ts",
@@ -5860,6 +5874,71 @@ test("streaming conversation growth keeps following a readable exchange", () => 
   assert.match(
     overlayDomStateSource,
     /else if \(state\.commandRailConversationVisible\) {\s*ensureCommandRailConversationVisible\(commandRail\);/,
+  );
+});
+
+test("live conversation uses one compact decision and an independent transcript viewport", () => {
+  assert.match(
+    streetRuntimeSource,
+    /showConversationRail && rowanRail\.now\.decisionArtifact[\s\S]*buildCompactVisibleDecisionArtifactHtml\(rowanRail\.now\.decisionArtifact\)/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /liveConversationWorkspaceHtml[\s\S]*decisionArtifact: null/,
+    "The hidden Now card must not duplicate the live conversation artifact.",
+  );
+  assert.match(
+    streetRuntimeSource,
+    /data-live-conversation-workspace="true"/,
+  );
+  assert.match(
+    streetRuntimeSource,
+    /data-live-conversation-thread="true"/,
+  );
+  for (const field of [
+    "aim",
+    "signals",
+    "choice",
+    "rationale",
+    "next-check",
+    "options",
+  ]) {
+    assert.match(
+      streetOverlayHtmlSource,
+      new RegExp(`data-decision-field="${field}"`),
+      `Compact live decision must expose ${field} semantics.`,
+    );
+  }
+  assert.match(
+    streetOverlayStylesSource,
+    /\.ml-command-rail\.is-live-conversation\s*{[\s\S]*?overflow:\s*hidden;/,
+  );
+  assert.match(
+    streetOverlayStylesSource,
+    /\.ml-live-conversation-thread[\s\S]*?overflow:\s*hidden;/,
+  );
+  assert.match(
+    streetOverlayStylesSource,
+    /\.ml-live-conversation-thread \.ml-chat-shell\.is-rail[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;/,
+  );
+  assert.match(
+    streetOverlayStylesSource,
+    /\.ml-live-conversation-thread \.ml-chat-shell\.is-rail \.ml-chat-transcript,[\s\S]*?overflow-y:\s*auto;/,
+  );
+  assert.doesNotMatch(
+    overlayDomStateSource,
+    /commandRailDirectiveVisible|isCommandRailDirectiveVisible/,
+    "Live decision visibility must not compete with transcript scroll restoration.",
+  );
+  assert.match(
+    overlayDomStateSource,
+    /\[data-live-conversation-thread="true"\] \.ml-chat-transcript/,
+    "The independent live transcript must participate in overlay scroll preservation.",
+  );
+  assert.match(
+    overlayDomStateSource,
+    /if \(state\.transcriptScrollTop === null \|\| state\.transcriptNearBottom\) \{\s*transcript\.scrollTop = transcript\.scrollHeight;\s*\} else if \(state\.transcriptScrollTop !== null\) \{\s*transcript\.scrollTop = Math\.min\(/,
+    "A new or bottom-following transcript should follow the latest line without overriding intentional user scroll.",
   );
 });
 

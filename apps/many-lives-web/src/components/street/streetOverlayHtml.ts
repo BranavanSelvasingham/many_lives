@@ -409,22 +409,22 @@ export function buildCompactVisibleDecisionArtifactHtml(
         <strong>${escapeHtml(buildNarrativePreview(artifact.sourceSummary, 30))}</strong>
       </div>
       <div class="ml-decision-compact-copy">
-        <span>Aim: ${escapeHtml(buildNarrativePreview(artifact.objective, 54))}</span>
+        <span data-decision-field="aim">Aim: ${escapeHtml(buildNarrativePreview(artifact.objective, 54))}</span>
         ${
           signals
-            ? `<span>Signals: ${escapeHtml(buildNarrativePreview(signals, 58))}</span>`
+            ? `<span data-decision-field="signals">Signals: ${escapeHtml(buildNarrativePreview(signals, 58))}</span>`
             : ""
         }
-        <span>Choice: ${escapeHtml(buildNarrativePreview(artifact.selectedAction, 42))}</span>
-        <span>Why this: ${escapeHtml(buildNarrativePreview(artifact.rationale, 64))}</span>
+        <span data-decision-field="choice">Choice: ${escapeHtml(buildNarrativePreview(artifact.selectedAction, 42))}</span>
+        <span data-decision-field="rationale">Why this: ${escapeHtml(buildNarrativePreview(artifact.rationale, 64))}</span>
         ${
           artifact.nextCheck
-            ? `<span>Next check: ${escapeHtml(buildNarrativePreview(artifact.nextCheck, 62))}</span>`
+            ? `<span data-decision-field="next-check">Next check: ${escapeHtml(buildNarrativePreview(artifact.nextCheck, 62))}</span>`
             : ""
         }
         ${
           considered
-            ? `<span>Options: ${escapeHtml(buildNarrativePreview(considered, 42))}</span>`
+            ? `<span data-decision-field="options">Options: ${escapeHtml(buildNarrativePreview(considered, 42))}</span>`
             : ""
         }
       </div>

@@ -347,6 +347,65 @@ export function buildStreetOverlayStyle({
         gap: 14px;
         padding-top: 14px;
       }
+      .ml-command-rail.is-live-conversation {
+        overflow: hidden;
+      }
+      .ml-command-rail.is-live-conversation .ml-command-rail-body {
+        height: 100%;
+        min-height: 0;
+        gap: 0;
+        padding-top: 10px;
+      }
+      .ml-command-rail.is-live-conversation
+        .ml-command-rail-body
+        > :not(.ml-live-conversation-workspace) {
+        display: none;
+      }
+      .ml-live-conversation-workspace {
+        min-height: 0;
+        height: 100%;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 10px;
+      }
+      .ml-live-conversation-decision {
+        min-height: 0;
+      }
+      .ml-live-conversation-decision .ml-decision-artifact.is-compact {
+        max-width: none;
+        margin-top: 0;
+      }
+      .ml-live-conversation-decision .ml-decision-compact-copy span {
+        white-space: normal;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+      .ml-live-conversation-thread {
+        min-height: 0;
+        overflow: hidden;
+        border-top: 1px solid rgba(138, 151, 161, 0.12);
+      }
+      .ml-live-conversation-thread .ml-chat-shell.is-rail {
+        height: 100%;
+        min-height: 0;
+        margin-top: 0;
+        display: flex;
+        flex-direction: column;
+        border-top: 0;
+        padding-top: 10px;
+      }
+      .ml-live-conversation-thread .ml-chat-rail-note {
+        display: none;
+      }
+      .ml-live-conversation-thread .ml-chat-shell.is-rail .ml-chat-transcript,
+      .ml-live-conversation-thread .ml-chat-shell.is-rail.is-live .ml-chat-transcript {
+        min-height: 72px;
+        max-height: none;
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
       .ml-command-rail,
       .ml-focus-body,
       .ml-chat-transcript,
@@ -2524,6 +2583,63 @@ export function buildStreetOverlayStyle({
       }
       .ml-root.is-collapsible-rail.is-phone-rail .ml-dock-copy {
         display: none;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-header {
+        display: block;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-header
+        .ml-chat-avatar,
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-subtitle,
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-context,
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-live-pill {
+        display: none;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-title {
+        font-size: 12px;
+        line-height: 1.2;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-transcript {
+        margin-top: 6px;
+        gap: 6px;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-stack {
+        width: 100%;
+        max-width: 100%;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-row
+        .ml-chat-avatar {
+        display: none;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-bubble {
+        padding: 7px 9px;
+        font-size: 11px;
+        line-height: 1.32;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-thread
+        .ml-chat-meta {
+        margin-top: 2px;
+        font-size: 8px;
       }
       .ml-root.is-collapsible-rail.is-phone-rail .ml-time-chip.is-metric:last-child {
         display: none;

@@ -56,7 +56,7 @@ export function captureOverlayRenderState(
     "#ml-browser-camera-probe",
   );
   const transcript = root.querySelector<HTMLElement>(
-    '[data-chat-transcript="true"]',
+    '[data-chat-transcript="true"], [data-live-conversation-thread="true"] .ml-chat-transcript',
   );
 
   root
@@ -206,10 +206,10 @@ export function restoreOverlayRenderState(
   }
 
   const transcript = root.querySelector<HTMLElement>(
-    '[data-chat-transcript="true"]',
+    '[data-chat-transcript="true"], [data-live-conversation-thread="true"] .ml-chat-transcript',
   );
   if (transcript) {
-    if (state.transcriptNearBottom) {
+    if (state.transcriptScrollTop === null || state.transcriptNearBottom) {
       transcript.scrollTop = transcript.scrollHeight;
     } else if (state.transcriptScrollTop !== null) {
       transcript.scrollTop = Math.min(
