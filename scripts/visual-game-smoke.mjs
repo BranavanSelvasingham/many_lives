@@ -42,6 +42,9 @@ const AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS = 0.95;
 const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_READABILITY_TIMEOUT_MS ?? "30000",
 );
+const RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS = Number(
+  process.env.MANY_LIVES_VISUAL_DECISION_REPLAY_COMPLETION_TIMEOUT_MS ?? "60000",
+);
 const RESPONSIVE_DECISION_STABILITY_GRACE_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_STABILITY_GRACE_MS ?? "45000",
 );
@@ -5029,6 +5032,35 @@ function responsiveDecisionReadabilityDeadlineAt({
   );
 }
 
+function responsiveLongMaraReplayComplete(page, probe) {
+  const conversation = probe?.activeConversation;
+  const replay = conversation?.replay;
+  const latestReply = page?.latestMeaningfulConversationBubble?.text
+    ?.replace(/\s+/g, " ")
+    .trim();
+  return Boolean(
+    replay?.isReplaying === false &&
+      Number.isFinite(replay?.revealedEntryCount) &&
+      Number.isFinite(conversation?.lines) &&
+      replay.revealedEntryCount >= conversation.lines &&
+      /^Tonight's bed is yours if you keep the house easy to live in\.[\s\S]*before lunch\.$/i.test(
+        latestReply ?? "",
+      ),
+  );
+}
+
+function responsiveLongMaraReplayReadiness({
+  elapsedMs,
+  page,
+  probe,
+  timeoutMs,
+}) {
+  if (responsiveLongMaraReplayComplete(page, probe)) {
+    return "ready";
+  }
+  return elapsedMs < timeoutMs ? "waiting" : "timed_out";
+}
+
 function decisionArtifactReadabilitySignature(geometry) {
   const sceneViewport = geometry.sceneViewportCss;
   return JSON.stringify({
@@ -5607,6 +5639,67 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     }),
     30_000,
     "A single-sample caller must keep the original readiness deadline.",
+  );
+
+  const nearCompleteReplayProbe = {
+    activeConversation: {
+      lines: 2,
+      replay: {
+        isReplaying: true,
+        revealedEntryCount: 1,
+        streamedWordCount: 48,
+      },
+    },
+  };
+  const nearCompleteReplayPage = {
+    latestMeaningfulConversationBubble: {
+      text: "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before",
+    },
+  };
+  const completedReplayPage = {
+    latestMeaningfulConversationBubble: {
+      text: `${nearCompleteReplayPage.latestMeaningfulConversationBubble.text} lunch.`,
+    },
+  };
+  const completedReplayProbe = {
+    activeConversation: {
+      ...nearCompleteReplayProbe.activeConversation,
+      replay: {
+        isReplaying: false,
+        revealedEntryCount: 2,
+        streamedWordCount: 49,
+      },
+    },
+  };
+  assert.equal(
+    responsiveLongMaraReplayReadiness({
+      elapsedMs: 29_789,
+      page: nearCompleteReplayPage,
+      probe: nearCompleteReplayProbe,
+      timeoutMs: 60_000,
+    }),
+    "waiting",
+    "A near-complete replay at the former 30s cutoff must receive the remaining bounded replay window.",
+  );
+  assert.equal(
+    responsiveLongMaraReplayReadiness({
+      elapsedMs: 30_250,
+      page: completedReplayPage,
+      probe: completedReplayProbe,
+      timeoutMs: 60_000,
+    }),
+    "ready",
+    "A replay that completes just after the former cutoff must become ready without weakening its content contract.",
+  );
+  assert.equal(
+    responsiveLongMaraReplayReadiness({
+      elapsedMs: 60_000,
+      page: nearCompleteReplayPage,
+      probe: nearCompleteReplayProbe,
+      timeoutMs: 60_000,
+    }),
+    "timed_out",
+    "A replay that never completes must still fail at the bounded replay deadline.",
   );
 
   const interiorPage = {
@@ -6825,6 +6918,42 @@ async function waitForResponsiveDecisionCameraProbe(
   );
 }
 
+async function waitForResponsiveLongMaraReplayCompletion(session, label) {
+  const startedAt = Date.now();
+  let lastPage = null;
+  let lastProbe = null;
+
+  while (true) {
+    lastProbe = await session.readBrowserProbe();
+    lastPage = await session.inspectPage();
+    const elapsedMs = Date.now() - startedAt;
+    const readiness = responsiveLongMaraReplayReadiness({
+      elapsedMs,
+      page: lastPage,
+      probe: lastProbe,
+      timeoutMs: RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS,
+    });
+    if (readiness === "ready") {
+      return {
+        replay: lastProbe?.activeConversation?.replay ?? null,
+        waitedMs: elapsedMs,
+      };
+    }
+    if (readiness === "timed_out") {
+      break;
+    }
+    await sleep(POLL_INTERVAL_MS);
+  }
+
+  throw new Error(
+    `${label}: deterministic Mara replay did not complete within ${RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS}ms: ${JSON.stringify({
+      latestMeaningfulConversationBubble:
+        lastPage?.latestMeaningfulConversationBubble ?? null,
+      probe: compactDecisionArtifactProbeDiagnostic(lastProbe),
+    })}.`,
+  );
+}
+
 async function runResponsiveDecisionArtifactCheck(session) {
   const { gameId } = await createLongMaraDecisionArtifactGame();
   const results = [];
@@ -6877,18 +7006,18 @@ async function runResponsiveDecisionArtifactCheck(session) {
       frozenProbe.location?.spaceId ?? null,
       `${viewport.name} long Mara responsive decision camera`,
     );
+    const replayReadiness =
+      await waitForResponsiveLongMaraReplayCompletion(
+        session,
+        `${viewport.name} long Mara responsive decision replay`,
+      );
     const readableRail = await waitForVisibleDecisionArtifactDom(
       session,
       `${viewport.name} long Mara responsive decision rail`,
       {
         accept: ({ page, probe }) =>
           page.railState === "expanded" &&
-          probe.activeConversation?.replay?.isReplaying === false &&
-          probe.activeConversation?.replay?.revealedEntryCount >=
-            probe.activeConversation?.lines &&
-          /^Tonight's bed is yours if you keep the house easy to live in\./i.test(
-            page.latestMeaningfulConversationBubble?.text ?? "",
-          ),
+          responsiveLongMaraReplayComplete(page, probe),
         assertSettledPage: ({ page, payload, probe }) => {
           assertDecisionHierarchy(
             page,
@@ -6986,6 +7115,7 @@ async function runResponsiveDecisionArtifactCheck(session) {
       expandedGeometry: compactDecisionArtifactReadabilityGeometry(page),
       probe: compactDecisionArtifactProbeDiagnostic(frozenProbe),
       readabilityTiming: readableRail.timing,
+      replayReadiness,
       screenshotPath,
       viewport,
     });
