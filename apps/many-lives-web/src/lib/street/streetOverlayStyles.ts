@@ -398,6 +398,17 @@ export function buildStreetOverlayStyle({
       .ml-live-conversation-thread .ml-chat-rail-note {
         display: none;
       }
+      .ml-root:not(.is-collapsible-rail)
+        .ml-live-conversation-thread
+        .ml-chat-stack {
+        width: 100%;
+        max-width: 100%;
+      }
+      .ml-root:not(.is-collapsible-rail)
+        .ml-live-conversation-thread
+        .ml-chat-bubble-wrap {
+        flex: 1 1 auto;
+      }
       .ml-live-conversation-thread .ml-chat-shell.is-rail .ml-chat-transcript,
       .ml-live-conversation-thread .ml-chat-shell.is-rail.is-live .ml-chat-transcript {
         min-height: 72px;

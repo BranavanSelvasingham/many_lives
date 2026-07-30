@@ -5381,6 +5381,73 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       },
     },
   };
+  const readableDesktopLongMaraConversationPage = {
+    ...readableLongMaraConversationPage,
+    commandRail: {
+      clientHeight: 501,
+      overflowY: "hidden",
+      scrollHeight: 501,
+      scrollTop: 0,
+    },
+    decisionArtifact: {
+      ...readableLongMaraConversationPage.decisionArtifact,
+      height: 154,
+    },
+    latestMeaningfulConversationBubble: {
+      fullyVisible: true,
+      rect: {
+        bottom: 666,
+        height: 198,
+        left: 922,
+        right: 1197,
+        top: 468,
+        width: 275,
+        x: 922,
+        y: 468,
+      },
+      text: "Tonight's bed is yours if you keep the house easy to live in.",
+      visibleRect: {
+        bottom: 666,
+        height: 198,
+        left: 922,
+        right: 1197,
+        top: 468,
+        width: 275,
+        x: 922,
+        y: 468,
+      },
+    },
+    liveConversationTranscript: {
+      clientHeight: 208,
+      overflowY: "auto",
+      scrollHeight: 358,
+      scrollTop: 150,
+    },
+    liveConversationWorkspace: {
+      bottom: 685,
+      height: 477,
+      left: 878,
+      right: 1245,
+      top: 209,
+      width: 367,
+      x: 878,
+      y: 209,
+    },
+  };
+  const onePixelClippedDesktopConversationPage = {
+    ...readableDesktopLongMaraConversationPage,
+    latestMeaningfulConversationBubble: {
+      ...readableDesktopLongMaraConversationPage.latestMeaningfulConversationBubble,
+      fullyVisible: false,
+      visibleRect: {
+        ...readableDesktopLongMaraConversationPage
+          .latestMeaningfulConversationBubble.visibleRect,
+        height: 197,
+        top: 469,
+        y: 469,
+      },
+    },
+  };
   const missingScenePage = {
     ...readablePage,
     cameraActiveSpaceId: null,
@@ -5431,6 +5498,35 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     readableConversationSample.error,
     null,
     "A fully visible latest Mara reply should satisfy the strict conversation guard.",
+  );
+  const clippedDesktopConversationSample =
+    evaluateDecisionArtifactReadabilitySample(
+      createDecisionArtifactReadabilityState(),
+      onePixelClippedDesktopConversationPage,
+      (page) =>
+        assertLiveConversationDecisionAndBubbleReadable(
+          page,
+          "desktop long Mara responsive decision",
+        ),
+    );
+  assert.ok(
+    clippedDesktopConversationSample.error,
+    "A desktop Mara reply clipped by one pixel at the top must fail the responsive decision guard.",
+  );
+  const readableDesktopConversationSample =
+    evaluateDecisionArtifactReadabilitySample(
+      createDecisionArtifactReadabilityState(),
+      readableDesktopLongMaraConversationPage,
+      (page) =>
+        assertLiveConversationDecisionAndBubbleReadable(
+          page,
+          "desktop long Mara responsive decision",
+        ),
+    );
+  assert.equal(
+    readableDesktopConversationSample.error,
+    null,
+    "A 154px decision and fully visible 198px desktop Mara reply must satisfy the strict guard inside a 501px command rail.",
   );
   settling = recordDecisionArtifactReadabilitySample(settling, readablePage);
   assert.equal(settling.stableSamples, 1);
