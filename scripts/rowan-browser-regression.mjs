@@ -14504,6 +14504,14 @@ function autoplayRouteCaptureSamplesShareExactIdentity(before, after) {
   );
 }
 
+function autoplayArchivedRouteSamplesShareAdmissibleIdentity(before, after) {
+  return Boolean(
+    autoplayRouteCaptureSamplesShareExactRouteIdentity(before, after) &&
+      autoplayRouteSampleHudSignature(before) !== null &&
+      autoplayRouteSampleHudSignature(after) !== null,
+  );
+}
+
 function autoplayRecordedRouteWindowSharesAdmissibleIdentity(recordedWindow) {
   if (
     autoplayRouteCaptureSamplesShareExactIdentity(
@@ -15709,7 +15717,7 @@ function buildAutoplayArchivedRouteFrameCandidates({
   if (
     !openingProbe ||
     !closingProbe ||
-    !autoplayRouteCaptureSamplesShareExactIdentity(
+    !autoplayArchivedRouteSamplesShareAdmissibleIdentity(
       openingProbe,
       closingProbe,
     )
@@ -15752,7 +15760,7 @@ function buildAutoplayArchivedRouteFrameCandidates({
                   sample.route,
                   expectedTargetLocationId,
                 ) &&
-                autoplayRouteCaptureSamplesShareExactIdentity(
+                autoplayArchivedRouteSamplesShareAdmissibleIdentity(
                   openingProbe,
                   sample,
                 ),
@@ -15767,7 +15775,7 @@ function buildAutoplayArchivedRouteFrameCandidates({
                 sample.capturedAtEpochMs <=
                   capturedAtEpochMs -
                     AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS &&
-                autoplayRouteCaptureSamplesShareExactIdentity(
+                autoplayArchivedRouteSamplesShareAdmissibleIdentity(
                   sample,
                   matchedProbe,
                 ),
@@ -15784,7 +15792,11 @@ function buildAutoplayArchivedRouteFrameCandidates({
               openingFrameGraceMs >=
                 AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS &&
               openingFrameGraceMs <
-                AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+                AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS &&
+              autoplayArchivedRouteSamplesShareAdmissibleIdentity(
+                openingProbe,
+                matchedProbe,
+              ),
           );
           if (!settledBeforeProbe && !usesOpeningFrameGrace) {
             return null;

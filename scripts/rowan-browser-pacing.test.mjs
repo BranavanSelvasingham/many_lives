@@ -887,6 +887,174 @@ test("proactive route history survives a delayed observer and rejects unproven w
   );
   routeHudContinuityChecks =
     routeHudContinuityChecksBeforeConstrainedRunner;
+  const completedRouteOpeningAtEpochMs = 1_785_434_896_125;
+  const completedRoutePaintProbe = (text) => ({
+    regions: [{ surface: "hud", text }],
+    stableRegions: [{ surface: "hud", text }],
+    viewport: { height: 625, width: 1365 },
+  });
+  const completedRouteSample = (
+    progress,
+    sampleAtEpochMs,
+    hudText = "DAY 1 11:05 LATE MORNING $12 70 ENERGY 2/4 OUTCOMES MET",
+    routeOverrides = {},
+  ) => ({
+    ...routeSample(
+      progress,
+      0,
+      routeOverrides,
+      completedRoutePaintProbe(hudText),
+    ),
+    capturedAtEpochMs: sampleAtEpochMs,
+    capturedAtMonotonicMs:
+      sampleAtEpochMs - completedRouteOpeningAtEpochMs,
+  });
+  const completedRouteSamples = [
+    completedRouteSample(0.006, completedRouteOpeningAtEpochMs),
+    completedRouteSample(0.15, 1_785_434_897_000),
+    completedRouteSample(0.35, 1_785_434_898_300),
+    completedRouteSample(0.4, 1_785_434_898_412),
+    completedRouteSample(
+      0.65,
+      1_785_434_899_600,
+      "DAY 1 11:23 LATE MORNING $12 46 ENERGY 2/4 OUTCOMES MET",
+    ),
+    completedRouteSample(
+      0.77,
+      1_785_434_899_972,
+      "DAY 1 11:23 LATE MORNING $12 46 ENERGY 2/4 OUTCOMES MET",
+    ),
+  ];
+  const completedRouteArchivedFrames = [
+    {
+      data: "ci-completed-opening-route-start",
+      metadata: { timestamp: 1_785_434_898.445189 },
+      sequence: 726,
+    },
+    {
+      data: "ci-completed-opening-route-mid",
+      metadata: { timestamp: 1_785_434_899.960604 },
+      sequence: 730,
+    },
+  ];
+  const completedRouteValidateFrame = ({
+    frame,
+    paintProbe: acceptedPaintProbe,
+  }) => {
+    assert.equal(
+      typeof frame.data,
+      "string",
+      "Archived route evidence must contain rendered frame pixels.",
+    );
+    return {
+      buffer: Buffer.from(frame.data),
+      height: 625,
+      paintProbe: acceptedPaintProbe,
+      textPaint: {},
+      width: 1365,
+    };
+  };
+  const completedRouteArchivedTrajectory =
+    routeCapture.selectAutoplayRecordedRouteTrajectory({
+      archivedFrames: completedRouteArchivedFrames,
+      expectedTargetLocationId: "tea-house",
+      frames: completedRouteArchivedFrames,
+      label: "exact completed-route archived opening frames",
+      samples: completedRouteSamples,
+      validateFrame: completedRouteValidateFrame,
+      validateStableFramePair: () => ({}),
+    });
+  assert.equal(completedRouteArchivedTrajectory.start.frame.sequence, 726);
+  assert.equal(completedRouteArchivedTrajectory.mid.frame.sequence, 730);
+  assert.ok(
+    completedRouteArchivedTrajectory.mid.beforeProbe.route.progress -
+      completedRouteArchivedTrajectory.start.afterProbe.route.progress >=
+      0.1,
+  );
+  assert.equal(
+    completedRouteArchivedTrajectory.start.validated.textPaint
+      .routeHudContinuityBasis,
+    "exact-route-identity-and-per-frame-hud-paint",
+  );
+  assert.equal(
+    completedRouteArchivedTrajectory.mid.validated.textPaint
+      .routeHudContinuityBasis,
+    "exact-route-identity-and-per-frame-hud-paint",
+  );
+  for (const [fixtureLabel, archivedFrames] of [
+    ["one archived frame", completedRouteArchivedFrames.slice(0, 1)],
+    [
+      "stale and after-arrival archived frames",
+      [
+        {
+          data: "stale-opening-route-frame",
+          metadata: { timestamp: 1_785_434_895.9 },
+          sequence: 724,
+        },
+        {
+          data: "after-arrival-opening-route-frame",
+          metadata: { timestamp: 1_785_434_900.2 },
+          sequence: 732,
+        },
+      ],
+    ],
+  ]) {
+    assert.throws(
+      () =>
+        routeCapture.selectAutoplayRecordedRouteTrajectory({
+          archivedFrames,
+          expectedTargetLocationId: "tea-house",
+          frames: [],
+          label: fixtureLabel,
+          samples: completedRouteSamples,
+          validateFrame: completedRouteValidateFrame,
+          validateStableFramePair: () => ({}),
+        }),
+      /did not contain two distinct legal rendered positions/,
+    );
+  }
+  assert.throws(
+    () =>
+      routeCapture.selectAutoplayRecordedRouteTrajectory({
+        archivedFrames: [
+          completedRouteArchivedFrames[0],
+          {
+            ...completedRouteArchivedFrames[1],
+            data: undefined,
+          },
+        ],
+        expectedTargetLocationId: "tea-house",
+        frames: [],
+        label: "missing archived route pixels",
+        samples: completedRouteSamples,
+        validateFrame: completedRouteValidateFrame,
+        validateStableFramePair: () => ({}),
+      }),
+    /Archived route evidence must contain rendered frame pixels/,
+  );
+  assert.throws(
+    () =>
+      routeCapture.selectAutoplayRecordedRouteTrajectory({
+        archivedFrames: completedRouteArchivedFrames,
+        expectedTargetLocationId: "tea-house",
+        frames: [],
+        label: "changed archived route identity",
+        samples: completedRouteSamples.map((sample, index) =>
+          index < 4
+            ? sample
+            : {
+                ...sample,
+                route: {
+                  ...sample.route,
+                  targetLocationId: "repair-stall",
+                },
+              },
+        ),
+        validateFrame: completedRouteValidateFrame,
+        validateStableFramePair: () => ({}),
+      }),
+    /did not contain two distinct legal rendered positions/,
+  );
   const screencastFrame = (sequence, offsetMs) => ({
     data: `active-route-png-${sequence}`,
     metadata: { timestamp: (capturedAtEpochMs + offsetMs) / 1_000 },
