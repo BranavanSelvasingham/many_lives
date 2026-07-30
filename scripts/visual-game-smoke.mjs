@@ -4987,6 +4987,10 @@ function compactDecisionArtifactReadabilityGeometry(page) {
     dockRoot: page?.dockRoot ?? null,
     cameraActiveSpaceId: page?.cameraActiveSpaceId ?? null,
     cameraActiveSpaceKind: page?.cameraActiveSpaceKind ?? null,
+    latestMeaningfulConversationBubble:
+      page?.latestMeaningfulConversationBubble ?? null,
+    liveConversationTranscript: page?.liveConversationTranscript ?? null,
+    liveConversationWorkspace: page?.liveConversationWorkspace ?? null,
     sceneVisibleFraction: page?.sceneVisibleFraction ?? null,
     rail: page?.rail ?? null,
     railState: page?.railState ?? null,
@@ -5039,6 +5043,20 @@ function decisionArtifactReadabilitySignature(geometry) {
     decisionArtifact: geometry.decisionArtifact,
     decisionFields: geometry.decisionFields,
     dockRoot: geometry.dockRoot,
+    latestMeaningfulConversationBubble:
+      geometry.latestMeaningfulConversationBubble
+        ? {
+            fullyVisible:
+              geometry.latestMeaningfulConversationBubble.fullyVisible,
+          }
+        : null,
+    liveConversationTranscript: geometry.liveConversationTranscript
+      ? {
+          clientHeight: geometry.liveConversationTranscript.clientHeight,
+          overflowY: geometry.liveConversationTranscript.overflowY,
+        }
+      : null,
+    liveConversationWorkspace: geometry.liveConversationWorkspace,
     rail: geometry.rail,
     railState: geometry.railState,
     rightStack: geometry.rightStack,
@@ -5260,6 +5278,77 @@ function assertDecisionArtifactReadabilityWaitRegression() {
       },
     },
   };
+  const readableLongMaraConversationPage = {
+    ...readablePage,
+    decisionArtifactCount: 1,
+    latestMeaningfulConversationBubble: {
+      fullyVisible: true,
+      rect: {
+        bottom: 752,
+        height: 89,
+        left: 25,
+        right: 361,
+        top: 663,
+        width: 336,
+        x: 25,
+        y: 663,
+      },
+      text: "Tonight's bed is yours if you keep the house easy to live in.",
+      visibleRect: {
+        bottom: 752,
+        height: 89,
+        left: 25,
+        right: 361,
+        top: 663,
+        width: 336,
+        x: 25,
+        y: 663,
+      },
+    },
+    liveConversationTranscript: {
+      clientHeight: 112,
+      overflowY: "auto",
+      scrollHeight: 214,
+      scrollTop: 102,
+    },
+    liveConversationWorkspace: {
+      bottom: 755,
+      height: 230,
+      left: 25,
+      right: 365,
+      top: 525,
+      width: 340,
+      x: 25,
+      y: 525,
+    },
+  };
+  const clippedLongMaraConversationPage = {
+    ...readableLongMaraConversationPage,
+    latestMeaningfulConversationBubble: {
+      ...readableLongMaraConversationPage.latestMeaningfulConversationBubble,
+      fullyVisible: false,
+      rect: {
+        bottom: 791,
+        height: 89,
+        left: 25,
+        right: 361,
+        top: 702,
+        width: 336,
+        x: 25,
+        y: 702,
+      },
+      visibleRect: {
+        bottom: 755,
+        height: 22,
+        left: 25,
+        right: 361,
+        top: 733,
+        width: 336,
+        x: 25,
+        y: 733,
+      },
+    },
+  };
   const missingScenePage = {
     ...readablePage,
     cameraActiveSpaceId: null,
@@ -5283,6 +5372,33 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     settling.stableSamples,
     0,
     "A long Mara artifact with a clipped Why This field must not count as readable.",
+  );
+  const clippedConversationSample = evaluateDecisionArtifactReadabilitySample(
+    createDecisionArtifactReadabilityState(),
+    clippedLongMaraConversationPage,
+    (page) =>
+      assertLiveConversationDecisionAndBubbleReadable(
+        page,
+        "mobile long Mara responsive decision",
+      ),
+  );
+  assert.ok(
+    clippedConversationSample.error,
+    "A partially visible latest Mara reply must fail the responsive decision guard.",
+  );
+  const readableConversationSample = evaluateDecisionArtifactReadabilitySample(
+    createDecisionArtifactReadabilityState(),
+    readableLongMaraConversationPage,
+    (page) =>
+      assertLiveConversationDecisionAndBubbleReadable(
+        page,
+        "mobile long Mara responsive decision",
+      ),
+  );
+  assert.equal(
+    readableConversationSample.error,
+    null,
+    "A fully visible latest Mara reply should satisfy the strict conversation guard.",
   );
   settling = recordDecisionArtifactReadabilitySample(settling, readablePage);
   assert.equal(settling.stableSamples, 1);
@@ -6765,7 +6881,14 @@ async function runResponsiveDecisionArtifactCheck(session) {
       session,
       `${viewport.name} long Mara responsive decision rail`,
       {
-        accept: ({ page }) => page.railState === "expanded",
+        accept: ({ page, probe }) =>
+          page.railState === "expanded" &&
+          probe.activeConversation?.replay?.isReplaying === false &&
+          probe.activeConversation?.replay?.revealedEntryCount >=
+            probe.activeConversation?.lines &&
+          /^Tonight's bed is yours if you keep the house easy to live in\./i.test(
+            page.latestMeaningfulConversationBubble?.text ?? "",
+          ),
         assertSettledPage: ({ page, payload, probe }) => {
           assertDecisionHierarchy(
             page,

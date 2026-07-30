@@ -11,9 +11,34 @@ export type OverlayRenderState = {
   focusedTagName: string | null;
   scrollIdentityByKey: Map<string, string>;
   scrollTopByKey: Map<string, number>;
+  transcriptFollowLatest: boolean;
   transcriptNearBottom: boolean;
   transcriptScrollTop: number | null;
 };
+
+export type ConversationTranscriptFollowGeometry = {
+  distanceFromBottom: number;
+  latestMeaningfulBottom: number | null;
+  latestMeaningfulTop: number | null;
+  viewportBottom: number;
+  viewportTop: number;
+};
+
+export function shouldFollowLatestConversationLine({
+  distanceFromBottom,
+  latestMeaningfulBottom,
+  latestMeaningfulTop,
+  viewportBottom,
+  viewportTop,
+}: ConversationTranscriptFollowGeometry) {
+  const latestMeaningfulLineIntersectsViewport =
+    latestMeaningfulBottom !== null &&
+    latestMeaningfulTop !== null &&
+    latestMeaningfulBottom > viewportTop + 1 &&
+    latestMeaningfulTop < viewportBottom - 1;
+
+  return distanceFromBottom < 48 || latestMeaningfulLineIntersectsViewport;
+}
 
 export function isOverlayTextInputFocused(root: HTMLDivElement | null) {
   const activeElement = document.activeElement;
@@ -108,6 +133,9 @@ export function captureOverlayRenderState(
         : null,
     scrollIdentityByKey,
     scrollTopByKey,
+    transcriptFollowLatest: transcript
+      ? conversationTranscriptShouldFollowLatest(transcript)
+      : false,
     transcriptNearBottom: transcript
       ? transcript.scrollHeight -
           transcript.scrollTop -
@@ -216,6 +244,16 @@ export function restoreOverlayRenderState(
         state.transcriptScrollTop,
         Math.max(transcript.scrollHeight - transcript.clientHeight, 0),
       );
+    }
+    if (state.transcriptFollowLatest) {
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+    if (
+      state.transcriptFollowLatest ||
+      state.transcriptScrollTop === null ||
+      state.transcriptNearBottom
+    ) {
+      followLatestConversationLineAfterLayout(root, transcript);
     }
   }
 
@@ -353,14 +391,12 @@ function commandRailConversationTargetRect(commandRail: HTMLElement) {
     latestMeaningfulExchange,
   );
   const latestRowRect = latestRow.getBoundingClientRect();
-  return (
-    preferredRect && rectFitsCommandRail(preferredRect, railRect)
-      ? preferredRect
-      : latestMeaningfulRect &&
-          rectFitsCommandRail(latestMeaningfulRect, railRect)
-        ? latestMeaningfulRect
-        : latestRowRect
-  );
+  return preferredRect && rectFitsCommandRail(preferredRect, railRect)
+    ? preferredRect
+    : latestMeaningfulRect &&
+        rectFitsCommandRail(latestMeaningfulRect, railRect)
+      ? latestMeaningfulRect
+      : latestRowRect;
 }
 
 function conversationRowHasSpokenText(row: HTMLElement) {
@@ -370,6 +406,38 @@ function conversationRowHasSpokenText(row: HTMLElement) {
       ?.textContent?.replace(/\s+/g, " ")
       .trim(),
   );
+}
+
+function conversationTranscriptShouldFollowLatest(transcript: HTMLElement) {
+  const meaningfulBubbles = Array.from(
+    transcript.querySelectorAll<HTMLElement>(".ml-chat-bubble"),
+  ).filter((bubble) =>
+    Boolean(bubble.textContent?.replace(/\s+/g, " ").trim()),
+  );
+  const latestMeaningfulBubble = meaningfulBubbles.at(-1);
+  const transcriptRect = transcript.getBoundingClientRect();
+  const latestMeaningfulRect =
+    latestMeaningfulBubble?.getBoundingClientRect() ?? null;
+
+  return shouldFollowLatestConversationLine({
+    distanceFromBottom:
+      transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight,
+    latestMeaningfulBottom: latestMeaningfulRect?.bottom ?? null,
+    latestMeaningfulTop: latestMeaningfulRect?.top ?? null,
+    viewportBottom: transcriptRect.bottom,
+    viewportTop: transcriptRect.top,
+  });
+}
+
+function followLatestConversationLineAfterLayout(
+  root: HTMLDivElement,
+  transcript: HTMLElement,
+) {
+  window.requestAnimationFrame(() => {
+    if (root.contains(transcript)) {
+      transcript.scrollTop = transcript.scrollHeight;
+    }
+  });
 }
 
 function rectForConversationElements(elements: HTMLElement[]) {

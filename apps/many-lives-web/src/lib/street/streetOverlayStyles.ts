@@ -2584,10 +2584,87 @@ export function buildStreetOverlayStyle({
       .ml-root.is-collapsible-rail.is-phone-rail .ml-dock-copy {
         display: none;
       }
+      .ml-root.is-collapsible-rail
+        .ml-live-conversation-thread
+        .ml-chat-stack {
+        width: 100%;
+        max-width: 100%;
+      }
+      .ml-root.is-collapsible-rail
+        .ml-live-conversation-thread
+        .ml-chat-row
+        .ml-chat-avatar {
+        display: none;
+      }
+      .ml-root.is-collapsible-rail
+        .ml-live-conversation-thread
+        .ml-chat-bubble {
+        padding: 8px 10px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .ml-root.is-phone-rail.is-rail-expanded:has(
+          .ml-command-rail.is-live-conversation
+        )
+        .ml-rail-head {
+        align-items: center;
+        padding: 9px 12px;
+      }
+      .ml-root.is-phone-rail.is-rail-expanded:has(
+          .ml-command-rail.is-live-conversation
+        )
+        .ml-rail-head
+        .ml-kicker,
+      .ml-root.is-phone-rail.is-rail-expanded:has(
+          .ml-command-rail.is-live-conversation
+        )
+        .ml-rail-status {
+        display: none;
+      }
+      .ml-root.is-phone-rail.is-rail-expanded:has(
+          .ml-command-rail.is-live-conversation
+        )
+        .ml-rail-heading-row {
+        margin-top: 0;
+      }
+      .ml-root.is-phone-rail.is-rail-expanded:has(
+          .ml-command-rail.is-live-conversation
+        )
+        .ml-rail-name {
+        font-size: 21px;
+        line-height: 1;
+      }
+      .ml-root.is-phone-rail.is-rail-expanded:has(
+          .ml-command-rail.is-live-conversation
+        )
+        .ml-rail-toggle {
+        padding: 8px 10px;
+      }
+      .ml-root.is-phone-rail
+        .ml-command-rail.is-live-conversation
+        .ml-command-rail-body {
+        gap: 0;
+        padding-top: 6px;
+      }
+      .ml-root.is-phone-rail .ml-live-conversation-workspace {
+        gap: 6px;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-decision
+        .ml-decision-artifact.is-compact {
+        padding: 7px 8px;
+      }
+      .ml-root.is-phone-rail
+        .ml-live-conversation-decision
+        .ml-decision-compact-copy {
+        gap: 2px;
+        margin-top: 4px;
+        line-height: 1.2;
+      }
       .ml-root.is-phone-rail
         .ml-live-conversation-thread
         .ml-chat-header {
-        display: block;
+        display: none;
       }
       .ml-root.is-phone-rail
         .ml-live-conversation-thread
@@ -2613,7 +2690,7 @@ export function buildStreetOverlayStyle({
       .ml-root.is-phone-rail
         .ml-live-conversation-thread
         .ml-chat-transcript {
-        margin-top: 6px;
+        margin-top: 0;
         gap: 6px;
       }
       .ml-root.is-phone-rail

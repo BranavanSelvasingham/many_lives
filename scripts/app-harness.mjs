@@ -126,6 +126,17 @@ function buildSteps() {
       "scripts/visual-game-smoke-startup.test.mjs",
       "scripts/visual-scene-anchor-regression.test.mjs",
     ]),
+    commandStep("web unit tests", "corepack", [
+      "pnpm",
+      "--filter",
+      "@many-lives/sim-server",
+      "exec",
+      "node",
+      "--import",
+      "tsx",
+      "--test",
+      "../many-lives-web/src/lib/street/overlayDomState.test.ts",
+    ]),
     commandStep("web sim fallback test", "corepack", [
       "pnpm",
       "--filter",
