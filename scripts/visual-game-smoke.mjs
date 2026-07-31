@@ -179,6 +179,7 @@ const screenshotCaptureRetries = [];
 const screenshotPixelDiagnostics = [];
 const eastWaterfrontCompositionDiagnostics = [];
 const fringeCompositionDiagnostics = [];
+const interiorActorVisibilityDiagnostics = [];
 const interiorIdentityDiagnostics = [];
 const secondaryLandmarkCompositionDiagnostics = [];
 
@@ -234,6 +235,19 @@ const INTERIOR_CAMERA_VIEWPORT = {
   name: "interior-camera",
   width: 810,
 };
+const MORROW_HOUSE_MARA_WORLD_POINT = { x: 276, y: 276 };
+const MORROW_HOUSE_MARA_INTERACTION_WORLD_POINT = { x: 316, y: 276 };
+const MORROW_HOUSE_PORTAL_WORLD_POINT = { x: 356, y: 396 };
+const MORROW_HOUSE_MARA_WORLD_EXTENTS = {
+  halfHeight: 23,
+  halfWidth: 17,
+};
+const ROWAN_WORLD_EXTENTS = {
+  halfHeight: 26.5,
+  halfWidth: 19.5,
+};
+const INTERIOR_ACTOR_EDGE_MARGIN_PX = 20;
+const INTERIOR_PORTAL_EDGE_MARGIN_PX = 24;
 const requestedViewportName = process.env.MANY_LIVES_VISUAL_VIEWPORT ?? null;
 const ACTIVE_VIEWPORTS = requestedViewportName
   ? VIEWPORTS.filter((viewport) => viewport.name === requestedViewportName)
@@ -2721,6 +2735,7 @@ function assertAuthoredInteriorIdentityPixels(
   let coolMetalPixels = 0;
   let darkHardwarePixels = 0;
   let detailTransitions = 0;
+  let domesticTextilePixels = 0;
   let goldAccentPixels = 0;
   let rustAccentPixels = 0;
   let sampledPixels = 0;
@@ -2764,6 +2779,24 @@ function assertAuthoredInteriorIdentityPixels(
       }
       if (luminance <= 72) {
         darkHardwarePixels += 1;
+      }
+      const mutedGreenTextile =
+        green >= red * 1.01 &&
+        green >= blue * 1.08 &&
+        red >= 55 &&
+        red <= 165 &&
+        luminance >= 50 &&
+        luminance <= 175;
+      const wovenBurgundy =
+        red >= 80 &&
+        red <= 165 &&
+        red >= green * 1.14 &&
+        blue >= red * 0.55 &&
+        blue <= green * 1.05 &&
+        luminance >= 55 &&
+        luminance <= 155;
+      if (mutedGreenTextile || wovenBurgundy) {
+        domesticTextilePixels += 1;
       }
       if (red >= 165 && green >= 105 && green >= blue * 1.22) {
         goldAccentPixels += 1;
@@ -2810,6 +2843,7 @@ function assertAuthoredInteriorIdentityPixels(
   const fractions = {
     coolMetal: coolMetalPixels / Math.max(sampledPixels, 1),
     darkHardware: darkHardwarePixels / Math.max(sampledPixels, 1),
+    domesticTextile: domesticTextilePixels / Math.max(sampledPixels, 1),
     goldAccent: goldAccentPixels / Math.max(sampledPixels, 1),
     rustAccent: rustAccentPixels / Math.max(sampledPixels, 1),
     warmMaterial: warmMaterialPixels / Math.max(sampledPixels, 1),
@@ -2828,7 +2862,14 @@ function assertAuthoredInteriorIdentityPixels(
     `${label}: the room lacks readable dark fixtures/hardware (${fractions.darkHardware.toFixed(3)} fraction).`,
   );
 
-  if (role === "tea-house") {
+  if (role === "boarding-house") {
+    assert.ok(
+      fractions.warmMaterial >= 0.2 &&
+        fractions.domesticTextile >= 0.015 &&
+        fractions.goldAccent >= 0.008,
+      `${label}: Morrow House lacks its warm reception, woven domestic textile, or brass key signature: ${JSON.stringify(fractions)}.`,
+    );
+  } else if (role === "tea-house") {
     assert.ok(
       fractions.warmMaterial >= 0.16 && fractions.goldAccent >= 0.01,
       `${label}: Kettle & Lamp lacks broad warm service material and tea-light accents: ${JSON.stringify(fractions)}.`,
@@ -3521,10 +3562,16 @@ async function assertAuthoredInteriorVisualGuard() {
 
   assert.ok(
     streetSource.includes("function drawBoardingHouseInteriorAtmosphere") &&
+      streetSource.includes("function drawBoardingHouseLoungeRug") &&
+      streetSource.includes("function drawBoardingHouseWovenRug") &&
+      streetSource.includes("function drawBoardingHouseRoomHall") &&
+      streetSource.includes("function drawBoardingHouseKeyBoard") &&
+      streetSource.includes("getInteriorActorCompositionBounds") &&
+      streetSource.includes("getInteriorPortalWorldPoints") &&
       streetSource.includes(
         'space.id === "interior:boarding-house"',
       ),
-    "Morrow House must keep a boarding-house-specific interior atmosphere pass.",
+    "Morrow House must keep its opaque woven rugs, room hall, key board, and boarding-house-specific atmosphere passes.",
   );
   assert.ok(
     streetSource.includes("function drawBoardingHouseInteriorObjectDetail") &&
@@ -3579,6 +3626,8 @@ async function assertAuthoredInteriorVisualGuard() {
       smokeSource.includes("assertBoardingHouseInteriorCompositionPixels") &&
       smokeSource.includes("assertAuthoredInteriorIdentityPixels") &&
       smokeSource.includes("assertInteriorCameraPointsUnobscured") &&
+      smokeSource.includes("assertMorrowHouseRelevantActorsUnobscured") &&
+      smokeSource.includes("captureMorrowHouseMobileState") &&
       smokeSource.includes("assertInteriorTitleInsideScene") &&
       smokeSource.includes("assertAuthoredInteriorVisualGuard"),
     "Visual smoke must keep desktop/mobile screenshots plus pixel-backed and geometry-backed checks for all authored interiors.",
@@ -6801,6 +6850,131 @@ function assertInteriorCameraPointsUnobscured(page, camera, label) {
   return diagnostics;
 }
 
+function assertMorrowHouseRelevantActorsUnobscured(
+  page,
+  camera,
+  label,
+  viewport,
+  stateId,
+) {
+  const actors = {};
+  for (const [name, worldPoint, worldExtents] of [
+    [
+      "mara",
+      MORROW_HOUSE_MARA_WORLD_POINT,
+      MORROW_HOUSE_MARA_WORLD_EXTENTS,
+    ],
+    ["rowan", camera.playerWorldPoint, ROWAN_WORLD_EXTENTS],
+  ]) {
+    const screenPoint = projectCameraWorldPoint(camera, worldPoint);
+    const topLeft = projectCameraWorldPoint(camera, {
+      x: worldPoint.x - worldExtents.halfWidth,
+      y: worldPoint.y - worldExtents.halfHeight,
+    });
+    const bottomRight = projectCameraWorldPoint(camera, {
+      x: worldPoint.x + worldExtents.halfWidth,
+      y: worldPoint.y + worldExtents.halfHeight,
+    });
+    const bounds = {
+      bottom: bottomRight.y,
+      height: bottomRight.y - topLeft.y,
+      left: topLeft.x,
+      right: bottomRight.x,
+      top: topLeft.y,
+      width: bottomRight.x - topLeft.x,
+    };
+    const visibleSlices = [
+      bounds.left + 1,
+      screenPoint.x,
+      bounds.right - 1,
+    ].map((x) => getUnobscuredSceneBoundsAtX(page, x));
+    const visible = {
+      bottom: Math.min(...visibleSlices.map((slice) => slice.bottom)),
+      left: Math.max(...visibleSlices.map((slice) => slice.left)),
+      right: Math.min(...visibleSlices.map((slice) => slice.right)),
+      top: Math.max(...visibleSlices.map((slice) => slice.top)),
+    };
+    const clearance = Math.min(
+      bounds.left - visible.left,
+      visible.right - bounds.right,
+      bounds.top - visible.top,
+      visible.bottom - bounds.bottom,
+    );
+    const unobscured = clearance >= INTERIOR_ACTOR_EDGE_MARGIN_PX;
+    assert.ok(
+      unobscured,
+      `${label}: ${name}'s full sprite bounds lack ${INTERIOR_ACTOR_EDGE_MARGIN_PX}px of unobscured breathing room: ${JSON.stringify({
+        bounds,
+        clearance: Number(clearance.toFixed(2)),
+        screenPoint,
+        visible,
+        worldPoint,
+      })}.`,
+    );
+    actors[name] = {
+      bounds: Object.fromEntries(
+        Object.entries(bounds).map(([key, value]) => [
+          key,
+          Number(value.toFixed(2)),
+        ]),
+      ),
+      clearance: Number(clearance.toFixed(2)),
+      requiredMargin: INTERIOR_ACTOR_EDGE_MARGIN_PX,
+      screenPoint: {
+        x: Number(screenPoint.x.toFixed(2)),
+        y: Number(screenPoint.y.toFixed(2)),
+      },
+      unobscured,
+      worldPoint,
+    };
+  }
+
+  const portalPoint = projectCameraWorldPoint(
+    camera,
+    MORROW_HOUSE_PORTAL_WORLD_POINT,
+  );
+  const portalVisible = getUnobscuredSceneBoundsAtX(page, portalPoint.x);
+  const portalClearance = Math.min(
+    portalPoint.x - portalVisible.left,
+    portalVisible.right - portalPoint.x,
+    portalPoint.y - portalVisible.top,
+    portalVisible.bottom - portalPoint.y,
+  );
+  const portalUnobscured =
+    portalClearance >= INTERIOR_PORTAL_EDGE_MARGIN_PX;
+  assert.ok(
+    portalUnobscured,
+    `${label}: the Morrow House portal/action point lacks ${INTERIOR_PORTAL_EDGE_MARGIN_PX}px of unobscured clearance: ${JSON.stringify({
+      clearance: Number(portalClearance.toFixed(2)),
+      screenPoint: portalPoint,
+      visible: portalVisible,
+      worldPoint: MORROW_HOUSE_PORTAL_WORLD_POINT,
+    })}.`,
+  );
+  actors.portal = {
+    clearance: Number(portalClearance.toFixed(2)),
+    requiredMargin: INTERIOR_PORTAL_EDGE_MARGIN_PX,
+    screenPoint: {
+      x: Number(portalPoint.x.toFixed(2)),
+      y: Number(portalPoint.y.toFixed(2)),
+    },
+    unobscured: portalUnobscured,
+    worldPoint: MORROW_HOUSE_PORTAL_WORLD_POINT,
+  };
+
+  const diagnostics = {
+    actors,
+    label,
+    playerWorldPoint: camera.playerWorldPoint,
+    relevantActorId: "npc-mara",
+    role: "boarding-house",
+    stateId,
+    viewport: viewport.name,
+  };
+  interiorActorVisibilityDiagnostics.push(diagnostics);
+  return diagnostics;
+}
+
 function assertInteriorTitleInsideScene(camera, label) {
   const bounds = camera.interiorTitleWorldBounds;
   assert.ok(bounds, `${label}: missing interior title world bounds.`);
@@ -8971,6 +9145,96 @@ async function waitForVisualHierarchyPage(session, label) {
   }
 }
 
+async function captureMorrowHouseMobileState({
+  expectedPlayerWorldPoint,
+  gameId,
+  label,
+  screenshotName,
+  session,
+  stateId,
+  viewport,
+}) {
+  await session.setViewport(viewport);
+  await session.navigate(
+    `${activeWebBase}/?freezeAutoplay=1&readyCheck=${stateId}-${Date.now()}&gameId=${gameId}`,
+  );
+  await session.waitForAppReady();
+  const initial = await waitForInteriorCameraProbe(session);
+  const { settled, settledAgain } = await waitForInteriorCameraSettle(
+    session,
+    initial,
+  );
+  assert.ok(
+    cameraPointDistance(
+      settledAgain.playerWorldPoint,
+      expectedPlayerWorldPoint,
+    ) <= 2,
+    `${label}: Rowan did not load at the expected alternate-state point: ${JSON.stringify({
+      actual: settledAgain.playerWorldPoint,
+      expected: expectedPlayerWorldPoint,
+      stateId,
+    })}.`,
+  );
+
+  const page = await waitForVisualHierarchyPage(session, label);
+  assertOverlayGeometry(
+    page,
+    viewport,
+    label,
+    page.visibleTimeChips,
+    "interior:boarding-house",
+  );
+  assertBoundedVisualHierarchy(page, label);
+  const pointVisibility = assertInteriorCameraPointsUnobscured(
+    page,
+    settledAgain,
+    label,
+  );
+  const titleBounds = assertInteriorTitleInsideScene(settledAgain, label);
+  const screenshotPath = path.join(OUTPUT_DIR, screenshotName);
+  const capture = await captureValidatedScreenshot({
+    expectedHudText: page.visibleTimeChips,
+    label,
+    page,
+    session,
+    targetPath: screenshotPath,
+    viewport,
+  });
+  const composition = assertBoardingHouseInteriorCompositionPixels(
+    capture.screenshot,
+    page,
+    viewport,
+    label,
+  );
+  const identity = assertAuthoredInteriorIdentityPixels(
+    capture.screenshot,
+    page,
+    viewport,
+    "boarding-house",
+    label,
+  );
+  const actorVisibility = assertMorrowHouseRelevantActorsUnobscured(
+    page,
+    settledAgain,
+    label,
+    viewport,
+    stateId,
+  );
+
+  return {
+    actorVisibility,
+    composition,
+    identity,
+    initial,
+    pointVisibility,
+    screenshotPath,
+    settled,
+    settledAgain,
+    stateId,
+    titleBounds,
+  };
+}
+
 async function runInteriorCameraCheck(session) {
   const gameId = await createInteriorCameraGame();
   await session.setViewport(INTERIOR_CAMERA_VIEWPORT);
@@ -9051,6 +9315,20 @@ async function runInteriorCameraCheck(session) {
     INTERIOR_CAMERA_VIEWPORT,
     "interior camera",
   );
+  const compactIdentity = assertAuthoredInteriorIdentityPixels(
+    compactCapture.screenshot,
+    interiorPage,
+    INTERIOR_CAMERA_VIEWPORT,
+    "boarding-house",
+    "Morrow House interior desktop",
+  );
+  const compactActorVisibility = assertMorrowHouseRelevantActorsUnobscured(
+    interiorPage,
+    settledAgain,
+    "Morrow House interior desktop",
+    INTERIOR_CAMERA_VIEWPORT,
+    "desktop-current",
+  );
 
   const interiorSettleOptions = { attempts: 8, settleMs: 90 };
   const eastEdge = await settleCameraAtEdge(
@@ -9121,70 +9399,72 @@ async function runInteriorCameraCheck(session) {
     (viewport) => viewport.name === "mobile",
   );
   assert.ok(mobileViewport, "Interior camera check is missing the mobile viewport.");
-  await session.setViewport(mobileViewport);
-  await session.navigate(
-    `${activeWebBase}/?freezeAutoplay=1&readyCheck=interior-camera-mobile-${Date.now()}&gameId=${gameId}`,
-  );
-  await session.waitForAppReady();
-  const mobileInitial = await waitForInteriorCameraProbe(session);
-  const {
-    settled: mobileSettled,
-    settledAgain: mobileSettledAgain,
-  } = await waitForInteriorCameraSettle(session, mobileInitial);
-  const mobilePage = await waitForVisualHierarchyPage(
+  const mobileGameId = await createInteriorCameraGame();
+  const mobilePortalState = await captureMorrowHouseMobileState({
+    expectedPlayerWorldPoint: MORROW_HOUSE_PORTAL_WORLD_POINT,
+    gameId: mobileGameId,
+    label: "Morrow House interior mobile entrance state",
+    screenshotName: "interior-camera-mobile.png",
     session,
-    "interior camera mobile",
-  );
-  assertOverlayGeometry(
-    mobilePage,
-    mobileViewport,
-    "interior camera mobile",
-    mobilePage.visibleTimeChips,
-    "interior:boarding-house",
-  );
-  assertBoundedVisualHierarchy(mobilePage, "interior camera mobile");
-  const mobilePointVisibility = assertInteriorCameraPointsUnobscured(
-    mobilePage,
-    mobileSettledAgain,
-    "interior camera mobile",
-  );
-  const mobileTitleBounds = assertInteriorTitleInsideScene(
-    mobileSettledAgain,
-    "interior camera mobile",
-  );
-  const mobileScreenshotPath = path.join(
-    OUTPUT_DIR,
-    "interior-camera-mobile.png",
-  );
-  const mobileCapture = await captureValidatedScreenshot({
-    expectedHudText: mobilePage.visibleTimeChips,
-    label: "interior camera mobile",
-    page: mobilePage,
-    session,
-    targetPath: mobileScreenshotPath,
+    stateId: "entrance",
     viewport: mobileViewport,
   });
-  const mobileComposition = assertBoardingHouseInteriorCompositionPixels(
-    mobileCapture.screenshot,
-    mobilePage,
-    mobileViewport,
-    "interior camera mobile",
+  const movedNearMara = await fetchJson(
+    `${activeWebBase}/sim/game/${mobileGameId}/command`,
+    {
+      body: JSON.stringify({
+        type: "move_to",
+        x: 5,
+        y: 5,
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
   );
+  assert.equal(
+    movedNearMara?.game?.activeSpaceId,
+    "interior:boarding-house",
+    "Morrow House alternate-state check left the interior.",
+  );
+  assert.deepEqual(
+    {
+      x: movedNearMara?.game?.player?.x,
+      y: movedNearMara?.game?.player?.y,
+    },
+    { x: 5, y: 5 },
+    "Morrow House alternate-state check could not position Rowan near Mara.",
+  );
+  const mobileNearMaraState = await captureMorrowHouseMobileState({
+    expectedPlayerWorldPoint: MORROW_HOUSE_MARA_INTERACTION_WORLD_POINT,
+    gameId: mobileGameId,
+    label: "Morrow House interior mobile Mara state",
+    screenshotName: "interior-camera-mobile-near-mara.png",
+    session,
+    stateId: "near-mara",
+    viewport: mobileViewport,
+  });
 
   return {
+    compactActorVisibility,
     compactComposition,
+    compactIdentity,
     compactPointVisibility,
     compactTitleBounds,
     eastEdge,
     gameId,
     initial,
-    mobileComposition,
-    mobileInitial,
-    mobilePointVisibility,
-    mobileScreenshotPath,
-    mobileSettled,
-    mobileSettledAgain,
-    mobileTitleBounds,
+    mobileActorVisibility: mobilePortalState.actorVisibility,
+    mobileComposition: mobilePortalState.composition,
+    mobileGameId,
+    mobileIdentity: mobilePortalState.identity,
+    mobileInitial: mobilePortalState.initial,
+    mobileNearMaraState,
+    mobilePointVisibility: mobilePortalState.pointVisibility,
+    mobilePortalState,
+    mobileScreenshotPath: mobilePortalState.screenshotPath,
+    mobileSettled: mobilePortalState.settled,
+    mobileSettledAgain: mobilePortalState.settledAgain,
+    mobileTitleBounds: mobilePortalState.titleBounds,
     northEdge,
     screenshotPath,
     settled,
@@ -9281,6 +9561,7 @@ async function main() {
     const visualQualityRegressionEvidence =
       createVisualQualityRegressionEvidence({
         fringeCompositionDiagnostics,
+        interiorActorVisibilityDiagnostics,
         interiorIdentityDiagnostics,
         results,
         screenshotPixelDiagnostics,
@@ -9311,6 +9592,7 @@ async function main() {
           freshAutoplayOptOut,
           outputDir: OUTPUT_DIR,
           interiorCamera,
+          interiorActorVisibilityDiagnostics,
           interiorIdentityDiagnostics,
           responsiveDecisionArtifact,
           results,
@@ -9343,6 +9625,7 @@ async function main() {
         `[many-lives] Mobile after west pan: ${path.join(OUTPUT_DIR, "mobile-after-pan-west.png")}`,
         `[many-lives] Interior camera: ${path.join(OUTPUT_DIR, "interior-camera.png")}`,
         `[many-lives] Interior camera mobile: ${path.join(OUTPUT_DIR, "interior-camera-mobile.png")}`,
+        `[many-lives] Interior camera mobile near Mara: ${path.join(OUTPUT_DIR, "interior-camera-mobile-near-mara.png")}`,
         `[many-lives] Kettle & Lamp interior desktop: ${path.join(OUTPUT_DIR, "tea-house-interior-desktop.png")}`,
         `[many-lives] Kettle & Lamp interior mobile: ${path.join(OUTPUT_DIR, "tea-house-interior-mobile.png")}`,
         `[many-lives] Mercer Repairs interior desktop: ${path.join(OUTPUT_DIR, "repair-stall-interior-desktop.png")}`,

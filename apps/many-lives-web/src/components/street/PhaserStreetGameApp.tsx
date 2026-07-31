@@ -3585,15 +3585,20 @@ function drawBoardingHouseInteriorAtmosphere(
 
   drawBoardingHousePerimeterPanels(layer, space);
   drawBoardingHouseFloorboards(layer, space);
+  drawBoardingHouseLoungeRug(layer);
+  drawBoardingHouseRoomHall(layer);
   drawBoardingHouseWindow(layer, 2.1, 0.26, 1.2);
   drawBoardingHouseWindow(layer, 8.5, 0.26, 1.2);
   drawBoardingHouseWallPanels(layer, space);
   drawBoardingHouseNoticeboard(layer);
+  drawBoardingHouseKeyBoard(layer);
   drawBoardingHouseHearth(layer);
+  drawBoardingHouseLoungeChairs(layer);
   drawBoardingHouseLocalLamp(layer, 4.35, 3.72);
   drawBoardingHouseLocalLamp(layer, 8.15, 3.72);
   drawBoardingHouseWallClock(layer);
   drawBoardingHouseCoatRail(layer);
+  drawBoardingHouseLuggage(layer);
   drawBoardingHousePictureFrames(layer);
 }
 
@@ -3671,6 +3676,103 @@ function drawBoardingHouseFloorboards(
   }
 }
 
+function drawBoardingHouseLoungeRug(
+  layer: PhaserType.GameObjects.Graphics,
+) {
+  const origin = mapTileToWorldOrigin(4.95, 3.97);
+  drawBoardingHouseWovenRug(layer, {
+    height: CELL * 1.1,
+    width: CELL * 2.1,
+    x: origin.x,
+    y: origin.y,
+  });
+}
+
+function drawBoardingHouseWovenRug(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: { height: number; width: number; x: number; y: number },
+) {
+  layer.fillStyle(0x2d2922, 0.22);
+  layer.fillRect(rect.x + 2, rect.y + 3, rect.width, rect.height);
+  layer.fillStyle(0x75514b, 1);
+  layer.fillRect(rect.x, rect.y, rect.width, rect.height);
+  layer.lineStyle(1.5, 0x47312f, 1);
+  layer.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  layer.lineStyle(1, 0xc1a476, 1);
+  layer.strokeRect(
+    rect.x + 5,
+    rect.y + 5,
+    rect.width - 10,
+    rect.height - 10,
+  );
+
+  layer.fillStyle(0x9b7160, 1);
+  layer.fillRect(rect.x + 7, rect.y + 8, rect.width - 14, 3);
+  layer.fillRect(
+    rect.x + 7,
+    rect.y + rect.height - 11,
+    rect.width - 14,
+    3,
+  );
+  layer.lineStyle(1, 0x5d3f3c, 1);
+  for (let x = rect.x + 10; x < rect.x + rect.width - 8; x += 8) {
+    layer.lineBetween(x, rect.y + 12, x, rect.y + rect.height - 12);
+  }
+
+  const motifY = rect.y + rect.height / 2;
+  layer.lineStyle(1.5, 0xc9ae7d, 1);
+  for (let x = rect.x + 15; x < rect.x + rect.width - 12; x += 18) {
+    layer.lineBetween(x - 5, motifY, x, motifY - 5);
+    layer.lineBetween(x, motifY - 5, x + 5, motifY);
+    layer.lineBetween(x + 5, motifY, x, motifY + 5);
+    layer.lineBetween(x, motifY + 5, x - 5, motifY);
+  }
+
+  layer.lineStyle(1.2, 0xc1a476, 1);
+  for (let y = rect.y + 8; y < rect.y + rect.height - 4; y += 9) {
+    layer.lineBetween(rect.x - 3, y, rect.x, y);
+    layer.lineBetween(rect.x + rect.width, y, rect.x + rect.width + 3, y);
+  }
+}
+
+function drawBoardingHouseRoomHall(layer: PhaserType.GameObjects.Graphics) {
+  const hall = mapTileToWorldOrigin(9.35, 1.18);
+  layer.fillStyle(0x4d453d, 0.58);
+  layer.fillRoundedRect(hall.x, hall.y, CELL * 2.45, CELL * 7.55, 8);
+  layer.lineStyle(1.4, 0x2e2924, 0.58);
+  layer.strokeRoundedRect(hall.x, hall.y, CELL * 2.45, CELL * 7.55, 8);
+
+  const roomDoors = [
+    { tileX: 5.0, tileY: 1.1 },
+    { tileX: 10.76, tileY: 2.15 },
+    { tileX: 10.76, tileY: 6.55 },
+  ];
+  roomDoors.forEach((door, index) => {
+    const origin = mapTileToWorldOrigin(door.tileX, door.tileY);
+    const width = CELL * 0.84;
+    const height = CELL * 1.22;
+    layer.fillStyle(0x342820, 0.32);
+    layer.fillRoundedRect(origin.x + 3, origin.y + 4, width, height, 5);
+    layer.fillStyle(0x76583d, 0.94);
+    layer.fillRoundedRect(origin.x, origin.y, width, height, 5);
+    layer.lineStyle(1.4, 0x3c2d23, 0.72);
+    layer.strokeRoundedRect(origin.x, origin.y, width, height, 5);
+    layer.fillStyle(0xc7ab76, 0.86);
+    layer.fillRoundedRect(origin.x + 7, origin.y + 7, 14, 9, 3);
+    layer.lineStyle(1, 0x6d5638, 0.72);
+    for (let mark = 0; mark <= index; mark += 1) {
+      layer.lineBetween(
+        origin.x + 10 + mark * 4,
+        origin.y + 10,
+        origin.x + 10 + mark * 4,
+        origin.y + 13,
+      );
+    }
+    layer.fillStyle(0xd4ad65, 0.92);
+    layer.fillCircle(origin.x + width - 7, origin.y + height * 0.58, 2.6);
+  });
+}
+
 function drawBoardingHouseWindow(
   layer: PhaserType.GameObjects.Graphics,
   tileX: number,
@@ -3705,17 +3807,40 @@ function drawBoardingHouseWallPanels(
 }
 
 function drawBoardingHouseNoticeboard(layer: PhaserType.GameObjects.Graphics) {
-  const origin = mapTileToWorldOrigin(10, 1.12);
+  const origin = mapTileToWorldOrigin(4.08, 1.12);
   layer.fillStyle(0x20150d, 0.3);
-  layer.fillRoundedRect(origin.x + 2, origin.y + 2, CELL * 1.2, CELL * 0.72, 6);
+  layer.fillRoundedRect(origin.x + 2, origin.y + 2, CELL * 1.38, CELL * 0.8, 6);
   layer.fillStyle(0x805d38, 0.9);
-  layer.fillRoundedRect(origin.x, origin.y, CELL * 1.2, CELL * 0.72, 6);
+  layer.fillRoundedRect(origin.x, origin.y, CELL * 1.38, CELL * 0.8, 6);
   layer.fillStyle(0xe8d2a1, 0.78);
   layer.fillRoundedRect(origin.x + 7, origin.y + 7, 13, 17, 2);
   layer.fillRoundedRect(origin.x + 25, origin.y + 5, 14, 21, 2);
+  layer.fillStyle(0xc5d0c2, 0.72);
+  layer.fillRoundedRect(origin.x + 43, origin.y + 9, 8, 15, 2);
   layer.fillStyle(0xf0c66f, 0.86);
   layer.fillCircle(origin.x + 20, origin.y + 6, 2.1);
   layer.fillCircle(origin.x + 35, origin.y + 4, 2.1);
+  layer.fillCircle(origin.x + 47, origin.y + 8, 2.1);
+}
+
+function drawBoardingHouseKeyBoard(layer: PhaserType.GameObjects.Graphics) {
+  const origin = mapTileToWorldOrigin(3.42, 4.28);
+  const width = CELL * 1.55;
+  const height = CELL * 0.72;
+  layer.fillStyle(0x241912, 0.34);
+  layer.fillRoundedRect(origin.x + 3, origin.y + 4, width, height, 6);
+  layer.fillStyle(0x6d5239, 0.94);
+  layer.fillRoundedRect(origin.x, origin.y, width, height, 6);
+  layer.lineStyle(1.2, 0x33251b, 0.72);
+  layer.strokeRoundedRect(origin.x, origin.y, width, height, 6);
+  for (let index = 0; index < 5; index += 1) {
+    const keyX = origin.x + 9 + index * 10.5;
+    layer.fillStyle(0xd2ae65, 0.94);
+    layer.fillCircle(keyX, origin.y + 10, 2.4);
+    layer.lineStyle(1.3, 0xd2ae65, 0.9);
+    layer.lineBetween(keyX, origin.y + 12, keyX, origin.y + 19);
+    layer.lineBetween(keyX, origin.y + 18, keyX + 3.5, origin.y + 18);
+  }
 }
 
 function drawBoardingHouseHearth(layer: PhaserType.GameObjects.Graphics) {
@@ -3753,6 +3878,25 @@ function drawBoardingHouseLocalLamp(
   layer.fillCircle(center.x, center.y - 7, 2.4);
 }
 
+function drawBoardingHouseLoungeChairs(
+  layer: PhaserType.GameObjects.Graphics,
+) {
+  for (const chair of [
+    { rotation: -1, tileX: 5.35, tileY: 3.42 },
+    { rotation: 1, tileX: 7.12, tileY: 5.36 },
+  ]) {
+    const center = mapTileToWorldCenter(chair.tileX, chair.tileY);
+    layer.fillStyle(0x19201b, 0.18);
+    layer.fillEllipse(center.x + chair.rotation * 2, center.y + 5, 25, 10);
+    layer.fillStyle(0x667563, 0.92);
+    layer.fillRoundedRect(center.x - 12, center.y - 9, 24, 18, 6);
+    layer.lineStyle(1.3, 0x344337, 0.72);
+    layer.strokeRoundedRect(center.x - 12, center.y - 9, 24, 18, 6);
+    layer.fillStyle(0xb59b70, 0.68);
+    layer.fillRoundedRect(center.x - 8, center.y - 5, 16, 8, 4);
+  }
+}
+
 function drawBoardingHouseWallClock(layer: PhaserType.GameObjects.Graphics) {
   const center = mapTileToWorldCenter(6, 0.42);
   layer.fillStyle(0x281b12, 0.72);
@@ -3774,6 +3918,34 @@ function drawBoardingHouseCoatRail(layer: PhaserType.GameObjects.Graphics) {
     layer.fillCircle(hookX, origin.y + 1, 2.4);
     layer.lineStyle(1.2, 0x4b3422, 0.72);
     layer.lineBetween(hookX, origin.y + 2, hookX - 2, origin.y + 8);
+  }
+}
+
+function drawBoardingHouseLuggage(layer: PhaserType.GameObjects.Graphics) {
+  const cases = [
+    { color: 0x78583d, height: 18, tileX: 9.25, tileY: 8.18, width: 28 },
+    { color: 0x59685b, height: 15, tileX: 9.86, tileY: 8.35, width: 23 },
+  ];
+  for (const item of cases) {
+    const origin = mapTileToWorldOrigin(item.tileX, item.tileY);
+    layer.fillStyle(0x241b15, 0.26);
+    layer.fillRoundedRect(origin.x + 2, origin.y + 3, item.width, item.height, 4);
+    layer.fillStyle(item.color, 0.94);
+    layer.fillRoundedRect(origin.x, origin.y, item.width, item.height, 4);
+    layer.lineStyle(1.2, 0x33271f, 0.7);
+    layer.strokeRoundedRect(origin.x, origin.y, item.width, item.height, 4);
+    layer.lineBetween(
+      origin.x + item.width * 0.34,
+      origin.y + 2,
+      origin.x + item.width * 0.34,
+      origin.y + item.height - 2,
+    );
+    layer.lineBetween(
+      origin.x + item.width * 0.68,
+      origin.y + 2,
+      origin.x + item.width * 0.68,
+      origin.y + item.height - 2,
+    );
   }
 }
 
@@ -4284,6 +4456,16 @@ function drawInteriorRug(
   object: SpaceObject,
   rect: { height: number; width: number; x: number; y: number },
 ) {
+  if (object.id === "boarding-house-hearth-rug") {
+    drawBoardingHouseWovenRug(layer, {
+      height: rect.height - CELL,
+      width: rect.width - CELL * 1.2,
+      x: rect.x + CELL * 0.6,
+      y: rect.y + CELL * 0.5,
+    });
+    return;
+  }
+
   const inset = 6;
   const x = rect.x + inset;
   const y = rect.y + inset;
@@ -4390,6 +4572,10 @@ function drawBoardingHouseInteriorObjectDetail(
     layer.fillRoundedRect(rect.x + 32, rect.y + 8, rect.width - 40, rect.height - 16, 6);
     layer.lineStyle(1.2, 0xd9c792, 0.36);
     layer.lineBetween(rect.x + 34, rect.y + rect.height / 2, rect.x + rect.width - 10, rect.y + rect.height / 2);
+    layer.lineStyle(1, 0x6e7e79, 0.5);
+    for (let x = rect.x + 40; x < rect.x + rect.width - 10; x += 12) {
+      layer.lineBetween(x, rect.y + 10, x, rect.y + rect.height - 10);
+    }
     return;
   }
 
@@ -4402,6 +4588,13 @@ function drawBoardingHouseInteriorObjectDetail(
     layer.lineBetween(rect.x + 17, rect.y + 13, rect.x + 32, rect.y + 13);
     layer.fillStyle(0xf2c76b, 0.82);
     layer.fillCircle(rect.x + rect.width - 20, rect.y + 15, 4);
+    for (let index = 0; index < 3; index += 1) {
+      const slotX = rect.x + 48 + index * 19;
+      layer.fillStyle(0x302219, 0.52);
+      layer.fillRoundedRect(slotX, rect.y + 7, 14, 14, 3);
+      layer.fillStyle(index === 1 ? 0xc8d0be : 0xe0c996, 0.78);
+      layer.fillRoundedRect(slotX + 3, rect.y + 10, 8, 7, 2);
+    }
     return;
   }
 
@@ -4714,7 +4907,7 @@ function drawInteriorSpaceLabels(
   const labels: PhaserType.GameObjects.GameObject[] = [];
   const titleOrigin =
     space.id === "interior:boarding-house"
-      ? mapTileToWorldCenter(space.width / 2 + 1.15, 1.61)
+      ? mapTileToWorldCenter(space.width / 2 + 0.8, 1.61)
       : mapTileToWorldCenter(space.width / 2, 1.42);
   labels.push(
     scene.add
@@ -4862,26 +5055,17 @@ function renderDynamicScene(
     objects,
     runtimeState,
   );
-  const interiorCompositionBounds = runtimeState.indices.activeSpace
-    ? {
-        bottom: Math.max(
-          playerPixel.y,
-          interiorTitleWorldBounds?.bottom ?? playerPixel.y,
-        ),
-        left: Math.min(
-          playerPixel.x,
-          interiorTitleWorldBounds?.left ?? playerPixel.x,
-        ),
-        right: Math.max(
-          playerPixel.x,
-          interiorTitleWorldBounds?.right ?? playerPixel.x,
-        ),
-        top: Math.min(
-          playerPixel.y,
-          interiorTitleWorldBounds?.top ?? playerPixel.y,
-        ),
-      }
-    : null;
+  const interiorPortalWorldPoints = getInteriorPortalWorldPoints(
+    runtimeState.indices.activeSpace,
+  );
+  const interiorActorCompositionBounds =
+    getInteriorActorCompositionBounds(runtimeState.indices.activeSpace);
+  const interiorCompositionBounds = getInteriorCompositionBounds(
+    playerPixel,
+    interiorTitleWorldBounds,
+    interiorPortalWorldPoints,
+    interiorActorCompositionBounds,
+  );
   const cameraSafeFrame = getRuntimeInteriorCameraSafeFrame(
     objects.overlayDom,
     runtimeState,
@@ -4891,7 +5075,11 @@ function renderDynamicScene(
         left: camera.worldView.x,
         width: camera.worldView.width,
       },
-      trackedWorldPoints: [cameraFollowPixel, playerPixel],
+      trackedWorldPoints: [
+        cameraFollowPixel,
+        playerPixel,
+        ...interiorPortalWorldPoints,
+      ],
     },
   );
   const interiorCameraPoint = runtimeState.indices.activeSpace
@@ -9271,27 +9459,14 @@ function syncBrowserCameraProbe(
       )
     : null;
   const world = getWorldBounds(runtimeState.snapshot);
-  const cameraCompositionBounds =
-    runtimeState.indices.activeSpace && points
-      ? {
-          bottom: Math.max(
-            points.playerPixel.y,
-            points.interiorTitleWorldBounds?.bottom ?? points.playerPixel.y,
-          ),
-          left: Math.min(
-            points.playerPixel.x,
-            points.interiorTitleWorldBounds?.left ?? points.playerPixel.x,
-          ),
-          right: Math.max(
-            points.playerPixel.x,
-            points.interiorTitleWorldBounds?.right ?? points.playerPixel.x,
-          ),
-          top: Math.min(
-            points.playerPixel.y,
-            points.interiorTitleWorldBounds?.top ?? points.playerPixel.y,
-          ),
-        }
-      : null;
+  const cameraCompositionBounds = points
+    ? getInteriorCompositionBounds(
+        points.playerPixel,
+        points.interiorTitleWorldBounds,
+        getInteriorPortalWorldPoints(runtimeState.indices.activeSpace),
+        getInteriorActorCompositionBounds(runtimeState.indices.activeSpace),
+      )
+    : null;
   const scrollRange = runtimeState.indices.activeSpace
     ? getInteriorCameraScrollRange({
         compositionBounds: cameraCompositionBounds,
@@ -9332,6 +9507,16 @@ function syncBrowserCameraProbe(
           right: Number(points.interiorTitleWorldBounds.right.toFixed(2)),
           top: Number(points.interiorTitleWorldBounds.top.toFixed(2)),
           width: Number(points.interiorTitleWorldBounds.width.toFixed(2)),
+        }
+      : null,
+    interiorCompositionWorldBounds: cameraCompositionBounds
+      ? {
+          bottom: Number(cameraCompositionBounds.bottom.toFixed(2)),
+          height: Number(cameraCompositionBounds.height.toFixed(2)),
+          left: Number(cameraCompositionBounds.left.toFixed(2)),
+          right: Number(cameraCompositionBounds.right.toFixed(2)),
+          top: Number(cameraCompositionBounds.top.toFixed(2)),
+          width: Number(cameraCompositionBounds.width.toFixed(2)),
         }
       : null,
     followWorldPoint: points
@@ -9746,6 +9931,77 @@ function getInteriorTitleWorldBounds(
   };
 }
 
+function getInteriorPortalWorldPoints(space: SpaceDefinition | null | undefined) {
+  return (
+    space?.portals.map((portal) =>
+      mapTileToWorldCenter(portal.from.x, portal.from.y),
+    ) ?? []
+  );
+}
+
+function getInteriorActorCompositionBounds(
+  space: SpaceDefinition | null | undefined,
+) {
+  return (
+    space?.anchors
+      .filter((anchor) => anchor.kind === "npc")
+      .map((anchor) => {
+        const center = mapTileToWorldCenter(anchor.x, anchor.y);
+        return {
+          bottom: center.y + 23,
+          height: 46,
+          left: center.x - 17,
+          right: center.x + 17,
+          top: center.y - 23,
+          width: 34,
+        };
+      }) ?? []
+  );
+}
+
+function getInteriorCompositionBounds(
+  playerPoint: Point,
+  titleBounds: WorldBounds | null,
+  portalPoints: Point[],
+  actorBounds: WorldBounds[],
+): WorldBounds | null {
+  if (!titleBounds && portalPoints.length === 0 && actorBounds.length === 0) {
+    return null;
+  }
+  const left = Math.min(
+    playerPoint.x,
+    titleBounds?.left ?? playerPoint.x,
+    ...portalPoints.map((point) => point.x),
+    ...actorBounds.map((bounds) => bounds.left),
+  );
+  const right = Math.max(
+    playerPoint.x,
+    titleBounds?.right ?? playerPoint.x,
+    ...portalPoints.map((point) => point.x),
+    ...actorBounds.map((bounds) => bounds.right),
+  );
+  const top = Math.min(
+    playerPoint.y,
+    titleBounds?.top ?? playerPoint.y,
+    ...portalPoints.map((point) => point.y),
+    ...actorBounds.map((bounds) => bounds.top),
+  );
+  const bottom = Math.max(
+    playerPoint.y,
+    titleBounds?.bottom ?? playerPoint.y,
+    ...portalPoints.map((point) => point.y),
+    ...actorBounds.map((bounds) => bounds.bottom),
+  );
+  return {
+    bottom,
+    height: bottom - top,
+    left,
+    right,
+    top,
+    width: right - left,
+  };
+}
+
 function getRuntimeCameraGestureViewport(
   runtimeState: RuntimeState,
 ): SceneViewport {
@@ -9817,26 +10073,12 @@ function resetRuntimeCameraForGame(
     objects,
     runtimeState,
   );
-  const interiorCompositionBounds = runtimeState.indices.activeSpace
-    ? {
-        bottom: Math.max(
-          playerPixel.y,
-          interiorTitleWorldBounds?.bottom ?? playerPixel.y,
-        ),
-        left: Math.min(
-          playerPixel.x,
-          interiorTitleWorldBounds?.left ?? playerPixel.x,
-        ),
-        right: Math.max(
-          playerPixel.x,
-          interiorTitleWorldBounds?.right ?? playerPixel.x,
-        ),
-        top: Math.min(
-          playerPixel.y,
-          interiorTitleWorldBounds?.top ?? playerPixel.y,
-        ),
-      }
-    : null;
+  const interiorCompositionBounds = getInteriorCompositionBounds(
+    playerPixel,
+    interiorTitleWorldBounds,
+    getInteriorPortalWorldPoints(runtimeState.indices.activeSpace),
+    getInteriorActorCompositionBounds(runtimeState.indices.activeSpace),
+  );
   let minScrollX = 0;
   let maxScrollX = Math.max(world.width - visibleWidth, 0);
   let minScrollY = 0;

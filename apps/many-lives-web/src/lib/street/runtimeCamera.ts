@@ -590,9 +590,7 @@ export function getInteriorCameraRestingScroll(
   compositionBounds: CameraWorldBounds | null = null,
 ) {
   const horizontalFocus = compositionBounds
-    ? (Math.min(focusPoint.x, compositionBounds.left) +
-        Math.max(focusPoint.x, compositionBounds.right)) /
-      2
+    ? (compositionBounds.left + compositionBounds.right) / 2
     : focusPoint.x;
   const frameHeight = frame.bottom - frame.top;
   const preferredScrollY =

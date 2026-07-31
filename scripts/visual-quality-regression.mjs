@@ -1,5 +1,9 @@
 const REQUIRED_LANDMARKS = new Set(["morrow-yard", "pilgrim-slip"]);
-const REQUIRED_INTERIORS = new Set(["tea-house", "repair-stall"]);
+const REQUIRED_INTERIORS = new Set([
+  "boarding-house",
+  "tea-house",
+  "repair-stall",
+]);
 
 function fail(category, message, evidence) {
   throw new Error(
@@ -38,6 +42,25 @@ function rectClearance(firstRect, secondRect) {
     first.top - second.bottom,
     second.left - first.right,
     first.left - second.right,
+  );
+}
+
+function hasMeaningfulActorBounds(bounds) {
+  const edges = rectEdges(bounds);
+  return Boolean(
+    edges &&
+      [edges.bottom, edges.left, edges.right, edges.top].every(Number.isFinite) &&
+      edges.right - edges.left >= 24 &&
+      edges.bottom - edges.top >= 32,
+  );
+}
+
+function meetsRequiredMargin(clearance, requiredMargin, minimumMargin) {
+  return (
+    Number.isFinite(clearance) &&
+    Number.isFinite(requiredMargin) &&
+    requiredMargin >= minimumMargin &&
+    clearance >= requiredMargin
   );
 }
 
@@ -95,6 +118,7 @@ function compactCompositionProfile(diagnostic) {
 
 export function createVisualQualityRegressionEvidence({
   fringeCompositionDiagnostics,
+  interiorActorVisibilityDiagnostics,
   interiorIdentityDiagnostics,
   results,
   screenshotPixelDiagnostics,
@@ -118,6 +142,24 @@ export function createVisualQualityRegressionEvidence({
       label: diagnostic.label,
       luminanceRange: diagnostic.luminanceRange,
       role: diagnostic.role,
+    })),
+    interiorActors: interiorActorVisibilityDiagnostics.map((diagnostic) => ({
+      playerBounds: diagnostic.actors?.rowan?.bounds,
+      playerClearance: diagnostic.actors?.rowan?.clearance,
+      playerRequiredMargin: diagnostic.actors?.rowan?.requiredMargin,
+      playerVisible: diagnostic.actors?.rowan?.unobscured === true,
+      playerWorldPoint: diagnostic.playerWorldPoint,
+      portalClearance: diagnostic.actors?.portal?.clearance,
+      portalRequiredMargin: diagnostic.actors?.portal?.requiredMargin,
+      portalVisible: diagnostic.actors?.portal?.unobscured === true,
+      relevantActorBounds: diagnostic.actors?.mara?.bounds,
+      relevantActorClearance: diagnostic.actors?.mara?.clearance,
+      relevantActorId: diagnostic.relevantActorId,
+      relevantActorRequiredMargin: diagnostic.actors?.mara?.requiredMargin,
+      relevantActorVisible: diagnostic.actors?.mara?.unobscured === true,
+      role: diagnostic.role,
+      stateId: diagnostic.stateId,
+      viewport: diagnostic.viewport,
     })),
     landmarks: secondaryLandmarkCompositionDiagnostics.map((diagnostic) => ({
       activeColorBins: diagnostic.activeColorBins,
@@ -209,7 +251,11 @@ export function assertVisualQualityRegressionEvidence(evidence) {
         entry.luminanceRange >= 58 &&
         entry.detailTransitionFraction >= 0.018;
       const roleIdentity =
-        role === "tea-house"
+        role === "boarding-house"
+          ? entry.fractions?.warmMaterial >= 0.2 &&
+            entry.fractions?.domesticTextile >= 0.015 &&
+            entry.fractions?.goldAccent >= 0.008
+          : role === "tea-house"
           ? entry.fractions?.warmMaterial >= 0.16 &&
             entry.fractions?.goldAccent >= 0.01
           : entry.fractions?.coolMetal >= 0.18 &&
@@ -221,6 +267,71 @@ export function assertVisualQualityRegressionEvidence(evidence) {
           entry,
         );
       }
+    }
+  }
+
+  const interiorActors = evidence?.interiorActors ?? [];
+  const mobileMorrowActors = interiorActors.filter(
+    (entry) => entry.role === "boarding-house" && entry.viewport === "mobile",
+  );
+  const requiredMobileMorrowStates = new Set(["entrance", "near-mara"]);
+  const capturedMobileMorrowStates = new Set(
+    mobileMorrowActors.map((entry) => entry.stateId),
+  );
+  const missingMobileMorrowStates = [...requiredMobileMorrowStates].filter(
+    (stateId) => !capturedMobileMorrowStates.has(stateId),
+  );
+  if (missingMobileMorrowStates.length > 0) {
+    fail(
+      "interior-actor-visibility",
+      "missing deterministic Morrow House phone evidence for entrance and Mara interaction states",
+      {
+        available: interiorActors.map((entry) => ({
+          role: entry.role,
+          stateId: entry.stateId,
+          viewport: entry.viewport,
+        })),
+        missingMobileMorrowStates,
+      },
+    );
+  }
+  for (const entry of mobileMorrowActors) {
+    const expectedPlayerWorldPoint =
+      entry.stateId === "entrance"
+        ? { x: 356, y: 396 }
+        : entry.stateId === "near-mara"
+          ? { x: 316, y: 276 }
+          : null;
+    if (
+      !expectedPlayerWorldPoint ||
+      pointDistance(entry.playerWorldPoint, expectedPlayerWorldPoint) > 2 ||
+      !entry.playerVisible ||
+      !entry.portalVisible ||
+      !entry.relevantActorVisible ||
+      entry.relevantActorId !== "npc-mara" ||
+      !hasMeaningfulActorBounds(entry.playerBounds) ||
+      !hasMeaningfulActorBounds(entry.relevantActorBounds) ||
+      !meetsRequiredMargin(
+        entry.playerClearance,
+        entry.playerRequiredMargin,
+        20,
+      ) ||
+      !meetsRequiredMargin(
+        entry.relevantActorClearance,
+        entry.relevantActorRequiredMargin,
+        20,
+      ) ||
+      !meetsRequiredMargin(
+        entry.portalClearance,
+        entry.portalRequiredMargin,
+        24,
+      )
+    ) {
+      fail(
+        "interior-actor-visibility",
+        "Morrow House phone frame does not clearly show Rowan, relevant resident Mara, and the portal/action region",
+        entry,
+      );
     }
   }
 
@@ -348,6 +459,7 @@ export function assertVisualQualityRegressionEvidence(evidence) {
     categories: [
       "landmark-identity-loss",
       "interior-identity-loss",
+      "interior-actor-visibility",
       "major-composition-or-dropout",
       "overlay-intersection",
       "excessive-cue-noise",
@@ -357,6 +469,7 @@ export function assertVisualQualityRegressionEvidence(evidence) {
       composition: composition.length,
       dropouts: dropouts.length,
       interiors: interiors.length,
+      interiorActors: interiorActors.length,
       landmarks: landmarks.length,
       overlays: overlays.length,
       routes: routes.length,

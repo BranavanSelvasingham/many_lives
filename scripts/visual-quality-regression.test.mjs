@@ -55,12 +55,29 @@ function controlEvidence() {
     ],
     interiorIdentityDiagnostics: [
       {
+        activeColorBins: 26,
+        detailTransitionFraction: 0.041,
+        dominantColorFraction: 0.312,
+        fractions: {
+          coolMetal: 0.018,
+          darkHardware: 0.246,
+          domesticTextile: 0.092,
+          goldAccent: 0.024,
+          rustAccent: 0.211,
+          warmMaterial: 0.438,
+        },
+        label: "Morrow House interior mobile",
+        luminanceRange: 124.2,
+        role: "boarding-house",
+      },
+      {
         activeColorBins: 23,
         detailTransitionFraction: 0.036,
         dominantColorFraction: 0.334,
         fractions: {
           coolMetal: 0.013,
           darkHardware: 0.508,
+          domesticTextile: 0.009,
           goldAccent: 0.382,
           rustAccent: 0.481,
           warmMaterial: 0.513,
@@ -76,6 +93,7 @@ function controlEvidence() {
         fractions: {
           coolMetal: 0.853,
           darkHardware: 0.612,
+          domesticTextile: 0.031,
           goldAccent: 0.003,
           rustAccent: 0.022,
           warmMaterial: 0.027,
@@ -83,6 +101,88 @@ function controlEvidence() {
         label: "Mercer Repairs interior desktop",
         luminanceRange: 102.3,
         role: "repair-stall",
+      },
+    ],
+    interiorActorVisibilityDiagnostics: [
+      {
+        actors: {
+          mara: {
+            bounds: {
+              bottom: 321,
+              height: 81,
+              left: 28,
+              right: 88,
+              top: 240,
+              width: 60,
+            },
+            clearance: 24,
+            requiredMargin: 20,
+            unobscured: true,
+          },
+          portal: {
+            clearance: 36.75,
+            requiredMargin: 24,
+            unobscured: true,
+          },
+          rowan: {
+            bounds: {
+              bottom: 326,
+              height: 92,
+              left: 105,
+              right: 173,
+              top: 234,
+              width: 68,
+            },
+            clearance: 28,
+            requiredMargin: 20,
+            unobscured: true,
+          },
+        },
+        playerWorldPoint: { x: 356, y: 396 },
+        relevantActorId: "npc-mara",
+        role: "boarding-house",
+        stateId: "entrance",
+        viewport: "mobile",
+      },
+      {
+        actors: {
+          mara: {
+            bounds: {
+              bottom: 321,
+              height: 81,
+              left: 30,
+              right: 90,
+              top: 240,
+              width: 60,
+            },
+            clearance: 22,
+            requiredMargin: 20,
+            unobscured: true,
+          },
+          portal: {
+            clearance: 38,
+            requiredMargin: 24,
+            unobscured: true,
+          },
+          rowan: {
+            bounds: {
+              bottom: 326,
+              height: 92,
+              left: 98,
+              right: 166,
+              top: 234,
+              width: 68,
+            },
+            clearance: 30,
+            requiredMargin: 20,
+            unobscured: true,
+          },
+        },
+        playerWorldPoint: { x: 316, y: 276 },
+        relevantActorId: "npc-mara",
+        role: "boarding-house",
+        stateId: "near-mara",
+        viewport: "mobile",
       },
     ],
     results: [structuredClone(baseResult)],
@@ -137,10 +237,60 @@ const degradationCases = [
   },
   {
     category: "interior-identity-loss",
+    name: "boarding-house identity loss",
+    degrade(evidence) {
+      evidence.interiors.find(
+        (entry) => entry.role === "boarding-house",
+      ).fractions.domesticTextile = 0;
+    },
+  },
+  {
+    category: "interior-identity-loss",
+    name: "tea-house identity loss",
     degrade(evidence) {
       evidence.interiors.find(
         (entry) => entry.role === "tea-house",
       ).fractions.warmMaterial = 0;
+    },
+  },
+  {
+    category: "interior-actor-visibility",
+    name: "relevant interior actor bounds clearance",
+    degrade(evidence) {
+      evidence.interiorActors[0].relevantActorClearance = 8;
+    },
+  },
+  {
+    category: "interior-actor-visibility",
+    name: "alternate-state Mara bounds clearance",
+    degrade(evidence) {
+      evidence.interiorActors.find(
+        (entry) => entry.stateId === "near-mara",
+      ).relevantActorClearance = -24.59;
+    },
+  },
+  {
+    category: "interior-actor-visibility",
+    name: "alternate-state capture coverage",
+    degrade(evidence) {
+      evidence.interiorActors = evidence.interiorActors.filter(
+        (entry) => entry.stateId === "entrance",
+      );
+    },
+  },
+  {
+    category: "interior-actor-visibility",
+    name: "player actor bounds evidence",
+    degrade(evidence) {
+      evidence.interiorActors[0].playerBounds.right =
+        evidence.interiorActors[0].playerBounds.left + 1;
+    },
+  },
+  {
+    category: "interior-actor-visibility",
+    name: "interior portal visibility",
+    degrade(evidence) {
+      evidence.interiorActors[0].portalVisible = false;
     },
   },
   {
@@ -180,7 +330,8 @@ test("VQ-10 control fixture passes every production-path invariant", () => {
   assert.deepEqual(result.counts, {
     composition: 4,
     dropouts: 1,
-    interiors: 2,
+    interiorActors: 2,
+    interiors: 3,
     landmarks: 2,
     overlays: 1,
     routes: 1,
