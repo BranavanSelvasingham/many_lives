@@ -14755,6 +14755,93 @@ function buildAutoplayRouteCaptureSegments({
   return segments;
 }
 
+function autoplayRouteSegmentCanExtendOpeningEvidence({
+  openingSample,
+  previousSample,
+  segment,
+}) {
+  if (
+    segment?.boundaryReasons?.length !== 1 ||
+    segment.boundaryReasons[0] !== "sample-gap" ||
+    !openingSample ||
+    !previousSample ||
+    !autoplayRouteCaptureSamplesShareExactIdentity(
+      openingSample,
+      previousSample,
+    ) ||
+    !Array.isArray(segment.samples) ||
+    segment.samples.length === 0
+  ) {
+    return false;
+  }
+  const durationMs = Number(openingSample.route?.durationMs);
+  const openingProgress = Number(openingSample.route?.progress);
+  if (
+    !Number.isFinite(durationMs) ||
+    durationMs <= 0 ||
+    !Number.isFinite(openingProgress) ||
+    openingProgress < 0 ||
+    openingProgress >= 1
+  ) {
+    return false;
+  }
+  const routeTimingToleranceMs = Math.max(250, durationMs * 0.03);
+  const maximumOpeningElapsedMs =
+    (1 - openingProgress) * durationMs + routeTimingToleranceMs;
+  let previous = previousSample;
+
+  for (const sample of segment.samples) {
+    const progress = Number(sample.route?.progress);
+    const previousProgress = Number(previous.route?.progress);
+    const gapMs = sample.capturedAtEpochMs - previous.capturedAtEpochMs;
+    const monotonicGapMs =
+      sample.capturedAtMonotonicMs - previous.capturedAtMonotonicMs;
+    const elapsedMs =
+      sample.capturedAtEpochMs - openingSample.capturedAtEpochMs;
+    const monotonicElapsedMs =
+      sample.capturedAtMonotonicMs -
+      openingSample.capturedAtMonotonicMs;
+    const maximumContinuousGapMs =
+      Number.isFinite(previousProgress) && previousProgress < 1
+        ? Math.max(
+            AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS,
+            (1 - previousProgress) * durationMs + routeTimingToleranceMs,
+          )
+        : null;
+    if (
+      !autoplayRouteCaptureSamplesShareExactIdentity(openingSample, sample) ||
+      Number(sample.route?.durationMs) !== durationMs ||
+      !Number.isFinite(progress) ||
+      !Number.isFinite(previousProgress) ||
+      progress < previousProgress ||
+      !Number.isFinite(gapMs) ||
+      gapMs <= 0 ||
+      maximumContinuousGapMs === null ||
+      gapMs > maximumContinuousGapMs ||
+      !Number.isFinite(monotonicGapMs) ||
+      monotonicGapMs <= 0 ||
+      monotonicGapMs > maximumContinuousGapMs ||
+      Math.abs(gapMs - monotonicGapMs) > 250 ||
+      elapsedMs < 0 ||
+      elapsedMs > maximumOpeningElapsedMs ||
+      monotonicElapsedMs < 0 ||
+      monotonicElapsedMs > maximumOpeningElapsedMs
+    ) {
+      return false;
+    }
+    previous = sample;
+  }
+
+  return (
+    segment.samples[0].capturedAtEpochMs -
+      previousSample.capturedAtEpochMs >
+      AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
+    segment.samples[0].capturedAtMonotonicMs -
+      previousSample.capturedAtMonotonicMs >
+      AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS
+  );
+}
+
 function buildAutoplayOpeningRouteEvidence({
   expectedTargetLocationId,
   samples,
@@ -14774,64 +14861,16 @@ function buildAutoplayOpeningRouteEvidence({
   }
 
   const fragments = [openingSegment];
+  const openingSample = openingSegment.samples[0] ?? null;
   for (const segment of segments.slice(1)) {
     const previous = fragments.at(-1)?.samples.at(-1) ?? null;
-    const next = segment.samples[0] ?? null;
-    const gapMs =
-      typeof previous?.capturedAtEpochMs === "number" &&
-      typeof next?.capturedAtEpochMs === "number"
-        ? next.capturedAtEpochMs - previous.capturedAtEpochMs
-        : null;
-    const monotonicGapMs =
-      typeof previous?.capturedAtMonotonicMs === "number" &&
-      typeof next?.capturedAtMonotonicMs === "number"
-        ? next.capturedAtMonotonicMs - previous.capturedAtMonotonicMs
-        : null;
-    const durationMs = previous?.route?.durationMs;
-    const previousProgress = previous?.route?.progress;
-    const nextProgress = next?.route?.progress;
-    const routeTimingToleranceMs =
-      typeof durationMs === "number" && Number.isFinite(durationMs)
-        ? Math.max(250, durationMs * 0.03)
-        : null;
-    const maximumContinuousGapMs =
-      routeTimingToleranceMs !== null &&
-      typeof previousProgress === "number" &&
-      Number.isFinite(previousProgress)
-        ? Math.max(
-            AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS,
-            (1 - previousProgress) * durationMs +
-              routeTimingToleranceMs,
-          )
-        : null;
-    const progressElapsedMs =
-      typeof nextProgress === "number" &&
-      typeof previousProgress === "number" &&
-      typeof durationMs === "number"
-        ? (nextProgress - previousProgress) * durationMs
-        : null;
-    const canExtendOpeningEvidence = Boolean(
-      segment.boundaryReasons.length === 1 &&
-        segment.boundaryReasons[0] === "sample-gap" &&
-        autoplayRouteCaptureSamplesShareExactIdentity(previous, next) &&
-        next?.route?.durationMs === durationMs &&
-        typeof nextProgress === "number" &&
-        typeof previousProgress === "number" &&
-        nextProgress >= previousProgress &&
-        typeof gapMs === "number" &&
-        gapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
-        maximumContinuousGapMs !== null &&
-        gapMs <= maximumContinuousGapMs &&
-        typeof monotonicGapMs === "number" &&
-        monotonicGapMs > AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS &&
-        monotonicGapMs <= maximumContinuousGapMs &&
-        Math.abs(gapMs - monotonicGapMs) <= 250 &&
-        typeof progressElapsedMs === "number" &&
-        progressElapsedMs >= 0 &&
-        progressElapsedMs <=
-          Math.min(gapMs, monotonicGapMs) + routeTimingToleranceMs
-    );
-    if (!canExtendOpeningEvidence) {
+    if (
+      !autoplayRouteSegmentCanExtendOpeningEvidence({
+        openingSample,
+        previousSample: previous,
+        segment,
+      })
+    ) {
       break;
     }
     fragments.push(segment);

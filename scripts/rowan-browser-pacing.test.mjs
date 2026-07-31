@@ -2298,7 +2298,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, selectAutoplayRecordedRouteTrajectory };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
@@ -3531,6 +3531,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         {
           generation = 2,
           hud = "DAY 1 11:05",
+          monotonicOffsetMs = offsetMs,
           previousOffsetMs = null,
           routeOverrides = {},
           tickCount,
@@ -3538,7 +3539,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         } = {},
       ) => ({
         capturedAtEpochMs: startedAt + offsetMs,
-        capturedAtMonotonicMs: offsetMs,
+        capturedAtMonotonicMs: monotonicOffsetMs,
         paintProbe: {
           ...paintProbe,
           regions: [{ surface: "hud", text: hud }],
@@ -3656,6 +3657,189 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         });
       assert.equal(trajectory.start.frame.sequence, 1);
       assert.equal(trajectory.mid.frame.sequence, 2);
+
+      const ciStartedAt = 1_785_513_475_087;
+      const ciSample = (progress, offsetMs, options = {}) => {
+        const captured = sample(progress, offsetMs, options);
+        return {
+          ...captured,
+          capturedAtEpochMs: ciStartedAt + offsetMs,
+          recorderPreviousTickAtEpochMs:
+            options.previousOffsetMs === undefined
+              ? null
+              : ciStartedAt + options.previousOffsetMs,
+        };
+      };
+      const ciFragmentedSamples = [
+        ciSample(0.003, 0, { tickCount: 1 }),
+        ciSample(0.128, 18, { previousOffsetMs: 0, tickCount: 2 }),
+        ciSample(0.253, 36, { previousOffsetMs: 18, tickCount: 3 }),
+        ciSample(0.253, 3_024, {
+          previousOffsetMs: 36,
+          tickCount: 22,
+        }),
+        ciSample(0.253, 3_028, {
+          previousOffsetMs: 3_024,
+          tickCount: 23,
+        }),
+        ciSample(0.853, 5_200, {
+          previousOffsetMs: 3_028,
+          tickCount: 42,
+        }),
+        ciSample(0.853, 5_201, {
+          previousOffsetMs: 5_200,
+          tickCount: 43,
+        }),
+        ciSample(0.854, 5_202, {
+          previousOffsetMs: 5_201,
+          tickCount: 44,
+        }),
+      ];
+      const ciRawSegments =
+        routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId: "tea-house",
+          samples: ciFragmentedSamples,
+        });
+      assert.equal(ciRawSegments.length, 3);
+      assert.deepEqual(
+        ciRawSegments.map((segment) => segment.boundaryReasons),
+        [[], ["sample-gap"], ["sample-gap"]],
+      );
+
+      const ciOpeningEvidence =
+        routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence({
+          expectedTargetLocationId: "tea-house",
+          samples: ciFragmentedSamples,
+        });
+      assert.equal(ciOpeningEvidence.fragmentCount, 3);
+      assert.equal(ciOpeningEvidence.openingSegment.samples.length, 8);
+
+      const ciFrame = (sequence, capturedAtEpochMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: { timestamp: capturedAtEpochMs / 1_000 },
+        sequence,
+      });
+      const ciFrames = [
+        ciFrame(101, 1_785_513_475_112.783, "ci-route-position-too-early"),
+        ciFrame(102, 1_785_513_478_185.051, "ci-route-position-mid"),
+      ];
+      assert.deepEqual(
+        recordedRoutePolicy
+          .buildAutoplayRecordedRouteFrameCandidates({
+            expectedTargetLocationId: "tea-house",
+            frames: ciFrames,
+            openingSegment: ciOpeningEvidence.openingSegment,
+            samples: ciOpeningEvidence.samples,
+          })
+          .map((candidate) => candidate.frame.sequence),
+        [102],
+        "The same-route fragment join must recover the bracketed CI frame without weakening the opening-frame compositing settle rule.",
+      );
+
+      const ciTrajectory =
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+          expectedTargetLocationId: "tea-house",
+          frames: [
+            ciFrame(100, ciStartedAt + 150, "ci-route-position-start"),
+            ...ciFrames,
+          ],
+          label: "same-route sample-fragment race",
+          samples: ciFragmentedSamples,
+          validateFrame: ({
+            frame: renderedFrame,
+            paintProbe: acceptedPaintProbe,
+          }) => ({
+            buffer: Buffer.from(renderedFrame.data, "base64"),
+            height: 625,
+            paintProbe: acceptedPaintProbe,
+            textPaint: {},
+            width: 1_365,
+          }),
+          validateStableFramePair: () => ({
+            hudPixelDifferenceRatio: 0,
+          }),
+        });
+      assert.equal(ciTrajectory.start.frame.sequence, 100);
+      assert.equal(ciTrajectory.mid.frame.sequence, 102);
+
+      const ciFragmentCountFor = (replacement) =>
+        routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence({
+          expectedTargetLocationId: "tea-house",
+          samples: [...ciFragmentedSamples.slice(0, 5), replacement],
+        }).fragmentCount;
+      assert.equal(
+        ciFragmentCountFor(
+          ciSample(0.853, 5_200, {
+            previousOffsetMs: 3_028,
+            routeOverrides: {
+              worldPath: [
+                { x: 331, y: 688 },
+                { x: 1_400, y: 700 },
+              ],
+            },
+            tickCount: 42,
+          }),
+        ),
+        2,
+      );
+      assert.equal(
+        ciFragmentCountFor(
+          ciSample(0.853, 5_200, {
+            hud: "DAY 1 11:10",
+            previousOffsetMs: 3_028,
+            tickCount: 42,
+          }),
+        ),
+        2,
+      );
+      assert.equal(
+        ciFragmentCountFor(
+          ciSample(0.853, 5_200, {
+            generation: 3,
+            previousOffsetMs: 3_028,
+            tickCount: 42,
+          }),
+        ),
+        2,
+      );
+      assert.equal(
+        ciFragmentCountFor(
+          ciSample(0.853, 5_200, {
+            previousOffsetMs: 3_028,
+            routeOverrides: { targetLocationId: "repair-stall" },
+            tickCount: 42,
+          }),
+        ),
+        2,
+      );
+      assert.equal(
+        ciFragmentCountFor(
+          ciSample(0.2, 5_200, {
+            previousOffsetMs: 3_028,
+            tickCount: 42,
+          }),
+        ),
+        2,
+      );
+      assert.equal(
+        ciFragmentCountFor(
+          ciSample(0.853, 5_200, {
+            monotonicOffsetMs: 4_800,
+            previousOffsetMs: 3_028,
+            tickCount: 42,
+          }),
+        ),
+        2,
+      );
+      assert.equal(
+        ciFragmentCountFor(
+          ciSample(0.853, 5_400, {
+            previousOffsetMs: 3_028,
+            tickCount: 42,
+          }),
+        ),
+        2,
+      );
 
       const fragmentCountFor = (replacement) =>
         routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence({
