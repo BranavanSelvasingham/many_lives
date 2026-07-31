@@ -45,6 +45,11 @@ const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
 const RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_REPLAY_COMPLETION_TIMEOUT_MS ?? "60000",
 );
+const RESPONSIVE_DECISION_REPLAY_PROGRESS_STALL_GRACE_MS = 15_000;
+const RESPONSIVE_DECISION_REPLAY_COMPLETION_MAX_MS = Math.max(
+  RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS,
+  120_000,
+);
 const RESPONSIVE_DECISION_STABILITY_GRACE_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_STABILITY_GRACE_MS ?? "45000",
 );
@@ -5049,16 +5054,130 @@ function responsiveLongMaraReplayComplete(page, probe) {
   );
 }
 
-function responsiveLongMaraReplayReadiness({
+function createResponsiveLongMaraReplayWaitState() {
+  return {
+    lastProgressAtMs: null,
+    progress: null,
+  };
+}
+
+function responsiveLongMaraReplayProgress(probe) {
+  const conversation = probe?.activeConversation;
+  const replay = conversation?.replay;
+  const streamingEntryId = replay?.streamingEntryId;
+  const interEntryPause =
+    streamingEntryId === null && replay?.streamedWordCount === 0;
+  if (
+    replay?.isReplaying !== true ||
+    !Number.isInteger(conversation?.lines) ||
+    conversation.lines <= 0 ||
+    !Number.isInteger(replay?.revealedEntryCount) ||
+    replay.revealedEntryCount < 0 ||
+    replay.revealedEntryCount > conversation.lines ||
+    !Number.isInteger(replay?.streamedWordCount) ||
+    replay.streamedWordCount < 0 ||
+    (!interEntryPause &&
+      (typeof streamingEntryId !== "string" ||
+        streamingEntryId.length === 0))
+  ) {
+    return null;
+  }
+  return {
+    lineCount: conversation.lines,
+    revealedEntryCount: replay.revealedEntryCount,
+    streamedWordCount: replay.streamedWordCount,
+    streamingEntryId,
+  };
+}
+
+function responsiveLongMaraReplayProgressAdvanced(previous, current) {
+  if (!previous || !current || current.lineCount !== previous.lineCount) {
+    return false;
+  }
+  if (current.revealedEntryCount < previous.revealedEntryCount) {
+    return false;
+  }
+  if (current.revealedEntryCount > previous.revealedEntryCount) {
+    return true;
+  }
+  return (
+    current.streamingEntryId === previous.streamingEntryId &&
+    current.streamedWordCount > previous.streamedWordCount
+  );
+}
+
+function responsiveLongMaraReplayProgressCompatible(previous, current) {
+  if (!previous || !current || current.lineCount !== previous.lineCount) {
+    return false;
+  }
+  if (current.revealedEntryCount < previous.revealedEntryCount) {
+    return false;
+  }
+  if (current.revealedEntryCount > previous.revealedEntryCount) {
+    return true;
+  }
+  if (
+    previous.streamingEntryId === null &&
+    previous.streamedWordCount === 0 &&
+    typeof current.streamingEntryId === "string" &&
+    current.streamingEntryId.length > 0
+  ) {
+    return true;
+  }
+  return (
+    current.streamingEntryId === previous.streamingEntryId &&
+    current.streamedWordCount >= previous.streamedWordCount
+  );
+}
+
+function responsiveLongMaraReplayWaitStep({
+  absoluteMaxMs,
   elapsedMs,
   page,
   probe,
+  stallGraceMs,
+  state,
   timeoutMs,
 }) {
   if (responsiveLongMaraReplayComplete(page, probe)) {
-    return "ready";
+    return { readiness: "ready", state };
   }
-  return elapsedMs < timeoutMs ? "waiting" : "timed_out";
+
+  const progress = responsiveLongMaraReplayProgress(probe);
+  const compatibleProgress = responsiveLongMaraReplayProgressCompatible(
+    state.progress,
+    progress,
+  );
+  const nextState = {
+    lastProgressAtMs: responsiveLongMaraReplayProgressAdvanced(
+      state.progress,
+      progress,
+    )
+      ? elapsedMs
+      : compatibleProgress
+        ? state.lastProgressAtMs
+        : null,
+    progress,
+  };
+
+  if (elapsedMs < timeoutMs) {
+    return { readiness: "waiting", state: nextState };
+  }
+  if (elapsedMs >= absoluteMaxMs) {
+    return { readiness: "timed_out", state: nextState };
+  }
+  const progressDeadlineMs =
+    nextState.lastProgressAtMs === null
+      ? timeoutMs
+      : Math.min(
+          absoluteMaxMs,
+          nextState.lastProgressAtMs + stallGraceMs,
+        );
+  return {
+    readiness:
+      elapsedMs < progressDeadlineMs ? "waiting" : "timed_out",
+    state: nextState,
+  };
 }
 
 function decisionArtifactReadabilitySignature(geometry) {
@@ -5737,65 +5856,232 @@ function assertDecisionArtifactReadabilityWaitRegression() {
     "A single-sample caller must keep the original readiness deadline.",
   );
 
-  const nearCompleteReplayProbe = {
+  const advancingReplayProbe = (
+    streamedWordCount,
+    {
+      revealedEntryCount = 1,
+      streamingEntryId = "conversation-2-663",
+    } = {},
+  ) => ({
     activeConversation: {
       lines: 2,
       replay: {
         isReplaying: true,
-        revealedEntryCount: 1,
-        streamedWordCount: 48,
+        revealedEntryCount,
+        streamedWordCount,
+        streamingEntryId,
       },
     },
-  };
-  const nearCompleteReplayPage = {
+  });
+  const advancingReplayPage = {
     latestMeaningfulConversationBubble: {
-      text: "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before",
+      text: "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your",
     },
   };
   const completedReplayPage = {
     latestMeaningfulConversationBubble: {
-      text: `${nearCompleteReplayPage.latestMeaningfulConversationBubble.text} lunch.`,
+      text: "Tonight's bed is yours if you keep the house easy to live in. Rinse what you use, don't vanish when something needs doing, and get a little coin in your pocket. The yard pump is already leaking, and Ada at Kettle & Lamp may still need calm hands before lunch.",
     },
   };
   const completedReplayProbe = {
     activeConversation: {
-      ...nearCompleteReplayProbe.activeConversation,
+      ...advancingReplayProbe(29).activeConversation,
       replay: {
         isReplaying: false,
         revealedEntryCount: 2,
         streamedWordCount: 49,
+        streamingEntryId: null,
       },
     },
   };
-  assert.equal(
-    responsiveLongMaraReplayReadiness({
-      elapsedMs: 29_789,
-      page: nearCompleteReplayPage,
-      probe: nearCompleteReplayProbe,
+  const replayStep = ({ elapsedMs, page, probe, state }) =>
+    responsiveLongMaraReplayWaitStep({
+      absoluteMaxMs: 120_000,
+      elapsedMs,
+      page,
+      probe,
+      stallGraceMs: 15_000,
+      state,
       timeoutMs: 60_000,
+    });
+  const lineOneProgress = {
+    lineCount: 3,
+    revealedEntryCount: 1,
+    streamedWordCount: 29,
+    streamingEntryId: "conversation-2-663",
+  };
+  assert.equal(
+    responsiveLongMaraReplayProgressAdvanced(lineOneProgress, {
+      lineCount: 3,
+      revealedEntryCount: 2,
+      streamedWordCount: 0,
+      streamingEntryId: "conversation-3-664",
     }),
-    "waiting",
-    "A near-complete replay at the former 30s cutoff must receive the remaining bounded replay window.",
+    true,
+    "Revealing the next line must count as progress even when its word counter resets.",
   );
   assert.equal(
-    responsiveLongMaraReplayReadiness({
-      elapsedMs: 30_250,
+    responsiveLongMaraReplayProgressAdvanced(lineOneProgress, {
+      lineCount: 3,
+      revealedEntryCount: 1,
+      streamedWordCount: 30,
+      streamingEntryId: "conversation-3-664",
+    }),
+    false,
+    "Changing entry identity without revealing another line must not count as progress.",
+  );
+  assert.equal(
+    responsiveLongMaraReplayProgressCompatible(lineOneProgress, {
+      lineCount: 3,
+      revealedEntryCount: 1,
+      streamedWordCount: 30,
+      streamingEntryId: "conversation-3-664",
+    }),
+    false,
+    "Changing entry identity without revealing another line must also clear prior grace.",
+  );
+
+  let interEntryReplay = replayStep({
+    elapsedMs: 59_750,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(29, {
+      revealedEntryCount: 0,
+      streamingEntryId: "conversation-1-662",
+    }),
+    state: createResponsiveLongMaraReplayWaitState(),
+  });
+  interEntryReplay = replayStep({
+    elapsedMs: 60_000,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(0, {
+      revealedEntryCount: 1,
+      streamingEntryId: null,
+    }),
+    state: interEntryReplay.state,
+  });
+  assert.equal(
+    interEntryReplay.readiness,
+    "waiting",
+    "A revealed-line increment into the null-id inter-entry pause must extend the replay wait.",
+  );
+  interEntryReplay = replayStep({
+    elapsedMs: 60_500,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(0),
+    state: interEntryReplay.state,
+  });
+  assert.equal(
+    interEntryReplay.state.lastProgressAtMs,
+    60_000,
+    "Starting the next entry must preserve, but not renew, inter-entry progress grace.",
+  );
+  interEntryReplay = replayStep({
+    elapsedMs: 61_000,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(1),
+    state: interEntryReplay.state,
+  });
+  assert.equal(
+    interEntryReplay.state.lastProgressAtMs,
+    61_000,
+    "Streaming the first word of the next entry must renew progress grace.",
+  );
+
+  let advancingReplay = replayStep({
+    elapsedMs: 59_750,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(28),
+    state: createResponsiveLongMaraReplayWaitState(),
+  });
+  advancingReplay = replayStep({
+    elapsedMs: 60_000,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(29),
+    state: advancingReplay.state,
+  });
+  assert.equal(
+    advancingReplay.readiness,
+    "waiting",
+    "The exact 29-word replay advancing at 60s must receive bounded stall grace.",
+  );
+  assert.equal(
+    replayStep({
+      elapsedMs: 65_000,
       page: completedReplayPage,
       probe: completedReplayProbe,
-      timeoutMs: 60_000,
-    }),
+      state: advancingReplay.state,
+    }).readiness,
     "ready",
-    "A replay that completes just after the former cutoff must become ready without weakening its content contract.",
+    "An extended replay must still satisfy the complete final-text contract.",
   );
+
+  let neverAdvancingReplay = replayStep({
+    elapsedMs: 0,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(29),
+    state: createResponsiveLongMaraReplayWaitState(),
+  });
+  neverAdvancingReplay = replayStep({
+    elapsedMs: 60_000,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(29),
+    state: neverAdvancingReplay.state,
+  });
   assert.equal(
-    responsiveLongMaraReplayReadiness({
-      elapsedMs: 60_000,
-      page: nearCompleteReplayPage,
-      probe: nearCompleteReplayProbe,
-      timeoutMs: 60_000,
-    }),
+    neverAdvancingReplay.readiness,
     "timed_out",
-    "A replay that never completes must still fail at the bounded replay deadline.",
+    "An unchanged partial replay must not extend the base deadline.",
+  );
+
+  let stalledReplay = replayStep({
+    elapsedMs: 59_750,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(28),
+    state: createResponsiveLongMaraReplayWaitState(),
+  });
+  stalledReplay = replayStep({
+    elapsedMs: 60_000,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(29),
+    state: stalledReplay.state,
+  });
+  stalledReplay = replayStep({
+    elapsedMs: 75_000,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(29),
+    state: stalledReplay.state,
+  });
+  assert.equal(
+    stalledReplay.readiness,
+    "timed_out",
+    "A replay that stops advancing must time out after bounded stall grace.",
+  );
+
+  let cappedReplay = replayStep({
+    elapsedMs: 59_750,
+    page: advancingReplayPage,
+    probe: advancingReplayProbe(28),
+    state: createResponsiveLongMaraReplayWaitState(),
+  });
+  for (const [elapsedMs, streamedWordCount] of [
+    [60_000, 29],
+    [74_000, 30],
+    [88_000, 31],
+    [102_000, 32],
+    [116_000, 33],
+    [120_000, 34],
+  ]) {
+    cappedReplay = replayStep({
+      elapsedMs,
+      page: advancingReplayPage,
+      probe: advancingReplayProbe(streamedWordCount),
+      state: cappedReplay.state,
+    });
+  }
+  assert.equal(
+    cappedReplay.readiness,
+    "timed_out",
+    "Continued partial progress must not exceed the hard absolute replay cap.",
   );
 
   const interiorPage = {
@@ -7018,34 +7304,41 @@ async function waitForResponsiveLongMaraReplayCompletion(session, label) {
   const startedAt = Date.now();
   let lastPage = null;
   let lastProbe = null;
+  let waitState = createResponsiveLongMaraReplayWaitState();
 
   while (true) {
     lastProbe = await session.readBrowserProbe();
     lastPage = await session.inspectPage();
     const elapsedMs = Date.now() - startedAt;
-    const readiness = responsiveLongMaraReplayReadiness({
+    const step = responsiveLongMaraReplayWaitStep({
+      absoluteMaxMs: RESPONSIVE_DECISION_REPLAY_COMPLETION_MAX_MS,
       elapsedMs,
       page: lastPage,
       probe: lastProbe,
+      stallGraceMs:
+        RESPONSIVE_DECISION_REPLAY_PROGRESS_STALL_GRACE_MS,
+      state: waitState,
       timeoutMs: RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS,
     });
-    if (readiness === "ready") {
+    waitState = step.state;
+    if (step.readiness === "ready") {
       return {
         replay: lastProbe?.activeConversation?.replay ?? null,
         waitedMs: elapsedMs,
       };
     }
-    if (readiness === "timed_out") {
+    if (step.readiness === "timed_out") {
       break;
     }
     await sleep(POLL_INTERVAL_MS);
   }
 
   throw new Error(
-    `${label}: deterministic Mara replay did not complete within ${RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS}ms: ${JSON.stringify({
+    `${label}: deterministic Mara replay did not complete within the ${RESPONSIVE_DECISION_REPLAY_COMPLETION_TIMEOUT_MS}ms base deadline plus bounded advancing-replay grace (absolute cap ${RESPONSIVE_DECISION_REPLAY_COMPLETION_MAX_MS}ms): ${JSON.stringify({
       latestMeaningfulConversationBubble:
         lastPage?.latestMeaningfulConversationBubble ?? null,
       probe: compactDecisionArtifactProbeDiagnostic(lastProbe),
+      replayProgress: waitState,
     })}.`,
   );
 }
