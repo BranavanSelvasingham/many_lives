@@ -4507,9 +4507,10 @@ class CdpSession {
     const firstWindow = existing[0] ?? null;
     if (
       firstWindow &&
-      recordedWindow.beforeProbe.route.progress -
-          firstWindow.afterProbe.route.progress <
-        AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
+      !autoplayRecordedRouteWindowsHaveDistinctProgress(
+        firstWindow,
+        recordedWindow,
+      )
     ) {
       return reject("route-progress-not-distinct");
     }
@@ -4532,6 +4533,45 @@ class CdpSession {
       );
     }
     return recordedWindow;
+  }
+
+  autoplayProactiveRouteWindowNeedsFollowUp(
+    recordedWindow,
+    expectedTargetLocationId,
+  ) {
+    const state = this.screencast;
+    const frame = autoplayRecordedRouteWindowFrame(recordedWindow);
+    const beforeProbe = recordedWindow?.beforeProbe;
+    const afterProbe = recordedWindow?.afterProbe;
+    if (
+      !state ||
+      state.routeFrameWindowArchive.length !== 1 ||
+      (frame?.source ?? frame?.metadata?.source) !==
+        "proactive-route-screenshot" ||
+      !autoplayRouteCaptureWindowCoherent(
+        beforeProbe?.route,
+        afterProbe?.route,
+        expectedTargetLocationId,
+      ) ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(beforeProbe, afterProbe)
+    ) {
+      return false;
+    }
+    const beforeProgress = Number(beforeProbe.route.progress);
+    const afterProgress = Number(afterProbe.route.progress);
+    const routeDurationMs = Number(afterProbe.route.durationMs);
+    if (
+      ![beforeProgress, afterProgress, routeDurationMs].every(
+        Number.isFinite,
+      ) ||
+      afterProgress - beforeProgress < AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
+    ) {
+      return false;
+    }
+    const remainingRouteMs =
+      routeDurationMs * Math.max(0, 1 - afterProgress) -
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS * 2;
+    return remainingRouteMs >= AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS;
   }
 
   autoplayRouteArchiveNeedsProactiveOpeningCapture(beforeProbe) {
@@ -4627,6 +4667,7 @@ class CdpSession {
       );
       let proactiveOpeningCapturePending =
         this.autoplayRouteArchiveNeedsProactiveOpeningCapture(beforeProbe);
+      let proactiveFollowUpPending = false;
       if (!proactiveOpeningCapturePending) {
         await this.rearmAutoplayScreencastForRouteCapture(
           `${label}:dense-opening-route-stream`,
@@ -4683,6 +4724,7 @@ class CdpSession {
         const firstWindow = state.routeFrameWindowArchive[0] ?? null;
         if (
           firstWindow &&
+          !proactiveFollowUpPending &&
           sample.route.progress - firstWindow.afterProbe.route.progress <
             AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
         ) {
@@ -4718,8 +4760,12 @@ class CdpSession {
           break;
         }
         let captured = null;
-        if (proactiveOpeningCapturePending && !firstWindow) {
+        if (
+          (proactiveOpeningCapturePending && !firstWindow) ||
+          (proactiveFollowUpPending && firstWindow)
+        ) {
           proactiveOpeningCapturePending = false;
+          proactiveFollowUpPending = false;
           try {
             captured = await captureAutoplayProactiveRouteFrameWindow({
               beforeProbe: sample,
@@ -4763,6 +4809,23 @@ class CdpSession {
         }
         if (!captured) {
           continue;
+        }
+        if (
+          this.autoplayProactiveRouteWindowNeedsFollowUp(
+            captured,
+            expectedTargetLocationId,
+          )
+        ) {
+          proactiveFollowUpPending = true;
+          state.routeFrameWindowCapturePendingSample = captured.afterProbe;
+          this.recordCdpTransportEvent(
+            "adaptive-proactive-route-follow-up",
+            {
+              afterProgress: captured.afterProbe.route.progress,
+              beforeProgress: captured.beforeProbe.route.progress,
+              expectedTargetLocationId,
+            },
+          );
         }
       }
       if (state.routeRenderedFrameEvidenceAccepted) {

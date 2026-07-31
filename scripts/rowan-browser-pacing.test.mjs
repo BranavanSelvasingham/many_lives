@@ -2298,7 +2298,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, selectAutoplayRecordedRouteTrajectory };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
@@ -2392,6 +2392,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayDelayedScreencastRouteFrameWindowMatches",
     "autoplayRouteCaptureWindowOpeningMembership",
     "autoplayRecordedRouteWindowFrame",
+    "autoplayRecordedRouteWindowsHaveDistinctProgress",
     "buildAutoplayOpeningRouteEvidence",
     "buildAutoplayRouteCaptureSegments",
     "buildAutoplayDelayedScreencastRouteFrameWindow",
@@ -2444,6 +2445,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.autoplayRouteCaptureWindowOpeningMembership,
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
+    recordedRoutePolicy.autoplayRecordedRouteWindowsHaveDistinctProgress,
     routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
     recordedRoutePolicy.buildAutoplayDelayedScreencastRouteFrameWindow,
@@ -5387,6 +5389,314 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(guardSession.autoplayRouteFrameWindows().length, 0);
       } finally {
         await guardSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
+    "a slow proactive opening capture immediately earns a second bounded proactive position",
+    async () => {
+      const routeSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/ci-adaptive-proactive-route",
+        url: "http://127.0.0.1/",
+      });
+      routeSession.socket = { destroyed: false, writable: true };
+      routeSession.send = async () => ({});
+      await routeSession.startAutoplayScreencast();
+      const startedAt = 1_785_517_972_106;
+      routeSession.screencast.startedAtEpochMs = startedAt;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const route = {
+        active: true,
+        durationMs: 5_040,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sample = (
+        progress,
+        offsetMs,
+        { generation = 2, hud = "DAY 1 11:05", routeOverrides = {} } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          ...paintProbe,
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+        },
+        recorderGeneration: generation,
+        route: { ...route, progress, ...routeOverrides },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.004, 0),
+        sample(0.12, 600),
+        sample(0.329, 1_700),
+        sample(0.45, 2_300),
+        sample(0.66, 3_400),
+        sample(0.84, 4_200),
+        sample(0.948, 4_768),
+      ];
+      const frame = (sequence, capturedAtEpochMs, pixels, source = null) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: {
+          ...(source ? { source } : {}),
+          timestamp: capturedAtEpochMs / 1_000,
+        },
+        sequence,
+        ...(source ? { source } : {}),
+      });
+      const earlyFrame = frame(
+        725,
+        startedAt + 34.283,
+        "ci-unsettled-opening-position",
+      );
+      routeSession.screencast.lastSequence = 725;
+      routeSession.screencast.routeFrameHistory.push(earlyFrame);
+      routeSession.archiveAutoplayRouteFrames({
+        acceptedCount: 1,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: openingSamples.slice(0, 1),
+      });
+      routeCompositingSleepFixture = async (minimumEpochMs) => {
+        assert.equal(minimumEpochMs, startedAt + 125);
+      };
+
+      const proactiveFrames = [
+        frame(
+          726,
+          1_785_517_973_794.276,
+          "ci-first-proactive-position",
+          "proactive-route-screenshot",
+        ),
+        frame(
+          727,
+          startedAt + 3_290,
+          "ci-second-proactive-position",
+          "proactive-route-screenshot",
+        ),
+      ];
+      const proactiveWindows = [
+        {
+          afterProbe: openingSamples[2],
+          beforeProbe: openingSamples[0],
+        },
+        {
+          afterProbe: openingSamples[4],
+          beforeProbe: openingSamples[2],
+        },
+      ];
+      let proactiveCaptureCount = 0;
+      proactiveRouteCaptureFixture = async ({
+        beforeProbe,
+        expectedTargetLocationId,
+        session,
+        timeoutMs,
+      }) => {
+        const captureIndex = proactiveCaptureCount;
+        const recordedWindow = proactiveWindows[captureIndex];
+        assert.equal(beforeProbe, recordedWindow.beforeProbe);
+        assert.equal(timeoutMs, 60);
+        proactiveCaptureCount += 1;
+        session.screencast.lastSequence =
+          proactiveFrames[captureIndex].sequence;
+        const recorder = {
+          acceptedCount: captureIndex === 0 ? 3 : 5,
+          expectedTargetLocationId,
+          generation: 2,
+          samples: openingSamples.slice(0, captureIndex === 0 ? 3 : 5),
+        };
+        session.archiveAutoplayRouteFrames(recorder);
+        return session.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: {
+            ...recordedWindow,
+            frame: proactiveFrames[captureIndex],
+          },
+          recorder,
+        });
+      };
+      routeSession.sampleAutoplayRouteCaptureRecorder = async () => {
+        assert.fail(
+          "Adaptive proactive follow-up must not wait for a constrained recorder sample.",
+        );
+      };
+      routeSession.captureAutoplayScreencastRouteFrameWindow = async () => {
+        assert.fail(
+          "Adaptive proactive follow-up must not spend the remaining route budget on dense capture.",
+        );
+      };
+
+      try {
+        await routeSession.scheduleAutoplayRouteVisualWindowCapture({
+          beforeProbe: openingSamples[0],
+          expectedTargetLocationId: "tea-house",
+          label: "ci-adaptive-proactive-route",
+        });
+        assert.equal(proactiveCaptureCount, 2);
+        assert.equal(
+          routeSession.screencast.routeFrameWindowCaptureAttemptCount,
+          2,
+        );
+        assert.equal(routeSession.autoplayRouteFrameWindows().length, 2);
+        assert.equal(
+          routeSession.screencast.routeFrameWindowCaptureStatus,
+          "complete",
+        );
+        assert.equal(
+          routeSession.autoplayProactiveRouteWindowNeedsFollowUp(
+            routeSession.autoplayRouteFrameWindows()[0],
+            "tea-house",
+          ),
+          false,
+          "The adaptive branch is one-shot after the second window is archived.",
+        );
+
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: routeSession.autoplayRouteFrameHistory(),
+            label: "CI adaptive proactive opening route",
+            recordedWindows: routeSession.autoplayRouteFrameWindows(),
+            samples: routeSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame: renderedFrame, paintProbe }) => ({
+              buffer: Buffer.from(renderedFrame.data, "base64"),
+              height: 625,
+              paintProbe,
+              textPaint: {},
+              width: 1365,
+            }),
+            validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+          });
+        assert.equal(trajectory.start.frame.sequence, 726);
+        assert.equal(trajectory.mid.frame.sequence, 727);
+        assert.equal(trajectory.start.evidenceSource, "proactive-route-frame");
+        assert.equal(trajectory.mid.evidenceSource, "proactive-route-frame");
+        assert.equal(
+          recordedRoutePolicy.autoplayRecordedRouteWindowsHaveDistinctProgress(
+            routeSession.autoplayRouteFrameWindows()[0],
+            routeSession.autoplayRouteFrameWindows()[1],
+          ),
+          true,
+        );
+        assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
+      } finally {
+        proactiveRouteCaptureFixture = async () => null;
+        routeCompositingSleepFixture = (minimumEpochMs) =>
+          sleepUntilEpochMs(minimumEpochMs, {
+            sleepFor: (milliseconds) =>
+              new Promise((resolve) => setTimeout(resolve, milliseconds)),
+          });
+        await routeSession.stopAutoplayScreencast();
+      }
+
+      const rejectionSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/ci-adaptive-proactive-guards",
+        url: "http://127.0.0.1/",
+      });
+      rejectionSession.socket = { destroyed: false, writable: true };
+      rejectionSession.send = async () => ({});
+      await rejectionSession.startAutoplayScreencast();
+      rejectionSession.archiveAutoplayRouteFrames({
+        acceptedCount: openingSamples.length,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: openingSamples,
+      });
+      const firstWindow = {
+        ...proactiveWindows[0],
+        frame: proactiveFrames[0],
+      };
+      assert.ok(
+        rejectionSession.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId: "tea-house",
+          recordedWindow: firstWindow,
+          recorder: {
+            expectedTargetLocationId: "tea-house",
+            samples: openingSamples,
+          },
+        }),
+      );
+      try {
+        const insufficientProgress = {
+          afterProbe: sample(0.39, 2_100),
+          beforeProbe: openingSamples[2],
+          frame: frame(
+            728,
+            startedAt + 2_000,
+            "ci-insufficient-progress-position",
+            "proactive-route-screenshot",
+          ),
+        };
+        assert.equal(
+          rejectionSession.archiveAutoplayRouteFrameWindow({
+            expectedTargetLocationId: "tea-house",
+            recordedWindow: insufficientProgress,
+            recorder: {
+              expectedTargetLocationId: "tea-house",
+              samples: [...openingSamples, insufficientProgress.afterProbe],
+            },
+          }),
+          null,
+        );
+        assert.equal(
+          rejectionSession.screencast.routeFrameWindowRejections.at(-1)
+            .reason,
+          "route-progress-not-distinct",
+        );
+
+        const identicalPixels = {
+          ...proactiveWindows[1],
+          frame: frame(
+            729,
+            startedAt + 3_290,
+            "ci-first-proactive-position",
+            "proactive-route-screenshot",
+          ),
+        };
+        assert.equal(
+          rejectionSession.archiveAutoplayRouteFrameWindow({
+            expectedTargetLocationId: "tea-house",
+            recordedWindow: identicalPixels,
+            recorder: {
+              expectedTargetLocationId: "tea-house",
+              samples: openingSamples,
+            },
+          }),
+          null,
+        );
+        assert.equal(
+          rejectionSession.screencast.routeFrameWindowRejections.at(-1)
+            .reason,
+          "visual-frame-pixels-identical",
+        );
+        assert.equal(rejectionSession.autoplayRouteFrameWindows().length, 1);
+      } finally {
+        await rejectionSession.stopAutoplayScreencast();
       }
     },
   );
