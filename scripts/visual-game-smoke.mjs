@@ -17,6 +17,10 @@ import {
   cameraScrollDistance,
   waitForStableCameraProbes,
 } from "./visual-game-camera-settle.mjs";
+import {
+  assertVisualQualityRegressionEvidence,
+  createVisualQualityRegressionEvidence,
+} from "./visual-quality-regression.mjs";
 
 const DEFAULT_WEB_BASE =
   process.env.MANY_LIVES_WEB_BASE_URL ?? "http://127.0.0.1:3001";
@@ -2986,8 +2990,11 @@ async function captureValidatedScreenshot({
       screenshotPixelDiagnostics.push({
         hudChips: pixelDiagnostics.hudChipDiagnostics,
         label,
+        largestNearBlackComponent:
+          pixelDiagnostics.largestNearBlackComponent,
         targetPath,
         uiTextRuns: pixelDiagnostics.uiTextDiagnostics,
+        viewport,
       });
       return {
         largestNearBlackComponent:
@@ -9271,6 +9278,16 @@ async function main() {
     authoredInteriorIdentity =
       await runAuthoredInteriorIdentityCheck(session);
     process.stdout.write("[many-lives] Finished authored interior identity.\n");
+    const visualQualityRegressionEvidence =
+      createVisualQualityRegressionEvidence({
+        fringeCompositionDiagnostics,
+        interiorIdentityDiagnostics,
+        results,
+        screenshotPixelDiagnostics,
+        secondaryLandmarkCompositionDiagnostics,
+      });
+    const visualQualityRegression =
+      assertVisualQualityRegressionEvidence(visualQualityRegressionEvidence);
 
     const unexpectedPageErrors = filterExpectedStoredGamePageErrors(
       session.pageErrors,
@@ -9302,6 +9319,8 @@ async function main() {
           secondaryLandmarkCompositionDiagnostics,
           secondaryLandmarkRouteIdentity,
           storedGameChoice,
+          visualQualityRegression,
+          visualQualityRegressionEvidence,
           webBase: activeWebBase,
         },
         null,
