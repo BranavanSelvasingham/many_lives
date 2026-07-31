@@ -2298,7 +2298,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
     "autoplayRecordedRouteWindowFrame",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayRouteCaptureWindowRetainsCompositingSettle, selectAutoplayRecordedRouteTrajectory };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
@@ -2382,10 +2382,12 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayRouteCaptureSamplesShareExactIdentity",
     "autoplayRouteCaptureSamplesShareExactRouteIdentity",
     "autoplayRecordedRouteWindowSharesAdmissibleIdentity",
+    "autoplayDelayedScreencastRouteFrameWindowMatches",
     "autoplayRouteCaptureWindowOpeningMembership",
     "autoplayRecordedRouteWindowFrame",
     "buildAutoplayOpeningRouteEvidence",
     "buildAutoplayRouteCaptureSegments",
+    "buildAutoplayDelayedScreencastRouteFrameWindow",
     "captureAutoplayProactiveRouteFrameWindow",
     "compactAutoplayRouteCaptureSegments",
     "compactAutoplayRouteFrameWindowProbe",
@@ -2431,11 +2433,13 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactIdentity,
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactRouteIdentity,
     routeSegmentsPolicy.autoplayRecordedRouteWindowSharesAdmissibleIdentity,
+    recordedRoutePolicy.autoplayDelayedScreencastRouteFrameWindowMatches,
     routeSegmentsPolicy.autoplayRouteCaptureWindowOpeningMembership,
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
     routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
+    recordedRoutePolicy.buildAutoplayDelayedScreencastRouteFrameWindow,
     (options) => proactiveRouteCaptureFixture(options),
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
     routeSegmentsPolicy.compactAutoplayRouteFrameWindowProbe,
@@ -2812,6 +2816,195 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         "A frame beyond both the 125ms tail bound and remaining legal route time must stay rejected.",
       );
       await tailSession.stopAutoplayScreencast();
+    },
+  );
+
+  await t.test(
+    "frames captured on a legal opening route survive an inactive after-probe",
+    async () => {
+      const delayedSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl: "ws://127.0.0.1:9222/devtools/page/delayed-route-frame",
+        url: "http://127.0.0.1/",
+      });
+      delayedSession.socket = { destroyed: false, writable: true };
+      delayedSession.send = async () => ({});
+      await delayedSession.startAutoplayScreencast();
+      const startedAt = delayedSession.screencast.startedAtEpochMs;
+      const route = {
+        active: true,
+        durationMs: 5_040,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sampleAt = (progress, offsetMs, overrides = {}) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+          stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+          viewport: { height: 625, width: 1_365 },
+        },
+        recorderGeneration: 2,
+        route: { ...route, progress },
+        source: "movement-probe-recorder",
+        ...overrides,
+      });
+      const samples = [
+        sampleAt(0.005, 0),
+        sampleAt(0.2, 300),
+        sampleAt(0.55, 700),
+        sampleAt(0.67, 900),
+        sampleAt(0.82, 1_100),
+      ];
+      const frames = [
+        {
+          data: Buffer.from("opening-route-position").toString("base64"),
+          metadata: { timestamp: (startedAt + 725) / 1_000 },
+          sequence: 41,
+          source: "screencast",
+        },
+        {
+          data: Buffer.from("later-route-position").toString("base64"),
+          metadata: { timestamp: (startedAt + 1_125) / 1_000 },
+          sequence: 42,
+          source: "screencast",
+        },
+      ];
+      delayedSession.screencast.routeRecorderExpectedTargetLocationId =
+        "tea-house";
+      delayedSession.screencast.routeRecorderGeneration = 2;
+      delayedSession.screencast.routeSampleArchive = samples.slice(0, 3);
+      let nextFrame = 0;
+      let afterProbeReadCount = 0;
+      delayedSession.waitForAutoplayScreencastFrame = async () =>
+        frames[nextFrame++];
+      delayedSession.sampleAutoplayRouteCaptureRecorder = async () => {
+        afterProbeReadCount += 1;
+        return null;
+      };
+      delayedSession.classifyAutoplayRouteCaptureSampleFailure = async () =>
+        "route-unavailable";
+
+      const firstWindow =
+        await delayedSession.captureAutoplayScreencastRouteFrameWindow({
+          afterSequence: 40,
+          beforeProbe: samples[0],
+          expectedTargetLocationId: "tea-house",
+          label: "delayed opening route frame",
+          timeoutMs: 1_000,
+        });
+      assert.ok(firstWindow);
+      assert.equal(firstWindow.delayedAfterProbeRecovery,
+        "archived-legal-route-samples");
+      assert.equal(firstWindow.routeTailFrameGraceMs, 25);
+
+      delayedSession.screencast.routeSampleArchive = samples;
+      const secondWindow =
+        await delayedSession.captureAutoplayScreencastRouteFrameWindow({
+          afterSequence: 41,
+          beforeProbe: samples[3],
+          expectedTargetLocationId: "tea-house",
+          label: "delayed later route frame",
+          timeoutMs: 1_000,
+        });
+      assert.ok(secondWindow);
+      assert.equal(afterProbeReadCount, 0,
+        "Archived legal samples must bind the frame before a slow inactive after-probe can discard it.");
+      assert.equal(delayedSession.autoplayRouteFrameWindows().length, 2);
+
+      const validateFrame = ({ frame, paintProbe }) => ({
+        buffer: Buffer.from(frame.data, "base64"),
+        height: 375,
+        paintProbe,
+        textPaint: {},
+        width: 819,
+      });
+      const trajectory =
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+          expectedTargetLocationId: "tea-house",
+          frames: [],
+          label: "delayed inactive after-probe",
+          recordedWindows: delayedSession.autoplayRouteFrameWindows(),
+          samples,
+          validateFrame,
+          validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+            assert.notDeepEqual(afterBuffer, beforeBuffer);
+            return { hudPixelDifferenceRatio: 0 };
+          },
+        });
+      assert.equal(trajectory.start.frame.sequence, 41);
+      assert.equal(trajectory.mid.frame.sequence, 42);
+      assert.equal(trajectory.start.evidenceSource, "screencast-frame");
+      assert.equal(trajectory.mid.evidenceSource, "screencast-frame");
+
+      const unrelatedPathSamples = samples.map((sample, index) =>
+        index === 2
+          ? {
+              ...sample,
+              route: {
+                ...sample.route,
+                worldPath: [
+                  { x: 331, y: 688 },
+                  { x: 884, y: 612 },
+                ],
+              },
+            }
+          : sample,
+      );
+      assert.equal(
+        recordedRoutePolicy.buildAutoplayDelayedScreencastRouteFrameWindow({
+          beforeProbe: unrelatedPathSamples[0],
+          expectedTargetLocationId: "tea-house",
+          frame: frames[0],
+          samples: unrelatedPathSamples.slice(0, 3),
+        }),
+        null,
+        "A path-changed frame must not inherit the opening route identity.",
+      );
+      assert.equal(
+        recordedRoutePolicy.buildAutoplayDelayedScreencastRouteFrameWindow({
+          beforeProbe: samples[0],
+          expectedTargetLocationId: "tea-house",
+          frame: {
+            ...frames[0],
+            metadata: { timestamp: (startedAt + 5_100) / 1_000 },
+            sequence: 43,
+          },
+          samples: samples.slice(0, 3),
+        }),
+        null,
+        "A frame beyond the projected legal route lifetime must stay rejected.",
+      );
+      assert.equal(
+        recordedRoutePolicy.buildAutoplayDelayedScreencastRouteFrameWindow({
+          beforeProbe: samples[0],
+          expectedTargetLocationId: "tea-house",
+          frame: frames[0],
+          samples: samples.slice(0, 3).map((sample, index) =>
+            index === 2
+              ? { ...sample, recorderGeneration: 3 }
+              : sample,
+          ),
+        }),
+        null,
+        "A generation-changed frame must not inherit archived route proof.",
+      );
+      await delayedSession.stopAutoplayScreencast();
     },
   );
 

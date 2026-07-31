@@ -4285,6 +4285,30 @@ class CdpSession {
         AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
       timeoutMs,
     });
+    const archivedSamples = [
+      ...new Map(
+        [...this.screencast.routeSampleArchive, beforeProbe].map((sample) => [
+          sample.capturedAtEpochMs,
+          sample,
+        ]),
+      ).values(),
+    ];
+    const archivedWindow = buildAutoplayDelayedScreencastRouteFrameWindow({
+      beforeProbe,
+      expectedTargetLocationId,
+      frame,
+      samples: archivedSamples,
+    });
+    if (archivedWindow) {
+      return this.archiveAutoplayRouteFrameWindow({
+        expectedTargetLocationId,
+        recordedWindow: archivedWindow,
+        recorder: {
+          expectedTargetLocationId,
+          samples: archivedSamples,
+        },
+      });
+    }
     const afterProbe = await this.sampleAutoplayRouteCaptureRecorder(
       `${label}:after-route-sample`,
     );
@@ -4400,6 +4424,12 @@ class CdpSession {
       openingSegment,
       recordedWindow,
     });
+    const delayedArchivedFrameProof =
+      autoplayDelayedScreencastRouteFrameWindowMatches({
+        expectedTargetLocationId,
+        openingSegment,
+        recordedWindow,
+      });
     if (!openingMembership.beforeBelongs) {
       return reject("before-probe-outside-opening-segment");
     }
@@ -4427,7 +4457,7 @@ class CdpSession {
         frame,
         recordedWindow.beforeProbe,
         recordedWindow.afterProbe,
-      )
+      ) && !delayedArchivedFrameProof
     ) {
       return reject("visual-frame-outside-probe-bracket");
     }
@@ -15511,6 +15541,12 @@ function recordedRouteWindowBelongsToOpeningSegment({
   recordedWindow,
 }) {
   const frame = autoplayRecordedRouteWindowFrame(recordedWindow);
+  const delayedArchivedFrameProof =
+    autoplayDelayedScreencastRouteFrameWindowMatches({
+      expectedTargetLocationId,
+      openingSegment,
+      recordedWindow,
+    });
   const openingMembership = autoplayRouteCaptureWindowOpeningMembership({
     expectedTargetLocationId,
     openingSegment,
@@ -15526,11 +15562,11 @@ function recordedRouteWindowBelongsToOpeningSegment({
         expectedTargetLocationId,
       ) &&
       autoplayRecordedRouteWindowSharesAdmissibleIdentity(recordedWindow) &&
-      screencastFrameIsBracketedByEpochProbes(
+      (screencastFrameIsBracketedByEpochProbes(
         frame,
         recordedWindow.beforeProbe,
         recordedWindow.afterProbe,
-      ) &&
+      ) || delayedArchivedFrameProof) &&
       screencastFrameCapturedAtEpochMs(frame) >=
         recordedWindow.beforeProbe.capturedAtEpochMs +
           AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS &&
@@ -15697,6 +15733,125 @@ function buildAutoplayRecordedRouteFrameCandidates({
         screencastFrameCapturedAtEpochMs(left.frame) -
         screencastFrameCapturedAtEpochMs(right.frame),
     );
+}
+
+function buildAutoplayDelayedScreencastRouteFrameWindow({
+  beforeProbe,
+  expectedTargetLocationId,
+  frame,
+  openingSegment: suppliedOpeningSegment = null,
+  samples,
+}) {
+  if (
+    !isAutoplayFootholdRouteFrame(
+      beforeProbe?.route,
+      expectedTargetLocationId,
+    ) ||
+    !Number.isInteger(beforeProbe?.recorderGeneration)
+  ) {
+    return null;
+  }
+  const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+  const durationMs = Number(beforeProbe.route.durationMs);
+  const progress = Number(beforeProbe.route.progress);
+  const remainingRouteMs =
+    Number.isFinite(durationMs) &&
+    durationMs > 0 &&
+    Number.isFinite(progress)
+      ? durationMs * Math.max(0, 1 - progress)
+      : null;
+  if (
+    capturedAtEpochMs === null ||
+    remainingRouteMs === null ||
+    capturedAtEpochMs <
+      beforeProbe.capturedAtEpochMs +
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS ||
+    capturedAtEpochMs > beforeProbe.capturedAtEpochMs + remainingRouteMs
+  ) {
+    return null;
+  }
+
+  const openingSegment =
+    suppliedOpeningSegment ??
+    buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId,
+      samples,
+    })[0];
+  const legalSamples = openingSegment?.samples ?? [];
+  const beforeBelongs = legalSamples.some(
+    (sample) =>
+      sample.capturedAtEpochMs === beforeProbe.capturedAtEpochMs &&
+      sample.route?.progress === beforeProbe.route.progress &&
+      autoplayRouteCaptureSamplesShareExactIdentity(sample, beforeProbe),
+  );
+  if (!beforeBelongs) {
+    return null;
+  }
+
+  const candidate = buildAutoplayRecordedRouteFrameCandidates({
+    expectedTargetLocationId,
+    frames: [frame],
+    openingSegment,
+    samples: legalSamples,
+  }).find((window) => window.frame.sequence === frame.sequence);
+  if (
+    !candidate ||
+    candidate.afterProbe.capturedAtEpochMs < beforeProbe.capturedAtEpochMs ||
+    !autoplayRouteCaptureSamplesShareExactIdentity(
+      beforeProbe,
+      candidate.beforeProbe,
+    ) ||
+    !autoplayRouteCaptureSamplesShareExactIdentity(
+      beforeProbe,
+      candidate.afterProbe,
+    )
+  ) {
+    return null;
+  }
+
+  return {
+    ...candidate,
+    captureBeforeProbe: beforeProbe,
+    delayedAfterProbeRecovery: "archived-legal-route-samples",
+  };
+}
+
+function autoplayDelayedScreencastRouteFrameWindowMatches({
+  expectedTargetLocationId,
+  openingSegment,
+  recordedWindow,
+}) {
+  if (
+    recordedWindow?.delayedAfterProbeRecovery !==
+      "archived-legal-route-samples" ||
+    !recordedWindow.captureBeforeProbe
+  ) {
+    return false;
+  }
+  const windowSamples = (openingSegment?.samples ?? []).filter(
+    (sample) =>
+      sample.capturedAtEpochMs <= recordedWindow.afterProbe.capturedAtEpochMs,
+  );
+  const provenWindow = buildAutoplayDelayedScreencastRouteFrameWindow({
+    beforeProbe: recordedWindow.captureBeforeProbe,
+    expectedTargetLocationId,
+    frame: autoplayRecordedRouteWindowFrame(recordedWindow),
+    openingSegment: openingSegment
+      ? { ...openingSegment, samples: windowSamples }
+      : null,
+    samples: windowSamples,
+  });
+  return Boolean(
+    provenWindow &&
+      provenWindow.beforeProbe.capturedAtEpochMs ===
+        recordedWindow.beforeProbe?.capturedAtEpochMs &&
+      provenWindow.beforeProbe.route?.progress ===
+        recordedWindow.beforeProbe?.route?.progress &&
+      provenWindow.afterProbe.capturedAtEpochMs ===
+        recordedWindow.afterProbe?.capturedAtEpochMs &&
+      provenWindow.afterProbe.route?.progress ===
+        recordedWindow.afterProbe?.route?.progress
+  );
 }
 
 function buildAutoplayArchivedRouteFrameCandidates({
