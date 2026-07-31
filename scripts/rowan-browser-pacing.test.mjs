@@ -121,6 +121,88 @@ const recordVisualMoveSettlementProgress = Function(
     visualMoveSettlementEnd,
   )})`,
 )();
+const naturalStopClassifierStart = source.indexOf(
+  "function classifyAutoplayNaturalFirstAfternoonStop(",
+);
+const naturalStopClassifierEnd = source.indexOf(
+  "\nfunction ",
+  naturalStopClassifierStart + 1,
+);
+const classifyAutoplayNaturalFirstAfternoonStop = Function(
+  "AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS",
+  `return (${source.slice(
+    naturalStopClassifierStart,
+    naturalStopClassifierEnd,
+  )})`,
+)(2_000);
+
+function completedFirstAfternoonSample(overrides = {}) {
+  return {
+    autonomy: {
+      actionId: null,
+      autoContinue: false,
+    },
+    firstAfternoon: {
+      completedAt: "2026-03-21T14:14:00.000Z",
+      completionAcknowledgedAt: null,
+      consequence: {
+        achievedAt: "2026-03-21T14:14:00.000Z",
+        id: "problem-pump",
+        kind: "local-problem",
+      },
+    },
+    objective: {
+      routeKey: "first-afternoon",
+      text: "Secure one foothold before the afternoon closes.",
+    },
+    ...overrides,
+  };
+}
+
+function acknowledgedFirstAfternoonHandoffSample() {
+  return completedFirstAfternoonSample({
+    autonomy: {
+      actionId: "rest:home",
+      autoContinue: true,
+      label: "Rest for an hour",
+      targetLocationId: "boarding-house",
+    },
+    firstAfternoon: {
+      completedAt: "2026-03-21T14:14:00.000Z",
+      completionAcknowledgedAt: "2026-03-21T14:14:00.000Z",
+      consequence: {
+        achievedAt: "2026-03-21T14:14:00.000Z",
+        evidence:
+          "Leaking hand pump solved after Rowan grounded the local problem.",
+        id: "problem-pump",
+        kind: "local-problem",
+        label: "Leaking hand pump solved",
+      },
+    },
+    objective: {
+      routeKey: "rest-home",
+      text: "Recover enough at Morrow House to move cleanly again.",
+    },
+    planningTrace: {
+      selectedActionId: "rest:home",
+      selectedLabel: "Rest for an hour",
+      selectedLegalBacking: {
+        actionId: "rest:home",
+        source: "current-legal-action-surface",
+      },
+      selectedRecommendation: {
+        accepted: true,
+        legalBackingSource: "current-legal-action-surface",
+        sourceKind: "deterministic-planner",
+        validationSource: "current-legal-action-surface",
+        validationStatus: "legal-action-surface-validated",
+      },
+    },
+    visibleDecisionArtifact: {
+      selectedAction: "Rest for an hour",
+    },
+  });
+}
 
 test("first-afternoon readability uses full app-visible dwell", () => {
   assert.ok(assertionStart >= 0 && assertionEnd > assertionStart);
@@ -136,6 +218,116 @@ test("completion and handoff both use the full-dwell assertion", () => {
   assert.equal(
     (source.match(/assertReadableFirstAfternoonDwell\(/g) ?? []).length,
     3,
+  );
+  assert.match(
+    source,
+    /assertReadableFirstAfternoonDwell\(\s*completionDwell,/,
+  );
+  assert.match(
+    source,
+    /assertReadableFirstAfternoonDwell\(\s*handoffDwell,/,
+  );
+});
+
+test("ordinary completion idle remains a natural first-afternoon stop", () => {
+  assert.deepEqual(
+    classifyAutoplayNaturalFirstAfternoonStop(
+      completedFirstAfternoonSample(),
+      [],
+    ),
+    {
+      accepted: true,
+      evidence: "completion-idle",
+    },
+  );
+});
+
+test("a slow observer accepts the acknowledged state-derived handoff from CI", () => {
+  const sample = acknowledgedFirstAfternoonHandoffSample();
+
+  assert.deepEqual(
+    classifyAutoplayNaturalFirstAfternoonStop(sample, [
+      {
+        configuredDurationMs: 2_800,
+        evidence: "active-terminal-card",
+        key: "objective-shift:rest-home",
+        kind: "objective_shift",
+        observedAppDurationMs: 547.6,
+      },
+    ]),
+    {
+      accepted: true,
+      evidence: "acknowledged-state-derived-handoff",
+      handoffActionId: "rest:home",
+      handoffCardKey: "objective-shift:rest-home",
+      handoffRouteKey: "rest-home",
+    },
+  );
+});
+
+test("acknowledged state-derived handoff without its active shift card is rejected", () => {
+  assert.deepEqual(
+    classifyAutoplayNaturalFirstAfternoonStop(
+      acknowledgedFirstAfternoonHandoffSample(),
+      [],
+    ),
+    {
+      accepted: false,
+      evidence: "untrusted-post-completion-state",
+    },
+  );
+});
+
+test("completed state without trustworthy handoff evidence is rejected", () => {
+  const sample = completedFirstAfternoonSample({
+    autonomy: {
+      actionId: "wander:anywhere",
+      autoContinue: true,
+      label: "Wander",
+    },
+    firstAfternoon: {
+      completedAt: "2026-03-21T14:14:00.000Z",
+      completionAcknowledgedAt: "2026-03-21T14:14:00.000Z",
+      consequence: {
+        achievedAt: "2026-03-21T14:14:00.000Z",
+        id: "problem-pump",
+        kind: "local-problem",
+      },
+    },
+    objective: {
+      routeKey: "wander",
+      text: "Wander without validated backing.",
+    },
+    visibleDecisionArtifact: {
+      selectedAction: "Wander",
+    },
+  });
+
+  assert.deepEqual(
+    classifyAutoplayNaturalFirstAfternoonStop(sample, [
+      {
+        configuredDurationMs: 2_800,
+        evidence: "active-terminal-card",
+        key: "objective-shift:wander",
+        kind: "objective_shift",
+        observedAppDurationMs: 500,
+      },
+    ]),
+    {
+      accepted: false,
+      evidence: "untrusted-post-completion-state",
+    },
+  );
+});
+
+test("slow-observer handoff recognition cannot replace full dwell proof", () => {
+  assert.match(
+    streetRuntimeSource,
+    /const FIRST_AFTERNOON_COMPLETION_DWELL_MS = 8000;/,
+  );
+  assert.match(
+    assertionSource,
+    /entry\.fullAppDurationMs >= FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS/,
   );
   assert.match(
     source,

@@ -19327,6 +19327,89 @@ function autoplayObservationSignature(sample) {
   });
 }
 
+function classifyAutoplayNaturalFirstAfternoonStop(
+  finalSample,
+  activePlaybackCardsAtEnd,
+) {
+  const firstAfternoon = finalSample?.firstAfternoon;
+  const consequence = firstAfternoon?.consequence;
+  if (
+    !firstAfternoon?.completedAt ||
+    !consequence?.achievedAt ||
+    !consequence?.id ||
+    !consequence?.kind
+  ) {
+    return { accepted: false, evidence: "missing-completed-consequence" };
+  }
+
+  if (finalSample?.autonomy?.autoContinue === false) {
+    return { accepted: true, evidence: "completion-idle" };
+  }
+
+  // A slow observer can miss the idle frame. This branch proves a coherent
+  // acknowledged handoff only; the inhabit browser's fullAppDurationMs checks
+  // remain authoritative for completion and handoff dwell length.
+  const completedAtMs = Date.parse(firstAfternoon.completedAt);
+  const acknowledgedAtMs = Date.parse(
+    firstAfternoon.completionAcknowledgedAt ?? "",
+  );
+  const routeKey = finalSample?.objective?.routeKey ?? null;
+  const actionId = finalSample?.autonomy?.actionId ?? null;
+  const planningTrace = finalSample?.planningTrace ?? null;
+  const selectedRecommendation = planningTrace?.selectedRecommendation ?? null;
+  const handoffCard = (activePlaybackCardsAtEnd ?? []).find(
+    (entry) =>
+      entry?.evidence === "active-terminal-card" &&
+      entry?.kind === "objective_shift" &&
+      entry?.key === `objective-shift:${routeKey}`,
+  );
+  const acknowledgedAfterCompletion =
+    Number.isFinite(completedAtMs) &&
+    Number.isFinite(acknowledgedAtMs) &&
+    acknowledgedAtMs >= completedAtMs;
+  const stateDerivedHandoff =
+    routeKey &&
+    routeKey !== "first-afternoon" &&
+    actionId &&
+    planningTrace?.selectedActionId === actionId &&
+    planningTrace?.selectedLabel ===
+      finalSample?.visibleDecisionArtifact?.selectedAction &&
+    planningTrace?.selectedLegalBacking?.actionId === actionId &&
+    Boolean(planningTrace.selectedLegalBacking.source) &&
+    selectedRecommendation?.accepted === true &&
+    [
+      "live-llm",
+      "deterministic-planner",
+      "deterministic-fallback",
+    ].includes(selectedRecommendation?.sourceKind) &&
+    selectedRecommendation?.validationStatus !== "unvalidated" &&
+    Boolean(selectedRecommendation?.validationSource) &&
+    Boolean(selectedRecommendation?.legalBackingSource);
+  const configuredHandoffCard =
+    handoffCard &&
+    typeof handoffCard.configuredDurationMs === "number" &&
+    handoffCard.configuredDurationMs >= AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS;
+
+  if (
+    acknowledgedAfterCompletion &&
+    stateDerivedHandoff &&
+    configuredHandoffCard
+  ) {
+    return {
+      accepted: true,
+      evidence: "acknowledged-state-derived-handoff",
+      handoffActionId: actionId,
+      handoffCardKey: handoffCard.key,
+      handoffRouteKey: routeKey,
+    };
+  }
+
+  return {
+    accepted: false,
+    evidence: "untrusted-post-completion-state",
+  };
+}
+
 function buildAutoplayObservationPacingLedger(samples) {
   const rawNormalizedSamples = [];
   let previousSignature = null;
@@ -19419,6 +19502,10 @@ function buildAutoplayObservationPacingLedger(samples) {
     normalizedSamples,
   );
   const playbackCardDwells = playbackCardDwellAudit.dwells;
+  const naturalStopEvidence = classifyAutoplayNaturalFirstAfternoonStop(
+    finalSample,
+    playbackCardDwellAudit.activeAtEnd,
+  );
 
   return {
     approachSamples,
@@ -19456,11 +19543,8 @@ function buildAutoplayObservationPacingLedger(samples) {
     maxInAppGapMs:
       appIdleGapMs.length > 0 ? Math.max(...appIdleGapMs) : null,
     maxIdleGapMs: idleGapMs.length > 0 ? Math.max(...idleGapMs) : null,
-    naturalStop: Boolean(
-      finalSample?.firstAfternoon?.completedAt &&
-        finalSample?.firstAfternoon?.consequence &&
-        finalSample?.autonomy?.autoContinue === false,
-    ),
+    naturalStop: naturalStopEvidence.accepted,
+    naturalStopEvidence,
     meaningfulBeatCount: nonDecisionTransitions.length,
     progressKinds,
     progressGaps,
