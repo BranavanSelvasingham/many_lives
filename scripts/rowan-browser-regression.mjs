@@ -4158,6 +4158,7 @@ class CdpSession {
 
   async captureAutoplayRouteVisualFrame({
     minimumCapturedAtEpochMs,
+    timeoutMs = AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS,
     viewport = null,
   }) {
     const state = this.screencast;
@@ -4204,7 +4205,12 @@ class CdpSession {
         optimizeForSpeed: true,
         quality: 90,
       },
-      { timeoutMs: AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS },
+      {
+        timeoutMs: Math.min(
+          AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS,
+          Math.max(AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS, timeoutMs),
+        ),
+      },
     );
     const data = response?.result?.data;
     assert.ok(data, "Chrome did not return proactive route screenshot data.");
@@ -4528,6 +4534,40 @@ class CdpSession {
     return recordedWindow;
   }
 
+  autoplayRouteArchiveNeedsProactiveOpeningCapture(beforeProbe) {
+    const state = this.screencast;
+    const openingSample = state?.routeSampleArchive[0] ?? beforeProbe;
+    if (
+      !state ||
+      state.routeFrameWindowArchive.length > 0 ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(
+        openingSample,
+        beforeProbe,
+      )
+    ) {
+      return false;
+    }
+    const openingAtEpochMs = openingSample?.capturedAtEpochMs;
+    if (!Number.isFinite(openingAtEpochMs)) {
+      return false;
+    }
+    const archivedFrameTimes = state.routeFrameArchive
+      .map((frame) => screencastFrameCapturedAtEpochMs(frame))
+      .filter(Number.isFinite);
+    const settledAtEpochMs =
+      openingAtEpochMs + AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS;
+    return Boolean(
+      archivedFrameTimes.some(
+        (capturedAtEpochMs) =>
+          capturedAtEpochMs >= openingAtEpochMs &&
+          capturedAtEpochMs < settledAtEpochMs,
+      ) &&
+        !archivedFrameTimes.some(
+          (capturedAtEpochMs) => capturedAtEpochMs >= settledAtEpochMs,
+        ),
+    );
+  }
+
   scheduleAutoplayRouteVisualWindowCapture({
     beforeProbe,
     expectedTargetLocationId,
@@ -4552,15 +4592,9 @@ class CdpSession {
     ) {
       return state?.routeFrameWindowCapturePromise ?? Promise.resolve(null);
     }
-    if (
-      state.routeScreencastRearmAttemptCount > 0 &&
-      !state.routeScreencastRearmPromise &&
-      state.everyNthFrame === AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME
-    ) {
+    if (state.routeFrameWindowCaptureAttemptCount >= 4) {
       state.routeFrameWindowCapturePendingSample = null;
-      state.routeFrameWindowCaptureStatus = state.routeScreencastRearmError
-        ? "dense-route-rearm-failed-awaiting-direct-validation"
-        : "dense-route-rearm-complete-awaiting-direct-validation";
+      state.routeFrameWindowCaptureStatus = "attempt-budget-exhausted";
       return Promise.resolve(state.routeFrameWindowArchive.length);
     }
     if (
@@ -4585,10 +4619,19 @@ class CdpSession {
     }
 
     state.routeFrameWindowCaptureStatus = "capturing-opening-route";
+    const openingCaptureStartSequence = this.autoplayScreencastSequence();
     state.routeFrameWindowCapturePromise = (async () => {
-      await this.rearmAutoplayScreencastForRouteCapture(
-        `${label}:dense-opening-route-stream`,
+      await sleepUntilEpochMs(
+        beforeProbe.capturedAtEpochMs +
+          AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
       );
+      let proactiveOpeningCapturePending =
+        this.autoplayRouteArchiveNeedsProactiveOpeningCapture(beforeProbe);
+      if (!proactiveOpeningCapturePending) {
+        await this.rearmAutoplayScreencastForRouteCapture(
+          `${label}:dense-opening-route-stream`,
+        );
+      }
       let unavailableSampleCount = 0;
       while (
         state.active &&
@@ -4674,15 +4717,46 @@ class CdpSession {
           state.routeFrameWindowCaptureStatus = "opening-route-ending";
           break;
         }
-        const captured = await this.captureAutoplayScreencastRouteFrameWindow({
-          afterSequence:
-            autoplayRecordedRouteWindowFrame(firstWindow)?.sequence ??
-            this.autoplayScreencastSequence(),
-          beforeProbe: sample,
-          expectedTargetLocationId,
-          label: captureLabel,
-          timeoutMs: frameTimeoutMs,
-        });
+        let captured = null;
+        if (proactiveOpeningCapturePending && !firstWindow) {
+          proactiveOpeningCapturePending = false;
+          try {
+            captured = await captureAutoplayProactiveRouteFrameWindow({
+              beforeProbe: sample,
+              expectedTargetLocationId,
+              label: captureLabel,
+              session: this,
+              timeoutMs: frameTimeoutMs,
+            });
+          } catch (error) {
+            const message =
+              error instanceof Error ? error.message : String(error);
+            this.recordAutoplayRouteFrameWindowRejection({
+              beforeProbe: sample,
+              reason: "proactive-opening-route-capture-failed",
+            });
+            this.recordCdpTransportEvent(
+              "proactive-opening-route-capture-failed",
+              {
+                error: message,
+                expectedTargetLocationId,
+              },
+            );
+          }
+        } else {
+          await this.rearmAutoplayScreencastForRouteCapture(
+            `${captureLabel}:dense-opening-route-stream`,
+          );
+          captured = await this.captureAutoplayScreencastRouteFrameWindow({
+            afterSequence:
+              autoplayRecordedRouteWindowFrame(firstWindow)?.sequence ??
+              openingCaptureStartSequence,
+            beforeProbe: sample,
+            expectedTargetLocationId,
+            label: captureLabel,
+            timeoutMs: frameTimeoutMs,
+          });
+        }
         if (state.routeRenderedFrameEvidenceAccepted) {
           state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
           break;
@@ -15495,6 +15569,7 @@ async function captureAutoplayProactiveRouteFrameWindow({
   expectedTargetLocationId,
   label,
   session,
+  timeoutMs = AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS,
 }) {
   const beforeProbe =
     initialBeforeProbe ??
@@ -15518,6 +15593,7 @@ async function captureAutoplayProactiveRouteFrameWindow({
       minimumCapturedAtEpochMs:
         beforeProbe.capturedAtEpochMs +
         AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      timeoutMs,
       viewport: beforeProbe.paintProbe?.viewport ?? null,
     });
     const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
@@ -15534,7 +15610,7 @@ async function captureAutoplayProactiveRouteFrameWindow({
         afterProbe?.route,
         expectedTargetLocationId,
       ) ||
-      !autoplayRouteCaptureSamplesShareExactRouteIdentity(
+      !autoplayRouteCaptureSamplesShareExactIdentity(
         beforeProbe,
         afterProbe,
       )

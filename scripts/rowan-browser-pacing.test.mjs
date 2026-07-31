@@ -2323,6 +2323,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     proactiveCaptureStart,
   );
   const proactiveCapturePolicy = Function(
+    "AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
     "autoplayRouteCaptureWindowCoherent",
     "isAutoplayFootholdRouteFrame",
@@ -2331,6 +2332,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayRouteCaptureSamplesShareExactRouteIdentity",
     `${source.slice(proactiveCaptureStart, proactiveCaptureEnd)}; return captureAutoplayProactiveRouteFrameWindow;`,
   )(
+    5,
     125,
     (beforeRoute, afterRoute, expectedTargetLocationId) =>
       routeSegmentsPolicy.isAutoplayFootholdRouteFrame(
@@ -2348,6 +2350,11 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactRouteIdentity,
   );
   let proactiveRouteCaptureFixture = async () => null;
+  let routeCompositingSleepFixture = (minimumEpochMs) =>
+    sleepUntilEpochMs(minimumEpochMs, {
+      sleepFor: (milliseconds) =>
+        new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    });
   const classStart = source.indexOf("class CdpSession {");
   const classEnd = source.indexOf(
     "\nasync function launchBrowserSession(",
@@ -2448,11 +2455,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     screencastFrameIsBracketedByEpochProbes,
     screencastFrameCapturedAtEpochMs,
     (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-    (minimumEpochMs) =>
-      sleepUntilEpochMs(minimumEpochMs, {
-        sleepFor: (milliseconds) =>
-          new Promise((resolve) => setTimeout(resolve, milliseconds)),
-      }),
+    (minimumEpochMs) => routeCompositingSleepFixture(minimumEpochMs),
     (promise, timeoutMs, message) =>
       Promise.race([
         promise,
@@ -4591,8 +4594,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         source: "movement-probe-recorder",
       });
       const openingSamples = [
-        sample(0.003, 0),
-        sample(0.18, 900),
+        sample(0.003, 0, { hud: "DAY 1 11:23" }),
+        sample(0.18, 900, { hud: "DAY 1 11:23" }),
         sample(0.73, 1_600, { hud: "DAY 1 11:23" }),
         sample(0.86, 2_400, { hud: "DAY 1 11:23" }),
         sample(0.95, 3_521, { hud: "DAY 1 11:23" }),
@@ -4697,7 +4700,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(trajectory.mid.afterProbe.route.progress, 0.95);
         assert.equal(
           trajectory.start.validated.textPaint.routeWindowPaintProbeBasis,
-          "stable-hud-containers-and-frame-adjacent-text",
+          undefined,
         );
         assert.match(
           trajectory.start.validated.paintProbe.regions[0].text,
@@ -4840,20 +4843,13 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         sample(0.51, 600),
         sample(0.7, 800),
       ];
-      const unsettledFrame = {
-        data: Buffer.from("unsettled-opening-frame").toString("base64"),
-        metadata: { timestamp: (startedAt + 42) / 1_000 },
-        sequence: 1,
-      };
-      routeSession.screencast.lastSequence = 1;
-      routeSession.screencast.routeFrameHistory.push(unsettledFrame);
       routeSession.archiveAutoplayRouteFrames({
         acceptedCount: 2,
         expectedTargetLocationId: "tea-house",
         generation: 2,
         samples: openingSamples.slice(0, 2),
       });
-      assert.equal(routeSession.screencast.routeFrameArchive.length, 1);
+      assert.equal(routeSession.screencast.routeFrameArchive.length, 0);
 
       const beforeSamples = [openingSamples[2], openingSamples[4]];
       routeSession.sampleAutoplayRouteCaptureRecorder = async () =>
@@ -4877,7 +4873,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           },
           sequence: captureIndex + 2,
         };
-        assert.equal(afterSequence, captureIndex === 0 ? 1 : 2);
+        assert.equal(afterSequence, captureIndex === 0 ? 0 : 2);
         const recorder = {
           acceptedCount: captureIndex === 0 ? 4 : 6,
           expectedTargetLocationId,
@@ -5026,7 +5022,6 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         );
 
         const commandCountAfterRecovery = commands.length;
-        routeSession.screencast.routeFrameWindowArchive = [];
         await routeSession.scheduleAutoplayRouteVisualWindowCapture({
           beforeProbe: openingSamples[5],
           expectedTargetLocationId: "tea-house",
@@ -5039,11 +5034,359 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         );
         assert.equal(
           routeSession.screencast.routeFrameWindowCaptureStatus,
-          "dense-route-rearm-complete-awaiting-direct-validation",
+          "complete",
         );
       } finally {
         proactiveRouteCaptureFixture = async () => null;
         await routeSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
+    "an unsettled opening frame triggers one bounded proactive position before dense rearm",
+    async () => {
+      const routeSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/ci-proactive-opening-route",
+        url: "http://127.0.0.1/",
+      });
+      routeSession.socket = { destroyed: false, writable: true };
+      routeSession.send = async () => ({});
+      await routeSession.startAutoplayScreencast();
+      const startedAt = 1_785_515_560_424;
+      routeSession.screencast.startedAtEpochMs = startedAt;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const route = {
+        active: true,
+        durationMs: 5_040,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sample = (
+        progress,
+        offsetMs,
+        { generation = 2, hud = "DAY 1 11:05", routeOverrides = {} } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          ...paintProbe,
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+        },
+        recorderGeneration: generation,
+        route: { ...route, progress, ...routeOverrides },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.004, 0),
+        sample(0.08, 150),
+        sample(0.19, 300),
+        sample(0.31, 600),
+        sample(0.655, 2_100),
+        sample(0.664, 2_123),
+      ];
+      const frame = (sequence, capturedAtEpochMs, pixels, source = null) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: {
+          ...(source ? { source } : {}),
+          timestamp: capturedAtEpochMs / 1_000,
+        },
+        sequence,
+        ...(source ? { source } : {}),
+      });
+      const tooEarlyFrame = frame(
+        758,
+        1_785_515_560_458.283,
+        "ci-unsettled-opening-position",
+      );
+      routeSession.screencast.lastSequence = 757;
+      routeSession.archiveAutoplayRouteFrames({
+        acceptedCount: 1,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: openingSamples.slice(0, 1),
+      });
+      assert.equal(routeSession.screencast.routeFrameArchive.length, 0);
+      assert.equal(
+        routeSession.autoplayRouteArchiveNeedsProactiveOpeningCapture(
+          openingSamples[0],
+        ),
+        false,
+      );
+      routeCompositingSleepFixture = async (minimumEpochMs) => {
+        assert.equal(minimumEpochMs, startedAt + 125);
+        routeSession.screencast.lastSequence = 758;
+        routeSession.screencast.routeFrameHistory.push(tooEarlyFrame);
+        routeSession.archiveAutoplayRouteFrames({
+          acceptedCount: 1,
+          expectedTargetLocationId: "tea-house",
+          generation: 2,
+          samples: openingSamples.slice(0, 1),
+        });
+      };
+
+      let proactiveCaptureCount = 0;
+      proactiveRouteCaptureFixture = async ({
+        beforeProbe,
+        expectedTargetLocationId,
+        session,
+        timeoutMs,
+      }) => {
+        proactiveCaptureCount += 1;
+        assert.equal(beforeProbe, openingSamples[0]);
+        assert.equal(timeoutMs, 60);
+        const recorder = {
+          acceptedCount: 2,
+          expectedTargetLocationId,
+          generation: 2,
+          samples: openingSamples.slice(0, 2),
+        };
+        session.archiveAutoplayRouteFrames(recorder);
+        return session.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: {
+            afterProbe: openingSamples[1],
+            beforeProbe,
+            frame: frame(
+              759,
+              startedAt + 125,
+              "ci-proactive-opening-position",
+              "proactive-route-screenshot",
+            ),
+          },
+          recorder,
+        });
+      };
+      const freshSamples = [openingSamples[3]];
+      routeSession.sampleAutoplayRouteCaptureRecorder = async () =>
+        freshSamples.shift() ?? null;
+      let directCaptureCount = 0;
+      routeSession.captureAutoplayScreencastRouteFrameWindow = async ({
+        afterSequence,
+        beforeProbe,
+        expectedTargetLocationId,
+      }) => {
+        directCaptureCount += 1;
+        assert.equal(afterSequence, 759);
+        assert.equal(beforeProbe, openingSamples[3]);
+        const recorder = {
+          acceptedCount: openingSamples.length,
+          expectedTargetLocationId,
+          generation: 2,
+          samples: openingSamples,
+        };
+        const renderedFrame = frame(
+          760,
+          1_785_515_562_520.554,
+          "ci-settled-opening-position",
+        );
+        routeSession.screencast.lastSequence = 760;
+        routeSession.screencast.routeFrameHistory.push(renderedFrame);
+        routeSession.archiveAutoplayRouteFrames(recorder);
+        return routeSession.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: {
+            afterProbe: openingSamples[4],
+            beforeProbe,
+            frame: renderedFrame,
+          },
+          recorder,
+        });
+      };
+
+      try {
+        await routeSession.scheduleAutoplayRouteVisualWindowCapture({
+          beforeProbe: openingSamples[0],
+          expectedTargetLocationId: "tea-house",
+          label: "ci-unsettled-opening-route",
+        });
+        assert.equal(proactiveCaptureCount, 1);
+        assert.equal(directCaptureCount, 1);
+        assert.equal(
+          routeSession.screencast.routeFrameWindowCaptureAttemptCount,
+          2,
+        );
+        assert.equal(
+          routeSession.autoplayRouteFrameWindows().length,
+          2,
+          JSON.stringify(routeSession.screencast.routeFrameWindowRejections),
+        );
+        assert.equal(
+          routeSession.screencast.routeFrameWindowCaptureStatus,
+          "complete",
+        );
+        assert.equal(
+          routeSession.screencast.routeFrameOpeningSegment.sampleCount,
+          6,
+        );
+        assert.equal(
+          routeSession.screencast.routeFrameOpeningSegment.firstProgress,
+          0.004,
+        );
+        assert.equal(
+          routeSession.screencast.routeFrameOpeningSegment.lastProgress,
+          0.664,
+        );
+        const directCandidates = recordedRoutePolicy
+          .buildAutoplayRecordedRouteFrameCandidates({
+            expectedTargetLocationId: "tea-house",
+            frames: routeSession.autoplayRouteFrameHistory(),
+            samples: routeSession.autoplayRouteCaptureSamples(),
+          })
+          .map((candidate) => candidate.frame.sequence);
+        assert.deepEqual(directCandidates, [760]);
+
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            expectedTargetLocationId: "tea-house",
+            frames: routeSession.autoplayRouteFrameHistory(),
+            label: "CI one-settled-frame opening route",
+            recordedWindows: routeSession.autoplayRouteFrameWindows(),
+            samples: routeSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame: renderedFrame, paintProbe }) => ({
+              buffer: Buffer.from(renderedFrame.data, "base64"),
+              height: 625,
+              paintProbe,
+              textPaint: {},
+              width: 1365,
+            }),
+            validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+          });
+        assert.equal(trajectory.start.frame.sequence, 759);
+        assert.equal(trajectory.mid.frame.sequence, 760);
+        assert.equal(trajectory.start.evidenceSource, "proactive-route-frame");
+        assert.equal(trajectory.mid.evidenceSource, "screencast-frame");
+        assert.ok(
+          trajectory.mid.beforeProbe.route.progress -
+            trajectory.start.afterProbe.route.progress >=
+            0.1,
+        );
+        assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
+        assert.equal(
+          routeSession.autoplayRouteArchiveNeedsProactiveOpeningCapture(
+            openingSamples[0],
+          ),
+          false,
+        );
+      } finally {
+        proactiveRouteCaptureFixture = async () => null;
+        routeCompositingSleepFixture = (minimumEpochMs) =>
+          sleepUntilEpochMs(minimumEpochMs, {
+            sleepFor: (milliseconds) =>
+              new Promise((resolve) => setTimeout(resolve, milliseconds)),
+          });
+        await routeSession.stopAutoplayScreencast();
+      }
+
+      const guardSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/ci-proactive-opening-guards",
+        url: "http://127.0.0.1/",
+      });
+      guardSession.socket = { destroyed: false, writable: true };
+      guardSession.send = async () => ({});
+      await guardSession.startAutoplayScreencast();
+      guardSession.screencast.startedAtEpochMs = startedAt;
+      let guardAfterProbe = openingSamples[1];
+      let guardFrameOffsetMs = 125;
+      let guardSequence = 800;
+      guardSession.captureAutoplayRouteVisualFrame = async () =>
+        frame(
+          guardSequence,
+          startedAt + guardFrameOffsetMs,
+          `guard-${guardSequence}`,
+          "proactive-route-screenshot",
+        );
+      guardSession.sampleAutoplayRouteCaptureRecorder = async () =>
+        guardAfterProbe;
+      guardSession.normalizeAutoplayRouteVisualFrame = async (renderedFrame) =>
+        renderedFrame;
+      guardSession.readOrRearmAutoplayRouteCaptureRecorder = async () => ({
+        acceptedCount: 2,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: [openingSamples[0], guardAfterProbe],
+      });
+      try {
+        const rejectedCaptures = [
+          {
+            afterProbe: openingSamples[1],
+            frameOffsetMs: 34.283,
+            reason: "visual-frame-before-compositing-settle",
+          },
+          {
+            afterProbe: openingSamples[1],
+            frameOffsetMs: 200,
+            reason: "visual-frame-outside-probe-bracket",
+          },
+          {
+            afterProbe: sample(0.08, 150, {
+              routeOverrides: {
+                worldPath: [
+                  { x: 331, y: 688 },
+                  { x: 1_420, y: 702 },
+                ],
+              },
+            }),
+            frameOffsetMs: 125,
+            reason: "after-probe-route-identity-changed",
+          },
+          {
+            afterProbe: sample(0.08, 150, { hud: "DAY 1 11:10" }),
+            frameOffsetMs: 125,
+            reason: "after-probe-route-identity-changed",
+          },
+          {
+            afterProbe: sample(0.08, 150, { generation: 3 }),
+            frameOffsetMs: 125,
+            reason: "after-probe-route-identity-changed",
+          },
+        ];
+        for (const rejected of rejectedCaptures) {
+          guardAfterProbe = rejected.afterProbe;
+          guardFrameOffsetMs = rejected.frameOffsetMs;
+          guardSequence += 1;
+          assert.equal(
+            await proactiveCapturePolicy({
+              beforeProbe: openingSamples[0],
+              expectedTargetLocationId: "tea-house",
+              label: `guard-${guardSequence}`,
+              session: guardSession,
+              timeoutMs: 1_000,
+            }),
+            null,
+          );
+          assert.equal(
+            guardSession.screencast.routeFrameWindowRejections.at(-1).reason,
+            rejected.reason,
+          );
+        }
+        assert.equal(guardSession.autoplayRouteFrameWindows().length, 0);
+      } finally {
+        await guardSession.stopAutoplayScreencast();
       }
     },
   );
