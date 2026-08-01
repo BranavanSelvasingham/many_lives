@@ -159,6 +159,19 @@ const buildAutoplayRouteCanvasReadbackGeometry = Function(
     routeCanvasGeometryEnd,
   )})`,
 )();
+const routeRecorderSamplerStart = source.indexOf(
+  "function sampleAutoplayRouteRecorderAtOrAfter(",
+);
+const routeRecorderSamplerEnd = source.indexOf(
+  "\nfunction ",
+  routeRecorderSamplerStart + 1,
+);
+const sampleAutoplayRouteRecorderAtOrAfter = Function(
+  `return (${source.slice(
+    routeRecorderSamplerStart,
+    routeRecorderSamplerEnd,
+  )})`,
+)();
 function completedFirstAfternoonSample(overrides = {}) {
   return {
     autonomy: {
@@ -539,6 +552,51 @@ test("route compositing waits through an early timer wake-up", async () => {
   assert.match(
     source,
     /await sleepUntilEpochMs\(minimumCapturedAtEpochMs\)/,
+  );
+});
+
+test("route canvas sampling reuses only recorder evidence at the required boundary", () => {
+  assert.ok(
+    routeRecorderSamplerStart >= 0 &&
+      routeRecorderSamplerEnd > routeRecorderSamplerStart,
+  );
+  const older = { capturedAtEpochMs: 999, route: { progress: 0.1 } };
+  const current = { capturedAtEpochMs: 1_000, route: { progress: 0.2 } };
+  const recorder = {
+    samples: [older, current],
+    sample() {
+      this.lastSampleStatus = "probe-unavailable";
+    },
+  };
+
+  assert.equal(
+    sampleAutoplayRouteRecorderAtOrAfter({
+      minimumCapturedAtEpochMs: 1_000,
+      recorder,
+    }),
+    current,
+  );
+  assert.equal(
+    sampleAutoplayRouteRecorderAtOrAfter({
+      minimumCapturedAtEpochMs: 1_001,
+      recorder,
+    }),
+    null,
+  );
+
+  const afterCapture = {
+    capturedAtEpochMs: 1_025,
+    route: { progress: 0.3 },
+  };
+  recorder.sample = function sample() {
+    this.samples.push(afterCapture);
+  };
+  assert.equal(
+    sampleAutoplayRouteRecorderAtOrAfter({
+      minimumCapturedAtEpochMs: 1_020,
+      recorder,
+    }),
+    afterCapture,
   );
 });
 
@@ -2598,6 +2656,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "buildAutoplayOpeningRouteEvidence",
     "buildAutoplayRouteCaptureSegments",
     "buildAutoplayRouteCanvasReadbackGeometry",
+    "sampleAutoplayRouteRecorderAtOrAfter",
     "buildAutoplayDelayedScreencastRouteFrameWindow",
     "captureAutoplayProactiveRouteFrameWindow",
     "compactAutoplayRouteCaptureSegments",
@@ -2655,6 +2714,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
     buildAutoplayRouteCanvasReadbackGeometry,
+    sampleAutoplayRouteRecorderAtOrAfter,
     recordedRoutePolicy.buildAutoplayDelayedScreencastRouteFrameWindow,
     (options) => proactiveRouteCaptureFixture(options),
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
@@ -6104,6 +6164,14 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           assert.ok(captured, "Unexpected extra canvas capture.");
           assert.match(params.expression, /gl\.readPixels\(/);
           assert.match(params.expression, /requestAnimationFrame\(resolve\)/);
+          assert.match(
+            params.expression,
+            /sampleAutoplayRouteRecorderAtOrAfter/,
+          );
+          assert.match(
+            params.expression,
+            /while \(!routeIsLegal\(afterProbe\)\)/,
+          );
           assert.doesNotMatch(params.expression, /\.toBlob\(|\.toDataURL\(/);
           assert.doesNotMatch(params.expression, /createImageData|putImageData/);
           assert.match(params.expression, /rawRowOrientation: "bottom-up"/);

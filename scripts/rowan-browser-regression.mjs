@@ -171,6 +171,21 @@ const INHABIT_GAMEPLAY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_INHABIT_GAMEPLAY_TIMEOUT_MS ?? "840000",
 );
 
+function sampleAutoplayRouteRecorderAtOrAfter({
+  minimumCapturedAtEpochMs,
+  recorder,
+}) {
+  if (!recorder || typeof recorder.sample !== "function") {
+    return null;
+  }
+  recorder.sample();
+  const latestSample = recorder.samples?.at(-1) ?? null;
+  return typeof latestSample?.capturedAtEpochMs === "number" &&
+    latestSample.capturedAtEpochMs >= minimumCapturedAtEpochMs
+    ? latestSample
+    : null;
+}
+
 function buildAutoplayRouteCanvasReadbackGeometry({
   canvas,
   canvasIndex,
@@ -4593,6 +4608,8 @@ class CdpSession {
     const requestedAtEpochMs = Date.now();
     const geometryBuilderSource =
       buildAutoplayRouteCanvasReadbackGeometry.toString();
+    const routeRecorderSamplerSource =
+      sampleAutoplayRouteRecorderAtOrAfter.toString();
     const commandSession = await this.autoplayRouteCanvasCommandSession();
     const response = await commandSession.send(
       "Runtime.evaluate",
@@ -4604,6 +4621,10 @@ class CdpSession {
           const expectedTargetLocationId = ${JSON.stringify(expectedTargetLocationId)};
           const expectedGeometry = ${JSON.stringify(expectedGeometry)};
           const buildAutoplayRouteCanvasReadbackGeometry = (${geometryBuilderSource});
+          const sampleAutoplayRouteRecorderAtOrAfter = (${routeRecorderSamplerSource});
+          const minimumCaptureBeforeAtEpochMs = ${JSON.stringify(
+            beforeProbe.capturedAtEpochMs,
+          )};
           const minimumCapturedAtEpochMs = ${JSON.stringify(
             beforeProbe.capturedAtEpochMs +
               AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
@@ -4620,14 +4641,6 @@ class CdpSession {
             } catch {
               return null;
             }
-          };
-          const sample = () => {
-            if (!recorder || typeof recorder.sample !== "function") return null;
-            const acceptedCount = recorder.acceptedCount;
-            recorder.sample();
-            return recorder.acceptedCount > acceptedCount
-              ? recorder.samples.at(-1) ?? null
-              : null;
           };
           const routeIsLegal = (probe) => Boolean(
             probe?.route?.active === true &&
@@ -4649,7 +4662,10 @@ class CdpSession {
           if (!Number.isFinite(initialRenderedAtMs)) {
             return failure("camera-render-timestamp-unavailable");
           }
-          const captureBeforeProbe = sample();
+          const captureBeforeProbe = sampleAutoplayRouteRecorderAtOrAfter({
+            minimumCapturedAtEpochMs: minimumCaptureBeforeAtEpochMs,
+            recorder,
+          });
           if (!routeIsLegal(captureBeforeProbe)) {
             return failure("capture-before-route-unavailable", {
               captureBeforeProbe,
@@ -4801,10 +4817,23 @@ class CdpSession {
               geometry,
             });
           }
-          const afterProbe = sample();
-          if (!routeIsLegal(afterProbe)) {
-            return failure("capture-after-route-unavailable", {
-              afterProbe,
+          let afterProbe = sampleAutoplayRouteRecorderAtOrAfter({
+            minimumCapturedAtEpochMs: capturedAtEpochMs,
+            recorder,
+          });
+          while (!routeIsLegal(afterProbe)) {
+            if (Date.now() >= deadlineAtEpochMs) {
+              return failure("capture-after-route-timeout", {
+                afterProbe,
+                capturedAtEpochMs,
+                lastObservedRoute: recorder.lastObservedRoute ?? null,
+                lastSampleStatus: recorder.lastSampleStatus ?? null,
+              });
+            }
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            afterProbe = sampleAutoplayRouteRecorderAtOrAfter({
+              minimumCapturedAtEpochMs: capturedAtEpochMs,
+              recorder,
             });
           }
           let binary = "";
