@@ -1,12 +1,23 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { deflateSync, inflateSync } from "node:zlib";
 
 const browserRegressionPath = new URL(
   "./rowan-browser-regression.mjs",
   import.meta.url,
 );
 const source = await readFile(browserRegressionPath, "utf8");
+const pngDecodeStart = source.indexOf("function paethPredictor(");
+const pngDecodeEnd = source.indexOf(
+  "\nfunction assertNoLargeNearBlackDropout(",
+  pngDecodeStart,
+);
+const decodePngPixels = Function(
+  "assert",
+  "inflateSync",
+  `${source.slice(pngDecodeStart, pngDecodeEnd)}; return decodePngPixels;`,
+)(assert, inflateSync);
 const overlayDomStateSource = await readFile(
   new URL(
     "../apps/many-lives-web/src/lib/street/overlayDomState.ts",
@@ -135,7 +146,19 @@ const classifyAutoplayNaturalFirstAfternoonStop = Function(
     naturalStopClassifierEnd,
   )})`,
 )(2_000);
-
+const routeCanvasGeometryStart = source.indexOf(
+  "function buildAutoplayRouteCanvasReadbackGeometry(",
+);
+const routeCanvasGeometryEnd = source.indexOf(
+  "\nconst APP_READY_TIMEOUT_MS",
+  routeCanvasGeometryStart + 1,
+);
+const buildAutoplayRouteCanvasReadbackGeometry = Function(
+  `return (${source.slice(
+    routeCanvasGeometryStart,
+    routeCanvasGeometryEnd,
+  )})`,
+)();
 function completedFirstAfternoonSample(overrides = {}) {
   return {
     autonomy: {
@@ -519,6 +542,132 @@ test("route compositing waits through an early timer wake-up", async () => {
   );
 });
 
+test("route canvas crop is derived from measured CSS and backing-store scale", () => {
+  assert.ok(
+    routeCanvasGeometryStart >= 0 &&
+      routeCanvasGeometryEnd > routeCanvasGeometryStart,
+  );
+  const scaled = buildAutoplayRouteCanvasReadbackGeometry({
+    canvas: { height: 1_350, width: 2_700 },
+    canvasIndex: 0,
+    contextType: "webgl2",
+    cropHeight: 360,
+    cropWidth: 640,
+    devicePixelRatio: 2,
+    rect: { height: 500, left: 24, top: 12, width: 1_000 },
+    renderScale: 2.7,
+    sceneViewport: { height: 1_080, width: 2_160, x: 270, y: 135 },
+    sceneViewportCss: { height: 400, width: 800, x: 100, y: 50 },
+  });
+  assert.equal(scaled.error, undefined);
+  assert.deepEqual(scaled.geometry.crop, {
+    height: 360,
+    width: 640,
+    x: 1_030,
+    y: 495,
+  });
+  assert.equal(
+    scaled.geometry.coordinateSpace.cssOriginMode,
+    "canvas-local",
+  );
+  assert.equal(scaled.geometry.coordinateSpace.backingScaleX, 2.7);
+  assert.equal(scaled.geometry.coordinateSpace.backingScaleY, 2.7);
+  assert.equal(scaled.geometry.coordinateSpace.devicePixelRatio, 2);
+  assert.equal(scaled.geometry.coordinateSpace.renderScale, 2.7);
+  assert.deepEqual(scaled.geometry.sceneViewportBackingFromCss, {
+    height: 1_080,
+    width: 2_160,
+    x: 270,
+    y: 135,
+  });
+
+  const clientRelative = buildAutoplayRouteCanvasReadbackGeometry({
+    canvas: { height: 1_350, width: 2_700 },
+    canvasIndex: 0,
+    contextType: "webgl2",
+    cropHeight: 360,
+    cropWidth: 640,
+    devicePixelRatio: 2,
+    rect: { height: 500, left: 24, top: 12, width: 1_000 },
+    renderScale: 2.7,
+    sceneViewport: { height: 1_080, width: 2_160, x: 270, y: 135 },
+    sceneViewportCss: { height: 400, width: 800, x: 124, y: 62 },
+  });
+  assert.equal(clientRelative.error, undefined);
+  assert.equal(
+    clientRelative.geometry.coordinateSpace.cssOriginMode,
+    "client-relative",
+  );
+  assert.deepEqual(clientRelative.geometry.crop, scaled.geometry.crop);
+
+  assert.equal(
+    buildAutoplayRouteCanvasReadbackGeometry({
+      canvas: { height: 1_350, width: 2_700 },
+      canvasIndex: 0,
+      contextType: "webgl2",
+      cropHeight: 360,
+      cropWidth: 640,
+      devicePixelRatio: 2,
+      rect: { height: 500, left: 24, top: 12, width: 900 },
+      renderScale: 2.7,
+      sceneViewport: { height: 1_080, width: 2_160, x: 270, y: 135 },
+      sceneViewportCss: { height: 400, width: 800, x: 100, y: 50 },
+    }).error,
+    "canvas-backing-scale-drift",
+  );
+  assert.equal(
+    buildAutoplayRouteCanvasReadbackGeometry({
+      canvas: { height: 1_350, width: 2_700 },
+      canvasIndex: 0,
+      contextType: "webgl2",
+      cropHeight: 360,
+      cropWidth: 640,
+      devicePixelRatio: 2,
+      rect: { height: 500, left: 24, top: 12, width: 1_000 },
+      renderScale: 2.7,
+      sceneViewport: { height: 1_080, width: 2_160, x: 20, y: 135 },
+      sceneViewportCss: { height: 400, width: 800, x: 100, y: 50 },
+    }).error,
+    "scene-viewport-coordinate-drift",
+  );
+});
+
+test("forced route canvas validation is opt-in and keeps real WebGL available", () => {
+  assert.match(
+    source,
+    /const AUTOPLAY_ROUTE_CANVAS_CAPTURE_TIMEOUT_MS = 1_500;/,
+  );
+  assert.match(source, /\{ timeoutMs: boundedTimeoutMs \+ 250 \}/);
+  assert.match(
+    source,
+    /MANY_LIVES_BROWSER_TEST_FORCE_ROUTE_CANVAS_FALLBACK === "1"/,
+  );
+  assert.match(
+    source,
+    /AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK[\s\S]*?"--enable-unsafe-swiftshader"[\s\S]*?"--use-angle=swiftshader"[\s\S]*?: \["--disable-gpu"\]/,
+  );
+  assert.match(
+    source,
+    /forced-route-canvas-validation\.json/,
+  );
+  assert.match(
+    source,
+    /Forced route canvas validation did not retain at least one independently validated default-framebuffer canvas position/,
+  );
+  assert.match(
+    source,
+    /autoplayRouteCanvasCommandSession\(\)[\s\S]*?session\.connect\(\{ navigate: false \}\)/,
+  );
+  assert.match(
+    source,
+    /async captureAutoplayRouteCanvasVisualFrame[\s\S]*?const commandSession = await this\.autoplayRouteCanvasCommandSession\(\);[\s\S]*?commandSession\.send\(\s*"Runtime\.evaluate"/,
+  );
+  assert.match(
+    source,
+    /async captureAutoplayRouteVisualFrame[\s\S]*?const response = await this\.send\(\s*"Page\.captureScreenshot"/,
+  );
+});
+
 test("first-afternoon pacing enforces the app-monotonic duration window with sampling tolerance", () => {
   assert.match(
     source,
@@ -745,6 +894,9 @@ test("proactive route history survives a delayed observer and rejects unproven w
     "requireStableAutoplayScreenshotPaintProbe",
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
+    "assertStableAutoplayScreencastFramePair",
+    "validateAutoplayRouteCanvasFrame",
+    "assertAutoplayRouteCanvasFramePair",
     "autoplayRecordedRouteWindowFrame",
     `${policySource}\n${source.slice(recordedStart, recordedEnd)}; return { archiveAutoplayRouteCaptureFromPacingProbe, assertAutoplayFootholdRouteCaptureGuard, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayFootholdRouteGuardFixture, buildAutoplayRouteCaptureSampleFromPacingProbe, buildAutoplayRouteCaptureSegments, selectAutoplayRecordedRouteTrajectory };`,
   )(
@@ -763,6 +915,16 @@ test("proactive route history survives a delayed observer and rejects unproven w
       routeHudContinuityChecks += 1;
       return { routeHudContinuityPixelDifferenceRatio: 0 };
     },
+    () => ({ hudPixelDifferenceRatio: 0 }),
+    ({ frame, paintProbe }) => ({
+      buffer: Buffer.from(frame.data, "base64"),
+      height: 360,
+      paintProbe,
+      routeCanvas: { geometry: frame.metadata.geometry },
+      textPaint: {},
+      width: 640,
+    }),
+    () => ({ routeCanvasChangedPixelRatio: 0.01 }),
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
   );
@@ -1467,16 +1629,17 @@ test("proactive route history survives a delayed observer and rejects unproven w
     /writeFile\(screenshot, captureWindow\.validated\.buffer\)/,
   );
   assert.match(source, /Page\.startScreencast/);
-  assert.match(source, /source: "proactive-route-screenshot"/);
+  assert.match(source, /source: "in-page-route-canvas"/);
   assert.match(
     source,
     /async captureAutoplayRouteVisualFrame[\s\S]*Page\.captureScreenshot/,
   );
-  assert.match(
-    source,
-    /withAutoplayScreencastPausedForRouteCapture[\s\S]*Page\.stopScreencast[\s\S]*Page\.startScreencast/,
-    "Proactive screenshots must own the CDP visual transport instead of competing with the active screencast.",
-  );
+  assert.match(source, /gl\.readPixels\(/);
+  assert.doesNotMatch(source, /\.toBlob\(/);
+  assert.doesNotMatch(source, /\.toDataURL\(/);
+  assert.match(source, /browserPayloadFormat: "rgba-base64"/);
+  assert.match(source, /rawRowOrientation: "bottom-up"/);
+  assert.match(source, /requestAnimationFrame\(resolve\)/);
   assert.match(source, /Page\.screencastFrameAck/);
   assert.match(source, /Page\.stopScreencast/);
   assert.match(
@@ -1505,14 +1668,19 @@ test("proactive route history survives a delayed observer and rejects unproven w
   );
   assert.match(
     proactiveCaptureSource,
-    /const capturedFrame = await session\.captureAutoplayRouteVisualFrame\(\{\s*minimumCapturedAtEpochMs:\s*beforeProbe\.capturedAtEpochMs \+\s*AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,/,
-    "The position screenshot must retain the compositing settle interval inside the legal opening segment.",
+    /const captured = await session\.captureAutoplayRouteCanvasVisualFrame\(\{/,
+    "The bounded fallback must use the in-page route canvas while screencast stays active.",
   );
   assert.equal(
-    (proactiveCaptureSource.match(/captureAutoplayRouteVisualFrame\(/g) ?? [])
+    (proactiveCaptureSource.match(/captureAutoplayRouteCanvasVisualFrame\(/g) ?? [])
       .length,
     1,
-    "Each proactive route position must consume one renderer screenshot.",
+    "Each fallback route position must consume one bounded canvas readback.",
+  );
+  assert.doesNotMatch(proactiveCaptureSource, /Page\.captureScreenshot/);
+  assert.doesNotMatch(
+    proactiveCaptureSource,
+    /withAutoplayScreencastPausedForRouteCapture/,
   );
   assert.match(runSource, /selectAutoplayRecordedRouteTrajectory\(/);
   assert.match(runSource, /startAutoplayRouteVisualWindowRecorder\(/);
@@ -2297,6 +2465,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "requireStableAutoplayScreenshotPaintProbe",
     "requireStableAutoplayRouteWindowPaintProbe",
     "assertAutoplayRouteHudContinuity",
+    "assertStableAutoplayScreencastFramePair",
+    "validateAutoplayRouteCanvasFrame",
+    "assertAutoplayRouteCanvasFramePair",
     "autoplayRecordedRouteWindowFrame",
     `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, selectAutoplayRecordedRouteTrajectory };`,
   )(
@@ -2312,6 +2483,32 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     (_before, after) => after,
     (_before, after) => after,
     () => ({ routeHudContinuityPixelDifferenceRatio: 0 }),
+    () => ({ hudPixelDifferenceRatio: 0 }),
+    ({ frame, paintProbe }) => {
+      assert.equal(frame?.metadata?.contextLost, false);
+      assert.equal(frame?.metadata?.defaultFramebuffer, true);
+      assert.ok(
+        Number(frame?.metadata?.renderedAtMs) >
+          Number(frame?.metadata?.initialRenderedAtMs),
+      );
+      assert.equal(frame?.metadata?.geometry?.crop?.width, 640);
+      assert.equal(frame?.metadata?.geometry?.crop?.height, 360);
+      const buffer = Buffer.from(frame.data, "base64");
+      assert.notEqual(buffer.toString(), "blank");
+      return {
+        buffer,
+        height: 360,
+        paintProbe,
+        routeCanvas: { geometry: frame.metadata.geometry },
+        textPaint: {},
+        width: 640,
+      };
+    },
+    ({ after, before }) => {
+      assert.deepEqual(after.routeCanvas.geometry, before.routeCanvas.geometry);
+      assert.notDeepEqual(after.buffer, before.buffer);
+      return { routeCanvasChangedPixelRatio: 0.01 };
+    },
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
   );
@@ -2328,6 +2525,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayRouteCaptureWindowCoherent",
     "isAutoplayFootholdRouteFrame",
     "screencastFrameCapturedAtEpochMs",
+    "screencastFrameIsBracketedByEpochProbes",
     "autoplayRouteCaptureSamplesShareExactIdentity",
     "autoplayRouteCaptureSamplesShareExactRouteIdentity",
     `${source.slice(proactiveCaptureStart, proactiveCaptureEnd)}; return captureAutoplayProactiveRouteFrameWindow;`,
@@ -2346,6 +2544,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       afterRoute.progress >= beforeRoute.progress,
     routeSegmentsPolicy.isAutoplayFootholdRouteFrame,
     screencastFrameCapturedAtEpochMs,
+    screencastFrameIsBracketedByEpochProbes,
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactIdentity,
     routeSegmentsPolicy.autoplayRouteCaptureSamplesShareExactRouteIdentity,
   );
@@ -2362,6 +2561,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
   const CdpSession = Function(
     "assert",
+    "deflateSync",
     "AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS",
     "AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME",
     "AUTOPLAY_ROUTE_SCREENCAST_EVERY_NTH_FRAME",
@@ -2380,6 +2580,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_ROUTE_RECORDER_MAX_RESTARTS",
     "AUTOPLAY_ROUTE_RECORDER_SAMPLE_INTERVAL_MS",
     "AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS",
+    "AUTOPLAY_ROUTE_CANVAS_CAPTURE_TIMEOUT_MS",
+    "AUTOPLAY_ROUTE_CANVAS_MAX_PAYLOAD_BASE64_LENGTH",
     "AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE",
     "AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT",
     "AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH",
@@ -2395,6 +2597,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayRecordedRouteWindowsHaveDistinctProgress",
     "buildAutoplayOpeningRouteEvidence",
     "buildAutoplayRouteCaptureSegments",
+    "buildAutoplayRouteCanvasReadbackGeometry",
     "buildAutoplayDelayedScreencastRouteFrameWindow",
     "captureAutoplayProactiveRouteFrameWindow",
     "compactAutoplayRouteCaptureSegments",
@@ -2409,6 +2612,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     `${source.slice(classStart, classEnd)}; return CdpSession;`,
   )(
     assert,
+    deflateSync,
     5,
     2,
     1,
@@ -2427,6 +2631,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     4,
     1,
     0.1,
+    1_500,
+    2_000_000,
     0.6,
     360,
     640,
@@ -2448,6 +2654,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     recordedRoutePolicy.autoplayRecordedRouteWindowsHaveDistinctProgress,
     routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
+    buildAutoplayRouteCanvasReadbackGeometry,
     recordedRoutePolicy.buildAutoplayDelayedScreencastRouteFrameWindow,
     (options) => proactiveRouteCaptureFixture(options),
     routeSegmentsPolicy.compactAutoplayRouteCaptureSegments,
@@ -4306,6 +4513,34 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         sequence,
         source: "proactive-route-screenshot",
       });
+      const canvasGeometry = {
+        canvas: {
+          height: 625,
+          index: 0,
+          rect: { height: 625, left: 0, top: 0, width: 1365 },
+          width: 1365,
+        },
+        contextType: "webgl",
+        crop: { height: 360, width: 640, x: 362, y: 132 },
+        renderScale: 1,
+        sceneViewport: { height: 625, width: 1365, x: 0, y: 0 },
+      };
+      const canvasFrame = (sequence, offsetMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: {
+          capturedAtEpochMs: startedAt + offsetMs,
+          contextLost: false,
+          defaultFramebuffer: true,
+          format: "png",
+          geometry: canvasGeometry,
+          initialRenderedAtMs: offsetMs - 20,
+          renderedAtMs: offsetMs - 1,
+          source: "in-page-route-canvas",
+          timestamp: (startedAt + offsetMs) / 1_000,
+        },
+        sequence,
+        source: "in-page-route-canvas",
+      });
       const arrivedProbe = sample(1, 5_500, {
         previousOffsetMs: 4_500,
         routeOverrides: { active: false },
@@ -4368,38 +4603,54 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         ),
       );
 
-      const captureGapAfter = sample(0.905, 7_080, {
+      const captureGapAfter = sample(0.95, 4_800, {
         previousOffsetMs: 4_500,
         tickCount: 5,
       });
+      const firstCaptureBefore = sample(0.05, 150, {
+        previousOffsetMs: 0,
+        tickCount: 2,
+      });
       const captureGapRecorder = {
         ...openingRecorder,
-        samples: [...openingRecorder.samples, captureGapAfter],
+        samples: [
+          initialSamples[0],
+          firstCaptureBefore,
+          initialSamples[1],
+          initialSamples[2],
+          finalOpeningSample,
+          captureGapAfter,
+        ],
       };
       assert.equal(
         routeSegmentsPolicy.buildAutoplayRouteCaptureSegments({
           expectedTargetLocationId: "tea-house",
           samples: captureGapRecorder.samples,
         }).length,
-        2,
-        "The synthetic screenshot delay must split the recorder segment without changing route identity.",
+        1,
+        "Recovery samples must stay inside the same legal opening route lifetime.",
       );
-      const afterSamples = [initialSamples[1], captureGapAfter];
-      const renderedFrames = [
-        frame(201, 500, "loaded-route-position-start"),
-        frame(202, 4_700, "loaded-route-position-mid"),
+      const canvasCaptures = [
+        {
+          afterProbe: initialSamples[1],
+          captureBeforeProbe: firstCaptureBefore,
+          frame: canvasFrame(201, 300, "loaded-route-position-start"),
+        },
+        {
+          afterProbe: captureGapAfter,
+          captureBeforeProbe: finalOpeningSample,
+          frame: canvasFrame(202, 4_650, "loaded-route-position-mid"),
+        },
       ];
       let visualCaptureCount = 0;
-      loadedSession.captureAutoplayRouteVisualFrame = async () => {
+      loadedSession.captureAutoplayRouteCanvasVisualFrame = async () => {
         assert.equal(
           loadedSession.screencast.routeVisualCaptureTransportStatus,
-          "paused-for-route-capture",
+          "active",
         );
         visualCaptureCount += 1;
-        return renderedFrames.shift();
+        return canvasCaptures.shift();
       };
-      loadedSession.sampleAutoplayRouteCaptureRecorder = async () =>
-        afterSamples.shift() ?? null;
       loadedSession.readOrRearmAutoplayRouteCaptureRecorder = async () =>
         captureGapRecorder;
 
@@ -4426,7 +4677,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(
           loadedSession.autoplayRouteFrameWindows()[1]
             .openingSegmentExtension,
-          "exclusive-route-capture-gap",
+          undefined,
         );
         assert.ok(
           loadedSession.autoplayRouteFrameWindows().every(
@@ -4436,14 +4687,20 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
               !recordedWindow.confirmationFrame,
           ),
         );
-        assert.equal(loadedSession.screencast.routeVisualCapturePauseCount, 2);
-        assert.equal(loadedSession.screencast.routeVisualCaptureResumeCount, 2);
+        assert.equal(loadedSession.screencast.routeVisualCapturePauseCount, 0);
+        assert.equal(loadedSession.screencast.routeVisualCaptureResumeCount, 0);
 
-        let crossPositionPixelCheckCount = 0;
+        const earlyHudFrame = {
+          data: Buffer.from("loaded-route-full-frame-hud").toString("base64"),
+          metadata: { timestamp: (startedAt + 14) / 1_000 },
+          sequence: 200,
+        };
         const trajectory =
           recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            archivedFrames: [earlyHudFrame],
             expectedTargetLocationId: "tea-house",
-            frames: [],
+            forceCanvasFallback: true,
+            frames: [earlyHudFrame],
             label: "three-sample loaded opening route",
             recordedWindows: loadedSession.autoplayRouteFrameWindows(),
             samples: loadedSession.autoplayRouteCaptureSamples(),
@@ -4454,19 +4711,14 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
               textPaint: { regionCount: 9, surfaces: ["hud"] },
               width: 1365,
             }),
-            validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
-              crossPositionPixelCheckCount += 1;
-              assert.notDeepEqual(afterBuffer, beforeBuffer);
-              return { hudPixelDifferenceRatio: 0 };
-            },
           });
-        assert.equal(trajectory.start.evidenceSource, "proactive-route-frame");
-        assert.equal(trajectory.mid.evidenceSource, "proactive-route-frame");
+        assert.equal(trajectory.start.evidenceSource, "canvas-route-frame");
+        assert.equal(trajectory.mid.evidenceSource, "canvas-route-frame");
         assert.equal(trajectory.start.beforeProbe.route.progress, 0.004);
         assert.equal(trajectory.start.afterProbe.route.progress, 0.25);
         assert.equal(trajectory.mid.beforeProbe.route.progress, 0.9);
-        assert.equal(trajectory.mid.afterProbe.route.progress, 0.905);
-        assert.equal(crossPositionPixelCheckCount, 1);
+        assert.equal(trajectory.mid.afterProbe.route.progress, 0.95);
+        assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
 
         const generationChanged = sample(0.2, 550, {
           generation: 3,
@@ -4502,7 +4754,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
-    "exclusive visual transport recovers five legal samples with zero screencast frames",
+    "canvas starvation fails closed without full-frame HUD corroboration",
     async () => {
       const starvationSession = new CdpSession({
         browser: null,
@@ -4512,35 +4764,9 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       });
       starvationSession.socket = { destroyed: false, writable: true };
       const commands = [];
-      let screenshotCount = 0;
       starvationSession.send = async (method, params) => {
         commands.push({ method, params });
-        if (method === "Page.captureScreenshot") {
-          assert.equal(
-            starvationSession.screencast.routeVisualCaptureTransportStatus,
-            "paused-for-route-capture",
-            "A renderer screenshot must never compete with the active screencast stream.",
-          );
-          assert.equal(params.optimizeForSpeed, true);
-          assert.equal(params.format, "jpeg");
-          assert.equal(params.quality, 90);
-          assert.deepEqual(params.clip, {
-            height: 625,
-            scale: 0.6,
-            width: 1365,
-            x: 0,
-            y: 0,
-          });
-          screenshotCount += 1;
-          return {
-            result: {
-              data: Buffer.from(
-                `\xff\xd8\xffstarved-opening-rendered-position-${screenshotCount}`,
-                "latin1",
-              ).toString("base64"),
-            },
-          };
-        }
+        assert.notEqual(method, "Page.captureScreenshot");
         return {};
       };
 
@@ -4610,20 +4836,59 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         samples: openingSamples,
         unavailableCount: 45,
       };
-      const afterSamples = [openingSamples[2], openingSamples[4]];
-      starvationSession.sampleAutoplayRouteCaptureRecorder = async () =>
-        afterSamples.shift() ?? null;
+      const canvasGeometry = {
+        canvas: {
+          height: 625,
+          index: 0,
+          rect: { height: 625, left: 0, top: 0, width: 1365 },
+          width: 1365,
+        },
+        contextType: "webgl",
+        crop: { height: 360, width: 640, x: 362, y: 132 },
+        renderScale: 1,
+        sceneViewport: { height: 625, width: 1365, x: 0, y: 0 },
+      };
+      const canvasCaptures = [
+        {
+          afterProbe: openingSamples[2],
+          captureBeforeProbe: openingSamples[1],
+          offsetMs: 1_000,
+          pixels: "starved-canvas-position-one",
+        },
+        {
+          afterProbe: openingSamples[4],
+          captureBeforeProbe: openingSamples[3],
+          offsetMs: 2_600,
+          pixels: "starved-canvas-position-two",
+        },
+      ];
+      starvationSession.captureAutoplayRouteCanvasVisualFrame = async () => {
+        const capture = canvasCaptures.shift();
+        assert.ok(capture);
+        starvationSession.screencast.lastSequence += 1;
+        return {
+          afterProbe: capture.afterProbe,
+          captureBeforeProbe: capture.captureBeforeProbe,
+          frame: {
+            data: Buffer.from(capture.pixels).toString("base64"),
+            metadata: {
+              capturedAtEpochMs: startedAt + capture.offsetMs,
+              contextLost: false,
+              defaultFramebuffer: true,
+              format: "png",
+              geometry: canvasGeometry,
+              initialRenderedAtMs: capture.offsetMs - 20,
+              renderedAtMs: capture.offsetMs - 1,
+              source: "in-page-route-canvas",
+              timestamp: (startedAt + capture.offsetMs) / 1_000,
+            },
+            sequence: starvationSession.screencast.lastSequence,
+            source: "in-page-route-canvas",
+          },
+        };
+      };
       starvationSession.readOrRearmAutoplayRouteCaptureRecorder = async () =>
         recorder;
-      starvationSession.normalizeAutoplayRouteVisualFrame = async (frame) => ({
-        ...frame,
-        data: Buffer.from(`normalized-${frame.sequence}`).toString("base64"),
-        metadata: {
-          ...frame.metadata,
-          format: "png",
-          sourceFormat: "jpeg",
-        },
-      });
 
       try {
         assert.equal(starvationSession.autoplayRouteFrameHistory().length, 0);
@@ -4653,62 +4918,47 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(starvationSession.autoplayRouteFrameWindows().length, 2);
         assert.equal(
           starvationSession.screencast.routeVisualCapturePauseCount,
-          2,
+          0,
         );
         assert.equal(
           starvationSession.screencast.routeVisualCaptureResumeCount,
-          2,
+          0,
         );
         assert.equal(
           starvationSession.screencast.routeVisualCaptureTransportStatus,
           "active",
         );
-        assert.deepEqual(
-          commands.slice(0, 7).map((command) => command.method),
-          [
-            "Page.startScreencast",
-            "Page.stopScreencast",
-            "Page.captureScreenshot",
-            "Page.startScreencast",
-            "Page.stopScreencast",
-            "Page.captureScreenshot",
-            "Page.startScreencast",
-          ],
-        );
-        assert.equal(screenshotCount, 2);
-
-        const trajectory =
-          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
-            expectedTargetLocationId: "tea-house",
-            frames: starvationSession.autoplayRouteFrameHistory(),
-            label: "five-sample zero-frame opening route",
-            recordedWindows: starvationSession.autoplayRouteFrameWindows(),
-            samples: starvationSession.autoplayRouteCaptureSamples(),
-            validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
-              buffer: Buffer.from(frame.data, "base64"),
-              height: 625,
-              paintProbe: framePaintProbe,
-              textPaint: {},
-              width: 1365,
-            }),
-            validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
-              assert.notDeepEqual(afterBuffer, beforeBuffer);
-              return { hudPixelDifferenceRatio: 0 };
-            },
-          });
-        assert.equal(trajectory.start.beforeProbe.route.progress, 0.003);
-        assert.equal(trajectory.start.afterProbe.route.progress, 0.73);
-        assert.equal(trajectory.mid.beforeProbe.route.progress, 0.86);
-        assert.equal(trajectory.mid.afterProbe.route.progress, 0.95);
         assert.equal(
-          trajectory.start.validated.textPaint.routeWindowPaintProbeBasis,
-          undefined,
+          commands.filter(({ method }) => method === "Page.stopScreencast")
+            .length,
+          0,
         );
-        assert.match(
-          trajectory.start.validated.paintProbe.regions[0].text,
-          /11:23/,
+        assert.equal(
+          commands.filter(({ method }) => method === "Page.captureScreenshot")
+            .length,
+          0,
         );
-        assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
+        assert.equal(canvasCaptures.length, 0);
+
+        assert.throws(
+          () =>
+            recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+              archivedFrames: [],
+              expectedTargetLocationId: "tea-house",
+              frames: starvationSession.autoplayRouteFrameHistory(),
+              label: "five-sample zero-frame opening route",
+              recordedWindows: starvationSession.autoplayRouteFrameWindows(),
+              samples: starvationSession.autoplayRouteCaptureSamples(),
+              validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
+                buffer: Buffer.from(frame.data, "base64"),
+                height: 625,
+                paintProbe: framePaintProbe,
+                textPaint: {},
+                width: 1365,
+              }),
+            }),
+          /lacked validated full-frame screencast HUD corroboration/,
+        );
 
         const laterSamples = [
           sample(0.1, 7_000, {
@@ -4799,7 +5049,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       });
       routeSession.socket = { destroyed: false, writable: true };
       const commands = [];
-      routeSession.send = async (method, params) => {
+      routeSession.send = async (method, params, options) => {
         commands.push({ method, params });
         return {};
       };
@@ -5315,17 +5565,16 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       let guardAfterProbe = openingSamples[1];
       let guardFrameOffsetMs = 125;
       let guardSequence = 800;
-      guardSession.captureAutoplayRouteVisualFrame = async () =>
-        frame(
+      guardSession.captureAutoplayRouteCanvasVisualFrame = async () => ({
+        afterProbe: guardAfterProbe,
+        captureBeforeProbe: openingSamples[0],
+        frame: frame(
           guardSequence,
           startedAt + guardFrameOffsetMs,
           `guard-${guardSequence}`,
-          "proactive-route-screenshot",
-        );
-      guardSession.sampleAutoplayRouteCaptureRecorder = async () =>
-        guardAfterProbe;
-      guardSession.normalizeAutoplayRouteVisualFrame = async (renderedFrame) =>
-        renderedFrame;
+          "in-page-route-canvas",
+        ),
+      });
       guardSession.readOrRearmAutoplayRouteCaptureRecorder = async () => ({
         acceptedCount: 2,
         expectedTargetLocationId: "tea-house",
@@ -5342,7 +5591,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
           {
             afterProbe: openingSamples[1],
             frameOffsetMs: 200,
-            reason: "visual-frame-outside-probe-bracket",
+            reason: "canvas-frame-outside-probe-bracket",
           },
           {
             afterProbe: sample(0.08, 150, {
@@ -5354,17 +5603,17 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
               },
             }),
             frameOffsetMs: 125,
-            reason: "after-probe-route-identity-changed",
+            reason: "canvas-route-identity-changed",
           },
           {
             afterProbe: sample(0.08, 150, { hud: "DAY 1 11:10" }),
             frameOffsetMs: 125,
-            reason: "after-probe-route-identity-changed",
+            reason: "canvas-route-identity-changed",
           },
           {
             afterProbe: sample(0.08, 150, { generation: 3 }),
             frameOffsetMs: 125,
-            reason: "after-probe-route-identity-changed",
+            reason: "canvas-route-identity-changed",
           },
         ];
         for (const rejected of rejectedCaptures) {
@@ -5697,6 +5946,611 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(rejectionSession.autoplayRouteFrameWindows().length, 1);
       } finally {
         await rejectionSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
+    "forced canvas mode ignores accepted screencast evidence and proves two opening positions",
+    async () => {
+      const routeSession = new CdpSession({
+        browser: null,
+        forceRouteCanvasFallback: true,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/ci-canvas-opening-route",
+        url: "http://127.0.0.1/",
+      });
+      routeSession.socket = { destroyed: false, writable: true };
+      const startedAt = 1_785_519_812_888;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const route = {
+        active: true,
+        durationMs: 6_350,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sample = (
+        progress,
+        offsetMs,
+        { generation = 2, hud = "DAY 1 11:05", routeOverrides = {} } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          ...paintProbe,
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+        },
+        recorderGeneration: generation,
+        route: { ...route, progress, ...routeOverrides },
+        source: "movement-probe-recorder",
+      });
+      const samples = {
+        afterFirst: sample(0.2, 200),
+        afterSecond: sample(0.5, 800),
+        beforeFirst: sample(0.04, 140),
+        beforeSecond: sample(0.34, 740),
+        opening: sample(0.003, 0),
+        secondTrigger: sample(0.32, 600),
+      };
+      const geometry = {
+        canvas: {
+          height: 625,
+          index: 0,
+          rect: { height: 625, left: 0, top: 0, width: 1365 },
+          width: 1365,
+        },
+        contextType: "webgl",
+        crop: { height: 360, width: 640, x: 362, y: 132 },
+        renderScale: 1,
+        sceneViewport: { height: 625, width: 1365, x: 0, y: 0 },
+      };
+      const rawCanvasPosition = (changed = false) => {
+        const pixels = Buffer.alloc(640 * 360 * 4);
+        for (let offset = 0; offset < pixels.length; offset += 4) {
+          pixels[offset] = 52;
+          pixels[offset + 1] = 96;
+          pixels[offset + 2] = 132;
+          pixels[offset + 3] = 255;
+        }
+        if (changed) {
+          for (let y = 120; y < 180; y += 1) {
+            for (let x = 280; x < 360; x += 1) {
+              const offset = (y * 640 + x) * 4;
+              pixels[offset] = 184;
+              pixels[offset + 1] = 72;
+              pixels[offset + 2] = 48;
+            }
+          }
+        }
+        return pixels;
+      };
+      const rawCanvasCapture = ({
+        afterProbe,
+        captureBeforeProbe,
+        changed = false,
+        offsetMs,
+      }) => ({
+        afterProbe,
+        captureBeforeProbe,
+        data: rawCanvasPosition(changed).toString("base64"),
+        metadata: {
+          browserPayloadFormat: "rgba-base64",
+          capturedAtEpochMs: startedAt + offsetMs,
+          capturedAtMonotonicMs: offsetMs,
+          contextLost: false,
+          defaultFramebuffer: true,
+          format: "rgba",
+          geometry,
+          initialRenderedAtMs: offsetMs - 50,
+          rawByteLength: 640 * 360 * 4,
+          rawHeight: 360,
+          rawRowOrientation: "bottom-up",
+          rawWidth: 640,
+          renderedAtMs: offsetMs - 8,
+          requestedAtEpochMs: startedAt + offsetMs - 25,
+          source: "in-page-route-canvas",
+          timestamp: (startedAt + offsetMs) / 1_000,
+        },
+      });
+      const captureResults = [
+        rawCanvasCapture({
+          afterProbe: samples.afterFirst,
+          captureBeforeProbe: samples.beforeFirst,
+          offsetMs: 150,
+        }),
+        rawCanvasCapture({
+          afterProbe: samples.afterSecond,
+          captureBeforeProbe: samples.beforeSecond,
+          changed: true,
+          offsetMs: 750,
+        }),
+      ];
+      const commands = [];
+      let allowFinalStop = false;
+      routeSession.send = async (method, params, options) => {
+        commands.push({ method, options, params });
+        assert.notEqual(
+          method,
+          "Page.captureScreenshot",
+          "Opening canvas recovery must not use Page.captureScreenshot.",
+        );
+        if (method === "Page.stopScreencast" && !allowFinalStop) {
+          assert.fail("Opening canvas recovery must not pause screencast.");
+        }
+        if (method === "Runtime.evaluate") {
+          const captured = captureResults.shift();
+          assert.ok(captured, "Unexpected extra canvas capture.");
+          assert.match(params.expression, /gl\.readPixels\(/);
+          assert.match(params.expression, /requestAnimationFrame\(resolve\)/);
+          assert.doesNotMatch(params.expression, /\.toBlob\(|\.toDataURL\(/);
+          assert.doesNotMatch(params.expression, /createImageData|putImageData/);
+          assert.match(params.expression, /rawRowOrientation: "bottom-up"/);
+          acceptedSamples.push(
+            captured.captureBeforeProbe,
+            captured.afterProbe,
+          );
+          return { result: { result: { value: captured } } };
+        }
+        return {};
+      };
+      await routeSession.startAutoplayScreencast();
+      routeSession.screencast.startedAtEpochMs = startedAt;
+      routeSession.archiveAutoplayRouteFrames({
+        acceptedCount: 1,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: [samples.opening],
+      });
+      const earlyHudFrame = {
+        data: Buffer.from("full-frame-hud-paint").toString("base64"),
+        metadata: { timestamp: (startedAt + 14) / 1_000 },
+        sequence: 865,
+      };
+      routeCompositingSleepFixture = async (minimumEpochMs) => {
+        assert.equal(minimumEpochMs, startedAt + 125);
+        routeSession.screencast.lastSequence = earlyHudFrame.sequence;
+        routeSession.screencast.routeFrameHistory.push(earlyHudFrame);
+        routeSession.archiveAutoplayRouteFrames({
+          acceptedCount: 1,
+          expectedTargetLocationId: "tea-house",
+          generation: 2,
+          samples: [samples.opening],
+        });
+      };
+      const acceptedSamples = [samples.opening];
+      routeSession.readOrRearmAutoplayRouteCaptureRecorder = async () => ({
+        acceptedCount: acceptedSamples.length,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: [...acceptedSamples],
+      });
+      const freshSamples = [samples.secondTrigger];
+      routeSession.sampleAutoplayRouteCaptureRecorder = async () => {
+        const next = freshSamples.shift() ?? null;
+        if (next) acceptedSamples.push(next);
+        return next;
+      };
+      proactiveRouteCaptureFixture = async (options) => {
+        return proactiveCapturePolicy(options);
+      };
+
+      const validateFullFrame = ({ frame, paintProbe: framePaintProbe }) => ({
+        buffer: Buffer.from(frame.data, "base64"),
+        height: 375,
+        paintProbe: framePaintProbe,
+        textPaint: {
+          maximumContainerGeometryDeltaCssPx: 0,
+          maximumTextGeometryDeltaCssPx: 0,
+          regionCount: 9,
+          surfaces: ["hud", "dock", "rail"],
+        },
+        width: 819,
+      });
+      try {
+        await routeSession.scheduleAutoplayRouteVisualWindowCapture({
+          beforeProbe: samples.opening,
+          expectedTargetLocationId: "tea-house",
+          label: "ci-non-pausing-canvas-opening-route",
+        });
+        assert.equal(
+          captureResults.length,
+          0,
+          JSON.stringify({
+            captureStatus:
+              routeSession.screencast.routeFrameWindowCaptureStatus,
+            pendingSample:
+              routeSession.screencast.routeFrameWindowCapturePendingSample,
+            rejections: routeSession.screencast.routeFrameWindowRejections,
+            transportEvents: routeSession.transportEvents,
+            windows: routeSession.autoplayRouteFrameWindows(),
+          }),
+        );
+        assert.equal(routeSession.screencast.routeCanvasCaptureCount, 2);
+        assert.equal(routeSession.screencast.routeVisualCapturePauseCount, 0);
+        assert.equal(routeSession.screencast.routeVisualCaptureResumeCount, 0);
+        assert.equal(
+          routeSession.screencast.routeVisualCaptureTransportStatus,
+          "active",
+        );
+        assert.equal(routeSession.autoplayRouteFrameWindows().length, 2);
+        const runtimeCaptureCommands = commands.filter(
+          ({ method }) => method === "Runtime.evaluate",
+        );
+        assert.equal(runtimeCaptureCommands.length, 2);
+        assert.ok(
+          runtimeCaptureCommands.every(
+            ({ options }) =>
+              options.timeoutMs > 0 && options.timeoutMs <= 1_750,
+          ),
+          "Two-position canvas scheduling exceeded the bounded response budget.",
+        );
+        assert.equal(
+          commands.filter(({ method }) => method === "Page.stopScreencast")
+            .length,
+          0,
+        );
+
+        const orientationPng = routeSession.encodeAutoplayRouteCanvasRgbaPng({
+          height: 2,
+          pixels: Buffer.from([
+            220, 30, 20, 255,
+            15, 40, 210, 255,
+          ]),
+          rowOrientation: "bottom-up",
+          width: 1,
+        });
+        const orientedPixels = decodePngPixels(orientationPng);
+        assert.deepEqual(
+          [...orientedPixels.pixels],
+          [15, 40, 210, 255, 220, 30, 20, 255],
+          "Node PNG encoding did not flip WebGL bottom-up rows exactly once.",
+        );
+
+        const assertRawCaptureRejected = async (mutate, pattern) => {
+          const captured = rawCanvasCapture({
+            afterProbe: samples.afterFirst,
+            captureBeforeProbe: samples.beforeFirst,
+            offsetMs: 150,
+          });
+          mutate(captured);
+          routeSession.send = async (method, params) => {
+            if (method !== "Runtime.evaluate") return {};
+            assert.doesNotMatch(params.expression, /\.toBlob\(|\.toDataURL\(/);
+            return { result: { result: { value: captured } } };
+          };
+          await assert.rejects(
+            routeSession.captureAutoplayRouteCanvasVisualFrame({
+              beforeProbe: samples.opening,
+              expectedTargetLocationId: "tea-house",
+            }),
+            pattern,
+          );
+        };
+        await assertRawCaptureRejected(
+          (captured) => {
+            captured.metadata.rawWidth -= 1;
+          },
+          /raw width did not match its crop geometry/,
+        );
+        await assertRawCaptureRejected(
+          (captured) => {
+            const shortPixels = rawCanvasPosition().subarray(0, -4);
+            captured.data = shortPixels.toString("base64");
+            captured.metadata.rawByteLength = shortPixels.length;
+          },
+          /raw byte length did not match 640x360 RGBA/,
+        );
+        await assertRawCaptureRejected(
+          (captured) => {
+            captured.metadata.rawRowOrientation = "top-down";
+          },
+          /must preserve WebGL bottom-up orientation/,
+        );
+
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            archivedFrames: [earlyHudFrame],
+            expectedTargetLocationId: "tea-house",
+            forceCanvasFallback: true,
+            frames: [earlyHudFrame],
+            label: "30652039449 constrained opening route",
+            recordedWindows: routeSession.autoplayRouteFrameWindows(),
+            samples: routeSession.autoplayRouteCaptureSamples(),
+            validateFrame: validateFullFrame,
+          });
+        assert.equal(trajectory.start.evidenceSource, "canvas-route-frame");
+        assert.equal(trajectory.mid.evidenceSource, "canvas-route-frame");
+        assert.equal(
+          trajectory.start.validated.textPaint.routeHudContinuityBasis,
+          "validated-screencast-hud-paint-and-exact-canvas-route-state",
+        );
+        assert.equal(
+          trajectory.mid.validated.textPaint.routeCanvasChangedPixelRatio,
+          0.01,
+        );
+        assert.ok(
+          recordedRoutePolicy.autoplayRecordedRouteWindowsHaveDistinctProgress(
+            trajectory.start,
+            trajectory.mid,
+          ),
+        );
+
+        const windows = routeSession.autoplayRouteFrameWindows();
+        const constrainedRunnerOpeningFrame = {
+          data: Buffer.from("fdb8867-full-frame-hud-and-city").toString(
+            "base64",
+          ),
+          metadata: { timestamp: (startedAt + 68) / 1_000 },
+          sequence: 865,
+          source: "screencast",
+        };
+        const mixedTrajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            archivedFrames: [constrainedRunnerOpeningFrame],
+            expectedTargetLocationId: "tea-house",
+            forceCanvasFallback: true,
+            frames: [constrainedRunnerOpeningFrame],
+            label: "fdb8867 and timing-final1 mixed opening route",
+            recordedWindows: [windows[1]],
+            samples: routeSession.autoplayRouteCaptureSamples(),
+            validateFrame: validateFullFrame,
+          });
+        assert.equal(mixedTrajectory.start.evidenceSource, "screencast-frame");
+        assert.equal(mixedTrajectory.mid.evidenceSource, "canvas-route-frame");
+        assert.equal(mixedTrajectory.start.frame.sequence, 865);
+        assert.equal(mixedTrajectory.mid.frame.sequence, 867);
+        assert.equal(
+          mixedTrajectory.mid.validated.textPaint.routeMixedEvidenceBasis,
+          "independently-validated-screencast-and-canvas-positions-with-exact-route-and-hud-identity",
+        );
+        for (const position of [
+          mixedTrajectory.start,
+          mixedTrajectory.mid,
+        ]) {
+          assert.equal(
+            position.validated.textPaint.routeHudContinuityBasis,
+            "exact-route-identity-and-per-frame-hud-paint",
+            "Both independently validated mixed positions must carry the accepted exact-identity HUD continuity basis.",
+          );
+        }
+        assert.equal(
+          mixedTrajectory.mid.validated.textPaint
+            .routeMixedTransportDimensionsCompared,
+          false,
+          "Mixed visual transports must never enter raw cross-dimension pixel comparison.",
+        );
+        assert.equal(
+          mixedTrajectory.mid.validated.textPaint
+            .hudCorroborationFrameSequence,
+          constrainedRunnerOpeningFrame.sequence,
+        );
+        assert.ok(
+          recordedRoutePolicy.autoplayRecordedRouteWindowsHaveDistinctProgress(
+            mixedTrajectory.start,
+            mixedTrajectory.mid,
+          ),
+        );
+        assert.equal(
+          routeSession.acceptAutoplayRouteRenderedFrameTrajectory(
+            mixedTrajectory,
+          ),
+          true,
+        );
+        assert.equal(
+          routeSession.autoplayRouteVisualWindowCaptureComplete(),
+          true,
+          "Forced mode must complete from one validated canvas position only after the mixed trajectory is accepted.",
+        );
+
+        const expectRejectedMixedTrajectory = (mutate, pattern) => {
+          const rejectedFrame = structuredClone(constrainedRunnerOpeningFrame);
+          const rejectedWindow = structuredClone(windows[1]);
+          mutate({ frame: rejectedFrame, window: rejectedWindow });
+          assert.throws(
+            () =>
+              recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+                archivedFrames: [rejectedFrame],
+                expectedTargetLocationId: "tea-house",
+                forceCanvasFallback: true,
+                frames: [rejectedFrame],
+                label: "rejected mixed opening route",
+                recordedWindows: [rejectedWindow],
+                samples: routeSession.autoplayRouteCaptureSamples(),
+                validateFrame: validateFullFrame,
+              }),
+            pattern,
+          );
+        };
+        expectRejectedMixedTrajectory(
+          ({ window }) => {
+            window.beforeProbe.route.worldPath = [{ x: 1, y: 1 }];
+          },
+          /did not contain two distinct legal rendered positions/,
+        );
+        expectRejectedMixedTrajectory(
+          ({ window }) => {
+            window.beforeProbe.paintProbe.stableRegions[0].text =
+              "DAY 1 11:10";
+          },
+          /did not contain two distinct legal rendered positions/,
+        );
+        expectRejectedMixedTrajectory(
+          ({ window }) => {
+            window.beforeProbe.recorderGeneration += 1;
+          },
+          /did not contain two distinct legal rendered positions/,
+        );
+        expectRejectedMixedTrajectory(
+          ({ window }) => {
+            window.beforeProbe.route.progress = 0.04;
+            window.afterProbe.route.progress = 0.09;
+          },
+          /did not contain two distinct legal rendered positions/,
+        );
+        expectRejectedMixedTrajectory(
+          ({ frame, window }) => {
+            window.frame.sequence = frame.sequence;
+          },
+          /did not contain two distinct legal rendered positions/,
+        );
+        expectRejectedMixedTrajectory(
+          ({ frame, window }) => {
+            window.frame.metadata.timestamp =
+              frame.metadata.timestamp + 0.05;
+          },
+          /did not contain two distinct legal rendered positions/,
+        );
+
+        const expectRejectedTrajectory = (mutate, pattern) => {
+          const rejectedWindows = structuredClone(windows);
+          mutate(rejectedWindows);
+          assert.throws(
+            () =>
+              recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+                archivedFrames: [earlyHudFrame],
+                expectedTargetLocationId: "tea-house",
+                forceCanvasFallback: true,
+                frames: [earlyHudFrame],
+                label: "rejected canvas opening route",
+                recordedWindows: rejectedWindows,
+                samples: routeSession.autoplayRouteCaptureSamples(),
+                validateFrame: validateFullFrame,
+              }),
+            pattern,
+          );
+        };
+        assert.throws(
+          () =>
+            recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+              archivedFrames: [],
+              expectedTargetLocationId: "tea-house",
+              forceCanvasFallback: true,
+              frames: [],
+              label: "missing HUD corroboration",
+              recordedWindows: windows,
+              samples: routeSession.autoplayRouteCaptureSamples(),
+              validateFrame: validateFullFrame,
+            }),
+          /lacked validated full-frame screencast HUD corroboration/,
+        );
+        const mislabeledDirectWindows = structuredClone(windows);
+        for (const recordedWindow of mislabeledDirectWindows) {
+          recordedWindow.frame.source = "screencast";
+          recordedWindow.frame.metadata.source = "screencast";
+        }
+        assert.throws(
+          () =>
+            recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+              archivedFrames: [earlyHudFrame],
+              expectedTargetLocationId: "tea-house",
+              forceCanvasFallback: true,
+              frames: [earlyHudFrame],
+              label: "forced canvas rejects screencast recorded windows",
+              recordedWindows: mislabeledDirectWindows,
+              samples: routeSession.autoplayRouteCaptureSamples(),
+              validateFrame: validateFullFrame,
+            }),
+          /did not contain two distinct legal rendered positions/,
+        );
+        expectRejectedTrajectory(
+          (rejected) => {
+            rejected[0].frame.metadata.timestamp =
+              (rejected[0].afterProbe.capturedAtEpochMs + 1) / 1_000;
+          },
+          /did not contain two distinct legal rendered positions/,
+        );
+        expectRejectedTrajectory(
+          (rejected) => {
+            rejected[1].frame.metadata.contextLost = true;
+          },
+          /Expected values to be strictly equal|contextLost/,
+        );
+        expectRejectedTrajectory(
+          (rejected) => {
+            rejected[1].frame.metadata.defaultFramebuffer = false;
+          },
+          /Expected values to be strictly equal|defaultFramebuffer/,
+        );
+        expectRejectedTrajectory(
+          (rejected) => {
+            rejected[1].frame.metadata.renderedAtMs =
+              rejected[1].frame.metadata.initialRenderedAtMs;
+          },
+          /falsy value/,
+        );
+        expectRejectedTrajectory(
+          (rejected) => {
+            rejected[1].frame.metadata.geometry = structuredClone(
+              rejected[1].frame.metadata.geometry,
+            );
+            rejected[1].frame.metadata.geometry.canvas.width += 1;
+          },
+          /Expected values to be strictly deep-equal/,
+        );
+        expectRejectedTrajectory(
+          (rejected) => {
+            rejected[1].frame.data = Buffer.from("blank").toString("base64");
+          },
+          /strictly unequal[\s\S]*'blank'/,
+        );
+        expectRejectedTrajectory(
+          (rejected) => {
+            rejected[1].frame.data = rejected[0].frame.data;
+          },
+          /Expected "actual" not to be strictly deep-equal/,
+        );
+        for (const mutateIdentity of [
+          (rejected) => {
+            rejected[1].beforeProbe.route.worldPath = [{ x: 1, y: 1 }];
+          },
+          (rejected) => {
+            rejected[1].beforeProbe.paintProbe.stableRegions[0].text =
+              "DAY 1 11:10";
+          },
+          (rejected) => {
+            rejected[1].beforeProbe.recorderGeneration += 1;
+          },
+          (rejected) => {
+            rejected[1].beforeProbe.route.progress = 0.01;
+            rejected[1].afterProbe.route.progress = 0.02;
+          },
+          (rejected) => {
+            rejected[1].afterProbe.route.active = false;
+          },
+        ]) {
+          expectRejectedTrajectory(
+            mutateIdentity,
+            /did not contain two distinct legal rendered positions/,
+          );
+        }
+      } finally {
+        proactiveRouteCaptureFixture = async () => null;
+        routeCompositingSleepFixture = (minimumEpochMs) =>
+          sleepUntilEpochMs(minimumEpochMs, {
+            sleepFor: (milliseconds) =>
+              new Promise((resolve) => setTimeout(resolve, milliseconds)),
+          });
+        allowFinalStop = true;
+        await routeSession.stopAutoplayScreencast();
       }
     },
   );

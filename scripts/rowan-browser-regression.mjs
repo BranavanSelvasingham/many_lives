@@ -8,7 +8,7 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { inflateSync } from "node:zlib";
+import { deflateSync, inflateSync } from "node:zlib";
 
 function findChromeBin() {
   const candidates = [
@@ -104,6 +104,12 @@ const AUTOPLAY_ROUTE_RECORDER_WAIT_TIMEOUT_MS = 15_000;
 const AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS = 2_000;
 const AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE = 0.02;
 const AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO = 0.006;
+const AUTOPLAY_ROUTE_CANVAS_CAPTURE_TIMEOUT_MS = 1_500;
+const AUTOPLAY_ROUTE_CANVAS_MAX_PAYLOAD_BASE64_LENGTH = 2_000_000;
+const AUTOPLAY_ROUTE_CANVAS_MIN_CHANGED_PIXEL_RATIO = 0.0005;
+const AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK =
+  USE_CHROME_DRIVER &&
+  process.env.MANY_LIVES_BROWSER_TEST_FORCE_ROUTE_CANVAS_FALLBACK === "1";
 const AUTOPLAY_ROUTE_OPENING_FRAME_MAX_PROGRESS = 0.02;
 const AUTOPLAY_ROUTE_OPENING_FRAME_MIN_SETTLE_MS = 50;
 const AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE = 0.6;
@@ -164,6 +170,166 @@ const AUTOPLAY_DWELL_AUDIT_BEAT_KINDS = new Set([
 const INHABIT_GAMEPLAY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_INHABIT_GAMEPLAY_TIMEOUT_MS ?? "840000",
 );
+
+function buildAutoplayRouteCanvasReadbackGeometry({
+  canvas,
+  canvasIndex,
+  contextType,
+  cropHeight,
+  cropWidth,
+  devicePixelRatio,
+  rect,
+  renderScale,
+  sceneViewport,
+  sceneViewportCss,
+}) {
+  const failure = (error, details = {}) => ({ error, ...details });
+  const finitePositive = (value) => Number.isFinite(value) && value > 0;
+  if (
+    !canvas ||
+    !finitePositive(canvas.width) ||
+    !finitePositive(canvas.height) ||
+    !rect ||
+    !finitePositive(rect.width) ||
+    !finitePositive(rect.height) ||
+    !sceneViewport ||
+    !sceneViewportCss ||
+    ![
+      rect.left,
+      rect.top,
+      sceneViewport.x,
+      sceneViewport.y,
+      sceneViewport.width,
+      sceneViewport.height,
+      sceneViewportCss.x,
+      sceneViewportCss.y,
+      sceneViewportCss.width,
+      sceneViewportCss.height,
+      renderScale,
+      devicePixelRatio,
+      cropWidth,
+      cropHeight,
+    ].every(Number.isFinite)
+  ) {
+    return failure("canvas-coordinate-metadata-unavailable");
+  }
+  const backingScaleX = canvas.width / rect.width;
+  const backingScaleY = canvas.height / rect.height;
+  const scaleTolerance = Math.max(0.02, renderScale * 0.01);
+  if (
+    !finitePositive(renderScale) ||
+    !finitePositive(devicePixelRatio) ||
+    Math.abs(backingScaleX - backingScaleY) > scaleTolerance ||
+    Math.abs(backingScaleX - renderScale) > scaleTolerance ||
+    Math.abs(backingScaleY - renderScale) > scaleTolerance
+  ) {
+    return failure("canvas-backing-scale-drift", {
+      backingScaleX,
+      backingScaleY,
+      devicePixelRatio,
+      renderScale,
+    });
+  }
+
+  const viewportSizeFromCss = {
+    height: sceneViewportCss.height * backingScaleY,
+    width: sceneViewportCss.width * backingScaleX,
+  };
+  const localOrigin = {
+    x: sceneViewportCss.x * backingScaleX,
+    y: sceneViewportCss.y * backingScaleY,
+  };
+  const clientOrigin = {
+    x: (sceneViewportCss.x - rect.left) * backingScaleX,
+    y: (sceneViewportCss.y - rect.top) * backingScaleY,
+  };
+  const originError = (origin) =>
+    Math.max(
+      Math.abs(origin.x - sceneViewport.x),
+      Math.abs(origin.y - sceneViewport.y),
+    );
+  const localOriginError = originError(localOrigin);
+  const clientOriginError = originError(clientOrigin);
+  const cssOriginMode =
+    localOriginError <= clientOriginError ? "canvas-local" : "client-relative";
+  const selectedOrigin =
+    cssOriginMode === "canvas-local" ? localOrigin : clientOrigin;
+  const coordinateTolerancePx = 1.5;
+  if (
+    Math.min(localOriginError, clientOriginError) > coordinateTolerancePx ||
+    Math.abs(viewportSizeFromCss.width - sceneViewport.width) >
+      coordinateTolerancePx ||
+    Math.abs(viewportSizeFromCss.height - sceneViewport.height) >
+      coordinateTolerancePx
+  ) {
+    return failure("scene-viewport-coordinate-drift", {
+      clientOrigin,
+      clientOriginError,
+      localOrigin,
+      localOriginError,
+      sceneViewport,
+      sceneViewportCss,
+      viewportSizeFromCss,
+    });
+  }
+  const sceneViewportBackingFromCss = {
+    height: viewportSizeFromCss.height,
+    width: viewportSizeFromCss.width,
+    x: selectedOrigin.x,
+    y: selectedOrigin.y,
+  };
+  const crop = {
+    height: cropHeight,
+    width: cropWidth,
+    x: Math.floor(
+      sceneViewportBackingFromCss.x +
+        (sceneViewportBackingFromCss.width - cropWidth) / 2,
+    ),
+    y: Math.floor(
+      sceneViewportBackingFromCss.y +
+        (sceneViewportBackingFromCss.height - cropHeight) / 2,
+    ),
+  };
+  const geometry = {
+    canvas: {
+      height: canvas.height,
+      index: canvasIndex,
+      rect: {
+        height: rect.height,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+      },
+      width: canvas.width,
+    },
+    contextType,
+    coordinateSpace: {
+      backingScaleX,
+      backingScaleY,
+      cssOriginMode,
+      devicePixelRatio,
+      renderScale,
+    },
+    crop,
+    renderScale,
+    sceneViewport,
+    sceneViewportBackingFromCss,
+    sceneViewportCss,
+  };
+  if (
+    crop.width !== cropWidth ||
+    crop.height !== cropHeight ||
+    crop.x < 0 ||
+    crop.y < 0 ||
+    crop.x + crop.width > canvas.width ||
+    crop.y + crop.height > canvas.height ||
+    sceneViewportBackingFromCss.width < crop.width ||
+    sceneViewportBackingFromCss.height < crop.height
+  ) {
+    return failure("canvas-crop-out-of-bounds", { geometry });
+  }
+  return { geometry };
+}
 const APP_READY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_BROWSER_APP_READY_TIMEOUT_MS ?? "120000",
 );
@@ -1580,8 +1746,15 @@ function isCdpRuntimeEvaluateTimeout(error) {
 }
 
 class CdpSession {
-  constructor({ browser, outputDir, pageWsUrl, url }) {
+  constructor({
+    browser,
+    forceRouteCanvasFallback = false,
+    outputDir,
+    pageWsUrl,
+    url,
+  }) {
     this.browser = browser;
+    this.forceRouteCanvasFallback = forceRouteCanvasFallback === true;
     this.outputDir = outputDir;
     this.pageWsUrl = new URL(pageWsUrl);
     this.url = url;
@@ -1596,9 +1769,11 @@ class CdpSession {
     this.pageErrors = [];
     this.buffer = Buffer.alloc(0);
     this.handshakeComplete = false;
+    this.routeCanvasCaptureSession = null;
+    this.routeCanvasCaptureSessionPromise = null;
   }
 
-  async connect() {
+  async connect({ navigate = true } = {}) {
     const port = this.pageWsUrl.port === "" ? 80 : Number(this.pageWsUrl.port);
     this.socket = createConnection({
       host: this.pageWsUrl.hostname,
@@ -1642,7 +1817,9 @@ class CdpSession {
     await this.send("Runtime.enable");
     await this.send("Log.enable");
     await this.send("Page.setLifecycleEventsEnabled", { enabled: true });
-    await this.navigate(this.url);
+    if (navigate) {
+      await this.navigate(this.url);
+    }
   }
 
   async navigate(url) {
@@ -1658,6 +1835,18 @@ class CdpSession {
 
   async close() {
     this.closing = true;
+    const routeCanvasCaptureSession =
+      this.routeCanvasCaptureSession ??
+      (await this.routeCanvasCaptureSessionPromise?.catch(() => null));
+    this.routeCanvasCaptureSession = null;
+    this.routeCanvasCaptureSessionPromise = null;
+    if (routeCanvasCaptureSession && routeCanvasCaptureSession !== this) {
+      await routeCanvasCaptureSession.close().catch((error) => {
+        this.recordCdpTransportEvent("route-canvas-session-close-failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     await this.stopAutoplayScreencast().catch((error) => {
       this.recordCdpTransportEvent("screencast-stop-on-close-failed", {
         error: error instanceof Error ? error.message : String(error),
@@ -1679,6 +1868,46 @@ class CdpSession {
     if (this.transportEvents.length > 20) {
       this.transportEvents.splice(0, this.transportEvents.length - 20);
     }
+  }
+
+  async autoplayRouteCanvasCommandSession() {
+    if (!this.browser) {
+      return this;
+    }
+    if (
+      this.routeCanvasCaptureSession?.handshakeComplete &&
+      !this.routeCanvasCaptureSession.transportFailure
+    ) {
+      return this.routeCanvasCaptureSession;
+    }
+    if (!this.routeCanvasCaptureSessionPromise) {
+      this.routeCanvasCaptureSessionPromise = (async () => {
+        const session = new CdpSession({
+          browser: null,
+          outputDir: this.outputDir,
+          pageWsUrl: this.pageWsUrl.toString(),
+          url: this.url,
+        });
+        try {
+          await session.connect({ navigate: false });
+        } catch (error) {
+          await session.close().catch(() => undefined);
+          throw error;
+        }
+        this.routeCanvasCaptureSession = session;
+        if (this.screencast) {
+          this.screencast.routeCanvasCaptureTransportStatus =
+            "dedicated-active";
+        }
+        this.recordCdpTransportEvent("route-canvas-session-connected", {
+          transport: "dedicated-page-cdp",
+        });
+        return session;
+      })().finally(() => {
+        this.routeCanvasCaptureSessionPromise = null;
+      });
+    }
+    return this.routeCanvasCaptureSessionPromise;
   }
 
   failCdpTransport(kind, error) {
@@ -1746,6 +1975,8 @@ class CdpSession {
                 ),
               routeFrameArchiveFrozen:
                 this.screencast.routeFrameArchiveFrozen,
+              forceRouteCanvasFallback:
+                this.screencast.forceRouteCanvasFallback,
               routeFrameArchivedSampleCount:
                 this.screencast.routeFrameArchivedSampleCount,
               routeFrameArchivedLastSampleAtEpochMs:
@@ -1779,6 +2010,12 @@ class CdpSession {
                   frameSequence:
                     autoplayRecordedRouteWindowFrame(window)?.sequence ?? null,
                 })),
+              routeCanvasCaptureCount:
+                this.screencast.routeCanvasCaptureCount,
+              routeCanvasCaptureGeometry:
+                this.screencast.routeCanvasCaptureGeometry,
+              routeCanvasCaptureTransportStatus:
+                this.screencast.routeCanvasCaptureTransportStatus,
               routeFrameWindowRejectedCount:
                 this.screencast.routeFrameWindowRejectedCount,
               routeFrameWindowRejections:
@@ -3763,6 +4000,10 @@ class CdpSession {
       routeFrameWindowRecorderStatus: "idle",
       routeFrameWindowRejectedCount: 0,
       routeFrameWindowRejections: [],
+      forceRouteCanvasFallback: this.forceRouteCanvasFallback,
+      routeCanvasCaptureCount: 0,
+      routeCanvasCaptureGeometry: null,
+      routeCanvasCaptureTransportStatus: "main-cdp",
       routeScreencastRearmAttemptCount: 0,
       routeScreencastRearmError: null,
       routeScreencastRearmPromise: null,
@@ -3971,7 +4212,7 @@ class CdpSession {
     state.routeFrameSamplePending = false;
     state.routeFrameWindowCapturePendingSample = null;
     await state.routeFrameSamplePromise?.catch(() => null);
-    if (!state.routeRenderedFrameEvidenceAccepted) {
+    if (!this.autoplayRouteVisualWindowCaptureComplete(state)) {
       await state.routeFrameWindowCapturePromise?.catch(() => null);
     }
     await state.routeFrameWindowRecorderPromise?.catch(() => null);
@@ -4140,20 +4381,111 @@ class CdpSession {
   acceptAutoplayRouteRenderedFrameTrajectory(trajectory) {
     const state = this.screencast;
     const acceptedSources = new Set([
+      "canvas-route-frame",
       "proactive-route-frame",
       "screencast-frame",
     ]);
     if (
       !state ||
       !acceptedSources.has(trajectory?.start?.evidenceSource) ||
-      !acceptedSources.has(trajectory?.mid?.evidenceSource)
+      !acceptedSources.has(trajectory?.mid?.evidenceSource) ||
+      (state.forceRouteCanvasFallback &&
+        ![
+          trajectory.start.evidenceSource,
+          trajectory.mid.evidenceSource,
+        ].includes("canvas-route-frame"))
     ) {
       return false;
     }
     state.routeRenderedFrameEvidenceAccepted = true;
     state.routeFrameWindowCapturePendingSample = null;
-    state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
+    state.routeFrameWindowCaptureStatus = state.forceRouteCanvasFallback
+      ? "canvas-evidence-ready"
+      : "screencast-evidence-ready";
     return true;
+  }
+
+  autoplayRouteVisualWindowCaptureComplete(state = this.screencast) {
+    if (!state) {
+      return false;
+    }
+    if (!state.forceRouteCanvasFallback) {
+      return state.routeRenderedFrameEvidenceAccepted;
+    }
+    return (
+      state.routeRenderedFrameEvidenceAccepted &&
+      state.routeFrameWindowArchive.filter(
+        (recordedWindow) =>
+          (autoplayRecordedRouteWindowFrame(recordedWindow)?.source ??
+            autoplayRecordedRouteWindowFrame(recordedWindow)?.metadata
+              ?.source) === "in-page-route-canvas",
+      ).length >= 1
+    );
+  }
+
+  autoplayRouteCanvasPngChunk(type, data) {
+    const typeBuffer = Buffer.from(type, "ascii");
+    const chunk = Buffer.alloc(12 + data.length);
+    chunk.writeUInt32BE(data.length, 0);
+    typeBuffer.copy(chunk, 4);
+    data.copy(chunk, 8);
+    let crc = 0xffffffff;
+    for (const byte of Buffer.concat([typeBuffer, data])) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit += 1) {
+        crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+      }
+    }
+    chunk.writeUInt32BE((crc ^ 0xffffffff) >>> 0, 8 + data.length);
+    return chunk;
+  }
+
+  encodeAutoplayRouteCanvasRgbaPng({
+    height,
+    pixels,
+    rowOrientation,
+    width,
+  }) {
+    assert.ok(
+      Number.isSafeInteger(width) && width > 0 &&
+        Number.isSafeInteger(height) && height > 0,
+      `Route canvas raw dimensions were invalid (${width}x${height}).`,
+    );
+    assert.equal(
+      rowOrientation,
+      "bottom-up",
+      "Route canvas raw rows must preserve WebGL bottom-up orientation.",
+    );
+    assert.ok(Buffer.isBuffer(pixels), "Route canvas raw pixels were not bytes.");
+    const rowBytes = width * 4;
+    assert.equal(
+      pixels.length,
+      rowBytes * height,
+      `Route canvas raw byte length did not match ${width}x${height} RGBA.`,
+    );
+    const scanlines = Buffer.alloc(height * (rowBytes + 1));
+    for (let targetRow = 0; targetRow < height; targetRow += 1) {
+      const scanlineOffset = targetRow * (rowBytes + 1);
+      const sourceOffset = (height - targetRow - 1) * rowBytes;
+      scanlines[scanlineOffset] = 0;
+      pixels.copy(
+        scanlines,
+        scanlineOffset + 1,
+        sourceOffset,
+        sourceOffset + rowBytes,
+      );
+    }
+    const header = Buffer.alloc(13);
+    header.writeUInt32BE(width, 0);
+    header.writeUInt32BE(height, 4);
+    header[8] = 8;
+    header[9] = 6;
+    return Buffer.concat([
+      Buffer.from("89504e470d0a1a0a", "hex"),
+      this.autoplayRouteCanvasPngChunk("IHDR", header),
+      this.autoplayRouteCanvasPngChunk("IDAT", deflateSync(scanlines)),
+      this.autoplayRouteCanvasPngChunk("IEND", Buffer.alloc(0)),
+    ]);
   }
 
   async captureAutoplayRouteVisualFrame({
@@ -4228,6 +4560,357 @@ class CdpSession {
       },
       sequence: state.lastSequence,
       source: "proactive-route-screenshot",
+    };
+  }
+
+  async captureAutoplayRouteCanvasVisualFrame({
+    beforeProbe,
+    expectedTargetLocationId,
+    timeoutMs = AUTOPLAY_ROUTE_CANVAS_CAPTURE_TIMEOUT_MS,
+  }) {
+    const state = this.screencast;
+    assert.ok(
+      state && state.active && state.status === "active",
+      "Autoplay screencast is not active for an in-page route canvas capture.",
+    );
+    assert.equal(
+      state.routeVisualCapturePaused,
+      false,
+      "In-page route canvas capture must not pause the CDP screencast.",
+    );
+    assert.ok(
+      isAutoplayFootholdRouteFrame(
+        beforeProbe?.route,
+        expectedTargetLocationId,
+      ),
+      "In-page route canvas capture requires an active legal opening route.",
+    );
+    const boundedTimeoutMs = Math.max(
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      Math.min(AUTOPLAY_ROUTE_CANVAS_CAPTURE_TIMEOUT_MS, timeoutMs),
+    );
+    const expectedGeometry = state.routeCanvasCaptureGeometry;
+    const requestedAtEpochMs = Date.now();
+    const geometryBuilderSource =
+      buildAutoplayRouteCanvasReadbackGeometry.toString();
+    const commandSession = await this.autoplayRouteCanvasCommandSession();
+    const response = await commandSession.send(
+      "Runtime.evaluate",
+      {
+        awaitPromise: true,
+        expression: `(async () => {
+          const recorder = window.__manyLivesAutoplayRouteCaptureRecorder;
+          const deadlineAtEpochMs = Date.now() + ${JSON.stringify(boundedTimeoutMs)};
+          const expectedTargetLocationId = ${JSON.stringify(expectedTargetLocationId)};
+          const expectedGeometry = ${JSON.stringify(expectedGeometry)};
+          const buildAutoplayRouteCanvasReadbackGeometry = (${geometryBuilderSource});
+          const minimumCapturedAtEpochMs = ${JSON.stringify(
+            beforeProbe.capturedAtEpochMs +
+              AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+          )};
+          const failure = (reason, details = {}) => ({
+            error: reason,
+            ...details,
+          });
+          const readCamera = () => {
+            const script = document.querySelector("#ml-browser-camera-probe");
+            if (!script) return null;
+            try {
+              return JSON.parse(script.textContent || "null");
+            } catch {
+              return null;
+            }
+          };
+          const sample = () => {
+            if (!recorder || typeof recorder.sample !== "function") return null;
+            const acceptedCount = recorder.acceptedCount;
+            recorder.sample();
+            return recorder.acceptedCount > acceptedCount
+              ? recorder.samples.at(-1) ?? null
+              : null;
+          };
+          const routeIsLegal = (probe) => Boolean(
+            probe?.route?.active === true &&
+              probe.route.targetLocationId === expectedTargetLocationId &&
+              typeof probe.route.progress === "number" &&
+              Number.isFinite(probe.route.progress) &&
+              probe.route.progress >= 0 &&
+              probe.route.progress < 1 &&
+              probe.route.legal === true &&
+              probe.route.reachesDestination === true &&
+              probe.route.sampledPointsLegal === true &&
+              probe.route.visualObstaclesClear === true
+          );
+          if (!recorder || recorder.status !== "active") {
+            return failure("route-recorder-unavailable");
+          }
+          const initialCamera = readCamera();
+          const initialRenderedAtMs = Number(initialCamera?.renderedAtMs);
+          if (!Number.isFinite(initialRenderedAtMs)) {
+            return failure("camera-render-timestamp-unavailable");
+          }
+          const captureBeforeProbe = sample();
+          if (!routeIsLegal(captureBeforeProbe)) {
+            return failure("capture-before-route-unavailable", {
+              captureBeforeProbe,
+            });
+          }
+          let camera = initialCamera;
+          while (
+            Date.now() < minimumCapturedAtEpochMs ||
+            Number(camera?.renderedAtMs) <= initialRenderedAtMs
+          ) {
+            if (Date.now() >= deadlineAtEpochMs) {
+              return failure("fresh-camera-render-timeout", {
+                initialRenderedAtMs,
+                renderedAtMs: Number(camera?.renderedAtMs),
+              });
+            }
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            camera = readCamera();
+          }
+          const canvases = Array.from(document.querySelectorAll("canvas"))
+            .map((canvas, index) => ({
+              canvas,
+              index,
+              rect: canvas.getBoundingClientRect(),
+            }))
+            .filter(({ canvas, rect }) =>
+              canvas.width > 0 &&
+              canvas.height > 0 &&
+              rect.width > 0 &&
+              rect.height > 0
+            )
+            .sort((left, right) =>
+              right.canvas.width * right.canvas.height -
+              left.canvas.width * left.canvas.height
+            );
+          if (canvases.length === 0) {
+            return failure("visible-canvas-unavailable");
+          }
+          let selectedCanvas = null;
+          for (const entry of canvases) {
+            for (const contextType of [
+              "webgl2",
+              "webgl",
+              "experimental-webgl",
+            ]) {
+              const gl = entry.canvas.getContext(contextType);
+              if (gl) {
+                selectedCanvas = { ...entry, contextType, gl };
+                break;
+              }
+            }
+            if (selectedCanvas) break;
+          }
+          if (!selectedCanvas) {
+            return failure("webgl-context-unavailable", {
+              visibleCanvases: canvases.map(({ canvas, index, rect }) => ({
+                backingHeight: canvas.height,
+                backingWidth: canvas.width,
+                cssHeight: rect.height,
+                cssWidth: rect.width,
+                index,
+              })),
+            });
+          }
+          const {
+            canvas,
+            contextType,
+            gl,
+            index: canvasIndex,
+            rect,
+          } = selectedCanvas;
+          if (gl.isContextLost()) {
+            return failure("webgl-context-lost");
+          }
+          if (gl.getParameter(gl.FRAMEBUFFER_BINDING) !== null) {
+            return failure("non-default-framebuffer-bound");
+          }
+          const geometryResult = buildAutoplayRouteCanvasReadbackGeometry({
+            canvas: { height: canvas.height, width: canvas.width },
+            canvasIndex,
+            contextType,
+            cropHeight: ${AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT},
+            cropWidth: ${AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH},
+            devicePixelRatio: window.devicePixelRatio || 1,
+            rect: {
+              height: rect.height,
+              left: rect.left,
+              top: rect.top,
+              width: rect.width,
+            },
+            renderScale: camera?.renderScale,
+            sceneViewport: camera?.sceneViewport,
+            sceneViewportCss: camera?.sceneViewportCss,
+          });
+          if (geometryResult.error) {
+            return failure(geometryResult.error, geometryResult);
+          }
+          const geometry = geometryResult.geometry;
+          const crop = geometry.crop;
+          if (
+            expectedGeometry &&
+            JSON.stringify(geometry) !== JSON.stringify(expectedGeometry)
+          ) {
+            return failure("canvas-geometry-changed", {
+              expectedGeometry,
+              geometry,
+            });
+          }
+          const pixels = new Uint8Array(crop.width * crop.height * 4);
+          gl.readPixels(
+            crop.x,
+            canvas.height - crop.y - crop.height,
+            crop.width,
+            crop.height,
+            gl.RGBA,
+            gl.UNSIGNED_BYTE,
+            pixels,
+          );
+          const capturedAtEpochMs = Date.now();
+          const capturedAtMonotonicMs = performance.now();
+          const afterCamera = readCamera();
+          const afterCanvasRect = canvas.getBoundingClientRect();
+          const afterGeometryResult = buildAutoplayRouteCanvasReadbackGeometry({
+            canvas: { height: canvas.height, width: canvas.width },
+            canvasIndex,
+            contextType,
+            cropHeight: ${AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT},
+            cropWidth: ${AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH},
+            devicePixelRatio: window.devicePixelRatio || 1,
+            rect: {
+              height: afterCanvasRect.height,
+              left: afterCanvasRect.left,
+              top: afterCanvasRect.top,
+              width: afterCanvasRect.width,
+            },
+            renderScale: afterCamera?.renderScale,
+            sceneViewport: afterCamera?.sceneViewport,
+            sceneViewportCss: afterCamera?.sceneViewportCss,
+          });
+          const afterGeometry = afterGeometryResult.geometry ?? null;
+          if (
+            gl.isContextLost() ||
+            gl.getParameter(gl.FRAMEBUFFER_BINDING) !== null ||
+            afterGeometryResult.error ||
+            JSON.stringify(afterGeometry) !== JSON.stringify(geometry)
+          ) {
+            return failure("canvas-changed-during-readback", {
+              afterGeometry,
+              geometry,
+            });
+          }
+          const afterProbe = sample();
+          if (!routeIsLegal(afterProbe)) {
+            return failure("capture-after-route-unavailable", {
+              afterProbe,
+            });
+          }
+          let binary = "";
+          for (let offset = 0; offset < pixels.length; offset += 32768) {
+            binary += String.fromCharCode(
+              ...pixels.subarray(offset, offset + 32768),
+            );
+          }
+          return {
+            afterProbe,
+            captureBeforeProbe,
+            data: btoa(binary),
+            metadata: {
+              browserPayloadFormat: "rgba-base64",
+              capturedAtEpochMs,
+              capturedAtMonotonicMs,
+              contextLost: false,
+              defaultFramebuffer: true,
+              format: "rgba",
+              geometry,
+              initialRenderedAtMs,
+              rawByteLength: pixels.length,
+              rawHeight: crop.height,
+              rawRowOrientation: "bottom-up",
+              rawWidth: crop.width,
+              renderedAtMs: Number(camera.renderedAtMs),
+              requestedAtEpochMs: ${JSON.stringify(requestedAtEpochMs)},
+              source: "in-page-route-canvas",
+              timestamp: capturedAtEpochMs / 1000,
+            },
+          };
+        })()`,
+        returnByValue: true,
+      },
+      { timeoutMs: boundedTimeoutMs + 250 },
+    );
+    if (response?.result?.exceptionDetails) {
+      throw new Error(
+        `In-page route canvas capture failed: ${JSON.stringify(response.result.exceptionDetails)}.`,
+      );
+    }
+    const captured = response?.result?.result?.value;
+    assert.ok(
+      captured && !captured.error,
+      `In-page route canvas capture failed closed: ${JSON.stringify(captured)}.`,
+    );
+    assert.ok(
+      typeof captured.data === "string" &&
+        captured.data.length > 0 &&
+        captured.data.length <=
+          AUTOPLAY_ROUTE_CANVAS_MAX_PAYLOAD_BASE64_LENGTH,
+      `In-page route canvas payload was empty or exceeded its bound (${captured?.data?.length ?? 0}).`,
+    );
+    assert.equal(
+      captured.metadata?.browserPayloadFormat,
+      "rgba-base64",
+      "In-page route canvas payload used an unexpected browser format.",
+    );
+    assert.equal(
+      captured.metadata?.rawWidth,
+      captured.metadata?.geometry?.crop?.width,
+      "In-page route canvas raw width did not match its crop geometry.",
+    );
+    assert.equal(
+      captured.metadata?.rawHeight,
+      captured.metadata?.geometry?.crop?.height,
+      "In-page route canvas raw height did not match its crop geometry.",
+    );
+    const rawPixels = Buffer.from(captured.data, "base64");
+    assert.equal(
+      captured.metadata?.rawByteLength,
+      rawPixels.length,
+      "In-page route canvas raw byte metadata did not match its payload.",
+    );
+    const pngBuffer = this.encodeAutoplayRouteCanvasRgbaPng({
+      height: captured.metadata.rawHeight,
+      pixels: rawPixels,
+      rowOrientation: captured.metadata.rawRowOrientation,
+      width: captured.metadata.rawWidth,
+    });
+    assert.equal(
+      pngBuffer.subarray(0, 8).toString("hex"),
+      "89504e470d0a1a0a",
+      "Node did not encode the in-page route canvas payload as PNG.",
+    );
+    const pngData = pngBuffer.toString("base64");
+    assert.ok(
+      pngData.length <= AUTOPLAY_ROUTE_CANVAS_MAX_PAYLOAD_BASE64_LENGTH,
+      `Node-encoded route canvas PNG exceeded its bound (${pngData.length}).`,
+    );
+    state.lastSequence += 1;
+    state.routeCanvasCaptureCount += 1;
+    state.routeCanvasCaptureGeometry ??= captured.metadata.geometry;
+    return {
+      afterProbe: captured.afterProbe,
+      captureBeforeProbe: captured.captureBeforeProbe,
+      frame: {
+        data: pngData,
+        metadata: {
+          ...captured.metadata,
+          format: "png",
+          nodeEncodedPng: true,
+        },
+        sequence: state.lastSequence,
+        source: "in-page-route-canvas",
+      },
     };
   }
 
@@ -4546,8 +5229,10 @@ class CdpSession {
     if (
       !state ||
       state.routeFrameWindowArchive.length !== 1 ||
-      (frame?.source ?? frame?.metadata?.source) !==
-        "proactive-route-screenshot" ||
+      ![
+        "in-page-route-canvas",
+        "proactive-route-screenshot",
+      ].includes(frame?.source ?? frame?.metadata?.source) ||
       !autoplayRouteCaptureWindowCoherent(
         beforeProbe?.route,
         afterProbe?.route,
@@ -4561,9 +5246,15 @@ class CdpSession {
     const afterProgress = Number(afterProbe.route.progress);
     const routeDurationMs = Number(afterProbe.route.durationMs);
     if (
-      ![beforeProgress, afterProgress, routeDurationMs].every(
-        Number.isFinite,
-      ) ||
+      ![beforeProgress, afterProgress, routeDurationMs].every(Number.isFinite)
+    ) {
+      return false;
+    }
+    const isCanvasReadback =
+      (frame?.source ?? frame?.metadata?.source) ===
+      "in-page-route-canvas";
+    if (
+      !isCanvasReadback &&
       afterProgress - beforeProgress < AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
     ) {
       return false;
@@ -4591,6 +5282,9 @@ class CdpSession {
     if (!Number.isFinite(openingAtEpochMs)) {
       return false;
     }
+    if (state.forceRouteCanvasFallback) {
+      return true;
+    }
     const archivedFrameTimes = state.routeFrameArchive
       .map((frame) => screencastFrameCapturedAtEpochMs(frame))
       .filter(Number.isFinite);
@@ -4614,16 +5308,19 @@ class CdpSession {
     label = "autoplay-route-visual-window-capture",
   }) {
     const state = this.screencast;
-    if (state?.routeRenderedFrameEvidenceAccepted) {
+    if (this.autoplayRouteVisualWindowCaptureComplete(state)) {
       state.routeFrameWindowCapturePendingSample = null;
-      state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
+      state.routeFrameWindowCaptureStatus = state.forceRouteCanvasFallback
+        ? "canvas-evidence-ready"
+        : "screencast-evidence-ready";
       return Promise.resolve(state.routeFrameArchive.length);
     }
     if (
       !state?.active ||
       state.routeFrameArchiveFrozen ||
-      state.routeFrameWindowArchive.length >=
-        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS ||
+      (!state.forceRouteCanvasFallback &&
+        state.routeFrameWindowArchive.length >=
+          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS) ||
       !autoplayRouteCaptureWindowCoherent(
         beforeProbe?.route,
         beforeProbe?.route,
@@ -4668,7 +5365,10 @@ class CdpSession {
       let proactiveOpeningCapturePending =
         this.autoplayRouteArchiveNeedsProactiveOpeningCapture(beforeProbe);
       let proactiveFollowUpPending = false;
-      if (!proactiveOpeningCapturePending) {
+      if (
+        !proactiveOpeningCapturePending &&
+        !state.forceRouteCanvasFallback
+      ) {
         await this.rearmAutoplayScreencastForRouteCapture(
           `${label}:dense-opening-route-stream`,
         );
@@ -4677,9 +5377,10 @@ class CdpSession {
       while (
         state.active &&
         !state.routeFrameArchiveFrozen &&
-        !state.routeRenderedFrameEvidenceAccepted &&
-        state.routeFrameWindowArchive.length <
-          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS &&
+        !this.autoplayRouteVisualWindowCaptureComplete(state) &&
+        (state.forceRouteCanvasFallback ||
+          state.routeFrameWindowArchive.length <
+            AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS) &&
         state.routeFrameWindowCaptureAttemptCount < 4
       ) {
         let sample = state.routeFrameWindowCapturePendingSample;
@@ -4724,7 +5425,10 @@ class CdpSession {
         const firstWindow = state.routeFrameWindowArchive[0] ?? null;
         if (
           firstWindow &&
-          !proactiveFollowUpPending &&
+          (!proactiveFollowUpPending ||
+            (autoplayRecordedRouteWindowFrame(firstWindow)?.source ??
+              autoplayRecordedRouteWindowFrame(firstWindow)?.metadata
+                ?.source) === "in-page-route-canvas") &&
           sample.route.progress - firstWindow.afterProbe.route.progress <
             AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS
         ) {
@@ -4761,6 +5465,7 @@ class CdpSession {
         }
         let captured = null;
         if (
+          state.forceRouteCanvasFallback ||
           (proactiveOpeningCapturePending && !firstWindow) ||
           (proactiveFollowUpPending && firstWindow)
         ) {
@@ -4803,8 +5508,10 @@ class CdpSession {
             timeoutMs: frameTimeoutMs,
           });
         }
-        if (state.routeRenderedFrameEvidenceAccepted) {
-          state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
+        if (this.autoplayRouteVisualWindowCaptureComplete(state)) {
+          state.routeFrameWindowCaptureStatus = state.forceRouteCanvasFallback
+            ? "canvas-evidence-ready"
+            : "screencast-evidence-ready";
           break;
         }
         if (!captured) {
@@ -4828,11 +5535,14 @@ class CdpSession {
           );
         }
       }
-      if (state.routeRenderedFrameEvidenceAccepted) {
-        state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
+      if (this.autoplayRouteVisualWindowCaptureComplete(state)) {
+        state.routeFrameWindowCaptureStatus = state.forceRouteCanvasFallback
+          ? "canvas-evidence-ready"
+          : "screencast-evidence-ready";
       } else if (
+        !state.forceRouteCanvasFallback &&
         state.routeFrameWindowArchive.length >=
-        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
       ) {
         state.routeFrameWindowCaptureStatus = "complete";
       } else if (state.routeFrameWindowCaptureAttemptCount >= 4) {
@@ -4845,8 +5555,10 @@ class CdpSession {
       .catch((error) => {
         state.routeFrameWindowCaptureError =
           error instanceof Error ? error.message : String(error);
-        if (state.routeRenderedFrameEvidenceAccepted) {
-          state.routeFrameWindowCaptureStatus = "screencast-evidence-ready";
+        if (this.autoplayRouteVisualWindowCaptureComplete(state)) {
+          state.routeFrameWindowCaptureStatus = state.forceRouteCanvasFallback
+            ? "canvas-evidence-ready"
+            : "screencast-evidence-ready";
           return state.routeFrameArchive.length;
         }
         state.routeFrameWindowCaptureStatus = "failed";
@@ -4886,9 +5598,10 @@ class CdpSession {
       let sawOpeningSegment = false;
       while (
         state.active &&
-        !state.routeRenderedFrameEvidenceAccepted &&
-        state.routeFrameWindowArchive.length <
-          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+        !this.autoplayRouteVisualWindowCaptureComplete(state) &&
+        (state.forceRouteCanvasFallback ||
+          state.routeFrameWindowArchive.length <
+            AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS)
       ) {
         let recorder;
         try {
@@ -4956,11 +5669,14 @@ class CdpSession {
         }
         await sleep(Math.min(PROBE_POLL_INTERVAL_MS, 25));
       }
-      if (state.routeRenderedFrameEvidenceAccepted) {
-        state.routeFrameWindowRecorderStatus = "screencast-evidence-ready";
+      if (this.autoplayRouteVisualWindowCaptureComplete(state)) {
+        state.routeFrameWindowRecorderStatus = state.forceRouteCanvasFallback
+          ? "canvas-evidence-ready"
+          : "screencast-evidence-ready";
       } else if (
+        !state.forceRouteCanvasFallback &&
         state.routeFrameWindowArchive.length >=
-        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
       ) {
         state.routeFrameWindowRecorderStatus = "complete";
       } else if (!state.active) {
@@ -5065,8 +5781,10 @@ class CdpSession {
       !state?.active ||
       !expectedTargetLocationId ||
       state.routeFrameArchiveFrozen ||
-      state.routeFrameWindowArchive.length >=
-        AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+      this.autoplayRouteVisualWindowCaptureComplete(state) ||
+      (!state.forceRouteCanvasFallback &&
+        state.routeFrameWindowArchive.length >=
+          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS)
     ) {
       return;
     }
@@ -5080,9 +5798,10 @@ class CdpSession {
         state.active &&
         state.routeFrameSamplePending &&
         !state.routeFrameArchiveFrozen &&
-        !state.routeRenderedFrameEvidenceAccepted &&
-        state.routeFrameWindowArchive.length <
-          AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS
+        !this.autoplayRouteVisualWindowCaptureComplete(state) &&
+        (state.forceRouteCanvasFallback ||
+          state.routeFrameWindowArchive.length <
+            AUTOPLAY_ROUTE_FRAME_WINDOW_ARCHIVE_MAX_WINDOWS)
       ) {
         state.routeFrameSamplePending = false;
         const remainingCadenceMs =
@@ -5139,7 +5858,7 @@ class CdpSession {
         if (
           state.active &&
           state.routeFrameSamplePending &&
-          !state.routeRenderedFrameEvidenceAccepted
+          !this.autoplayRouteVisualWindowCaptureComplete(state)
         ) {
           this.scheduleAutoplayRouteSampleFromScreencastFrame();
         }
@@ -5677,7 +6396,9 @@ async function launchBrowserSessionAttempt(url, attempt) {
     [
       "--headless=new",
       "--no-sandbox",
-      "--disable-gpu",
+      ...(AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK
+        ? ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"]
+        : ["--disable-gpu"]),
       "--disable-dev-shm-usage",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",
@@ -5775,6 +6496,7 @@ async function launchBrowserSessionAttempt(url, attempt) {
 
   const session = new CdpSession({
     browser,
+    forceRouteCanvasFallback: AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK,
     outputDir: OUTPUT_DIR,
     pageWsUrl,
     url,
@@ -15359,6 +16081,144 @@ function validateAutoplayScreencastFrame({
   };
 }
 
+function validateAutoplayRouteCanvasFrame({ frame, label, paintProbe }) {
+  assert.equal(
+    frame?.source ?? frame?.metadata?.source,
+    "in-page-route-canvas",
+    `${label}: route canvas evidence used the wrong visual source.`,
+  );
+  assert.equal(
+    frame?.metadata?.format,
+    "png",
+    `${label}: route canvas evidence was not a PNG.`,
+  );
+  assert.equal(
+    frame?.metadata?.contextLost,
+    false,
+    `${label}: route canvas WebGL context was lost.`,
+  );
+  assert.equal(
+    frame?.metadata?.defaultFramebuffer,
+    true,
+    `${label}: route canvas evidence did not come from the default framebuffer.`,
+  );
+  assert.ok(
+    Number(frame?.metadata?.renderedAtMs) >
+      Number(frame?.metadata?.initialRenderedAtMs),
+    `${label}: route canvas readback did not wait for a fresh Phaser render.`,
+  );
+  assert.ok(
+    Math.abs(
+      Number(frame?.metadata?.capturedAtEpochMs) -
+        screencastFrameCapturedAtEpochMs(frame),
+    ) <= 0.5,
+    `${label}: route canvas capture timestamp was inconsistent beyond serialization precision.`,
+  );
+  const geometry = frame?.metadata?.geometry;
+  const coordinateSpace = geometry?.coordinateSpace;
+  assert.ok(
+    geometry &&
+      geometry.crop?.width === AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH &&
+      geometry.crop?.height === AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT &&
+      geometry.canvas?.width >= geometry.crop.x + geometry.crop.width &&
+      geometry.canvas?.height >= geometry.crop.y + geometry.crop.height &&
+      ["canvas-local", "client-relative"].includes(
+        coordinateSpace?.cssOriginMode,
+      ) &&
+      Number.isFinite(coordinateSpace?.devicePixelRatio) &&
+      coordinateSpace.devicePixelRatio > 0 &&
+      Math.abs(
+        Number(coordinateSpace?.backingScaleX) -
+          Number(coordinateSpace?.renderScale),
+      ) <= Math.max(0.02, Number(coordinateSpace?.renderScale) * 0.01) &&
+      Math.abs(
+        Number(coordinateSpace?.backingScaleY) -
+          Number(coordinateSpace?.renderScale),
+      ) <= Math.max(0.02, Number(coordinateSpace?.renderScale) * 0.01) &&
+      geometry.sceneViewportBackingFromCss &&
+      geometry.sceneViewportCss &&
+      ["webgl", "webgl2", "experimental-webgl"].includes(
+        geometry.contextType,
+      ),
+    `${label}: route canvas geometry or crop metadata was invalid: ${JSON.stringify(geometry)}.`,
+  );
+  const buffer = Buffer.from(frame.data, "base64");
+  assert.ok(
+    buffer.toString("base64").length <=
+      AUTOPLAY_ROUTE_CANVAS_MAX_PAYLOAD_BASE64_LENGTH,
+    `${label}: route canvas payload exceeded its bound.`,
+  );
+  const { channels, height, pixels, width } = decodePngPixels(buffer);
+  assert.equal(width, geometry.crop.width, `${label}: route canvas crop width drifted.`);
+  assert.equal(
+    height,
+    geometry.crop.height,
+    `${label}: route canvas crop height drifted.`,
+  );
+  assertNoLargeNearBlackDropout(buffer, label);
+  let visiblePixels = 0;
+  let minimumChannel = 255;
+  let maximumChannel = 0;
+  for (let offset = 0; offset < pixels.length; offset += channels) {
+    const red = pixels[offset];
+    const green = pixels[offset + 1] ?? red;
+    const blue = pixels[offset + 2] ?? red;
+    minimumChannel = Math.min(minimumChannel, red, green, blue);
+    maximumChannel = Math.max(maximumChannel, red, green, blue);
+    if (Math.max(red, green, blue) >= 12) {
+      visiblePixels += 1;
+    }
+  }
+  const visiblePixelRatio = visiblePixels / Math.max(1, width * height);
+  assert.ok(
+    visiblePixelRatio >= 0.05 && maximumChannel - minimumChannel >= 16,
+    `${label}: route canvas readback was blank or visually empty (${visiblePixelRatio.toFixed(4)} visible ratio, ${maximumChannel - minimumChannel} channel range).`,
+  );
+  return {
+    buffer,
+    height,
+    paintProbe,
+    routeCanvas: {
+      geometry,
+      initialRenderedAtMs: frame.metadata.initialRenderedAtMs,
+      renderedAtMs: frame.metadata.renderedAtMs,
+      visiblePixelRatio,
+    },
+    textPaint: {},
+    width,
+  };
+}
+
+function assertAutoplayRouteCanvasFramePair({
+  after,
+  before,
+  label,
+}) {
+  assert.equal(
+    JSON.stringify(after.routeCanvas?.geometry),
+    JSON.stringify(before.routeCanvas?.geometry),
+    `${label}: route canvas geometry, crop, or framebuffer context changed between positions.`,
+  );
+  const routeCanvasChangedPixelRatio = screenshotRegionPixelDifferenceRatio(
+    before.buffer,
+    after.buffer,
+    { bottom: before.height, left: 0, right: before.width, top: 0 },
+    { height: before.height, width: before.width },
+  );
+  assert.ok(
+    routeCanvasChangedPixelRatio >=
+      AUTOPLAY_ROUTE_CANVAS_MIN_CHANGED_PIXEL_RATIO,
+    `${label}: route canvas positions were identical or did not contain meaningful rendered movement (${routeCanvasChangedPixelRatio.toFixed(6)} changed-pixel ratio).`,
+  );
+  return {
+    routeCanvasChangedPixelRatio,
+    routeCanvasEvidenceBasis:
+      "bounded-default-framebuffer-readbacks-with-exact-route-brackets",
+    routeCanvasMinimumChangedPixelRatio:
+      AUTOPLAY_ROUTE_CANVAS_MIN_CHANGED_PIXEL_RATIO,
+  };
+}
+
 async function acquireAutoplayScreencastFrameWindow({
   initialProbe,
   isCaptureWindowCoherent,
@@ -15531,6 +16391,20 @@ function compactAutoplayScreencastCaptureWindow(window) {
     after: compactProbe(window.afterProbe),
     before: compactProbe(window.beforeProbe),
     frame: {
+      ...((window.frame?.source ?? window.frame?.metadata?.source) ===
+      "in-page-route-canvas"
+        ? {
+            canvasReadback: {
+              contextLost: window.frame.metadata?.contextLost ?? null,
+              defaultFramebuffer:
+                window.frame.metadata?.defaultFramebuffer ?? null,
+              geometry: window.frame.metadata?.geometry ?? null,
+              initialRenderedAtMs:
+                window.frame.metadata?.initialRenderedAtMs ?? null,
+              renderedAtMs: window.frame.metadata?.renderedAtMs ?? null,
+            },
+          }
+        : {}),
       capturedAtEpochMs: screencastFrameCapturedAtEpochMs(window.frame),
       deviceHeight: window.frame.metadata?.deviceHeight ?? null,
       deviceWidth: window.frame.metadata?.deviceWidth ?? null,
@@ -15651,61 +16525,77 @@ async function captureAutoplayProactiveRouteFrameWindow({
     });
     return null;
   }
-  return session.withAutoplayScreencastPausedForRouteCapture(async () => {
-    const capturedFrame = await session.captureAutoplayRouteVisualFrame({
-      minimumCapturedAtEpochMs:
-        beforeProbe.capturedAtEpochMs +
-        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
-      timeoutMs,
-      viewport: beforeProbe.paintProbe?.viewport ?? null,
-    });
-    const afterProbe = await session.sampleAutoplayRouteCaptureRecorder(
-      `${label}:after-route-sample`,
-    );
-    const afterProbeFailure = afterProbe
-      ? null
-      : await session.classifyAutoplayRouteCaptureSampleFailure(
-          `${label}:after-route-sample-failure`,
-        );
-    if (
-      !autoplayRouteCaptureWindowCoherent(
-        beforeProbe.route,
-        afterProbe?.route,
-        expectedTargetLocationId,
-      ) ||
-      !autoplayRouteCaptureSamplesShareExactIdentity(
-        beforeProbe,
-        afterProbe,
-      )
-    ) {
-      session.recordAutoplayRouteFrameWindowRejection({
-        afterProbe,
-        beforeProbe,
-        frame: capturedFrame,
-        reason: afterProbe
-          ? "after-probe-route-identity-changed"
-          : `after-probe-${afterProbeFailure}`,
-      });
-      return null;
-    }
-    const frame = await session.normalizeAutoplayRouteVisualFrame(
-      capturedFrame,
-    );
-    const recorder =
-      await session.readOrRearmAutoplayRouteCaptureRecorder({
-        expectedTargetLocationId,
-        label: `${label}:recorder-read`,
-      });
-    session.archiveAutoplayRouteFrames(recorder);
-    return session.archiveAutoplayRouteFrameWindow({
+  const captured = await session.captureAutoplayRouteCanvasVisualFrame({
+    beforeProbe,
+    expectedTargetLocationId,
+    timeoutMs,
+  });
+  const { afterProbe, captureBeforeProbe, frame } = captured;
+  if (
+    !autoplayRouteCaptureWindowCoherent(
+      beforeProbe.route,
+      captureBeforeProbe?.route,
       expectedTargetLocationId,
-      recordedWindow: {
-        afterProbe,
-        beforeProbe,
-        frame,
-      },
-      recorder,
+    ) ||
+    !autoplayRouteCaptureWindowCoherent(
+      captureBeforeProbe?.route,
+      afterProbe?.route,
+      expectedTargetLocationId,
+    ) ||
+    !autoplayRouteCaptureSamplesShareExactIdentity(
+      beforeProbe,
+      captureBeforeProbe,
+    ) ||
+    !autoplayRouteCaptureSamplesShareExactIdentity(
+      captureBeforeProbe,
+      afterProbe,
+    )
+  ) {
+    session.recordAutoplayRouteFrameWindowRejection({
+      afterProbe,
+      beforeProbe,
+      frame,
+      reason: "canvas-route-identity-changed",
     });
+    return null;
+  }
+  if (
+    captureBeforeProbe?.source !== "movement-probe-recorder" ||
+    afterProbe?.source !== "movement-probe-recorder" ||
+    captureBeforeProbe.capturedAtEpochMs < beforeProbe.capturedAtEpochMs ||
+    !screencastFrameIsBracketedByEpochProbes(
+      frame,
+      captureBeforeProbe,
+      afterProbe,
+    ) ||
+    !screencastFrameIsBracketedByEpochProbes(
+      frame,
+      beforeProbe,
+      afterProbe,
+    )
+  ) {
+    session.recordAutoplayRouteFrameWindowRejection({
+      afterProbe,
+      beforeProbe,
+      frame,
+      reason: "canvas-frame-outside-probe-bracket",
+    });
+    return null;
+  }
+  const recorder = await session.readOrRearmAutoplayRouteCaptureRecorder({
+    expectedTargetLocationId,
+    label: `${label}:recorder-read`,
+  });
+  session.archiveAutoplayRouteFrames(recorder);
+  return session.archiveAutoplayRouteFrameWindow({
+    expectedTargetLocationId,
+    recordedWindow: {
+      afterProbe,
+      beforeProbe,
+      captureBeforeProbe,
+      frame,
+    },
+    recorder,
   });
 }
 
@@ -16481,10 +17371,83 @@ function buildAutoplayRecordedRouteWindowCandidates({
   );
 }
 
+function buildAutoplayRouteHudPaintReference({
+  archivedFrames = [],
+  frames = [],
+  label,
+  openingSegment,
+  validateFrame = validateAutoplayScreencastFrame,
+}) {
+  const legalSamples = openingSegment?.samples ?? [];
+  const candidates = [
+    ...new Map(
+      [...archivedFrames, ...frames]
+        .filter(
+          (frame) =>
+            (frame?.source ?? frame?.metadata?.source ?? "screencast") ===
+            "screencast",
+        )
+        .map((frame) => [frame.sequence, frame]),
+    ).values(),
+  ].sort(
+    (left, right) =>
+      screencastFrameCapturedAtEpochMs(left) -
+      screencastFrameCapturedAtEpochMs(right),
+  );
+  for (const frame of candidates) {
+    const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+    const beforeProbe = legalSamples
+      .filter((sample) => sample.capturedAtEpochMs <= capturedAtEpochMs)
+      .at(-1);
+    const afterProbe = legalSamples.find(
+      (sample) => sample.capturedAtEpochMs >= capturedAtEpochMs,
+    );
+    if (
+      !beforeProbe ||
+      !afterProbe ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(
+        beforeProbe,
+        afterProbe,
+      ) ||
+      !screencastFrameIsBracketedByEpochProbes(
+        frame,
+        beforeProbe,
+        afterProbe,
+      )
+    ) {
+      continue;
+    }
+    try {
+      const paintProbe = requireStableAutoplayScreenshotPaintProbe(
+        beforeProbe.paintProbe,
+        afterProbe.paintProbe,
+        `${label} HUD corroboration`,
+      );
+      const validated = validateFrame({
+        frame,
+        label: `${label} HUD corroboration`,
+        paintProbe,
+      });
+      return {
+        afterProbe,
+        beforeProbe,
+        buffer: validated.buffer,
+        frame,
+        paintProbe: validated.paintProbe,
+        textPaint: validated.textPaint,
+      };
+    } catch {
+      // A frame becomes corroboration only after the normal full-frame HUD audit.
+    }
+  }
+  return null;
+}
+
 function validateAutoplayRecordedRouteWindow({
   hudReference = null,
   label,
   recordedWindow,
+  validateCanvasFrame = validateAutoplayRouteCanvasFrame,
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
@@ -16493,6 +17456,7 @@ function validateAutoplayRecordedRouteWindow({
       hudReference,
       label,
       recordedFrame: recordedWindow,
+      validateCanvasFrame,
       validateFrame,
     });
   }
@@ -16547,6 +17511,7 @@ function validateAutoplayRecordedRouteFrame({
   hudReference = null,
   label,
   recordedFrame,
+  validateCanvasFrame = validateAutoplayRouteCanvasFrame,
   validateFrame = validateAutoplayScreencastFrame,
 }) {
   const exactIdentity = autoplayRouteCaptureSamplesShareExactIdentity(
@@ -16564,12 +17529,24 @@ function validateAutoplayRecordedRouteFrame({
         recordedFrame.afterProbe.paintProbe,
         `${label} route-window paint`,
       );
-  const validated = validateFrame({
+  const isCanvasReadback =
+    (recordedFrame.frame?.source ?? recordedFrame.frame?.metadata?.source) ===
+    "in-page-route-canvas";
+  if (isCanvasReadback) {
+    assert.ok(
+      hudReference?.buffer &&
+        hudReference?.paintProbe &&
+        hudReference?.textPaint?.regionCount >= 8 &&
+        hudReference.textPaint.surfaces?.includes("hud"),
+      `${label}: route canvas position lacked validated full-frame screencast HUD corroboration.`,
+    );
+  }
+  const validated = (isCanvasReadback ? validateCanvasFrame : validateFrame)({
     frame: recordedFrame.frame,
     label,
     paintProbe,
   });
-  const hudContinuity = hudReference
+  const hudContinuity = hudReference && !isCanvasReadback
     ? assertAutoplayRouteHudContinuity({
         afterBuffer: validated.buffer,
         beforeBuffer: validated.buffer,
@@ -16582,14 +17559,25 @@ function validateAutoplayRecordedRouteFrame({
     afterProbe: recordedFrame.afterProbe,
     beforeProbe: recordedFrame.beforeProbe,
     evidenceSource:
-      recordedFrame.frame?.source === "proactive-route-screenshot"
+      isCanvasReadback
+        ? "canvas-route-frame"
+        : recordedFrame.frame?.source === "proactive-route-screenshot"
         ? "proactive-route-frame"
         : "screencast-frame",
     frame: recordedFrame.frame,
     validated: {
       ...validated,
       textPaint: {
-        ...validated.textPaint,
+        ...(isCanvasReadback
+          ? {
+              ...hudReference.textPaint,
+              hudCorroborationCapturedAtEpochMs:
+                screencastFrameCapturedAtEpochMs(hudReference.frame),
+              hudCorroborationFrameSequence: hudReference.frame.sequence,
+              routeHudContinuityBasis:
+                "validated-screencast-hud-paint-and-exact-canvas-route-state",
+            }
+          : validated.textPaint),
         ...hudContinuity,
         ...(typeof recordedFrame.openingFrameGraceMs === "number"
           ? {
@@ -16699,13 +17687,41 @@ function autoplayRecordedRouteWindowsHaveDistinctProgress(
   );
 }
 
+function autoplayRouteTrajectoryEvidenceSource(candidate) {
+  const frame = candidate?.frame ?? candidate?.confirmationFrame ?? null;
+  if (
+    (frame?.source ?? frame?.metadata?.source) ===
+    "in-page-route-canvas"
+  ) {
+    return "canvas-route-frame";
+  }
+  if (frame?.source === "proactive-route-screenshot") {
+    return "proactive-route-frame";
+  }
+  return candidate?.frame ? "screencast-frame" : "confirmed-window";
+}
+
+function autoplayRouteTrajectoryIsMixedCanvasScreencastPair(
+  startSource,
+  midSource,
+) {
+  return (
+    new Set([startSource, midSource]).size === 2 &&
+    [startSource, midSource].includes("canvas-route-frame") &&
+    [startSource, midSource].includes("screencast-frame")
+  );
+}
+
 function selectAutoplayRecordedRouteTrajectory({
   archivedFrames = [],
   expectedTargetLocationId,
+  forceCanvasFallback = false,
   frames,
   label,
   recordedWindows = [],
   samples,
+  validateCanvasFrame = validateAutoplayRouteCanvasFrame,
+  validateCanvasFramePair = assertAutoplayRouteCanvasFramePair,
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
@@ -16714,33 +17730,73 @@ function selectAutoplayRecordedRouteTrajectory({
     samples,
   });
   const { openingSegment, segments } = openingEvidence;
+  const hudPaintReference = buildAutoplayRouteHudPaintReference({
+    archivedFrames,
+    frames,
+    label,
+    openingSegment,
+    validateFrame,
+  });
+  const recordedWindowCandidates =
+    buildAutoplayRecordedRouteWindowCandidates({
+      expectedTargetLocationId,
+      frames,
+      openingSegment,
+      recordedWindows,
+      samples: openingSegment?.samples ?? [],
+    });
+  const screencastCandidates =
+    buildAutoplayScreencastRouteFrameCandidates({
+      archivedFrames,
+      expectedTargetLocationId,
+      frames,
+      openingSegment,
+      samples: openingSegment?.samples ?? [],
+    });
+  const canvasCandidates = recordedWindowCandidates.filter(
+    (candidate) =>
+      autoplayRouteTrajectoryEvidenceSource(candidate) ===
+      "canvas-route-frame",
+  );
   const candidateSets = [
     {
-      candidates: buildAutoplayScreencastRouteFrameCandidates({
-        archivedFrames,
-        expectedTargetLocationId,
-        frames,
-        openingSegment,
-        samples: openingSegment?.samples ?? [],
-      }),
+      candidates: forceCanvasFallback ? [] : screencastCandidates,
+      requireMixedCanvasScreencastPair: false,
       validate: ({ recordedEvidence, ...options }) =>
         validateAutoplayRecordedRouteFrame({
           ...options,
           recordedFrame: recordedEvidence,
+          validateCanvasFrame,
         }),
     },
     {
-      candidates: buildAutoplayRecordedRouteWindowCandidates({
-        expectedTargetLocationId,
-        frames,
-        openingSegment,
-        recordedWindows,
-        samples: openingSegment?.samples ?? [],
-      }),
+      candidates: forceCanvasFallback
+        ? canvasCandidates
+        : recordedWindowCandidates,
+      requireMixedCanvasScreencastPair: false,
       validate: ({ recordedEvidence, ...options }) =>
         validateAutoplayRecordedRouteWindow({
           ...options,
           recordedWindow: recordedEvidence,
+          validateCanvasFrame,
+        }),
+    },
+    {
+      candidates: [...screencastCandidates, ...canvasCandidates].sort(
+        (left, right) =>
+          screencastFrameCapturedAtEpochMs(
+            left.frame ?? left.confirmationFrame,
+          ) -
+          screencastFrameCapturedAtEpochMs(
+            right.frame ?? right.confirmationFrame,
+          ),
+      ),
+      requireMixedCanvasScreencastPair: true,
+      validate: ({ recordedEvidence, ...options }) =>
+        validateAutoplayRecordedRouteFrame({
+          ...options,
+          recordedFrame: recordedEvidence,
+          validateCanvasFrame,
         }),
     },
   ];
@@ -16750,7 +17806,13 @@ function selectAutoplayRecordedRouteTrajectory({
     for (const startCandidate of candidateSet.candidates) {
       let start;
       try {
+        const startFrame =
+          startCandidate.frame ?? startCandidate.confirmationFrame ?? null;
+        const startIsCanvas =
+          (startFrame?.source ?? startFrame?.metadata?.source) ===
+          "in-page-route-canvas";
         start = candidateSet.validate({
+          hudReference: startIsCanvas ? hudPaintReference : null,
           label: `${label} route-start`,
           recordedEvidence: startCandidate,
           validateFrame,
@@ -16762,17 +17824,15 @@ function selectAutoplayRecordedRouteTrajectory({
       }
       const hudReference = {
         buffer: start.validated.buffer,
+        frame: start.frame,
         paintProbe: start.validated.paintProbe,
+        textPaint: start.validated.textPaint,
       };
       for (const midCandidate of candidateSet.candidates) {
         const midFrame =
           midCandidate.frame ?? midCandidate.confirmationFrame ?? null;
         const midEvidenceSource =
-          midFrame?.source === "proactive-route-screenshot"
-            ? "proactive-route-frame"
-            : midCandidate.frame
-              ? "screencast-frame"
-              : "confirmed-window";
+          autoplayRouteTrajectoryEvidenceSource(midCandidate);
         const sharesVisualTransport =
           midEvidenceSource === start.evidenceSource;
         const sharesExactRouteIdentity =
@@ -16787,9 +17847,25 @@ function selectAutoplayRecordedRouteTrajectory({
           );
         const compareHudPixels =
           sharesVisualTransport && sharesExactHudIdentity;
+        const canvasPair =
+          start.evidenceSource === "canvas-route-frame" &&
+          midEvidenceSource === "canvas-route-frame";
+        const hasCanvasPosition =
+          start.evidenceSource === "canvas-route-frame" ||
+          midEvidenceSource === "canvas-route-frame";
+        const mixedCanvasScreencastPair =
+          autoplayRouteTrajectoryIsMixedCanvasScreencastPair(
+            start.evidenceSource,
+            midEvidenceSource,
+          );
         if (
           !midFrame ||
           !sharesExactRouteIdentity ||
+          (candidateSet.requireMixedCanvasScreencastPair &&
+            !mixedCanvasScreencastPair) ||
+          (hasCanvasPosition && !canvasPair && !mixedCanvasScreencastPair) ||
+          (mixedCanvasScreencastPair && !sharesExactHudIdentity) ||
+          (canvasPair && !sharesExactHudIdentity) ||
           midFrame.sequence <= start.frame.sequence ||
           screencastFrameCapturedAtEpochMs(midFrame) <
             screencastFrameCapturedAtEpochMs(start.frame) +
@@ -16802,14 +17878,82 @@ function selectAutoplayRecordedRouteTrajectory({
           continue;
         }
         try {
-          const mid = candidateSet.validate({
-            hudReference: compareHudPixels ? hudReference : null,
+          let mid = candidateSet.validate({
+            hudReference: canvasPair
+              ? hudPaintReference
+              : mixedCanvasScreencastPair &&
+                  midEvidenceSource === "canvas-route-frame"
+                ? hudReference
+              : compareHudPixels
+                ? hudReference
+                : null,
             label: `${label} route-mid`,
             recordedEvidence: midCandidate,
             validateFrame,
             validateStableFramePair,
           });
-          if (
+          if (mixedCanvasScreencastPair) {
+            const screencastPosition =
+              start.evidenceSource === "screencast-frame" ? start : mid;
+            const canvasCandidate =
+              start.evidenceSource === "canvas-route-frame"
+                ? startCandidate
+                : midCandidate;
+            const canvasPosition = candidateSet.validate({
+              hudReference: {
+                buffer: screencastPosition.validated.buffer,
+                frame: screencastPosition.frame,
+                paintProbe: screencastPosition.validated.paintProbe,
+                textPaint: screencastPosition.validated.textPaint,
+              },
+              label: `${label} mixed route canvas position`,
+              recordedEvidence: canvasCandidate,
+              validateFrame,
+              validateStableFramePair,
+            });
+            if (start.evidenceSource === "canvas-route-frame") {
+              start = canvasPosition;
+            } else {
+              mid = canvasPosition;
+            }
+            const mixedEvidence = {
+              routeMixedCanvasFrameSequence:
+                start.evidenceSource === "canvas-route-frame"
+                  ? start.frame.sequence
+                  : mid.frame.sequence,
+              routeMixedEvidenceBasis:
+                "independently-validated-screencast-and-canvas-positions-with-exact-route-and-hud-identity",
+              routeMixedScreencastFrameSequence:
+                start.evidenceSource === "screencast-frame"
+                  ? start.frame.sequence
+                  : mid.frame.sequence,
+              routeMixedTransportDimensionsCompared: false,
+              routeHudContinuityBasis:
+                "exact-route-identity-and-per-frame-hud-paint",
+            };
+            start.validated.textPaint = {
+              ...start.validated.textPaint,
+              ...mixedEvidence,
+            };
+            mid.validated.textPaint = {
+              ...mid.validated.textPaint,
+              ...mixedEvidence,
+            };
+          } else if (canvasPair) {
+            const canvasPairEvidence = validateCanvasFramePair({
+              after: mid.validated,
+              before: start.validated,
+              label: `${label} opening canvas positions`,
+            });
+            start.validated.textPaint = {
+              ...start.validated.textPaint,
+              ...canvasPairEvidence,
+            };
+            mid.validated.textPaint = {
+              ...mid.validated.textPaint,
+              ...canvasPairEvidence,
+            };
+          } else if (
             compareHudPixels &&
             ["proactive-route-frame", "screencast-frame"].includes(
               start.evidenceSource,
@@ -16856,10 +18000,12 @@ function selectAutoplayRecordedRouteTrajectory({
               ...routeHudContinuity,
             };
           }
-          assert.ok(
-            !start.validated.buffer.equals(mid.validated.buffer),
-            `${label}: route-start and route-mid reused identical visual pixels.`,
-          );
+          if (!mixedCanvasScreencastPair) {
+            assert.ok(
+              !start.validated.buffer.equals(mid.validated.buffer),
+              `${label}: route-start and route-mid reused identical visual pixels.`,
+            );
+          }
           return { mid, start };
         } catch (error) {
           lastError = error;
@@ -16923,6 +18069,7 @@ async function waitForAutoplayRecordedRouteTrajectory({
       const trajectory = selectAutoplayRecordedRouteTrajectory({
         archivedFrames: session.autoplayRouteArchivedFrames(),
         expectedTargetLocationId,
+        forceCanvasFallback: session.forceRouteCanvasFallback,
         frames: session.autoplayRouteFrameHistory(),
         label,
         recordedWindows: session.autoplayRouteFrameWindows(),
@@ -17222,6 +18369,18 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
 
   await session.startAutoplayScreencast();
   autoplayScreencastStarted = true;
+  if (AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK) {
+    assert.equal(
+      session.forceRouteCanvasFallback,
+      true,
+      "Forced route canvas validation was not enabled on the Chrome session.",
+    );
+    assert.equal(
+      session.screencast?.forceRouteCanvasFallback,
+      true,
+      "Forced route canvas validation was not enabled on the active screencast.",
+    );
+  }
   try {
     await session.startAutoplayRouteCaptureRecorder({
       expectedTargetLocationId: expectedRouteTarget,
@@ -17310,6 +18469,7 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
               session.archiveAutoplayRouteFrames(recorder);
               const trajectory = selectAutoplayRecordedRouteTrajectory({
                 expectedTargetLocationId: expectedRouteTarget,
+                forceCanvasFallback: session.forceRouteCanvasFallback,
                 frames: session.autoplayRouteFrameHistory(),
                 label: `${openingWorldVariant} autoplay foothold route`,
                 recordedWindows: session.autoplayRouteFrameWindows(),
@@ -17761,7 +18921,11 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
     assert.ok(
       Number.isInteger(window?.frame?.sequence) &&
         typeof window?.frame?.capturedAtEpochMs === "number" &&
-        ["screencast", "proactive-route-screenshot"].includes(
+        [
+          "screencast",
+          "in-page-route-canvas",
+          "proactive-route-screenshot",
+        ].includes(
           window?.frame?.source,
         ) &&
         window?.frame?.width >= 640 &&
@@ -17783,8 +18947,39 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
           AUTOPLAY_SCREENCAST_TEXT_GEOMETRY_TOLERANCE_CSS_PX &&
         (window.textPaint.hudPixelDifferenceRatio <= 0.006 ||
           window.textPaint.routeHudContinuityBasis ===
-            "exact-route-identity-and-per-frame-hud-paint"),
+            "exact-route-identity-and-per-frame-hud-paint" ||
+          window.textPaint.routeHudContinuityBasis ===
+            "validated-screencast-hud-paint-and-exact-canvas-route-state"),
       `${evidence.openingWorldVariant}: ${label} did not validate complete visible text paint. Evidence: ${evidencePath}.`,
+    );
+    if (window?.frame?.source === "in-page-route-canvas") {
+      const hasCanvasPairProof =
+        window.textPaint.routeCanvasEvidenceBasis ===
+          "bounded-default-framebuffer-readbacks-with-exact-route-brackets" &&
+        window.textPaint.routeCanvasChangedPixelRatio >=
+          AUTOPLAY_ROUTE_CANVAS_MIN_CHANGED_PIXEL_RATIO;
+      const hasMixedTransportProof =
+        window.textPaint.routeMixedEvidenceBasis ===
+          "independently-validated-screencast-and-canvas-positions-with-exact-route-and-hud-identity" &&
+        window.textPaint.routeMixedTransportDimensionsCompared === false;
+      assert.ok(
+        window.frame.canvasReadback?.contextLost === false &&
+          window.frame.canvasReadback?.defaultFramebuffer === true &&
+          Number(window.frame.canvasReadback.renderedAtMs) >
+            Number(window.frame.canvasReadback.initialRenderedAtMs) &&
+          (hasCanvasPairProof || hasMixedTransportProof),
+        `${evidence.openingWorldVariant}: ${label} canvas position lost its framebuffer, render, or changed-pixel proof. Evidence: ${evidencePath}.`,
+      );
+    }
+  }
+  if (
+    routeStartWindow?.frame?.source === "in-page-route-canvas" &&
+    routeMidWindow?.frame?.source === "in-page-route-canvas"
+  ) {
+    assert.equal(
+      JSON.stringify(routeMidWindow.frame.canvasReadback?.geometry),
+      JSON.stringify(routeStartWindow.frame.canvasReadback?.geometry),
+      `${evidence.openingWorldVariant}: opening canvas position geometry changed between route-start and route-mid. Evidence: ${evidencePath}.`,
     );
   }
   assert.ok(
@@ -17809,7 +19004,9 @@ function assertAutoplayOpeningWorldTrajectoryEvidence(evidence, evidencePath) {
     routeMidWindow.textPaint.routeHudContinuityPixelDifferenceRatio <=
       AUTOPLAY_ROUTE_HUD_CONTINUITY_MAX_PIXEL_DIFFERENCE_RATIO ||
       routeMidWindow.textPaint.routeHudContinuityBasis ===
-        "exact-route-identity-and-per-frame-hud-paint",
+        "exact-route-identity-and-per-frame-hud-paint" ||
+      routeMidWindow.textPaint.routeHudContinuityBasis ===
+        "validated-screencast-hud-paint-and-exact-canvas-route-state",
     `${evidence.openingWorldVariant}: route-mid HUD diverged from its accepted route-start HUD. Evidence: ${evidencePath}.`,
   );
   for (const [label, route] of [
@@ -24163,6 +25360,7 @@ function buildInterimVisualEvidence({ overlayChecks, timeline }) {
 function buildRegressionSummary({
   autoplayObservation,
   evidence,
+  forcedRouteCanvasValidationPath = null,
   game,
   inhabitGameplay,
   independentNpcActionEvidence,
@@ -24179,6 +25377,8 @@ function buildRegressionSummary({
 }) {
   return {
     browserDriver: BROWSER_DRIVER,
+    forcedRouteCanvasFallback: AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK,
+    forcedRouteCanvasValidationPath,
     autoplayObservation,
     evidence,
     finalGameId: game.id,
@@ -25208,9 +26408,66 @@ async function main() {
     overlayChecks,
     timeline,
   });
+  let forcedRouteCanvasValidationPath = null;
+  if (AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK) {
+    const routeMilestones = (
+      autoplayObservation?.trajectoryEvidence?.milestones ?? []
+    ).filter((milestone) =>
+      ["foothold-route-start", "foothold-route-mid"].includes(milestone.key),
+    );
+    assert.equal(
+      routeMilestones.length,
+      2,
+      "Forced route canvas validation did not preserve both opening route milestones.",
+    );
+    assert.ok(
+      routeMilestones.some(
+        (milestone) =>
+          milestone.routeCaptureWindow?.frame?.source ===
+            "in-page-route-canvas" &&
+          milestone.routeCaptureWindow.frame.canvasReadback
+            ?.defaultFramebuffer === true,
+      ) &&
+        routeMilestones.every((milestone) =>
+          ["in-page-route-canvas", "screencast"].includes(
+            milestone.routeCaptureWindow?.frame?.source,
+          ),
+        ),
+      "Forced route canvas validation did not retain at least one independently validated default-framebuffer canvas position.",
+    );
+    forcedRouteCanvasValidationPath = path.join(
+      OUTPUT_DIR,
+      "forced-route-canvas-validation.json",
+    );
+    await writeFile(
+      forcedRouteCanvasValidationPath,
+      `${JSON.stringify(
+        {
+          forced: true,
+          evidenceSources: routeMilestones.map(
+            (milestone) => milestone.routeCaptureWindow.frame.source,
+          ),
+          positions: routeMilestones.map((milestone) => ({
+            frame: milestone.routeCaptureWindow.frame,
+            key: milestone.key,
+            routeWindow: {
+              after: milestone.routeCaptureWindow.after,
+              before: milestone.routeCaptureWindow.before,
+            },
+          })),
+          switch:
+            "MANY_LIVES_BROWSER_TEST_FORCE_ROUTE_CANVAS_FALLBACK=1",
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  }
   const summary = buildRegressionSummary({
     autoplayObservation,
     evidence,
+    forcedRouteCanvasValidationPath,
     game,
     inhabitGameplay,
     independentNpcActionEvidence,
@@ -25230,7 +26487,7 @@ async function main() {
   await writeProcessExitDiagnostics("success");
   await writeStream(
     process.stdout,
-    `[many-lives] Rowan ${USE_CHROME_DRIVER ? "Chrome" : "in-app probe"} regression passed.\n[many-lives] Web base: ${getWebBase()}\n[many-lives] Game URL: ${browserUrl(game.id)}\n[many-lives] Output: ${OUTPUT_DIR}\n[many-lives] Timeline: ${timelinePath}\n[many-lives] Summary: ${summaryPath}\n${evidence.recordingPath ? `[many-lives] Recording: ${evidence.recordingPath}\n` : ""}`,
+    `[many-lives] Rowan ${USE_CHROME_DRIVER ? "Chrome" : "in-app probe"} regression passed.\n[many-lives] Web base: ${getWebBase()}\n[many-lives] Game URL: ${browserUrl(game.id)}\n[many-lives] Output: ${OUTPUT_DIR}\n[many-lives] Timeline: ${timelinePath}\n[many-lives] Summary: ${summaryPath}\n${forcedRouteCanvasValidationPath ? `[many-lives] Forced route canvas validation: ${forcedRouteCanvasValidationPath}\n` : ""}${evidence.recordingPath ? `[many-lives] Recording: ${evidence.recordingPath}\n` : ""}`,
     "stdout",
   );
 }
