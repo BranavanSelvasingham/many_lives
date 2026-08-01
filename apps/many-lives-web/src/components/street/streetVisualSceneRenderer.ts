@@ -31,7 +31,7 @@ const PILGRIM_SLIP_EAST_CHANNEL_CLEARANCE = 97;
 const HARBOR_APRON_PALETTES = [
   { accent: 0x73847d, base: 0x76583f, board: 0x987451, seam: 0x493a30 },
   { accent: 0x879b98, base: 0x62645f, board: 0x807a6c, seam: 0x3d4545 },
-  { accent: 0xc2a66e, base: 0x866344, board: 0xa27d54, seam: 0x4d3b2e },
+  { accent: 0xd5b46f, base: 0x946b3f, board: 0xb38a58, seam: 0x4d3828 },
   { accent: 0x80928c, base: 0x73563e, board: 0x916d4b, seam: 0x44352b },
 ] as const;
 
