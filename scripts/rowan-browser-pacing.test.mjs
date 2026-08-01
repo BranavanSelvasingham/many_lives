@@ -5054,6 +5054,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         return {};
       };
       await routeSession.startAutoplayScreencast();
+      routeSession.autoplayRouteArchiveNeedsProactiveOpeningCapture = () =>
+        false;
       const startedAt = routeSession.screencast.startedAtEpochMs;
       const paintProbe = {
         regions: [{ surface: "hud", text: "DAY 1 11:05" }],
@@ -5296,7 +5298,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
-    "an unsettled opening frame triggers one bounded proactive position before dense rearm",
+    "a missing or unsettled opening frame triggers one bounded proactive position before dense rearm",
     async () => {
       const routeSession = new CdpSession({
         browser: null,
@@ -5384,7 +5386,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         routeSession.autoplayRouteArchiveNeedsProactiveOpeningCapture(
           openingSamples[0],
         ),
-        false,
+        true,
+        "A runner with no settled opening frame must use the bounded canvas capture instead of waiting through the route.",
       );
       routeCompositingSleepFixture = async (minimumEpochMs) => {
         assert.equal(minimumEpochMs, startedAt + 125);
@@ -6568,6 +6571,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       routeSession.socket = { destroyed: false, writable: true };
       routeSession.send = async () => ({});
       await routeSession.startAutoplayScreencast();
+      routeSession.autoplayRouteArchiveNeedsProactiveOpeningCapture = () =>
+        false;
       const startedAt = routeSession.screencast.startedAtEpochMs;
       const paintProbe = {
         regions: [{ surface: "hud", text: "DAY 1 11:05" }],

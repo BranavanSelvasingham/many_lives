@@ -5290,15 +5290,8 @@ class CdpSession {
       .filter(Number.isFinite);
     const settledAtEpochMs =
       openingAtEpochMs + AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS;
-    return Boolean(
-      archivedFrameTimes.some(
-        (capturedAtEpochMs) =>
-          capturedAtEpochMs >= openingAtEpochMs &&
-          capturedAtEpochMs < settledAtEpochMs,
-      ) &&
-        !archivedFrameTimes.some(
-          (capturedAtEpochMs) => capturedAtEpochMs >= settledAtEpochMs,
-        ),
+    return !archivedFrameTimes.some(
+      (capturedAtEpochMs) => capturedAtEpochMs >= settledAtEpochMs,
     );
   }
 
