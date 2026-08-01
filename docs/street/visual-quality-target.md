@@ -50,7 +50,7 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-03` | Morrow House interior | `CANDIDATE` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clearly framed Rowan and relevant Mara, and unobscured portal/action areas. |
 | `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `CANDIDATE` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
-| `VQ-06` | Waterfront and quay edge | `CANDIDATE` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
+| `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
 | `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
 | `VQ-08` | Labels, cues, and scene-to-rail balance | `CANDIDATE` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `CANDIDATE` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
@@ -58,6 +58,20 @@ South Quay reaches the visual target state only when all active rows are
 
 `CANDIDATE` rows must be rechecked against the next intended release commit.
 They are not grandfathered into `VERIFIED`.
+
+### Verified Production Evidence
+
+- `VQ-06` was verified on production commit
+  `b9c82b3472fa9fc447fe5fc7dee9bc0695ebccd1` against baseline
+  `b7dd868d64c6633b9c08152697a3d62b8681fa1d`. Exact-SHA CI/deploy, the live
+  fresh/saved/autoplay smoke, and the production visual smoke passed. Matched
+  phone and tall high-DPR east/south channel comparisons showed three distinct
+  quay bays, varied timber and stone materials, ladders, mooring hardware,
+  cargo props, and a buoy without regressing map primacy or overlay spacing.
+  The comparison packet was shown from
+  `/tmp/manylives-vq06-b9c82b3-comparisons`; the full deployed capture set was
+  inspected at `/tmp/manylives-b9c82b3-live-visual`. GitHub Actions run:
+  `30706967230`.
 
 ## Required Evidence Packet
 
