@@ -28,6 +28,13 @@ type AuthoredVisualSceneObjects = {
 
 const PILGRIM_SLIP_EAST_CHANNEL_CLEARANCE = 97;
 
+const HARBOR_APRON_PALETTES = [
+  { accent: 0x73847d, base: 0x76583f, board: 0x987451, seam: 0x493a30 },
+  { accent: 0x879b98, base: 0x62645f, board: 0x807a6c, seam: 0x3d4545 },
+  { accent: 0xc2a66e, base: 0x866344, board: 0xa27d54, seam: 0x4d3b2e },
+  { accent: 0x80928c, base: 0x73563e, board: 0x916d4b, seam: 0x44352b },
+] as const;
+
 function getPilgrimSlipRenderedWidth(rect: VisualRect) {
   return Math.max(320, rect.width - PILGRIM_SLIP_EAST_CHANNEL_CLEARANCE);
 }
@@ -3071,53 +3078,35 @@ function drawHarborEdge(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  const quayWall = visualScene.surfaceZones.find(
+  const quayWalls = visualScene.surfaceZones.filter(
     (zone) => zone.kind === "quay_wall",
   );
-  const dockApron = visualScene.surfaceZones.find(
-    (zone) => zone.kind === "dock_apron",
-  );
+  const dockAprons = visualScene.surfaceZones
+    .filter((zone) => zone.kind === "dock_apron")
+    .sort((left, right) => left.rect.y - right.rect.y || left.rect.x - right.rect.x);
   const dockLandmark = visualScene.landmarks.find(
     (landmark) => landmark.style === "dock",
   );
 
-  if (quayWall) {
-    const rect = quayWall.rect;
-    layer.fillStyle(0x0a1720, 0.18);
-    layer.fillRoundedRect(
-      rect.x + 6,
-      rect.y + rect.height - 6,
-      rect.width - 12,
-      12,
-      5,
+  for (const [index, dockApron] of dockAprons.entries()) {
+    drawDockApronTreatment(
+      layer,
+      dockApron.rect,
+      index,
+      findAdjacentQuayWall(dockApron.rect, quayWalls)?.rect,
     );
-    layer.fillStyle(0xf0d7a0, 0.12);
-    layer.fillRoundedRect(rect.x + 12, rect.y + 4, rect.width - 24, 7, 4);
-    layer.lineStyle(2, 0xb4a583, 0.36);
-    for (let x = rect.x + 26; x < rect.x + rect.width - 26; x += 86) {
-      layer.lineBetween(x, rect.y + 10, x, rect.y + rect.height - 4);
-      layer.fillStyle(0xf8e7b8, 0.08);
-      layer.fillEllipse(x + 8, rect.y + rect.height + 12, 16, 34);
-    }
   }
 
-  if (dockApron) {
-    const rect = dockApron.rect;
-    layer.fillStyle(0xb38b5c, 0.28);
-    layer.fillRoundedRect(rect.x + 14, rect.y + 16, rect.width - 28, 18, 8);
-    layer.lineStyle(2.4, 0xf2d7a3, 0.2);
-    layer.lineBetween(
-      rect.x + 18,
-      rect.y + 12,
-      rect.x + rect.width - 20,
-      rect.y + 9,
+  for (const [index, quayWall] of quayWalls.entries()) {
+    const adjacentAprons = dockAprons.filter(
+      (dockApron) =>
+        findAdjacentQuayWall(dockApron.rect, quayWalls) === quayWall,
     );
-    layer.lineStyle(2, 0x493426, 0.16);
-    layer.lineBetween(
-      rect.x + 20,
-      rect.y + rect.height - 10,
-      rect.x + rect.width - 22,
-      rect.y + rect.height - 14,
+    drawQuayWallTreatment(
+      layer,
+      quayWall.rect,
+      index,
+      adjacentAprons.map((dockApron) => dockApron.rect),
     );
   }
 
@@ -3143,6 +3132,190 @@ function drawHarborEdge(
       layer.fillRoundedRect(x, rect.y + 48, 36, 5, 3);
       layer.fillEllipse(x + 12, rect.y + rect.height + 2, 24, 11);
     }
+  }
+}
+
+function findAdjacentQuayWall(
+  apron: VisualRect,
+  quayWalls: VisualScene["surfaceZones"],
+) {
+  const candidates = quayWalls
+    .map((quayWall) => {
+      const wall = quayWall.rect;
+      const isVertical = wall.height > wall.width;
+      const crossAxisGap = isVertical
+        ? intervalGap(apron.y, apron.y + apron.height, wall.y, wall.y + wall.height)
+        : intervalGap(apron.x, apron.x + apron.width, wall.x, wall.x + wall.width);
+      const edgeGap = isVertical
+        ? intervalGap(apron.x, apron.x + apron.width, wall.x, wall.x + wall.width)
+        : intervalGap(apron.y, apron.y + apron.height, wall.y, wall.y + wall.height);
+      return { crossAxisGap, edgeGap, quayWall };
+    })
+    .filter((candidate) => candidate.crossAxisGap === 0 && candidate.edgeGap <= 40)
+    .sort((left, right) => left.edgeGap - right.edgeGap);
+  return candidates[0]?.quayWall;
+}
+
+function intervalGap(
+  firstStart: number,
+  firstEnd: number,
+  secondStart: number,
+  secondEnd: number,
+) {
+  return Math.max(firstStart - secondEnd, secondStart - firstEnd, 0);
+}
+
+function drawDockApronTreatment(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+  index: number,
+  adjacentWall?: VisualRect,
+) {
+  const palette = HARBOR_APRON_PALETTES[index % HARBOR_APRON_PALETTES.length];
+  const variation = index % 3;
+  const wallIsVertical = adjacentWall
+    ? adjacentWall.height > adjacentWall.width
+    : rect.height < rect.width * 0.32;
+
+  layer.fillStyle(palette.base, 0.98);
+  layer.fillRoundedRect(rect.x + 3, rect.y + 3, rect.width - 6, rect.height - 6, 8);
+  layer.fillStyle(palette.board, 0.56);
+  layer.fillRoundedRect(rect.x + 9, rect.y + 9, rect.width - 18, rect.height - 18, 6);
+
+  if (variation === 0) {
+    layer.lineStyle(1.4, palette.seam, 0.72);
+    for (let x = rect.x + 22; x < rect.x + rect.width - 12; x += 29) {
+      layer.lineBetween(x, rect.y + 9, x - 2, rect.y + rect.height - 9);
+    }
+    layer.lineStyle(2, palette.accent, 0.62);
+    layer.lineBetween(
+      rect.x + 20,
+      rect.y + rect.height * 0.62,
+      rect.x + Math.min(78, rect.width * 0.48),
+      rect.y + rect.height * 0.62,
+    );
+  } else if (variation === 1) {
+    layer.lineStyle(1.2, palette.seam, 0.78);
+    for (let y = rect.y + 16; y < rect.y + rect.height - 8; y += 18) {
+      layer.lineBetween(rect.x + 10, y, rect.x + rect.width - 10, y + 1);
+    }
+    for (let x = rect.x + 30; x < rect.x + rect.width - 12; x += 42) {
+      layer.lineBetween(x, rect.y + 9, x, rect.y + rect.height * 0.48);
+      layer.lineBetween(
+        x + 18,
+        rect.y + rect.height * 0.52,
+        x + 18,
+        rect.y + rect.height - 9,
+      );
+    }
+    layer.fillStyle(palette.seam, 0.86);
+    layer.fillRoundedRect(rect.x + 18, rect.y + rect.height - 25, 38, 11, 3);
+    layer.lineStyle(1.4, palette.accent, 0.8);
+    for (let x = rect.x + 23; x <= rect.x + 49; x += 7) {
+      layer.lineBetween(x, rect.y + rect.height - 23, x, rect.y + rect.height - 16);
+    }
+  } else {
+    layer.lineStyle(1.5, palette.seam, 0.68);
+    for (let x = rect.x + 20; x < rect.x + rect.width - 14; x += 38) {
+      layer.lineBetween(x, rect.y + 9, x + 3, rect.y + rect.height - 9);
+    }
+    layer.lineStyle(1.6, palette.accent, 0.66);
+    layer.strokeEllipse(
+      rect.x + Math.min(52, rect.width * 0.32),
+      rect.y + rect.height * 0.55,
+      Math.min(42, rect.width * 0.26),
+      Math.min(24, rect.height * 0.34),
+    );
+    layer.lineStyle(1.2, palette.seam, 0.52);
+    layer.lineBetween(
+      rect.x + rect.width * 0.48,
+      rect.y + 12,
+      rect.x + rect.width * 0.74,
+      rect.y + rect.height - 12,
+    );
+  }
+
+  layer.fillStyle(0x2f3b3e, 0.78);
+  if (wallIsVertical) {
+    layer.fillRoundedRect(
+      rect.x + rect.width - 14,
+      rect.y + 7,
+      10,
+      rect.height - 14,
+      4,
+    );
+  } else {
+    layer.fillRoundedRect(
+      rect.x + 7,
+      rect.y + rect.height - 14,
+      rect.width - 14,
+      10,
+      4,
+    );
+  }
+}
+
+function drawQuayWallTreatment(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+  index: number,
+  adjacentAprons: VisualRect[],
+) {
+  const isVertical = rect.height > rect.width;
+  const seamPattern = [72, 94, 64, 108];
+  layer.fillStyle(0x465052, 1);
+  layer.fillRoundedRect(rect.x + 2, rect.y + 2, rect.width - 4, rect.height - 4, 6);
+
+  if (isVertical) {
+    layer.fillStyle(0xb39b72, 0.74);
+    layer.fillRoundedRect(rect.x + 3, rect.y + 5, 8, rect.height - 10, 3);
+    layer.fillStyle(0x152d36, 0.92);
+    layer.fillRect(rect.x + rect.width - 7, rect.y + 3, 7, rect.height - 6);
+    layer.lineStyle(1.4, 0x293a3e, 0.82);
+    let seamY = rect.y + 26 + index * 9;
+    let seamIndex = 0;
+    while (seamY < rect.y + rect.height - 18) {
+      layer.lineBetween(rect.x + 5, seamY, rect.x + rect.width - 5, seamY + 2);
+      seamY += seamPattern[seamIndex % seamPattern.length];
+      seamIndex += 1;
+    }
+    for (const [apronIndex, apron] of adjacentAprons.entries()) {
+      const fenderY = apron.y + apron.height * (apronIndex % 2 === 0 ? 0.34 : 0.62);
+      const fenderHeight = 30 + (apronIndex % 3) * 7;
+      layer.fillStyle(0x263237, 0.96);
+      layer.fillRoundedRect(
+        rect.x + rect.width - 7,
+        fenderY - fenderHeight / 2,
+        11,
+        fenderHeight,
+        4,
+      );
+      layer.fillStyle(0xa9774e, 0.8);
+      layer.fillCircle(rect.x + rect.width - 1, fenderY - fenderHeight / 2 + 5, 3);
+      layer.lineStyle(1.4, 0xc8edf4, 0.22);
+      layer.strokeEllipse(rect.x + rect.width + 8, fenderY + 7, 20, 7);
+    }
+    return;
+  }
+
+  layer.fillStyle(0xb39b72, 0.72);
+  layer.fillRoundedRect(rect.x + 5, rect.y + 3, rect.width - 10, 8, 3);
+  layer.fillStyle(0x162e37, 0.92);
+  layer.fillRect(rect.x + 3, rect.y + rect.height - 7, rect.width - 6, 7);
+  layer.lineStyle(1.4, 0x293a3e, 0.78);
+  let seamX = rect.x + 28 + index * 7;
+  let seamIndex = 0;
+  while (seamX < rect.x + rect.width - 18) {
+    layer.lineBetween(seamX, rect.y + 5, seamX + 2, rect.y + rect.height - 5);
+    seamX += seamPattern[seamIndex % seamPattern.length];
+    seamIndex += 1;
+  }
+  for (const [apronIndex, apron] of adjacentAprons.entries()) {
+    const fenderX = apron.x + apron.width * (0.32 + apronIndex * 0.18);
+    layer.fillStyle(0x263237, 0.96);
+    layer.fillRoundedRect(fenderX - 16, rect.y + rect.height - 7, 32, 11, 4);
+    layer.fillStyle(0xa9774e, 0.78);
+    layer.fillCircle(fenderX - 10, rect.y + rect.height - 1, 3);
   }
 }
 
@@ -4438,14 +4611,19 @@ function drawHarborMooringCluster(
   layer: PhaserType.GameObjects.Graphics,
   cluster: VisualScene["propClusters"][number],
 ) {
-  for (const mooringPoint of cluster.points ?? []) {
+  const points = cluster.points ?? [];
+  const isVerticalQuay = cluster.rect.height > cluster.rect.width * 1.5;
+  for (const [index, mooringPoint] of points.entries()) {
     drawBollard(layer, mooringPoint.x, mooringPoint.y);
-    drawRopeCoil(layer, mooringPoint.x + 18, mooringPoint.y + 8);
+    if (isVerticalQuay && index === 1) {
+      drawMooringCapstan(layer, mooringPoint.x - 24, mooringPoint.y + 7);
+    } else {
+      drawRopeCoil(layer, mooringPoint.x + 18, mooringPoint.y + 8);
+    }
   }
 
-  if (cluster.rect.height > cluster.rect.width * 1.5) {
+  if (isVerticalQuay) {
     const edgeX = cluster.rect.x + cluster.rect.width - 12;
-    const points = cluster.points ?? [];
     for (const mooringPoint of [points[0], points.at(-1)]) {
       if (mooringPoint) {
         drawDockLadder(layer, edgeX, mooringPoint.y + 28);
@@ -5236,6 +5414,23 @@ function drawRopeCoil(
   layer.strokeEllipse(x, y, 10, 5);
 }
 
+function drawMooringCapstan(
+  layer: PhaserType.GameObjects.Graphics,
+  x: number,
+  y: number,
+) {
+  layer.fillStyle(0x07151b, 0.16);
+  layer.fillEllipse(x + 1, y + 8, 26, 8);
+  layer.fillStyle(0x45575a, 1);
+  layer.fillRoundedRect(x - 8, y - 7, 16, 17, 5);
+  layer.fillStyle(0x82918d, 0.96);
+  layer.fillEllipse(x, y - 7, 22, 9);
+  layer.fillStyle(0xc19a61, 0.72);
+  layer.fillCircle(x, y - 7, 4);
+  layer.lineStyle(2, 0x38484b, 0.9);
+  layer.lineBetween(x - 14, y - 7, x + 14, y - 7);
+}
+
 function drawDockLadder(
   layer: PhaserType.GameObjects.Graphics,
   x: number,
@@ -5326,6 +5521,10 @@ function drawAmbientHarborLife(
     const pulse = (Math.sin(beat * 1.7 + eastWater.row * 0.5) + 1) / 2;
     const buoyX = eastWater.x + eastWater.width * 0.54;
     const buoyY = eastWater.y + eastWater.height * 0.5 + pulse * 4;
+    layer.lineStyle(1.8, 0xb9c2ad, 0.46);
+    layer.lineBetween(eastWater.x + 1, buoyY - 9, buoyX - 5, buoyY + 5);
+    layer.fillStyle(0x42575a, 0.94);
+    layer.fillCircle(eastWater.x + 2, buoyY - 9, 4);
     drawHarborBuoy(layer, buoyX, buoyY, 0.84 + pulse * 0.08);
   }
 }

@@ -146,6 +146,11 @@ const EAST_WATERFRONT_MOORING_BAYS = [
     top: 976,
   },
 ];
+const EAST_WATERFRONT_VIEWPORT_NAMES = new Set([
+  "mobile",
+  "compact-boundary",
+  "codex-retina-tall",
+]);
 const NORTH_FRINGE_WORLD_REGION = {
   bottom: 190,
   left: 96,
@@ -374,6 +379,30 @@ async function readWebHealth(baseUrl) {
 
   assert.equal(webResponse.ok, true, "Web app did not respond.");
   assert.equal(health.status, "ok", "Sim health endpoint is not ok.");
+}
+
+async function disableLocalNextDevelopmentIndicator(baseUrl) {
+  const url = new URL(baseUrl);
+  if (!["127.0.0.1", "localhost", "::1"].includes(url.hostname)) {
+    return false;
+  }
+
+  const response = await fetch(
+    new URL("/__nextjs_disable_dev_indicator", url),
+    {
+      method: "POST",
+      signal: AbortSignal.timeout(8_000),
+    },
+  );
+  if (response.status === 404) {
+    return false;
+  }
+  assert.equal(
+    response.status,
+    204,
+    `Could not disable the local Next.js development indicator (${response.status} ${response.statusText}).`,
+  );
+  return true;
 }
 
 function buildFallbackBase(baseUrl, port) {
@@ -1437,6 +1466,49 @@ class CdpSession {
   }
 
   async captureScreenshot(targetPath) {
+    const developmentOverlay = await this.evaluate(`(() => {
+      const isVisible = (element) => {
+        if (!(element instanceof Element)) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 &&
+          style.display !== "none" && style.visibility !== "hidden" &&
+          Number.parseFloat(style.opacity || "1") > 0.01;
+      };
+      const roots = Array.from(document.querySelectorAll("nextjs-portal"))
+        .map((portal) => portal.shadowRoot)
+        .filter(Boolean);
+      return {
+        portalCount: roots.length,
+        visibleErrorCount: roots.reduce(
+          (count, root) => count + Array.from(
+            root.querySelectorAll("[data-nextjs-dialog-overlay],[data-nextjs-dialog]"),
+          ).filter(isVisible).length,
+          0,
+        ),
+        visibleIndicatorCount: roots.filter((root) =>
+          isVisible(root.getElementById("data-devtools-indicator")),
+        ).length,
+        visiblePanelCount: roots.filter((root) =>
+          isVisible(root.getElementById("panel-route")),
+        ).length,
+      };
+    })()`);
+    assert.equal(
+      developmentOverlay.visibleErrorCount,
+      0,
+      `Next.js error UI is visible before screenshot capture: ${JSON.stringify(developmentOverlay)}.`,
+    );
+    assert.deepEqual(
+      {
+        visibleIndicatorCount: developmentOverlay.visibleIndicatorCount,
+        visiblePanelCount: developmentOverlay.visiblePanelCount,
+      },
+      { visibleIndicatorCount: 0, visiblePanelCount: 0 },
+      `Next.js development UI would contaminate the screenshot: ${JSON.stringify(developmentOverlay)}.`,
+    );
     await this.evaluate(`new Promise((resolve) => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -2089,18 +2161,25 @@ function assertEastWaterfrontCompositionPixels(
       continue;
     }
 
-    const warmBins = new Uint16Array(4);
+    const materialBins = new Uint16Array(4);
+    const colorBins = new Map();
     let darkHardwarePixels = 0;
+    let groundedMaterialPixels = 0;
     let maximumLuminance = 0;
     let minimumLuminance = 255;
+    let paleSlabPixels = 0;
     let sampledPixels = 0;
-    let warmMaterialPixels = 0;
+    let totalBlue = 0;
+    let totalGreen = 0;
+    let totalRed = 0;
+    let transitionPixels = 0;
 
     for (
       let sourceY = Math.floor(sample.top * scaleY);
       sourceY < Math.ceil(sample.bottom * scaleY);
       sourceY += 1
     ) {
+      let previousColor = null;
       for (
         let sourceX = Math.floor(sample.left * scaleX);
         sourceX < Math.ceil(sample.right * scaleX);
@@ -2117,6 +2196,7 @@ function assertEastWaterfrontCompositionPixels(
               cssY <= blocker.bottom,
           )
         ) {
+          previousColor = null;
           continue;
         }
 
@@ -2125,13 +2205,17 @@ function assertEastWaterfrontCompositionPixels(
         const green = image.pixels[offset + 1] ?? red;
         const blue = image.pixels[offset + 2] ?? red;
         const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
-        const warmMaterial =
-          red >= 135 &&
-          red <= 210 &&
-          red - green >= 16 &&
-          red - green <= 44 &&
-          green - blue >= 24 &&
-          green - blue <= 58;
+        const chroma = Math.max(red, green, blue) - Math.min(red, green, blue);
+        const groundedMaterial =
+          luminance >= 48 &&
+          luminance <= 165 &&
+          ((red - green >= 4 && green - blue >= 2) || chroma <= 38);
+        const paleSlab =
+          luminance >= 148 &&
+          red >= 160 &&
+          green >= 142 &&
+          blue >= 112 &&
+          chroma <= 78;
         const darkHardware =
           (red >= 52 &&
             red <= 124 &&
@@ -2155,21 +2239,43 @@ function assertEastWaterfrontCompositionPixels(
             blue - green <= 28);
 
         sampledPixels += 1;
+        totalBlue += blue;
+        totalGreen += green;
+        totalRed += red;
         minimumLuminance = Math.min(minimumLuminance, luminance);
         maximumLuminance = Math.max(maximumLuminance, luminance);
-        if (warmMaterial) {
-          warmMaterialPixels += 1;
+        const colorBinKey = `${red >> 4}:${green >> 4}:${blue >> 4}`;
+        colorBins.set(colorBinKey, (colorBins.get(colorBinKey) ?? 0) + 1);
+        if (groundedMaterial) {
+          groundedMaterialPixels += 1;
           const relativeX =
             sample.right > sample.left
               ? (cssX - sample.left) / (sample.right - sample.left)
               : 0;
-          warmBins[
-            clamp(Math.floor(relativeX * warmBins.length), 0, warmBins.length - 1)
+          materialBins[
+            clamp(
+              Math.floor(relativeX * materialBins.length),
+              0,
+              materialBins.length - 1,
+            )
           ] += 1;
+        }
+        if (paleSlab) {
+          paleSlabPixels += 1;
         }
         if (darkHardware) {
           darkHardwarePixels += 1;
         }
+        if (
+          previousColor &&
+          Math.abs(red - previousColor.red) +
+            Math.abs(green - previousColor.green) +
+            Math.abs(blue - previousColor.blue) >=
+            34
+        ) {
+          transitionPixels += 1;
+        }
+        previousColor = { blue, green, red };
       }
     }
 
@@ -2177,23 +2283,38 @@ function assertEastWaterfrontCompositionPixels(
       continue;
     }
 
-    const warmMaterialFraction = warmMaterialPixels / sampledPixels;
-    const minimumWarmPixelsPerBin = Math.max(
+    const groundedMaterialFraction = groundedMaterialPixels / sampledPixels;
+    const minimumMaterialPixelsPerBin = Math.max(
       4,
       Math.floor(sampledPixels * 0.006),
     );
-    const activeWarmBins = [...warmBins].filter(
-      (count) => count >= minimumWarmPixelsPerBin,
+    const activeMaterialBins = [...materialBins].filter(
+      (count) => count >= minimumMaterialPixelsPerBin,
     ).length;
     const luminanceRange = maximumLuminance - minimumLuminance;
     const minimumDarkHardwarePixels = Math.max(
       6,
       Math.floor(sampledPixels * 0.003),
     );
+    const minimumColorBinPixels = Math.max(4, Math.floor(sampledPixels * 0.004));
+    const activeColorBins = [...colorBins.values()].filter(
+      (count) => count >= minimumColorBinPixels,
+    ).length;
+    const [dominantColorKey, dominantColorPixels] = [...colorBins.entries()].sort(
+      (left, right) => right[1] - left[1],
+    )[0];
+    const dominantColorFraction = dominantColorPixels / sampledPixels;
+    const paleSlabFraction = paleSlabPixels / sampledPixels;
+    const transitionFraction = transitionPixels / sampledPixels;
+    const meanColor = {
+      blue: totalBlue / sampledPixels,
+      green: totalGreen / sampledPixels,
+      red: totalRed / sampledPixels,
+    };
 
     assert.ok(
-      warmMaterialFraction >= 0.16 && activeWarmBins >= 3,
-      `${label}: ${bay.id} east-waterfront bay lacks a broad authored dock material (${warmMaterialFraction.toFixed(3)} warm fraction, ${activeWarmBins}/4 active horizontal bands).`,
+      groundedMaterialFraction >= 0.32 && activeMaterialBins >= 3,
+      `${label}: ${bay.id} east-waterfront bay lacks a broad grounded dock material (${groundedMaterialFraction.toFixed(3)} material fraction, ${activeMaterialBins}/4 active horizontal bands).`,
     );
     assert.ok(
       darkHardwarePixels >= minimumDarkHardwarePixels,
@@ -2203,14 +2324,38 @@ function assertEastWaterfrontCompositionPixels(
       luminanceRange >= 48,
       `${label}: ${bay.id} east-waterfront bay is visually flat (${luminanceRange.toFixed(1)} luminance range).`,
     );
+    assert.ok(
+      paleSlabFraction <= 0.34,
+      `${label}: ${bay.id} east-waterfront bay regressed to a pale slab (${paleSlabFraction.toFixed(3)} pale fraction).`,
+    );
+    assert.ok(
+      activeColorBins >= 5 && dominantColorFraction <= 0.72,
+      `${label}: ${bay.id} east-waterfront bay lacks material variation (${activeColorBins} active colors, ${dominantColorFraction.toFixed(3)} dominant fraction).`,
+    );
+    assert.ok(
+      transitionFraction >= 0.012,
+      `${label}: ${bay.id} east-waterfront bay lacks working-surface detail (${transitionFraction.toFixed(3)} transition fraction).`,
+    );
 
     diagnostics.push({
-      activeWarmBins,
+      activeColorBins,
+      activeMaterialBins,
       bay: bay.id,
       darkHardwarePixels,
+      dominantColorFraction: Number(dominantColorFraction.toFixed(3)),
+      dominantColorKey,
+      groundedMaterialFraction: Number(groundedMaterialFraction.toFixed(3)),
       luminanceRange: Number(luminanceRange.toFixed(1)),
+      meanColor: Object.fromEntries(
+        Object.entries(meanColor).map(([channel, value]) => [
+          channel,
+          Number(value.toFixed(1)),
+        ]),
+      ),
+      paleSlabFraction: Number(paleSlabFraction.toFixed(3)),
       sample,
-      warmMaterialFraction: Number(warmMaterialFraction.toFixed(3)),
+      sampledPixels,
+      transitionFraction: Number(transitionFraction.toFixed(3)),
     });
   }
 
@@ -2220,6 +2365,56 @@ function assertEastWaterfrontCompositionPixels(
   );
   eastWaterfrontCompositionDiagnostics.push({ bays: diagnostics, label });
   return diagnostics;
+}
+
+function assertEastWaterfrontBayCoverage(diagnostics, viewportName) {
+  const bestByBay = new Map();
+  for (const diagnostic of diagnostics) {
+    const current = bestByBay.get(diagnostic.bay);
+    if (!current || diagnostic.sampledPixels > current.sampledPixels) {
+      bestByBay.set(diagnostic.bay, diagnostic);
+    }
+  }
+  const missingBays = EAST_WATERFRONT_MOORING_BAYS.filter(
+    (bay) => !bestByBay.has(bay.id),
+  ).map((bay) => bay.id);
+  assert.deepEqual(
+    missingBays,
+    [],
+    `${viewportName}: matched east/south captures did not validate every authored east-waterfront bay.`,
+  );
+
+  const bays = EAST_WATERFRONT_MOORING_BAYS.map((bay) => bestByBay.get(bay.id));
+  const dominantColors = new Set(bays.map((bay) => bay.dominantColorKey));
+  assert.ok(
+    dominantColors.size >= 2,
+    `${viewportName}: east-waterfront bays regressed to one repeated material signature (${[...dominantColors].join(", ")}).`,
+  );
+  let minimumPairwiseColorDistance = Number.POSITIVE_INFINITY;
+  for (let leftIndex = 0; leftIndex < bays.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < bays.length; rightIndex += 1) {
+      const left = bays[leftIndex].meanColor;
+      const right = bays[rightIndex].meanColor;
+      minimumPairwiseColorDistance = Math.min(
+        minimumPairwiseColorDistance,
+        Math.hypot(
+          left.red - right.red,
+          left.green - right.green,
+          left.blue - right.blue,
+        ),
+      );
+    }
+  }
+  assert.ok(
+    minimumPairwiseColorDistance >= 5,
+    `${viewportName}: east-waterfront bays are mechanically repeated (${minimumPairwiseColorDistance.toFixed(1)} minimum mean-color distance).`,
+  );
+  return {
+    bays,
+    dominantColorCount: dominantColors.size,
+    minimumPairwiseColorDistance: Number(minimumPairwiseColorDistance.toFixed(1)),
+    viewportName,
+  };
 }
 
 function sampleWorldCompositionRegion(
@@ -3490,9 +3685,15 @@ async function assertCameraPanContractGuard() {
     "Map-agency target labels must hide instead of clamping distant landmark labels into the wrong camera region.",
   );
   assert.ok(
-    visualSceneRendererSource.includes("drawHarborBuoy("),
-    "Harbor ambient life must render the east-water cue as an authored buoy, not a stray bright dot.",
+    visualSceneRendererSource.includes("drawHarborBuoy(") &&
+      visualSceneRendererSource.includes(
+        "layer.lineBetween(eastWater.x + 1, buoyY - 9, buoyX - 5, buoyY + 5)",
+      ),
+    "Harbor ambient life must render the east-water cue as a quay-tied authored buoy, not a stray bright dot.",
   );
+  const harborEdgeSource = visualSceneRendererSource.match(
+    /function drawHarborEdge\([\s\S]*?\n}\n\nfunction findAdjacentQuayWall/,
+  )?.[0];
   assert.ok(
     southQuayV2DocumentSource.includes('"id": "east-channel-mooring-bays"') &&
       southQuayV2DocumentSource.includes(
@@ -3501,11 +3702,30 @@ async function assertCameraPanContractGuard() {
       southQuayV2DocumentSource.match(
         /"id": "surface-east-channel-(?:north|middle|south)-bay"/g,
       )?.length === 3 &&
+      harborEdgeSource &&
+      !harborEdgeSource.includes("visualScene.surfaceZones.find(") &&
+      harborEdgeSource.includes(
+        'visualScene.surfaceZones.filter(\n    (zone) => zone.kind === "quay_wall"',
+      ) &&
+      harborEdgeSource.includes(
+        '.filter((zone) => zone.kind === "dock_apron")',
+      ) &&
+      harborEdgeSource.includes(
+        "for (const [index, dockApron] of dockAprons.entries())",
+      ) &&
+      harborEdgeSource.includes(
+        "for (const [index, quayWall] of quayWalls.entries())",
+      ) &&
+      visualSceneRendererSource.includes("function drawDockApronTreatment") &&
+      visualSceneRendererSource.includes("function drawQuayWallTreatment") &&
+      visualSceneRendererSource.includes("function drawMooringCapstan") &&
       visualSceneRendererSource.includes(
         "cluster.rect.height > cluster.rect.width * 1.5",
       ) &&
-      smokeSource.includes("assertEastWaterfrontCompositionPixels"),
-    "The east waterfront must retain its authored asymmetric mooring bays, vertical quay treatment, and pixel-backed regression.",
+      smokeSource.includes("assertEastWaterfrontCompositionPixels") &&
+      smokeSource.includes("assertEastWaterfrontBayCoverage") &&
+      smokeSource.includes('"codex-retina-tall"'),
+    "Every authored waterfront apron and wall must retain a varied, pixel-backed working-quay treatment across phone, compact, and high-DPR captures.",
   );
   assert.ok(
     southQuayV2DocumentSource.includes('"id": "fringe-north-west-town"') &&
@@ -7698,6 +7918,8 @@ async function runResponsiveDecisionArtifactCheck(session) {
 }
 
 async function runViewportCheck(session, viewport) {
+  const eastWaterfrontViewportDiagnostics = [];
+  let eastWaterfrontCoverage = null;
   const url = `${activeWebBase}/?new=1&readyCheck=${viewport.name}-${Date.now()}&freezeAutoplay=1`;
   await session.setViewport(viewport);
   await session.navigate(url);
@@ -8271,13 +8493,15 @@ async function runViewportCheck(session, viewport) {
       targetPath: eastPanScreenshotPath,
       viewport,
     });
-    if (viewport.name === "mobile" || viewport.name === "phone-boundary") {
-      assertEastWaterfrontCompositionPixels(
-        eastPanCapture.screenshot,
-        eastEdge,
-        eastPanCapture.page,
-        viewport,
-        `${viewport.name} east pan`,
+    if (EAST_WATERFRONT_VIEWPORT_NAMES.has(viewport.name)) {
+      eastWaterfrontViewportDiagnostics.push(
+        ...assertEastWaterfrontCompositionPixels(
+          eastPanCapture.screenshot,
+          eastEdge,
+          eastPanCapture.page,
+          viewport,
+          `${viewport.name} east pan`,
+        ),
       );
     }
 
@@ -8327,18 +8551,25 @@ async function runViewportCheck(session, viewport) {
       targetPath: southPanScreenshotPath,
       viewport,
     });
-    if (viewport.name === "mobile" || viewport.name === "phone-boundary") {
-      assertEastWaterfrontCompositionPixels(
-        southPanCapture.screenshot,
-        southEdge,
-        southPanCapture.page,
-        viewport,
-        `${viewport.name} south pan`,
+    if (EAST_WATERFRONT_VIEWPORT_NAMES.has(viewport.name)) {
+      eastWaterfrontViewportDiagnostics.push(
+        ...assertEastWaterfrontCompositionPixels(
+          southPanCapture.screenshot,
+          southEdge,
+          southPanCapture.page,
+          viewport,
+          `${viewport.name} south pan`,
+        ),
+      );
+      eastWaterfrontCoverage = assertEastWaterfrontBayCoverage(
+        eastWaterfrontViewportDiagnostics,
+        viewport.name,
       );
     }
   }
 
   return {
+    eastWaterfrontCoverage,
     eventCues: browserProbe.visualEventCues ?? [],
     mapAgency,
     page,
@@ -9491,6 +9722,8 @@ async function main() {
   await assertCameraPanContractGuard();
   await assertAuthoredInteriorVisualGuard();
   const webServer = await ensureStack();
+  const nextDevelopmentIndicatorDisabled =
+    await disableLocalNextDevelopmentIndicator(activeWebBase);
   const devtoolsPort = await findFreePort();
   const session = await launchBrowser(devtoolsPort);
   const results = [];
@@ -9590,6 +9823,7 @@ async function main() {
           fringeCompositionDiagnostics,
           freshAutoplayStart,
           freshAutoplayOptOut,
+          nextDevelopmentIndicatorDisabled,
           outputDir: OUTPUT_DIR,
           interiorCamera,
           interiorActorVisibilityDiagnostics,
