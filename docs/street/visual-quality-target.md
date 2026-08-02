@@ -47,7 +47,7 @@ South Quay reaches the visual target state only when all active rows are
 | --- | --- | --- | --- |
 | `VQ-01` | Core exterior landmarks: Morrow House, Kettle & Lamp, Quay Square | `CANDIDATE` | Desktop, tablet, phone, and high-DPR screenshots show distinct silhouettes, materials, entrances, and props before labels. |
 | `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `VERIFIED` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
-| `VQ-03` | Morrow House interior | `CANDIDATE` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clearly framed Rowan and relevant Mara, and unobscured portal/action areas. |
+| `VQ-03` | Morrow House interior | `VERIFIED` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clearly framed Rowan and relevant Mara, and unobscured portal/action areas. |
 | `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
@@ -62,6 +62,18 @@ They are not grandfathered into `VERIFIED`.
 
 ### Verified Production Evidence
 
+- `VQ-03` was verified on production commit
+  `5cc9108ccfe88a028cb80e0a0c3c4424bc9fb6c6` against baseline
+  `da5d68ff6269fb7bf70ab3674c320b784530c8aa`. Matched desktop and phone
+  comparisons show a woven reception zone, guest cubbies and key storage, a
+  clear entry runner, and a distinct guest-room corridor while Rowan, Mara,
+  the exit, title, and live rail remain unobscured. Exact-SHA CI/deploy, the
+  production visual smoke, saved-run prompts, and a three-minute zero-click
+  watch run passed; the run produced durable leaking-pump memory and continued
+  into a state-derived Kettle & Lamp objective on Day 2. Comparisons were shown
+  from `/tmp/manylives-5cc9108-live-comparisons`; deployed captures were
+  inspected at `/tmp/manylives-5cc9108-live-review`. GitHub Actions run:
+  `30746811458`.
 - `VQ-05` was verified on production commit
   `fb5671b94b4058ffdd01e74f43a37b82277d0d88` against baseline
   `dd03d2ced869496144e07ff88d74de25aeb355f4`. The release added the north
