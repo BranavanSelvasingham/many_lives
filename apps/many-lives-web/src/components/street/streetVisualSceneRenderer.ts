@@ -50,6 +50,7 @@ export function renderAuthoredVisualScene(
   if (visualScene.id === "south-quay-v2") {
     drawSurfaceZones(objects.terrainLayer, visualScene);
     drawFringeZones(objects.terrainLayer, visualScene);
+    drawV2EdgeGroundComposition(objects.terrainLayer, visualScene);
     drawV2LandmarkGroundArt(objects.terrainLayer, visualScene);
     drawHarborEdge(objects.terrainLayer, visualScene);
     drawV2LandmarkStructureArt(objects, visualScene);
@@ -2746,6 +2747,145 @@ function drawFringeZones(
   }
 }
 
+function drawV2EdgeGroundComposition(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  for (const fringe of visualScene.fringeZones) {
+    if (fringe.kind === "neighbor_facade" && fringe.edge === "north") {
+      drawNorthServiceThreshold(layer, fringe.rect);
+    }
+  }
+
+  const courtyard = visualScene.landmarks.find(
+    (landmark) => landmark.style === "courtyard",
+  );
+  if (courtyard) {
+    drawWestWorkingFringe(layer, courtyard.rect);
+  }
+}
+
+function drawNorthServiceThreshold(
+  layer: PhaserType.GameObjects.Graphics,
+  rect: VisualRect,
+) {
+  const streetY = rect.y + rect.height;
+  const streetHeight = 52;
+  const apronY = streetY + streetHeight;
+  const apronHeight = 44;
+
+  layer.fillStyle(0x465256, 1);
+  layer.fillRect(rect.x, streetY, rect.width, streetHeight);
+  layer.fillStyle(0x303b3f, 0.72);
+  layer.fillRect(rect.x, streetY + streetHeight - 9, rect.width, 9);
+  layer.fillStyle(0x768081, 0.72);
+  layer.fillRect(rect.x, streetY + 6, rect.width, 5);
+  layer.lineStyle(1.4, 0xaeb2a5, 0.3);
+  for (let x = rect.x + 20; x < rect.x + rect.width - 12; x += 62) {
+    layer.lineBetween(x, streetY + 25, Math.min(x + 27, rect.x + rect.width), streetY + 25);
+  }
+
+  layer.fillStyle(0x62675f, 1);
+  layer.fillRect(rect.x, apronY, rect.width, apronHeight);
+  layer.fillStyle(0x918b78, 0.42);
+  layer.fillRect(rect.x, apronY, rect.width, 7);
+  layer.fillStyle(0x464b47, 0.82);
+  layer.fillRect(rect.x, apronY + apronHeight - 6, rect.width, 6);
+  layer.lineStyle(1.2, 0x383f3e, 0.62);
+  for (let x = rect.x + 8; x < rect.x + rect.width; x += 36) {
+    layer.lineBetween(x, apronY + 8, x - 9, apronY + apronHeight - 7);
+  }
+  layer.lineStyle(1, 0xb6ac94, 0.22);
+  layer.lineBetween(rect.x, apronY + 23, rect.x + rect.width, apronY + 23);
+  layer.fillStyle(0x78583f, 0.88);
+  for (let x = rect.x + 92; x < rect.x + rect.width - 34; x += 264) {
+    layer.fillRoundedRect(x, apronY + 31, 52, 6, 2);
+  }
+
+  const globalStart = Math.floor(rect.x / 176);
+  for (let x = rect.x + 42; x < rect.x + rect.width - 18; x += 176) {
+    const bayIndex = globalStart + Math.round((x - rect.x) / 176);
+    if (bayIndex % 3 === 1) {
+      layer.fillStyle(0x283438, 0.92);
+      layer.fillRoundedRect(x, apronY + 13, 30, 10, 3);
+      layer.lineStyle(1, 0x94a3a0, 0.46);
+      for (let grateX = x + 5; grateX < x + 27; grateX += 6) {
+        layer.lineBetween(grateX, apronY + 15, grateX, apronY + 21);
+      }
+    } else if (bayIndex % 3 === 2) {
+      layer.fillStyle(0x76583f, 0.9);
+      layer.fillRoundedRect(x + 4, apronY + 27, 44, 9, 3);
+      layer.fillStyle(0x9b764b, 0.72);
+      layer.fillRect(x + 9, apronY + 23, 34, 5);
+    }
+  }
+}
+
+function drawWestWorkingFringe(
+  layer: PhaserType.GameObjects.Graphics,
+  courtyard: VisualRect,
+) {
+  const x = Math.max(124, courtyard.x - 28);
+  const y = courtyard.y - 98;
+  const width = courtyard.width + 58;
+  const approachHeight = courtyard.y - y;
+  const rightEdgeX = courtyard.x + courtyard.width;
+  const bottomY = courtyard.y + courtyard.height;
+
+  layer.fillStyle(0x66685d, 1);
+  layer.fillRoundedRect(x, y, width, approachHeight + 10, 12);
+  layer.fillStyle(0x8a8876, 0.72);
+  layer.fillRoundedRect(x + 14, y + 12, width - 28, approachHeight - 18, 9);
+
+  layer.fillStyle(0x66685d, 0.98);
+  layer.fillRect(x, courtyard.y, courtyard.x - x, courtyard.height);
+  layer.fillRect(
+    rightEdgeX,
+    courtyard.y,
+    x + width - rightEdgeX,
+    courtyard.height,
+  );
+  layer.fillRect(x, bottomY, width, 28);
+
+  layer.fillStyle(0x4b5149, 0.88);
+  layer.fillRect(x + width - 54, y + 10, 42, approachHeight - 16);
+  layer.fillStyle(0x9b937b, 0.52);
+  for (let stoneY = y + 18; stoneY < y + approachHeight - 12; stoneY += 27) {
+    layer.fillRoundedRect(x + width - 48, stoneY, 30, 16, 4);
+  }
+
+  layer.fillStyle(0x3e5738, 0.96);
+  layer.fillRoundedRect(x + 14, y + 14, 126, 38, 6);
+  layer.fillStyle(0x667f4f, 0.96);
+  for (let bedX = x + 30; bedX < x + 132; bedX += 30) {
+    layer.fillCircle(bedX, y + 30 + ((bedX - x) % 3), 10);
+    layer.fillCircle(bedX + 8, y + 26, 8);
+  }
+
+  layer.fillStyle(0x705239, 0.94);
+  layer.fillRect(x + 150, y + 18, width - 218, 7);
+  layer.fillRect(x + 150, y + 49, width - 218, 6);
+  layer.fillStyle(0x3b322b, 0.88);
+  for (let postX = x + 158; postX < x + width - 72; postX += 48) {
+    layer.fillRect(postX, y + 14, 6, 43);
+  }
+
+  layer.lineStyle(3, 0x55584f, 0.62);
+  layer.lineBetween(x + 164, y + 67, x + width - 78, y + 79);
+  layer.lineBetween(x + 160, y + 82, x + width - 82, y + 94);
+  layer.lineStyle(1.2, 0xb6ad91, 0.34);
+  for (let gravelX = x + 26; gravelX < x + width - 58; gravelX += 38) {
+    layer.lineBetween(gravelX, y + 64, gravelX + 14, y + 60);
+  }
+
+  layer.fillStyle(0x2e3b3d, 0.92);
+  layer.fillRoundedRect(x + 24, bottomY + 8, width - 90, 12, 4);
+  layer.lineStyle(1, 0x83918c, 0.46);
+  for (let drainX = x + 34; drainX < x + width - 76; drainX += 18) {
+    layer.lineBetween(drainX, bottomY + 11, drainX, bottomY + 17);
+  }
+}
+
 function drawNeighborFacadeZone(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
@@ -2805,18 +2945,19 @@ function drawNorthNeighborRow(
   rect: VisualRect,
 ) {
   const facadePalettes = [
-    { accent: 0xc19562, roof: 0x29343a, wall: 0x526466 },
-    { accent: 0x7fa09a, roof: 0x332f31, wall: 0x65564d },
-    { accent: 0xd0aa6d, roof: 0x26363b, wall: 0x455c60 },
-    { accent: 0xa8795d, roof: 0x30343a, wall: 0x5c6260 },
+    { accent: 0xc28d55, roof: 0x1c2a30, wall: 0x3d5659 },
+    { accent: 0x75968e, roof: 0x29272a, wall: 0x604b40 },
+    { accent: 0xd0a15d, roof: 0x1c3035, wall: 0x355057 },
+    { accent: 0xa86e4d, roof: 0x272d31, wall: 0x4d5552 },
   ];
   const bayCount = Math.max(2, Math.round(rect.width / 176));
   const bayWidth = rect.width / bayCount;
   for (let bayIndex = 0; bayIndex < bayCount; bayIndex += 1) {
+    const globalBayIndex = Math.round(rect.x / 176) + bayIndex;
     const x = rect.x + bayIndex * bayWidth + 4;
     const width = bayWidth;
-    const palette = facadePalettes[bayIndex % facadePalettes.length];
-    const roofLift = (bayIndex % 3) * 8;
+    const palette = facadePalettes[globalBayIndex % facadePalettes.length];
+    const roofLift = [2, 14, 6, 20][globalBayIndex % 4];
     const facadeY = rect.y + 26 + roofLift;
     const facadeHeight = rect.height - 38 - roofLift;
 
@@ -2826,6 +2967,20 @@ function drawNorthNeighborRow(
     layer.fillRoundedRect(x, facadeY, width - 8, facadeHeight, 5);
     layer.fillStyle(palette.roof, 1);
     layer.fillRect(x - 3, facadeY - 12, width - 2, 20);
+    if (globalBayIndex % 4 === 1) {
+      layer.fillTriangle(
+        x + 18,
+        facadeY - 12,
+        x + width - 28,
+        facadeY - 12,
+        x + width * 0.52,
+        facadeY - 31,
+      );
+    } else if (globalBayIndex % 4 === 3) {
+      layer.fillRect(x + width - 42, facadeY - 24, 24, 13);
+      layer.fillStyle(0x101b20, 0.8);
+      layer.fillRect(x + width - 38, facadeY - 27, 16, 4);
+    }
     layer.fillStyle(palette.accent, 0.78);
     layer.fillRect(x + 8, facadeY + 10, width - 24, 7);
     layer.fillStyle(0x1b292f, 0.95);
@@ -2834,16 +2989,21 @@ function drawNorthNeighborRow(
     layer.fillRect(x + 19, rect.y + 2 + roofLift, 12, 5);
 
     const windowY = facadeY + 38;
-    drawFringeWindow(layer, x + 34, windowY, bayIndex % 2 === 0);
+    drawFringeWindow(layer, x + 34, windowY, globalBayIndex % 2 === 0);
     if (width >= 166) {
       drawFringeWindow(
         layer,
         x + width - 54,
-        windowY + (bayIndex % 2) * 5,
-        bayIndex % 3 === 1,
+        windowY + (globalBayIndex % 2) * 5,
+        globalBayIndex % 3 === 1,
       );
     }
-    if (bayIndex % 2 === 0) {
+    layer.fillStyle(0x111d22, 0.3);
+    layer.fillRect(x + width - 15, facadeY + 4, 7, facadeHeight - 9);
+    layer.fillStyle(palette.accent, 0.34);
+    layer.fillRect(x + 7, facadeY + 25, 6, facadeHeight - 31);
+
+    if (globalBayIndex % 3 === 0) {
       drawFringeServiceDoor(
         layer,
         x + width - 48,
@@ -2851,7 +3011,7 @@ function drawNorthNeighborRow(
         34,
         47,
       );
-    } else {
+    } else if (globalBayIndex % 3 === 1) {
       layer.fillStyle(0x243a3d, 0.92);
       layer.fillRoundedRect(
         x + 18,
@@ -2873,27 +3033,47 @@ function drawNorthNeighborRow(
           facadeY + facadeHeight - 9,
         );
       }
+    } else {
+      layer.fillStyle(0x725137, 0.94);
+      layer.fillRoundedRect(
+        x + 20,
+        facadeY + facadeHeight - 35,
+        width - 42,
+        29,
+        4,
+      );
+      layer.fillStyle(0xc09a61, 0.6);
+      layer.fillRect(x + 28, facadeY + facadeHeight - 29, width - 58, 5);
     }
 
-    layer.fillStyle(0x273e32, 0.96);
-    layer.fillRoundedRect(
-      x + 12,
-      rect.y + rect.height - 18,
-      Math.max(24, width - 32),
-      12,
-      6,
-    );
-    layer.fillStyle(0x71915c, 0.9);
-    for (
-      let planterX = x + 24;
-      planterX < x + width - 22;
-      planterX += 34
-    ) {
-      layer.fillCircle(
-        planterX,
-        rect.y + rect.height - 21 - (bayIndex % 2) * 2,
-        8,
+    if (globalBayIndex % 3 === 0) {
+      layer.fillStyle(0x273e32, 0.96);
+      layer.fillRoundedRect(
+        x + 12,
+        rect.y + rect.height - 18,
+        Math.max(24, width - 32),
+        12,
+        6,
       );
+      layer.fillStyle(0x71915c, 0.9);
+      for (
+        let planterX = x + 28;
+        planterX < x + width - 24;
+        planterX += 42
+      ) {
+        layer.fillCircle(planterX, rect.y + rect.height - 21, 8);
+      }
+    } else if (globalBayIndex % 3 === 1) {
+      layer.fillStyle(0x725139, 0.96);
+      layer.fillRoundedRect(x + 26, rect.y + rect.height - 18, 48, 12, 3);
+      layer.fillRoundedRect(x + 82, rect.y + rect.height - 15, 34, 9, 3);
+    } else {
+      layer.fillStyle(0x35484a, 0.96);
+      layer.fillRect(x + 14, rect.y + rect.height - 15, width - 34, 9);
+      layer.lineStyle(1.2, 0xb7905d, 0.48);
+      for (let railX = x + 24; railX < x + width - 24; railX += 24) {
+        layer.lineBetween(railX, rect.y + rect.height - 24, railX, rect.y + rect.height - 7);
+      }
     }
 
   }

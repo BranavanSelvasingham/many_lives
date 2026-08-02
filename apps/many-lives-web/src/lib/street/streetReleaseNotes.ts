@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.15",
-  build: "7966456",
-  source: "Release 0.1.15",
+  version: "0.1.16",
+  build: "dd03d2c",
+  source: "South Quay visual review",
   features: [
     {
-      title: "Rowan is clearly the agent under observation",
+      title: "A grounded northern edge",
       body:
-        "The persistent rail now identifies Rowan as the autonomous agent, so watching the city never casts the viewer as the character making the decisions.",
+        "The neighboring row now meets South Quay through a darker service street, curb, drains, loading strips, and more varied building fronts.",
     },
     {
-      title: "Progress and reasoning have distinct homes",
+      title: "A working western fringe",
       body:
-        "Progress holds outcomes, evidence, and accomplishments, while Reasoning holds Rowan's beliefs, plans, confidence, memories, and next uncertainty.",
+        "The open ground around Morrow Yard now reads as a compacted working approach with planting, timber boundaries, stone edges, and drainage.",
     },
     {
-      title: "Opening walks keep their own story",
+      title: "Visual checks cover the whole composition",
       body:
-        "Kettle & Lamp and Mercer Repairs openings preserve distinct, continuous routes tied to the current world state from first decision through consequence.",
+        "High-DPR regressions now sample the broad north and west transition areas, not only their already detailed landmark interiors.",
     },
   ],
 };

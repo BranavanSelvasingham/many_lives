@@ -157,11 +157,17 @@ const NORTH_FRINGE_WORLD_REGION = {
   right: 680,
   top: 18,
 };
+const NORTH_SERVICE_THRESHOLD_WORLD_REGION = {
+  bottom: 288,
+  left: 96,
+  right: 680,
+  top: 192,
+};
 const WEST_OPEN_LOT_WORLD_REGION = {
-  bottom: 1094,
-  left: 150,
-  right: 500,
-  top: 862,
+  bottom: 856,
+  left: 124,
+  right: 536,
+  top: 760,
 };
 const MORROW_YARD_WORLD_REGION = {
   bottom: 1104,
@@ -228,10 +234,12 @@ const NORTH_FRINGE_VIEWPORT_NAMES = new Set([
   "mobile",
   "codex-compact",
   "codex-retina-compact",
+  "codex-retina-tall",
 ]);
 const WEST_OPEN_LOT_VIEWPORT_NAMES = new Set([
   "codex-compact",
   "codex-retina-compact",
+  "codex-retina-tall",
 ]);
 const INTERIOR_CAMERA_VIEWPORT = {
   deviceScaleFactor: 2,
@@ -2467,13 +2475,18 @@ function sampleWorldCompositionRegion(
   let darkMaterialPixels = 0;
   let coolUtilityPixels = 0;
   let greenMaterialPixels = 0;
+  let lightNeutralPixels = 0;
   let maximumLuminance = 0;
   let minimumLuminance = 255;
   let paleVoidPixels = 0;
   let sampledPixels = 0;
   let transitionPixels = 0;
+  let verticalTransitionPixels = 0;
   let warmDetailPixels = 0;
   let waterMaterialPixels = 0;
+  const sourceLeft = Math.floor(sample.left * scaleX);
+  const sourceRight = Math.ceil(sample.right * scaleX);
+  const previousRowColors = new Array(sourceRight - sourceLeft).fill(null);
 
   for (
     let sourceY = Math.floor(sample.top * scaleY);
@@ -2482,10 +2495,11 @@ function sampleWorldCompositionRegion(
   ) {
     let previousColor = null;
     for (
-      let sourceX = Math.floor(sample.left * scaleX);
-      sourceX < Math.ceil(sample.right * scaleX);
+      let sourceX = sourceLeft;
+      sourceX < sourceRight;
       sourceX += 1
     ) {
+      const columnIndex = sourceX - sourceLeft;
       const cssX = (sourceX + 0.5) / scaleX;
       const cssY = (sourceY + 0.5) / scaleY;
       if (
@@ -2498,6 +2512,7 @@ function sampleWorldCompositionRegion(
         )
       ) {
         previousColor = null;
+        previousRowColors[columnIndex] = null;
         continue;
       }
 
@@ -2519,6 +2534,12 @@ function sampleWorldCompositionRegion(
         Math.max(red, green, blue) - Math.min(red, green, blue) <= 58
       ) {
         paleVoidPixels += 1;
+      }
+      if (
+        luminance >= 154 &&
+        Math.max(red, green, blue) - Math.min(red, green, blue) <= 64
+      ) {
+        lightNeutralPixels += 1;
       }
       if (
         luminance >= 38 &&
@@ -2572,7 +2593,18 @@ function sampleWorldCompositionRegion(
       ) {
         transitionPixels += 1;
       }
+      const previousRowColor = previousRowColors[columnIndex];
+      if (
+        previousRowColor &&
+        Math.abs(red - previousRowColor.red) +
+          Math.abs(green - previousRowColor.green) +
+          Math.abs(blue - previousRowColor.blue) >=
+          42
+      ) {
+        verticalTransitionPixels += 1;
+      }
       previousColor = { blue, green, red };
+      previousRowColors[columnIndex] = { blue, green, red };
     }
   }
 
@@ -2592,11 +2624,13 @@ function sampleWorldCompositionRegion(
     darkMaterialFraction: darkMaterialPixels / sampledPixels,
     dominantColorFraction,
     greenMaterialFraction: greenMaterialPixels / sampledPixels,
+    lightNeutralFraction: lightNeutralPixels / sampledPixels,
     luminanceRange: maximumLuminance - minimumLuminance,
     paleVoidFraction: paleVoidPixels / sampledPixels,
     sample,
     sampledPixels,
     transitionFraction: transitionPixels / sampledPixels,
+    verticalTransitionFraction: verticalTransitionPixels / sampledPixels,
     warmDetailFraction: warmDetailPixels / sampledPixels,
     waterMaterialFraction: waterMaterialPixels / sampledPixels,
   };
@@ -2637,14 +2671,57 @@ function assertNorthFringeCompositionPixels(
   );
   assert.ok(
     diagnostics.luminanceRange >= 72 &&
-      diagnostics.transitionFraction >= minimumTransitionFraction &&
+      Math.max(
+        diagnostics.transitionFraction,
+        diagnostics.verticalTransitionFraction,
+      ) >= minimumTransitionFraction &&
       diagnostics.dominantColorFraction <= 0.46,
-    `${label}: north fringe is visually flat (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
+    `${label}: north fringe is visually flat (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} horizontal transitions, ${diagnostics.verticalTransitionFraction.toFixed(3)} vertical transitions, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
   );
   fringeCompositionDiagnostics.push({
     ...diagnostics,
     label,
     region: "north-fringe",
+  });
+}
+
+function assertNorthServiceThresholdPixels(
+  buffer,
+  camera,
+  page,
+  viewport,
+  label,
+) {
+  const diagnostics = sampleWorldCompositionRegion(
+    buffer,
+    camera,
+    page,
+    viewport,
+    NORTH_SERVICE_THRESHOLD_WORLD_REGION,
+    label,
+  );
+  const minimumTransitionFraction =
+    0.024 / (viewport.deviceScaleFactor ?? 1);
+  assert.ok(
+    diagnostics.activeColorBins >= 12 &&
+      diagnostics.dominantColorFraction <= 0.52,
+    `${label}: north service threshold lacks distinct street, curb, and apron materials (${diagnostics.activeColorBins} active bins, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
+  );
+  assert.ok(
+    diagnostics.darkMaterialFraction >= 0.72 &&
+      diagnostics.lightNeutralFraction <= 0.24,
+    `${label}: north service threshold regressed to a broad washed slab (${diagnostics.darkMaterialFraction.toFixed(3)} grounded material, ${diagnostics.lightNeutralFraction.toFixed(3)} light neutral material).`,
+  );
+  assert.ok(
+    diagnostics.coolUtilityFraction >= 0.16 &&
+      diagnostics.warmDetailFraction >= 0.01 &&
+      diagnostics.verticalTransitionFraction >= minimumTransitionFraction,
+    `${label}: north service threshold lost its industrial road/apron material breaks (${diagnostics.coolUtilityFraction.toFixed(3)} cool road, ${diagnostics.warmDetailFraction.toFixed(3)} warm accents, ${diagnostics.verticalTransitionFraction.toFixed(3)} vertical transitions).`,
+  );
+  fringeCompositionDiagnostics.push({
+    ...diagnostics,
+    label,
+    region: "north-service-threshold",
   });
 }
 
@@ -2666,23 +2743,24 @@ function assertWestOpenLotCompositionPixels(
   const minimumTransitionFraction =
     0.022 / (viewport.deviceScaleFactor ?? 1);
   assert.ok(
-    diagnostics.activeColorBins >= 16,
-    `${label}: west open lot lacks authored material variety (${diagnostics.activeColorBins} active bins).`,
+    diagnostics.activeColorBins >= 12 &&
+      diagnostics.dominantColorFraction <= 0.52,
+    `${label}: west open lot lacks authored material variety (${diagnostics.activeColorBins} active bins, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
   );
   assert.ok(
-    diagnostics.greenMaterialFraction >= 0.045 &&
-      diagnostics.greenMaterialFraction <= 0.7,
+    diagnostics.greenMaterialFraction >= 0.06 &&
+      diagnostics.greenMaterialFraction <= 0.34,
     `${label}: west open lot no longer preserves restrained planted ground around the working yard (${diagnostics.greenMaterialFraction.toFixed(3)} green material).`,
   );
   assert.ok(
-    diagnostics.warmDetailFraction >= 0.05,
-    `${label}: west open lot lost its beds, workbench, storage, and service props (${diagnostics.warmDetailFraction.toFixed(3)} warm detail).`,
+    diagnostics.darkMaterialFraction >= 0.7 &&
+      diagnostics.warmDetailFraction >= 0.035,
+    `${label}: west open lot lost its compacted ground, beds, timber boundary, and service detail (${diagnostics.darkMaterialFraction.toFixed(3)} grounded material, ${diagnostics.warmDetailFraction.toFixed(3)} warm detail).`,
   );
   assert.ok(
-    diagnostics.luminanceRange >= 68 &&
-      diagnostics.transitionFraction >= minimumTransitionFraction &&
-      diagnostics.dominantColorFraction <= 0.46,
-    `${label}: west open lot regressed to a flat empty rectangle (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions, ${diagnostics.dominantColorFraction.toFixed(3)} dominant color).`,
+    diagnostics.luminanceRange >= 56 &&
+      diagnostics.transitionFraction >= minimumTransitionFraction,
+    `${label}: west open lot regressed to a flat empty rectangle (${diagnostics.luminanceRange.toFixed(1)} luminance range, ${diagnostics.transitionFraction.toFixed(3)} transitions).`,
   );
   fringeCompositionDiagnostics.push({
     ...diagnostics,
@@ -3734,8 +3812,11 @@ async function assertCameraPanContractGuard() {
         '"id": "courtyard-morrow-yard-service"',
       ) &&
       visualSceneRendererSource.includes("drawNorthNeighborRow") &&
+      visualSceneRendererSource.includes("drawNorthServiceThreshold") &&
+      visualSceneRendererSource.includes("drawWestWorkingFringe") &&
       visualSceneRendererSource.includes("drawRaisedGardenBed") &&
       smokeSource.includes("assertNorthFringeCompositionPixels") &&
+      smokeSource.includes("assertNorthServiceThresholdPixels") &&
       smokeSource.includes("assertWestOpenLotCompositionPixels"),
     "The north/west edge must retain its authored neighbor row, working yard composition, and pixel-backed fringe regressions.",
   );
@@ -8443,6 +8524,13 @@ async function runViewportCheck(session, viewport) {
         northPanCapture.page,
         viewport,
         `${viewport.name} north pan`,
+      );
+      assertNorthServiceThresholdPixels(
+        northPanCapture.screenshot,
+        northEdge,
+        northPanCapture.page,
+        viewport,
+        `${viewport.name} north service threshold`,
       );
     }
 

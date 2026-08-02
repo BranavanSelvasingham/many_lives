@@ -60,6 +60,19 @@ South Quay reaches the visual target state only when all active rows are
 `CANDIDATE` rows must be rechecked against the next intended release commit.
 They are not grandfathered into `VERIFIED`.
 
+### Current Candidate Evidence
+
+- `R2026-08-02-V1` (medium) reopened `VQ-05` from direct production review on
+  `dd03d2ced869496144e07ff88d74de25aeb355f4`: the north neighboring row and
+  west working fringe still read as broad washed slabs at high DPR even though
+  the existing pixel probes passed. The probes sampled the detailed facade and
+  courtyard interiors but missed the broader ground transitions. The local
+  candidate adds an authored service threshold, varied facade rhythm, a
+  compacted western approach, and wider high-DPR composition checks. Focused
+  validation passed at
+  `/tmp/manylives-r2026-08-02-v1-vq05-visual-r6`; `VQ-05` remains `CANDIDATE`
+  until exact-SHA deployment, matched production captures, and live smoke pass.
+
 ### Verified Production Evidence
 
 - `VQ-06` was verified on production commit
