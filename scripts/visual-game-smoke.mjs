@@ -251,6 +251,12 @@ const INTERIOR_CAMERA_VIEWPORT = {
 const MORROW_HOUSE_MARA_WORLD_POINT = { x: 276, y: 276 };
 const MORROW_HOUSE_MARA_INTERACTION_WORLD_POINT = { x: 316, y: 276 };
 const MORROW_HOUSE_PORTAL_WORLD_POINT = { x: 356, y: 396 };
+const MORROW_HOUSE_ENTRY_RUNNER_WORLD_BOUNDS = {
+  bottom: 416,
+  left: 331,
+  right: 381,
+  top: 354,
+};
 const MORROW_HOUSE_MARA_WORLD_EXTENTS = {
   halfHeight: 23,
   halfWidth: 17,
@@ -2861,6 +2867,7 @@ function assertBoardingHouseInteriorCompositionPixels(
   buffer,
   page,
   viewport,
+  camera,
   label,
 ) {
   const image = decodePngPixels(buffer);
@@ -2960,9 +2967,93 @@ function assertBoardingHouseInteriorCompositionPixels(
     })}.`,
   );
 
+  const runnerTopLeft = projectCameraWorldPoint(camera, {
+    x: MORROW_HOUSE_ENTRY_RUNNER_WORLD_BOUNDS.left,
+    y: MORROW_HOUSE_ENTRY_RUNNER_WORLD_BOUNDS.top,
+  });
+  const runnerBottomRight = projectCameraWorldPoint(camera, {
+    x: MORROW_HOUSE_ENTRY_RUNNER_WORLD_BOUNDS.right,
+    y: MORROW_HOUSE_ENTRY_RUNNER_WORLD_BOUNDS.bottom,
+  });
+  const runnerVisible = getUnobscuredSceneBoundsAtX(
+    page,
+    (runnerTopLeft.x + runnerBottomRight.x) / 2,
+  );
+  const runnerSample = {
+    bottom: Math.min(runnerBottomRight.y, runnerVisible.bottom),
+    left: Math.max(runnerTopLeft.x, runnerVisible.left),
+    right: Math.min(runnerBottomRight.x, runnerVisible.right),
+    top: Math.max(runnerTopLeft.y, runnerVisible.top),
+  };
+  assert.ok(
+    runnerSample.right - runnerSample.left >= 34 &&
+      runnerSample.bottom - runnerSample.top >= 28,
+    `${label}: the boarding-house entry runner lacks enough unobscured area for a visual signature check: ${JSON.stringify({
+      runnerSample,
+      runnerVisible,
+    })}.`,
+  );
+
+  let runnerPixels = 0;
+  let runnerTextilePixels = 0;
+  let runnerTransitions = 0;
+  for (
+    let sourceY = Math.floor(runnerSample.top * scaleY);
+    sourceY < Math.ceil(runnerSample.bottom * scaleY);
+    sourceY += sampleStep
+  ) {
+    let previousLuminance = null;
+    for (
+      let sourceX = Math.floor(runnerSample.left * scaleX);
+      sourceX < Math.ceil(runnerSample.right * scaleX);
+      sourceX += sampleStep
+    ) {
+      const offset = (sourceY * image.width + sourceX) * image.channels;
+      const red = image.pixels[offset];
+      const green = image.pixels[offset + 1] ?? red;
+      const blue = image.pixels[offset + 2] ?? red;
+      const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+      const wovenBurgundy =
+        red >= 72 &&
+        red <= 170 &&
+        red >= green * 1.12 &&
+        blue >= red * 0.5 &&
+        blue <= green * 1.08 &&
+        luminance >= 48 &&
+        luminance <= 165;
+      if (wovenBurgundy) {
+        runnerTextilePixels += 1;
+      }
+      if (
+        previousLuminance !== null &&
+        Math.abs(previousLuminance - luminance) >= 16
+      ) {
+        runnerTransitions += 1;
+      }
+      previousLuminance = luminance;
+      runnerPixels += 1;
+    }
+  }
+
+  const entryRunner = {
+    detailTransitionFraction: Number(
+      (runnerTransitions / Math.max(runnerPixels, 1)).toFixed(3),
+    ),
+    sample: runnerSample,
+    textileFraction: Number(
+      (runnerTextilePixels / Math.max(runnerPixels, 1)).toFixed(3),
+    ),
+  };
+  assert.ok(
+    entryRunner.textileFraction >= 0.34 &&
+      entryRunner.detailTransitionFraction >= 0.02,
+    `${label}: Morrow House lost the woven portal-to-reception threshold that breaks up the flat floor while preserving its walkable lane: ${JSON.stringify(entryRunner)}.`,
+  );
+
   return {
     authoredFraction: Number(authoredFraction.toFixed(3)),
     columnFractions,
+    entryRunner,
     sample,
     warmWash,
   };
@@ -3863,16 +3954,19 @@ async function assertAuthoredInteriorVisualGuard() {
 
   assert.ok(
     streetSource.includes("function drawBoardingHouseInteriorAtmosphere") &&
+      streetSource.includes("function drawBoardingHouseReceptionThreshold") &&
+      streetSource.includes("function drawBoardingHouseEntryRunner") &&
       streetSource.includes("function drawBoardingHouseLoungeRug") &&
       streetSource.includes("function drawBoardingHouseWovenRug") &&
       streetSource.includes("function drawBoardingHouseRoomHall") &&
+      streetSource.includes("function drawBoardingHouseGuestCubbies") &&
       streetSource.includes("function drawBoardingHouseKeyBoard") &&
       streetSource.includes("getInteriorActorCompositionBounds") &&
       streetSource.includes("getInteriorPortalWorldPoints") &&
       streetSource.includes(
         'space.id === "interior:boarding-house"',
       ),
-    "Morrow House must keep its opaque woven rugs, room hall, key board, and boarding-house-specific atmosphere passes.",
+    "Morrow House must keep its reception threshold, entry runner, guest cubbies, opaque woven rugs, room hall, key board, and boarding-house-specific atmosphere passes.",
   );
   assert.ok(
     streetSource.includes("function drawBoardingHouseInteriorObjectDetail") &&
@@ -9591,6 +9685,7 @@ async function captureMorrowHouseMobileState({
     capture.screenshot,
     page,
     viewport,
+    settledAgain,
     label,
   );
   const identity = assertAuthoredInteriorIdentityPixels(
@@ -9700,6 +9795,7 @@ async function runInteriorCameraCheck(session) {
     compactCapture.screenshot,
     interiorPage,
     INTERIOR_CAMERA_VIEWPORT,
+    settledAgain,
     "interior camera",
   );
   const compactIdentity = assertAuthoredInteriorIdentityPixels(

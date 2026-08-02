@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.16",
-  build: "dd03d2c",
-  source: "South Quay visual review",
+  version: "0.1.17",
+  build: "da5d68f",
+  source: "Morrow House visual review",
   features: [
     {
-      title: "A grounded northern edge",
+      title: "A warmer Morrow House welcome",
       body:
-        "The neighboring row now meets South Quay through a darker service street, curb, drains, loading strips, and more varied building fronts.",
+        "The first interior now opens through a woven runner into a defined reception area, making Rowan's temporary home feel inhabited before any label is read.",
     },
     {
-      title: "A working western fringe",
+      title: "Guest rooms have a clearer place",
       body:
-        "The open ground around Morrow Yard now reads as a compacted working approach with planting, timber boundaries, stone edges, and drainage.",
+        "Keys, guest cubbies, desk details, and the side-hall runner separate the house's service desk from its private room corridor.",
     },
     {
-      title: "Visual checks cover the whole composition",
+      title: "The arrival stays readable",
       body:
-        "High-DPR regressions now sample the broad north and west transition areas, not only their already detailed landmark interiors.",
+        "Desktop and phone checks now protect the entry signature while keeping Rowan, Mara, the exit, and the watch controls unobscured.",
     },
   ],
 };

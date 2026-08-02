@@ -3585,12 +3585,15 @@ function drawBoardingHouseInteriorAtmosphere(
 
   drawBoardingHousePerimeterPanels(layer, space);
   drawBoardingHouseFloorboards(layer, space);
+  drawBoardingHouseReceptionThreshold(layer);
+  drawBoardingHouseEntryRunner(layer);
   drawBoardingHouseLoungeRug(layer);
   drawBoardingHouseRoomHall(layer);
   drawBoardingHouseWindow(layer, 2.1, 0.26, 1.2);
   drawBoardingHouseWindow(layer, 8.5, 0.26, 1.2);
   drawBoardingHouseWallPanels(layer, space);
   drawBoardingHouseNoticeboard(layer);
+  drawBoardingHouseGuestCubbies(layer);
   drawBoardingHouseKeyBoard(layer);
   drawBoardingHouseHearth(layer);
   drawBoardingHouseLoungeChairs(layer);
@@ -3600,6 +3603,62 @@ function drawBoardingHouseInteriorAtmosphere(
   drawBoardingHouseCoatRail(layer);
   drawBoardingHouseLuggage(layer);
   drawBoardingHousePictureFrames(layer);
+}
+
+function drawBoardingHouseReceptionThreshold(
+  layer: PhaserType.GameObjects.Graphics,
+) {
+  const origin = mapTileToWorldOrigin(1.78, 5.18);
+  const width = CELL * 3.58;
+  const height = CELL * 1.9;
+
+  layer.fillStyle(0x513b2d, 0.2);
+  layer.fillRoundedRect(origin.x + 3, origin.y + 4, width, height, 7);
+  layer.fillStyle(0x947047, 0.84);
+  layer.fillRoundedRect(origin.x, origin.y, width, height, 7);
+  layer.lineStyle(2, 0x5d432f, 0.72);
+  layer.strokeRoundedRect(origin.x, origin.y, width, height, 7);
+  layer.lineStyle(1, 0xd4b77e, 0.28);
+  for (let x = origin.x + 14; x < origin.x + width - 12; x += 22) {
+    for (let y = origin.y + 9; y < origin.y + height - 8; y += 18) {
+      layer.lineBetween(x - 7, y, x, y + 7);
+      layer.lineBetween(x, y + 7, x + 7, y);
+    }
+  }
+  layer.lineStyle(1.4, 0x684a34, 0.52);
+  layer.lineBetween(
+    origin.x + 8,
+    origin.y + height - 14,
+    origin.x + width - 8,
+    origin.y + height - 14,
+  );
+}
+
+function drawBoardingHouseEntryRunner(
+  layer: PhaserType.GameObjects.Graphics,
+) {
+  const origin = mapTileToWorldOrigin(5.86, 7.46);
+  const width = CELL * 1.28;
+  const height = CELL * 1.52;
+
+  layer.fillStyle(0x2d2922, 0.22);
+  layer.fillRoundedRect(origin.x + 2, origin.y + 3, width, height, 5);
+  layer.fillStyle(0x684948, 0.98);
+  layer.fillRoundedRect(origin.x, origin.y, width, height, 5);
+  layer.lineStyle(1.4, 0x47312f, 0.92);
+  layer.strokeRoundedRect(origin.x, origin.y, width, height, 5);
+  layer.lineStyle(1, 0xc1a476, 0.88);
+  layer.strokeRoundedRect(origin.x + 5, origin.y + 5, width - 10, height - 10, 3);
+  layer.lineStyle(1, 0x9b7160, 0.82);
+  for (let y = origin.y + 11; y < origin.y + height - 8; y += 9) {
+    layer.lineBetween(origin.x + 8, y, origin.x + width - 8, y);
+  }
+  layer.fillStyle(0xc9ae7d, 0.86);
+  for (let y = origin.y + 15; y < origin.y + height - 10; y += 18) {
+    const centerX = origin.x + width / 2;
+    layer.fillTriangle(centerX, y - 4.5, centerX - 4.5, y, centerX + 4.5, y);
+    layer.fillTriangle(centerX, y + 4.5, centerX - 4.5, y, centerX + 4.5, y);
+  }
 }
 
 function drawBoardingHousePerimeterPanels(
@@ -3742,6 +3801,36 @@ function drawBoardingHouseRoomHall(layer: PhaserType.GameObjects.Graphics) {
   layer.lineStyle(1.4, 0x2e2924, 0.58);
   layer.strokeRoundedRect(hall.x, hall.y, CELL * 2.45, CELL * 7.55, 8);
 
+  const runner = mapTileToWorldOrigin(9.89, 1.62);
+  layer.fillStyle(0x2b2320, 0.28);
+  layer.fillRoundedRect(
+    runner.x + 2,
+    runner.y + 3,
+    CELL * 0.85,
+    CELL * 6.55,
+    7,
+  );
+  layer.fillStyle(0x654745, 0.76);
+  layer.fillRoundedRect(
+    runner.x,
+    runner.y,
+    CELL * 0.85,
+    CELL * 6.55,
+    7,
+  );
+  layer.lineStyle(1.2, 0xb69a6d, 0.68);
+  layer.strokeRoundedRect(
+    runner.x + 5,
+    runner.y + 5,
+    CELL * 0.85 - 10,
+    CELL * 6.55 - 10,
+    5,
+  );
+  layer.lineStyle(1, 0x3f302e, 0.64);
+  for (let y = runner.y + 17; y < runner.y + CELL * 6.55 - 10; y += 24) {
+    layer.lineBetween(runner.x + 8, y, runner.x + CELL * 0.85 - 8, y);
+  }
+
   const roomDoors = [
     { tileX: 5.0, tileY: 1.1 },
     { tileX: 10.76, tileY: 2.15 },
@@ -3771,6 +3860,35 @@ function drawBoardingHouseRoomHall(layer: PhaserType.GameObjects.Graphics) {
     layer.fillStyle(0xd4ad65, 0.92);
     layer.fillCircle(origin.x + width - 7, origin.y + height * 0.58, 2.6);
   });
+}
+
+function drawBoardingHouseGuestCubbies(
+  layer: PhaserType.GameObjects.Graphics,
+) {
+  const origin = mapTileToWorldOrigin(2.02, 4.48);
+  const width = CELL * 1.24;
+  const height = CELL * 0.86;
+
+  layer.fillStyle(0x241912, 0.3);
+  layer.fillRoundedRect(origin.x + 3, origin.y + 3, width, height, 5);
+  layer.fillStyle(0x5c422f, 0.96);
+  layer.fillRoundedRect(origin.x, origin.y, width, height, 5);
+  layer.lineStyle(1.3, 0x33241b, 0.82);
+  layer.strokeRoundedRect(origin.x, origin.y, width, height, 5);
+
+  for (let row = 0; row < 2; row += 1) {
+    for (let column = 0; column < 3; column += 1) {
+      const slotX = origin.x + 6 + column * 15;
+      const slotY = origin.y + 6 + row * 14;
+      layer.fillStyle(0x2f241d, 0.78);
+      layer.fillRoundedRect(slotX, slotY, 11, 10, 2);
+      layer.fillStyle(column === 1 && row === 0 ? 0xd8c9a5 : 0xa7b2a1, 0.76);
+      layer.fillRoundedRect(slotX + 2, slotY + 2, 7, 4, 1);
+    }
+  }
+
+  layer.fillStyle(0xd2ae65, 0.92);
+  layer.fillCircle(origin.x + width - 8, origin.y + height - 6, 2.6);
 }
 
 function drawBoardingHouseWindow(
@@ -4580,6 +4698,17 @@ function drawBoardingHouseInteriorObjectDetail(
   }
 
   if (object.kind === "desk") {
+    layer.lineStyle(1.4, 0xa98355, 0.48);
+    for (let panel = 0; panel < 3; panel += 1) {
+      const panelX = rect.x + 9 + panel * ((rect.width - 18) / 3);
+      layer.strokeRoundedRect(
+        panelX,
+        rect.y + rect.height - 24,
+        (rect.width - 24) / 3,
+        16,
+        3,
+      );
+    }
     layer.fillStyle(0x2a1c12, 0.2);
     layer.fillRoundedRect(rect.x + 12, rect.y + 11, 26, 9, 4);
     layer.fillStyle(0xe8d5aa, 0.74);
@@ -4588,12 +4717,22 @@ function drawBoardingHouseInteriorObjectDetail(
     layer.lineBetween(rect.x + 17, rect.y + 13, rect.x + 32, rect.y + 13);
     layer.fillStyle(0xf2c76b, 0.82);
     layer.fillCircle(rect.x + rect.width - 20, rect.y + 15, 4);
-    for (let index = 0; index < 3; index += 1) {
-      const slotX = rect.x + 48 + index * 19;
+    layer.fillStyle(0x4b3322, 0.86);
+    layer.fillRoundedRect(
+      rect.x + rect.width - 32,
+      rect.y + 8,
+      5,
+      8,
+      2,
+    );
+    layer.fillStyle(0xe2bd6e, 0.9);
+    layer.fillCircle(rect.x + rect.width - 29.5, rect.y + 7, 4);
+    for (let index = 0; index < 4; index += 1) {
+      const slotX = rect.x + 45 + index * 17;
       layer.fillStyle(0x302219, 0.52);
-      layer.fillRoundedRect(slotX, rect.y + 7, 14, 14, 3);
+      layer.fillRoundedRect(slotX, rect.y + 7, 13, 14, 3);
       layer.fillStyle(index === 1 ? 0xc8d0be : 0xe0c996, 0.78);
-      layer.fillRoundedRect(slotX + 3, rect.y + 10, 8, 7, 2);
+      layer.fillRoundedRect(slotX + 3, rect.y + 10, 7, 7, 2);
     }
     return;
   }
