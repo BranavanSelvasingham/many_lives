@@ -8582,7 +8582,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         <div class="ml-panel ml-rail-shell">
           <div class="ml-rail-head">
             <div class="ml-rail-head-copy">
-              <div class="ml-kicker">Agent under observation</div>
+              <div class="ml-kicker">Many Lives • Living-world simulation</div>
               <div class="ml-rail-heading-row">
                 <div class="ml-rail-name">${escapeHtml(game.player.name)}</div>
                 <div class="ml-rail-status">Autonomous Agent</div>

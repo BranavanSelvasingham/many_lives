@@ -42,12 +42,15 @@ export function buildLoadingHtml(
         justify-content: center;
         padding: 24px;
         box-sizing: border-box;
+        background: #101a20;
         pointer-events: none;
         font-family: "Avenir Next", "Nunito Sans", ui-sans-serif, system-ui, sans-serif;
       }
       .ml-loading-card {
-        width: min(680px, 100%);
-        border-radius: 32px;
+        position: relative;
+        width: min(640px, 100%);
+        overflow: hidden;
+        border-radius: 8px;
         border: 1px solid rgba(138, 151, 161, 0.22);
         background: linear-gradient(180deg, rgba(18, 26, 31, 0.94), rgba(12, 18, 23, 0.9));
         box-shadow: 0 28px 80px rgba(0, 0, 0, 0.32);
@@ -55,23 +58,59 @@ export function buildLoadingHtml(
         pointer-events: auto;
         color: #edf2f5;
       }
-      .ml-loading-kicker {
+      .ml-loading-card::before {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 3px;
+        background: #cdae73;
+        content: "";
+      }
+      .ml-loading-brand {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 18px;
+      }
+      .ml-loading-wordmark {
+        color: #f3d59d;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 18px;
+        font-weight: 700;
+      }
+      .ml-loading-location {
         font-size: 11px;
-        letter-spacing: 0.22em;
+        letter-spacing: 0.16em;
         text-transform: uppercase;
         color: rgba(213, 224, 229, 0.66);
       }
+      .ml-loading-type {
+        margin-top: 24px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: rgba(213, 224, 229, 0.7);
+      }
       .ml-loading-title {
-        margin-top: 14px;
-        font-size: 34px;
-        line-height: 0.98;
+        margin-top: 8px;
+        max-width: 560px;
+        font-family: Georgia, "Times New Roman", serif;
+        font-size: 36px;
+        line-height: 1.08;
         font-weight: 700;
       }
-      .ml-loading-copy {
-        margin-top: 12px;
+      .ml-loading-purpose {
+        margin-top: 14px;
+        max-width: 570px;
         font-size: 16px;
-        line-height: 1.7;
-        color: rgba(219, 228, 233, 0.82);
+        line-height: 1.55;
+        color: rgba(235, 240, 243, 0.9);
+      }
+      .ml-loading-copy {
+        margin-top: 10px;
+        font-size: 13px;
+        line-height: 1.55;
+        color: rgba(196, 208, 215, 0.74);
       }
       .ml-loading-status {
         margin-top: 20px;
@@ -116,17 +155,54 @@ export function buildLoadingHtml(
         background: rgba(28, 38, 45, 0.78);
         color: rgba(232, 238, 241, 0.9);
       }
+      @media (max-width: 520px) {
+        .ml-loading-root {
+          align-items: flex-start;
+          padding: 18px;
+        }
+        .ml-loading-card {
+          margin-top: 44px;
+          padding: 22px;
+        }
+        .ml-loading-brand {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .ml-loading-type {
+          margin-top: 18px;
+        }
+        .ml-loading-title {
+          font-size: 30px;
+        }
+        .ml-loading-actions {
+          align-items: stretch;
+          flex-direction: column;
+        }
+        .ml-loading-button {
+          width: 100%;
+        }
+      }
     </style>
     <div class="ml-loading-root">
       <div class="ml-loading-card">
-        <div class="ml-loading-kicker">Brackenport • South Quay</div>
+        <div class="ml-loading-brand">
+          <div class="ml-loading-wordmark">Many Lives</div>
+          <div class="ml-loading-location">Brackenport • South Quay</div>
+        </div>
+        <div class="ml-loading-type">Living-world agent simulation</div>
         <div class="ml-loading-title">${
-          snapshot.storedGameId ? "Continue Rowan's run?" : "Opening the district"
+          snapshot.storedGameId
+            ? "Continue Rowan's run?"
+            : "Watch Rowan find a way forward"
         }</div>
+        <div class="ml-loading-purpose">
+          Rowan reads a changing city, weighs available options, and pursues goals through the people, places, and pressures he encounters.
+        </div>
         <div class="ml-loading-copy">${
           snapshot.storedGameId
-            ? "This browser has a saved run. Continue where Rowan left off, or start a fresh first afternoon."
-            : "One person, one block, one day to start finding a place in the city."
+            ? "Continue observing the same evolving world, or begin a fresh first afternoon."
+            : "The semi-open city begins in South Quay and keeps moving without step-by-step guidance."
         }</div>
         <div class="ml-loading-status ${snapshot.error ? "ml-loading-error" : ""}">
           ${escapeHtml(

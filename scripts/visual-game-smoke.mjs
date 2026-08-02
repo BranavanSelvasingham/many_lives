@@ -8614,8 +8614,13 @@ async function waitForStoredGameChoice(session) {
     async () => {
       try {
         return await session.evaluate(`(() => {
+          const text = document.body.innerText || "";
+          const normalizedText = text.toLowerCase();
           return Boolean(
-            document.body.innerText.includes("Continue Rowan's run?") &&
+            text.includes("Continue Rowan's run?") &&
+              normalizedText.includes("many lives") &&
+              normalizedText.includes("living-world agent simulation") &&
+              normalizedText.includes("rowan reads a changing city") &&
               document.querySelector("[data-resume-stored-game]") &&
               document.querySelector("[data-start-new-game]")
           );
@@ -8632,13 +8637,23 @@ async function waitForStoredGameChoice(session) {
 async function inspectStoredGameChoice(session) {
   return session.evaluate(`(() => {
     const text = document.body.innerText || "";
+    const normalizedText = text.toLowerCase();
     const rawBackendError =
       /\\{"message":|"message"\\s*:\\s*"Game\\s+game-|Game\\s+game-[A-Za-z0-9-]+\\s+was not found/i.test(text);
     return {
       bodyText: text.slice(0, 800),
       hasCompleteState: text.includes("COMPLETE") || text.includes("First afternoon complete"),
+      hasProductIdentity: normalizedText.includes("many lives"),
       hasRawBackendError: rawBackendError,
       hasResumeButton: Boolean(document.querySelector("[data-resume-stored-game]")),
+      hasSimulationPurpose:
+        normalizedText.includes("living-world agent simulation") &&
+        normalizedText.includes("rowan reads a changing city") &&
+        normalizedText.includes("weighs available options") &&
+        normalizedText.includes("pursues goals"),
+      hasSouthQuayContext:
+        normalizedText.includes("brackenport") &&
+        normalizedText.includes("south quay"),
       hasStartNewButton: Boolean(document.querySelector("[data-start-new-game]")),
       localStorageGameId: window.localStorage.getItem("many-lives:street-game-id"),
       url: location.href
@@ -8799,6 +8814,21 @@ async function runStoredGameChoiceCheck(session) {
     false,
     "Stored-game prompt should not silently show the previous completed run.",
   );
+  assert.equal(
+    prompt.hasProductIdentity,
+    true,
+    "Stored-game prompt is missing Many Lives identity.",
+  );
+  assert.equal(
+    prompt.hasSimulationPurpose,
+    true,
+    "Stored-game prompt is missing the living-world agent purpose.",
+  );
+  assert.equal(
+    prompt.hasSouthQuayContext,
+    true,
+    "Stored-game prompt is missing its Brackenport and South Quay context.",
+  );
   assert.equal(prompt.hasResumeButton, true, "Stored-game prompt is missing Resume.");
   assert.equal(prompt.hasStartNewButton, true, "Stored-game prompt is missing Start New.");
   assert.equal(
@@ -8811,6 +8841,17 @@ async function runStoredGameChoiceCheck(session) {
     seededGameId,
     "Stored-game prompt did not capture the seeded storage id.",
   );
+
+  const desktopPromptScreenshotPath = path.join(
+    OUTPUT_DIR,
+    "saved-run-prompt-desktop.png",
+  );
+  await session.captureScreenshot(desktopPromptScreenshotPath);
+  assertPngScreenshot(await readFile(desktopPromptScreenshotPath), {
+    ...VIEWPORTS[0],
+    minimumUsefulBytesRatio: 0.03,
+    name: "saved-run-prompt-desktop",
+  });
 
   const driftGameId = await driftStoredGameIdAfterPrompt(session, seededGameId);
 
@@ -8826,10 +8867,35 @@ async function runStoredGameChoiceCheck(session) {
 
   await session.navigate(`${activeWebBase}/?storagePrompt=${Date.now()}`);
   await waitForStoredGameChoice(session);
+  const mobileViewport = VIEWPORTS.find(
+    (viewport) => viewport.name === "mobile",
+  );
+  assert.ok(
+    mobileViewport,
+    "Stored-game prompt check is missing the mobile viewport.",
+  );
+  await session.setViewport(mobileViewport);
+  const mobilePrompt = await inspectStoredGameChoice(session);
+  assert.equal(
+    mobilePrompt.hasSimulationPurpose,
+    true,
+    "Mobile stored-game prompt lost the living-world agent purpose.",
+  );
+  const mobilePromptScreenshotPath = path.join(
+    OUTPUT_DIR,
+    "saved-run-prompt-mobile.png",
+  );
+  await session.captureScreenshot(mobilePromptScreenshotPath);
+  assertPngScreenshot(await readFile(mobilePromptScreenshotPath), {
+    ...mobileViewport,
+    minimumUsefulBytesRatio: 0.03,
+    name: "saved-run-prompt-mobile",
+  });
   await session.clickSelector("[data-start-new-game]");
   await session.waitForAppReady();
   await sleep(500);
   const freshProbe = await session.readBrowserProbe();
+  await session.setViewport(VIEWPORTS[0]);
   assert.ok(freshProbe?.gameId, "Start new run did not create a game id.");
   assert.notEqual(
     freshProbe.gameId,
@@ -8840,9 +8906,11 @@ async function runStoredGameChoiceCheck(session) {
   const missingStoredGame = await runMissingStoredGameCheck(session);
 
   return {
+    desktopPromptScreenshotPath,
     driftGameId,
     freshGameId: freshProbe.gameId,
     missingStoredGame,
+    mobilePromptScreenshotPath,
     prompt,
     resumedGameId: resumedProbe.gameId,
     seededGameId,
@@ -9854,6 +9922,8 @@ async function main() {
         `[many-lives] Desktop after pan: ${path.join(OUTPUT_DIR, "desktop-after-pan.png")}`,
         `[many-lives] Desktop after west pan: ${path.join(OUTPUT_DIR, "desktop-after-pan-west.png")}`,
         `[many-lives] Fresh autoplay started: ${path.join(OUTPUT_DIR, "fresh-autoplay-started.png")}`,
+        `[many-lives] Saved-run prompt desktop: ${path.join(OUTPUT_DIR, "saved-run-prompt-desktop.png")}`,
+        `[many-lives] Saved-run prompt mobile: ${path.join(OUTPUT_DIR, "saved-run-prompt-mobile.png")}`,
         `[many-lives] Mobile: ${path.join(OUTPUT_DIR, "mobile.png")}`,
         `[many-lives] Mobile after pan: ${path.join(OUTPUT_DIR, "mobile-after-pan.png")}`,
         `[many-lives] Mobile after west pan: ${path.join(OUTPUT_DIR, "mobile-after-pan-west.png")}`,

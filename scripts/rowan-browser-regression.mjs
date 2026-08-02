@@ -23376,8 +23376,8 @@ function assertInhabitPlayerDom(
   );
   assert.match(
     dom.bodyText,
-    /Agent under observation\s+Rowan\s+Autonomous Agent/i,
-    `${label}: observer-facing UI should identify Rowan as the autonomous agent under observation.`,
+    /Many Lives\s+•\s+Living-world simulation\s+Rowan\s+Autonomous Agent/i,
+    `${label}: observer-facing UI should identify Many Lives as a living-world simulation and Rowan as its autonomous agent.`,
   );
   assert.doesNotMatch(
     dom.bodyText,
