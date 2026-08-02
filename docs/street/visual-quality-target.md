@@ -55,7 +55,7 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-08` | Labels, cues, and scene-to-rail balance | `CANDIDATE` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `CANDIDATE` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
-| `VQ-11` | Opening identity and simulation premise | `CANDIDATE` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
+| `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
 
 `CANDIDATE` rows must be rechecked against the next intended release commit.
 They are not grandfathered into `VERIFIED`.
@@ -73,6 +73,17 @@ They are not grandfathered into `VERIFIED`.
   `/tmp/manylives-vq06-b9c82b3-comparisons`; the full deployed capture set was
   inspected at `/tmp/manylives-b9c82b3-live-visual`. GitHub Actions run:
   `30706967230`.
+- `VQ-11` was verified on production commit
+  `5a16faff2478f9a5398c161f85eb939a92ce4938` against baseline
+  `afffdd36a4303adccab1ae10ed7b8b3feb331ef5`. Exact-SHA CI/deploy, the live
+  fresh/saved/new/autoplay smoke, a real accepted OpenAI planner trace, and the
+  deployed visual smoke passed. Matched desktop and phone comparisons showed
+  the Many Lives identity, living-world agent premise, full-frame opening
+  composition, preserved saved-run choices, and the restrained live rail mark.
+  The comparison packet was shown from
+  `/tmp/manylives-opening-5a16faf-comparisons`; deployed captures were inspected
+  at `/tmp/manylives-opening-5a16faf-live-visual-retry`. GitHub Actions run:
+  `30728148534`.
 
 ## Required Evidence Packet
 

@@ -8865,8 +8865,6 @@ async function runStoredGameChoiceCheck(session) {
     "Resume stored run did not reopen the stored game id.",
   );
 
-  await session.navigate(`${activeWebBase}/?storagePrompt=${Date.now()}`);
-  await waitForStoredGameChoice(session);
   const mobileViewport = VIEWPORTS.find(
     (viewport) => viewport.name === "mobile",
   );
@@ -8875,6 +8873,8 @@ async function runStoredGameChoiceCheck(session) {
     "Stored-game prompt check is missing the mobile viewport.",
   );
   await session.setViewport(mobileViewport);
+  await session.navigate(`${activeWebBase}/?storagePrompt=${Date.now()}`);
+  await waitForStoredGameChoice(session);
   const mobilePrompt = await inspectStoredGameChoice(session);
   assert.equal(
     mobilePrompt.hasSimulationPurpose,
