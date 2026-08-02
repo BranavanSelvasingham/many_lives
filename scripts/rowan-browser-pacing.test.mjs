@@ -5358,7 +5358,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   );
 
   await t.test(
-    "a missing or unsettled opening frame triggers one bounded proactive position before dense rearm",
+    "a missing or unsettled opening frame triggers one bounded proactive position alongside dense capture",
     async () => {
       const routeSession = new CdpSession({
         browser: null,
@@ -5701,6 +5701,194 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         assert.equal(guardSession.autoplayRouteFrameWindows().length, 0);
       } finally {
         await guardSession.stopAutoplayScreencast();
+      }
+    },
+  );
+
+  await t.test(
+    "a slow proactive capture preserves dense screencast route positions",
+    async () => {
+      const routeSession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/ci-concurrent-proactive-route",
+        url: "http://127.0.0.1/",
+      });
+      routeSession.socket = { destroyed: false, writable: true };
+      const commands = [];
+      routeSession.send = async (method, params) => {
+        commands.push({ method, params });
+        return {};
+      };
+      await routeSession.startAutoplayScreencast();
+      const startedAt = 1_785_519_000_000;
+      routeSession.screencast.startedAtEpochMs = startedAt;
+      routeSession.screencast.routeRecorderExpectedTargetLocationId =
+        "tea-house";
+      routeSession.scheduleAutoplayRouteSampleFromScreencastFrame = () => {};
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const route = {
+        active: true,
+        durationMs: 1_000,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sample = (progress, offsetMs) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe,
+        recorderGeneration: 2,
+        route: { ...route, progress },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.005, 0),
+        sample(0.2, 250),
+        sample(0.35, 400),
+        sample(0.65, 650),
+        sample(0.9, 850),
+      ];
+      const recorder = (sampleCount) => ({
+        acceptedCount: sampleCount,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        samples: openingSamples.slice(0, sampleCount),
+      });
+      routeSession.archiveAutoplayRouteFrames(recorder(1));
+      routeSession.sampleAutoplayRouteCaptureRecorder = async () => null;
+      routeCompositingSleepFixture = async (minimumEpochMs) => {
+        assert.equal(minimumEpochMs, startedAt + 125);
+      };
+
+      let markSlowCaptureStarted;
+      const slowCaptureStarted = new Promise((resolve) => {
+        markSlowCaptureStarted = resolve;
+      });
+      let releaseSlowCapture;
+      const slowCaptureHeld = new Promise((resolve) => {
+        releaseSlowCapture = resolve;
+      });
+      proactiveRouteCaptureFixture = async () => {
+        markSlowCaptureStarted();
+        await slowCaptureHeld;
+        throw new Error("capture-after-route-timeout");
+      };
+
+      let capturePromise = null;
+      try {
+        capturePromise =
+          routeSession.scheduleAutoplayRouteVisualWindowCapture({
+            beforeProbe: openingSamples[0],
+            expectedTargetLocationId: "tea-house",
+            label: "ci-concurrent-proactive-route",
+          });
+        await slowCaptureStarted;
+        assert.equal(
+          routeSession.screencast.everyNthFrame,
+          1,
+          "Dense screencast cadence must be active while the separate proactive canvas command is pending.",
+        );
+
+        routeSession.archiveAutoplayRouteFrames(recorder(2));
+        routeSession.handleAutoplayScreencastFrame({
+          data: Buffer.from("dense-opening-position").toString("base64"),
+          metadata: { timestamp: (startedAt + 250) / 1_000 },
+          sessionId: 901,
+        });
+        routeSession.archiveAutoplayRouteFrames(recorder(4));
+        routeSession.handleAutoplayScreencastFrame({
+          data: Buffer.from("dense-mid-route-position").toString("base64"),
+          metadata: { timestamp: (startedAt + 650) / 1_000 },
+          sessionId: 902,
+        });
+        routeSession.archiveAutoplayRouteFrames(recorder(5));
+        releaseSlowCapture();
+        await capturePromise;
+
+        assert.deepEqual(
+          routeSession
+            .autoplayRouteArchivedFrames()
+            .map((frame) => Buffer.from(frame.data, "base64").toString()),
+          ["dense-opening-position", "dense-mid-route-position"],
+          "Both dense frames must remain in the legal opening-route archive after the proactive attempt times out.",
+        );
+        const trajectory =
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            archivedFrames: routeSession.autoplayRouteArchivedFrames(),
+            expectedTargetLocationId: "tea-house",
+            frames: [],
+            label: "concurrent dense screencast opening route",
+            recordedWindows: routeSession.autoplayRouteFrameWindows(),
+            samples: routeSession.autoplayRouteCaptureSamples(),
+            validateFrame: ({ frame, paintProbe: framePaintProbe }) => ({
+              buffer: Buffer.from(frame.data, "base64"),
+              height: 625,
+              paintProbe: framePaintProbe,
+              textPaint: {},
+              width: 1365,
+            }),
+            validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+              assert.notDeepEqual(afterBuffer, beforeBuffer);
+              return { hudPixelDifferenceRatio: 0 };
+            },
+          });
+        assert.equal(trajectory.start.frame.sequence, 1);
+        assert.equal(trajectory.mid.frame.sequence, 2);
+        assert.equal(trajectory.start.evidenceSource, "screencast-frame");
+        assert.equal(trajectory.mid.evidenceSource, "screencast-frame");
+        assert.equal(
+          trajectory.start.validated.textPaint.routeFrameEvidenceBasis,
+          "archived-screencast-frame-matched-to-legal-route-sample",
+        );
+        assert.equal(
+          trajectory.mid.validated.textPaint.routeFrameEvidenceBasis,
+          "archived-screencast-frame-matched-to-legal-route-sample",
+        );
+        assert.deepEqual(
+          commands
+            .filter(({ method }) =>
+              ["Page.startScreencast", "Page.stopScreencast"].includes(method),
+            )
+            .map(({ method, params }) => [
+              method,
+              params?.everyNthFrame ?? null,
+            ]),
+          [
+            ["Page.startScreencast", 2],
+            ["Page.stopScreencast", null],
+            ["Page.startScreencast", 1],
+            ["Page.stopScreencast", null],
+            ["Page.startScreencast", 2],
+          ],
+        );
+      } finally {
+        releaseSlowCapture();
+        await capturePromise?.catch(() => null);
+        proactiveRouteCaptureFixture = async () => null;
+        routeCompositingSleepFixture = (minimumEpochMs) =>
+          sleepUntilEpochMs(minimumEpochMs, {
+            sleepFor: (milliseconds) =>
+              new Promise((resolve) => setTimeout(resolve, milliseconds)),
+          });
+        await routeSession.stopAutoplayScreencast();
       }
     },
   );

@@ -5380,6 +5380,12 @@ class CdpSession {
     state.routeFrameWindowCaptureStatus = "capturing-opening-route";
     const openingCaptureStartSequence = this.autoplayScreencastSequence();
     state.routeFrameWindowCapturePromise = (async () => {
+      if (!state.forceRouteCanvasFallback) {
+        // The separate canvas readback must not leave a short route on sparse cadence.
+        await this.rearmAutoplayScreencastForRouteCapture(
+          `${label}:dense-opening-route-stream`,
+        );
+      }
       await sleepUntilEpochMs(
         beforeProbe.capturedAtEpochMs +
           AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
@@ -5387,14 +5393,6 @@ class CdpSession {
       let proactiveOpeningCapturePending =
         this.autoplayRouteArchiveNeedsProactiveOpeningCapture(beforeProbe);
       let proactiveFollowUpPending = false;
-      if (
-        !proactiveOpeningCapturePending &&
-        !state.forceRouteCanvasFallback
-      ) {
-        await this.rearmAutoplayScreencastForRouteCapture(
-          `${label}:dense-opening-route-stream`,
-        );
-      }
       let unavailableSampleCount = 0;
       while (
         state.active &&
