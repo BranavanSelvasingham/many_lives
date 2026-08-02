@@ -52,7 +52,7 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
 | `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
-| `VQ-08` | Labels, cues, and scene-to-rail balance | `CANDIDATE` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
+| `VQ-08` | Labels, cues, and scene-to-rail balance | `VERIFIED` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `CANDIDATE` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 | `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
@@ -62,6 +62,20 @@ They are not grandfathered into `VERIFIED`.
 
 ### Verified Production Evidence
 
+- `VQ-08` was verified on production commit
+  `c478726cf8f46ffd06eaf467f14ceade68df84b4` against baseline
+  `de0b9fa33805fa1b356cc16ea0394e72bc908d9f`. The deployed visual smoke
+  passed ten desktop, tablet, phone, compact/tall Codex, and high-DPR viewport
+  profiles plus landmark-loss, overlay-intersection, cue-noise, and
+  route-label-detachment assertions. Matched desktop, mobile, and compact
+  comparisons show the map retaining visual priority while the oversized
+  observation framing and persistent Rowan marker recede, the living-world
+  identity becomes explicit, and the current objective remains legible without
+  stacked cue treatment. Exact-SHA CI/deploy, production health, saved/fresh
+  autoplay smoke, and a real accepted OpenAI planner trace passed. Comparisons
+  were shown from `/tmp/manylives-c478726-vq08-comparisons`; deployed captures
+  were inspected at `/tmp/manylives-c478726-live-visual`. GitHub Actions run:
+  `30758595050`.
 - `VQ-03` was verified on production commit
   `5cc9108ccfe88a028cb80e0a0c3c4424bc9fb6c6` against baseline
   `da5d68ff6269fb7bf70ab3674c320b784530c8aa`. Matched desktop and phone
