@@ -49,7 +49,7 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `VERIFIED` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
 | `VQ-03` | Morrow House interior | `CANDIDATE` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clearly framed Rowan and relevant Mara, and unobscured portal/action areas. |
 | `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
-| `VQ-05` | North/west/east fringes and open lots | `CANDIDATE` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
+| `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
 | `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
 | `VQ-08` | Labels, cues, and scene-to-rail balance | `CANDIDATE` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
@@ -60,21 +60,18 @@ South Quay reaches the visual target state only when all active rows are
 `CANDIDATE` rows must be rechecked against the next intended release commit.
 They are not grandfathered into `VERIFIED`.
 
-### Current Candidate Evidence
-
-- `R2026-08-02-V1` (medium) reopened `VQ-05` from direct production review on
-  `dd03d2ced869496144e07ff88d74de25aeb355f4`: the north neighboring row and
-  west working fringe still read as broad washed slabs at high DPR even though
-  the existing pixel probes passed. The probes sampled the detailed facade and
-  courtyard interiors but missed the broader ground transitions. The local
-  candidate adds an authored service threshold, varied facade rhythm, a
-  compacted western approach, and wider high-DPR composition checks. Focused
-  validation passed at
-  `/tmp/manylives-r2026-08-02-v1-vq05-visual-r6`; `VQ-05` remains `CANDIDATE`
-  until exact-SHA deployment, matched production captures, and live smoke pass.
-
 ### Verified Production Evidence
 
+- `VQ-05` was verified on production commit
+  `fb5671b94b4058ffdd01e74f43a37b82277d0d88` against baseline
+  `dd03d2ced869496144e07ff88d74de25aeb355f4`. The release added the north
+  service threshold, varied facade rhythm, and grounded west working approach;
+  broader high-DPR checks fail the prior washed slabs and pass the release.
+  Exact-SHA CI/deploy, the 14-step live harness with a successful OpenAI planner
+  trace, and the deployed visual smoke all passed. Matched north, west, and
+  mobile comparisons were shown from `/tmp/manylives-fb5671b-comparisons`;
+  deployed captures were inspected at `/tmp/manylives-fb5671b-live-visual`.
+  GitHub Actions run: `30734488488`.
 - `VQ-06` was verified on production commit
   `b9c82b3472fa9fc447fe5fc7dee9bc0695ebccd1` against baseline
   `b7dd868d64c6633b9c08152697a3d62b8681fa1d`. Exact-SHA CI/deploy, the live
