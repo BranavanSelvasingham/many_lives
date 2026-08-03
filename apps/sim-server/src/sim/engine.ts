@@ -4794,7 +4794,7 @@ function autonomyLabelForNextBeat(
   }
 
   if (plan.waitUntilMinutes !== undefined) {
-    return `Wait until ${formatClockAt(world, plan.waitUntilMinutes)}`;
+    return `Wait until ${formatWaitUntil(world, plan.waitUntilMinutes)}`;
   }
 
   if (plan.actionId) {
@@ -4952,7 +4952,7 @@ function autonomyDetailForObjectivePlan(
   }
 
   if (plan.waitUntilMinutes !== undefined) {
-    return `Rowan is letting the clock move until ${formatClockAt(
+    return `Rowan is letting the clock move until ${formatWaitUntil(
       world,
       plan.waitUntilMinutes,
     )}: ${rationale}.`;
@@ -5367,7 +5367,7 @@ function buildRowanAutonomySignals({
       : undefined,
     npcName ? `Person: ${npcName}` : undefined,
     loopStep.kind === "wait" && loopStep.waitUntilMinutes !== undefined
-      ? `Timing: about ${formatClockAt(world, loopStep.waitUntilMinutes)}`
+      ? `Timing: ${formatWaitUntil(world, loopStep.waitUntilMinutes)}`
       : undefined,
     actionLabel && loopStep.kind !== "wait"
       ? `Action: ${actionLabel}`
@@ -5945,7 +5945,7 @@ function immediatePlannerActionLabel(
   }
 
   if (actionId.startsWith("wait:") && plan.waitUntilMinutes !== undefined) {
-    return `Wait until ${formatClockAt(world, plan.waitUntilMinutes)}`;
+    return `Wait until ${formatWaitUntil(world, plan.waitUntilMinutes)}`;
   }
 
   return autonomyLabelForAction(world, actionId);
@@ -8569,7 +8569,7 @@ function buildObjectiveWaitPlans(
         nextOpening.stop.locationId;
       const plan: ObjectivePlan = {
         actionId: `wait:${nextOpening.startTotalMinutes}`,
-        rationale: `${npc.name} is unavailable, and no more useful current action is open. Wait until ${formatScheduleMinute(nextOpening.startTotalMinutes)} for ${npc.name}'s next opening at ${locationName}.`,
+        rationale: `${npc.name} is unavailable, and no more useful current action is open. ${npc.name}'s next opening is ${formatWaitUntil(world, nextOpening.startTotalMinutes)} at ${locationName}.`,
         score: 180,
         targetLocationId: world.player.currentLocationId,
         waitUntilMinutes: nextOpening.startTotalMinutes,
@@ -12201,6 +12201,21 @@ function formatClockAt(world: StreetGameState, totalMinutes: number) {
   const hour = Math.floor(minuteOfDay / 60);
   const minute = minuteOfDay % 60;
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function formatWaitUntil(world: StreetGameState, totalMinutes: number) {
+  const targetDay = Math.floor(Math.max(0, totalMinutes) / (24 * 60)) + 1;
+  const clock = formatClockAt(world, totalMinutes);
+
+  if (targetDay === world.clock.day) {
+    return clock;
+  }
+
+  if (targetDay === world.clock.day + 1) {
+    return `tomorrow at ${clock}`;
+  }
+
+  return `day ${targetDay} at ${clock}`;
 }
 
 function arrivalThought(

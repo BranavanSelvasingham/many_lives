@@ -8368,6 +8368,97 @@ describe("SimulationEngine street slice", () => {
   });
 });
 describe("schedule-aware NPC objective execution", () => {
+  it("makes next-day waits explicit throughout Rowan's visible decision", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-tomas-next-day-wait-label");
+    world = await enterMorrowHouse(engine, world);
+    for (const problem of world.problems) {
+      problem.status = "resolved";
+      problem.urgency = 0;
+    }
+    for (const job of world.jobs) {
+      job.accepted = false;
+      job.completed = job.id !== "job-yard-shift";
+      job.missed = false;
+    }
+    world.player.energy = 80;
+    setTestClock(world, 15, 16);
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Find yard work from Tomas.",
+    });
+
+    expect(world.player.objective).toMatchObject({
+      routeKey: "work-yard",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "wait:2040",
+      detail: expect.stringMatching(/until tomorrow at 10:00/i),
+      label: "Wait until tomorrow at 10:00",
+    });
+    expect(world.rowanAutonomy.intent?.signals).toContain(
+      "Timing: tomorrow at 10:00",
+    );
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedActionId: "wait:2040",
+      selectedLabel: "Wait until tomorrow at 10:00",
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.nextSteps.find(
+        (step) => step.actionId === "wait:2040",
+      ),
+    ).toMatchObject({
+      label: "Wait until tomorrow at 10:00",
+    });
+
+    const artifact = buildRowanVisibleDecisionArtifact(world);
+    expect(artifact).toMatchObject({
+      constraints: expect.arrayContaining([
+        expect.stringMatching(/tomorrow at 10:00/i),
+      ]),
+      rationale: expect.stringMatching(/tomorrow at 10:00|day 2 at 10:00/i),
+      selectedAction: "Wait until tomorrow at 10:00",
+    });
+    expect(JSON.stringify(artifact)).not.toMatch(/Wait until 10:00/);
+  });
+
+  it("keeps same-day wait labels concise", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-tomas-same-day-wait-label");
+    const freightYard = world.locations.find(
+      (location) => location.id === "freight-yard",
+    );
+    expect(freightYard).toBeDefined();
+    if (!freightYard) {
+      return;
+    }
+
+    world.activeSpaceId = STREET_SPACE_ID;
+    world.player.spaceId = STREET_SPACE_ID;
+    world.player.currentLocationId = freightYard.id;
+    world.player.x = freightYard.entryX;
+    world.player.y = freightYard.entryY;
+    setTestClock(world, 9, 16);
+
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Find yard work from Tomas.",
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "wait:600",
+      detail: expect.stringMatching(/until 10:00/i),
+      label: "Wait until 10:00",
+    });
+    expect(world.rowanAutonomy.intent?.signals).toContain("Timing: 10:00");
+    const artifact = buildRowanVisibleDecisionArtifact(world);
+    expect(artifact).toMatchObject({
+      selectedAction: "Wait until 10:00",
+    });
+    expect(JSON.stringify(artifact)).not.toMatch(/tomorrow|day 1/i);
+  });
+
   it("accepts a Jo route before close and rejects the same projected arrival after close", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let beforeClose = await engine.createGame("game-jo-before-close-arrival");
