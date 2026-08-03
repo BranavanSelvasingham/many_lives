@@ -7474,20 +7474,23 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
     return openingProbe;
   }
 
-  const readAdvancedProbe = async () => {
-    const probe = await session.readBrowserProbe();
+  const hasAdvancedFromOpening = (probe) => {
     if (!probe?.watchMode?.enabled || probe.watchMode?.frozen) {
       return false;
     }
 
-    const advanced =
+    return (
       openingActionHasAutoplayProgressed(probe) ||
       probe.clock?.totalMinutes > openingProbe.clock?.totalMinutes ||
       probe.autonomy?.key !== openingProbe.autonomy?.key ||
       probe.location?.id !== openingProbe.location?.id ||
-      Boolean(probe.activeConversation?.npcId);
+      Boolean(probe.activeConversation?.npcId)
+    );
+  };
+  const readAdvancedProbe = async () => {
+    const probe = await session.readBrowserProbe();
 
-    return advanced ? probe : false;
+    return hasAdvancedFromOpening(probe) ? probe : false;
   };
   const openingDiagnostic = compactDecisionArtifactProbeDiagnostic(openingProbe);
 
@@ -7501,6 +7504,9 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
     );
   } catch (error) {
     const latestProbe = await session.readBrowserProbe();
+    if (hasAdvancedFromOpening(latestProbe)) {
+      return latestProbe;
+    }
     if (
       !openingActionNeedsNearArrivalGrace(openingProbe) &&
       !openingActionNeedsNearArrivalGrace(latestProbe)
