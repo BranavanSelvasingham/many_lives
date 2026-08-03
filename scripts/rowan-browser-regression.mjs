@@ -1760,6 +1760,19 @@ function isCdpRuntimeEvaluateTimeout(error) {
   );
 }
 
+function isCdpExecutionContextReset(error) {
+  return Boolean(
+    error instanceof Error &&
+      /execution context|cannot find (?:default )?context|inspected target navigated|context was destroyed/i.test(
+        error.message,
+      ),
+  );
+}
+
+function isRetryableAutoplayRouteCanvasCaptureError(error) {
+  return isCdpRuntimeEvaluateTimeout(error) || isCdpExecutionContextReset(error);
+}
+
 class CdpSession {
   constructor({
     browser,
@@ -2029,6 +2042,8 @@ class CdpSession {
                 this.screencast.routeCanvasCaptureCount,
               routeCanvasCaptureGeometry:
                 this.screencast.routeCanvasCaptureGeometry,
+              routeCanvasCaptureRuntimeEvaluateFailed:
+                this.screencast.routeCanvasCaptureRuntimeEvaluateFailed,
               routeCanvasCaptureTransportStatus:
                 this.screencast.routeCanvasCaptureTransportStatus,
               routeFrameWindowRejectedCount:
@@ -4018,6 +4033,7 @@ class CdpSession {
       forceRouteCanvasFallback: this.forceRouteCanvasFallback,
       routeCanvasCaptureCount: 0,
       routeCanvasCaptureGeometry: null,
+      routeCanvasCaptureRuntimeEvaluateFailed: false,
       routeCanvasCaptureTransportStatus: "main-cdp",
       routeScreencastRearmAttemptCount: 0,
       routeScreencastRearmError: null,
@@ -4504,6 +4520,7 @@ class CdpSession {
   }
 
   async captureAutoplayRouteVisualFrame({
+    commandSession = this,
     minimumCapturedAtEpochMs,
     timeoutMs = AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS,
     viewport = null,
@@ -4513,10 +4530,15 @@ class CdpSession {
       state && ["starting", "active"].includes(state.status),
       "Autoplay screencast is not active for a route visual capture.",
     );
-    assert.equal(
-      state.routeVisualCaptureTransportStatus,
-      "paused-for-route-capture",
-      "Proactive route screenshots require exclusive access to the CDP visual transport.",
+    const usesDedicatedCommandSession =
+      commandSession !== this &&
+      commandSession === this.routeCanvasCaptureSession &&
+      commandSession.handshakeComplete &&
+      !commandSession.transportFailure;
+    assert.ok(
+      state.routeVisualCaptureTransportStatus === "paused-for-route-capture" ||
+        usesDedicatedCommandSession,
+      "Proactive route screenshots require either exclusive main-CDP access or the dedicated capture transport.",
     );
     await sleepUntilEpochMs(minimumCapturedAtEpochMs);
     const requestedAtEpochMs = Date.now();
@@ -4532,9 +4554,13 @@ class CdpSession {
             scale: Math.min(
               1,
               Math.max(
-                AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE,
                 AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_WIDTH / viewportWidth,
                 AUTOPLAY_ROUTE_RENDERED_FRAME_MIN_HEIGHT / viewportHeight,
+                Math.min(
+                  AUTOPLAY_ROUTE_PROACTIVE_SCREENSHOT_SCALE,
+                  AUTOPLAY_SCREENCAST_MAX_WIDTH / viewportWidth,
+                  AUTOPLAY_SCREENCAST_MAX_HEIGHT / viewportHeight,
+                ),
               ),
             ),
             width: viewportWidth,
@@ -4542,7 +4568,7 @@ class CdpSession {
             y: 0,
           }
         : null;
-    const response = await this.send(
+    const response = await commandSession.send(
       "Page.captureScreenshot",
       {
         captureBeyondViewport: false,
@@ -4941,6 +4967,62 @@ class CdpSession {
         source: "in-page-route-canvas",
       },
     };
+  }
+
+  async captureAutoplayRouteScreenshotVisualFrame({
+    beforeProbe,
+    expectedTargetLocationId,
+    label,
+    timeoutMs,
+  }) {
+    const captureBeforeProbe =
+      await this.sampleAutoplayRouteCaptureRecorder(
+        `${label}:screenshot-fallback-before-route-sample`,
+      );
+    if (
+      !autoplayRouteCaptureWindowCoherent(
+        beforeProbe?.route,
+        captureBeforeProbe?.route,
+        expectedTargetLocationId,
+      ) ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(
+        beforeProbe,
+        captureBeforeProbe,
+      )
+    ) {
+      this.recordAutoplayRouteFrameWindowRejection({
+        afterProbe: captureBeforeProbe,
+        beforeProbe,
+        reason: "screenshot-fallback-before-route-unavailable",
+      });
+      return null;
+    }
+
+    const routeDurationMs = Number(captureBeforeProbe.route.durationMs);
+    const routeProgress = Number(captureBeforeProbe.route.progress);
+    const remainingRouteMs =
+      Number.isFinite(routeDurationMs) && Number.isFinite(routeProgress)
+        ? routeDurationMs * Math.max(0, 1 - routeProgress) -
+          AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS * 2
+        : timeoutMs;
+    const fallbackTimeoutMs = Math.min(
+      timeoutMs,
+      Math.max(AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS, remainingRouteMs),
+    );
+    const commandSession = await this.autoplayRouteCanvasCommandSession();
+    const frame = await this.captureAutoplayRouteVisualFrame({
+      commandSession,
+      minimumCapturedAtEpochMs:
+        captureBeforeProbe.capturedAtEpochMs +
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS,
+      timeoutMs: fallbackTimeoutMs,
+      viewport: captureBeforeProbe.paintProbe?.viewport ?? null,
+    });
+    const afterProbe = await this.sampleAutoplayRouteCaptureRecorder(
+      `${label}:screenshot-fallback-after-route-sample`,
+    );
+    const normalizedFrame = await this.normalizeAutoplayRouteVisualFrame(frame);
+    return { afterProbe, captureBeforeProbe, frame: normalizedFrame };
   }
 
   async normalizeAutoplayRouteVisualFrame(frame) {
@@ -5633,8 +5715,8 @@ class CdpSession {
           const message = error instanceof Error ? error.message : String(error);
           if (
             state.active &&
-            /execution context|cannot find (?:default )?context|inspected target navigated|context was destroyed/i.test(
-              message,
+            isCdpExecutionContextReset(
+              error instanceof Error ? error : new Error(message),
             )
           ) {
             state.routeFrameWindowRecorderStatus =
@@ -16521,6 +16603,60 @@ async function captureAutoplayLiveTrajectoryMilestone({
   };
 }
 
+async function captureAutoplayRouteVisualFrameWithFallback({
+  beforeProbe,
+  expectedTargetLocationId,
+  label,
+  session,
+  timeoutMs,
+}) {
+  const state = session.screencast;
+  const shouldUseScreenshotFallback = Boolean(
+    !session.forceRouteCanvasFallback &&
+      state?.routeCanvasCaptureRuntimeEvaluateFailed,
+  );
+  if (!shouldUseScreenshotFallback) {
+    try {
+      return await session.captureAutoplayRouteCanvasVisualFrame({
+        beforeProbe,
+        expectedTargetLocationId,
+        timeoutMs,
+      });
+    } catch (error) {
+      if (
+        session.forceRouteCanvasFallback ||
+        !isRetryableAutoplayRouteCanvasCaptureError(error)
+      ) {
+        throw error;
+      }
+      if (state) {
+        state.routeCanvasCaptureRuntimeEvaluateFailed = true;
+        state.routeCanvasCaptureTransportStatus =
+          "runtime-evaluate-failed-screenshot-fallback";
+      }
+      session.recordCdpTransportEvent(
+        "route-canvas-runtime-evaluate-screenshot-fallback",
+        {
+          error: error instanceof Error ? error.message : String(error),
+          expectedTargetLocationId,
+        },
+      );
+    }
+  }
+
+  const captured = await session.captureAutoplayRouteScreenshotVisualFrame({
+    beforeProbe,
+    expectedTargetLocationId,
+    label,
+    timeoutMs,
+  });
+  assert.ok(
+    captured,
+    `${label}: route screenshot fallback lost the active legal route.`,
+  );
+  return captured;
+}
+
 async function captureAutoplayProactiveRouteFrameWindow({
   beforeProbe: initialBeforeProbe = null,
   expectedTargetLocationId,
@@ -16545,9 +16681,11 @@ async function captureAutoplayProactiveRouteFrameWindow({
     });
     return null;
   }
-  const captured = await session.captureAutoplayRouteCanvasVisualFrame({
+  const captured = await captureAutoplayRouteVisualFrameWithFallback({
     beforeProbe,
     expectedTargetLocationId,
+    label,
+    session,
     timeoutMs,
   });
   const { afterProbe, captureBeforeProbe, frame } = captured;
@@ -17276,6 +17414,139 @@ function assertAutoplayScreencastRouteFrameCandidateMergeGuard() {
     ),
     false,
     "Merged candidates at the same route progress must not form a pair.",
+  );
+}
+
+async function assertAutoplayRouteCaptureTransportRecoveryGuard() {
+  const targetLocationId = "tea-house";
+  const baseEpochMs = 1_785_760_476_893;
+  const sampleAt = (offsetMs, progress) => ({
+    capturedAtEpochMs: baseEpochMs + offsetMs,
+    capturedAtMonotonicMs: 10_000 + offsetMs,
+    paintProbe: {
+      capturedAtEpochMs: baseEpochMs + offsetMs,
+      regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+      stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+      viewport: { height: 360, width: 640 },
+    },
+    recorderGeneration: 2,
+    route: buildAutoplayFootholdRouteGuardFixture(progress, {
+      durationMs: 5_040,
+      spaceId: "street:south-quay",
+      target: { x: 17, y: 9 },
+      targetLocationId,
+      tilePath: [{ x: 3, y: 9 }, { x: 17, y: 9 }],
+      worldPath: [{ x: 331, y: 688 }, { x: 1_338, y: 656 }],
+    }),
+    source: "movement-probe-recorder",
+  });
+  const samples = [
+    sampleAt(0, 0.005),
+    sampleAt(2_500, 0.5),
+    sampleAt(2_640, 0.528),
+    sampleAt(3_200, 0.64),
+    sampleAt(3_340, 0.668),
+  ];
+  const frameAt = (offsetMs, sequence, pixels, source) => ({
+    data: Buffer.from(pixels).toString("base64"),
+    metadata: {
+      format: "png",
+      source,
+      timestamp: (baseEpochMs + offsetMs) / 1_000,
+    },
+    sequence,
+    source,
+  });
+  const fallbackCaptures = [[1, 2, 2_570, 800], [3, 4, 3_270, 802]].map(
+    ([beforeIndex, afterIndex, offsetMs, sequence], index) => ({
+      afterProbe: samples[afterIndex],
+      captureBeforeProbe: samples[beforeIndex],
+      frame: frameAt(
+        offsetMs,
+        sequence,
+        `fallback-position-${index}`,
+        "proactive-route-screenshot",
+      ),
+    }),
+  );
+  let canvasCaptureCount = 0;
+  let screenshotFallbackCount = 0;
+  const session = {
+    captureAutoplayRouteCanvasVisualFrame: async () => {
+      canvasCaptureCount += 1;
+      throw new Error(
+        "Timed out waiting for Chrome DevTools response for Runtime.evaluate.",
+      );
+    },
+    captureAutoplayRouteScreenshotVisualFrame: async () =>
+      fallbackCaptures[screenshotFallbackCount++],
+    forceRouteCanvasFallback: false,
+    recordCdpTransportEvent: () => undefined,
+    screencast: { routeCanvasCaptureRuntimeEvaluateFailed: false },
+  };
+  const recordedWindows = [];
+  for (const [index, beforeProbe] of [samples[0], samples[2]].entries()) {
+    recordedWindows.push({
+      ...(await captureAutoplayRouteVisualFrameWithFallback({
+        beforeProbe,
+        expectedTargetLocationId: targetLocationId,
+        label: `route capture recovery guard position ${index + 1}`,
+        session,
+        timeoutMs: index === 0 ? 4_000 : 2_000,
+      })),
+      beforeProbe,
+    });
+  }
+  assert.equal(
+    canvasCaptureCount,
+    1,
+    "A route-scoped Runtime.evaluate timeout must disable repeated canvas readbacks for the same short route.",
+  );
+  assert.equal(
+    screenshotFallbackCount,
+    2,
+    "The failed canvas readback and its follow-up must use the bounded screenshot fallback.",
+  );
+
+  const openingEvidence = buildAutoplayOpeningRouteEvidence({
+    expectedTargetLocationId: targetLocationId,
+    samples,
+  });
+  assert.equal(
+    openingEvidence.fragmentCount,
+    2,
+    "The recovery fixture must preserve the observed split opening sample history.",
+  );
+  const candidates = buildAutoplayRecordedRouteWindowCandidates({
+    expectedTargetLocationId: targetLocationId,
+    frames: [frameAt(3_000, 801, "only-screencast-frame", "screencast")],
+    openingSegment: openingEvidence.openingSegment,
+    recordedWindows,
+    samples,
+  });
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.frame?.sequence),
+    [800, 802],
+    `Two independently bracketed screenshot positions must survive a one-frame screencast history: ${JSON.stringify(
+      candidates.map((candidate) => ({
+        after: candidate.afterProbe?.route?.progress,
+        before: candidate.beforeProbe?.route?.progress,
+        sequence: candidate.frame?.sequence,
+      })),
+    )}`,
+  );
+  assert.equal(
+    autoplayRecordedRouteWindowsHaveDistinctProgress(
+      candidates[0],
+      candidates[1],
+    ),
+    true,
+    "Recovered route positions must retain distinct legal progress.",
+  );
+  assert.notEqual(
+    candidates[0].frame.data,
+    candidates[1].frame.data,
+    "Recovered route positions must retain distinct rendered pixels.",
   );
 }
 
@@ -18410,6 +18681,12 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     session.startAutoplayRouteVisualWindowRecorder({
       expectedTargetLocationId: expectedRouteTarget,
       label: `${openingWorldVariant}:autoplay:route-visual-window-recorder`,
+    });
+    await session.autoplayRouteCanvasCommandSession().catch((error) => {
+      session.recordCdpTransportEvent("route-canvas-session-prewarm-failed", {
+        error: error instanceof Error ? error.message : String(error),
+        expectedTargetLocationId: expectedRouteTarget,
+      });
     });
     await session.rearmAutoplayScreencastForRouteCapture(
       `${openingWorldVariant}:autoplay:route-dense-stream-prearm`,
@@ -25573,6 +25850,7 @@ async function main() {
   assertAutoplayPlaybackCardDwellResetGuard();
   assertAutoplayFootholdRouteCaptureGuard();
   assertAutoplayScreencastRouteFrameCandidateMergeGuard();
+  await assertAutoplayRouteCaptureTransportRecoveryGuard();
   assertVisibleImplementationLanguageGuardRegression();
   assertAutoplayNullProbeRetryGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {

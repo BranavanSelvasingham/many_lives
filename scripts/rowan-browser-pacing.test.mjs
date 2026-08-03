@@ -1643,7 +1643,9 @@ test("proactive route history survives a delayed observer and rejects unproven w
   const captureSource = source.slice(captureStart, captureEnd);
   const recordedSource = source.slice(recordedStart, recordedEnd);
   const proactiveCaptureSource = source.slice(
-    source.indexOf("async function captureAutoplayProactiveRouteFrameWindow("),
+    source.indexOf(
+      "async function captureAutoplayRouteVisualFrameWithFallback(",
+    ),
     recordedStart,
   );
   const runStart = source.indexOf(
@@ -1726,8 +1728,23 @@ test("proactive route history survives a delayed observer and rejects unproven w
   );
   assert.match(
     proactiveCaptureSource,
-    /const captured = await session\.captureAutoplayRouteCanvasVisualFrame\(\{/,
-    "The bounded fallback must use the in-page route canvas while screencast stays active.",
+    /return await session\.captureAutoplayRouteCanvasVisualFrame\(\{/,
+    "The bounded fallback must begin with the in-page route canvas while screencast stays active.",
+  );
+  assert.match(
+    proactiveCaptureSource,
+    /session\.forceRouteCanvasFallback \|\|\s*!isRetryableAutoplayRouteCanvasCaptureError\(error\)[\s\S]*throw error;/,
+    "Forced canvas mode and non-transport failures must remain fail-closed.",
+  );
+  assert.match(
+    proactiveCaptureSource,
+    /captureAutoplayRouteScreenshotVisualFrame\(\{/,
+    "Only a retryable canvas transport failure may use the bracketed screenshot recovery.",
+  );
+  assert.match(
+    proactiveCaptureSource,
+    /const captured = await captureAutoplayRouteVisualFrameWithFallback\(\{/,
+    "The proactive route position must retain the strict canvas-first recovery helper.",
   );
   assert.equal(
     (proactiveCaptureSource.match(/captureAutoplayRouteCanvasVisualFrame\(/g) ?? [])
@@ -2570,8 +2587,18 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     (recordedWindow) =>
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
   );
+  const cdpCaptureErrorPolicyStart = source.indexOf(
+    "function isCdpRuntimeEvaluateTimeout(",
+  );
+  const cdpCaptureErrorPolicyEnd = source.indexOf(
+    "\nclass CdpSession {",
+    cdpCaptureErrorPolicyStart,
+  );
+  const cdpCaptureErrorPolicy = Function(
+    `${source.slice(cdpCaptureErrorPolicyStart, cdpCaptureErrorPolicyEnd)}; return { isCdpExecutionContextReset, isRetryableAutoplayRouteCanvasCaptureError };`,
+  )();
   const proactiveCaptureStart = source.indexOf(
-    "async function captureAutoplayProactiveRouteFrameWindow(",
+    "async function captureAutoplayRouteVisualFrameWithFallback(",
   );
   const proactiveCaptureEnd = source.indexOf(
     "\nfunction recordedRouteWindowBelongsToOpeningSegment(",
@@ -2580,6 +2607,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   const proactiveCapturePolicy = Function(
     "AUTOPLAY_SCREENCAST_COMMAND_TIMEOUT_MS",
     "AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS",
+    "isRetryableAutoplayRouteCanvasCaptureError",
     "autoplayRouteCaptureWindowCoherent",
     "isAutoplayFootholdRouteFrame",
     "screencastFrameCapturedAtEpochMs",
@@ -2590,6 +2618,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
   )(
     5,
     125,
+    cdpCaptureErrorPolicy.isRetryableAutoplayRouteCanvasCaptureError,
     (beforeRoute, afterRoute, expectedTargetLocationId) =>
       routeSegmentsPolicy.isAutoplayFootholdRouteFrame(
         beforeRoute,
@@ -2663,6 +2692,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "compactAutoplayRouteFrameWindowProbe",
     "CDP_WAIT_TIMEOUT_MS",
     "isAutoplayFootholdRouteFrame",
+    "isCdpExecutionContextReset",
     "screencastFrameIsBracketedByEpochProbes",
     "screencastFrameCapturedAtEpochMs",
     "sleep",
@@ -2721,6 +2751,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     routeSegmentsPolicy.compactAutoplayRouteFrameWindowProbe,
     20,
     routeSegmentsPolicy.isAutoplayFootholdRouteFrame,
+    cdpCaptureErrorPolicy.isCdpExecutionContextReset,
     screencastFrameIsBracketedByEpochProbes,
     screencastFrameCapturedAtEpochMs,
     (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
@@ -4620,7 +4651,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         loadedSession.captureAutoplayRouteVisualFrame({
           minimumCapturedAtEpochMs: startedAt,
         }),
-        /exclusive access to the CDP visual transport/,
+        /either exclusive main-CDP access or the dedicated capture transport/,
       );
 
       for (let attempt = 0; attempt < 4; attempt += 1) {
