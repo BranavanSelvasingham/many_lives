@@ -45,13 +45,13 @@ South Quay reaches the visual target state only when all active rows are
 
 | ID | Surface | Current status | Target evidence |
 | --- | --- | --- | --- |
-| `VQ-01` | Core exterior landmarks: Morrow House, Kettle & Lamp, Quay Square | `CANDIDATE` | Desktop, tablet, phone, and high-DPR screenshots show distinct silhouettes, materials, entrances, and props before labels. |
+| `VQ-01` | Core exterior landmarks: Morrow House, Kettle & Lamp, Quay Square | `VERIFIED` | Desktop, tablet, phone, and high-DPR screenshots show distinct silhouettes, materials, entrances, and props before labels. |
 | `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `VERIFIED` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
 | `VQ-03` | Morrow House interior | `VERIFIED` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clearly framed Rowan and relevant Mara, and unobscured portal/action areas. |
 | `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
-| `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
+| `VQ-07` | Responsive composition and map primacy | `VERIFIED` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
 | `VQ-08` | Labels, cues, and scene-to-rail balance | `VERIFIED` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `VERIFIED` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
@@ -62,6 +62,25 @@ They are not grandfathered into `VERIFIED`.
 
 ### Verified Production Evidence
 
+- `VQ-01` was verified on production commit
+  `46fa94fb396bc9b5850212bd90f8c5b266e51bf0`. Exact-production desktop,
+  tablet, phone, and high-DPR captures show Morrow House's two-storey boarding
+  facade and stoop, Quay Square's fountain and planted civic geometry, and
+  Kettle & Lamp's striped cafe frontage and occupied terrace as distinct
+  landmarks before their labels are needed. The inspected capture set is
+  `/private/tmp/manylives-46fa94f-vq07-live-visual-retry`.
+- `VQ-07` was verified on production commit
+  `46fa94fb396bc9b5850212bd90f8c5b266e51bf0`. The deployed visual smoke passed
+  `390x844`, phone-boundary, tablet portrait, compact/tall Codex, reported and
+  high-DPR Codex profiles with collapsed and expanded context plus north,
+  south, east, and west panning. Inspection confirmed that the HUD, bottom
+  dock, rail, actors, and landmark labels remain separated while the map stays
+  primary. A clean saved-run prompt, Continue, and Start New pass protected
+  session continuity. Evidence was inspected at
+  `/private/tmp/manylives-46fa94f-vq07-live-visual-retry`; live fresh,
+  saved/resumed, distinct-new, autoplay, console, and accepted OpenAI planner
+  smoke passed at `/private/tmp/manylives-46fa94f-live-smoke-retry`. GitHub
+  Actions run: `30808042072`.
 - `VQ-09` was verified on production commit
   `7bc50be1491105299e1bf714457adcb9f0a07c8a`. The focused hosted Chrome
   regression completed ordinary-lead and noticed-pump trajectories with zero
