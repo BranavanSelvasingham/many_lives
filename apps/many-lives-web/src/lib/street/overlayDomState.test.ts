@@ -1,7 +1,45 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { shouldFollowLatestConversationLine } from "./overlayDomState";
+import {
+  shouldFollowCommandRailGrowth,
+  shouldFollowLatestConversationLine,
+} from "./overlayDomState";
+
+test("near-bottom command rail growth follows only a continuing live conversation", () => {
+  assert.equal(
+    shouldFollowCommandRailGrowth({
+      nearBottom: true,
+      nextConversationActive: false,
+      previousConversationActive: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFollowCommandRailGrowth({
+      nearBottom: true,
+      nextConversationActive: true,
+      previousConversationActive: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldFollowCommandRailGrowth({
+      nearBottom: true,
+      nextConversationActive: false,
+      previousConversationActive: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFollowCommandRailGrowth({
+      nearBottom: false,
+      nextConversationActive: true,
+      previousConversationActive: true,
+    }),
+    false,
+  );
+});
 
 test("streaming growth keeps following a partially visible latest reply", () => {
   assert.equal(

@@ -8568,6 +8568,21 @@ test("streaming conversation growth keeps following a readable exchange", () => 
   );
   assert.match(
     overlayDomStateSource,
+    /commandRailConversationActive: commandRail\s*\? isLiveCommandRailConversation\(commandRail\)/,
+    "Command rail capture must distinguish live conversation state from ordinary near-bottom position.",
+  );
+  assert.match(
+    overlayDomStateSource,
+    /shouldFollowCommandRailGrowth\(\{[\s\S]*?nearBottom: state\.commandRailNearBottom,[\s\S]*?nextConversationActive: isLiveCommandRailConversation\(commandRail\),[\s\S]*?previousConversationActive: state\.commandRailConversationActive,[\s\S]*?\}\)/,
+    "Near-bottom command rail growth should follow only while a live conversation continues.",
+  );
+  assert.doesNotMatch(
+    overlayDomStateSource,
+    /else if \(state\.commandRailNearBottom\)/,
+    "Ordinary decision rails must preserve their prior scroll position when content grows.",
+  );
+  assert.match(
+    overlayDomStateSource,
     /else if \(state\.commandRailConversationVisible\) {\s*ensureCommandRailConversationVisible\(commandRail\);/,
   );
 });

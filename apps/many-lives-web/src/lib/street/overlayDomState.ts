@@ -1,6 +1,7 @@
 export type OverlayRenderState = {
   activeFieldKey: string | null;
   browserCameraProbeJson: string | null;
+  commandRailConversationActive: boolean;
   commandRailConversationVisible: boolean;
   commandRailNearBottom: boolean;
   commandRailScrollTop: number | null;
@@ -23,6 +24,20 @@ export type ConversationTranscriptFollowGeometry = {
   viewportBottom: number;
   viewportTop: number;
 };
+
+export type CommandRailGrowthFollowState = {
+  nearBottom: boolean;
+  nextConversationActive: boolean;
+  previousConversationActive: boolean;
+};
+
+export function shouldFollowCommandRailGrowth({
+  nearBottom,
+  nextConversationActive,
+  previousConversationActive,
+}: CommandRailGrowthFollowState) {
+  return nearBottom && nextConversationActive && previousConversationActive;
+}
 
 export function shouldFollowLatestConversationLine({
   distanceFromBottom,
@@ -111,6 +126,9 @@ export function captureOverlayRenderState(
         ? (activeField.dataset.overlayFieldKey ?? null)
         : null,
     browserCameraProbeJson: browserCameraProbe?.textContent ?? null,
+    commandRailConversationActive: commandRail
+      ? isLiveCommandRailConversation(commandRail)
+      : false,
     commandRailConversationVisible: commandRail
       ? isCommandRailConversationVisible(commandRail)
       : false,
@@ -214,7 +232,13 @@ export function restoreOverlayRenderState(
       ensureCommandRailDirectiveVisible(commandRail);
     } else if (!commandRailIdentityMatches) {
       scrollCommandRailToDirective(commandRail);
-    } else if (state.commandRailNearBottom) {
+    } else if (
+      shouldFollowCommandRailGrowth({
+        nearBottom: state.commandRailNearBottom,
+        nextConversationActive: isLiveCommandRailConversation(commandRail),
+        previousConversationActive: state.commandRailConversationActive,
+      })
+    ) {
       commandRail.scrollTop = commandRail.scrollHeight;
       ensureCommandRailConversationVisible(commandRail);
     } else if (state.commandRailConversationVisible) {
@@ -349,6 +373,10 @@ function ensureCommandRailConversationVisible(commandRail: HTMLElement) {
   }
 
   commandRail.scrollTop = Math.max(nextScrollTop, 0);
+}
+
+function isLiveCommandRailConversation(commandRail: HTMLElement) {
+  return commandRail.classList.contains("is-live-conversation");
 }
 
 function isCommandRailConversationVisible(commandRail: HTMLElement) {
