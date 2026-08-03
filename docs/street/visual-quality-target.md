@@ -53,7 +53,7 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
 | `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
 | `VQ-08` | Labels, cues, and scene-to-rail balance | `VERIFIED` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
-| `VQ-09` | Route and transition continuity | `CANDIDATE` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
+| `VQ-09` | Route and transition continuity | `VERIFIED` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 | `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
 
@@ -62,6 +62,19 @@ They are not grandfathered into `VERIFIED`.
 
 ### Verified Production Evidence
 
+- `VQ-09` was verified on production commit
+  `7bc50be1491105299e1bf714457adcb9f0a07c8a`. The focused hosted Chrome
+  regression completed ordinary-lead and noticed-pump trajectories with zero
+  progression clicks, legal route-start and route-mid captures to Kettle &
+  Lamp and Mercer Repairs, explicit exterior/interior continuity, distinct
+  durable consequences, and natural first-afternoon stopping points. The
+  deployed visual smoke also passed secondary-route identity, responsive,
+  saved-run, panning, and interior checks. Route sequences were inspected at
+  `/private/tmp/manylives-7bc50be-vq09-focused-live`; the full deployed visual
+  set was inspected at `/private/tmp/manylives-7bc50be-v1-live-visual`, and
+  production fresh/saved/autoplay smoke passed at
+  `/private/tmp/manylives-7bc50be-live-smoke`. GitHub Actions run:
+  `30787105857`.
 - `VQ-08` was verified on production commit
   `c478726cf8f46ffd06eaf467f14ceade68df84b4` against baseline
   `de0b9fa33805fa1b356cc16ea0394e72bc908d9f`. The deployed visual smoke
