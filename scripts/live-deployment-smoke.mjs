@@ -241,8 +241,13 @@ async function main() {
     console.log(`[many-lives:live-smoke] screenshot: ${screenshotPath}`);
     console.log(`[many-lives:live-smoke] summary: ${SUMMARY_PATH}`);
   } catch (error) {
+    const failureDiagnostics = await captureLiveFailureDiagnostics(session);
+    if (failureDiagnostics.finalProbe) {
+      probeSnapshots.finalFailureProbe = failureDiagnostics.finalProbe;
+    }
     Object.assign(summary, {
       error: error instanceof Error ? error.stack ?? error.message : String(error),
+      failureDiagnostics,
       finishedAt: new Date().toISOString(),
       livePlannerEvidence: deriveLivePlannerEvidence({
         health: summary.health,
@@ -408,6 +413,7 @@ function compactProbeSnapshot(label, probe) {
       label: probe.clock?.label ?? null,
       totalMinutes: probe.clock?.totalMinutes ?? null,
     },
+    busyLabel: probe.busyLabel ?? null,
     gameId: probe.gameId ?? null,
     label,
     location: {
@@ -425,6 +431,13 @@ function compactProbeSnapshot(label, probe) {
       status: probe.rail?.status ?? null,
       thought: compactText(probe.rail?.thought, 260),
     },
+    timing: probe.timing
+      ? {
+          appMonotonicMs: probe.timing.appMonotonicMs ?? null,
+          autoContinue: probe.timing.autoContinue ?? null,
+          wallMonotonicMs: probe.timing.wallMonotonicMs ?? null,
+        }
+      : null,
     watchMode: {
       autoContinue: Boolean(probe.watchMode?.autoContinue),
       enabled: Boolean(probe.watchMode?.enabled),
@@ -433,6 +446,51 @@ function compactProbeSnapshot(label, probe) {
       status: probe.watchMode?.status ?? null,
     },
   };
+}
+
+async function captureLiveFailureDiagnostics(session) {
+  const diagnostics = {
+    busyLabel: null,
+    captureErrors: [],
+    capturedAt: new Date().toISOString(),
+    finalPage: null,
+    finalProbe: null,
+    pageIssues: session.pageIssues.slice(-50),
+    requestedUrl: session.lastNavigatedUrl,
+    screenshot: null,
+    timing: null,
+  };
+
+  try {
+    const probe = await session.readBrowserProbe();
+    diagnostics.busyLabel = probe?.busyLabel ?? null;
+    diagnostics.finalProbe = compactProbeSnapshot("finalFailureProbe", probe);
+    diagnostics.timing = probe?.timing ?? null;
+  } catch (error) {
+    diagnostics.captureErrors.push(
+      `probe: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  try {
+    diagnostics.finalPage = await session.inspectPage();
+  } catch (error) {
+    diagnostics.captureErrors.push(
+      `page: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  const screenshotPath = path.join(OUTPUT_DIR, "failure-final.png");
+  try {
+    await session.captureScreenshot(screenshotPath);
+    diagnostics.screenshot = screenshotPath;
+  } catch (error) {
+    diagnostics.captureErrors.push(
+      `screenshot: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  return diagnostics;
 }
 
 function compactAIRuntime(aiRuntime) {

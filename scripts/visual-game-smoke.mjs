@@ -766,6 +766,8 @@ class CdpSession {
       );
       const passiveWatchStatus = document.querySelector(".ml-autoplay-note");
       const text = document.body.innerText || "";
+      const rawBackendError =
+        /\\{"message":|"message"\\s*:\\s*"Game\\s+game-|Game\\s+game-[A-Za-z0-9-]+\\s+was not found/i.test(text);
       const isVisibleEnabled = (element) => {
         if (!element) {
           return false;
@@ -1254,6 +1256,7 @@ class CdpSession {
           text.includes("Unhandled Runtime Error") ||
           text.includes("Application error") ||
           text.includes("Next.js") && text.includes("Error"),
+        hasRawBackendError: rawBackendError,
         rail: railRect ? {
           height: Math.round(railRect.height),
           width: Math.round(railRect.width),
@@ -8967,6 +8970,90 @@ async function runMissingStoredGameCheck(session) {
   };
 }
 
+async function installFreshOpeningCommandLossFault(session) {
+  await session.evaluate(`(() => {
+    const originalFetch = window.fetch.bind(window);
+    const trace = {
+      commandAbortReason: null,
+      commandAbortedAt: null,
+      commandStartedAt: null,
+      createdGameIds: [],
+      installedAt: Date.now(),
+      reconciliationReads: 0
+    };
+
+    window.__manyLivesFreshOpeningCommandLossFault = trace;
+    window.fetch = async (input, init = {}) => {
+      const request = input instanceof Request ? input : null;
+      const requestUrl = new URL(request?.url ?? String(input), location.href);
+      const method = String(init.method ?? request?.method ?? "GET").toUpperCase();
+
+      if (method === "POST" && requestUrl.pathname.endsWith("/sim/game/new")) {
+        const response = await originalFetch(input, init);
+        try {
+          const payload = await response.clone().json();
+          if (payload?.game?.id) {
+            trace.createdGameIds.push(payload.game.id);
+          }
+        } catch {}
+        return response;
+      }
+
+      const failedGameId = trace.createdGameIds[0] ?? null;
+      if (
+        failedGameId &&
+        method === "POST" &&
+        requestUrl.pathname.endsWith(
+          "/sim/game/" + encodeURIComponent(failedGameId) + "/command"
+        ) &&
+        trace.commandStartedAt === null
+      ) {
+        trace.commandStartedAt = Date.now();
+        const signal = init.signal ?? request?.signal ?? null;
+        return new Promise((resolve, reject) => {
+          const rejectForAbort = () => {
+            trace.commandAbortedAt = Date.now();
+            trace.commandAbortReason = signal?.reason?.name ?? "AbortError";
+            reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          };
+          if (signal?.aborted) {
+            rejectForAbort();
+            return;
+          }
+          signal?.addEventListener("abort", rejectForAbort, { once: true });
+        });
+      }
+
+      if (
+        failedGameId &&
+        trace.commandAbortedAt !== null &&
+        method === "GET" &&
+        requestUrl.pathname.endsWith(
+          "/sim/game/" + encodeURIComponent(failedGameId) + "/state"
+        )
+      ) {
+        trace.reconciliationReads += 1;
+        return new Response(
+          JSON.stringify({ message: "Game " + failedGameId + " was not found" }),
+          {
+            headers: { "Content-Type": "application/json" },
+            status: 404
+          }
+        );
+      }
+
+      return originalFetch(input, init);
+    };
+    return true;
+  })()`);
+}
+
+async function readFreshOpeningCommandLossFault(session) {
+  return session.evaluate(
+    `window.__manyLivesFreshOpeningCommandLossFault ?? null`,
+  );
+}
+
 function filterExpectedStoredGamePageErrors(pageErrors, storedGameChoice) {
   const missingGameId = storedGameChoice?.missingStoredGame?.missingGameId;
   if (!missingGameId) {
@@ -9073,17 +9160,86 @@ async function runStoredGameChoiceCheck(session) {
     minimumUsefulBytesRatio: 0.03,
     name: "saved-run-prompt-mobile",
   });
+  await installFreshOpeningCommandLossFault(session);
   await session.clickSelector("[data-start-new-game]");
   await session.waitForAppReady();
-  await sleep(500);
-  const freshProbe = await session.readBrowserProbe();
+  await session.waitForWatchModeUi(mobileViewport);
+  const freshOpeningProbe = await session.readBrowserProbe();
+  const freshProbe = await waitForFreshAutoplayAdvance(
+    session,
+    freshOpeningProbe,
+    "saved-run Start New recovery",
+  );
+  const freshPage = await session.inspectPage();
+  const recoveryFault = await readFreshOpeningCommandLossFault(session);
+  const storedReplacementGameId = await session.evaluate(
+    `window.localStorage.getItem("many-lives:street-game-id")`,
+  );
   await session.setViewport(VIEWPORTS[0]);
-  assert.ok(freshProbe?.gameId, "Start new run did not create a game id.");
+  await session.waitForAnimationFrames(2);
+  assert.ok(
+    freshOpeningProbe?.gameId,
+    "Start new run did not create its initial fresh game id.",
+  );
+  assert.ok(freshProbe?.gameId, "Start new run did not recover a game id.");
   assert.notEqual(
     freshProbe.gameId,
     seededGameId,
     "Start new run reused the stored game id.",
   );
+  assert.notEqual(
+    freshProbe.gameId,
+    freshOpeningProbe.gameId,
+    "Start new run did not replace the confirmed missing fresh game.",
+  );
+  assert.deepEqual(
+    recoveryFault?.createdGameIds,
+    [freshOpeningProbe.gameId, freshProbe.gameId],
+    "Start new recovery must create exactly one distinct replacement game.",
+  );
+  assert.ok(
+    recoveryFault?.commandStartedAt,
+    "Start new recovery did not exercise the opening command hang.",
+  );
+  assert.ok(
+    recoveryFault?.commandAbortedAt,
+    "Start new recovery did not abort the hung opening command.",
+  );
+  assert.ok(
+    recoveryFault.commandAbortedAt - recoveryFault.commandStartedAt <
+      AUTOPLAY_START_TIMEOUT_MS,
+    "Start new recovery did not abort within the existing autoplay gate.",
+  );
+  assert.ok(
+    recoveryFault.reconciliationReads >= 1,
+    "Start new recovery did not reconcile the failed game authoritatively.",
+  );
+  assert.equal(
+    storedReplacementGameId,
+    freshProbe.gameId,
+    "Start new recovery did not persist the replacement game id.",
+  );
+  assert.equal(
+    freshPage.hasRawBackendError,
+    false,
+    "Start new recovery leaked a raw missing-game backend error.",
+  );
+  assert.deepEqual(
+    freshPage.visibleProgressionControls,
+    [],
+    "Start new recovery exposed a required progression click in watch mode.",
+  );
+  assertNoWatchModeReplyAffordances(freshPage, "saved-run Start New recovery");
+  const recoveredFreshScreenshotPath = path.join(
+    OUTPUT_DIR,
+    "saved-run-start-new-recovered.png",
+  );
+  await session.captureScreenshot(recoveredFreshScreenshotPath);
+  assertPngScreenshot(await readFile(recoveredFreshScreenshotPath), {
+    ...VIEWPORTS[0],
+    minimumUsefulBytesRatio: 0.03,
+    name: "saved-run-start-new-recovered",
+  });
 
   const missingStoredGame = await runMissingStoredGameCheck(session);
 
@@ -9091,9 +9247,12 @@ async function runStoredGameChoiceCheck(session) {
     desktopPromptScreenshotPath,
     driftGameId,
     freshGameId: freshProbe.gameId,
+    freshOpeningGameId: freshOpeningProbe.gameId,
     missingStoredGame,
     mobilePromptScreenshotPath,
     prompt,
+    recoveredFreshScreenshotPath,
+    recoveryFault,
     resumedGameId: resumedProbe.gameId,
     seededGameId,
   };

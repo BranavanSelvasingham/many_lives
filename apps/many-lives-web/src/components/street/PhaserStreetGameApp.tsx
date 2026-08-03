@@ -14,7 +14,9 @@ import {
   actInStreetGame,
   advanceStreetObjective,
   createStreetGame,
+  isStreetRequestTimeoutError,
   loadStreetGame,
+  STREET_RECOVERY_REQUEST_TIMEOUT_MS,
   waitInStreetGame,
 } from "@/lib/street/api";
 import { useSearchParams } from "next/navigation";
@@ -215,7 +217,11 @@ import {
   type CameraGestureState,
   type CameraSafeFrame,
 } from "@/lib/street/runtimeCamera";
-import { shouldSkipUrlCleanupGameReload } from "@/lib/street/sessionIdentity";
+import {
+  shouldReplaceMissingFreshGame,
+  shouldSkipUrlCleanupGameReload,
+  type StreetSessionIdentity,
+} from "@/lib/street/sessionIdentity";
 import {
   CELL,
   KENNEY_TILE,
@@ -491,6 +497,24 @@ function hideGameIdFromCurrentUrl() {
   window.history.replaceState(null, "", nextUrl.toString());
 }
 
+function replaceFreshGameIdInCurrentUrl(
+  failedGameId: string,
+  replacementGameId: string,
+) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const nextUrl = new URL(window.location.href);
+  if (nextUrl.searchParams.get("gameId") !== failedGameId) {
+    return false;
+  }
+
+  nextUrl.searchParams.set("gameId", replacementGameId);
+  window.history.replaceState(null, "", nextUrl.toString());
+  return true;
+}
+
 function readStoredStreetGameId() {
   if (typeof window === "undefined") {
     return null;
@@ -542,6 +566,10 @@ function isMissingStreetGameError(error: unknown) {
 function formatStreetRuntimeError(error: unknown, fallback: string) {
   if (isMissingStreetGameError(error)) {
     return "That run is no longer available. Start a fresh run to keep watching Rowan.";
+  }
+
+  if (isStreetRequestTimeoutError(error)) {
+    return "The district took too long to respond. Rowan can try again from the latest available state.";
   }
 
   if (error instanceof Error && error.message.trim()) {
@@ -1051,6 +1079,7 @@ export function PhaserStreetGameApp() {
   const boundGameRefreshTimerRef = useRef<number | null>(null);
   const playbackTimerRef = useRef<number | null>(null);
   const rowanPlaybackRef = useRef<RowanPlaybackState>(rowanPlayback);
+  const streetSessionIdentityRef = useRef<StreetSessionIdentity | null>(null);
   const urlCleanupGameIdRef = useRef<string | null>(null);
   const requestedGameId = useMemo(() => {
     const rawGameId = searchParams.get("gameId");
@@ -1354,6 +1383,7 @@ export function PhaserStreetGameApp() {
       setBusyLabel(null);
       setStoredGamePromptId(storedGameId);
       setGame(null);
+      streetSessionIdentityRef.current = null;
       autoContinueBeatStartedRef.current = null;
       publishAutoContinueBeatTiming(null);
       setRowanPlayback(createEmptyRowanPlaybackState());
@@ -1380,6 +1410,15 @@ export function PhaserStreetGameApp() {
       if (!applyGameUpdate(nextGame, requestId)) {
         return;
       }
+      streetSessionIdentityRef.current = {
+        gameId: nextGame.id,
+        replacementAttempted: false,
+        source: gameIdToOpen
+          ? requestedGameId === gameIdToOpen
+            ? "explicit"
+            : "stored"
+          : "fresh",
+      };
       rememberStreetGameId(nextGame.id);
       if (
         forceFreshGame ||
@@ -1491,6 +1530,86 @@ export function PhaserStreetGameApp() {
     };
   }, [applyGameUpdate, boundGameObserverEnabled, nextRequestId, requestedGameId]);
 
+  const reconcileFailedAutoplayCommand = useCallback(
+    async (failedGame: StreetGameState, commandError: unknown) => {
+      if (
+        !isStreetRequestTimeoutError(commandError) &&
+        !isMissingStreetGameError(commandError)
+      ) {
+        throw commandError;
+      }
+
+      const reconciliationRequestId = nextRequestId();
+      try {
+        const authoritativeGame = await loadStreetGame(failedGame.id, {
+          timeoutMs: STREET_RECOVERY_REQUEST_TIMEOUT_MS,
+        });
+        return applyGameUpdate(authoritativeGame, reconciliationRequestId)
+          ? authoritativeGame
+          : null;
+      } catch (reconciliationError) {
+        if (!isMissingStreetGameError(reconciliationError)) {
+          throw reconciliationError;
+        }
+
+        const identity = streetSessionIdentityRef.current;
+        if (
+          !identity ||
+          !shouldReplaceMissingFreshGame({
+            activeGameId: gameRef.current?.id ?? null,
+            confirmedMissingGameId: failedGame.id,
+            failedGameId: failedGame.id,
+            identity,
+          })
+        ) {
+          throw reconciliationError;
+        }
+
+        streetSessionIdentityRef.current = {
+          ...identity,
+          replacementAttempted: true,
+        };
+        const replacementGame = await createStreetGame({
+          timeoutMs: STREET_RECOVERY_REQUEST_TIMEOUT_MS,
+        });
+        if (gameRef.current?.id !== failedGame.id) {
+          return null;
+        }
+
+        clearPendingVisualGameUpdate();
+        clearOptimisticPlayerMove();
+        firstAfternoonPresentationStartRef.current = null;
+        autoContinueBeatStartedRef.current = null;
+        publishAutoContinueBeatTiming(null);
+        lastObjectiveAutoContinueKeyRef.current = null;
+        setRowanPlayback(createEmptyRowanPlaybackState());
+        if (!applyGameUpdate(replacementGame, reconciliationRequestId)) {
+          return null;
+        }
+
+        streetSessionIdentityRef.current = {
+          gameId: replacementGame.id,
+          replacementAttempted: true,
+          source: "fresh",
+        };
+        rememberStreetGameId(replacementGame.id);
+        if (
+          replaceFreshGameIdInCurrentUrl(failedGame.id, replacementGame.id)
+        ) {
+          urlCleanupGameIdRef.current = replacementGame.id;
+        }
+        return replacementGame;
+      }
+    },
+    [
+      applyGameUpdate,
+      clearOptimisticPlayerMove,
+      clearPendingVisualGameUpdate,
+      nextRequestId,
+      publishAutoContinueBeatTiming,
+    ],
+  );
+
   const runWithBusy = useCallback(
     async (label: string, callback: () => Promise<void>) => {
       setError(null);
@@ -1563,16 +1682,41 @@ export function PhaserStreetGameApp() {
     let madeVisibleProgress = false;
     const requestSucceeded = await runWithBusy(busyCopy, async () => {
       const requestId = nextRequestId();
-      const nextGame = await advanceStreetObjective(activeGame.id, {
-        allowTimeSkip: true,
-        confirmMove: options.confirmedByUser ?? false,
-      });
+      let nextGame: StreetGameState | null;
+      let nextGameAlreadyApplied = false;
+      try {
+        nextGame = await advanceStreetObjective(activeGame.id, {
+          allowTimeSkip: true,
+          confirmMove: options.confirmedByUser ?? false,
+        });
+      } catch (commandError) {
+        nextGame = await reconcileFailedAutoplayCommand(
+          activeGame,
+          commandError,
+        );
+        nextGameAlreadyApplied = true;
+        if (!nextGame || nextGame.id !== activeGame.id) {
+          return;
+        }
+      }
+      if (nextGameAlreadyApplied) {
+        madeVisibleProgress = autoplayAdvanceMadeVisibleProgress(
+          activeGame,
+          nextGame,
+        );
+        return;
+      }
       madeVisibleProgress =
         autoplayAdvanceMadeVisibleProgress(activeGame, nextGame) &&
         applyGameUpdate(nextGame, requestId);
     });
     return requestSucceeded && madeVisibleProgress;
-  }, [applyGameUpdate, nextRequestId, runWithBusy]);
+  }, [
+    applyGameUpdate,
+    nextRequestId,
+    reconcileFailedAutoplayCommand,
+    runWithBusy,
+  ]);
 
   useEffect(() => {
     return () => {

@@ -1,3 +1,9 @@
+export type StreetSessionIdentity = {
+  gameId: string;
+  replacementAttempted: boolean;
+  source: "explicit" | "fresh" | "stored";
+};
+
 export function shouldSkipUrlCleanupGameReload({
   activeGameId,
   cleanupGameId,
@@ -14,5 +20,26 @@ export function shouldSkipUrlCleanupGameReload({
       cleanupGameId &&
       activeGameId === cleanupGameId &&
       (!requestedGameId || requestedGameId === cleanupGameId),
+  );
+}
+
+export function shouldReplaceMissingFreshGame({
+  activeGameId,
+  confirmedMissingGameId,
+  failedGameId,
+  identity,
+}: {
+  activeGameId: string | null;
+  confirmedMissingGameId: string | null;
+  failedGameId: string;
+  identity: StreetSessionIdentity | null;
+}) {
+  return Boolean(
+    identity &&
+      identity.source === "fresh" &&
+      !identity.replacementAttempted &&
+      identity.gameId === failedGameId &&
+      confirmedMissingGameId === failedGameId &&
+      activeGameId === failedGameId,
   );
 }
