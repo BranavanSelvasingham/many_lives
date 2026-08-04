@@ -42,6 +42,10 @@ const AUTOPLAY_START_TIMEOUT_MS = Number(
 const AUTOPLAY_NEAR_ARRIVAL_GRACE_MS = Number(
   process.env.MANY_LIVES_VISUAL_AUTOPLAY_NEAR_ARRIVAL_GRACE_MS ?? "8000",
 );
+const STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS = Number(
+  process.env.MANY_LIVES_VISUAL_STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS ??
+    "20000",
+);
 const AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS = 0.95;
 const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_READABILITY_TIMEOUT_MS ?? "30000",
@@ -4543,6 +4547,78 @@ function assertOpeningActionCarryForwardContractGuard() {
     "an opening route below the near-arrival threshold must not weaken the pacing deadline",
   );
 
+  const storedGameRecoveryFixture = {
+    initialGameId: "game-initial",
+    probe: {
+      gameId: "game-replacement",
+      openingActionCarryForward: {
+        phase: "opening_in_progress",
+        requiredVisibleInput: false,
+        selectedActionId: "enter:boarding-house",
+        status: "in_progress",
+        targetLocationId: "boarding-house",
+        watchMode: { autoplayEnabled: true, enabled: true, frozen: false },
+      },
+    },
+    recoveryFault: {
+      commandAbortedAt: AUTOPLAY_START_TIMEOUT_MS - 1,
+      commandStartedAt: 0,
+      createdGameIds: ["game-initial", "game-replacement"],
+    },
+  };
+  assert.equal(
+    storedGameRecoveryNeedsAutoplayGrace(
+      storedGameRecoveryFixture.initialGameId,
+      storedGameRecoveryFixture.probe,
+      storedGameRecoveryFixture.recoveryFault,
+    ),
+    true,
+    "a single recovered replacement at the legal opening state should receive bounded autoplay grace",
+  );
+  assert.equal(
+    storedGameRecoveryNeedsAutoplayGrace(
+      storedGameRecoveryFixture.initialGameId,
+      storedGameRecoveryFixture.probe,
+      {
+        ...storedGameRecoveryFixture.recoveryFault,
+        createdGameIds: [
+          "game-initial",
+          "game-replacement",
+          "game-unexpected",
+        ],
+      },
+    ),
+    false,
+    "recovery autoplay grace must not tolerate more than one replacement game",
+  );
+  assert.equal(
+    storedGameRecoveryNeedsAutoplayGrace(
+      storedGameRecoveryFixture.initialGameId,
+      {
+        ...storedGameRecoveryFixture.probe,
+        openingActionCarryForward: {
+          ...storedGameRecoveryFixture.probe.openingActionCarryForward,
+          requiredVisibleInput: true,
+        },
+      },
+      storedGameRecoveryFixture.recoveryFault,
+    ),
+    false,
+    "recovery autoplay grace must not mask a required opening click",
+  );
+  assert.equal(
+    storedGameRecoveryNeedsAutoplayGrace(
+      storedGameRecoveryFixture.initialGameId,
+      storedGameRecoveryFixture.probe,
+      {
+        ...storedGameRecoveryFixture.recoveryFault,
+        commandAbortedAt: AUTOPLAY_START_TIMEOUT_MS,
+      },
+    ),
+    false,
+    "recovery autoplay grace must not weaken the existing command-abort gate",
+  );
+
   const mutateCarryForward = (changes) => ({
     openingActionCarryForward: {
       ...progressedProbe.openingActionCarryForward,
@@ -4644,6 +4720,33 @@ function openingActionNeedsNearArrivalGrace(browserProbe) {
       route.reachesDestination &&
       Number.isFinite(route.progress) &&
       route.progress >= AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS,
+  );
+}
+
+function storedGameRecoveryNeedsAutoplayGrace(
+  initialGameId,
+  replacementProbe,
+  recoveryFault,
+) {
+  const carryForward = replacementProbe?.openingActionCarryForward;
+  const createdGameIds = recoveryFault?.createdGameIds ?? [];
+  const abortDurationMs =
+    recoveryFault?.commandAbortedAt - recoveryFault?.commandStartedAt;
+
+  return Boolean(
+    initialGameId &&
+      createdGameIds.length === 2 &&
+      createdGameIds[0] === initialGameId &&
+      createdGameIds[1] === replacementProbe?.gameId &&
+      Number.isFinite(abortDurationMs) &&
+      abortDurationMs >= 0 &&
+      abortDurationMs < AUTOPLAY_START_TIMEOUT_MS &&
+      ["queued", "in_progress"].includes(carryForward?.status) &&
+      carryForward?.selectedActionId === "enter:boarding-house" &&
+      carryForward?.targetLocationId === "boarding-house" &&
+      carryForward?.requiredVisibleInput === false &&
+      carryForward?.watchMode?.enabled &&
+      !carryForward.watchMode.frozen
   );
 }
 
@@ -7533,6 +7636,54 @@ async function waitForFreshAutoplayAdvance(session, openingProbe, label) {
   }
 }
 
+async function waitForStoredGameRecoveryAutoplayAdvance(
+  session,
+  initialGameId,
+  timedOutProbe,
+  initialError,
+) {
+  const recoveryFault = await readFreshOpeningCommandLossFault(session);
+  if (
+    !storedGameRecoveryNeedsAutoplayGrace(
+      initialGameId,
+      timedOutProbe,
+      recoveryFault,
+    )
+  ) {
+    throw initialError;
+  }
+
+  process.stdout.write(
+    "[many-lives] Start New replacement entered bounded recovery autoplay grace.\n",
+  );
+
+  const replacementOpeningDiagnostic =
+    compactDecisionArtifactProbeDiagnostic(timedOutProbe);
+  try {
+    return await waitFor(
+      async () => {
+        const probe = await session.readBrowserProbe();
+        return openingActionHasAutoplayProgressed(probe) ? probe : false;
+      },
+      STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS,
+      `saved-run Start New replacement did not visibly advance without a click within the additional ${STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS}ms. Replacement opening state: ${JSON.stringify(
+        replacementOpeningDiagnostic,
+      )}`,
+    );
+  } catch (error) {
+    const latestProbe = await session.readBrowserProbe();
+    if (openingActionHasAutoplayProgressed(latestProbe)) {
+      return latestProbe;
+    }
+    throw new Error(
+      `${error.message} Latest state: ${JSON.stringify(
+        compactDecisionArtifactProbeDiagnostic(latestProbe),
+      )}`,
+      { cause: error },
+    );
+  }
+}
+
 async function runFreshAutoplayStartCheck(session) {
   const viewport = VIEWPORTS[0];
   const url = `${activeWebBase}/?new=1&autoplayStart=${Date.now()}`;
@@ -9171,11 +9322,22 @@ async function runStoredGameChoiceCheck(session) {
   await session.waitForAppReady();
   await session.waitForWatchModeUi(mobileViewport);
   const freshOpeningProbe = await session.readBrowserProbe();
-  const freshProbe = await waitForFreshAutoplayAdvance(
-    session,
-    freshOpeningProbe,
-    "saved-run Start New recovery",
-  );
+  let freshProbe;
+  try {
+    freshProbe = await waitForFreshAutoplayAdvance(
+      session,
+      freshOpeningProbe,
+      "saved-run Start New recovery",
+    );
+  } catch (error) {
+    const timedOutProbe = await session.readBrowserProbe();
+    freshProbe = await waitForStoredGameRecoveryAutoplayAdvance(
+      session,
+      freshOpeningProbe.gameId,
+      timedOutProbe,
+      error,
+    );
+  }
   const freshPage = await session.inspectPage();
   const recoveryFault = await readFreshOpeningCommandLossFault(session);
   const storedReplacementGameId = await session.evaluate(
