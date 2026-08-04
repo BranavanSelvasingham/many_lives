@@ -3575,7 +3575,9 @@ class CdpSession {
   async startAutoplayRouteCaptureRecorder({
     expectedTargetLocationId,
     generation = null,
+    includeBrowserProbe = false,
     label = "autoplay-route-recorder-start",
+    maxSnapshots = AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS,
     restartReason = null,
   }) {
     const screencastState = this.screencast;
@@ -3589,12 +3591,14 @@ class CdpSession {
       }
       const expectedTargetLocationId = ${JSON.stringify(expectedTargetLocationId)};
       const generation = ${JSON.stringify(recorderGeneration)};
+      const includeBrowserProbe = ${JSON.stringify(includeBrowserProbe)};
       const restartReason = ${JSON.stringify(restartReason)};
-      const maxSnapshots = ${AUTOPLAY_ROUTE_RECORDER_MAX_SNAPSHOTS};
+      const maxSnapshots = ${JSON.stringify(maxSnapshots)};
       const state = {
         acceptedCount: 0,
         expectedTargetLocationId,
         generation,
+        includeBrowserProbe,
         intervalId: null,
         lastTickAtEpochMs: null,
         lastObservedRoute: null,
@@ -3729,18 +3733,47 @@ class CdpSession {
         const recorderPreviousTickAtEpochMs = state.lastTickAtEpochMs;
         state.lastTickAtEpochMs = capturedAtEpochMs;
         state.tickCount += 1;
-        const script = document.querySelector("#ml-browser-movement-probe");
-        if (!script) {
+        const parseProbe = (selector) => {
+          const script = document.querySelector(selector);
+          if (!script) {
+            return null;
+          }
+          try {
+            return JSON.parse(script.textContent || "null");
+          } catch {
+            return { parseError: true };
+          }
+        };
+        const movement = parseProbe("#ml-browser-movement-probe");
+        if (!movement) {
           state.unavailableCount += 1;
           state.lastSampleStatus = "probe-unavailable";
           return;
         }
-        let route = null;
-        try {
-          route = JSON.parse(script.textContent || "null")?.playerRoute ?? null;
-        } catch {
+        if (movement.parseError) {
           state.parseErrorCount += 1;
           state.lastSampleStatus = "parse-error";
+          return;
+        }
+        const route = movement.playerRoute ?? null;
+        const browserProbe = includeBrowserProbe
+          ? parseProbe("#ml-browser-probe")
+          : null;
+        const cameraProbe = includeBrowserProbe
+          ? parseProbe("#ml-browser-camera-probe")
+          : null;
+        const mapAgencyProbe = includeBrowserProbe
+          ? parseProbe("#ml-browser-map-agency-probe")
+          : null;
+        if (
+          includeBrowserProbe &&
+          (!browserProbe ||
+            browserProbe.parseError ||
+            cameraProbe?.parseError ||
+            mapAgencyProbe?.parseError)
+        ) {
+          state.parseErrorCount += 1;
+          state.lastSampleStatus = "evidence-parse-error";
           return;
         }
         state.lastObservedRoute = route
@@ -3752,7 +3785,8 @@ class CdpSession {
           : null;
         const acceptable = Boolean(
           route?.active === true &&
-            route.targetLocationId === expectedTargetLocationId &&
+            (expectedTargetLocationId === null ||
+              route.targetLocationId === expectedTargetLocationId) &&
             typeof route.progress === "number" &&
             Number.isFinite(route.progress) &&
             route.progress >= 0 &&
@@ -3770,8 +3804,20 @@ class CdpSession {
           return;
         }
         state.samples.push({
+          browserProbe: browserProbe
+            ? {
+                ...browserProbe,
+                cdpRead: {
+                  capturedAtEpochMs,
+                  capturedAtMonotonicMs
+                },
+                movement
+              }
+            : null,
+          cameraProbe,
           capturedAtEpochMs,
           capturedAtMonotonicMs,
+          mapAgencyProbe,
           paintProbe: readPaintProbe(),
           recorderGeneration: generation,
           recorderParseErrorCount: state.parseErrorCount,
@@ -3798,6 +3844,7 @@ class CdpSession {
       return {
         expectedTargetLocationId,
         generation,
+        includeBrowserProbe,
         restartReason,
         startedAtEpochMs: state.startedAtEpochMs,
         status: state.status
@@ -15188,6 +15235,7 @@ function buildTimelineEntry({
   label,
   mapAgency,
   probe,
+  routeCaptureRecovery = null,
   screenshot,
   screenshotError,
 }) {
@@ -15220,6 +15268,7 @@ function buildTimelineEntry({
     movement: probe.movement ?? null,
     objective: probe.objective,
     rail: probe.rail,
+    routeCaptureRecovery,
     screenshot,
     screenshotError: screenshotError ?? null,
     firstAfternoon: probe.firstAfternoon ?? null,
@@ -25833,6 +25882,332 @@ function buildRegressionSteps(gameRef) {
   ];
 }
 
+function scriptedRouteSampleMatchesTransition(
+  sample,
+  previousGame,
+  nextGame,
+  {
+    matchesGame = (probe, ...games) =>
+      matchingGameSnapshotForProbe(probe, ...games),
+  } = {},
+) {
+  const probe = sample?.browserProbe;
+  const route = sample?.route;
+  const activeSpaceId =
+    previousGame?.activeSpaceId ?? previousGame?.player?.spaceId ?? null;
+  const nextSpaceId =
+    nextGame?.activeSpaceId ?? nextGame?.player?.spaceId ?? null;
+  const matchingGame = matchesGame(
+    probe,
+    previousGame,
+    nextGame,
+  );
+  const interiorTargetMatches =
+    !String(activeSpaceId).startsWith("interior:") ||
+    (route?.target?.x === nextGame?.player?.x &&
+      route?.target?.y === nextGame?.player?.y);
+
+  return Boolean(
+    matchingGame &&
+      activeSpaceId === nextSpaceId &&
+      route?.active === true &&
+      route.legal === true &&
+      route.reachesDestination === true &&
+      route.sampledPointsLegal === true &&
+      route.visualObstaclesClear === true &&
+      route.spaceId === activeSpaceId &&
+      route.targetLocationId === nextGame?.player?.currentLocationId &&
+      isDeepStrictEqual(probe.movement?.playerRoute, route) &&
+      Array.isArray(route.tilePath) &&
+      route.tilePath.length >= 2 &&
+      Array.isArray(route.worldPath) &&
+      route.worldPath.length >= 2 &&
+      probe.visualPlayer?.isMovingToServerState === true &&
+      probe.visualPlayer?.targetX === nextGame?.player?.x &&
+      probe.visualPlayer?.targetY === nextGame?.player?.y &&
+      interiorTargetMatches
+  );
+}
+
+function scriptedRoutePositionSample(position, previousGame, nextGame) {
+  return [position?.beforeProbe, position?.afterProbe].find((sample) =>
+    scriptedRouteSampleMatchesTransition(sample, previousGame, nextGame),
+  );
+}
+
+function assertScriptedRouteCaptureRecoveryGuard() {
+  const previousGame = {
+    activeSpaceId: "interior:tea-house",
+    id: "game-scripted-route-guard",
+    player: {
+      currentLocationId: "tea-house",
+      spaceId: "interior:tea-house",
+      x: 7,
+      y: 8,
+    },
+  };
+  const nextGame = {
+    ...previousGame,
+    player: { ...previousGame.player, y: 4 },
+  };
+  const browserProbe = { gameId: previousGame.id };
+  const matchesFixtureGame = (probe) =>
+    probe?.gameId === previousGame.id ? previousGame : null;
+  const route = buildAutoplayFootholdRouteGuardFixture(0.4, {
+    durationMs: 2_520,
+    spaceId: "interior:tea-house",
+    target: { x: 7, y: 4 },
+    targetLocationId: "tea-house",
+    tilePath: [
+      { x: 7, y: 8 },
+      { x: 7, y: 7 },
+      { x: 7, y: 6 },
+      { x: 7, y: 5 },
+      { x: 7, y: 4 },
+    ],
+    worldPath: [
+      { x: 420, y: 460 },
+      { x: 420, y: 300 },
+    ],
+  });
+  const routeSample = {
+    browserProbe: {
+      ...browserProbe,
+      movement: { playerRoute: route },
+      visualPlayer: {
+        isMovingToServerState: true,
+        targetX: 7,
+        targetY: 4,
+      },
+    },
+    route,
+  };
+  assert.equal(
+    scriptedRouteSampleMatchesTransition(
+      routeSample,
+      previousGame,
+      nextGame,
+      { matchesGame: matchesFixtureGame },
+    ),
+    true,
+    "A page-side active route captured before Node resumes must remain recoverable.",
+  );
+  assert.equal(
+    scriptedRouteSampleMatchesTransition(
+      {
+        browserProbe: {
+          gameId: nextGame.id,
+          movement: { playerRoute: null },
+          visualPlayer: {
+            isMovingToServerState: false,
+            targetX: 7,
+            targetY: 4,
+          },
+        },
+        route: null,
+      },
+      previousGame,
+      nextGame,
+      { matchesGame: matchesFixtureGame },
+    ),
+    false,
+    "The exact settled destination must not substitute for missing route evidence.",
+  );
+  assert.equal(
+    scriptedRouteSampleMatchesTransition(
+      {
+        ...routeSample,
+        browserProbe: {
+          ...routeSample.browserProbe,
+          movement: {
+            playerRoute: { ...route, target: { x: 7, y: 5 } },
+          },
+        },
+        route: { ...route, target: { x: 7, y: 5 } },
+      },
+      previousGame,
+      nextGame,
+      { matchesGame: matchesFixtureGame },
+    ),
+    false,
+    "A discontinuous interior endpoint must not be accepted as route recovery.",
+  );
+  assert.equal(
+    scriptedRouteSampleMatchesTransition(
+      {
+        ...routeSample,
+        browserProbe: {
+          ...routeSample.browserProbe,
+          movement: { playerRoute: { ...route, progress: 0.5 } },
+        },
+      },
+      previousGame,
+      nextGame,
+      { matchesGame: matchesFixtureGame },
+    ),
+    false,
+    "Route metadata from different sample times must not be combined.",
+  );
+  assert.equal(
+    scriptedRouteSampleMatchesTransition(
+      {
+        ...routeSample,
+        browserProbe: {
+          ...routeSample.browserProbe,
+          visualPlayer: {
+            ...routeSample.browserProbe.visualPlayer,
+            targetY: 5,
+          },
+        },
+      },
+      previousGame,
+      nextGame,
+      { matchesGame: matchesFixtureGame },
+    ),
+    false,
+    "A rendered player targeting the wrong destination must fail recovery.",
+  );
+}
+
+async function recoverScriptedRouteTrajectory({
+  label,
+  nextGame,
+  previousGame,
+  requireClose,
+  session,
+}) {
+  const startedAt = Date.now();
+  let lastError = null;
+  let lastRecorder = null;
+
+  while (Date.now() - startedAt < 2_000) {
+    const recorder = await session.readAutoplayRouteCaptureRecorder(
+      `${label}:scripted-route-recorder-read`,
+    );
+    lastRecorder = recorder;
+    const expectedTargetLocationId = nextGame.player.currentLocationId;
+    const samples = (recorder?.samples ?? []).filter((sample) =>
+      scriptedRouteSampleMatchesTransition(sample, previousGame, nextGame),
+    );
+    const frames = session.autoplayRouteFrameHistory();
+    try {
+      const trajectory = selectAutoplayRecordedRouteTrajectory({
+        archivedFrames: session.autoplayRouteArchivedFrames(),
+        expectedTargetLocationId,
+        forceCanvasFallback: false,
+        frames,
+        label: `${label} scripted route recovery`,
+        recordedWindows: [],
+        samples,
+      });
+      const startSample = scriptedRoutePositionSample(
+        trajectory.start,
+        previousGame,
+        nextGame,
+      );
+      const midSample = scriptedRoutePositionSample(
+        trajectory.mid,
+        previousGame,
+        nextGame,
+      );
+      assert.ok(
+        startSample && midSample,
+        `${label}: recovered route frames lacked exact browser-state identity.`,
+      );
+
+      let close = null;
+      if (requireClose) {
+        const openingSegment = buildAutoplayRouteCaptureSegments({
+          expectedTargetLocationId,
+          samples,
+        })[0];
+        const closeCandidate = buildAutoplayScreencastRouteFrameCandidates({
+          archivedFrames: session.autoplayRouteArchivedFrames(),
+          expectedTargetLocationId,
+          frames,
+          openingSegment,
+          samples,
+        })
+          .filter(
+            (candidate) =>
+              Number(candidate.beforeProbe?.route?.progress) >= 0.82 &&
+              scriptedRoutePositionSample(
+                candidate,
+                previousGame,
+                nextGame,
+              ),
+          )
+          .at(-1);
+        assert.ok(
+          closeCandidate,
+          `${label}: recovered route lacked a rendered close position.`,
+        );
+        close = validateAutoplayRecordedRouteFrame({
+          label: `${label} scripted route recovery route-close`,
+          recordedFrame: closeCandidate,
+        });
+      }
+
+      return { close, mid: trajectory.mid, start: trajectory.start };
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(50);
+  }
+
+  throw new Error(
+    `${label}: page-side route recovery did not retain two continuous rendered positions. Recorder: ${JSON.stringify({
+      acceptedCount: lastRecorder?.acceptedCount ?? 0,
+      lastObservedRoute: lastRecorder?.lastObservedRoute ?? null,
+      lastSampleStatus: lastRecorder?.lastSampleStatus ?? null,
+      parseErrorCount: lastRecorder?.parseErrorCount ?? 0,
+      sampleCount: lastRecorder?.samples?.length ?? 0,
+    })}. CDP diagnostics: ${JSON.stringify(session.cdpDiagnosticSnapshot())}. Last recovery error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
+}
+
+async function captureRecoveredScriptedMovementState({
+  game,
+  index,
+  label,
+  nextGame,
+  position,
+  previousGame,
+}) {
+  const sample = scriptedRoutePositionSample(
+    position,
+    previousGame,
+    nextGame,
+  );
+  assert.ok(sample, `${label}: recovered route sample did not match the move.`);
+  const probe = sample.browserProbe;
+  assertBrowserProbeMatchesGame(label, game, probe, {
+    allowVisualMove: true,
+  });
+  assertCityEventState(label, game);
+  assertPlayerRouteDiagnostics(label, probe);
+  if ((game.activeSpaceId ?? game.player.spaceId) === "street:south-quay") {
+    assertRequiredNpcPatrolDiagnostics(label, probe);
+  }
+  const key = `${String(index).padStart(2, "0")}-${slug(label)}`;
+  const screenshot = path.join(OUTPUT_DIR, `${key}.png`);
+  await writeFile(screenshot, position.validated.buffer);
+  return {
+    camera: sample.cameraProbe ?? null,
+    dom: null,
+    mapAgency: sample.mapAgencyProbe ?? null,
+    probe,
+    routeCaptureRecovery: {
+      evidenceSource: position.evidenceSource,
+      frameSequence: position.frame?.sequence ?? null,
+      sampleCapturedAtEpochMs: sample.capturedAtEpochMs,
+      status: "page-side-prearmed-route-recovery",
+    },
+    screenshot,
+    screenshotError: null,
+  };
+}
+
 async function main() {
   assertRailReadabilityStateRegression();
   assertUnavailableApproachAdviceAuthorityRegression();
@@ -25851,6 +26226,7 @@ async function main() {
   assertAutoplayFootholdRouteCaptureGuard();
   assertAutoplayScreencastRouteFrameCandidateMergeGuard();
   await assertAutoplayRouteCaptureTransportRecoveryGuard();
+  assertScriptedRouteCaptureRecoveryGuard();
   assertVisibleImplementationLanguageGuardRegression();
   assertAutoplayNullProbeRetryGuard();
   if (RUN_SIM_WAIT_GUARD_ONLY) {
@@ -26050,6 +26426,22 @@ async function main() {
       const step = steps[index];
       traceRegression(`step-start:${index}:${step.label}`);
       const previousGame = gameRef.current;
+      let scriptedRouteCaptureActive = false;
+      if (session !== null) {
+        await session.startAutoplayScreencast();
+        try {
+          await session.startAutoplayRouteCaptureRecorder({
+            expectedTargetLocationId: null,
+            includeBrowserProbe: true,
+            label: `${step.label}:scripted-route-recorder-prearm`,
+            maxSnapshots: 128,
+          });
+          scriptedRouteCaptureActive = true;
+        } catch (error) {
+          await session.stopAutoplayScreencast().catch(() => undefined);
+          throw error;
+        }
+      }
       game = await step.mutate();
       traceRegression(
         `step-mutated:${index}:${step.label}:${game.currentTime}:${game.rowanAutonomy.label}`,
@@ -26060,10 +26452,37 @@ async function main() {
         playerPositionChanged(previousGame, game)
       ) {
         traceRegression(`step-visual-move:${index}:${step.label}`);
-        const routeStartProbe = await session.waitForVisualMove(
-          previousGame,
-          game,
-        );
+        let recoveredTrajectory = null;
+        let routeStartProbe;
+        try {
+          routeStartProbe = await session.waitForVisualMove(
+            previousGame,
+            game,
+          );
+        } catch (liveRouteError) {
+          try {
+            recoveredTrajectory = await recoverScriptedRouteTrajectory({
+              label: step.label,
+              nextGame: game,
+              previousGame,
+              requireClose: shouldCaptureCloseConversationRoute(step.label),
+              session,
+            });
+          } catch (recoveryError) {
+            throw new Error(
+              `${liveRouteError instanceof Error ? liveRouteError.message : String(liveRouteError)} Page-side recovery also failed: ${recoveryError instanceof Error ? recoveryError.message : String(recoveryError)}`,
+              { cause: liveRouteError },
+            );
+          }
+          routeStartProbe = scriptedRoutePositionSample(
+            recoveredTrajectory.start,
+            previousGame,
+            game,
+          ).browserProbe;
+          process.stdout.write(
+            `[many-lives] Recovered hosted scripted route evidence for ${step.label} from pre-armed page samples and screencast frames.\n`,
+          );
+        }
         const routeStartGame = matchingGameSnapshotForProbe(
           routeStartProbe,
           previousGame,
@@ -26074,13 +26493,22 @@ async function main() {
           `${step.label}: route start did not match its departure or arrival snapshot.`,
         );
         const routeStartLabel = `${step.label}-route-start`;
-        const routeStartCapture = await captureBrowserMovementState({
-          game: routeStartGame,
-          index: `${index}a`,
-          label: routeStartLabel,
-          probe: routeStartProbe,
-          session,
-        });
+        const routeStartCapture = recoveredTrajectory
+          ? await captureRecoveredScriptedMovementState({
+              game: routeStartGame,
+              index: `${index}a`,
+              label: routeStartLabel,
+              nextGame: game,
+              position: recoveredTrajectory.start,
+              previousGame,
+            })
+          : await captureBrowserMovementState({
+              game: routeStartGame,
+              index: `${index}a`,
+              label: routeStartLabel,
+              probe: routeStartProbe,
+              session,
+            });
         timeline.push(
           buildTimelineEntry({
             camera: routeStartCapture.camera,
@@ -26089,6 +26517,7 @@ async function main() {
             label: routeStartLabel,
             mapAgency: routeStartCapture.mapAgency,
             probe: routeStartCapture.probe,
+            routeCaptureRecovery: routeStartCapture.routeCaptureRecovery,
             screenshot: routeStartCapture.screenshot,
             screenshotError: routeStartCapture.screenshotError,
           }),
@@ -26099,12 +26528,18 @@ async function main() {
           "utf8",
         );
 
-        const routeMidProbe = await session.waitForVisualRouteProgress(
-          previousGame,
-          game,
-          0.35,
-          { fallbackProbe: routeStartProbe },
-        );
+        const routeMidProbe = recoveredTrajectory
+          ? scriptedRoutePositionSample(
+              recoveredTrajectory.mid,
+              previousGame,
+              game,
+            ).browserProbe
+          : await session.waitForVisualRouteProgress(
+              previousGame,
+              game,
+              0.35,
+              { fallbackProbe: routeStartProbe },
+            );
         const routeMidGame = matchingGameSnapshotForProbe(
           routeMidProbe,
           previousGame,
@@ -26115,13 +26550,22 @@ async function main() {
           `${step.label}: route midpoint did not match its departure or arrival snapshot.`,
         );
         const routeMidLabel = `${step.label}-route-mid`;
-        const routeMidCapture = await captureBrowserMovementState({
-          game: routeMidGame,
-          index: `${index}b`,
-          label: routeMidLabel,
-          probe: routeMidProbe,
-          session,
-        });
+        const routeMidCapture = recoveredTrajectory
+          ? await captureRecoveredScriptedMovementState({
+              game: routeMidGame,
+              index: `${index}b`,
+              label: routeMidLabel,
+              nextGame: game,
+              position: recoveredTrajectory.mid,
+              previousGame,
+            })
+          : await captureBrowserMovementState({
+              game: routeMidGame,
+              index: `${index}b`,
+              label: routeMidLabel,
+              probe: routeMidProbe,
+              session,
+            });
         timeline.push(
           buildTimelineEntry({
             camera: routeMidCapture.camera,
@@ -26130,6 +26574,7 @@ async function main() {
             label: routeMidLabel,
             mapAgency: routeMidCapture.mapAgency,
             probe: routeMidCapture.probe,
+            routeCaptureRecovery: routeMidCapture.routeCaptureRecovery,
             screenshot: routeMidCapture.screenshot,
             screenshotError: routeMidCapture.screenshotError,
           }),
@@ -26141,12 +26586,18 @@ async function main() {
         );
 
         if (shouldCaptureCloseConversationRoute(step.label)) {
-          const routeCloseProbe = await session.waitForVisualRouteProgress(
-            previousGame,
-            game,
-            0.82,
-            { fallbackProbe: routeMidProbe },
-          );
+          const routeCloseProbe = recoveredTrajectory
+            ? scriptedRoutePositionSample(
+                recoveredTrajectory.close,
+                previousGame,
+                game,
+              ).browserProbe
+            : await session.waitForVisualRouteProgress(
+                previousGame,
+                game,
+                0.82,
+                { fallbackProbe: routeMidProbe },
+              );
           const routeCloseGame = matchingGameSnapshotForProbe(
             routeCloseProbe,
             previousGame,
@@ -26157,13 +26608,22 @@ async function main() {
             `${step.label}: route close did not match its departure or arrival snapshot.`,
           );
           const routeCloseLabel = `${step.label}-route-close`;
-          const routeCloseCapture = await captureBrowserMovementState({
-            game: routeCloseGame,
-            index: `${index}c`,
-            label: routeCloseLabel,
-            probe: routeCloseProbe,
-            session,
-          });
+          const routeCloseCapture = recoveredTrajectory
+            ? await captureRecoveredScriptedMovementState({
+                game: routeCloseGame,
+                index: `${index}c`,
+                label: routeCloseLabel,
+                nextGame: game,
+                position: recoveredTrajectory.close,
+                previousGame,
+              })
+            : await captureBrowserMovementState({
+                game: routeCloseGame,
+                index: `${index}c`,
+                label: routeCloseLabel,
+                probe: routeCloseProbe,
+                session,
+              });
           timeline.push(
             buildTimelineEntry({
               camera: routeCloseCapture.camera,
@@ -26172,6 +26632,7 @@ async function main() {
               label: routeCloseLabel,
               mapAgency: routeCloseCapture.mapAgency,
               probe: routeCloseCapture.probe,
+              routeCaptureRecovery: routeCloseCapture.routeCaptureRecovery,
               screenshot: routeCloseCapture.screenshot,
               screenshotError: routeCloseCapture.screenshotError,
             }),
@@ -26183,6 +26644,13 @@ async function main() {
           );
         }
         await session.waitForVisualMoveSettlement(previousGame, game);
+      }
+      if (scriptedRouteCaptureActive) {
+        await session.stopAutoplayRouteCaptureRecorder(
+          `${step.label}:scripted-route-recorder-stop`,
+        );
+        await session.stopAutoplayScreencast();
+        scriptedRouteCaptureActive = false;
       }
       gameRef.current = game;
       const capture =
