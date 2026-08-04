@@ -2520,11 +2520,27 @@ function buildStreetPlannerChoices(
   objective: ObjectiveDirective,
 ): ObjectivePlanChoice[] {
   const choices: ObjectivePlanChoice[] = [];
-
-  for (const plan of buildObjectiveAgentPlanCandidates(world, objective, {
+  const deterministicPlanKey =
+    deterministicLoopStep.planningTrace?.selectedPlanKey;
+  const candidatePlans = buildObjectiveAgentPlanCandidates(world, objective, {
     includeLowScoringActions: false,
-  })) {
-    if (!plannerChoiceCanExecute(world, objective, plan)) {
+  });
+
+  for (const plan of candidatePlans) {
+    const isSelectedCompetingLivePlan = Boolean(
+      deterministicPlanKey &&
+        objectivePlanTraceKey(world, plan) === deterministicPlanKey &&
+        planCanCompeteWithFinalPredicate(
+          world,
+          objective,
+          plan,
+          candidatePlans,
+        ),
+    );
+    if (
+      !plannerChoiceCanExecute(world, objective, plan) &&
+      !isSelectedCompetingLivePlan
+    ) {
       continue;
     }
     addPlannerChoice(world, choices, plan);
@@ -6600,14 +6616,6 @@ function buildObjectiveAgentPlanCandidates(
       if (!plan) {
         continue;
       }
-      const suppressed = shouldSuppressObjectivePlanCandidate(
-        world,
-        objective,
-        plan,
-      );
-      if (suppressed && !options.includeLowScoringActions) {
-        continue;
-      }
 
       plan.score = scoreObjectiveAgentPlan(world, preview, {
         action,
@@ -6638,14 +6646,6 @@ function buildObjectiveAgentPlanCandidates(
         speech: moveIntent?.speech,
         targetLocationId: location.id,
       };
-      const suppressed = shouldSuppressObjectivePlanCandidate(
-        world,
-        objective,
-        plan,
-      );
-      if (suppressed && !options.includeLowScoringActions) {
-        continue;
-      }
       plan.score = scoreObjectiveAgentMovePlan(world, {
         desiredOutcomes,
         location,
@@ -6659,18 +6659,31 @@ function buildObjectiveAgentPlanCandidates(
     }
   }
 
+  const scoredCandidates = dedupeObjectivePlans(candidates);
+  const eligibleCandidates = options.includeLowScoringActions
+    ? scoredCandidates
+    : scoredCandidates.filter(
+        (plan) =>
+          !shouldSuppressObjectivePlanCandidate(
+            world,
+            objective,
+            plan,
+            scoredCandidates,
+          ),
+      );
+
   for (const waitPlan of buildObjectiveWaitPlans(
     world,
     objective,
     desiredOutcomes,
-    candidates,
+    eligibleCandidates,
   )) {
     if (options.includeLowScoringActions || waitPlan.score > 0) {
-      candidates.push(waitPlan);
+      eligibleCandidates.push(waitPlan);
     }
   }
 
-  return dedupeObjectivePlans(candidates);
+  return dedupeObjectivePlans(eligibleCandidates);
 }
 
 function buildStreetPlanningOutcomes(
@@ -6936,6 +6949,7 @@ function shouldSuppressObjectivePlanCandidate(
   world: StreetGameState,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   plan: ObjectivePlan,
+  candidates: ObjectivePlan[],
 ) {
   if (
     plan.waitUntilMinutes === undefined &&
@@ -6950,11 +6964,61 @@ function shouldSuppressObjectivePlanCandidate(
   }
 
   const pressure = dominantObjectivePlanningPressure(world, objective);
-  return Boolean(
-    pressure &&
-      pressureRequiresFocusedPlan(pressure) &&
-      !planMatchesObjectivePlanningPressure(world, plan, pressure),
+  if (
+    !pressure ||
+    !pressureRequiresFocusedPlan(pressure) ||
+    planMatchesObjectivePlanningPressure(world, plan, pressure)
+  ) {
+    return false;
+  }
+
+  return !planCanCompeteWithFinalPredicate(
+    world,
+    objective,
+    plan,
+    candidates,
   );
+}
+
+function planCanCompeteWithFinalPredicate(
+  world: StreetGameState,
+  objective: { text: string; focus: ObjectiveFocus; routeKey: string },
+  plan: ObjectivePlan,
+  candidates: ObjectivePlan[],
+) {
+  const finalPredicate = openObjectivePredicateOutcomes(world).find((outcome) =>
+    isFinalCurrentObjectivePredicateOutcome(world, outcome),
+  );
+  const dominantPressure = dominantObjectivePlanningPressure(world, objective);
+  if (
+    !finalPredicate ||
+    dominantPressure?.kind !== "predicate" ||
+    dominantPressure.matchedOutcomeId !== finalPredicate.id
+  ) {
+    return false;
+  }
+
+  const pressureMatch = bestObjectivePlanningPressureMatch(
+    world,
+    objective,
+    plan,
+  );
+  if (pressureMatch?.pressure.kind !== "job") {
+    return false;
+  }
+
+  const dominantPlanScore = Math.max(
+    ...candidates
+      .filter((candidate) =>
+        planMatchesObjectivePlanningPressure(
+          world,
+          candidate,
+          dominantPressure,
+        ),
+      )
+      .map((candidate) => candidate.score),
+  );
+  return Number.isFinite(dominantPlanScore) && plan.score > dominantPlanScore;
 }
 
 function dominantObjectivePlanningPressure(

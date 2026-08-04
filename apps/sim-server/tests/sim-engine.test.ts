@@ -5780,6 +5780,139 @@ describe("SimulationEngine street slice", () => {
     expectCognitionToMirrorAutonomy(world);
   });
 
+  it("lets a closing discovered job outrank a legal final objective predicate", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame(
+      "game-closing-job-over-final-standing-predicate",
+    );
+
+    world = await enterMorrowHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-mara",
+      text: "What do I need to do to keep a room here?",
+    });
+    const yardJob = world.jobs.find((job) => job.id === "job-yard-shift");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const pumpProblem = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+
+    expect(yardJob).toBeDefined();
+    expect(teaJob).toBeDefined();
+    expect(pumpProblem).toBeDefined();
+    if (!yardJob || !teaJob || !pumpProblem) {
+      return;
+    }
+
+    setTestClock(world, 16, 34);
+    world.player.energy = 64;
+    world.player.reputation.morrow_house = 1;
+    world.player.knownLocationIds = [
+      ...new Set([...world.player.knownLocationIds, "freight-yard"]),
+    ];
+    for (const npcId of ["npc-mara", "npc-ada"]) {
+      const npc = world.npcs.find((entry) => entry.id === npcId);
+      if (npc) {
+        npc.trust = Math.max(1, npc.trust);
+      }
+    }
+    teaJob.discovered = true;
+    teaJob.accepted = false;
+    teaJob.completed = true;
+    teaJob.missed = false;
+    yardJob.discovered = true;
+    yardJob.accepted = false;
+    yardJob.completed = false;
+    yardJob.missed = false;
+    pumpProblem.discovered = true;
+    pumpProblem.status = "resolved";
+    world.activeConversation = undefined;
+    world = await engine.runCommand(world, {
+      type: "set_objective",
+      text: "Build standing at Morrow House so the room stays mine.",
+    });
+
+    expect(world.player.currentLocationId).toBe("boarding-house");
+    expect(
+      world.player.objective?.outcomes.filter(
+        (outcome) => outcome.status !== "met" && outcome.status !== "failed",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        actionId: "contribute:boarding-house",
+        id: "settle-standing",
+        urgency: 4,
+      }),
+    ]);
+    expect(
+      world.availableActions.find(
+        (action) => action.id === "contribute:boarding-house",
+      ),
+    ).toMatchObject({ disabled: false });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:boarding-house",
+      autoContinue: true,
+      mode: "acting",
+      targetLocationId: "freight-yard",
+    });
+
+    const considered = world.rowanAutonomy.planningTrace?.considered ?? [];
+    const selectedJob = considered.find(
+      (option) =>
+        option.status === "selected" &&
+        option.pressureId === "job:job-yard-shift",
+    );
+    const choreAlternative = considered.find(
+      (option) => option.actionId === "contribute:boarding-house",
+    );
+
+    expect(selectedJob).toMatchObject({
+      actionId: "exit:boarding-house",
+      legalBacking: {
+        actionId: "exit:boarding-house",
+        locationId: "boarding-house",
+        source: "current-legal-action-surface",
+      },
+      planKey: expect.stringContaining("accept:job-yard-shift"),
+      pressureKind: "job",
+      targetLocationId: "freight-yard",
+    });
+    expect(world.rowanAutonomy.planningTrace?.plannerIntent).toMatchObject({
+      actionId: "accept:job-yard-shift",
+      pressureId: "job:job-yard-shift",
+      pressureKind: "job",
+      targetLocationId: "freight-yard",
+    });
+    expect(choreAlternative).toMatchObject({
+      actionId: "contribute:boarding-house",
+      pressureId: "predicate:settle-standing",
+      pressureKind: "predicate",
+      status: "rejected",
+    });
+    expect(selectedJob?.score).toBeGreaterThan(choreAlternative?.score ?? 0);
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.find(
+        (option) => option.actionId === "contribute:boarding-house",
+      ),
+    ).toMatchObject({
+      reason: "Lower priority than the selected live-state move.",
+      status: "rejected",
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.some(
+        (option) => option.pressureId === "job:job-yard-shift",
+      ),
+    ).toBe(false);
+    expect(
+      world.availableActions.find(
+        (action) => action.id === "contribute:boarding-house",
+      ),
+    ).toMatchObject({ disabled: false });
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("lets urgent jobs outrank stale explore route scoring", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-urgent-job-over-explore-route-score");
