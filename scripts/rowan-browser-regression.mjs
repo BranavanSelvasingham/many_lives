@@ -17199,6 +17199,17 @@ function buildAutoplayArchivedRouteFrameCandidates({
           if (!matchedProbe) {
             return null;
           }
+          const nextRouteSample = legalSamples.find(
+            (sample) => sample.capturedAtEpochMs >= capturedAtEpochMs,
+          );
+          const bracketedAfterProbe =
+            nextRouteSample &&
+            autoplayArchivedRouteSamplesShareAdmissibleIdentity(
+              openingProbe,
+              nextRouteSample,
+            )
+              ? nextRouteSample
+              : null;
           const settledBeforeProbe = legalSamples
             .filter(
               (sample) =>
@@ -17234,6 +17245,10 @@ function buildAutoplayArchivedRouteFrameCandidates({
           return {
             afterProbe: matchedProbe,
             archivedFramePromotion: true,
+            archivedFrameProgressAfterProbe: bracketedAfterProbe,
+            archivedFrameRouteBracket: bracketedAfterProbe
+              ? "same-segment-legal-after-sample"
+              : null,
             beforeProbe: usesOpeningFrameGrace
               ? openingProbe
               : settledBeforeProbe,
@@ -17463,6 +17478,292 @@ function assertAutoplayScreencastRouteFrameCandidateMergeGuard() {
     ),
     false,
     "Merged candidates at the same route progress must not form a pair.",
+  );
+}
+
+function assertAutoplayArchivedSettledRouteTrajectoryGuard() {
+  const expectedTargetLocationId = "tea-house";
+  const baseEpochMs = 1_785_815_710_886;
+  const paintProbeAt = (capturedAtEpochMs, hudText) => {
+    const regions = Array.from({ length: 8 }, (_, index) => ({
+      rect: {
+        bottom: 28 + index * 18,
+        left: 16,
+        right: 216,
+        top: 16 + index * 18,
+      },
+      surface: index === 0 ? "hud" : index === 1 ? "dock" : "rail",
+      text: index === 0 ? hudText : `stable route text ${index}`,
+    }));
+    return {
+      capturedAtEpochMs,
+      regions,
+      stableRegions: [
+        { ...regions[0], rect: { ...regions[0].rect } },
+        { ...regions[1], rect: { ...regions[1].rect } },
+      ],
+      viewport: { height: 768, width: 1_365 },
+    };
+  };
+  const routeAt = (progress, overrides = {}) =>
+    buildAutoplayFootholdRouteGuardFixture(progress, {
+      durationMs: 5_040,
+      spaceId: "street:south-quay",
+      target: { x: 17, y: 9 },
+      targetLocationId: expectedTargetLocationId,
+      tilePath: [
+        { x: 3, y: 9 },
+        { x: 10, y: 9 },
+        { x: 17, y: 9 },
+      ],
+      worldPath: [
+        { x: 331, y: 688 },
+        { x: 884, y: 688 },
+        { x: 1_338, y: 656 },
+      ],
+      ...overrides,
+    });
+  const sampleAt = (offsetMs, progress, hudText, routeOverrides = {}) => ({
+    capturedAtEpochMs: baseEpochMs + offsetMs,
+    capturedAtMonotonicMs: 10_000 + offsetMs,
+    paintProbe: paintProbeAt(baseEpochMs + offsetMs, hudText),
+    recorderGeneration: 2,
+    route: routeAt(progress, routeOverrides),
+    source: "movement-probe-recorder",
+  });
+  const oldHud = "DAY 1 11:05 LATE MORNING $12 70 ENERGY";
+  const middleHud = "DAY 1 11:06 LATE MORNING $12 69 ENERGY";
+  const settledHud = "DAY 1 11:23 LATE MORNING $12 46 ENERGY";
+  const samples = [
+    sampleAt(0, 0.005, oldHud),
+    sampleAt(900, 0.15, oldHud),
+    sampleAt(1_800, 0.35, oldHud),
+    sampleAt(2_155, 0.432, oldHud),
+    sampleAt(2_400, 0.48, oldHud),
+    sampleAt(2_500, 0.5, middleHud),
+    sampleAt(3_660, 0.731, settledHud),
+  ];
+  const frameAt = (offsetMs, sequence, pixels) => ({
+    data: Buffer.from(pixels).toString("base64"),
+    metadata: {
+      format: "png",
+      timestamp: (baseEpochMs + offsetMs) / 1_000,
+    },
+    sequence,
+    source: "screencast",
+  });
+  const frames = [
+    frameAt(2_300, 910, "hosted-route-position-one"),
+    frameAt(3_657, 912, "hosted-route-position-two"),
+  ];
+  const directCandidates = buildAutoplayRecordedRouteFrameCandidates({
+    expectedTargetLocationId,
+    frames,
+    samples,
+  });
+  const archivedCandidates = buildAutoplayArchivedRouteFrameCandidates({
+    archivedFrames: frames,
+    expectedTargetLocationId,
+    samples,
+  });
+  const candidates = buildAutoplayScreencastRouteFrameCandidates({
+    archivedFrames: frames,
+    expectedTargetLocationId,
+    frames,
+    samples,
+  });
+  assert.deepEqual(
+    directCandidates.map((candidate) => candidate.frame.sequence),
+    [910],
+    "The hosted fixture must reproduce one directly bracketed route frame.",
+  );
+  assert.deepEqual(
+    archivedCandidates.map((candidate) => candidate.frame.sequence),
+    [910, 912],
+    "Both hosted frames must remain tied to the same archived legal segment.",
+  );
+  assert.equal(
+    archivedCandidates[1].archivedFrameRouteBracket,
+    "same-segment-legal-after-sample",
+    "The late hosted frame must use the legal sample retained before settlement.",
+  );
+  assert.equal(
+    archivedCandidates[1].afterProbe.route.progress,
+    0.5,
+    "Archived promotion must preserve the established at-or-before after-probe contract.",
+  );
+  assert.equal(
+    archivedCandidates[1].archivedFrameProgressAfterProbe.route.progress,
+    0.731,
+    "The future legal sample must remain separate interpolation evidence.",
+  );
+  assert.ok(
+    archivedCandidates[1].beforeProbe.route.progress -
+      archivedCandidates[0].afterProbe.route.progress <
+      AUTOPLAY_ROUTE_MIN_DISTINCT_PROGRESS,
+    "The hosted fixture must require frame-time interpolation rather than uncovered probe progress.",
+  );
+  assert.equal(
+    autoplayRecordedRouteWindowsHaveDistinctProgress(
+      candidates[0],
+      candidates[1],
+    ),
+    true,
+    "Same-segment legal brackets must prove distinct progress after the live route settles.",
+  );
+
+  const validateFrame = ({ frame, paintProbe }) => ({
+    buffer: Buffer.from(frame.data, "base64"),
+    height: 360,
+    paintProbe,
+    textPaint: {
+      regionCount: paintProbe.regions.length,
+      surfaces: [...new Set(paintProbe.regions.map((region) => region.surface))],
+    },
+    width: 640,
+  });
+  const trajectory = selectAutoplayRecordedRouteTrajectory({
+    archivedFrames: frames,
+    expectedTargetLocationId,
+    frames,
+    label: "hosted settled route guard",
+    samples,
+    validateFrame,
+    validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+  });
+  assert.deepEqual(
+    [trajectory.start.frame.sequence, trajectory.mid.frame.sequence],
+    [910, 912],
+    "The hosted evidence shape must recover two ordered rendered route positions.",
+  );
+  assert.ok(
+    trajectory.mid.validated.textPaint.archivedRouteFrameEstimatedProgress >
+      0.72,
+    "Validated archived evidence must retain its frame-time progress estimate.",
+  );
+  const compactRouteEvidenceWindow = (window) => ({
+    after: {
+      ...compactAutoplayPlayerRoute({
+        movement: { playerRoute: window.afterProbe.route },
+      }),
+      capturedAtEpochMs: window.afterProbe.capturedAtEpochMs,
+    },
+    before: {
+      ...compactAutoplayPlayerRoute({
+        movement: { playerRoute: window.beforeProbe.route },
+      }),
+      capturedAtEpochMs: window.beforeProbe.capturedAtEpochMs,
+    },
+    frame: compactAutoplayScreencastCaptureWindow(window).frame,
+    textPaint: window.validated.textPaint,
+  });
+  assert.equal(
+    autoplayRecordedRouteWindowsHaveDistinctProgress(
+      compactRouteEvidenceWindow(trajectory.start),
+      compactRouteEvidenceWindow(trajectory.mid),
+    ),
+    true,
+    "Compacted summary evidence must retain the hosted route trajectory proof.",
+  );
+
+  const unsafeSampleSets = [
+    ["destination-only", (route) => ({ ...route, active: false, progress: 1 })],
+    ["illegal", (route) => ({ ...route, legal: false })],
+    [
+      "wrong-target",
+      (route) => ({ ...route, targetLocationId: "repair-stall" }),
+    ],
+  ];
+  for (const [label, mutateRoute] of unsafeSampleSets) {
+    const unsafeSamples = samples.map((sample) => ({
+      ...sample,
+      route: mutateRoute(sample.route),
+    }));
+    assert.equal(
+      buildAutoplayScreencastRouteFrameCandidates({
+        archivedFrames: frames,
+        expectedTargetLocationId,
+        frames,
+        samples: unsafeSamples,
+      }).length,
+      0,
+      `${label} evidence must not produce a route frame candidate.`,
+    );
+  }
+
+  const discontinuousSamples = samples.map((sample, index) =>
+    index === samples.length - 1
+      ? {
+          ...sample,
+          route: routeAt(sample.route.progress, {
+            target: { x: 16, y: 8 },
+            tilePath: [
+              { x: 3, y: 9 },
+              { x: 16, y: 8 },
+            ],
+            worldPath: [
+              { x: 331, y: 688 },
+              { x: 1_254, y: 620 },
+            ],
+          }),
+        }
+      : sample,
+  );
+  assert.equal(
+    buildAutoplayScreencastRouteFrameCandidates({
+      archivedFrames: frames,
+      expectedTargetLocationId,
+      frames,
+      samples: discontinuousSamples,
+    }).length,
+    1,
+    "A frame from a discontinuous route segment must not complete the opening pair.",
+  );
+
+  const identicalFrames = frames.map((frame) => ({
+    ...frame,
+    data: Buffer.from("identical-route-frame").toString("base64"),
+  }));
+  assert.throws(
+    () =>
+      selectAutoplayRecordedRouteTrajectory({
+        archivedFrames: identicalFrames,
+        expectedTargetLocationId,
+        frames: identicalFrames,
+        label: "hosted identical frame guard",
+        samples,
+        validateFrame,
+        validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+      }),
+    /identical visual pixels/,
+    "Identical route frames must remain invalid.",
+  );
+  const blankFrames = frames.map((frame) =>
+    frame.sequence === 912
+      ? {
+          ...frame,
+          data: Buffer.from("blank-route-frame").toString("base64"),
+        }
+      : frame,
+  );
+  assert.throws(
+    () =>
+      selectAutoplayRecordedRouteTrajectory({
+        archivedFrames: blankFrames,
+        expectedTargetLocationId,
+        frames: blankFrames,
+        label: "hosted blank frame guard",
+        samples,
+        validateFrame: ({ frame, paintProbe }) => {
+          if (frame.sequence === 912) {
+            throw new Error("blank hosted route frame");
+          }
+          return validateFrame({ frame, paintProbe });
+        },
+        validateStableFramePair: () => ({ hudPixelDifferenceRatio: 0 }),
+      }),
+    /blank hosted route frame/,
+    "A blank late route frame must remain invalid.",
   );
 }
 
@@ -17886,6 +18187,10 @@ function validateAutoplayRecordedRouteFrame({
     label,
     paintProbe,
   });
+  const archivedRouteFrameEstimatedProgress = recordedFrame
+    .archivedFrameProgressAfterProbe
+    ? autoplayRecordedRouteWindowEstimatedFrameProgress(recordedFrame)
+    : null;
   const hudContinuity = hudReference && !isCanvasReadback
     ? assertAutoplayRouteHudContinuity({
         afterBuffer: validated.buffer,
@@ -17938,6 +18243,9 @@ function validateAutoplayRecordedRouteFrame({
           ? {
               routeFrameEvidenceBasis:
                 "archived-screencast-frame-matched-to-legal-route-sample",
+              ...(Number.isFinite(archivedRouteFrameEstimatedProgress)
+                ? { archivedRouteFrameEstimatedProgress }
+                : {}),
             }
           : {}),
         ...(!exactIdentity
@@ -17951,6 +18259,63 @@ function validateAutoplayRecordedRouteFrame({
   };
 }
 
+function autoplayRecordedRouteWindowEstimatedFrameProgress(window) {
+  const windowProbe = (position) =>
+    window?.[`${position}Probe`] ?? window?.[position] ?? null;
+  const carriedEstimate = Number(
+    window?.validated?.textPaint?.archivedRouteFrameEstimatedProgress ??
+      window?.textPaint?.archivedRouteFrameEstimatedProgress,
+  );
+  if (Number.isFinite(carriedEstimate)) {
+    return carriedEstimate;
+  }
+  const beforeProbe = windowProbe("before");
+  const afterProbe =
+    window?.archivedFrameProgressAfterProbe ?? windowProbe("after");
+  const beforeProgress = Number(
+    beforeProbe?.route?.progress ?? beforeProbe?.progress,
+  );
+  const afterProgress = Number(
+    afterProbe?.route?.progress ?? afterProbe?.progress,
+  );
+  const beforeAtEpochMs = Number(beforeProbe?.capturedAtEpochMs);
+  const afterAtEpochMs = Number(afterProbe?.capturedAtEpochMs);
+  const frame = window?.frame ?? window?.confirmationFrame;
+  const screencastCapturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
+  const capturedAtEpochMs =
+    typeof screencastCapturedAtEpochMs === "number"
+      ? screencastCapturedAtEpochMs
+      : Number(frame?.capturedAtEpochMs);
+  const routeTailFrameGraceMs =
+    window?.routeTailFrameGraceMs ?? window?.textPaint?.routeTailFrameGraceMs;
+  if (
+    typeof routeTailFrameGraceMs === "number" &&
+    Number.isFinite(afterProgress) &&
+    capturedAtEpochMs > afterAtEpochMs &&
+    capturedAtEpochMs - afterAtEpochMs === routeTailFrameGraceMs
+  ) {
+    return afterProgress;
+  }
+  if (
+    ![
+      beforeProgress,
+      afterProgress,
+      beforeAtEpochMs,
+      afterAtEpochMs,
+      capturedAtEpochMs,
+    ].every(Number.isFinite) ||
+    afterAtEpochMs <= beforeAtEpochMs ||
+    capturedAtEpochMs < beforeAtEpochMs ||
+    capturedAtEpochMs > afterAtEpochMs
+  ) {
+    return null;
+  }
+  const elapsedRatio =
+    (capturedAtEpochMs - beforeAtEpochMs) /
+    (afterAtEpochMs - beforeAtEpochMs);
+  return beforeProgress + (afterProgress - beforeProgress) * elapsedRatio;
+}
+
 function autoplayRecordedRouteWindowsHaveDistinctProgress(
   start,
   midCandidate,
@@ -17959,56 +18324,6 @@ function autoplayRecordedRouteWindowsHaveDistinctProgress(
     window?.[`${position}Probe`] ?? window?.[position] ?? null;
   const probeProgress = (probe) =>
     Number(probe?.route?.progress ?? probe?.progress);
-  const frameCapturedAtEpochMs = (frame) => {
-    const capturedAtEpochMs = screencastFrameCapturedAtEpochMs(frame);
-    if (typeof capturedAtEpochMs === "number") {
-      return capturedAtEpochMs;
-    }
-    return Number(frame?.capturedAtEpochMs);
-  };
-  const estimatedFrameProgress = (window) => {
-    const beforeProbe = windowProbe(window, "before");
-    const afterProbe = windowProbe(window, "after");
-    const beforeProgress = probeProgress(beforeProbe);
-    const afterProgress = probeProgress(afterProbe);
-    const beforeAtEpochMs = Number(beforeProbe?.capturedAtEpochMs);
-    const afterAtEpochMs = Number(afterProbe?.capturedAtEpochMs);
-    const capturedAtEpochMs = frameCapturedAtEpochMs(
-      window?.frame ?? window?.confirmationFrame,
-    );
-    const routeTailFrameGraceMs =
-      window?.routeTailFrameGraceMs ??
-      window?.textPaint?.routeTailFrameGraceMs;
-    if (
-      typeof routeTailFrameGraceMs === "number" &&
-      Number.isFinite(afterProgress) &&
-      capturedAtEpochMs > afterAtEpochMs &&
-      capturedAtEpochMs - afterAtEpochMs ===
-        routeTailFrameGraceMs
-    ) {
-      return afterProgress;
-    }
-    if (
-      ![
-        beforeProgress,
-        afterProgress,
-        beforeAtEpochMs,
-        afterAtEpochMs,
-        capturedAtEpochMs,
-      ].every(Number.isFinite) ||
-      afterAtEpochMs <= beforeAtEpochMs ||
-      capturedAtEpochMs < beforeAtEpochMs ||
-      capturedAtEpochMs > afterAtEpochMs
-    ) {
-      return null;
-    }
-    const elapsedRatio =
-      (capturedAtEpochMs - beforeAtEpochMs) /
-      (afterAtEpochMs - beforeAtEpochMs);
-    return (
-      beforeProgress + (afterProgress - beforeProgress) * elapsedRatio
-    );
-  };
   const startAfterProbe = windowProbe(start, "after");
   const midBeforeProbe = windowProbe(midCandidate, "before");
   const uncoveredProgress =
@@ -18017,8 +18332,10 @@ function autoplayRecordedRouteWindowsHaveDistinctProgress(
     return true;
   }
 
-  const startFrameProgress = estimatedFrameProgress(start);
-  const midFrameProgress = estimatedFrameProgress(midCandidate);
+  const startFrameProgress =
+    autoplayRecordedRouteWindowEstimatedFrameProgress(start);
+  const midFrameProgress =
+    autoplayRecordedRouteWindowEstimatedFrameProgress(midCandidate);
   return Boolean(
     Number.isFinite(startFrameProgress) &&
       Number.isFinite(midFrameProgress) &&
@@ -26225,6 +26542,7 @@ async function main() {
   assertAutoplayPlaybackCardDwellResetGuard();
   assertAutoplayFootholdRouteCaptureGuard();
   assertAutoplayScreencastRouteFrameCandidateMergeGuard();
+  assertAutoplayArchivedSettledRouteTrajectoryGuard();
   await assertAutoplayRouteCaptureTransportRecoveryGuard();
   assertScriptedRouteCaptureRecoveryGuard();
   assertVisibleImplementationLanguageGuardRegression();
