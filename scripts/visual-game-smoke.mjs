@@ -46,6 +46,9 @@ const STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS = Number(
   process.env.MANY_LIVES_VISUAL_STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS ??
     "20000",
 );
+const STORED_GAME_RECOVERY_SCHEDULER_STALL_MS = Number(
+  process.env.MANY_LIVES_VISUAL_STORED_RECOVERY_SCHEDULER_STALL_MS ?? "0",
+);
 const AUTOPLAY_NEAR_ARRIVAL_MIN_PROGRESS = 0.95;
 const RESPONSIVE_DECISION_READABILITY_TIMEOUT_MS = Number(
   process.env.MANY_LIVES_VISUAL_DECISION_READABILITY_TIMEOUT_MS ?? "30000",
@@ -4561,7 +4564,9 @@ function assertOpeningActionCarryForwardContractGuard() {
       },
     },
     recoveryFault: {
-      commandAbortedAt: AUTOPLAY_START_TIMEOUT_MS - 1,
+      commandAbortedAt: AUTOPLAY_START_TIMEOUT_MS + 5_000,
+      commandAbortedBeforeDeadline: true,
+      commandAbortDeadlineObservedAt: null,
       commandStartedAt: 0,
       createdGameIds: ["game-initial", "game-replacement"],
     },
@@ -4612,11 +4617,31 @@ function assertOpeningActionCarryForwardContractGuard() {
       storedGameRecoveryFixture.probe,
       {
         ...storedGameRecoveryFixture.recoveryFault,
-        commandAbortedAt: AUTOPLAY_START_TIMEOUT_MS,
+        commandAbortedBeforeDeadline: false,
+        commandAbortDeadlineObservedAt: AUTOPLAY_START_TIMEOUT_MS,
       },
     ),
     false,
     "recovery autoplay grace must not weaken the existing command-abort gate",
+  );
+  assert.equal(
+    storedGameRecoveryNeedsAutoplayGrace(
+      storedGameRecoveryFixture.initialGameId,
+      {
+        ...storedGameRecoveryFixture.probe,
+        openingActionCarryForward: {
+          ...storedGameRecoveryFixture.probe.openingActionCarryForward,
+          watchMode: {
+            ...storedGameRecoveryFixture.probe.openingActionCarryForward
+              .watchMode,
+            frozen: true,
+          },
+        },
+      },
+      storedGameRecoveryFixture.recoveryFault,
+    ),
+    false,
+    "recovery autoplay grace must not mask frozen watch mode",
   );
 
   const mutateCarryForward = (changes) => ({
@@ -4730,17 +4755,17 @@ function storedGameRecoveryNeedsAutoplayGrace(
 ) {
   const carryForward = replacementProbe?.openingActionCarryForward;
   const createdGameIds = recoveryFault?.createdGameIds ?? [];
-  const abortDurationMs =
-    recoveryFault?.commandAbortedAt - recoveryFault?.commandStartedAt;
 
   return Boolean(
     initialGameId &&
       createdGameIds.length === 2 &&
       createdGameIds[0] === initialGameId &&
       createdGameIds[1] === replacementProbe?.gameId &&
-      Number.isFinite(abortDurationMs) &&
-      abortDurationMs >= 0 &&
-      abortDurationMs < AUTOPLAY_START_TIMEOUT_MS &&
+      Number.isFinite(recoveryFault?.commandStartedAt) &&
+      Number.isFinite(recoveryFault?.commandAbortedAt) &&
+      recoveryFault.commandAbortedAt >= recoveryFault.commandStartedAt &&
+      recoveryFault?.commandAbortedBeforeDeadline === true &&
+      recoveryFault.commandAbortDeadlineObservedAt === null &&
       ["queued", "in_progress"].includes(carryForward?.status) &&
       carryForward?.selectedActionId === "enter:boarding-house" &&
       carryForward?.targetLocationId === "boarding-house" &&
@@ -9129,14 +9154,20 @@ async function runMissingStoredGameCheck(session) {
 
 async function installFreshOpeningCommandLossFault(session) {
   await session.evaluate(`(() => {
+    const commandAbortGateMs = ${AUTOPLAY_START_TIMEOUT_MS};
     const originalFetch = window.fetch.bind(window);
+    const schedulerStallMs = ${STORED_GAME_RECOVERY_SCHEDULER_STALL_MS};
     const trace = {
       commandAbortReason: null,
       commandAbortedAt: null,
+      commandAbortedBeforeDeadline: null,
+      commandAbortDeadlineObservedAt: null,
       commandStartedAt: null,
       createdGameIds: [],
       installedAt: Date.now(),
-      reconciliationReads: 0
+      reconciliationReads: 0,
+      schedulerStallEndedAt: null,
+      schedulerStallStartedAt: null
     };
 
     window.__manyLivesFreshOpeningCommandLossFault = trace;
@@ -9167,10 +9198,22 @@ async function installFreshOpeningCommandLossFault(session) {
       ) {
         trace.commandStartedAt = Date.now();
         const signal = init.signal ?? request?.signal ?? null;
+        const commandAbortDeadlineTimer = window.setTimeout(() => {
+          trace.commandAbortDeadlineObservedAt = Date.now();
+        }, commandAbortGateMs);
+        if (Number.isFinite(schedulerStallMs) && schedulerStallMs > 0) {
+          trace.schedulerStallStartedAt = Date.now();
+          // Reproduce hosted timer delivery after a starved browser main thread.
+          while (Date.now() - trace.schedulerStallStartedAt < schedulerStallMs) {}
+          trace.schedulerStallEndedAt = Date.now();
+        }
         return new Promise((resolve, reject) => {
           const rejectForAbort = () => {
             trace.commandAbortedAt = Date.now();
+            trace.commandAbortedBeforeDeadline =
+              trace.commandAbortDeadlineObservedAt === null;
             trace.commandAbortReason = signal?.reason?.name ?? "AbortError";
+            window.clearTimeout(commandAbortDeadlineTimer);
             reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
           };
           if (signal?.aborted) {
@@ -9373,10 +9416,22 @@ async function runStoredGameChoiceCheck(session) {
     recoveryFault?.commandAbortedAt,
     "Start new recovery did not abort the hung opening command.",
   );
-  assert.ok(
-    recoveryFault.commandAbortedAt - recoveryFault.commandStartedAt <
-      AUTOPLAY_START_TIMEOUT_MS,
-    "Start new recovery did not abort within the existing autoplay gate.",
+  assert.equal(
+    recoveryFault.commandAbortedBeforeDeadline,
+    true,
+    `Start new recovery did not abort before the existing ${AUTOPLAY_START_TIMEOUT_MS}ms autoplay gate: ${JSON.stringify(
+      {
+        commandAbortedAt: recoveryFault.commandAbortedAt,
+        commandAbortDeadlineObservedAt:
+          recoveryFault.commandAbortDeadlineObservedAt,
+        commandStartedAt: recoveryFault.commandStartedAt,
+      },
+    )}.`,
+  );
+  assert.equal(
+    recoveryFault.commandAbortDeadlineObservedAt,
+    null,
+    "Start new recovery reached the existing autoplay deadline before the command abort.",
   );
   assert.ok(
     recoveryFault.reconciliationReads >= 1,
