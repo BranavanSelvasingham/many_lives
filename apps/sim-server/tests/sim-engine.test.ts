@@ -3259,6 +3259,172 @@ describe("SimulationEngine street slice", () => {
     );
   });
 
+  it("keeps job promises aligned with anchor energy and started work progress", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame("game-job-anchor-energy-commitment");
+
+    world = await engine.runCommand(world, {
+      type: "move_to",
+      x: 6,
+      y: 4,
+    });
+    world = await enterTeaHouse(engine, world);
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "talk:npc-ada",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+    expect(world.activeConversation).toBeUndefined();
+    setTestClock(world, 12, 29);
+    world.player.energy = 28;
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "work",
+      routeKey: "work-tea",
+      source: "dynamic",
+      text: "Secure paid work at Kettle & Lamp and follow through.",
+    };
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(actionById(world, "accept:job-tea-shift")).toMatchObject({
+      disabled: true,
+      disabledReason:
+        "You need enough energy to reach the work station and carry this shift.",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      accepted: false,
+      completed: false,
+      missed: false,
+    });
+    expect(
+      world.player.objective?.completedTrail.some(
+        (step) => step.id === "work-commit",
+      ),
+    ).toBe(false);
+
+    world.player.energy = 32;
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+    expect(actionById(world, "accept:job-tea-shift")).toMatchObject({
+      disabled: true,
+      disabledReason:
+        "You need enough energy to reach the work station and carry this shift.",
+    });
+    expect(world.rowanAutonomy.actionId).not.toBe("accept:job-tea-shift");
+    expect(world.rowanAutonomy.label).not.toMatch(/shift booked|start the lunch rush/i);
+    expect(world.rowanAutonomy.planningTrace?.selectedActionId).not.toBe(
+      "accept:job-tea-shift",
+    );
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      accepted: false,
+      completed: false,
+      missed: false,
+    });
+    expect(
+      world.player.objective?.completedTrail.some(
+        (step) => step.id === "work-commit",
+      ),
+    ).toBe(false);
+
+    world.player.energy = 43;
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+    expect(actionById(world, "accept:job-tea-shift")?.disabled).not.toBe(true);
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "accept:job-tea-shift",
+    });
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      accepted: true,
+      completed: false,
+      missed: false,
+    });
+    expect(
+      world.player.objective?.completedTrail.some(
+        (step) => step.id === "work-commit",
+      ),
+    ).toBe(true);
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "work:job-tea-shift",
+      layer: "commitment",
+      stepKind: "act",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "work:job-tea-shift",
+    });
+
+    expect(world.firstAfternoon?.teaShiftStage).toBe("rush");
+    expect(world.player.energy).toBe(38);
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      accepted: true,
+      completed: false,
+      missed: false,
+      progressMinutes: 20,
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      layer: "commitment",
+      stepKind: "act",
+    });
+    expect(world.rowanAutonomy.actionId).toBe("work:job-tea-shift");
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "work:job-tea-shift",
+    });
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      accepted: true,
+      completed: false,
+      missed: false,
+      progressMinutes: 45,
+    });
+
+    world = await engine.runCommand(world, {
+      type: "act",
+      actionId: "work:job-tea-shift",
+    });
+
+    expect(world.jobs.find((job) => job.id === "job-tea-shift")).toMatchObject({
+      accepted: false,
+      completed: true,
+      missed: false,
+      progressMinutes: 60,
+    });
+    expect(
+      world.player.objective?.outcomes.find(
+        (outcome) => outcome.id === "work-commit",
+      )?.status,
+    ).not.toBe("failed");
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("routes first-afternoon low-energy recovery home instead of reopening Ada", async () => {
     const setupEngine = new SimulationEngine(new MockAIProvider());
     let world = await setupEngine.createGame("game-low-energy-recovery-plan");

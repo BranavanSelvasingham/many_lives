@@ -144,6 +144,8 @@ export const STEP_MINUTES = 30;
 
 const MINUTES_PER_MOVEMENT_TILE = 1.5;
 const MIN_PLAYER_MOVEMENT_ENERGY = 12;
+const MIN_JOB_START_ENERGY = 28;
+const JOB_ENERGY_COST = 14;
 const RECOVERY_ENERGY_THRESHOLD = 35;
 const MIN_STREET_PLANNER_CONFIDENCE = 0.55;
 const JOB_WINDOW_PRESSURE_MINUTES = 45;
@@ -792,6 +794,82 @@ function movementEnergyForDistance(
   }
 
   return distance * 2;
+}
+
+function actionAnchorArrivalProjection(
+  world: StreetGameState,
+  actionId: string,
+  start: GridPoint = world.player,
+) {
+  const space = activeSpace(world);
+  const anchor = space.anchors.find(
+    (candidate) => candidate.actionId === actionId,
+  );
+  if (!anchor) {
+    return {
+      energyCost: 0,
+      point: start,
+    };
+  }
+
+  const route = findWalkableRoute(space.tiles, start, anchor);
+  if (!route.reached) {
+    return undefined;
+  }
+
+  return {
+    energyCost: movementEnergyForDistance(
+      Math.max(route.path.length - 1, 0),
+      space.kind,
+    ),
+    point: anchor,
+  };
+}
+
+function projectedEnergyAtActionAnchor(
+  world: StreetGameState,
+  actionId: string,
+) {
+  const projection = actionAnchorArrivalProjection(world, actionId);
+  return projection
+    ? world.player.energy - projection.energyCost
+    : undefined;
+}
+
+function projectedEnergyAtAcceptedJobStart(
+  world: StreetGameState,
+  job: JobState,
+) {
+  let energy = world.player.energy;
+  let point: GridPoint = world.player;
+
+  for (const actionId of [`accept:${job.id}`, `work:${job.id}`]) {
+    const projection = actionAnchorArrivalProjection(world, actionId, point);
+    if (!projection) {
+      return undefined;
+    }
+    energy -= projection.energyCost;
+    point = projection.point;
+  }
+
+  return energy;
+}
+
+function requiredJobActionArrivalEnergy(
+  world: StreetGameState,
+  job: JobState,
+) {
+  const stagedWork = objectiveRouteWorkStageWatchCopy(
+    world,
+    currentObjectiveDirective(world),
+    {
+      jobId: job.id,
+      stage: world.firstAfternoon?.teaShiftStage,
+    },
+  );
+  return !jobIsStartedCommitment(world, job) && stagedWork
+    ? MIN_JOB_START_ENERGY + JOB_ENERGY_COST
+    : MIN_JOB_START_ENERGY;
 }
 
 function findWalkableRoute(tiles: MapTile[], start: GridPoint, end: GridPoint) {
@@ -1778,7 +1856,7 @@ function resolveCommittedJobLoopStep(
     };
   }
 
-  if (world.player.energy < 28) {
+  if (world.player.energy < MIN_JOB_START_ENERGY) {
     return committedJobRecoveryLoopStep(world, committedJob);
   }
 
@@ -1843,9 +1921,25 @@ function resolveCommittedJobLoopStep(
   }
 
   const workAlreadyStarted = jobIsStartedCommitment(world, committedJob);
+  const requiredWorkEnergy = requiredJobActionArrivalEnergy(
+    world,
+    committedJob,
+  );
+  const projectedWorkEnergy = projectedEnergyAtActionAnchor(
+    world,
+    `work:${committedJob.id}`,
+  );
   if (
     (currentHour(world) < committedJob.endHour || workAlreadyStarted) &&
-    world.player.energy >= 28
+    projectedWorkEnergy !== undefined &&
+    projectedWorkEnergy < requiredWorkEnergy
+  ) {
+    return committedJobRecoveryLoopStep(world, committedJob);
+  }
+  if (
+    (currentHour(world) < committedJob.endHour || workAlreadyStarted) &&
+    projectedWorkEnergy !== undefined &&
+    projectedWorkEnergy >= requiredWorkEnergy
   ) {
     const workStageWatchCopy = objectiveRouteWorkStageWatchCopy(
       world,
@@ -9397,7 +9491,11 @@ function acceptJob(world: StreetGameState, jobId: string): void {
     return;
   }
 
-  if (currentHour(world) >= job.startHour && world.player.energy < 28) {
+  if (
+    currentHour(world) >= job.startHour &&
+    (projectedEnergyAtAcceptedJobStart(world, job) ?? world.player.energy) <
+      requiredJobActionArrivalEnergy(world, job)
+  ) {
     addFeed(
       world,
       "info",
@@ -9563,7 +9661,7 @@ function workJob(world: StreetGameState, jobId: string): void {
     return;
   }
 
-  if (world.player.energy < 28) {
+  if (world.player.energy < MIN_JOB_START_ENERGY) {
     addFeed(
       world,
       "info",
@@ -9576,6 +9674,10 @@ function workJob(world: StreetGameState, jobId: string): void {
     world.firstAfternoon ??= {};
     if (!world.firstAfternoon.teaShiftStage) {
       advanceWorld(world, 20, { workingJobId: job.id });
+      job.progressMinutes = Math.min(
+        job.durationMinutes,
+        (job.progressMinutes ?? 0) + 20,
+      );
       world.player.energy = clamp(world.player.energy - 4, 12, 100);
       world.firstAfternoon.teaShiftStage = "rush";
       const workStageThought = objectiveRouteWorkStageThought(
@@ -9607,6 +9709,10 @@ function workJob(world: StreetGameState, jobId: string): void {
 
     if (world.firstAfternoon.teaShiftStage === "rush") {
       advanceWorld(world, 25, { workingJobId: job.id });
+      job.progressMinutes = Math.min(
+        job.durationMinutes,
+        (job.progressMinutes ?? 0) + 25,
+      );
       world.player.energy = clamp(world.player.energy - 5, 12, 100);
       world.firstAfternoon.teaShiftStage = "counter";
       movePlayerWithinActiveSpaceForWork(world, { x: 7, y: 5 });
@@ -9657,7 +9763,9 @@ function workJob(world: StreetGameState, jobId: string): void {
   );
   const energyCost = Math.max(
     1,
-    Math.round((14 * workAdvance.advancedMinutes) / job.durationMinutes),
+    Math.round(
+      (JOB_ENERGY_COST * workAdvance.advancedMinutes) / job.durationMinutes,
+    ),
   );
 
   if (workAdvance.interrupted && totalProgressMinutes < job.durationMinutes) {
@@ -9983,7 +10091,7 @@ function restAtHome(world: StreetGameState): void {
 
   const pumpSolved = problemById(world, "problem-pump")?.status === "solved";
   const restAdvance = advanceWorldUntilIndependentNpcAction(world, 60);
-  const fullRestEnergy = postFirstAfternoonNeedsCommitmentRecovery(world)
+  const fullRestEnergy = needsCommitmentRecovery(world)
     ? 56
     : pumpSolved
       ? 28
@@ -10017,7 +10125,18 @@ function restAtHome(world: StreetGameState): void {
   markCurrentObjectiveStepCompleted(world, "rest-home", "rest-hour");
 }
 
-function postFirstAfternoonNeedsCommitmentRecovery(world: StreetGameState) {
+function needsCommitmentRecovery(world: StreetGameState) {
+  const activeJob = world.jobs.find(
+    (job) =>
+      job.id === world.player.activeJobId &&
+      job.accepted &&
+      !job.completed &&
+      !job.missed,
+  );
+  if (activeJob) {
+    return true;
+  }
+
   const yardJob = jobById(world, "job-yard-shift");
   return Boolean(
     world.firstAfternoon?.completionAcknowledgedAt &&
@@ -10747,6 +10866,12 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
   )) {
     if (!job.accepted) {
       const actionId = `accept:${job.id}`;
+      const projectedStartEnergy = projectedEnergyAtAcceptedJobStart(world, job);
+      const currentlyTooDrained = world.player.energy < MIN_JOB_START_ENERGY;
+      const lacksStartEnergy =
+        currentHour(world) >= job.startHour &&
+        (projectedStartEnergy ?? world.player.energy) <
+          requiredJobActionArrivalEnergy(world, job);
       actions.push({
         id: actionId,
         label: `Take ${job.title}`,
@@ -10756,16 +10881,23 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
         ...spatial(actionId, job.locationId),
         disabled:
           currentHour(world) >= job.endHour ||
-          (currentHour(world) >= job.startHour && world.player.energy < 28),
+          lacksStartEnergy,
         disabledReason:
           currentHour(world) >= job.endHour
             ? "The shift window is gone."
-            : currentHour(world) >= job.startHour && world.player.energy < 28
-              ? "You are too drained for work that starts now."
+            : lacksStartEnergy
+              ? currentlyTooDrained
+                ? "You are too drained for work that starts now."
+                : "You need enough energy to reach the work station and carry this shift."
             : undefined,
       });
     } else {
       const actionId = `work:${job.id}`;
+      const projectedWorkEnergy = projectedEnergyAtActionAnchor(world, actionId);
+      const currentlyTooDrained = world.player.energy < MIN_JOB_START_ENERGY;
+      const lacksWorkEnergy =
+        projectedWorkEnergy !== undefined &&
+        projectedWorkEnergy < requiredJobActionArrivalEnergy(world, job);
       const workAlreadyStarted = jobIsStartedCommitment(world, job);
       const workStageWatchCopy = objectiveRouteWorkStageWatchCopy(
         world,
@@ -10795,14 +10927,16 @@ function buildAvailableActions(world: StreetGameState): ActionOption[] {
         disabled:
           currentHour(world) < job.startHour ||
           (currentHour(world) >= job.endHour && !workAlreadyStarted) ||
-          world.player.energy < 28,
+          lacksWorkEnergy,
         disabledReason:
           currentHour(world) < job.startHour
             ? "Too early for the shift."
             : currentHour(world) >= job.endHour && !workAlreadyStarted
               ? "The shift has already slipped."
-              : world.player.energy < 28
-                ? "You are too drained for this work."
+              : lacksWorkEnergy
+                ? currentlyTooDrained
+                  ? "You are too drained for this work."
+                  : "You need enough energy to reach the work station and carry this shift."
                 : undefined,
       });
     }
