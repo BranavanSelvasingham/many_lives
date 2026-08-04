@@ -2118,6 +2118,12 @@ class CdpSession {
                 this.screencast.routeRecorderExpectedTargetLocationId,
               routeRecorderGeneration:
                 this.screencast.routeRecorderGeneration,
+              routeRecorderTargetDiscoveryStatus:
+                this.screencast.routeRecorderTargetDiscoveryStatus,
+              routeRecorderTargetLockedAtEpochMs:
+                this.screencast.routeRecorderTargetLockedAtEpochMs,
+              routeRecorderTargetLockGeneration:
+                this.screencast.routeRecorderTargetLockGeneration,
               routeRecorderRestartCount:
                 this.screencast.routeRecorderRestartCount,
               routeRecorderRestarts:
@@ -3627,14 +3633,14 @@ class CdpSession {
       if (previous?.intervalId) {
         window.clearInterval(previous.intervalId);
       }
-      const expectedTargetLocationId = ${JSON.stringify(expectedTargetLocationId)};
+      const configuredExpectedTargetLocationId = ${JSON.stringify(expectedTargetLocationId)};
       const generation = ${JSON.stringify(recorderGeneration)};
       const includeBrowserProbe = ${JSON.stringify(includeBrowserProbe)};
       const restartReason = ${JSON.stringify(restartReason)};
       const maxSnapshots = ${JSON.stringify(maxSnapshots)};
       const state = {
         acceptedCount: 0,
-        expectedTargetLocationId,
+        expectedTargetLocationId: configuredExpectedTargetLocationId,
         generation,
         includeBrowserProbe,
         intervalId: null,
@@ -3647,6 +3653,12 @@ class CdpSession {
         samples: [],
         startedAtEpochMs: Date.now(),
         status: "active",
+        targetDiscoveryStatus: configuredExpectedTargetLocationId
+          ? "configured"
+          : "waiting-for-legal-active-route",
+        targetLockedAtEpochMs: configuredExpectedTargetLocationId
+          ? Date.now()
+          : null,
         tickCount: 0,
         unavailableCount: 0
       };
@@ -3821,10 +3833,13 @@ class CdpSession {
               targetLocationId: route.targetLocationId ?? null
             }
           : null;
+        const routeTargetLocationId = route?.targetLocationId ?? null;
         const acceptable = Boolean(
           route?.active === true &&
-            (expectedTargetLocationId === null ||
-              route.targetLocationId === expectedTargetLocationId) &&
+            typeof routeTargetLocationId === "string" &&
+            routeTargetLocationId.length > 0 &&
+            (state.expectedTargetLocationId === null ||
+              routeTargetLocationId === state.expectedTargetLocationId) &&
             typeof route.progress === "number" &&
             Number.isFinite(route.progress) &&
             route.progress >= 0 &&
@@ -3840,6 +3855,11 @@ class CdpSession {
             ? "route-rejected"
             : "route-unavailable";
           return;
+        }
+        if (state.expectedTargetLocationId === null) {
+          state.expectedTargetLocationId = routeTargetLocationId;
+          state.targetDiscoveryStatus = "locked-from-legal-active-route";
+          state.targetLockedAtEpochMs = capturedAtEpochMs;
         }
         state.samples.push({
           browserProbe: browserProbe
@@ -3880,24 +3900,43 @@ class CdpSession {
       window[recorderKey] = state;
       sample();
       return {
-        expectedTargetLocationId,
+        configuredExpectedTargetLocationId,
+        expectedTargetLocationId: state.expectedTargetLocationId,
         generation,
         includeBrowserProbe,
         restartReason,
         startedAtEpochMs: state.startedAtEpochMs,
-        status: state.status
+        status: state.status,
+        targetDiscoveryStatus: state.targetDiscoveryStatus,
+        targetLockedAtEpochMs: state.targetLockedAtEpochMs
       };
     })()`, label).then((recorder) => {
       if (screencastState) {
         assert.ok(
           !screencastState.routeRecorderExpectedTargetLocationId ||
             screencastState.routeRecorderExpectedTargetLocationId ===
-              expectedTargetLocationId,
+              recorder.expectedTargetLocationId,
           "Autoplay route recorder target changed across one browser session.",
         );
+        assert.ok(
+          expectedTargetLocationId === null ||
+            recorder.expectedTargetLocationId === expectedTargetLocationId,
+          "Autoplay route recorder did not retain its configured target.",
+        );
+        assert.equal(
+          recorder.generation,
+          recorderGeneration,
+          "Autoplay route recorder started with a stale generation.",
+        );
         screencastState.routeRecorderExpectedTargetLocationId =
-          expectedTargetLocationId;
+          recorder.expectedTargetLocationId;
         screencastState.routeRecorderGeneration = recorderGeneration;
+        screencastState.routeRecorderTargetDiscoveryStatus =
+          recorder.targetDiscoveryStatus;
+        screencastState.routeRecorderTargetLockedAtEpochMs =
+          recorder.targetLockedAtEpochMs;
+        screencastState.routeRecorderTargetLockGeneration =
+          recorder.expectedTargetLocationId ? recorderGeneration : null;
       }
       return recorder;
     });
@@ -3924,6 +3963,8 @@ class CdpSession {
         samples: state.samples,
         startedAtEpochMs: state.startedAtEpochMs,
         status: state.status,
+        targetDiscoveryStatus: state.targetDiscoveryStatus,
+        targetLockedAtEpochMs: state.targetLockedAtEpochMs,
         tickCount: state.tickCount,
         unavailableCount: state.unavailableCount
       };
@@ -3967,17 +4008,37 @@ class CdpSession {
       `${label}:read`,
     );
     if (recorder) {
-      assert.equal(
-        recorder.expectedTargetLocationId,
-        expectedTargetLocationId,
+      assert.ok(
+        expectedTargetLocationId === null ||
+          recorder.expectedTargetLocationId === expectedTargetLocationId,
         `${label}: page recorder target changed unexpectedly.`,
       );
-      screencastState.routeRecorderExpectedTargetLocationId =
-        expectedTargetLocationId;
-      screencastState.routeRecorderGeneration = Math.max(
-        screencastState.routeRecorderGeneration,
-        recorder.generation ?? 1,
+      assert.ok(
+        !screencastState.routeRecorderExpectedTargetLocationId ||
+          !recorder.expectedTargetLocationId ||
+          screencastState.routeRecorderExpectedTargetLocationId ===
+            recorder.expectedTargetLocationId,
+        `${label}: discovered page recorder target conflicts with the active screencast target.`,
       );
+      assert.equal(
+        recorder.generation,
+        screencastState.routeRecorderGeneration,
+        `${label}: page recorder generation is stale.`,
+      );
+      screencastState.routeRecorderExpectedTargetLocationId =
+        recorder.expectedTargetLocationId ?? expectedTargetLocationId;
+      screencastState.routeRecorderTargetDiscoveryStatus =
+        recorder.targetDiscoveryStatus ??
+        (screencastState.routeRecorderExpectedTargetLocationId
+          ? "locked-from-page-recorder"
+          : "waiting-for-legal-active-route");
+      screencastState.routeRecorderTargetLockedAtEpochMs =
+        recorder.targetLockedAtEpochMs ??
+        screencastState.routeRecorderTargetLockedAtEpochMs;
+      screencastState.routeRecorderTargetLockGeneration =
+        screencastState.routeRecorderExpectedTargetLocationId
+          ? recorder.generation
+          : null;
       return recorder;
     }
 
@@ -4027,10 +4088,13 @@ class CdpSession {
         const rearmed = await this.readAutoplayRouteCaptureRecorder(
           `${label}:confirm-generation-${generation}`,
         );
-        assert.equal(
-          rearmed?.expectedTargetLocationId,
-          expectedTargetLocationId,
-          `${label}: re-armed recorder did not retain the expected target.`,
+        assert.ok(
+          expectedTargetLocationId === null
+            ? rearmed?.expectedTargetLocationId === null ||
+                (typeof rearmed?.expectedTargetLocationId === "string" &&
+                  rearmed.expectedTargetLocationId.length > 0)
+            : rearmed?.expectedTargetLocationId === expectedTargetLocationId,
+          `${label}: re-armed recorder did not retain or legally discover the expected target.`,
         );
         assert.equal(
           rearmed?.generation,
@@ -4134,6 +4198,9 @@ class CdpSession {
       routeVisualCaptureTransportStatus: "starting",
       routeRecorderExpectedTargetLocationId: null,
       routeRecorderGeneration: 0,
+      routeRecorderTargetDiscoveryStatus: "idle",
+      routeRecorderTargetLockedAtEpochMs: null,
+      routeRecorderTargetLockGeneration: null,
       routeRecorderRestartCount: 0,
       routeRecorderRestarts: [],
       routeRecorderRearmPromise: null,
@@ -5962,11 +6029,10 @@ class CdpSession {
 
   scheduleAutoplayRouteSampleFromScreencastFrame() {
     const state = this.screencast;
-    const expectedTargetLocationId =
+    let expectedTargetLocationId =
       state?.routeRecorderExpectedTargetLocationId ?? null;
     if (
       !state?.active ||
-      !expectedTargetLocationId ||
       state.routeFrameArchiveFrozen ||
       this.autoplayRouteVisualWindowCaptureComplete(state) ||
       (!state.forceRouteCanvasFallback &&
@@ -6007,6 +6073,10 @@ class CdpSession {
             expectedTargetLocationId,
             label: "screencast-frame-route-recorder",
           });
+          expectedTargetLocationId =
+            state.routeRecorderExpectedTargetLocationId ??
+            recorder?.expectedTargetLocationId ??
+            null;
           this.archiveAutoplayRouteFrames(recorder);
           sample = await this.sampleAutoplayRouteCaptureRecorder(
             "screencast-frame-route-sample-after-rearm",
@@ -6015,10 +6085,32 @@ class CdpSession {
         if (!sample) {
           continue;
         }
+        const targetLock = classifyAutoplayRouteRecorderTargetLock({
+          expectedTargetLocationId,
+          recorderGeneration: state.routeRecorderGeneration,
+          sample,
+        });
+        if (!targetLock.accepted) {
+          state.routeFrameSampleStatus =
+            `rejected-${targetLock.reason}`;
+          continue;
+        }
+        if (expectedTargetLocationId === null) {
+          expectedTargetLocationId = targetLock.targetLocationId;
+          state.routeRecorderExpectedTargetLocationId =
+            targetLock.targetLocationId;
+          state.routeRecorderTargetDiscoveryStatus =
+            "locked-from-cdp-frame-sample";
+          state.routeRecorderTargetLockedAtEpochMs =
+            sample.capturedAtEpochMs;
+          state.routeRecorderTargetLockGeneration =
+            state.routeRecorderGeneration;
+        }
         state.routeFrameSampleCount += 1;
         this.archiveAutoplayRouteFrames({
           acceptedCount: state.routeFrameSampleCount,
           expectedTargetLocationId,
+          generation: state.routeRecorderGeneration,
           samples: [sample],
         });
         this.scheduleAutoplayRouteVisualWindowCapture({
@@ -15530,6 +15622,44 @@ function isAutoplayFootholdRouteFrame(route, expectedTargetLocationId) {
       route.sampledPointsLegal === true &&
       route.visualObstaclesClear === true,
   );
+}
+
+function classifyAutoplayRouteRecorderTargetLock({
+  expectedTargetLocationId,
+  recorderGeneration,
+  sample,
+}) {
+  if (!sample?.route) {
+    return { accepted: false, reason: "route-unavailable" };
+  }
+  if (
+    !Number.isInteger(recorderGeneration) ||
+    sample.recorderGeneration !== recorderGeneration
+  ) {
+    return { accepted: false, reason: "stale-generation" };
+  }
+  const targetLocationId = sample.route.targetLocationId ?? null;
+  if (
+    typeof targetLocationId !== "string" ||
+    targetLocationId.length === 0
+  ) {
+    return { accepted: false, reason: "target-unavailable" };
+  }
+  if (
+    expectedTargetLocationId &&
+    targetLocationId !== expectedTargetLocationId
+  ) {
+    return { accepted: false, reason: "wrong-target" };
+  }
+  if (!isAutoplayFootholdRouteFrame(sample.route, targetLocationId)) {
+    return { accepted: false, reason: "route-not-active-legal" };
+  }
+  return {
+    accepted: true,
+    discovered: expectedTargetLocationId === null,
+    reason: expectedTargetLocationId === null ? "target-discovered" : "matched",
+    targetLocationId,
+  };
 }
 
 function autoplayRouteSampleHudSignature(sample) {
@@ -26541,7 +26671,98 @@ function assertScriptedRouteCaptureRecoveryGuard() {
       },
     },
     route,
+    recorderGeneration: 3,
   };
+  assert.deepEqual(
+    classifyAutoplayRouteRecorderTargetLock({
+      expectedTargetLocationId: null,
+      recorderGeneration: 3,
+      sample: routeSample,
+    }),
+    {
+      accepted: true,
+      discovered: true,
+      reason: "target-discovered",
+      targetLocationId: "tea-house",
+    },
+    "A wildcard scripted prearm must discover and lock its first legal active route target.",
+  );
+  assert.equal(
+    classifyAutoplayRouteRecorderTargetLock({
+      expectedTargetLocationId: "repair-stall",
+      recorderGeneration: 3,
+      sample: routeSample,
+    }).reason,
+    "wrong-target",
+    "A locked recorder must reject a route to another target.",
+  );
+  assert.equal(
+    classifyAutoplayRouteRecorderTargetLock({
+      expectedTargetLocationId: null,
+      recorderGeneration: 3,
+      sample: { recorderGeneration: 3, route: null },
+    }).reason,
+    "route-unavailable",
+    "Wildcard discovery must not lock without an active route.",
+  );
+  assert.equal(
+    classifyAutoplayRouteRecorderTargetLock({
+      expectedTargetLocationId: null,
+      recorderGeneration: 4,
+      sample: routeSample,
+    }).reason,
+    "stale-generation",
+    "A route sample from an earlier recorder generation must not lock the target.",
+  );
+  assert.equal(
+    classifyAutoplayRouteRecorderTargetLock({
+      expectedTargetLocationId: null,
+      recorderGeneration: 3,
+      sample: {
+        ...routeSample,
+        route: { ...route, active: false, progress: 1 },
+      },
+    }).reason,
+    "route-not-active-legal",
+    "A settled destination must not lock a wildcard recorder.",
+  );
+  const routeSampleAt = (capturedAtEpochMs, progress, routeOverrides = {}) => ({
+    ...routeSample,
+    capturedAtEpochMs,
+    paintProbe: {
+      regions: [{ surface: "hud", text: "DAY 1 11:25" }],
+      stableRegions: [{ surface: "hud", text: "DAY 1 11:25" }],
+    },
+    route: { ...route, progress, ...routeOverrides },
+    source: "movement-probe-recorder",
+  });
+  const wrongSegmentSamples = [
+    routeSampleAt(1_000, 0.08),
+    routeSampleAt(1_200, 0.42, {
+      tilePath: [
+        { x: 4, y: 8 },
+        { x: 7, y: 4 },
+      ],
+      worldPath: [
+        { x: 300, y: 460 },
+        { x: 420, y: 300 },
+      ],
+    }),
+  ];
+  const wrongSegmentCapture = buildAutoplayRouteCaptureSegments({
+    expectedTargetLocationId: "tea-house",
+    samples: wrongSegmentSamples,
+  });
+  assert.equal(
+    wrongSegmentCapture.length,
+    2,
+    "Same-target samples from different paths must not form one recoverable route segment.",
+  );
+  assert.deepEqual(
+    wrongSegmentCapture[1].boundaryReasons,
+    ["path-change"],
+    "Wrong-segment rejection must remain explicitly path-backed.",
+  );
   assert.equal(
     scriptedRouteSampleMatchesTransition(
       routeSample,
