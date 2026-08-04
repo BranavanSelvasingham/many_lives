@@ -1055,6 +1055,44 @@ async function waitFor(
   throw new Error(errorMessage);
 }
 
+async function runWithPeriodicAutoplayPacingObservation({
+  observe,
+  operation,
+  pollIntervalMs = AUTOPLAY_PACING_SAMPLE_INTERVAL_MS,
+  waitForInterval = sleep,
+}) {
+  let operationError = null;
+  let operationResult;
+  let operationSettled = false;
+  const completion = Promise.resolve()
+    .then(operation)
+    .then(
+      (result) => {
+        operationResult = result;
+        operationSettled = true;
+      },
+      (error) => {
+        operationError = error;
+        operationSettled = true;
+      },
+    );
+
+  while (!operationSettled) {
+    await Promise.race([
+      completion,
+      waitForInterval(Math.max(1, pollIntervalMs)),
+    ]);
+    if (!operationSettled) {
+      await observe();
+    }
+  }
+
+  if (operationError) {
+    throw operationError;
+  }
+  return operationResult;
+}
+
 function paethPredictor(left, up, upLeft) {
   const estimate = left + up - upLeft;
   const leftDistance = Math.abs(estimate - left);
@@ -19105,6 +19143,77 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
     );
     visibleCopyAuditCount += startDom ? 1 : 0;
 
+    const recordPacingProbe = async (
+      probe,
+      { allowDomAudit = true, label = "dom-audit" } = {},
+    ) => {
+      if (!probe) {
+        return null;
+      }
+      let sampleDom = null;
+      const now = Date.now();
+      const probeSample = sampleAutoplayObservationSample({
+        dom: null,
+        elapsedMs: now - pacingStartedAt,
+        probe,
+      });
+      const probeSignature = autoplayObservationSignature(probeSample);
+      const probeChanged = probeSignature !== lastProbeSignature;
+      const shouldAuditDom =
+        allowDomAudit &&
+        (probeChanged ||
+          now - lastDomAuditAt >= AUTOPLAY_DOM_AUDIT_INTERVAL_MS);
+      const shouldSample =
+        probeChanged ||
+        (shouldAuditDom &&
+          now - lastSampleAt >= AUTOPLAY_PACING_SAMPLE_INTERVAL_MS);
+
+      if (!shouldSample) {
+        return sampleDom;
+      }
+      if (shouldAuditDom) {
+        sampleDom = await session
+          .readAutoplayDomAudit(`${openingWorldVariant}:autoplay:${label}`)
+          .catch(() => null);
+        lastDomAuditAt = now;
+      }
+      if (sampleDom) {
+        assertNoVisibleImplementationLanguage(
+          `${openingWorldVariant} autoplay sample`,
+          sampleDom.bodyText,
+        );
+        visibleCopyAuditCount += 1;
+      }
+      pacingSamples.push(
+        sampleAutoplayObservationSample({
+          dom: sampleDom,
+          elapsedMs: now - pacingStartedAt,
+          probe,
+        }),
+      );
+      lastSampleAt = now;
+      lastProbeSignature = probeSignature;
+      return sampleDom;
+    };
+    const captureMilestoneWithoutStarvingPacing = async (
+      key,
+      probe,
+      milestoneDom = null,
+    ) =>
+      runWithPeriodicAutoplayPacingObservation({
+        observe: async () => {
+          const captureProbe = acceptedAutoplayPacingProbe(
+            await session
+              .readAutoplayPacingProbe(
+                `${openingWorldVariant}:autoplay:${key}:capture-pacing-probe`,
+              )
+              .catch(() => null),
+          );
+          await recordPacingProbe(captureProbe, { allowDomAudit: false });
+        },
+        operation: () => captureMilestoneOnce(key, probe, milestoneDom),
+      });
+
     const completion = await waitFor(
       async () => {
         const probe = acceptedAutoplayPacingProbe(
@@ -19189,54 +19298,18 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
           );
         }
 
-        let sampleDom = null;
-        const now = Date.now();
-        const probeSample = sampleAutoplayObservationSample({
-          dom: null,
-          elapsedMs: now - pacingStartedAt,
-          probe,
-        });
-        const probeSignature = autoplayObservationSignature(probeSample);
-        const probeChanged = probeSignature !== lastProbeSignature;
-        const shouldAuditDom =
-          probeChanged ||
-          now - lastDomAuditAt >= AUTOPLAY_DOM_AUDIT_INTERVAL_MS;
-        const shouldSample =
-          probeChanged ||
-          (shouldAuditDom &&
-            now - lastSampleAt >= AUTOPLAY_PACING_SAMPLE_INTERVAL_MS);
-
-        if (shouldSample) {
-          if (shouldAuditDom) {
-            sampleDom = await session
-              .readAutoplayDomAudit(`${openingWorldVariant}:autoplay:dom-audit`)
-              .catch(() => null);
-            lastDomAuditAt = now;
-          }
-          if (sampleDom) {
-            assertNoVisibleImplementationLanguage(
-              `${openingWorldVariant} autoplay sample`,
-              sampleDom.bodyText,
-            );
-            visibleCopyAuditCount += 1;
-          }
-          pacingSamples.push(
-            sampleAutoplayObservationSample({
-              dom: sampleDom,
-              elapsedMs: now - pacingStartedAt,
-              probe,
-            }),
-          );
-          lastSampleAt = now;
-          lastProbeSignature = probeSignature;
-        }
+        const sampleDom = await recordPacingProbe(probe);
 
         if (probe.activeConversation) {
-          await captureMilestoneOnce("first-interaction", probe, sampleDom);
+          await captureMilestoneWithoutStarvingPacing(
+            "first-interaction",
+            probe,
+            sampleDom,
+          );
         }
 
         if (trajectoryFootholdReached(probe, openingWorldVariant)) {
-          await captureMilestoneOnce(
+          await captureMilestoneWithoutStarvingPacing(
             "consequential-foothold",
             probe,
             sampleDom,
@@ -20790,6 +20863,135 @@ function assertAutoplayProgressGapGuard() {
     "A playback card left static for 19 seconds must still fail the pacing gate.",
   );
 
+  const hostedCaptureStarvationSamples = [
+    {
+      appMonotonicMs: 197_235.3,
+      autonomy: { label: "Return to Morrow House to take stock" },
+      elapsedMs: 198_687,
+      location: { id: "courtyard", spaceId: "street:south-quay" },
+      movement: { routeActive: false, routeProgress: null },
+      playback: { completedTimings: [] },
+    },
+    {
+      appMonotonicMs: 201_725.4,
+      autonomy: { label: "Return to Morrow House to take stock" },
+      elapsedMs: 202_900,
+      location: { id: "courtyard", spaceId: "street:south-quay" },
+      movement: { routeActive: false, routeProgress: null },
+      playback: {
+        activeKey: "time-passed:2026-03-21T14:08:00.000Z",
+        activeKind: "time_passed",
+        activeStartedAtMs: 201_725.4,
+        activeTitle: "Time passed",
+        completedTimings: [],
+      },
+    },
+    {
+      appMonotonicMs: 206_690,
+      autonomy: { label: "Return to Morrow House to take stock" },
+      elapsedMs: 207_800,
+      location: { id: "courtyard", spaceId: "street:south-quay" },
+      movement: { routeActive: false, routeProgress: null },
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 206_690,
+            key: "time-passed:2026-03-21T14:08:00.000Z",
+            kind: "time_passed",
+            startedAtMs: 201_725.4,
+            title: "Time passed",
+          },
+        ],
+      },
+    },
+    {
+      appMonotonicMs: 211_100,
+      autonomy: { label: "Return to Morrow House to take stock" },
+      elapsedMs: 212_100,
+      location: { id: "courtyard", spaceId: "street:south-quay" },
+      movement: { routeActive: true, routeProgress: 0.08 },
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 206_690,
+            key: "time-passed:2026-03-21T14:08:00.000Z",
+            kind: "time_passed",
+            startedAtMs: 201_725.4,
+            title: "Time passed",
+          },
+        ],
+      },
+    },
+    {
+      appMonotonicMs: 217_300,
+      autonomy: { label: "Return to Morrow House to take stock" },
+      elapsedMs: 218_300,
+      location: { id: "courtyard", spaceId: "street:south-quay" },
+      movement: { routeActive: true, routeProgress: 0.55 },
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 206_690,
+            key: "time-passed:2026-03-21T14:08:00.000Z",
+            kind: "time_passed",
+            startedAtMs: 201_725.4,
+            title: "Time passed",
+          },
+        ],
+      },
+    },
+    {
+      appMonotonicMs: 225_579.9,
+      autonomy: { label: "Enter Morrow House" },
+      elapsedMs: 225_590,
+      location: { id: "boarding-house", spaceId: "interior:boarding-house" },
+      movement: { routeActive: false, routeProgress: null },
+      playback: {
+        completedTimings: [
+          {
+            completedAtMs: 206_690,
+            key: "time-passed:2026-03-21T14:08:00.000Z",
+            kind: "time_passed",
+            startedAtMs: 201_725.4,
+            title: "Time passed",
+          },
+        ],
+      },
+    },
+  ];
+  const buildHostedCaptureStarvationGaps = (samples) =>
+    buildAutoplayObservationProgressGaps(
+      samples,
+      samples.slice(1).map((sample, index) => ({
+        progressKinds: classifyAutoplayObservationProgress(
+          samples[index],
+          sample,
+        ),
+        toElapsedMs: sample.elapsedMs,
+      })),
+    );
+  const sampledCaptureGaps = buildHostedCaptureStarvationGaps(
+    hostedCaptureStarvationSamples,
+  );
+  assert.ok(
+    Math.max(...sampledCaptureGaps.map((gap) => gap.appDurationMs)) <=
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "Playback and route states sampled during milestone capture must prove continuous visible progress.",
+  );
+  const unsampledCaptureGaps = buildHostedCaptureStarvationGaps([
+    hostedCaptureStarvationSamples[0],
+    hostedCaptureStarvationSamples.at(-1),
+  ]);
+  assert.ok(
+    Math.abs(unsampledCaptureGaps[0].appDurationMs - 18_889.9) < 0.01,
+    "The hosted sparse-observer fixture must retain its exact over-budget completion-to-next-sample gap.",
+  );
+  assert.ok(
+    unsampledCaptureGaps[0].appDurationMs >
+      AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
+    "A destination sample plus an earlier playback completion must not excuse unobserved route time.",
+  );
+
   const pageResetGap = buildAutoplayObservationProgressGaps(
     [
       {
@@ -21030,6 +21232,47 @@ function assertAutoplayFirstAfternoonDurationGuard() {
       assertAutoplayFirstAfternoonDuration(durationMs, "failing-fixture"),
     );
   }
+}
+
+async function assertPeriodicAutoplayPacingObservationGuard() {
+  let observationCount = 0;
+  let resolveCapture;
+  const result = await runWithPeriodicAutoplayPacingObservation({
+    observe: async () => {
+      observationCount += 1;
+      if (observationCount === 3) {
+        resolveCapture("captured");
+      }
+    },
+    operation: () =>
+      new Promise((resolve) => {
+        resolveCapture = resolve;
+      }),
+    pollIntervalMs: AUTOPLAY_PACING_SAMPLE_INTERVAL_MS,
+    waitForInterval: async () => {},
+  });
+  assert.equal(
+    result,
+    "captured",
+    "Milestone capture must return its original result after pacing observation.",
+  );
+  assert.equal(
+    observationCount,
+    3,
+    "A pending milestone capture must not starve periodic pacing observation.",
+  );
+
+  await assert.rejects(
+    runWithPeriodicAutoplayPacingObservation({
+      observe: async () => {},
+      operation: async () => {
+        throw new Error("capture failed");
+      },
+      waitForInterval: async () => {},
+    }),
+    /capture failed/,
+    "Periodic observation must not swallow milestone capture failures.",
+  );
 }
 
 function assertAutoplayAppMonotonicResetGuard() {
@@ -26537,6 +26780,7 @@ async function main() {
   assertIndependentNpcSurfaceRefreshGuard();
   assertWatchPacingTransitionSignatureGuard();
   assertAutoplayProgressGapGuard();
+  await assertPeriodicAutoplayPacingObservationGuard();
   assertAutoplayFirstAfternoonDurationGuard();
   assertAutoplayAppMonotonicResetGuard();
   assertAutoplayPlaybackCardDwellResetGuard();
