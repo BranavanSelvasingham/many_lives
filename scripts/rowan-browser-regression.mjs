@@ -5611,6 +5611,22 @@ class CdpSession {
     );
   }
 
+  autoplayDenseOpeningCaptureTimeoutMs(frameTimeoutMs) {
+    const minimumDenseBudgetMs =
+      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS +
+      AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS;
+    if (frameTimeoutMs < minimumDenseBudgetMs) {
+      return 0;
+    }
+    return Math.min(
+      frameTimeoutMs,
+      Math.max(
+        AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS,
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS * 4,
+      ),
+    );
+  }
+
   scheduleAutoplayRouteVisualWindowCapture({
     beforeProbe,
     expectedTargetLocationId,
@@ -5771,10 +5787,40 @@ class CdpSession {
           break;
         }
         let captured = null;
+        const denseOpeningCaptureTimeoutMs =
+          !state.forceRouteCanvasFallback &&
+          proactiveOpeningCapturePending &&
+          !firstWindow
+            ? this.autoplayDenseOpeningCaptureTimeoutMs(frameTimeoutMs)
+            : 0;
+        if (denseOpeningCaptureTimeoutMs > 0) {
+          try {
+            captured = await this.captureAutoplayScreencastRouteFrameWindow({
+              afterSequence: openingCaptureStartSequence,
+              beforeProbe: sample,
+              expectedTargetLocationId,
+              label: `${captureLabel}:dense-before-canvas`,
+              timeoutMs: denseOpeningCaptureTimeoutMs,
+            });
+          } catch (error) {
+            this.recordCdpTransportEvent(
+              "route-opening-dense-capture-before-canvas-failed",
+              {
+                error: error instanceof Error ? error.message : String(error),
+                expectedTargetLocationId,
+                timeoutMs: denseOpeningCaptureTimeoutMs,
+              },
+            );
+          }
+          if (captured) {
+            proactiveOpeningCapturePending = false;
+          }
+        }
         if (
-          state.forceRouteCanvasFallback ||
-          (proactiveOpeningCapturePending && !firstWindow) ||
-          (proactiveFollowUpPending && firstWindow)
+          !captured &&
+          (state.forceRouteCanvasFallback ||
+            (proactiveOpeningCapturePending && !firstWindow) ||
+            (proactiveFollowUpPending && firstWindow))
         ) {
           proactiveOpeningCapturePending = false;
           proactiveFollowUpPending = false;
