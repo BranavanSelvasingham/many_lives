@@ -7,6 +7,7 @@ import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { once } from "node:events";
+import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 
 import {
@@ -283,11 +284,18 @@ if (requestedViewportName && ACTIVE_VIEWPORTS.length === 0) {
 }
 const INTERIOR_CAMERA_MIN_PAN_DELTA = 20;
 
-function hasWatchModeProgressText(bodyText) {
+export function hasWatchModeProgressText(bodyText, browserProbe = null) {
+  const route = browserProbe?.movement?.playerRoute;
   return (
     bodyText.includes("Continue watching") ||
     bodyText.includes("Watch Rowan begin") ||
-    CONTEXTUAL_WATCH_MODE_COPY_PATTERN.test(bodyText)
+    CONTEXTUAL_WATCH_MODE_COPY_PATTERN.test(bodyText) ||
+    Boolean(
+      route?.active &&
+        route.legal &&
+        route.reachesDestination &&
+        Number.isFinite(route.progress),
+    )
   );
 }
 
@@ -377,6 +385,200 @@ async function waitFor(condition, timeoutMs, message) {
   }
 
   throw new Error(message);
+}
+
+function recoveredDesktopReadinessExpression(expectedGameId, viewport) {
+  return `(() => {
+    const expectedGameId = ${JSON.stringify(expectedGameId)};
+    const expectedViewport = ${JSON.stringify({
+      height: viewport.height,
+      width: viewport.width,
+    })};
+    const visibleState = (element) => {
+      if (!(element instanceof Element)) {
+        return { rect: null, visible: false };
+      }
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      const visibleWidth = Math.max(
+        0,
+        Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0)
+      );
+      const visibleHeight = Math.max(
+        0,
+        Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0)
+      );
+      return {
+        rect: {
+          height: Math.round(rect.height),
+          width: Math.round(rect.width),
+          x: Math.round(rect.x),
+          y: Math.round(rect.y)
+        },
+        visible:
+          visibleWidth > 0 &&
+          visibleHeight > 0 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.contentVisibility !== "hidden" &&
+          Number.parseFloat(style.opacity || "1") > 0.01
+      };
+    };
+    const parseProbe = (selector) => {
+      const element = document.querySelector(selector);
+      try {
+        return element?.textContent ? JSON.parse(element.textContent) : null;
+      } catch (error) {
+        return {
+          parseError: error instanceof Error ? error.message : String(error)
+        };
+      }
+    };
+    const root = document.querySelector(".ml-root");
+    const canvas = document.querySelector("canvas");
+    const rail = document.querySelector(".ml-rail-shell");
+    const hud = document.querySelector(".ml-time-pill");
+    const rootState = visibleState(root);
+    const canvasState = visibleState(canvas);
+    const railState = visibleState(rail);
+    const hudState = visibleState(hud);
+    const browserProbe = parseProbe("#ml-browser-probe");
+    const cameraProbe = parseProbe("#ml-browser-camera-probe");
+    const bodyText = document.body?.innerText ?? "";
+    const viewportMatches =
+      window.innerWidth === expectedViewport.width &&
+      window.innerHeight === expectedViewport.height;
+    const rootFillsViewport = Boolean(
+      rootState.visible &&
+      rootState.rect?.width >= expectedViewport.width * 0.9 &&
+      rootState.rect?.height >= expectedViewport.height * 0.9
+    );
+    const canvasFillsPlayfield = Boolean(
+      canvasState.visible &&
+      canvasState.rect?.width >= expectedViewport.width * 0.5 &&
+      canvasState.rect?.height >= expectedViewport.height * 0.5
+    );
+    const cameraReady = Boolean(
+      cameraProbe?.sceneViewportCss &&
+      cameraProbe.sceneViewportCss.width > 0 &&
+      cameraProbe.sceneViewportCss.height > 0
+    );
+    const hasFrameworkOverlay =
+      /Unhandled Runtime Error|Runtime Error|Build Error|Failed to compile|Application error/i.test(
+        document.body?.textContent ?? ""
+      );
+    const reasons = [];
+    if (!viewportMatches) reasons.push("viewport-mismatch");
+    if (!rootFillsViewport) reasons.push("root-not-renderable");
+    if (!canvasFillsPlayfield) reasons.push("canvas-not-renderable");
+    if (!railState.visible) reasons.push("rail-not-visible");
+    if (!hudState.visible) reasons.push("hud-not-visible");
+    if (!cameraReady) reasons.push("camera-probe-not-ready");
+    if (browserProbe?.gameId !== expectedGameId) reasons.push("game-id-mismatch");
+    if (!root?.classList.contains("is-watch-mode")) reasons.push("watch-mode-not-ready");
+    if (!bodyText.includes("Rowan")) reasons.push("rowan-ui-not-ready");
+    if (hasFrameworkOverlay) reasons.push("framework-overlay-visible");
+    return {
+      bodyTextSample: bodyText.replace(/\\s+/g, " ").trim().slice(0, 500),
+      browserProbeGameId: browserProbe?.gameId ?? null,
+      cameraRenderedAtMs: cameraProbe?.renderedAtMs ?? null,
+      cameraSceneViewportCss: cameraProbe?.sceneViewportCss ?? null,
+      canvas: canvasState,
+      expectedGameId,
+      hasFrameworkOverlay,
+      hud: hudState,
+      innerViewport: { height: window.innerHeight, width: window.innerWidth },
+      rail: railState,
+      ready: reasons.length === 0,
+      reasons,
+      root: rootState,
+      rootClass: root?.className ?? "",
+      url: location.href
+    };
+  })()`;
+}
+
+function recoveredDesktopStableKey(state) {
+  return JSON.stringify({
+    browserProbeGameId: state?.browserProbeGameId ?? null,
+    cameraSceneViewportCss: state?.cameraSceneViewportCss ?? null,
+    canvas: state?.canvas ?? null,
+    hud: state?.hud ?? null,
+    innerViewport: state?.innerViewport ?? null,
+    rail: state?.rail ?? null,
+    root: state?.root ?? null,
+    rootClass: state?.rootClass ?? "",
+  });
+}
+
+export async function waitForRecoveredDesktopRenderableState(
+  session,
+  expectedGameId,
+  viewport,
+  options = {},
+) {
+  assert.ok(expectedGameId, "Recovered desktop readiness requires a game id.");
+  assert.ok(
+    Number.isFinite(viewport?.width) && Number.isFinite(viewport?.height),
+    "Recovered desktop readiness requires a finite viewport.",
+  );
+  const timeoutMs = options.timeoutMs ?? APP_READY_TIMEOUT_MS;
+  const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
+  const requiredStableSamples = options.requiredStableSamples ?? 3;
+  const startedAt = Date.now();
+  const diagnostics = [];
+  let lastStableKey = null;
+  let stableSamples = 0;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    let state;
+    try {
+      await session.waitForAnimationFrames(2);
+      state = await session.evaluate(
+        recoveredDesktopReadinessExpression(expectedGameId, viewport),
+      );
+    } catch (error) {
+      state = {
+        error: error instanceof Error ? error.message : String(error),
+        ready: false,
+        reasons: ["readiness-probe-failed"],
+      };
+    }
+
+    const stableKey = state?.ready
+      ? recoveredDesktopStableKey(state)
+      : null;
+    if (stableKey && stableKey === lastStableKey) {
+      stableSamples += 1;
+    } else {
+      stableSamples = stableKey ? 1 : 0;
+    }
+    lastStableKey = stableKey;
+    diagnostics.push({
+      ...state,
+      observedAtMs: Date.now() - startedAt,
+      stableSamples,
+    });
+    if (diagnostics.length > 8) {
+      diagnostics.shift();
+    }
+
+    if (state?.ready && stableSamples >= requiredStableSamples) {
+      return {
+        ...state,
+        diagnostics,
+        stableSamples,
+      };
+    }
+
+    await sleep(pollIntervalMs);
+  }
+
+  throw new Error(
+    `Timed out after ${timeoutMs}ms waiting for recovered game ${expectedGameId} to render stably at ${viewport.width}x${viewport.height}. Required ${requiredStableSamples} stable samples; last samples: ${JSON.stringify(
+      diagnostics,
+    )}`,
+  );
 }
 
 async function fetchJson(url, init, timeoutMs = 8_000) {
@@ -4729,6 +4931,26 @@ function openingActionHasAutoplayProgressed(browserProbe) {
   );
 }
 
+export function storedGameRecoveryHasVisibleAutoplayProgress(browserProbe) {
+  if (openingActionHasAutoplayProgressed(browserProbe)) {
+    return true;
+  }
+
+  const carryForward = browserProbe?.openingActionCarryForward;
+  return Boolean(
+    carryForward?.status === "completed" &&
+      carryForward.phase === "opening_completed" &&
+      carryForward.selectedActionId === "enter:boarding-house" &&
+      carryForward.targetLocationId === "boarding-house" &&
+      carryForward.requiredVisibleInput === false &&
+      carryForward.watchMode?.enabled &&
+      !carryForward.watchMode.frozen &&
+      carryForward.completionEvidence?.includes("entered-morrow-house") &&
+      browserProbe?.location?.id === "boarding-house" &&
+      browserProbe.location.spaceId === "interior:boarding-house"
+  );
+}
+
 function openingActionNeedsNearArrivalGrace(browserProbe) {
   const carryForward = browserProbe?.openingActionCarryForward;
   const route = browserProbe?.movement?.playerRoute;
@@ -7688,7 +7910,9 @@ async function waitForStoredGameRecoveryAutoplayAdvance(
     return await waitFor(
       async () => {
         const probe = await session.readBrowserProbe();
-        return openingActionHasAutoplayProgressed(probe) ? probe : false;
+        return storedGameRecoveryHasVisibleAutoplayProgress(probe)
+          ? probe
+          : false;
       },
       STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS,
       `saved-run Start New replacement did not visibly advance without a click within the additional ${STORED_GAME_RECOVERY_AUTOPLAY_GRACE_MS}ms. Replacement opening state: ${JSON.stringify(
@@ -7697,7 +7921,7 @@ async function waitForStoredGameRecoveryAutoplayAdvance(
     );
   } catch (error) {
     const latestProbe = await session.readBrowserProbe();
-    if (openingActionHasAutoplayProgressed(latestProbe)) {
+    if (storedGameRecoveryHasVisibleAutoplayProgress(latestProbe)) {
       return latestProbe;
     }
     throw new Error(
@@ -7773,7 +7997,7 @@ async function runFreshAutoplayStartCheck(session) {
     {
       accept: ({ page, probe }) => {
         const continuedText =
-          hasWatchModeProgressText(page.bodyText) ||
+          hasWatchModeProgressText(page.bodyText, probe) ||
           Boolean(probe?.activeConversation?.npcId);
         const stillOpeningCta = page.bodyText.includes("Watch Rowan begin");
 
@@ -7802,7 +8026,7 @@ async function runFreshAutoplayStartCheck(session) {
     "fresh autoplay remained stuck on Watch Rowan begin after the start delay.",
   );
   assert.ok(
-    hasWatchModeProgressText(page.bodyText) ||
+    hasWatchModeProgressText(page.bodyText, continuedProbe) ||
       Boolean(continuedProbe.activeConversation?.npcId),
     "fresh autoplay did not present a continued watch-mode state after starting.",
   );
@@ -9381,13 +9605,19 @@ async function runStoredGameChoiceCheck(session) {
       error,
     );
   }
-  const freshPage = await session.inspectPage();
   const recoveryFault = await readFreshOpeningCommandLossFault(session);
   const storedReplacementGameId = await session.evaluate(
     `window.localStorage.getItem("many-lives:street-game-id")`,
   );
   await session.setViewport(VIEWPORTS[0]);
-  await session.waitForAnimationFrames(2);
+  const recoveredDesktopReady =
+    await waitForRecoveredDesktopRenderableState(
+      session,
+      freshProbe.gameId,
+      VIEWPORTS[0],
+    );
+  const freshPage = await session.inspectPage();
+  const recoveredDesktopProbe = await session.readBrowserProbe();
   assert.ok(
     freshOpeningProbe?.gameId,
     "Start new run did not create its initial fresh game id.",
@@ -9443,6 +9673,16 @@ async function runStoredGameChoiceCheck(session) {
     "Start new recovery did not persist the replacement game id.",
   );
   assert.equal(
+    recoveredDesktopReady.browserProbeGameId,
+    freshProbe.gameId,
+    "Start new recovery desktop render did not retain the recovered game id.",
+  );
+  assert.equal(
+    recoveredDesktopProbe?.gameId,
+    freshProbe.gameId,
+    "Start new recovery desktop probe switched to a different game before capture.",
+  );
+  assert.equal(
     freshPage.hasRawBackendError,
     false,
     "Start new recovery leaked a raw missing-game backend error.",
@@ -9475,6 +9715,7 @@ async function runStoredGameChoiceCheck(session) {
     mobilePromptScreenshotPath,
     prompt,
     recoveredFreshScreenshotPath,
+    recoveredDesktopReady,
     recoveryFault,
     resumedGameId: resumedProbe.gameId,
     seededGameId,
@@ -10524,9 +10765,14 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `[many-lives] Visual game smoke failed: ${error.stack ?? error.message}\n`,
-  );
-  process.exit(1);
-});
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((error) => {
+    process.stderr.write(
+      `[many-lives] Visual game smoke failed: ${error.stack ?? error.message}\n`,
+    );
+    process.exit(1);
+  });
+}
