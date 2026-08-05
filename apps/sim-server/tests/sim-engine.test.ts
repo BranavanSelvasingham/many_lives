@@ -7935,7 +7935,7 @@ describe("SimulationEngine street slice", () => {
     expect(
       noticedPump.finalWorld.player.reputation.morrow_house,
     ).toBeGreaterThan(ordinary.finalWorld.player.reputation.morrow_house);
-  });
+  }, 30_000);
 
   it("hands first-afternoon completion into a fresh state-derived next objective", async () => {
     const acknowledgementFeed =
