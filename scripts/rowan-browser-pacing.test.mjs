@@ -2544,7 +2544,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "validateAutoplayRouteCanvasFrame",
     "assertAutoplayRouteCanvasFramePair",
     "autoplayRecordedRouteWindowFrame",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, selectAutoplayRecordedRouteTrajectory };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, buildAutoplayRenderedOpeningRouteEvidence, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
@@ -2683,6 +2683,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "autoplayRecordedRouteWindowFrame",
     "autoplayRecordedRouteWindowsHaveDistinctProgress",
     "buildAutoplayOpeningRouteEvidence",
+    "buildAutoplayRenderedOpeningRouteEvidence",
     "buildAutoplayRouteCaptureSegments",
     "buildAutoplayRouteCanvasReadbackGeometry",
     "sampleAutoplayRouteRecorderAtOrAfter",
@@ -2742,6 +2743,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       recordedWindow?.frame ?? recordedWindow?.confirmationFrame ?? null,
     recordedRoutePolicy.autoplayRecordedRouteWindowsHaveDistinctProgress,
     routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence,
+    recordedRoutePolicy.buildAutoplayRenderedOpeningRouteEvidence,
     routeSegmentsPolicy.buildAutoplayRouteCaptureSegments,
     buildAutoplayRouteCanvasReadbackGeometry,
     sampleAutoplayRouteRecorderAtOrAfter,
@@ -3308,6 +3310,220 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         "A generation-changed frame must not inherit archived route proof.",
       );
       await delayedSession.stopAutoplayScreencast();
+    },
+  );
+
+  await t.test(
+    "attempt-1 opening frames survive a post-probe route end and sample gap",
+    async () => {
+      const recoverySession = new CdpSession({
+        browser: null,
+        outputDir: "/tmp",
+        pageWsUrl:
+          "ws://127.0.0.1:9222/devtools/page/attempt-1-route-recovery",
+        url: "http://127.0.0.1/",
+      });
+      recoverySession.socket = { destroyed: false, writable: true };
+      recoverySession.send = async () => ({});
+      await recoverySession.startAutoplayScreencast();
+      const startedAt = recoverySession.screencast.startedAtEpochMs;
+      const route = {
+        active: true,
+        durationMs: 5_040,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 10, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 884, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sampleAt = (progress, offsetMs, monotonicOffsetMs) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: monotonicOffsetMs,
+        paintProbe: {
+          regions: [
+            { surface: "hud", text: "DAY 1 11:05 LATE MORNING" },
+            { surface: "dock", text: "WORLD" },
+            { surface: "rail", text: "Rowan" },
+          ],
+          stableRegions: [
+            { surface: "hud", text: "DAY 1 11:05 LATE MORNING" },
+          ],
+          viewport: { height: 625, width: 1_365 },
+        },
+        recorderGeneration: 2,
+        route: { ...route, progress },
+        source: "movement-probe-recorder",
+      });
+      const samples = [
+        sampleAt(0.009, 0, 5_000),
+        sampleAt(0.009, 2_210, 100),
+        sampleAt(0.457, 2_253, 143),
+        sampleAt(0.767, 3_812, 1_702),
+      ];
+      const frameAt = (sequence, offsetMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: { timestamp: (startedAt + offsetMs) / 1_000 },
+        sequence,
+        source: "screencast",
+      });
+      const openingFrame = frameAt(774, 2_243, "attempt-1-route-start");
+      const laterFrame = frameAt(775, 3_792, "attempt-1-route-mid");
+      const recorder = {
+        acceptedCount: samples.length,
+        expectedTargetLocationId: "tea-house",
+        generation: 2,
+        lastObservedRoute: null,
+        samples,
+        status: "active",
+        unavailableCount: 1,
+      };
+
+      const strictOpening =
+        routeSegmentsPolicy.buildAutoplayOpeningRouteEvidence({
+          expectedTargetLocationId: "tea-house",
+          samples,
+        });
+      assert.equal(strictOpening.fragmentCount, 1);
+      assert.equal(strictOpening.openingSegment.samples.length, 1);
+      recoverySession.screencast.routeRecorderExpectedTargetLocationId =
+        "tea-house";
+      recoverySession.screencast.routeRecorderGeneration = 2;
+      recoverySession.screencast.routeSampleArchive = [samples[0]];
+      recoverySession.screencast.routeFrameArchive = [openingFrame];
+      recoverySession.screencast.routeFrameHistory = [];
+      recoverySession.waitForAutoplayScreencastFrame = async () => laterFrame;
+      recoverySession.sampleAutoplayRouteCaptureRecorder = async () => null;
+      recoverySession.readOrRearmAutoplayRouteCaptureRecorder = async () =>
+        recorder;
+      let failureClassificationCount = 0;
+      recoverySession.classifyAutoplayRouteCaptureSampleFailure = async () => {
+        failureClassificationCount += 1;
+        return "route-unavailable";
+      };
+
+      const recoveredWindow =
+        await recoverySession.captureAutoplayScreencastRouteFrameWindow({
+          afterSequence: 774,
+          beforeProbe: samples[2],
+          expectedTargetLocationId: "tea-house",
+          label: "attempt-1 ended opening route",
+          timeoutMs: 1_000,
+        });
+      assert.ok(recoveredWindow);
+      assert.equal(
+        recoveredWindow.endedRouteRecovery,
+        "retained-legal-post-frame-sample",
+      );
+      assert.equal(recoveredWindow.afterProbe.route.progress, 0.767);
+      assert.equal(failureClassificationCount, 0);
+      assert.equal(
+        recoverySession.screencast.routeFrameWindowRejections.length,
+        0,
+      );
+      assert.equal(recoverySession.autoplayRouteFrameWindows().length, 1);
+      assert.equal(recoverySession.autoplayRouteCaptureSamples().length, 1);
+      assert.equal(
+        recoverySession.autoplayRouteCaptureSamples(recorder).length,
+        samples.length,
+        "The final selector must retain the recorder samples that legally bracket the recovered frame.",
+      );
+
+      const validateFrame = ({ frame, paintProbe }) => ({
+        buffer: Buffer.from(frame.data, "base64"),
+        height: 375,
+        paintProbe,
+        textPaint: {},
+        width: 819,
+      });
+      const trajectory =
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+          archivedFrames: recoverySession.autoplayRouteArchivedFrames(),
+          expectedTargetLocationId: "tea-house",
+          frames: recoverySession.autoplayRouteFrameHistory(),
+          label: "attempt-1 recovered opening route",
+          recordedWindows: recoverySession.autoplayRouteFrameWindows(),
+          samples: recoverySession.autoplayRouteCaptureSamples(recorder),
+          validateFrame,
+          validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+            assert.notDeepEqual(afterBuffer, beforeBuffer);
+            return { hudPixelDifferenceRatio: 0 };
+          },
+        });
+      assert.deepEqual(
+        [trajectory.start.frame.sequence, trajectory.mid.frame.sequence],
+        [774, 775],
+      );
+      assert.ok(
+        recordedRoutePolicy.autoplayRecordedRouteWindowsHaveDistinctProgress(
+          trajectory.start,
+          trajectory.mid,
+        ),
+      );
+
+      const expectInsufficientEvidence = ({
+        frames = [openingFrame],
+        mutatedSamples = samples,
+        windows = [recoveredWindow],
+      } = {}) =>
+        assert.throws(
+          () =>
+            recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+              archivedFrames: frames,
+              expectedTargetLocationId: "tea-house",
+              frames,
+              label: "attempt-1 rejected opening route",
+              recordedWindows: windows,
+              samples: mutatedSamples,
+              validateFrame,
+              validateStableFramePair: () => ({}),
+            }),
+          /did not contain two distinct legal rendered positions/,
+        );
+      expectInsufficientEvidence({ windows: [] });
+      expectInsufficientEvidence({
+        windows: [
+          {
+            ...recoveredWindow,
+            frame: { ...recoveredWindow.frame, data: openingFrame.data },
+          },
+        ],
+      });
+      expectInsufficientEvidence({
+        mutatedSamples: samples.map((sample, index) =>
+          index === samples.length - 1
+            ? { ...sample, route: { ...sample.route, legal: false } }
+            : sample,
+        ),
+      });
+      expectInsufficientEvidence({
+        mutatedSamples: samples.map((sample, index) =>
+          index === samples.length - 1
+            ? {
+                ...sample,
+                route: {
+                  ...sample.route,
+                  worldPath: [
+                    { x: 331, y: 688 },
+                    { x: 1_338, y: 620 },
+                  ],
+                },
+              }
+            : sample,
+        ),
+      });
+      await recoverySession.stopAutoplayScreencast();
     },
   );
 

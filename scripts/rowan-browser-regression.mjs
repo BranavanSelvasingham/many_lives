@@ -4546,15 +4546,17 @@ class CdpSession {
 
   autoplayRouteCaptureSamples(recorder = null) {
     const archivedSamples = this.screencast?.routeSampleArchive ?? [];
-    if (archivedSamples.length > 0) {
+    if (!recorder) {
       return [...archivedSamples];
     }
     return [
-      ...(buildAutoplayRouteCaptureSegments({
-        expectedTargetLocationId: recorder?.expectedTargetLocationId,
-        samples: recorder?.samples,
-      })[0]?.samples ?? []),
-    ];
+      ...new Map(
+        [...archivedSamples, ...(recorder.samples ?? [])].map((sample) => [
+          `${sample.recorderGeneration}:${sample.capturedAtEpochMs}`,
+          sample,
+        ]),
+      ).values(),
+    ].sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs);
   }
 
   autoplayRouteFrameWindows() {
@@ -5264,11 +5266,11 @@ class CdpSession {
     const afterProbe = await this.sampleAutoplayRouteCaptureRecorder(
       `${label}:after-route-sample`,
     );
-    const afterProbeFailure = afterProbe
-      ? null
-      : await this.classifyAutoplayRouteCaptureSampleFailure(
-          `${label}:after-route-sample-failure`,
-        );
+    const recorder = await this.readOrRearmAutoplayRouteCaptureRecorder({
+      expectedTargetLocationId,
+      label: `${label}:recorder-read`,
+    });
+    this.archiveAutoplayRouteFrames(recorder);
     if (
       !autoplayRouteCaptureWindowCoherent(
         beforeProbe.route,
@@ -5277,6 +5279,56 @@ class CdpSession {
       ) ||
       !autoplayRouteCaptureSamplesShareExactIdentity(beforeProbe, afterProbe)
     ) {
+      const recoverySamples = [
+        ...new Map(
+          [
+            ...(this.screencast?.routeSampleArchive ?? []),
+            ...(recorder.samples ?? []),
+            beforeProbe,
+          ].map((sample) => [
+            `${sample.recorderGeneration}:${sample.capturedAtEpochMs}`,
+            sample,
+          ]),
+        ).values(),
+      ].sort((left, right) => left.capturedAtEpochMs - right.capturedAtEpochMs);
+      const captureSegment = buildAutoplayRouteCaptureSegments({
+        expectedTargetLocationId,
+        samples: recoverySamples,
+      }).find((segment) =>
+        segment.samples.some(
+          (sample) =>
+            sample.capturedAtEpochMs === beforeProbe.capturedAtEpochMs &&
+            sample.route?.progress === beforeProbe.route?.progress &&
+            autoplayRouteCaptureSamplesShareExactIdentity(sample, beforeProbe),
+        ),
+      );
+      const recoveredWindow = captureSegment
+        ? buildAutoplayDelayedScreencastRouteFrameWindow({
+            beforeProbe,
+            expectedTargetLocationId,
+            frame,
+            openingSegment: captureSegment,
+            samples: captureSegment.samples,
+          })
+        : null;
+      if (recoveredWindow) {
+        const archivedRecovery = this.archiveAutoplayRouteFrameWindow({
+          expectedTargetLocationId,
+          recordedWindow: {
+            ...recoveredWindow,
+            endedRouteRecovery: "retained-legal-post-frame-sample",
+          },
+          recorder,
+        });
+        if (archivedRecovery) {
+          return archivedRecovery;
+        }
+      }
+      const afterProbeFailure = afterProbe
+        ? null
+        : await this.classifyAutoplayRouteCaptureSampleFailure(
+            `${label}:after-route-sample-failure`,
+          );
       this.recordAutoplayRouteFrameWindowRejection({
         afterProbe,
         beforeProbe,
@@ -5287,11 +5339,6 @@ class CdpSession {
       });
       return null;
     }
-    const recorder = await this.readOrRearmAutoplayRouteCaptureRecorder({
-      expectedTargetLocationId,
-      label: `${label}:recorder-read`,
-    });
-    this.archiveAutoplayRouteFrames(recorder);
     return this.archiveAutoplayRouteFrameWindow({
       expectedTargetLocationId,
       recordedWindow: {
@@ -5361,13 +5408,19 @@ class CdpSession {
       });
       return null;
     };
-    const openingSegment = buildAutoplayRouteCaptureSegments({
+    const openingSegment = buildAutoplayRenderedOpeningRouteEvidence({
       expectedTargetLocationId,
+      frames: [
+        ...state.routeFrameArchive,
+        ...state.routeFrameHistory,
+        frame,
+      ],
+      recordedWindows: [...state.routeFrameWindowArchive, recordedWindow],
       samples: [
         ...state.routeSampleArchive,
         ...(recorder.samples ?? []),
       ],
-    })[0];
+    }).openingSegment;
     if (!openingSegment) {
       return reject("opening-segment-unavailable");
     }
@@ -18512,6 +18565,187 @@ function autoplayRecordedRouteWindowsHaveDistinctProgress(
   );
 }
 
+function autoplayRenderedRouteEvidenceExtendsOpeningSegment({
+  expectedTargetLocationId,
+  frames,
+  openingSegment,
+  recordedWindows,
+  segment,
+}) {
+  if (
+    segment?.boundaryReasons?.length !== 1 ||
+    segment.boundaryReasons[0] !== "sample-gap" ||
+    !openingSegment?.samples?.length ||
+    !segment.samples?.length
+  ) {
+    return false;
+  }
+  const openingSample = openingSegment.samples[0];
+  const previousSample = openingSegment.samples.at(-1);
+  const resumedSample = segment.samples[0];
+  const durationMs = Number(openingSample.route?.durationMs);
+  const previousProgress = Number(previousSample.route?.progress);
+  const resumedProgress = Number(resumedSample.route?.progress);
+  const gapMs =
+    resumedSample.capturedAtEpochMs - previousSample.capturedAtEpochMs;
+  const routeTimingToleranceMs = Number.isFinite(durationMs)
+    ? Math.max(250, durationMs * 0.03)
+    : null;
+  if (
+    !Number.isFinite(durationMs) ||
+    durationMs <= 0 ||
+    !Number.isFinite(previousProgress) ||
+    !Number.isFinite(resumedProgress) ||
+    Math.abs(resumedProgress - previousProgress) >
+      AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE ||
+    !Number.isFinite(gapMs) ||
+    gapMs <= AUTOPLAY_ROUTE_SEGMENT_MAX_SAMPLE_GAP_MS ||
+    gapMs >
+      (1 - previousProgress) * durationMs + routeTimingToleranceMs ||
+    !autoplayRouteCaptureSamplesShareExactIdentity(
+      openingSample,
+      resumedSample,
+    ) ||
+    resumedSample.recorderGeneration !== openingSample.recorderGeneration
+  ) {
+    return false;
+  }
+
+  let priorProgress = previousProgress;
+  for (const sample of segment.samples) {
+    const progress = Number(sample.route?.progress);
+    const elapsedMs =
+      sample.capturedAtEpochMs - openingSample.capturedAtEpochMs;
+    if (
+      !Number.isFinite(progress) ||
+      progress + AUTOPLAY_ROUTE_SEGMENT_PROGRESS_RESET_TOLERANCE <
+        priorProgress ||
+      !Number.isFinite(elapsedMs) ||
+      elapsedMs < 0 ||
+      elapsedMs >
+        (1 - Number(openingSample.route.progress)) * durationMs +
+          routeTimingToleranceMs ||
+      !autoplayRouteCaptureSamplesShareExactIdentity(openingSample, sample) ||
+      sample.recorderGeneration !== openingSample.recorderGeneration
+    ) {
+      return false;
+    }
+    priorProgress = progress;
+  }
+
+  const proposedOpeningSegment = {
+    ...openingSegment,
+    evidenceFragmentCount:
+      (openingSegment.evidenceFragmentCount ?? 1) + 1,
+    samples: [...openingSegment.samples, ...segment.samples],
+  };
+  const candidates = [
+    ...buildAutoplayRecordedRouteFrameCandidates({
+      expectedTargetLocationId,
+      frames,
+      openingSegment: proposedOpeningSegment,
+      samples: proposedOpeningSegment.samples,
+    }),
+    ...(recordedWindows ?? []).filter((recordedWindow) =>
+      recordedRouteWindowBelongsToOpeningSegment({
+        expectedTargetLocationId,
+        openingSegment: proposedOpeningSegment,
+        recordedWindow,
+      }),
+    ),
+  ]
+    .filter(
+      (candidate) =>
+        Number.isInteger(autoplayRecordedRouteWindowFrame(candidate)?.sequence) &&
+        typeof autoplayRecordedRouteWindowFrame(candidate)?.data === "string",
+    )
+    .sort(
+      (left, right) =>
+        screencastFrameCapturedAtEpochMs(
+          autoplayRecordedRouteWindowFrame(left),
+        ) -
+        screencastFrameCapturedAtEpochMs(
+          autoplayRecordedRouteWindowFrame(right),
+        ),
+    );
+
+  return candidates.some((start, startIndex) =>
+    candidates.slice(startIndex + 1).some((mid) => {
+      const startFrame = autoplayRecordedRouteWindowFrame(start);
+      const midFrame = autoplayRecordedRouteWindowFrame(mid);
+      return Boolean(
+        midFrame.sequence > startFrame.sequence &&
+          screencastFrameCapturedAtEpochMs(midFrame) >=
+            screencastFrameCapturedAtEpochMs(startFrame) +
+              AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS &&
+          autoplayRouteCaptureSamplesShareExactRouteIdentity(
+            start.afterProbe,
+            mid.beforeProbe,
+          ) &&
+          autoplayRouteCaptureSamplesShareExactIdentity(
+            openingSample,
+            start.beforeProbe,
+          ) &&
+          autoplayRouteCaptureSamplesShareExactIdentity(
+            openingSample,
+            mid.afterProbe,
+          ) &&
+          autoplayRecordedRouteWindowsHaveDistinctProgress(start, mid) &&
+          !Buffer.from(startFrame.data, "base64").equals(
+            Buffer.from(midFrame.data, "base64"),
+          )
+      );
+    }),
+  );
+}
+
+function buildAutoplayRenderedOpeningRouteEvidence({
+  expectedTargetLocationId,
+  frames = [],
+  recordedWindows = [],
+  samples,
+}) {
+  const evidence = buildAutoplayOpeningRouteEvidence({
+    expectedTargetLocationId,
+    samples,
+  });
+  let openingSegment = evidence.openingSegment;
+  let fragmentCount = evidence.fragmentCount;
+  if (!openingSegment) {
+    return evidence;
+  }
+
+  for (const segment of evidence.segments.slice(fragmentCount)) {
+    if (
+      !autoplayRenderedRouteEvidenceExtendsOpeningSegment({
+        expectedTargetLocationId,
+        frames,
+        openingSegment,
+        recordedWindows,
+        segment,
+      })
+    ) {
+      break;
+    }
+    fragmentCount += 1;
+    openingSegment = {
+      ...openingSegment,
+      evidenceFragmentCount: fragmentCount,
+      samples: [...openingSegment.samples, ...segment.samples],
+      stalledRecorderGapCount:
+        (openingSegment.stalledRecorderGapCount ?? 0) + 1,
+    };
+  }
+
+  return {
+    ...evidence,
+    fragmentCount,
+    openingSegment,
+    renderedEvidenceFragmentCount: fragmentCount - evidence.fragmentCount,
+    samples: openingSegment.samples,
+  };
+}
+
 function autoplayRouteTrajectoryEvidenceSource(candidate) {
   const frame = candidate?.frame ?? candidate?.confirmationFrame ?? null;
   if (
@@ -18550,8 +18784,10 @@ function selectAutoplayRecordedRouteTrajectory({
   validateFrame = validateAutoplayScreencastFrame,
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
-  const openingEvidence = buildAutoplayOpeningRouteEvidence({
+  const openingEvidence = buildAutoplayRenderedOpeningRouteEvidence({
     expectedTargetLocationId,
+    frames: [...(archivedFrames ?? []), ...(frames ?? [])],
+    recordedWindows,
     samples,
   });
   const { openingSegment, segments } = openingEvidence;
@@ -18598,6 +18834,35 @@ function selectAutoplayRecordedRouteTrajectory({
       candidates: forceCanvasFallback
         ? canvasCandidates
         : recordedWindowCandidates,
+      requireMixedCanvasScreencastPair: false,
+      validate: ({ recordedEvidence, ...options }) =>
+        validateAutoplayRecordedRouteWindow({
+          ...options,
+          recordedWindow: recordedEvidence,
+          validateCanvasFrame,
+        }),
+    },
+    {
+      candidates: forceCanvasFallback
+        ? []
+        : [
+            ...new Map(
+              [...screencastCandidates, ...recordedWindowCandidates].map(
+                (candidate) => [
+                  autoplayRecordedRouteWindowFrame(candidate)?.sequence,
+                  candidate,
+                ],
+              ),
+            ).values(),
+          ].sort(
+            (left, right) =>
+              screencastFrameCapturedAtEpochMs(
+                autoplayRecordedRouteWindowFrame(left),
+              ) -
+              screencastFrameCapturedAtEpochMs(
+                autoplayRecordedRouteWindowFrame(right),
+              ),
+          ),
       requireMixedCanvasScreencastPair: false,
       validate: ({ recordedEvidence, ...options }) =>
         validateAutoplayRecordedRouteWindow({
