@@ -4370,6 +4370,227 @@ describe("SimulationEngine street slice", () => {
     );
   });
 
+  it("keeps watch mode moving when a people predicate competes with a reachable tool lead", async () => {
+    const engine = new SimulationEngine(new MockAIProvider());
+    let world = await engine.createGame(
+      "game-people-predicate-reachable-tool-lead",
+    );
+    world = await enterMorrowHouse(engine, world);
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+    const ada = world.npcs.find((npc) => npc.id === "npc-ada");
+    const nia = world.npcs.find((npc) => npc.id === "npc-nia");
+
+    expect(pump).toBeDefined();
+    expect(teaJob).toBeDefined();
+    expect(mara).toBeDefined();
+    expect(ada).toBeDefined();
+    expect(nia).toBeDefined();
+    if (!pump || !teaJob || !mara || !ada || !nia) {
+      return;
+    }
+
+    setTestClock(world, 13, 54);
+    world.currentTime = "2026-03-21T13:54:00.000Z";
+    for (const [index, text] of [
+      "What would make tonight's room feel real?",
+      "Are Ada's lunch work and the pump both live approaches?",
+      "Which approach would make the quickest foothold?",
+      "What should I weigh before choosing between them?",
+      "I need one concrete next step from what the block allows.",
+    ].entries()) {
+      world.conversations.push({
+        id: `conversation-mara-foothold-${index + 1}`,
+        locationId: "boarding-house",
+        npcId: "npc-mara",
+        speaker: "player",
+        speakerName: "Rowan",
+        text,
+        threadId: "conversation-thread-npc-mara",
+        time: "2026-03-21T13:54:00.000Z",
+      });
+    }
+    world.conversations.push({
+      id: "conversation-ada-lunch-lead-complete",
+      locationId: "tea-house",
+      npcId: "npc-ada",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "Is the lunch work still a real option today?",
+      threadId: "thread-ada-lunch-lead-complete",
+      time: "2026-03-21T12:29:00.000Z",
+    });
+    world.player.money = 12;
+    world.player.energy = 35;
+    world.player.inventory = [];
+    world.player.knownLocationIds = [
+      "boarding-house",
+      "courtyard",
+      "tea-house",
+    ];
+    world.player.knownNpcIds = ["npc-mara", "npc-ada"];
+    world.player.memories = world.player.memories.filter(
+      (memory) => !/\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(memory.text),
+    );
+    world.player.activeJobId = undefined;
+    world.player.lastRestAt = "2026-03-21T13:53:00.000Z";
+    world.player.pendingObjectiveMove = undefined;
+    world.player.reputation.morrow_house = 2;
+    world.activeConversation = undefined;
+    world.firstAfternoon = {
+      approachesKnownAt: "2026-03-21T11:03:00.000Z",
+      leadFieldNote: {
+        createdAt: "2026-03-21T12:29:00.000Z",
+        evidence:
+          "Asked Ada at Kettle & Lamp at 12:29; she offered cup-and-counter shift for $14.",
+        learned:
+          "Mara's Kettle & Lamp lead is real: Ada needs steady lunch help today.",
+        memory:
+          "Ada remembers Rowan asked directly before the lunch rush instead of waiting for work to find him.",
+        next: "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
+      },
+    };
+
+    mara.currentLocationId = "boarding-house";
+    mara.currentSpaceId = world.activeSpaceId;
+    mara.known = true;
+    mara.trust = 3;
+    mara.lastInteractionAt = world.currentTime;
+    ada.currentLocationId = "tea-house";
+    ada.currentSpaceId = "interior:tea-house";
+    ada.known = true;
+    ada.trust = 1;
+    nia.currentLocationId = "market-square";
+    nia.currentSpaceId = STREET_SPACE_ID;
+    nia.known = false;
+    nia.trust = 0;
+
+    pump.discovered = true;
+    pump.escalatedAt = "2026-03-21T13:03:00.000Z";
+    pump.escalationLevel = 1;
+    pump.status = "active";
+    pump.urgency = 4;
+    teaJob.accepted = false;
+    teaJob.completed = false;
+    teaJob.discovered = true;
+    teaJob.missed = false;
+    teaJob.missedAt = undefined;
+
+    world.player.objective = {
+      ...(world.player.objective as PlayerObjective),
+      completedTrail: [],
+      focus: "people",
+      outcomes: [
+        {
+          authority: "predicate",
+          id: "people-talk",
+          label: "Local introduction made",
+          status: "met",
+          urgency: 3,
+        },
+        {
+          authority: "predicate",
+          id: "people-open",
+          label: "A local connection opened up",
+          status: "met",
+          urgency: 2,
+        },
+        {
+          authority: "predicate",
+          blockers: ["Rowan still needs a second trusted local tie."],
+          id: "people-friend",
+          label: "Two trusted local ties built",
+          npcId: "npc-nia",
+          status: "blocked",
+          targetLocationId: "market-square",
+          urgency: 1,
+        },
+      ],
+      progress: {
+        completed: 2,
+        label: "2/3 outcomes met",
+        total: 3,
+      },
+      routeKey: "people-npc-mara",
+      source: "conversation",
+      text: "Talk to Mara to choose a concrete live approach for an early foothold.",
+      trail: [],
+    };
+    world.conversationThreads["npc-mara"] = {
+      id: "conversation-thread-npc-mara",
+      npcId: "npc-mara",
+      updatedAt: world.currentTime,
+      locationId: "boarding-house",
+      lines: world.conversations.filter((entry) => entry.npcId === "npc-mara"),
+      decision:
+        "Rowan should talk to Mara at Morrow House to pick a concrete live approach as a foothold for this afternoon.",
+      objectiveText:
+        "Talk to Mara to choose a concrete live approach for an early foothold.",
+      summary:
+        "Rowan has a clear next step: consult Mara to decide on the first foothold.",
+    };
+
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.player.objective).toMatchObject({
+      routeKey: "people-npc-mara",
+      source: "conversation",
+    });
+    expect(actionById(world, "talk:npc-mara")?.disabled).not.toBe(true);
+    expect(world.rowanAutonomy.planningTrace?.considered).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          pressureId: "tool:item-wrench:problem-pump:lead:npc-mara",
+        }),
+      ]),
+    );
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedPressureId: "tool:item-wrench:problem-pump:lead:npc-mara",
+    });
+    expect(world.rowanAutonomy).toMatchObject({
+      autoContinue: true,
+      npcId: "npc-mara",
+      stepKind: "talk",
+      targetLocationId: "boarding-house",
+    });
+    expect(world.rowanAutonomy.stepKind).not.toBe("blocked");
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedActionId: "talk:npc-mara",
+      selectedLegalBacking: {
+        actionId: "talk:npc-mara",
+        locationId: "boarding-house",
+        source: "current-legal-action-surface",
+      },
+      selectedPressureId: "tool:item-wrench:problem-pump:lead:npc-mara",
+      selectedPressureKind: "tool",
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.considered.find(
+        (option) => option.status === "selected",
+      ),
+    ).toMatchObject({
+      actionId: "talk:npc-mara",
+      pressureId: "tool:item-wrench:problem-pump:lead:npc-mara",
+      pressureKind: "tool",
+      provenance: "live-pressure",
+    });
+    expect(
+      world.rowanAutonomy.planningTrace?.rejected.find(
+        (option) => option.targetLocationId === "market-square",
+      ),
+    ).toMatchObject({
+      actionId: "exit:boarding-house",
+      reason: expect.stringMatching(/dominant live pressure/i),
+      status: "rejected",
+    });
+    expectCognitionToMirrorAutonomy(world);
+  });
+
   it("asks a legal local source when an urgent problem's tool source is still unknown", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-unknown-pump-tool-source-recovery");

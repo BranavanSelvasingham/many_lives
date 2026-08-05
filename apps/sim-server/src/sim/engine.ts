@@ -7653,6 +7653,20 @@ function planTargetsUrgentLivePressure(
   world: StreetGameState,
   plan: ObjectivePlan,
 ) {
+  const plannerActionId = plannerActionIdForPlan(plan) ?? "";
+  const [plannerKind, plannerTargetId] = plannerActionId.split(":");
+  if (
+    plannerKind === "talk" &&
+    plannerTargetId &&
+    urgentKnownProblems(world).some(
+      (problem) =>
+        problemToolLeadAtCurrentLocation(world, problem)?.id ===
+        plannerTargetId,
+    )
+  ) {
+    return true;
+  }
+
   const actionId = plan.actionId ?? "";
   const [kind, targetId] = actionId.split(":");
 
