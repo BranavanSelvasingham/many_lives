@@ -8,6 +8,19 @@ const browserRegressionPath = new URL(
   import.meta.url,
 );
 const source = await readFile(browserRegressionPath, "utf8");
+const focusedSummaryStart = source.indexOf(
+  "function buildFocusedAutoplaySummaryEvidence(",
+);
+const focusedSummaryEnd = source.indexOf(
+  "\nfunction buildRegressionSummary(",
+  focusedSummaryStart,
+);
+const {
+  buildFocusedAutoplaySummaryEvidence,
+  buildFocusedFullRunRouteContinuityLedger,
+} = Function(
+  `${source.slice(focusedSummaryStart, focusedSummaryEnd)}; return { buildFocusedAutoplaySummaryEvidence, buildFocusedFullRunRouteContinuityLedger };`,
+)();
 const pngDecodeStart = source.indexOf("function paethPredictor(");
 const pngDecodeEnd = source.indexOf(
   "\nfunction assertNoLargeNearBlackDropout(",
@@ -871,6 +884,116 @@ test("autoplay observer budget preserves strict app-visible pacing evidence", ()
   assert.match(
     source,
     /`autoplay-observation-\$\{openingWorldVariant\}`,\s*AUTOPLAY_OBSERVATION_PHASE_TIMEOUT_MS/,
+  );
+});
+
+test("focused autoplay summary reports its real screenshots and scoped route evidence", () => {
+  const milestone = (variant, key, route = null) => ({
+    key,
+    routeCaptureWindow: route ? { after: route } : null,
+    screenshot: `/private/tmp/focused/${variant}-${key}.png`,
+  });
+  const variation = (variant, consequenceId, targetLocationId) => ({
+    trajectoryEvidence: {
+      consequence: { id: consequenceId },
+      milestones: [
+        milestone(variant, "opening"),
+        milestone(variant, "first-interaction"),
+        milestone(variant, "foothold-route-start", {
+          legal: true,
+          progress: 0.1,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          targetLocationId,
+          visualObstaclesClear: true,
+        }),
+        milestone(variant, "foothold-route-mid", {
+          legal: true,
+          progress: 0.55,
+          reachesDestination: true,
+          sampledPointsLegal: true,
+          targetLocationId,
+          visualObstaclesClear: true,
+        }),
+        milestone(variant, "consequential-foothold"),
+        milestone(variant, "natural-stop"),
+      ],
+      naturalStop: true,
+      progressionClicks: 0,
+    },
+  });
+  const focused = buildFocusedAutoplaySummaryEvidence({
+    "noticed-pump": variation(
+      "noticed-pump",
+      "problem-pump",
+      "repair-stall",
+    ),
+    "ordinary-lead": variation(
+      "ordinary-lead",
+      "job-tea-shift",
+      "tea-house",
+    ),
+  });
+
+  assert.equal(focused.summaryScope.mode, "focused-autoplay-only");
+  assert.equal(focused.screenshotCount, 12);
+  assert.equal(focused.evidence.screenshots.length, 12);
+  assert.equal(
+    new Set(focused.evidence.screenshots.map((entry) => entry.path)).size,
+    12,
+  );
+  assert.equal(
+    focused.focusedAutoplayRouteContinuityLedger.allVariantsPassed,
+    true,
+  );
+  assert.equal(
+    focused.focusedAutoplayRouteContinuityLedger.distinctConsequences,
+    true,
+  );
+  for (const entry of Object.values(
+    focused.focusedAutoplayRouteContinuityLedger.variants,
+  )) {
+    assert.equal(entry.status, "passed");
+    assert.equal(entry.naturalStop, true);
+    assert.equal(entry.progressionClicks, 0);
+    assert.deepEqual(entry.routeChecks, {
+      legal: true,
+      progressMonotonic: true,
+      reachesDestination: true,
+      sampledPointsLegal: true,
+      sameTarget: true,
+      visualObstaclesClear: true,
+    });
+    assert.ok(entry.routeStart.screenshot);
+    assert.ok(entry.routeMid.screenshot);
+  }
+});
+
+test("focused mode explains full-run route coverage without weakening full mode", () => {
+  const focusedLedger = buildFocusedFullRunRouteContinuityLedger([
+    { baseLabel: "stage-cafe-move", label: "first-kettle-route" },
+    { baseLabel: "stage-home-move", label: "return-home-route" },
+  ]);
+
+  assert.equal(focusedLedger.status, "not-applicable");
+  assert.ok(
+    focusedLedger.requiredCoverage.every(
+      (entry) =>
+        entry.status === "not-applicable" &&
+        /focused-autoplay-only/.test(entry.explanation),
+    ),
+  );
+  assert.match(
+    source,
+    /const movementAudit = buildMovementAuditSummary\(movementAuditTimeline\);\s*assertMovementAuditSummary\(movementAudit\);/,
+  );
+  assert.match(
+    source,
+    /const screenshotCount = timeline\.filter\(\(entry\) => entry\.screenshot\)\.length;/,
+  );
+  assert.match(
+    source,
+    /const evidence = await createVisualEvidence\(\{\s*overlayChecks,\s*timeline,\s*\}\);/,
   );
 });
 

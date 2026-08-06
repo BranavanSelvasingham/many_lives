@@ -26704,9 +26704,157 @@ function buildInterimVisualEvidence({ overlayChecks, timeline }) {
   };
 }
 
+function buildFocusedAutoplaySummaryEvidence(openingWorldVariationEvidence) {
+  const screenshotPaths = new Set();
+  const screenshots = [];
+  const variants = {};
+
+  for (const [openingWorldVariant, variation] of Object.entries(
+    openingWorldVariationEvidence ?? {},
+  )) {
+    const trajectory = variation?.trajectoryEvidence ?? null;
+    const milestones = trajectory?.milestones ?? [];
+    for (const milestone of milestones) {
+      if (!milestone.screenshot || screenshotPaths.has(milestone.screenshot)) {
+        continue;
+      }
+      screenshotPaths.add(milestone.screenshot);
+      screenshots.push({
+        label: `${openingWorldVariant}:${milestone.key}`,
+        path: milestone.screenshot,
+        type: "focused-autoplay",
+      });
+    }
+
+    const routeMilestone = (key) => {
+      const milestone = milestones.find((entry) => entry.key === key) ?? null;
+      const route = milestone?.routeCaptureWindow?.after ?? null;
+      return {
+        key,
+        legal: route?.legal ?? null,
+        progress: route?.progress ?? null,
+        reachesDestination: route?.reachesDestination ?? null,
+        sampledPointsLegal: route?.sampledPointsLegal ?? null,
+        screenshot: milestone?.screenshot ?? null,
+        targetLocationId: route?.targetLocationId ?? null,
+        visualObstaclesClear: route?.visualObstaclesClear ?? null,
+      };
+    };
+    const routeStart = routeMilestone("foothold-route-start");
+    const routeMid = routeMilestone("foothold-route-mid");
+    const routeMilestones = [routeStart, routeMid];
+    const routeChecks = {
+      legal: routeMilestones.every((entry) => entry.legal === true),
+      progressMonotonic:
+        typeof routeStart.progress === "number" &&
+        typeof routeMid.progress === "number" &&
+        routeMid.progress > routeStart.progress,
+      reachesDestination: routeMilestones.every(
+        (entry) => entry.reachesDestination === true,
+      ),
+      sampledPointsLegal: routeMilestones.every(
+        (entry) => entry.sampledPointsLegal === true,
+      ),
+      sameTarget:
+        Boolean(routeStart.targetLocationId) &&
+        routeStart.targetLocationId === routeMid.targetLocationId,
+      visualObstaclesClear: routeMilestones.every(
+        (entry) => entry.visualObstaclesClear === true,
+      ),
+    };
+    const naturalStop = trajectory?.naturalStop === true;
+    const progressionClicks = trajectory?.progressionClicks ?? null;
+    const status =
+      naturalStop &&
+      progressionClicks === 0 &&
+      Object.values(routeChecks).every(Boolean)
+        ? "passed"
+        : "failed";
+
+    variants[openingWorldVariant] = {
+      consequence: trajectory?.consequence ?? null,
+      milestoneScreenshotCount: milestones.filter(
+        (milestone) => milestone.screenshot,
+      ).length,
+      naturalStop,
+      progressionClicks,
+      routeChecks,
+      routeMid,
+      routeStart,
+      status,
+    };
+  }
+
+  const variantEntries = Object.values(variants);
+  const consequenceIds = variantEntries
+    .map((entry) => entry.consequence?.id)
+    .filter(Boolean);
+  const distinctConsequences =
+    consequenceIds.length === variantEntries.length &&
+    new Set(consequenceIds).size === variantEntries.length;
+
+  return {
+    evidence: {
+      manifestPath: null,
+      overlays: [],
+      recordingPath: null,
+      screenshots,
+    },
+    focusedAutoplayRouteContinuityLedger: {
+      allVariantsPassed:
+        variantEntries.length > 0 &&
+        variantEntries.every((entry) => entry.status === "passed") &&
+        distinctConsequences,
+      distinctConsequences,
+      scope: "focused-autoplay-opening-trajectories",
+      variants,
+    },
+    screenshotCount: screenshots.length,
+    summaryScope: {
+      fullRunRouteContinuity: "not-applicable",
+      includedPhases: [
+        "ordinary-lead-focused-autoplay",
+        "noticed-pump-focused-autoplay",
+      ],
+      mode: "focused-autoplay-only",
+      skippedPhaseExplanation:
+        "Focused autoplay-only mode intentionally skips the scripted timeline, overlay checks, unavailable-NPC check, observe carry-forward check, and full inhabit gameplay pass.",
+      skippedPhases: [
+        "scripted-timeline",
+        "overlay-panel-checks",
+        "unavailable-npc-cross-layer",
+        "observe-only-carry-forward",
+        "inhabit-gameplay",
+      ],
+    },
+  };
+}
+
+function buildFocusedFullRunRouteContinuityLedger(requiredCoverage) {
+  const explanation =
+    "not-applicable-focused-autoplay-only: full scripted and inhabit route coverage is intentionally skipped";
+  return {
+    entries: [],
+    explanation,
+    gaps: [],
+    requiredCoverage: requiredCoverage.map(({ baseLabel, label }) => ({
+      baseLabel,
+      explanation,
+      label,
+      locationId: null,
+      requiredInEveryAudit: false,
+      routeGapCount: 0,
+      status: "not-applicable",
+    })),
+    scope: "full-regression-route-continuity",
+    status: "not-applicable",
+  };
+}
+
 function buildRegressionSummary({
   autoplayObservation,
   evidence,
+  focusedAutoplaySummaryEvidence = null,
   forcedRouteCanvasValidationPath = null,
   game,
   inhabitGameplay,
@@ -26722,7 +26870,7 @@ function buildRegressionSummary({
   timelinePath,
   unavailableNpcCrossLayer,
 }) {
-  return {
+  const summary = {
     browserDriver: BROWSER_DRIVER,
     forcedRouteCanvasFallback: AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK,
     forcedRouteCanvasValidationPath,
@@ -26766,6 +26914,26 @@ function buildRegressionSummary({
     })),
     timelinePath,
     unavailableNpcCrossLayer,
+  };
+
+  if (!focusedAutoplaySummaryEvidence) {
+    return summary;
+  }
+
+  return {
+    ...summary,
+    evidence: focusedAutoplaySummaryEvidence.evidence,
+    finalGameId: null,
+    finalState: null,
+    focusedAutoplayRouteContinuityLedger:
+      focusedAutoplaySummaryEvidence.focusedAutoplayRouteContinuityLedger,
+    playerRouteContinuityLedger: buildFocusedFullRunRouteContinuityLedger(
+      REQUIRED_PLAYER_ROUTE_COVERAGE,
+    ),
+    screenshotCount: focusedAutoplaySummaryEvidence.screenshotCount,
+    steps: [],
+    summaryScope: focusedAutoplaySummaryEvidence.summaryScope,
+    timelinePath: null,
   };
 }
 
@@ -27404,6 +27572,12 @@ async function main() {
     const checkpointSummary = buildRegressionSummary({
       autoplayObservation,
       evidence: buildInterimVisualEvidence({ overlayChecks, timeline }),
+      focusedAutoplaySummaryEvidence:
+        RUN_AUTOPLAY_OBSERVATIONS_ONLY && openingWorldVariationEvidence
+          ? buildFocusedAutoplaySummaryEvidence(
+              openingWorldVariationEvidence,
+            )
+          : null,
       game,
       inhabitGameplay,
       independentNpcActionEvidence: buildIndependentNpcActionEvidence(timeline),
@@ -27827,6 +28001,12 @@ async function main() {
         const interimSummary = buildRegressionSummary({
           autoplayObservation,
           evidence: buildInterimVisualEvidence({ overlayChecks, timeline }),
+          focusedAutoplaySummaryEvidence:
+            RUN_AUTOPLAY_OBSERVATIONS_ONLY && openingWorldVariationEvidence
+              ? buildFocusedAutoplaySummaryEvidence(
+                  openingWorldVariationEvidence,
+                )
+              : null,
           game,
           inhabitGameplay,
           independentNpcActionEvidence: buildIndependentNpcActionEvidence(timeline),
@@ -27887,6 +28067,37 @@ async function main() {
       });
     }
     traceRegression("closed");
+
+    if (
+      RUN_AUTOPLAY_OBSERVATIONS_ONLY &&
+      browserChecksCompleted &&
+      openingWorldVariationEvidence &&
+      !cleanupError
+    ) {
+      const focusedAutoplaySummaryEvidence =
+        buildFocusedAutoplaySummaryEvidence(openingWorldVariationEvidence);
+      const focusedMovementAudit = buildMovementAuditSummary([]);
+      const focusedSummary = buildRegressionSummary({
+        autoplayObservation,
+        evidence: buildInterimVisualEvidence({ overlayChecks, timeline }),
+        focusedAutoplaySummaryEvidence,
+        game,
+        inhabitGameplay,
+        independentNpcActionEvidence: buildIndependentNpcActionEvidence([]),
+        movementAudit: focusedMovementAudit,
+        observeOnlyCarryForward,
+        openingWorldVariationEvidence,
+        outputStatus: "passed",
+        overlayChecks,
+        phaseDiagnostics,
+        screenshotCount: 0,
+        timeline,
+        timelinePath,
+        unavailableNpcCrossLayer,
+      });
+      await writeRegressionSummary(summaryPath, focusedSummary);
+      traceRegression("summary-written:focused-autoplay-passed");
+    }
   }
 
   if (cleanupError) {
