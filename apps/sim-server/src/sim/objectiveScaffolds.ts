@@ -65,7 +65,7 @@ interface ObjectiveRouteTextMatchInput {
 }
 
 interface ObjectiveRouteSelectionPolicy {
-  absorbConversationFocuses?: ObjectiveFocus[];
+  absorbConversationFocuses?: ObjectiveFocus[] | "all";
   matchesObjectiveText?: (input: ObjectiveRouteTextMatchInput) => boolean;
   retainPrevious?: (input: {
     previous: PlayerObjective;
@@ -3317,7 +3317,7 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         routeKey: "mara-ada-lead",
       },
       {
-        absorbConversationFocuses: ["settle", "work"],
+        absorbConversationFocuses: "all",
         matchesObjectiveText: ({
           normalizedText,
           previous,
@@ -4991,11 +4991,14 @@ export function objectiveRouteScaffoldAbsorbsConversationFocus(
   routeKey: string | undefined,
   focus: ObjectiveFocus,
 ) {
+  const absorbConversationFocuses = routeKey
+    ? objectiveRouteSelectionPolicyForRouteKey(routeKey)
+        ?.absorbConversationFocuses
+    : undefined;
+
   return Boolean(
-    routeKey &&
-      objectiveRouteSelectionPolicyForRouteKey(
-        routeKey,
-      )?.absorbConversationFocuses?.includes(focus),
+    absorbConversationFocuses === "all" ||
+      absorbConversationFocuses?.includes(focus),
   );
 }
 

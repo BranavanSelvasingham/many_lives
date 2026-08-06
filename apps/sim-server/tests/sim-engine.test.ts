@@ -7700,7 +7700,7 @@ describe("SimulationEngine street slice", () => {
     ).toBe(false);
   });
 
-  it("routes a wrench objective to Jo instead of reopening Mara", async () => {
+  it("routes the opening's live wrench pressure to Mercer instead of reopening Mara", async () => {
     const engine = new SimulationEngine(new MockAIProvider());
     let world = await engine.createGame("game-tool-route-ordinary");
 
@@ -7716,7 +7716,9 @@ describe("SimulationEngine street slice", () => {
       silent: true,
     });
 
-    expect(world.player.objective?.routeKey).toBe("tool-pump");
+    expect(world.player.objective?.routeKey).toBe("first-afternoon");
+    expect(world.firstAfternoon?.completedAt).toBeUndefined();
+    expect(world.firstAfternoon?.completionAcknowledgedAt).toBeUndefined();
     expect(world.rowanAutonomy).toMatchObject({
       actionId: "exit:boarding-house",
       autoContinue: true,
@@ -7729,26 +7731,13 @@ describe("SimulationEngine street slice", () => {
     world = await advanceUntil(
       engine,
       world,
-      (nextWorld) => nextWorld.rowanAutonomy.actionId === "buy:item-wrench",
+      (nextWorld) => nextWorld.activeSpaceId === "interior:repair-stall",
     );
 
     expect(world.player.currentLocationId).toBe("repair-stall");
     expect(world.activeSpaceId).toBe("interior:repair-stall");
-    expect(world.rowanAutonomy).toMatchObject({
-      actionId: "buy:item-wrench",
-      autoContinue: true,
-      mode: "acting",
-      targetLocationId: "repair-stall",
-    });
-
-    world = await engine.runCommand(world, {
-      type: "advance_objective",
-      allowTimeSkip: true,
-    });
-
-    expect(
-      world.player.inventory.some((item) => item.id === "item-wrench"),
-    ).toBe(true);
+    expect(world.activeConversation?.npcId).not.toBe("npc-mara");
+    expect(world.player.objective?.routeKey).toBe("first-afternoon");
   });
 
   it("lets objective pursuit carry through a pre-start shift without manual waiting", async () => {

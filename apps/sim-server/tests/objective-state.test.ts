@@ -177,6 +177,10 @@ describe("objectiveState classification", () => {
     expect(classifyObjective(text)).toBe("people");
 
     const world = seedStreetGame("objective-nia-block-lead");
+    world.firstAfternoon = {
+      ...world.firstAfternoon,
+      completionAcknowledgedAt: world.currentTime,
+    };
     world.player.knownNpcIds = Array.from(
       new Set([...world.player.knownNpcIds, "npc-nia"]),
     );
@@ -1152,14 +1156,52 @@ describe("objectiveState classification", () => {
     expect(scaffoldSource).toContain("textMatchesMaraAdaLeadObjective");
   });
 
-  it("retains first-afternoon through settle/work conversation routes until acknowledgement", () => {
+  it("retains first-afternoon through every conversation focus until acknowledgement", () => {
     const cases = [
       {
+        expectedFocus: "custom",
+        expectedReleasedRouteKey: "settle-core",
+        npcId: "npc-mara",
+        text: "Ask Mara about tonight's room cost and next concrete task.",
+      },
+      {
+        expectedFocus: "people",
+        expectedReleasedRouteKey: "people-npc-nia",
+        npcId: "npc-nia",
+        text: "Ask Nia where the block is about to jam before the square feels it.",
+      },
+      {
+        expectedFocus: "help",
+        expectedReleasedRouteKey: "tool-pump",
+        npcId: "npc-mara",
+        text: "Fix the pump in Morrow Yard before it spreads.",
+      },
+      {
+        expectedFocus: "tool",
+        expectedReleasedRouteKey: "tool-cart",
+        npcId: "npc-mara",
+        text: "Buy the wrench Mara recommended before taking the next task.",
+      },
+      {
+        expectedFocus: "explore",
+        expectedReleasedRouteKey: "explore-tea-house",
+        npcId: "npc-ada",
+        text: "Explore the district and get your bearings.",
+      },
+      {
+        expectedFocus: "rest",
+        expectedReleasedRouteKey: "rest-home",
+        npcId: "npc-mara",
+        text: "Rest at Morrow House before taking another commitment.",
+      },
+      {
+        expectedFocus: "settle",
         expectedReleasedRouteKey: "settle-core",
         npcId: "npc-mara",
         text: "Find out what it takes to keep my room at Morrow House tonight.",
       },
       {
+        expectedFocus: "work",
         expectedReleasedRouteKey: "work-tea",
         npcId: "npc-ada",
         text: "Earn money at Kettle & Lamp before lunch.",
@@ -1168,11 +1210,17 @@ describe("objectiveState classification", () => {
 
     for (const testCase of cases) {
       const world = seedStreetGame(
-        `objective-first-afternoon-retains-${testCase.expectedReleasedRouteKey}`,
+        `objective-first-afternoon-retains-${testCase.expectedFocus}`,
       );
+      expect(classifyObjective(testCase.text)).toBe(testCase.expectedFocus);
       const previous = firstAfternoonObjective(world);
       expect(previous?.routeKey).toBe("first-afternoon");
       world.player.objective = previous;
+      if (testCase.npcId === "npc-nia") {
+        world.player.knownNpcIds = Array.from(
+          new Set([...world.player.knownNpcIds, "npc-nia"]),
+        );
+      }
       addConversationObjective(world, testCase.npcId, testCase.text);
 
       const retained = buildPlayerObjectiveState(world, { previous });
@@ -1191,6 +1239,27 @@ describe("objectiveState classification", () => {
 
       expect(released?.routeKey).toBe(testCase.expectedReleasedRouteKey);
     }
+  });
+
+  it("does not absorb an explicit manual redirect into first-afternoon", () => {
+    const world = seedStreetGame("objective-first-afternoon-manual-redirect");
+    const previous = firstAfternoonObjective(world);
+    expect(previous?.routeKey).toBe("first-afternoon");
+    world.player.objective = previous;
+
+    const redirected = buildPlayerObjectiveState(world, {
+      focus: "help",
+      previous,
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+    });
+
+    expect(redirected).toMatchObject({
+      focus: "tool",
+      routeKey: "tool-pump",
+      source: "manual",
+      text: "Fix the pump in Morrow Yard before it spreads.",
+    });
   });
 
   it("retains Mara's Ada lead through settle/work conversation routes", () => {
@@ -1251,6 +1320,10 @@ describe("objectiveState classification", () => {
     expect(manualSettle?.routeKey).toBe("settle-core");
 
     const conversationWorld = seedStreetGame("objective-unrelated-conversation");
+    conversationWorld.firstAfternoon = {
+      ...conversationWorld.firstAfternoon,
+      completionAcknowledgedAt: conversationWorld.currentTime,
+    };
     conversationWorld.player.knownNpcIds = Array.from(
       new Set([...conversationWorld.player.knownNpcIds, "npc-nia"]),
     );
