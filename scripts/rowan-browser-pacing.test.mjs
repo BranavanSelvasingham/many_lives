@@ -8,6 +8,40 @@ const browserRegressionPath = new URL(
   import.meta.url,
 );
 const source = await readFile(browserRegressionPath, "utf8");
+const visibleConversationInteractionStart = source.indexOf(
+  "function isVisibleAutoplayConversationInteraction(",
+);
+const visibleConversationInteractionEnd = source.indexOf(
+  "\nfunction ",
+  visibleConversationInteractionStart + 1,
+);
+const isVisibleAutoplayConversationInteraction =
+  visibleConversationInteractionStart >= 0 &&
+  visibleConversationInteractionEnd >= 0
+    ? Function(
+        `return (${source.slice(
+          visibleConversationInteractionStart,
+          visibleConversationInteractionEnd,
+        )});`,
+      )()
+    : null;
+const autoplayProgressClassifierStart = source.indexOf(
+  "function classifyAutoplayObservationProgress(",
+);
+const autoplayProgressClassifierEnd = source.indexOf(
+  "\nfunction ",
+  autoplayProgressClassifierStart + 1,
+);
+const classifyAutoplayObservationProgress =
+  autoplayProgressClassifierStart >= 0 && autoplayProgressClassifierEnd >= 0
+    ? Function(
+        "isVisibleAutoplayConversationInteraction",
+        `return (${source.slice(
+          autoplayProgressClassifierStart,
+          autoplayProgressClassifierEnd,
+        )});`,
+      )(isVisibleAutoplayConversationInteraction)
+    : null;
 const focusedSummaryStart = source.indexOf(
   "function buildFocusedAutoplaySummaryEvidence(",
 );
@@ -66,6 +100,50 @@ const rowanPlaybackSource = await readFile(
   ),
   "utf8",
 );
+const resolvedConversationTransitionDeclaration =
+  "export const findResolvedConversationThreadTransitions:";
+const resolvedConversationTransitionStart = rowanPlaybackSource.indexOf(
+  resolvedConversationTransitionDeclaration,
+);
+const resolvedConversationTransitionAssignmentMatch =
+  resolvedConversationTransitionStart >= 0
+    ? /=\s*\(/.exec(
+        rowanPlaybackSource.slice(resolvedConversationTransitionStart),
+      )
+    : null;
+const resolvedConversationTransitionAssignment =
+  resolvedConversationTransitionAssignmentMatch &&
+  resolvedConversationTransitionStart >= 0
+    ? resolvedConversationTransitionStart +
+      resolvedConversationTransitionAssignmentMatch.index +
+      resolvedConversationTransitionAssignmentMatch[0].length -
+      1
+    : -1;
+const resolvedConversationTransitionEndMatch =
+  resolvedConversationTransitionAssignment >= 0
+    ? /\n\s*};/.exec(
+        rowanPlaybackSource.slice(resolvedConversationTransitionAssignment),
+      )
+    : null;
+const resolvedConversationTransitionEnd =
+  resolvedConversationTransitionEndMatch &&
+  resolvedConversationTransitionAssignment >= 0
+    ? resolvedConversationTransitionAssignment +
+      resolvedConversationTransitionEndMatch.index +
+      resolvedConversationTransitionEndMatch[0].lastIndexOf("}") +
+      1
+    : -1;
+const findResolvedConversationThreadTransitions =
+  resolvedConversationTransitionStart >= 0 &&
+  resolvedConversationTransitionAssignment >= 0 &&
+  resolvedConversationTransitionEnd >= 0
+    ? Function(
+        `return (${rowanPlaybackSource.slice(
+          resolvedConversationTransitionAssignment,
+          resolvedConversationTransitionEnd,
+        )});`,
+      )()
+    : null;
 const assertionStart = source.indexOf(
   "function assertReadableFirstAfternoonDwell(",
 );
@@ -869,6 +947,107 @@ test("first-afternoon runtime catches up from state-derived pacing pressure", ()
   assert.doesNotMatch(
     rowanPlaybackSource,
     /noticed-pump|problem-pump.*PACING_TARGET/,
+  );
+});
+
+test("a fast resolved conversation transition still produces a readable conversation beat", () => {
+  assert.equal(typeof findResolvedConversationThreadTransitions, "function");
+
+  const previousGame = {
+    activeConversation: undefined,
+    conversationThreads: {},
+  };
+  const resolvedMaraThread = {
+    decision: "Mara confirms the pump needs attention before the tide turns.",
+    id: "thread-mara-first-afternoon",
+    lines: [
+      {
+        id: "line-mara-1103",
+        npcId: "npc-mara",
+        speaker: "npc",
+        speakerName: "Mara",
+        text: "The pump is losing pressure. Mercer will know which seal failed.",
+        threadId: "thread-mara-first-afternoon",
+        time: "11:03",
+      },
+    ],
+    npcId: "npc-mara",
+    updatedAt: "2026-04-14T11:03:00.000Z",
+  };
+  const nextGame = {
+    activeConversation: undefined,
+    conversationThreads: { "npc-mara": resolvedMaraThread },
+  };
+
+  const transitions = findResolvedConversationThreadTransitions(
+    previousGame.conversationThreads,
+    nextGame.conversationThreads,
+  );
+  assert.deepEqual(
+    transitions.map((thread) => thread.id),
+    [resolvedMaraThread.id],
+    "A resolved thread that appeared between browser snapshots must remain presentable.",
+  );
+  assert.deepEqual(
+    findResolvedConversationThreadTransitions(
+      nextGame.conversationThreads,
+      structuredClone(nextGame.conversationThreads),
+    ),
+    [],
+    "An unchanged resolved thread must not replay on every state refresh.",
+  );
+
+  const resolvedBeatIndex = rowanPlaybackSource.indexOf(
+    "const resolvedConversationThreadTransitions =",
+  );
+  const movementBeatIndex = rowanPlaybackSource.indexOf(
+    "if (playerMoveDistance > 0 && !activeSpaceChanged)",
+  );
+  assert.ok(
+    resolvedBeatIndex >= 0 && resolvedBeatIndex < movementBeatIndex,
+    "The recovered conversation card must be queued before route playback from the same state transition.",
+  );
+  assert.match(
+    rowanPlaybackSource.slice(resolvedBeatIndex, movementBeatIndex),
+    /kind: "thread_landed"[\s\S]*ROWAN_PLAYBACK_TIMING_MS\.postThreadLandedPause/,
+  );
+  assert.match(
+    rowanPlaybackSource,
+    /Object\.values\(game\.conversationThreads\)[\s\S]*thread\.updatedAt[\s\S]*thread\.lines\.length/,
+    "Conversation-only revisions must invalidate the street game sync key.",
+  );
+  assert.match(
+    source,
+    /find\(isVisibleAutoplayConversationInteraction\)\s*\?\.elapsedMs/,
+    "The visible-interaction assertion must recognize the recovered semantic card without being removed.",
+  );
+
+  const beforePresentation = {
+    activeConversation: null,
+    playback: {
+      activeKey: null,
+      activeKind: null,
+      completedTimings: [],
+    },
+  };
+  const resolvedPresentation = {
+    activeConversation: null,
+    playback: {
+      activeKey: `thread-landed:${resolvedMaraThread.id}:${resolvedMaraThread.updatedAt}`,
+      activeKind: "thread_landed",
+      completedTimings: [],
+    },
+  };
+  assert.equal(
+    isVisibleAutoplayConversationInteraction(resolvedPresentation),
+    true,
+  );
+  assert.ok(
+    classifyAutoplayObservationProgress(
+      beforePresentation,
+      resolvedPresentation,
+    ).includes("conversation-progress"),
+    "The browser pacing ledger must treat the recovered conversation card as visible conversation progress.",
   );
 });
 

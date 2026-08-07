@@ -22401,8 +22401,8 @@ function buildAutoplayObservationPacingLedger(samples) {
     firstAfternoonCompletedElapsedMs:
       firstAfternoonCompletionSample?.elapsedMs ?? null,
     firstInteractionElapsedMs:
-      normalizedSamples.find((sample) => sample.activeConversation)?.elapsedMs ??
-      null,
+      normalizedSamples.find(isVisibleAutoplayConversationInteraction)
+        ?.elapsedMs ?? null,
     firstMeaningfulProgressAfterDecisionMs:
       decisionSample && firstPostDecisionTransition
         ? Math.max(0, firstPostDecisionTransition.toElapsedMs - decisionSample.elapsedMs)
@@ -23137,6 +23137,15 @@ function findRepeatedPeopleRecoveryCycles(samples) {
   return repeated;
 }
 
+function isVisibleAutoplayConversationInteraction(sample) {
+  return Boolean(
+    sample?.activeConversation?.npcId ||
+      ["thread_line", "thread_landed"].includes(
+        sample?.playback?.activeKind ?? "",
+      ),
+  );
+}
+
 function classifyAutoplayObservationProgress(previous, next) {
   const progressKinds = [];
   const previousRouteProgress = previous.movement?.routeProgress ?? null;
@@ -23156,6 +23165,11 @@ function classifyAutoplayObservationProgress(previous, next) {
   const previousCompletedPlayback =
     previous.playback?.completedTimings?.at(-1) ?? null;
   const nextCompletedPlayback = next.playback?.completedTimings?.at(-1) ?? null;
+  const visibleConversationPlaybackChanged =
+    (isVisibleAutoplayConversationInteraction(previous) ||
+      isVisibleAutoplayConversationInteraction(next)) &&
+    (previous.playback?.activeKey !== next.playback?.activeKey ||
+      previous.playback?.activeKind !== next.playback?.activeKind);
   if (
     (previous.autonomy?.label ?? null) !== (next.autonomy?.label ?? null) ||
     ((!previous.activity?.busyLabel ||
@@ -23203,7 +23217,8 @@ function classifyAutoplayObservationProgress(previous, next) {
     previous.activeConversation?.replay?.streamedWordCount !==
       next.activeConversation?.replay?.streamedWordCount ||
     previous.activeConversation?.replay?.revealedEntryCount !==
-      next.activeConversation?.replay?.revealedEntryCount
+      next.activeConversation?.replay?.revealedEntryCount ||
+    visibleConversationPlaybackChanged
   ) {
     progressKinds.push("conversation-progress");
   }

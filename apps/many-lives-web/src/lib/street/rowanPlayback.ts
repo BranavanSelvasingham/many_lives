@@ -73,6 +73,41 @@ type AutoContinueBeatTiming = {
   startedAtMs: number;
 };
 
+type FindResolvedConversationThreadTransitions = (
+  previousThreads: StreetGameState["conversationThreads"],
+  nextThreads: StreetGameState["conversationThreads"],
+) => StreetGameState["conversationThreads"][string][];
+
+export const findResolvedConversationThreadTransitions:
+  FindResolvedConversationThreadTransitions = (
+  previousThreads,
+  nextThreads,
+) => {
+  const previousThreadsById = new Map(
+    Object.values(previousThreads).map((thread) => [thread.id, thread]),
+  );
+
+  return Object.values(nextThreads).filter((nextThread) => {
+    if (nextThread.lines.length === 0) {
+      return false;
+    }
+
+    const previousThread = previousThreadsById.get(nextThread.id);
+    const previousLastLine = previousThread?.lines.at(-1);
+    const nextLastLine = nextThread.lines.at(-1);
+    return (
+      !previousThread ||
+      previousThread.updatedAt !== nextThread.updatedAt ||
+      previousThread.decision !== nextThread.decision ||
+      previousThread.objectiveText !== nextThread.objectiveText ||
+      previousThread.summary !== nextThread.summary ||
+      previousThread.lines.length !== nextThread.lines.length ||
+      previousLastLine?.id !== nextLastLine?.id ||
+      previousLastLine?.text !== nextLastLine?.text
+    );
+  });
+};
+
 export function buildStreetGameSyncKey(game: StreetGameState) {
   return [
     game.id,
@@ -114,6 +149,20 @@ export function buildStreetGameSyncKey(game: StreetGameState) {
     game.activeConversation?.decision ?? "",
     game.activeConversation?.objectiveText ?? "",
     game.activeConversation?.lines.length ?? 0,
+    ...Object.values(game.conversationThreads)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((thread) =>
+        [
+          thread.id,
+          thread.updatedAt,
+          thread.decision ?? "",
+          thread.objectiveText ?? "",
+          thread.summary ?? "",
+          thread.lines.length,
+          thread.lines.at(-1)?.id ?? "",
+          thread.lines.at(-1)?.text ?? "",
+        ].join(":"),
+      ),
     ...game.jobs.map((job) =>
       [
         job.id,
@@ -748,6 +797,35 @@ export function deriveRowanPlaybackBeats(
     ),
   );
   const nextIndependentActions = buildIndependentNpcActionRecords(nextGame);
+  const resolvedConversationThreadTransitions =
+    !previousGame.activeConversation && !nextGame.activeConversation
+      ? findResolvedConversationThreadTransitions(
+          previousGame.conversationThreads,
+          nextGame.conversationThreads,
+        )
+      : [];
+
+  for (const thread of resolvedConversationThreadTransitions) {
+    const npcName = npcNameForId(nextGame, thread.npcId);
+    const latestLine = thread.lines.at(-1);
+    const latestSpeakerName =
+      latestLine?.speaker === "player"
+        ? nextGame.player.name
+        : latestLine?.speakerName || npcName;
+    beats.push({
+      blocking: true,
+      detail: latestLine
+        ? `${latestSpeakerName}: ${trimConversationBeatText(latestLine.text)}`
+        : `${npcName} gave Rowan a lead.`,
+      key: `thread-landed:${thread.id}:${thread.updatedAt}`,
+      kind: "thread_landed",
+      durationMs: ROWAN_PLAYBACK_TIMING_MS.postThreadLandedPause,
+      locationId: thread.locationId,
+      npcId: thread.npcId,
+      title: `Conversation finished with ${npcName}`,
+      tone: "conversation",
+    });
+  }
 
   if (playerMoveDistance > 0 && !activeSpaceChanged) {
     const moveTargetName =
