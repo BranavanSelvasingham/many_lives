@@ -42,6 +42,35 @@ const classifyAutoplayObservationProgress =
         )});`,
       )(isVisibleAutoplayConversationInteraction)
     : null;
+const periodicPacingObservationStart = source.indexOf(
+  "async function runWithPeriodicAutoplayPacingObservation(",
+);
+const periodicPacingObservationEnd = source.indexOf(
+  "\nfunction ",
+  periodicPacingObservationStart + 1,
+);
+const runWithPeriodicAutoplayPacingObservation = Function(
+  "AUTOPLAY_PACING_SAMPLE_INTERVAL_MS",
+  "sleep",
+  `return (${source.slice(
+    periodicPacingObservationStart,
+    periodicPacingObservationEnd,
+  )})`,
+)(1, async () => {});
+const terminalStopBrowserEvidenceStart = source.indexOf(
+  "function buildAutoplayTerminalStopBrowserEvidence(",
+);
+const terminalStopBrowserEvidenceEnd = source.indexOf(
+  "\nfunction ",
+  terminalStopBrowserEvidenceStart + 1,
+);
+const buildAutoplayTerminalStopBrowserEvidence = Function(
+  "AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS",
+  `return (${source.slice(
+    terminalStopBrowserEvidenceStart,
+    terminalStopBrowserEvidenceEnd,
+  )})`,
+)(2_000);
 const focusedSummaryStart = source.indexOf(
   "function buildFocusedAutoplaySummaryEvidence(",
 );
@@ -507,6 +536,153 @@ test("slow-observer handoff recognition cannot replace full dwell proof", () => 
   assert.match(
     source,
     /assertReadableFirstAfternoonDwell\(\s*handoffDwell,/,
+  );
+});
+
+test("long autoplay evidence capture retains direct terminal browser proof", async () => {
+  let releaseCapture;
+  const observedSamples = [];
+  const completionIdleSample = completedFirstAfternoonSample({
+    appMonotonicMs: 241_100,
+    elapsedMs: 241_410,
+    firstAfternoon: {
+      completedAt: "2026-03-21T14:14:00.000Z",
+      completionAcknowledgedAt: null,
+      consequence: {
+        achievedAt: "2026-03-21T14:14:00.000Z",
+        id: "problem-pump",
+        kind: "local-problem",
+      },
+    },
+    rawAppMonotonicMs: 241_100,
+    watchMode: { enabled: true, frozen: false },
+  });
+  const activeShiftSample = {
+    ...acknowledgedFirstAfternoonHandoffSample(),
+    appMonotonicMs: 242_200,
+    elapsedMs: 242_510,
+    playback: {
+      activeDurationMs: 2_800,
+      activeKey: "objective-shift:rest-home",
+      activeKind: "objective_shift",
+      activeStartedAtMs: 241_900,
+      activeTitle: "Objective shifted",
+      completedTimings: [],
+    },
+    rawAppMonotonicMs: 242_200,
+    watchMode: { enabled: true, frozen: false },
+  };
+  const postShiftSample = {
+    ...acknowledgedFirstAfternoonHandoffSample(),
+    appMonotonicMs: 245_100,
+    elapsedMs: 245_410,
+    playback: {
+      activeDurationMs: null,
+      activeKey: null,
+      activeKind: null,
+      activeStartedAtMs: null,
+      activeTitle: null,
+      completedTimings: [],
+    },
+    rawAppMonotonicMs: 245_100,
+    watchMode: { enabled: true, frozen: false },
+  };
+  const captureProbes = [
+    completionIdleSample,
+    activeShiftSample,
+    postShiftSample,
+  ];
+
+  const captureResult = await runWithPeriodicAutoplayPacingObservation({
+    observe: async () => {
+      observedSamples.push(captureProbes.shift());
+      if (captureProbes.length === 0) {
+        releaseCapture("captured");
+      }
+    },
+    operation: () =>
+      new Promise((resolve) => {
+        releaseCapture = resolve;
+      }),
+    pollIntervalMs: 1,
+    waitForInterval: async () => {},
+  });
+
+  assert.equal(captureResult, "captured");
+  const browserEvidence =
+    buildAutoplayTerminalStopBrowserEvidence(observedSamples);
+  const completionIdleEvidence = browserEvidence.filter(
+    (entry) => entry.evidence === "browser-completion-idle-sample",
+  );
+  const objectiveShiftEvidence = browserEvidence.filter(
+    (entry) => entry.evidence === "browser-active-terminal-card-sample",
+  );
+  assert.equal(completionIdleEvidence.length, 1);
+  assert.equal(objectiveShiftEvidence.length, 1);
+  assert.equal(objectiveShiftEvidence[0].key, "objective-shift:rest-home");
+  assert.deepEqual(
+    buildAutoplayTerminalStopBrowserEvidence([
+      {
+        ...activeShiftSample,
+        screenshot: "/tmp/terminal-card.png",
+        watchMode: { enabled: true, frozen: true },
+      },
+    ]),
+    [],
+    "A screenshot path or frozen state must not replace a live watch-mode browser sample.",
+  );
+  assert.deepEqual(
+    classifyAutoplayNaturalFirstAfternoonStop(
+      postShiftSample,
+      completionIdleEvidence,
+    ),
+    { accepted: true, evidence: "observed-completion-idle" },
+  );
+  assert.deepEqual(
+    classifyAutoplayNaturalFirstAfternoonStop(
+      postShiftSample,
+      objectiveShiftEvidence,
+    ),
+    {
+      accepted: true,
+      evidence: "acknowledged-state-derived-handoff",
+      handoffActionId: "rest:home",
+      handoffCardKey: "objective-shift:rest-home",
+      handoffRouteKey: "rest-home",
+    },
+  );
+  assert.deepEqual(
+    classifyAutoplayNaturalFirstAfternoonStop(postShiftSample, []),
+    { accepted: false, evidence: "untrusted-post-completion-state" },
+    "Later acknowledged state must still fail without a browser-observed terminal beat.",
+  );
+});
+
+test("route evidence records and keeps sampling pacing probes", () => {
+  const runStart = source.indexOf("async function runAutoplayObservation(");
+  const runEnd = source.indexOf(
+    "\nfunction assertAutoplayOpeningWorldTrajectoryEvidence(",
+    runStart,
+  );
+  const runSource = source.slice(runStart, runEnd);
+  const initialProbeRecord = runSource.indexOf(
+    "const sampleDom = await recordPacingProbe(probe);",
+  );
+  const routeEvidence = runSource.indexOf(
+    'if (!capturedMilestoneKeys.has("foothold-route-start"))',
+  );
+
+  assert.ok(
+    initialProbeRecord >= 0 && initialProbeRecord < routeEvidence,
+    "The current browser probe must be recorded before route evidence acquisition.",
+  );
+  assert.match(
+    runSource,
+    /runAutoplayEvidenceWithoutStarvingPacing\([\s\S]*foothold-route-evidence/,
+  );
+  assert.match(
+    runSource,
+    /captureRouteMilestoneWithoutStarvingPacing\(/,
   );
 });
 
@@ -2206,7 +2382,7 @@ test("proactive route history survives a delayed observer and rejects unproven w
   }
   assert.match(
     runSource,
-    /archiveAutoplayRouteFrames\(recorder\);\s+const trajectory = selectAutoplayRecordedRouteTrajectory[\s\S]*acceptAutoplayRouteRenderedFrameTrajectory\(trajectory\);\s+return trajectory;/,
+    /archiveAutoplayRouteFrames\(recorder\);\s+const trajectory = selectAutoplayRecordedRouteTrajectory[\s\S]*acceptAutoplayRouteRenderedFrameTrajectory\(\s*trajectory,?\s*\);\s+return trajectory;/,
     "Validated screencast evidence must supersede the screenshot fallback only after trajectory selection succeeds.",
   );
   assert.doesNotMatch(runSource, /route\?\.active\s*&&[\s\S]*waitForAutoplayRecordedRouteTrajectory/);

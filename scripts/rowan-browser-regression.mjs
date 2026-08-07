@@ -19636,24 +19636,45 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
       lastProbeSignature = probeSignature;
       return sampleDom;
     };
-    const captureMilestoneWithoutStarvingPacing = async (
-      key,
-      probe,
-      milestoneDom = null,
+    const runAutoplayEvidenceWithoutStarvingPacing = async (
+      label,
+      operation,
     ) =>
       runWithPeriodicAutoplayPacingObservation({
         observe: async () => {
           const captureProbe = acceptedAutoplayPacingProbe(
             await session
               .readAutoplayPacingProbe(
-                `${openingWorldVariant}:autoplay:${key}:capture-pacing-probe`,
+                `${openingWorldVariant}:autoplay:${label}:capture-pacing-probe`,
               )
               .catch(() => null),
           );
           await recordPacingProbe(captureProbe, { allowDomAudit: false });
         },
-        operation: () => captureMilestoneOnce(key, probe, milestoneDom),
+        operation,
       });
+    const captureMilestoneWithoutStarvingPacing = async (
+      key,
+      probe,
+      milestoneDom = null,
+    ) =>
+      runAutoplayEvidenceWithoutStarvingPacing(key, () =>
+        captureMilestoneOnce(key, probe, milestoneDom),
+      );
+    const captureRouteMilestoneWithoutStarvingPacing = async (
+      key,
+      expectedTargetLocationId,
+      milestoneDom = null,
+      recordedCaptureWindow = null,
+    ) =>
+      runAutoplayEvidenceWithoutStarvingPacing(key, () =>
+        captureRouteMilestoneOnce(
+          key,
+          expectedTargetLocationId,
+          milestoneDom,
+          recordedCaptureWindow,
+        ),
+      );
 
     const completion = await waitFor(
       async () => {
@@ -19663,45 +19684,56 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
           ),
         );
 
+        if (!probe) {
+          return false;
+        }
+        const sampleDom = await recordPacingProbe(probe);
+
         if (!capturedMilestoneKeys.has("foothold-route-start")) {
-          const recordedTrajectory = await (async () => {
-            try {
-              const recorder =
-                await session.readOrRearmAutoplayRouteCaptureRecorder({
-                  expectedTargetLocationId: expectedRouteTarget,
-                  label: `${openingWorldVariant}:autoplay:route-recorder-read`,
-                });
-              if (!recorder || recorder.acceptedCount === 0) {
-                await archiveAutoplayRouteCaptureFromPacingProbe({
-                  expectedTargetLocationId: expectedRouteTarget,
-                  label: `${openingWorldVariant}:autoplay:route-fallback`,
-                  probe,
-                  session,
-                });
-              }
-              session.archiveAutoplayRouteFrames(recorder);
-              const trajectory = selectAutoplayRecordedRouteTrajectory({
-                expectedTargetLocationId: expectedRouteTarget,
-                forceCanvasFallback: session.forceRouteCanvasFallback,
-                frames: session.autoplayRouteFrameHistory(),
-                label: `${openingWorldVariant} autoplay foothold route`,
-                recordedWindows: session.autoplayRouteFrameWindows(),
-                samples: session.autoplayRouteCaptureSamples(recorder),
-              });
-              session.acceptAutoplayRouteRenderedFrameTrajectory(trajectory);
-              return trajectory;
-            } catch {
-              return null;
-            }
-          })();
+          const recordedTrajectory =
+            await runAutoplayEvidenceWithoutStarvingPacing(
+              "foothold-route-evidence",
+              async () => {
+                try {
+                  const recorder =
+                    await session.readOrRearmAutoplayRouteCaptureRecorder({
+                      expectedTargetLocationId: expectedRouteTarget,
+                      label: `${openingWorldVariant}:autoplay:route-recorder-read`,
+                    });
+                  if (!recorder || recorder.acceptedCount === 0) {
+                    await archiveAutoplayRouteCaptureFromPacingProbe({
+                      expectedTargetLocationId: expectedRouteTarget,
+                      label: `${openingWorldVariant}:autoplay:route-fallback`,
+                      probe,
+                      session,
+                    });
+                  }
+                  session.archiveAutoplayRouteFrames(recorder);
+                  const trajectory = selectAutoplayRecordedRouteTrajectory({
+                    expectedTargetLocationId: expectedRouteTarget,
+                    forceCanvasFallback: session.forceRouteCanvasFallback,
+                    frames: session.autoplayRouteFrameHistory(),
+                    label: `${openingWorldVariant} autoplay foothold route`,
+                    recordedWindows: session.autoplayRouteFrameWindows(),
+                    samples: session.autoplayRouteCaptureSamples(recorder),
+                  });
+                  session.acceptAutoplayRouteRenderedFrameTrajectory(
+                    trajectory,
+                  );
+                  return trajectory;
+                } catch {
+                  return null;
+                }
+              },
+            );
           if (recordedTrajectory) {
-            await captureRouteMilestoneOnce(
+            await captureRouteMilestoneWithoutStarvingPacing(
               "foothold-route-start",
               expectedRouteTarget,
               null,
               recordedTrajectory.start,
             );
-            await captureRouteMilestoneOnce(
+            await captureRouteMilestoneWithoutStarvingPacing(
               "foothold-route-mid",
               expectedRouteTarget,
               null,
@@ -19710,36 +19742,34 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
           }
         }
 
-        if (!probe) {
-          return false;
-        }
-
         if (
           (probe?.firstAfternoon?.completedAt ||
             /first afternoon complete/i.test(probe?.autonomy?.label ?? "")) &&
           !capturedMilestoneKeys.has("foothold-route-start")
         ) {
           const recordedTrajectory =
-            await waitForAutoplayRecordedRouteTrajectory({
-              expectedTargetLocationId: expectedRouteTarget,
-              label: `${openingWorldVariant} autoplay completed foothold route`,
-              session,
-            });
-          await captureRouteMilestoneOnce(
+            await runAutoplayEvidenceWithoutStarvingPacing(
+              "completed-foothold-route-evidence",
+              () =>
+                waitForAutoplayRecordedRouteTrajectory({
+                  expectedTargetLocationId: expectedRouteTarget,
+                  label: `${openingWorldVariant} autoplay completed foothold route`,
+                  session,
+                }),
+            );
+          await captureRouteMilestoneWithoutStarvingPacing(
             "foothold-route-start",
             expectedRouteTarget,
             null,
             recordedTrajectory.start,
           );
-          await captureRouteMilestoneOnce(
+          await captureRouteMilestoneWithoutStarvingPacing(
             "foothold-route-mid",
             expectedRouteTarget,
             null,
             recordedTrajectory.mid,
           );
         }
-
-        const sampleDom = await recordPacingProbe(probe);
 
         if (probe.activeConversation) {
           await captureMilestoneWithoutStarvingPacing(
@@ -19911,6 +19941,8 @@ async function runAutoplayObservation(session, { game, openingWorldVariant }) {
         idleGapLimitMs: AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS,
         activePlaybackCardsAtEnd:
           pacingLedger.activePlaybackCardsAtEnd,
+        terminalStopBrowserEvidence:
+          pacingLedger.terminalStopBrowserEvidence,
         maxInAppGapMs: pacingLedger.maxInAppGapMs,
         maxObserverGapMs: pacingLedger.maxIdleGapMs,
         meaningfulBeatCount: pacingLedger.meaningfulBeatCount,
@@ -22204,9 +22236,115 @@ function autoplayObservationSignature(sample) {
   });
 }
 
+function buildAutoplayTerminalStopBrowserEvidence(samples) {
+  const evidenceByIdentity = new Map();
+
+  for (const sample of samples ?? []) {
+    const firstAfternoon = sample?.firstAfternoon;
+    const consequence = firstAfternoon?.consequence;
+    if (
+      sample?.watchMode?.enabled !== true ||
+      sample.watchMode.frozen === true ||
+      !firstAfternoon?.completedAt ||
+      !consequence?.achievedAt ||
+      !consequence?.id ||
+      !consequence?.kind
+    ) {
+      continue;
+    }
+
+    const completionIdentity = [
+      firstAfternoon.completedAt,
+      consequence.kind,
+      consequence.id,
+    ].join(":");
+    if (sample?.autonomy?.autoContinue === false) {
+      evidenceByIdentity.set(`completion-idle:${completionIdentity}`, {
+        appMonotonicMs: sample.appMonotonicMs ?? null,
+        completedAt: firstAfternoon.completedAt,
+        consequenceId: consequence.id,
+        consequenceKind: consequence.kind,
+        elapsedMs: sample.elapsedMs ?? null,
+        evidence: "browser-completion-idle-sample",
+      });
+    }
+
+    const routeKey = sample?.objective?.routeKey ?? null;
+    const expectedCardKey = routeKey ? `objective-shift:${routeKey}` : null;
+    const playback = sample?.playback;
+    const activeStartedAtMs = playback?.activeStartedAtMs;
+    const activeDurationMs = playback?.activeDurationMs;
+    const rawAppMonotonicMs = sample?.rawAppMonotonicMs;
+    if (
+      routeKey &&
+      routeKey !== "first-afternoon" &&
+      playback?.activeKind === "objective_shift" &&
+      playback?.activeKey === expectedCardKey &&
+      typeof activeStartedAtMs === "number" &&
+      typeof activeDurationMs === "number" &&
+      activeDurationMs >= AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS &&
+      typeof rawAppMonotonicMs === "number" &&
+      rawAppMonotonicMs >= activeStartedAtMs
+    ) {
+      evidenceByIdentity.set(
+        `objective-shift:${completionIdentity}:${routeKey}`,
+        {
+          completedAt: firstAfternoon.completedAt,
+          configuredDurationMs: activeDurationMs,
+          consequenceId: consequence.id,
+          consequenceKind: consequence.kind,
+          evidence: "browser-active-terminal-card-sample",
+          key: playback.activeKey,
+          kind: playback.activeKind,
+          observedAppDurationMs: rawAppMonotonicMs - activeStartedAtMs,
+          routeKey,
+          title: playback.activeTitle ?? null,
+        },
+      );
+    }
+
+    for (const completedTiming of playback?.completedTimings ?? []) {
+      const completedDurationMs =
+        typeof completedTiming?.completedAtMs === "number" &&
+        typeof completedTiming?.startedAtMs === "number"
+          ? completedTiming.completedAtMs - completedTiming.startedAtMs
+          : null;
+      if (
+        routeKey &&
+        routeKey !== "first-afternoon" &&
+        completedTiming?.kind === "objective_shift" &&
+        completedTiming?.key === expectedCardKey &&
+        typeof completedTiming.configuredDurationMs === "number" &&
+        completedTiming.configuredDurationMs >=
+          AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS &&
+        typeof completedDurationMs === "number" &&
+        completedDurationMs >= AUTOPLAY_MIN_PLAYBACK_CARD_DWELL_MS
+      ) {
+        evidenceByIdentity.set(
+          `objective-shift:${completionIdentity}:${routeKey}`,
+          {
+            appDurationMs: completedDurationMs,
+            completedAt: firstAfternoon.completedAt,
+            configuredDurationMs: completedTiming.configuredDurationMs,
+            consequenceId: consequence.id,
+            consequenceKind: consequence.kind,
+            evidence: "browser-playback-timer",
+            key: completedTiming.key,
+            kind: completedTiming.kind,
+            routeKey,
+            title: completedTiming.title ?? null,
+          },
+        );
+      }
+    }
+  }
+
+  return [...evidenceByIdentity.values()];
+}
+
 function classifyAutoplayNaturalFirstAfternoonStop(
   finalSample,
-  activePlaybackCardsAtEnd,
+  terminalStopBrowserEvidence,
 ) {
   const firstAfternoon = finalSample?.firstAfternoon;
   const consequence = firstAfternoon?.consequence;
@@ -22223,6 +22361,17 @@ function classifyAutoplayNaturalFirstAfternoonStop(
     return { accepted: true, evidence: "completion-idle" };
   }
 
+  const observedCompletionIdle = (terminalStopBrowserEvidence ?? []).find(
+    (entry) =>
+      entry?.evidence === "browser-completion-idle-sample" &&
+      entry?.completedAt === firstAfternoon.completedAt &&
+      entry?.consequenceId === consequence.id &&
+      entry?.consequenceKind === consequence.kind,
+  );
+  if (observedCompletionIdle) {
+    return { accepted: true, evidence: "observed-completion-idle" };
+  }
+
   // A slow observer can miss the idle frame. This branch proves a coherent
   // acknowledged handoff only; the inhabit browser's fullAppDurationMs checks
   // remain authoritative for completion and handoff dwell length.
@@ -22234,11 +22383,18 @@ function classifyAutoplayNaturalFirstAfternoonStop(
   const actionId = finalSample?.autonomy?.actionId ?? null;
   const planningTrace = finalSample?.planningTrace ?? null;
   const selectedRecommendation = planningTrace?.selectedRecommendation ?? null;
-  const handoffCard = (activePlaybackCardsAtEnd ?? []).find(
+  const handoffCard = (terminalStopBrowserEvidence ?? []).find(
     (entry) =>
-      entry?.evidence === "active-terminal-card" &&
+      [
+        "active-terminal-card",
+        "browser-active-terminal-card-sample",
+        "browser-playback-timer",
+      ].includes(entry?.evidence) &&
       entry?.kind === "objective_shift" &&
-      entry?.key === `objective-shift:${routeKey}`,
+      entry?.key === `objective-shift:${routeKey}` &&
+      (!entry?.completedAt || entry.completedAt === firstAfternoon.completedAt) &&
+      (!entry?.consequenceId || entry.consequenceId === consequence.id) &&
+      (!entry?.consequenceKind || entry.consequenceKind === consequence.kind),
   );
   const acknowledgedAfterCompletion =
     Number.isFinite(completedAtMs) &&
@@ -22379,9 +22535,14 @@ function buildAutoplayObservationPacingLedger(samples) {
     normalizedSamples,
   );
   const playbackCardDwells = playbackCardDwellAudit.dwells;
+  const terminalStopBrowserEvidence =
+    buildAutoplayTerminalStopBrowserEvidence(normalizedSamples);
   const naturalStopEvidence = classifyAutoplayNaturalFirstAfternoonStop(
     finalSample,
-    playbackCardDwellAudit.activeAtEnd,
+    [
+      ...playbackCardDwellAudit.activeAtEnd,
+      ...terminalStopBrowserEvidence,
+    ],
   );
 
   return {
@@ -22428,6 +22589,7 @@ function buildAutoplayObservationPacingLedger(samples) {
     playbackCardDwells,
     repeatedPeopleRecoveryCycles:
       findRepeatedPeopleRecoveryCycles(normalizedSamples),
+    terminalStopBrowserEvidence,
     samples: normalizedSamples,
     transitions,
     visibleProgressionControlSamples: (samples ?? []).filter(
