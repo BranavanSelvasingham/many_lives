@@ -1,6 +1,10 @@
 import { Suspense } from "react";
 import { PhaserStreetGameApp } from "@/components/street/PhaserStreetGameApp";
 
+// This document references deployment-specific chunk hashes and must not outlive them.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 function StreetGameFallback() {
   return (
     <main

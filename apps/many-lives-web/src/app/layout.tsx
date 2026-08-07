@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 
+import { CHUNK_LOAD_RECOVERY_SCRIPT } from "./chunkLoadRecovery";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,6 +20,12 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        <script
+          id="many-lives-chunk-load-recovery"
+          dangerouslySetInnerHTML={{ __html: CHUNK_LOAD_RECOVERY_SCRIPT }}
+        />
+      </head>
       <body>{children}</body>
     </html>
   );
