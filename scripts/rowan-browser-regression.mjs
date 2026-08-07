@@ -25707,6 +25707,192 @@ async function runInhabitCameraCheck(session) {
   };
 }
 
+function preservedInhabitWatchedAutoContinueMilestoneLabel(
+  milestoneLabel,
+  probe,
+) {
+  if (
+    milestoneLabel === "first-afternoon-complete" &&
+    probe?.watchMode?.enabled &&
+    !probe.watchMode.frozen &&
+    isFirstAfternoonCompletionPendingProbe(probe)
+  ) {
+    return "post-first-afternoon-handoff";
+  }
+  return null;
+}
+
+function createInhabitWatchedAutoContinueAuditDescriptor({
+  milestoneLabel,
+  probe,
+}) {
+  return {
+    beforeProgressSignature: playerGameProgressSignature(probe),
+    completionAutoContinue: isFirstAfternoonCompletionPendingProbe(probe),
+    handoffReorientation: isPostFirstAfternoonHandoffPendingProbe(probe),
+    milestoneLabel,
+    probe,
+  };
+}
+
+function beginInhabitWatchedAutoContinueAudit({
+  attempt,
+  clickLog,
+  descriptor,
+  objectiveSequenceAudit,
+  session,
+}) {
+  const {
+    beforeProgressSignature,
+    completionAutoContinue,
+    handoffReorientation,
+    milestoneLabel,
+    probe,
+  } = descriptor;
+  const startedAt = Date.now();
+  const logEntry = {
+    autoContinueElapsedAtProbeMs:
+      probe.timing?.autoContinue?.elapsedMs ?? null,
+    autoContinueIntendedDelayMs:
+      probe.timing?.autoContinue?.intendedDelayMs ?? null,
+    autoContinueKey: probe.timing?.autoContinue?.key ?? null,
+    autoContinueStartedAtMs:
+      probe.timing?.autoContinue?.startedAtMs ?? null,
+    beforeAutonomyLabel: probe.autonomy?.label ?? null,
+    beforeClock: probe.clock,
+    beforeLocation: probe.location,
+    beforeObjectiveRouteKey: probe.objective?.routeKey ?? null,
+    beforeObjectiveText: probe.objective?.text ?? null,
+    completionAutoContinue,
+    handoffReorientation,
+    objectiveSequenceAuditIndex: null,
+    kind: "watched-auto-continue",
+    milestone: milestoneLabel,
+    sequenceRunId: null,
+    text: completionAutoContinue
+      ? "Watched autoplay dwell on the completion field note, then open the next live objective."
+      : handoffReorientation
+        ? "Watched autoplay dwell on the first state-derived post-afternoon objective before acting."
+        : "Watched autoplay carry the beat.",
+  };
+  clickLog.push(logEntry);
+
+  const completion = (async () => {
+    const dom = await session
+      .readDomSnapshot(`${milestoneLabel}:watch-dom-snapshot`)
+      .catch(() => null);
+    const auditEntry = buildObjectiveSequenceAuditEntry({
+      control: null,
+      dom,
+      kind: "watched-auto-continue",
+      milestone: milestoneLabel,
+      probe,
+    });
+    objectiveSequenceAudit.push(auditEntry);
+    logEntry.objectiveSequenceAuditIndex = objectiveSequenceAudit.length - 1;
+    logEntry.sequenceRunId = objectiveSequenceGroupIdForEntry(auditEntry);
+    assert.equal(
+      auditEntry.failureReasons.length,
+      0,
+      `${milestoneLabel}: objective-sequence audit failed before watch beat: ${JSON.stringify(
+        auditEntry,
+        null,
+        2,
+      )}`,
+    );
+
+    if (completionAutoContinue || handoffReorientation) {
+      logEntry.readabilityWaitMs =
+        remainingFirstAfternoonReadabilityCheckpointMs(
+          logEntry.autoContinueElapsedAtProbeMs,
+        );
+      await sleep(logEntry.readabilityWaitMs);
+      const readabilityProbe = await session.readBrowserProbe(
+        `${milestoneLabel}-readability-checkpoint-${attempt + 1}`,
+      );
+      logEntry.readabilityCheckpointMs = Date.now() - startedAt;
+      logEntry.readabilityCheckpointFromBeatStartMs =
+        typeof logEntry.autoContinueElapsedAtProbeMs === "number"
+          ? logEntry.autoContinueElapsedAtProbeMs +
+            logEntry.readabilityCheckpointMs
+          : logEntry.readabilityCheckpointMs;
+      logEntry.readabilityStateStable =
+        playerGameProgressSignature(readabilityProbe) ===
+        beforeProgressSignature;
+      logEntry.readabilityObjectiveRouteKey =
+        readabilityProbe?.objective?.routeKey ?? null;
+      assert.equal(
+        logEntry.readabilityStateStable,
+        true,
+        `${milestoneLabel}: ${
+          completionAutoContinue
+            ? "first-afternoon completion"
+            : "post-first-afternoon reorientation"
+        } changed before a human-readable checkpoint: ${JSON.stringify(
+          {
+            before: {
+              autonomy: probe.autonomy,
+              clock: probe.clock,
+              objective: probe.objective,
+            },
+            checkpoint: {
+              autonomy: readabilityProbe?.autonomy,
+              clock: readabilityProbe?.clock,
+              objective: readabilityProbe?.objective,
+            },
+            checkpointMs: logEntry.readabilityCheckpointMs,
+          },
+          null,
+          2,
+        )}`,
+      );
+    }
+
+    const transitionedProbe = await waitForInhabitTransition(
+      session,
+      beforeProgressSignature,
+      `${milestoneLabel}-watch-${attempt + 1}`,
+    );
+    logEntry.durationMs = Date.now() - startedAt;
+    const beforeAppMonotonicMs = probe.timing?.appMonotonicMs;
+    const afterAppMonotonicMs = transitionedProbe.timing?.appMonotonicMs;
+    logEntry.beforeAppMonotonicMs = beforeAppMonotonicMs ?? null;
+    logEntry.afterAppMonotonicMs = afterAppMonotonicMs ?? null;
+    logEntry.appDurationMs =
+      typeof beforeAppMonotonicMs === "number" &&
+      typeof afterAppMonotonicMs === "number"
+        ? Math.max(0, afterAppMonotonicMs - beforeAppMonotonicMs)
+        : null;
+    logEntry.fullAppDurationMs =
+      typeof logEntry.autoContinueStartedAtMs === "number" &&
+      typeof afterAppMonotonicMs === "number"
+        ? Math.max(
+            0,
+            afterAppMonotonicMs - logEntry.autoContinueStartedAtMs,
+          )
+        : typeof logEntry.autoContinueElapsedAtProbeMs === "number" &&
+            typeof logEntry.appDurationMs === "number"
+          ? logEntry.autoContinueElapsedAtProbeMs + logEntry.appDurationMs
+          : null;
+    return transitionedProbe;
+  })();
+
+  return { completion, logEntry };
+}
+
+async function captureInhabitMilestoneEvidence({
+  capture,
+  preserveWatchedAutoContinue = null,
+}) {
+  const watchedAuditPromise = preserveWatchedAutoContinue?.() ?? null;
+  const capturePromise = capture();
+  const [moment] = await Promise.all([
+    capturePromise,
+    watchedAuditPromise ?? Promise.resolve(null),
+  ]);
+  return moment;
+}
+
 async function clickUntilInhabitMilestone({
   clickLog,
   maxClicks,
@@ -25726,15 +25912,28 @@ async function clickUntilInhabitMilestone({
       observations: scheduledNpcObservations,
       probe,
     });
+    const beforeProgressSignature = playerGameProgressSignature(probe);
+    const preservedMilestoneLabel =
+      preservedInhabitWatchedAutoContinueMilestoneLabel(
+        milestone.label,
+        probe,
+      );
     if (milestone.reached(probe)) {
-      return probe;
+      return {
+        pendingWatchedAutoContinue: preservedMilestoneLabel
+          ? createInhabitWatchedAutoContinueAuditDescriptor({
+              milestoneLabel: preservedMilestoneLabel,
+              probe,
+            })
+          : null,
+        probe,
+      };
     }
 
     if (attempt === maxClicks) {
       break;
     }
 
-    const beforeProgressSignature = playerGameProgressSignature(probe);
     const completionAutoContinue =
       isFirstAfternoonCompletionPendingProbe(probe);
     const handoffReorientation =
@@ -25744,125 +25943,17 @@ async function clickUntilInhabitMilestone({
       !probe.watchMode?.frozen &&
       (probe.autonomy?.autoContinue || completionAutoContinue)
     ) {
-      const dom = await session
-        .readDomSnapshot(`${milestone.label}:watch-dom-snapshot`)
-        .catch(() => null);
-      const auditEntry = buildObjectiveSequenceAuditEntry({
-        control: null,
-        dom,
-        kind: "watched-auto-continue",
-        milestone: milestone.label,
-        probe,
-      });
-      objectiveSequenceAudit.push(auditEntry);
-      assert.equal(
-        auditEntry.failureReasons.length,
-        0,
-        `${milestone.label}: objective-sequence audit failed before watch beat: ${JSON.stringify(
-          auditEntry,
-          null,
-          2,
-        )}`,
-      );
-      const logEntry = {
-        autoContinueElapsedAtProbeMs:
-          probe.timing?.autoContinue?.elapsedMs ?? null,
-        autoContinueIntendedDelayMs:
-          probe.timing?.autoContinue?.intendedDelayMs ?? null,
-        autoContinueKey: probe.timing?.autoContinue?.key ?? null,
-        autoContinueStartedAtMs:
-          probe.timing?.autoContinue?.startedAtMs ?? null,
-        beforeAutonomyLabel: probe.autonomy?.label ?? null,
-        beforeClock: probe.clock,
-        beforeLocation: probe.location,
-        beforeObjectiveRouteKey: probe.objective?.routeKey ?? null,
-        beforeObjectiveText: probe.objective?.text ?? null,
-        completionAutoContinue,
-        handoffReorientation,
-        objectiveSequenceAuditIndex: objectiveSequenceAudit.length - 1,
-        kind: "watched-auto-continue",
-        milestone: milestone.label,
-        sequenceRunId: objectiveSequenceGroupIdForEntry(auditEntry),
-        text: completionAutoContinue
-          ? "Watched autoplay dwell on the completion field note, then open the next live objective."
-          : handoffReorientation
-            ? "Watched autoplay dwell on the first state-derived post-afternoon objective before acting."
-            : "Watched autoplay carry the beat.",
-      };
-      clickLog.push(logEntry);
-      const startedAt = Date.now();
-      if (completionAutoContinue || handoffReorientation) {
-        logEntry.readabilityWaitMs =
-          remainingFirstAfternoonReadabilityCheckpointMs(
-            logEntry.autoContinueElapsedAtProbeMs,
-          );
-        await sleep(logEntry.readabilityWaitMs);
-        const readabilityProbe = await session.readBrowserProbe(
-          `${milestone.label}-readability-checkpoint-${attempt + 1}`,
-        );
-        logEntry.readabilityCheckpointMs = Date.now() - startedAt;
-        logEntry.readabilityCheckpointFromBeatStartMs =
-          typeof logEntry.autoContinueElapsedAtProbeMs === "number"
-            ? logEntry.autoContinueElapsedAtProbeMs +
-              logEntry.readabilityCheckpointMs
-            : logEntry.readabilityCheckpointMs;
-        logEntry.readabilityStateStable =
-          playerGameProgressSignature(readabilityProbe) ===
-          beforeProgressSignature;
-        logEntry.readabilityObjectiveRouteKey =
-          readabilityProbe?.objective?.routeKey ?? null;
-        assert.equal(
-          logEntry.readabilityStateStable,
-          true,
-          `${milestone.label}: ${
-            completionAutoContinue
-              ? "first-afternoon completion"
-              : "post-first-afternoon reorientation"
-          } changed before a human-readable checkpoint: ${JSON.stringify(
-            {
-              before: {
-                autonomy: probe.autonomy,
-                clock: probe.clock,
-                objective: probe.objective,
-              },
-              checkpoint: {
-                autonomy: readabilityProbe?.autonomy,
-                clock: readabilityProbe?.clock,
-                objective: readabilityProbe?.objective,
-              },
-              checkpointMs: logEntry.readabilityCheckpointMs,
-            },
-            null,
-            2,
-          )}`,
-        );
-      }
-      const transitionedProbe = await waitForInhabitTransition(
+      const { completion } = beginInhabitWatchedAutoContinueAudit({
+        attempt,
+        clickLog,
+        descriptor: createInhabitWatchedAutoContinueAuditDescriptor({
+          milestoneLabel: milestone.label,
+          probe,
+        }),
+        objectiveSequenceAudit,
         session,
-        beforeProgressSignature,
-        `${milestone.label}-watch-${attempt + 1}`,
-      );
-      logEntry.durationMs = Date.now() - startedAt;
-      const beforeAppMonotonicMs = probe.timing?.appMonotonicMs;
-      const afterAppMonotonicMs = transitionedProbe.timing?.appMonotonicMs;
-      logEntry.beforeAppMonotonicMs = beforeAppMonotonicMs ?? null;
-      logEntry.afterAppMonotonicMs = afterAppMonotonicMs ?? null;
-      logEntry.appDurationMs =
-        typeof beforeAppMonotonicMs === "number" &&
-        typeof afterAppMonotonicMs === "number"
-          ? Math.max(0, afterAppMonotonicMs - beforeAppMonotonicMs)
-          : null;
-      logEntry.fullAppDurationMs =
-        typeof logEntry.autoContinueStartedAtMs === "number" &&
-        typeof afterAppMonotonicMs === "number"
-          ? Math.max(
-              0,
-              afterAppMonotonicMs - logEntry.autoContinueStartedAtMs,
-            )
-          : typeof logEntry.autoContinueElapsedAtProbeMs === "number" &&
-              typeof logEntry.appDurationMs === "number"
-            ? logEntry.autoContinueElapsedAtProbeMs + logEntry.appDurationMs
-            : null;
+      });
+      await completion;
       await closeInhabitSupportPanel(session);
       continue;
     }
@@ -26194,7 +26285,7 @@ async function runInhabitGameplayPass(session) {
   ];
 
   for (const milestone of milestones) {
-    const milestoneProbe = await clickUntilInhabitMilestone({
+    const milestoneResult = await clickUntilInhabitMilestone({
       clickLog,
       maxClicks: milestone.maxClicks,
       milestone,
@@ -26203,13 +26294,27 @@ async function runInhabitGameplayPass(session) {
       session,
     });
     milestonesReached.push(milestone.label);
-    await captureInhabitMoment({
-      index: momentIndex++,
-      label: milestone.label,
-      moments,
-      probeOverride: milestoneProbe,
-      session,
-      userQuestion: milestone.userQuestion,
+    await captureInhabitMilestoneEvidence({
+      capture: () =>
+        captureInhabitMoment({
+          index: momentIndex++,
+          label: milestone.label,
+          moments,
+          probeOverride: milestoneResult.probe,
+          session,
+          userQuestion: milestone.userQuestion,
+        }),
+      preserveWatchedAutoContinue:
+        milestoneResult.pendingWatchedAutoContinue
+          ? () =>
+              beginInhabitWatchedAutoContinueAudit({
+                attempt: 0,
+                clickLog,
+                descriptor: milestoneResult.pendingWatchedAutoContinue,
+                objectiveSequenceAudit,
+                session,
+              }).completion
+          : null,
     });
   }
 

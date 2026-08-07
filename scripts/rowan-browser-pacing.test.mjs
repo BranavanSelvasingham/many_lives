@@ -263,6 +263,50 @@ const sampleAutoplayRouteRecorderAtOrAfter = Function(
     routeRecorderSamplerEnd,
   )})`,
 )();
+const preservedInhabitWatchMilestoneStart = source.indexOf(
+  "function preservedInhabitWatchedAutoContinueMilestoneLabel(",
+);
+const preservedInhabitWatchMilestoneEnd = source.indexOf(
+  "\nfunction ",
+  preservedInhabitWatchMilestoneStart + 1,
+);
+const preservedInhabitWatchedAutoContinueMilestoneLabel = Function(
+  "isFirstAfternoonCompletionPendingProbe",
+  `return (${source.slice(
+    preservedInhabitWatchMilestoneStart,
+    preservedInhabitWatchMilestoneEnd,
+  )})`,
+)((probe) =>
+  Boolean(
+    probe?.firstAfternoon?.completedAt &&
+      !probe?.firstAfternoon?.completionAcknowledgedAt &&
+      /first afternoon complete/i.test(probe?.autonomy?.label ?? ""),
+  ),
+);
+const beginInhabitWatchAuditStart = source.indexOf(
+  "function beginInhabitWatchedAutoContinueAudit(",
+);
+const beginInhabitWatchAuditEnd = source.indexOf(
+  "\nasync function captureInhabitMilestoneEvidence(",
+  beginInhabitWatchAuditStart + 1,
+);
+const beginInhabitWatchAuditSource = source.slice(
+  beginInhabitWatchAuditStart,
+  beginInhabitWatchAuditEnd,
+);
+const inhabitMilestoneEvidenceCaptureStart = source.indexOf(
+  "async function captureInhabitMilestoneEvidence(",
+);
+const inhabitMilestoneEvidenceCaptureEnd = source.indexOf(
+  "\nasync function ",
+  inhabitMilestoneEvidenceCaptureStart + 1,
+);
+const captureInhabitMilestoneEvidence = Function(
+  `return (${source.slice(
+    inhabitMilestoneEvidenceCaptureStart,
+    inhabitMilestoneEvidenceCaptureEnd,
+  )})`,
+)();
 function completedFirstAfternoonSample(overrides = {}) {
   return {
     autonomy: {
@@ -483,6 +527,89 @@ test("readability checkpoint accounts for app time before the observer attaches"
     /readabilityWaitMs\s*=\s*\n\s*remainingFirstAfternoonReadabilityCheckpointMs\(/,
   );
   assert.match(source, /await sleep\(logEntry\.readabilityWaitMs\)/);
+});
+
+test("slow evidence capture cannot consume the completion watch audit", async () => {
+  const events = [];
+  let finishAudit;
+  let finishCapture;
+  const auditGate = new Promise((resolve) => {
+    finishAudit = resolve;
+  });
+  const captureGate = new Promise((resolve) => {
+    finishCapture = resolve;
+  });
+
+  const resultPromise = captureInhabitMilestoneEvidence({
+    capture: () => {
+      events.push("capture-started");
+      return captureGate;
+    },
+    preserveWatchedAutoContinue: () => {
+      events.push("audit-preserved");
+      return auditGate;
+    },
+  });
+
+  assert.deepEqual(
+    events,
+    ["audit-preserved", "capture-started"],
+    "The watched completion audit must be reserved before screenshot work starts.",
+  );
+  assert.ok(
+    beginInhabitWatchAuditSource.indexOf("clickLog.push(logEntry)") >= 0 &&
+      beginInhabitWatchAuditSource.indexOf("clickLog.push(logEntry)") <
+        beginInhabitWatchAuditSource.indexOf("const completion = (async ()"),
+    "The real watched-beat log reservation must happen before asynchronous browser audit work.",
+  );
+  finishCapture("captured-moment");
+  await Promise.resolve();
+  finishAudit();
+  assert.equal(await resultPromise, "captured-moment");
+  assert.match(
+    source,
+    /captureInhabitMilestoneEvidence\(\{[\s\S]*preserveWatchedAutoContinue:/,
+    "The inhabit milestone loop must use the audit-before-capture coordinator.",
+  );
+});
+
+test("only a pending watched completion reserves the handoff dwell audit", () => {
+  const pendingCompletion = completedFirstAfternoonSample({
+    autonomy: {
+      actionId: null,
+      autoContinue: false,
+      label: "First afternoon complete",
+    },
+    watchMode: {
+      enabled: true,
+      frozen: false,
+    },
+  });
+  assert.equal(
+    preservedInhabitWatchedAutoContinueMilestoneLabel(
+      "first-afternoon-complete",
+      pendingCompletion,
+    ),
+    "post-first-afternoon-handoff",
+  );
+  assert.equal(
+    preservedInhabitWatchedAutoContinueMilestoneLabel(
+      "post-first-afternoon-handoff",
+      pendingCompletion,
+    ),
+    null,
+  );
+  assert.equal(
+    preservedInhabitWatchedAutoContinueMilestoneLabel(
+      "first-afternoon-complete",
+      {
+        ...acknowledgedFirstAfternoonHandoffSample(),
+        watchMode: { enabled: true, frozen: false },
+      },
+    ),
+    null,
+    "Later acknowledged state alone must not synthesize completion dwell evidence.",
+  );
 });
 
 test("autoplay pacing uses cumulative app-visible progress gaps", () => {
