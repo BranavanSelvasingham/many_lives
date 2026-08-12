@@ -226,6 +226,64 @@ class ConversationClaimLiveAIProvider extends LiveDialogueAIProvider {
   }
 }
 
+class F13PoisonedHandoffLiveAIProvider extends LiveDialogueAIProvider {
+  readonly interpretationRequests: StreetConversationInterpretationRequest[] = [];
+
+  override async generateStreetAutonomousLine(
+    input: StreetAutonomousLineRequest,
+  ) {
+    if (input.npcId === "npc-mara") {
+      this.autonomousLineRequests.push(input);
+      return {
+        speech:
+          "The Morrow Yard pump needs the right tool, but I do not know where to find one. Do you know a reachable source?",
+      };
+    }
+    return super.generateStreetAutonomousLine(input);
+  }
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    this.replyRequests.push(input);
+    return input.npcId === "npc-ada"
+      ? {
+          followupThought: "Ada is keeping the live work concrete.",
+          reply:
+            "My cup-and-counter shift is open now and pays fourteen coins until 3pm.",
+        }
+      : {
+          followupThought: "Mara is circling the same broad advice.",
+          reply:
+            "Talk through today's options again and choose a concrete foothold with my guidance.",
+        };
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ) {
+    this.interpretationRequests.push(input);
+    if (input.npcId === "npc-ada") {
+      const objectiveText =
+        "Return to South Quay and talk to Mara at Morrow House about the room, then decide on a concrete foothold.";
+      return {
+        decision: objectiveText,
+        memoryKind: "self" as const,
+        memoryText: "Ada sent Rowan back to Mara to discuss the room again.",
+        objectiveText,
+        summary: "Ada reopened the Morrow House room conversation.",
+      };
+    }
+
+    return {
+      decision: "talk to Mara again before choosing a concrete foothold.",
+      memoryKind: "self" as const,
+      memoryText:
+        "Mara told Rowan to keep discussing the day before choosing a foothold.",
+      objectiveText: "Talk to Mara about securing a foothold today.",
+      summary: "Mara kept Rowan in the same broad conversation loop.",
+    };
+  }
+}
+
 class ThinAdaLiveAIProvider extends LiveDialogueAIProvider {
   override async generateStreetReply(input: StreetDialogueRequest) {
     if (input.npcId === "npc-ada") {
@@ -8373,6 +8431,209 @@ describe("SimulationEngine street slice", () => {
         }
       }
     }
+  });
+
+  it("rejects the live Ada-to-Mara poison and bounds the selected tool-lead conversation", async () => {
+    const provider = new F13PoisonedHandoffLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-f13-live-ada-mara-poison",
+      { hour: 12, minute: 15, teaWindow: "current" },
+    );
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+    if (!pump || !teaJob || !mara) {
+      throw new Error("Missing seeded F13 state");
+    }
+
+    world.firstAfternoon ??= {};
+    world.firstAfternoon.approachesKnownAt = world.currentTime;
+    world.conversations.push({
+      id: "conversation-f13-room-terms",
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "I understand what tonight's room requires.",
+      threadId: "conversation-thread-npc-mara",
+      time: world.currentTime,
+    });
+    world.conversations.push({
+      id: "conversation-f13-live-approaches",
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "Are Ada's lunch work and the leaking pump both live approaches?",
+      threadId: "conversation-thread-npc-mara",
+      time: world.currentTime,
+    });
+    world.conversations.push({
+      id: "conversation-f13-live-approaches-reply",
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      speaker: "npc",
+      speakerName: "Mara",
+      text: "Ada's cup-and-counter shift is open, and the leaking pump in Morrow Yard is another live approach.",
+      threadId: "conversation-thread-npc-mara",
+      time: world.currentTime,
+    });
+    world.conversationThreads["npc-mara"] = {
+      id: "conversation-thread-npc-mara",
+      decision: "Compare the live approaches before choosing one.",
+      lines: world.conversations.filter((entry) => entry.npcId === "npc-mara"),
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      objectiveText: "Choose and start a concrete foothold.",
+      summary: "Mara grounded Ada's work and the leaking pump as live approaches.",
+      updatedAt: world.currentTime,
+    };
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+    expect(world.player.objective).toMatchObject({
+      routeKey: "first-afternoon",
+      outcomes: expect.arrayContaining([
+        expect.objectContaining({ id: "first-afternoon-room", status: "met" }),
+        expect.objectContaining({
+          id: "first-afternoon-approaches",
+          status: "met",
+        }),
+      ]),
+    });
+    const broadObjectiveText = world.player.objective?.text;
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "What work is actually open here now?",
+    });
+
+    expect(world.player.objective?.text).toBe(broadObjectiveText);
+    expect(world.activeConversation?.objectiveText).toMatch(
+      /cup-and-counter shift/i,
+    );
+    expect(JSON.stringify(world.activeConversation)).not.toMatch(
+      /talk to Mara at Morrow House about the room|sent Rowan back to Mara/i,
+    );
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation interpretation reopened an already-met objective predicate.",
+    );
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+    const morrowHouse = world.spaces?.find(
+      (space) => space.id === "interior:boarding-house",
+    );
+    const morrowHouseSpawn = morrowHouse?.anchors.find(
+      (anchor) => anchor.kind === "spawn",
+    );
+    if (!morrowHouse || !morrowHouseSpawn) {
+      throw new Error("Missing Morrow House interior spawn");
+    }
+    setTestClock(world, 13, 59);
+    world.currentTime = "2026-03-21T13:59:00.000Z";
+    world.activeSpaceId = morrowHouse.id;
+    world.player.spaceId = morrowHouse.id;
+    world.player.currentLocationId = "boarding-house";
+    world.player.x = morrowHouseSpawn.x;
+    world.player.y = morrowHouseSpawn.y;
+    const currentPump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    const currentTeaJob = world.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    const currentMara = world.npcs.find((npc) => npc.id === "npc-mara");
+    if (!currentPump || !currentTeaJob || !currentMara) {
+      throw new Error("Missing current F13 state");
+    }
+    world.player.energy = 35;
+    world.player.inventory = [];
+    world.player.knownLocationIds = [
+      "boarding-house",
+      "courtyard",
+      "tea-house",
+    ];
+    world.player.knownNpcIds = ["npc-mara", "npc-ada"];
+    world.player.memories = world.player.memories.filter(
+      (memory) => !/\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(memory.text),
+    );
+    world.player.pendingObjectiveMove = undefined;
+    world.activeConversation = undefined;
+    currentMara.currentLocationId = "boarding-house";
+    currentMara.currentSpaceId = world.activeSpaceId;
+    currentMara.known = true;
+    currentMara.lastInteractionAt = world.currentTime;
+    currentTeaJob.accepted = false;
+    currentTeaJob.completed = false;
+    currentTeaJob.discovered = true;
+    currentTeaJob.missed = false;
+    currentTeaJob.missedAt = undefined;
+    currentPump.discovered = true;
+    currentPump.escalatedAt = "2026-03-21T13:03:00.000Z";
+    currentPump.escalationLevel = 1;
+    currentPump.status = "active";
+    currentPump.urgency = 4;
+    currentPump.expiredAt = undefined;
+    currentPump.resolvedAt = undefined;
+    currentPump.resolvedByNpcId = undefined;
+    currentPump.consequenceAppliedAt = undefined;
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.rowanAutonomy).toMatchObject({
+      npcId: "npc-mara",
+      stepKind: "talk",
+    });
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedActionId: "talk:npc-mara",
+      selectedPressureId: "tool:item-wrench:problem-pump:lead:npc-mara",
+      selectedPressureKind: "tool",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(world.activeConversation).toMatchObject({
+      npcId: "npc-mara",
+      decision: expect.stringMatching(/Mercer Repairs.*wrench.*pump/i),
+      objectiveText: "Buy a wrench and fix the pump.",
+    });
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation interpretation discarded a simulator-grounded objective action.",
+    );
+    expect(JSON.stringify(world.activeConversation)).not.toMatch(
+      /talk to Mara again|same broad conversation loop/i,
+    );
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(provider.interpretationRequests).toHaveLength(2);
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:boarding-house",
+      autoContinue: true,
+      targetLocationId: "repair-stall",
+    });
+    expect(world.rowanAutonomy.actionId).not.toBe("talk:npc-mara");
+    expect(world.rowanAutonomy.planningTrace?.selectedPressureId).not.toBe(
+      "tool:item-wrench:problem-pump:lead:npc-mara",
+    );
   });
 
   it("keeps late Mara advice off completed work and resolved trouble", async () => {

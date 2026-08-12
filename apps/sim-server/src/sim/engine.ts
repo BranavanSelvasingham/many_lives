@@ -3618,12 +3618,111 @@ function latestNpcReplyFromConversation(
   return [...lines].reverse().find((line) => line.speaker === "npc")?.text;
 }
 
+function conversationObjectiveCandidate(
+  world: StreetGameState,
+  text: string | undefined,
+) {
+  if (!text?.trim()) {
+    return undefined;
+  }
+
+  return buildPlayerObjectiveState(
+    {
+      ...world,
+      player: { ...world.player, objective: undefined },
+    },
+    {
+      text,
+      focus: classifyObjective(text),
+      source: "conversation",
+    },
+  );
+}
+
+function conversationObjectiveRouteKeys(
+  objective: NonNullable<ReturnType<typeof buildPlayerObjectiveState>>,
+  includesOutcome: (outcome: ObjectiveOutcomeState) => boolean,
+) {
+  const outcomeIds = new Set(
+    objective.outcomes.filter(includesOutcome).map((outcome) => outcome.id),
+  );
+
+  return new Set(
+    [...objective.outcomes, ...objective.trail, ...objective.completedTrail]
+      .filter((entry) => outcomeIds.has(entry.id))
+      .map((entry) => {
+        if (entry.actionId) {
+          return `action:${entry.actionId}|${entry.targetLocationId ?? ""}`;
+        }
+        if (entry.npcId && entry.targetLocationId) {
+          return `npc:${entry.npcId}|${entry.targetLocationId}`;
+        }
+        return undefined;
+      })
+      .filter((key): key is string => Boolean(key)),
+  );
+}
+
+function conversationObjectiveReopensMetOutcome(
+  world: StreetGameState,
+  text: string | undefined,
+) {
+  const current = world.player.objective;
+  const candidate = conversationObjectiveCandidate(world, text);
+  if (!current || !candidate) {
+    return false;
+  }
+
+  const metTargets = conversationObjectiveRouteKeys(
+    current,
+    (outcome) => outcome.status === "met",
+  );
+  const openTargets = conversationObjectiveRouteKeys(
+    candidate,
+    (outcome) => outcome.status !== "met" && outcome.status !== "failed",
+  );
+
+  return [...openTargets].some((target) => metTargets.has(target));
+}
+
+function conversationObjectiveDiscardsGroundedAction(
+  world: StreetGameState,
+  text: string | undefined,
+  groundedText: string | undefined,
+) {
+  const candidate = conversationObjectiveCandidate(world, text);
+  const grounded = conversationObjectiveCandidate(world, groundedText);
+  if (!text || !candidate || !grounded) {
+    return false;
+  }
+
+  const isOpen = (outcome: ObjectiveOutcomeState) =>
+    outcome.status !== "met" && outcome.status !== "failed";
+  const actionKeys = (
+    objective: NonNullable<ReturnType<typeof buildPlayerObjectiveState>>,
+  ) =>
+    new Set(
+      objective.outcomes
+        .filter(isOpen)
+        .filter((outcome) => Boolean(outcome.actionId))
+        .map(
+          (outcome) =>
+            `action:${outcome.actionId}|${outcome.targetLocationId ?? ""}`,
+        ),
+    );
+  const candidateActions = actionKeys(candidate);
+  const groundedActions = actionKeys(grounded);
+
+  return [...groundedActions].some((action) => !candidateActions.has(action));
+}
+
 function sanitizeConversationResolutionForVisibleEvidence(
   world: StreetGameState,
   npc: NpcState,
   objective: { text: string; focus: ObjectiveFocus; routeKey: string },
   resolution: ConversationResolution,
   closingReply: string,
+  groundedFallback: ConversationResolution,
 ): ConversationResolution {
   const claimPolicyIssues = conversationClaimPolicyIssues(world, npc, [
     resolution.decision,
@@ -3639,6 +3738,32 @@ function sanitizeConversationResolutionForVisibleEvidence(
       claimPolicyIssues,
     );
     return buildRejectedConversationResolution(world, npc);
+  }
+
+  if (
+    conversationObjectiveReopensMetOutcome(world, resolution.objectiveText)
+  ) {
+    recordAIRuntimePolicyFallback(
+      world,
+      "interpretStreetConversation",
+      "Conversation interpretation reopened an already-met objective predicate.",
+    );
+    resolution = groundedFallback;
+  }
+
+  if (
+    conversationObjectiveDiscardsGroundedAction(
+      world,
+      resolution.objectiveText,
+      groundedFallback.objectiveText,
+    )
+  ) {
+    recordAIRuntimePolicyFallback(
+      world,
+      "interpretStreetConversation",
+      "Conversation interpretation discarded a simulator-grounded objective action.",
+    );
+    resolution = groundedFallback;
   }
 
   const currentStateResolution = sanitizeConversationResolutionForCurrentState(
@@ -9319,12 +9444,7 @@ async function resolveConversationResolution(
     npcId: npc.id,
     objective,
   });
-
-  return sanitizeConversationResolutionForVisibleEvidence(
-    world,
-    npc,
-    objective,
-    {
+  let resolution: ConversationResolution = {
     decision: interpreted.decision ?? heuristic.decision,
     memoryKind: interpreted.memoryText
       ? (interpreted.memoryKind ?? heuristic.memoryKind)
@@ -9333,8 +9453,15 @@ async function resolveConversationResolution(
     npcImpression: interpreted.npcImpression ?? heuristic.npcImpression,
     objectiveText: interpreted.objectiveText ?? heuristic.objectiveText,
     summary: interpreted.summary ?? heuristic.summary,
-    },
+  };
+
+  return sanitizeConversationResolutionForVisibleEvidence(
+    world,
+    npc,
+    objective,
+    resolution,
     closingReply,
+    heuristic,
   );
 }
 
@@ -11835,6 +11962,10 @@ function deriveConversationResolution(
   const playerAskedPump = /\bpump\b|\bleak\b|\bwrench\b|\brepair\b/.test(
     latestPlayerLine ?? "",
   );
+  const playerAskedToolSource = Boolean(
+    playerAskedPump &&
+      /\b(?:find|source|tool|where|wrench)\b/.test(latestPlayerLine ?? ""),
+  );
   const suppressPumpTopic = objectiveRouteSuppressesConversationTopic(
     world,
     objective,
@@ -11872,6 +12003,7 @@ function deriveConversationResolution(
     case "npc-mara":
       if (
         objective.routeKey === "first-afternoon" &&
+        !playerAskedToolSource &&
         teaJob?.discovered &&
         jobWindowOpen(world, teaJob) &&
         pumpProblem?.discovered &&
