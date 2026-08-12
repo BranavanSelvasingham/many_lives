@@ -951,6 +951,9 @@ class CdpSession {
       const dock = document.querySelector(".ml-dock-panel");
       const dockRoot = document.querySelector(".ml-dock");
       const rail = document.querySelector(".ml-rail-shell");
+      const railKicker = document.querySelector(".ml-rail-head .ml-kicker");
+      const railPeekLabel = document.querySelector(".ml-rail-peek-label");
+      const railThought = document.querySelector(".ml-rail-thought");
       const commandRail = document.querySelector(".ml-command-rail");
       const rightStack = document.querySelector(".ml-right-stack");
       const root = document.querySelector(".ml-root");
@@ -1472,6 +1475,20 @@ class CdpSession {
           x: Math.round(railRect.x),
           y: Math.round(railRect.y)
         } : null,
+        railCopy: {
+          kicker: railKicker?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          kickerFits: railKicker
+            ? railKicker.scrollWidth <= railKicker.clientWidth + 1
+            : false,
+          peek: railPeekLabel?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          peekFits: railPeekLabel
+            ? railPeekLabel.scrollWidth <= railPeekLabel.clientWidth + 1
+            : false,
+          thought: railThought?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          thoughtLineClamp: railThought
+            ? window.getComputedStyle(railThought).webkitLineClamp
+            : "",
+        },
         railState: rightStack?.getAttribute("data-rail-state") ?? null,
         rightStack: rightStackRect ? {
           height: Math.round(rightStackRect.height),
@@ -8568,6 +8585,37 @@ async function runViewportCheck(session, viewport) {
     assert.ok(
       !page.compactPrimaryAction,
       `${viewport.name}: compact watch mode should show carry-forward status, not a visible primary action: ${JSON.stringify(page.compactPrimaryAction)}.`,
+    );
+  }
+  if (viewport.width <= 560) {
+    assert.equal(
+      page.railCopy?.kicker,
+      "Many Lives • Living-world sim",
+      `${viewport.name}: collapsed phone rail lost the concise simulation identity.`,
+    );
+    assert.equal(
+      page.railCopy?.kickerFits,
+      true,
+      `${viewport.name}: collapsed phone simulation identity is horizontally clipped.`,
+    );
+    assert.match(
+      page.railCopy?.peek ?? "",
+      /South Quay • Watching Rowan/i,
+      `${viewport.name}: collapsed phone rail lost the readable place and watch-state context.`,
+    );
+    assert.equal(
+      page.railCopy?.peekFits,
+      true,
+      `${viewport.name}: collapsed phone place and watch-state context is horizontally clipped.`,
+    );
+    assert.equal(
+      page.railCopy?.thoughtLineClamp,
+      "2",
+      `${viewport.name}: collapsed phone rail must preserve two lines for Rowan's current beat.`,
+    );
+    assert.ok(
+      (page.rail?.height ?? 0) >= 142 && (page.rail?.height ?? 0) <= 146,
+      `${viewport.name}: collapsed phone rail height must preserve a readable beat without displacing the map (${page.rail?.height}px).`,
     );
   }
   if (viewport.name === "desktop") {

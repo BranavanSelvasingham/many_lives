@@ -2751,6 +2751,68 @@ export function buildStreetOverlayStyle({
       .ml-root.is-collapsible-rail.is-rail-collapsed .ml-rail-shell {
         max-height: var(--ml-compact-rail-collapsed-height);
       }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed .ml-rail-shell {
+        position: relative;
+        border-color: rgba(205, 174, 115, 0.34);
+        background:
+          linear-gradient(145deg, rgba(12, 21, 26, 0.97), rgba(10, 17, 22, 0.96) 58%, rgba(31, 27, 22, 0.95));
+        box-shadow:
+          0 22px 44px rgba(0, 0, 0, 0.34),
+          inset 3px 0 0 rgba(205, 174, 115, 0.72);
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed .ml-rail-head {
+        gap: 10px;
+        padding: 10px 14px 9px 16px;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed
+        .ml-rail-head
+        .ml-kicker {
+        overflow: hidden;
+        text-overflow: clip;
+        white-space: nowrap;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        color: rgba(241, 214, 160, 0.82);
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed
+        .ml-rail-heading-row {
+        margin-top: 4px;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed .ml-rail-name {
+        font-size: 22px;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed .ml-rail-status {
+        border-color: rgba(205, 174, 115, 0.34);
+        background: rgba(205, 174, 115, 0.13);
+        padding: 5px 8px;
+        font-size: 8px;
+        letter-spacing: 0.1em;
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed
+        .ml-rail-peek-label {
+        margin-top: 5px;
+        overflow: hidden;
+        text-overflow: clip;
+        white-space: nowrap;
+        font-size: 9px;
+        letter-spacing: 0.08em;
+        color: rgba(213, 224, 229, 0.7);
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed .ml-rail-thought {
+        display: -webkit-box;
+        margin-top: 4px;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        font-size: 13px;
+        line-height: 1.28;
+        color: rgba(239, 243, 245, 0.94);
+      }
+      .ml-root.is-collapsible-rail.is-phone-rail.is-rail-collapsed .ml-rail-toggle {
+        border-color: rgba(205, 174, 115, 0.28);
+        background: rgba(31, 38, 40, 0.9);
+        color: rgba(247, 227, 187, 0.94);
+      }
       .ml-root.is-collapsible-rail.is-rail-expanded .ml-rail-head {
         padding-bottom: 10px;
       }

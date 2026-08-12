@@ -8721,6 +8721,14 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     .join(" • ");
   const railStatusLabel = rowanRail.statusLabel;
   const railPeekLabel = rowanRail.peekLabel;
+  const railKickerLabel =
+    railViewport === "phone"
+      ? "Many Lives • Living-world sim"
+      : "Many Lives • Living-world simulation";
+  const railContextLabel =
+    railViewport === "phone"
+      ? `${game.districtName} • ${railStatusLabel}`
+      : `${game.cityName} • ${game.districtName} • ${railStatusLabel} • ${railPeekLabel}`;
   const railThought = buildNarrativePreview(
     firstAfternoonOpening && watchModeProgressionControlsSuppressed
       ? primaryContinueCopy
@@ -8865,14 +8873,12 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
         <div class="ml-panel ml-rail-shell">
           <div class="ml-rail-head">
             <div class="ml-rail-head-copy">
-              <div class="ml-kicker">Many Lives • Living-world simulation</div>
+              <div class="ml-kicker">${escapeHtml(railKickerLabel)}</div>
               <div class="ml-rail-heading-row">
                 <div class="ml-rail-name">${escapeHtml(game.player.name)}</div>
                 <div class="ml-rail-status">Autonomous Agent</div>
               </div>
-              <div class="ml-rail-peek-label">${escapeHtml(
-                `${game.cityName} • ${game.districtName} • ${railStatusLabel} • ${railPeekLabel}`,
-              )}</div>
+              <div class="ml-rail-peek-label">${escapeHtml(railContextLabel)}</div>
               <div class="ml-rail-thought">${escapeHtml(railThought)}</div>
               ${compactPrimaryActionHtml}
             </div>
