@@ -80,6 +80,10 @@ At every heartbeat or consolidation decision:
    `BLOCKED`.
 3. Record the evidence source, exact commit/worktree state, validation command,
    and screenshot/browser artifact for any `IMPROVED` or `VERIFIED` claim.
+   For visual work, generate the packet defined by
+   [visual-review-method.md](/Users/branavan/GitHub/many_lives/docs/street/visual-review-method.md),
+   clear every automatic reject, inspect the contact sheet, and complete the
+   human scorecard before calling the implementation a verified candidate.
 4. Recheck all protected strengths affected by the delta. A change that fixes a
    finding while regressing a protected strength fails.
 5. Never mark a finding `VERIFIED` from implementation completion alone. Run
@@ -117,4 +121,3 @@ classification, changed files, validation results, screenshot/browser evidence,
 commit/CI/deploy/live state, protected-strength regressions, and residual risk.
 Use `NOTIFY` whenever a finding changes classification, an owner is created or
 steered, verification fails, a release state changes, or evidence is missing.
-

@@ -2142,6 +2142,14 @@ class CdpSession {
         readyState: socket?.readyState ?? null,
         writable: socket?.writable ?? null,
       },
+      browser: this.browser
+        ? {
+            exitCode: this.browser.exitCode ?? null,
+            pid: this.browser.pid ?? null,
+            signalCode: this.browser.signalCode ?? null,
+            stderr: this.browser.manyLivesStderr?.() ?? null,
+          }
+        : null,
       transportEvents: this.transportEvents.slice(-8),
       transportFailure: this.transportFailure,
     };
@@ -6820,6 +6828,7 @@ async function launchBrowserSessionAttempt(url, attempt) {
       browserStderr = browserStderr.slice(-12_000);
     }
   });
+  browser.manyLivesStderr = () => browserStderr.trim() || null;
 
   let pageWsUrl;
   try {

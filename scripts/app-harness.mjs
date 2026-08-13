@@ -126,6 +126,7 @@ function buildSteps() {
       "scripts/visual-game-stored-recovery-readiness.test.mjs",
       "scripts/visual-game-smoke-startup.test.mjs",
       "scripts/visual-quality-regression.test.mjs",
+      "scripts/visual-review.test.mjs",
       "scripts/visual-scene-anchor-regression.test.mjs",
     ]),
     commandStep("web unit tests", "corepack", [
@@ -209,6 +210,23 @@ function buildSteps() {
               filePath: path.join(VISUAL_DIR, "summary.json"),
               minBytes: 1_000,
               parseJson: true,
+            },
+            {
+              filePath: path.join(
+                VISUAL_DIR,
+                "visual-review",
+                "scorecard.json",
+              ),
+              minBytes: 1_000,
+              parseJson: true,
+            },
+            {
+              filePath: path.join(
+                VISUAL_DIR,
+                "visual-review",
+                "review-deck.png",
+              ),
+              minBytes: 100_000,
             },
           ]),
         ),

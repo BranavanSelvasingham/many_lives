@@ -9448,10 +9448,22 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     /Timed out waiting for Chrome DevTools response.*pendingRequests/,
   );
   assert.equal(timeoutSession.pending.size, 0);
+  timeoutSession.browser = {
+    exitCode: 137,
+    manyLivesStderr: () => "renderer process terminated",
+    pid: 4242,
+    signalCode: "SIGKILL",
+  };
   timeoutSession.socket.destroyed = true;
   await assert.rejects(
     timeoutSession.send("Runtime.evaluate"),
-    /transport is not writable.*pendingRequests/,
+    (error) => {
+      assert.match(error.message, /transport is not writable.*pendingRequests/);
+      assert.match(error.message, /"exitCode":137/);
+      assert.match(error.message, /"signalCode":"SIGKILL"/);
+      assert.match(error.message, /renderer process terminated/);
+      return true;
+    },
   );
 });
 

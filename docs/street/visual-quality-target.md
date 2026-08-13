@@ -195,6 +195,14 @@ For a visual release, preserve or link an evidence directory containing:
 Equivalent harness filenames are acceptable when the report maps them to these
 surfaces explicitly.
 
+Every new visual evidence directory must also contain the generated
+`visual-review/review-deck.png`, `visual-review/scorecard.json`,
+`visual-review/assessment-template.json`, and `visual-review/review.md` packet
+defined by [visual-review-method.md](/Users/branavan/GitHub/many_lives/docs/street/visual-review-method.md).
+The automatic gate must pass before screenshot existence counts as coverage.
+An affected row remains `CANDIDATE` while the packet says
+`HUMAN_REVIEW_REQUIRED` or `CHANGES_REQUIRED`.
+
 ## Major Production Push Presentation
 
 A production push is visually major when it changes any convergence-matrix
@@ -216,6 +224,8 @@ Every major visual production push must show the user what changed:
 5. Prefer labeled side-by-side `Before <short SHA>` / `After <short SHA>`
    comparisons. Separate matched images are acceptable when composition tools
    are unavailable.
+   The standard generator writes `visual-review/comparison-deck.png` for the
+   four representative contract shots when a baseline is supplied.
 6. Show the comparison images in the production notification using the
    available image or browser-artifact surface. Include exact artifact paths
    and a concise description of the visible delta.

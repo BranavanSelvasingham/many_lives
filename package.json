@@ -13,6 +13,7 @@
     "playtest:gameplay:browser": "MANY_LIVES_BROWSER_DRIVER=chrome node scripts/rowan-browser-regression.mjs",
     "playtest:inhabit:browser": "MANY_LIVES_BROWSER_DRIVER=chrome node scripts/rowan-browser-regression.mjs",
     "visual:game": "node scripts/visual-game-smoke.mjs",
+    "visual:review": "node scripts/generate-visual-review.mjs",
     "harness": "node scripts/app-harness.mjs",
     "harness:quick": "node scripts/app-harness.mjs --profile quick",
     "live:openai": "corepack pnpm --filter @many-lives/sim-server live:openai",
@@ -21,5 +22,8 @@
     "test": "node scripts/app-harness.mjs --profile ci",
     "lint": "corepack pnpm --filter @many-lives/sim-server lint && corepack pnpm --filter @many-lives/many-lives-web lint",
     "format": "corepack pnpm --filter @many-lives/sim-server format && corepack pnpm --filter @many-lives/many-lives-web format"
+  },
+  "devDependencies": {
+    "sharp": "0.34.5"
   }
 }

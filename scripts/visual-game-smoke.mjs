@@ -22,6 +22,7 @@ import {
   assertVisualQualityRegressionEvidence,
   createVisualQualityRegressionEvidence,
 } from "./visual-quality-regression.mjs";
+import { generateVisualReviewArtifacts } from "./visual-review.mjs";
 
 const DEFAULT_WEB_BASE =
   process.env.MANY_LIVES_WEB_BASE_URL ?? "http://127.0.0.1:3001";
@@ -10899,36 +10900,55 @@ async function main() {
       `Page logged runtime errors:\n${unexpectedPageErrors.join("\n")}`,
     );
 
+    const visualSummary = {
+      afterHoursNpcAvailability,
+      authoredInteriorIdentity,
+      eastWaterfrontCompositionDiagnostics,
+      exteriorMaterialDepthDiagnostics,
+      fringeCompositionDiagnostics,
+      freshAutoplayStart,
+      freshAutoplayOptOut,
+      nextDevelopmentIndicatorDisabled,
+      outputDir: OUTPUT_DIR,
+      pageHealth: {
+        nextDevelopmentIndicatorDisabled,
+        status: "passed",
+        unexpectedPageErrors,
+      },
+      interiorCamera,
+      interiorActorVisibilityDiagnostics,
+      interiorIdentityDiagnostics,
+      responsiveDecisionArtifact,
+      results,
+      screenshotCaptureRetries,
+      screenshotPixelDiagnostics,
+      secondaryLandmarkCompositionDiagnostics,
+      secondaryLandmarkRouteIdentity,
+      storedGameChoice,
+      visualQualityRegression,
+      visualQualityRegressionEvidence,
+      webBase: activeWebBase,
+    };
+    const visualReview = await generateVisualReviewArtifacts({
+      baselineDir: process.env.MANY_LIVES_VISUAL_BASELINE_DIR ?? null,
+      baselineRef: process.env.MANY_LIVES_VISUAL_BASELINE_REF ?? null,
+      candidateDir: OUTPUT_DIR,
+      candidateRef:
+        process.env.MANY_LIVES_VISUAL_CANDIDATE_REF ??
+        process.env.GITHUB_SHA ??
+        null,
+      outputDir: path.join(OUTPUT_DIR, "visual-review"),
+      requireBaseline: process.env.MANY_LIVES_VISUAL_REQUIRE_BASELINE === "1",
+      summary: visualSummary,
+    });
+    assert.equal(
+      visualReview.automaticStatus,
+      "passed",
+      `Visual review automatic reject gate failed. Inspect ${visualReview.scorecardPath}.`,
+    );
     await writeFile(
       summaryPath,
-      `${JSON.stringify(
-        {
-          afterHoursNpcAvailability,
-          authoredInteriorIdentity,
-          eastWaterfrontCompositionDiagnostics,
-          exteriorMaterialDepthDiagnostics,
-          fringeCompositionDiagnostics,
-          freshAutoplayStart,
-          freshAutoplayOptOut,
-          nextDevelopmentIndicatorDisabled,
-          outputDir: OUTPUT_DIR,
-          interiorCamera,
-          interiorActorVisibilityDiagnostics,
-          interiorIdentityDiagnostics,
-          responsiveDecisionArtifact,
-          results,
-          screenshotCaptureRetries,
-          screenshotPixelDiagnostics,
-          secondaryLandmarkCompositionDiagnostics,
-          secondaryLandmarkRouteIdentity,
-          storedGameChoice,
-          visualQualityRegression,
-          visualQualityRegressionEvidence,
-          webBase: activeWebBase,
-        },
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify({ ...visualSummary, visualReview }, null, 2)}\n`,
       "utf8",
     );
 
@@ -10957,6 +10977,8 @@ async function main() {
         `[many-lives] Morrow Yard compact: ${path.join(OUTPUT_DIR, "morrow-yard-codex-compact.png")}`,
         `[many-lives] Morrow Yard route compact tall: ${path.join(OUTPUT_DIR, "morrow-yard-route-compact-tall.png")}`,
         `[many-lives] Pilgrim Slip route compact tall: ${path.join(OUTPUT_DIR, "pilgrim-slip-route-compact-tall.png")}`,
+        `[many-lives] Visual review deck: ${visualReview.reviewDeckPath}`,
+        `[many-lives] Visual review scorecard: ${visualReview.scorecardPath}`,
         `[many-lives] Summary: ${summaryPath}`,
         "",
       ].join("\n"),

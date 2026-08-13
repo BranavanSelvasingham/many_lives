@@ -1,0 +1,307 @@
+{
+  "schemaVersion": 1,
+  "title": "Many Lives South Quay Visual Review",
+  "scoreScale": {
+    "1": "Broken or misleading",
+    "2": "Materially weak",
+    "3": "Acceptable but visibly unfinished",
+    "4": "Polished and release-ready",
+    "5": "Exceptional and portfolio-defining"
+  },
+  "minimumWeightedScore": 4,
+  "dimensions": [
+    {
+      "id": "functional_clarity",
+      "label": "Functional clarity",
+      "weight": 25,
+      "minimumScore": 4,
+      "prompt": "Can a first-time viewer understand the current aim, agent decision, movement, interaction, and consequence without contradictory scene or rail evidence?"
+    },
+    {
+      "id": "composition_hierarchy",
+      "label": "Composition and hierarchy",
+      "weight": 20,
+      "minimumScore": 4,
+      "prompt": "Does the scene establish one useful focal order with intentional spacing, scale, balance, breathing room, and map primacy?"
+    },
+    {
+      "id": "system_consistency",
+      "label": "Visual-system consistency",
+      "weight": 15,
+      "minimumScore": 4,
+      "prompt": "Do map art, interiors, actors, HUD, rail, typography, icons, cues, materials, and transitions feel authored by one system?"
+    },
+    {
+      "id": "landmark_identity",
+      "label": "Scene and landmark identity",
+      "weight": 15,
+      "minimumScore": 4,
+      "prompt": "Are places and interiors recognizable before labels through silhouette, material, entrance, prop, and activity signatures?"
+    },
+    {
+      "id": "legibility_accessibility",
+      "label": "Legibility and accessibility",
+      "weight": 10,
+      "minimumScore": 4,
+      "prompt": "Are text, controls, actors, routes, contrast, and state changes readable without clipping, overlap, crowding, or excessive cue density?"
+    },
+    {
+      "id": "state_authenticity",
+      "label": "State authenticity",
+      "weight": 10,
+      "minimumScore": 4,
+      "prompt": "Does every event-like prop, marker, label, NPC, route, and consequence correspond to current simulation state rather than decorative or stale implication?"
+    },
+    {
+      "id": "motion_feedback",
+      "label": "Motion and feedback",
+      "weight": 5,
+      "minimumScore": 3,
+      "prompt": "Do movement, transitions, pacing, and consequence feedback make the city feel alive, continuous, and responsive rather than static or scripted?"
+    }
+  ],
+  "requiredViewportProfiles": [
+    "desktop",
+    "mobile",
+    "phone-boundary",
+    "compact-boundary",
+    "tablet-portrait",
+    "codex-compact",
+    "codex-retina-compact",
+    "codex-retina-reported",
+    "codex-screenshot-tall",
+    "codex-retina-tall"
+  ],
+  "automaticRejects": [
+    "required-shot-coverage",
+    "visual-regression",
+    "viewport-coverage",
+    "fresh-autoplay",
+    "saved-run-continuity",
+    "route-continuity",
+    "interior-identity",
+    "page-health"
+  ],
+  "groupOrder": [
+    "opening",
+    "responsive",
+    "exteriors",
+    "edges",
+    "routes",
+    "interiors",
+    "state"
+  ],
+  "shots": [
+    {
+      "id": "opening-desktop",
+      "title": "Opening premise / desktop",
+      "file": "fresh-autoplay-started.png",
+      "group": "opening",
+      "viewport": "desktop",
+      "state": "fresh zero-click autoplay",
+      "matrixRows": ["VQ-07", "VQ-08", "VQ-11"],
+      "comparison": true
+    },
+    {
+      "id": "opening-phone",
+      "title": "Opening composition / phone",
+      "file": "mobile.png",
+      "group": "opening",
+      "viewport": "mobile",
+      "state": "fresh watch mode",
+      "matrixRows": ["VQ-07", "VQ-08", "VQ-11"],
+      "comparison": true
+    },
+    {
+      "id": "saved-run-desktop",
+      "title": "Saved-run choice / desktop",
+      "file": "saved-run-prompt-desktop.png",
+      "group": "opening",
+      "viewport": "desktop",
+      "state": "stored identity choice",
+      "matrixRows": ["VQ-07", "VQ-11"]
+    },
+    {
+      "id": "saved-run-phone",
+      "title": "Saved-run choice / phone",
+      "file": "saved-run-prompt-mobile.png",
+      "group": "opening",
+      "viewport": "mobile",
+      "state": "stored identity choice",
+      "matrixRows": ["VQ-07", "VQ-11"]
+    },
+    {
+      "id": "expanded-context-tablet",
+      "title": "Expanded context / tablet",
+      "file": "tablet-portrait-rail-expanded.png",
+      "group": "responsive",
+      "viewport": "tablet-portrait",
+      "state": "expanded decision context",
+      "matrixRows": ["VQ-07", "VQ-08"]
+    },
+    {
+      "id": "expanded-context-phone",
+      "title": "Expanded context / phone",
+      "file": "mobile-rail-expanded.png",
+      "group": "responsive",
+      "viewport": "mobile",
+      "state": "expanded decision context",
+      "matrixRows": ["VQ-07", "VQ-08"]
+    },
+    {
+      "id": "high-dpr-tall",
+      "title": "Map-first composition / high DPR",
+      "file": "codex-retina-tall.png",
+      "group": "responsive",
+      "viewport": "codex-retina-tall",
+      "state": "collapsed watch context",
+      "matrixRows": ["VQ-07", "VQ-08", "VQ-12"]
+    },
+    {
+      "id": "core-landmarks",
+      "title": "Core landmark composition",
+      "file": "desktop.png",
+      "group": "exteriors",
+      "viewport": "desktop",
+      "state": "street overview",
+      "matrixRows": ["VQ-01", "VQ-08", "VQ-12"],
+      "comparison": true
+    },
+    {
+      "id": "secondary-landmarks",
+      "title": "Secondary landmark composition",
+      "file": "secondary-landmarks-desktop.png",
+      "group": "exteriors",
+      "viewport": "desktop",
+      "state": "street overview",
+      "matrixRows": ["VQ-02", "VQ-12"],
+      "comparison": true
+    },
+    {
+      "id": "morrow-yard-compact",
+      "title": "Morrow Yard / compact",
+      "file": "morrow-yard-codex-compact.png",
+      "group": "exteriors",
+      "viewport": "codex-compact",
+      "state": "secondary landmark framing",
+      "matrixRows": ["VQ-02", "VQ-07"]
+    },
+    {
+      "id": "north-fringe",
+      "title": "North fringe pan limit",
+      "file": "codex-retina-tall-after-pan-north.png",
+      "group": "edges",
+      "viewport": "codex-retina-tall",
+      "state": "north pan limit",
+      "matrixRows": ["VQ-05", "VQ-07"]
+    },
+    {
+      "id": "west-fringe",
+      "title": "West working fringe",
+      "file": "codex-retina-tall-after-pan-west.png",
+      "group": "edges",
+      "viewport": "codex-retina-tall",
+      "state": "west pan limit",
+      "matrixRows": ["VQ-05", "VQ-07"]
+    },
+    {
+      "id": "east-waterfront",
+      "title": "East waterfront",
+      "file": "codex-retina-tall-after-pan-east.png",
+      "group": "edges",
+      "viewport": "codex-retina-tall",
+      "state": "east pan limit",
+      "matrixRows": ["VQ-05", "VQ-06", "VQ-07"]
+    },
+    {
+      "id": "south-waterfront",
+      "title": "South quay edge",
+      "file": "codex-retina-tall-after-pan-south.png",
+      "group": "edges",
+      "viewport": "codex-retina-tall",
+      "state": "south pan limit",
+      "matrixRows": ["VQ-05", "VQ-06", "VQ-07"]
+    },
+    {
+      "id": "morrow-yard-route",
+      "title": "Morrow Yard route and arrival",
+      "file": "morrow-yard-route-compact-tall.png",
+      "group": "routes",
+      "viewport": "codex-screenshot-tall",
+      "state": "route endpoint",
+      "matrixRows": ["VQ-02", "VQ-09"]
+    },
+    {
+      "id": "pilgrim-slip-route",
+      "title": "Pilgrim Slip route and arrival",
+      "file": "pilgrim-slip-route-compact-tall.png",
+      "group": "routes",
+      "viewport": "codex-screenshot-tall",
+      "state": "route endpoint",
+      "matrixRows": ["VQ-02", "VQ-06", "VQ-09"]
+    },
+    {
+      "id": "morrow-house-interior-desktop",
+      "title": "Morrow House interior / desktop",
+      "file": "interior-camera.png",
+      "group": "interiors",
+      "viewport": "interior-camera",
+      "state": "entrance and Mara",
+      "matrixRows": ["VQ-03", "VQ-09"]
+    },
+    {
+      "id": "morrow-house-interior-phone",
+      "title": "Morrow House interior / phone",
+      "file": "interior-camera-mobile-near-mara.png",
+      "group": "interiors",
+      "viewport": "mobile",
+      "state": "near Mara",
+      "matrixRows": ["VQ-03", "VQ-07", "VQ-09"]
+    },
+    {
+      "id": "tea-house-interior-desktop",
+      "title": "Kettle & Lamp interior / desktop",
+      "file": "tea-house-interior-desktop.png",
+      "group": "interiors",
+      "viewport": "desktop",
+      "state": "authored interior",
+      "matrixRows": ["VQ-04"]
+    },
+    {
+      "id": "tea-house-interior-phone",
+      "title": "Kettle & Lamp interior / phone",
+      "file": "tea-house-interior-mobile.png",
+      "group": "interiors",
+      "viewport": "mobile",
+      "state": "authored interior",
+      "matrixRows": ["VQ-04", "VQ-07"]
+    },
+    {
+      "id": "repair-interior-desktop",
+      "title": "Mercer Repairs interior / desktop",
+      "file": "repair-stall-interior-desktop.png",
+      "group": "interiors",
+      "viewport": "desktop",
+      "state": "authored interior",
+      "matrixRows": ["VQ-04"]
+    },
+    {
+      "id": "repair-interior-phone",
+      "title": "Mercer Repairs interior / phone",
+      "file": "repair-stall-interior-mobile.png",
+      "group": "interiors",
+      "viewport": "mobile",
+      "state": "authored interior",
+      "matrixRows": ["VQ-04", "VQ-07"]
+    },
+    {
+      "id": "after-hours-state",
+      "title": "After-hours NPC state",
+      "file": "after-hours-npc-availability.png",
+      "group": "state",
+      "viewport": "desktop",
+      "state": "schedule-authoritative absence",
+      "matrixRows": ["VQ-08", "VQ-10"]
+    }
+  ]
+}

@@ -14,6 +14,7 @@ The goal is a solid 3 to 5 minute first-run experience: Rowan arrives in South Q
 - Sim routes: [apps/many-lives-web/src/app/sim](/Users/branavan/GitHub/many_lives/apps/many-lives-web/src/app/sim) proxies or hosts `/sim/game/*` routes for the browser app.
 - Sim engine: [apps/sim-server/src](/Users/branavan/GitHub/many_lives/apps/sim-server/src) owns the authoritative game rules when the server path is active.
 - Visual smoke: [scripts/visual-game-smoke.mjs](/Users/branavan/GitHub/many_lives/scripts/visual-game-smoke.mjs) is the mandatory browser-level QA for playfield, rail, panning, responsive layout, ambient character scale, autoplay, and stored-run behavior.
+- Visual review: [docs/street/visual-review-method.md](/Users/branavan/GitHub/many_lives/docs/street/visual-review-method.md) and [docs/street/visual-review-contract.json](/Users/branavan/GitHub/many_lives/docs/street/visual-review-contract.json) define the deterministic shot deck, automatic reject gates, human art-direction scorecard, and matched comparison packet.
 
 ## Game Identity And Reload Contract
 
@@ -135,6 +136,7 @@ The right rail should help the player understand the run without covering the wh
 - Every visible event-like prop should either be ordinary authored scenery or backed by current world pressure. If a cart, crowd, marker, route cue, or warning art implies a live event after that event has resolved, treat it as stale artifact noise and fix the backing rule or remove the cue.
 - Navigation coherence is part of visual quality. The route line, moving sprite, marker label, destination label, and authored landmark should agree about where the actor is going; screenshots should show plausible route progression instead of a start point and disconnected arrival.
 - Landmarks should be visually identifiable before labels: cafe, boarding house, square, dock yard, and quay edge should read by shape and props.
+- Treat the generated visual review verdict as a release input, not a replacement for inspection. `AUTOMATED_REJECT` blocks the candidate; `HUMAN_REVIEW_REQUIRED` means screenshots exist but no aesthetic claim is justified; `VERIFIED_CANDIDATE` still requires exact-production release evidence.
 
 Use [docs/street/south-quay-visual-spec.md](/Users/branavan/GitHub/many_lives/docs/street/south-quay-visual-spec.md) for map art direction.
 
