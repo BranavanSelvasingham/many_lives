@@ -4491,6 +4491,13 @@ function assertFirstRouteEventCues(browserProbe, viewportName) {
   const cues = browserProbe?.visualEventCues ?? [];
   const cueNames = new Set(cues.map((cue) => cue.cue));
   const cueByName = new Map(cues.map((cue) => [cue.cue, cue]));
+  const cueCountByLocation = new Map();
+  for (const cue of cues) {
+    cueCountByLocation.set(
+      cue.locationId,
+      (cueCountByLocation.get(cue.locationId) ?? 0) + 1,
+    );
+  }
   assert.ok(
     cues.length >= 2,
     `${viewportName}: expected at least two visible city event cues in the first-route probe, got ${JSON.stringify(cues)}.`,
@@ -4514,6 +4521,10 @@ function assertFirstRouteEventCues(browserProbe, viewportName) {
       .get("square crossing bustle")
       ?.backingEvents?.some((event) => event.id === "event-market-crossing"),
     `${viewportName}: square crossing bustle cue is not backed by the current square crossing event.`,
+  );
+  assert.ok(
+    [...cueCountByLocation.entries()].every(([, count]) => count <= 1),
+    `${viewportName}: one location is rendering multiple event vignettes at once: ${JSON.stringify(cues)}.`,
   );
   for (const cue of cues) {
     assertVisualEventCueBackedByCurrentPressure(cue, browserProbe, viewportName);

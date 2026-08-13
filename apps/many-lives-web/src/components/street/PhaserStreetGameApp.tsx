@@ -11295,7 +11295,7 @@ function drawAmbientCityLife(
     const crowdCount =
       route.id === "tea-house-front" && lunchRushActive
         ? 3
-        : route.id === "market-crossing" || route.id === "yard-shuttle"
+        : route.id === "yard-shuttle"
           ? 2
           : 1;
     const routeTempo =
@@ -11696,10 +11696,7 @@ function drawDockCartEvent(
   const anchors =
     runtimeState.indices.visualScene?.locationAnchors["market-square"];
   const eventDriven =
-    game &&
-    cityEventIsRenderable(game, "event-square-cart", {
-      includeUpcoming: true,
-    });
+    game && cityEventIsRenderable(game, "event-square-cart");
 
   if (!anchors || !game || !eventDriven) {
     return;
@@ -11707,16 +11704,14 @@ function drawDockCartEvent(
 
   registerVisualEventCue(runtimeState, {
     backingEvents: cityEventCueBacking(game, [
-      { eventId: "event-square-cart", includeUpcoming: true },
+      { eventId: "event-square-cart" },
     ]),
     cue: "square handcart",
     locationId: "market-square",
     locationName: locationNameForCue(game, "market-square", "Quay Square"),
     signal:
-      "large rolling cart, handlers, strapped crates, rope line, and visible wheels",
-    visibleLabel: cityEventVisibleLabel(game, "event-square-cart", {
-      includeUpcoming: true,
-    }),
+      "compact rolling handcart, strapped crates, handlers, and visible wheels",
+    visibleLabel: cityEventVisibleLabel(game, "event-square-cart"),
   });
 
   const rect = anchors.highlight;
@@ -11731,18 +11726,7 @@ function drawDockCartEvent(
   const x = rect.x + rect.width * (0.24 + eased * 0.44);
   const y = rect.y + rect.height * 0.33;
   const lift = Math.sin(now / 180) * 1.2;
-  const scale = 1.3;
-
-  layer.lineStyle(4, 0xf1dfb2, 0.14);
-  for (let index = 0; index < 3; index += 1) {
-    const laneX = rect.x + rect.width * (0.22 + index * 0.14);
-    layer.lineBetween(
-      laneX,
-      rect.y + rect.height * 0.31 + index * 5,
-      laneX + rect.width * 0.18,
-      rect.y + rect.height * 0.39 + index * 5,
-    );
-  }
+  const scale = 1.08;
 
   layer.fillStyle(0x071016, 0.18);
   layer.fillEllipse(x, y + 16 * scale, 68 * scale, 14 * scale);
@@ -11841,33 +11825,32 @@ function drawSquarePasserbyBeat(
   const game = runtimeState.snapshot.game;
   const anchors =
     runtimeState.indices.visualScene?.locationAnchors["market-square"];
-  const eventDriven =
-    game &&
-    (cityEventIsRenderable(game, "event-market-crossing") ||
-      cityEventIsRenderable(game, "event-square-cart", {
-        includeUpcoming: true,
-      }));
+  const crossingEventDriven =
+    game && cityEventIsRenderable(game, "event-market-crossing");
+  const cartEventDriven =
+    game && cityEventIsRenderable(game, "event-square-cart");
 
-  if (!anchors || !game || (!eventDriven && (hour < 8 || hour > 18))) {
+  if (
+    !anchors ||
+    !game ||
+    cartEventDriven ||
+    (!crossingEventDriven && (hour < 8 || hour > 18))
+  ) {
     return;
   }
 
-  registerVisualEventCue(runtimeState, {
-    backingEvents: cityEventCueBacking(game, [
-      { eventId: "event-market-crossing" },
-      { eventId: "event-square-cart", includeUpcoming: true },
-    ]),
-    cue: "square crossing bustle",
-    locationId: "market-square",
-    locationName: locationNameForCue(game, "market-square", "Quay Square"),
-    signal:
-      "broad stone crossing marks, paired pedestrians, shared parcel, pause bubble, and hand gesture",
-    visibleLabel:
-      cityEventVisibleLabel(game, "event-market-crossing") ??
-      cityEventVisibleLabel(game, "event-square-cart", {
-        includeUpcoming: true,
-      }),
-  });
+  if (crossingEventDriven) {
+    registerVisualEventCue(runtimeState, {
+      backingEvents: cityEventCueBacking(game, [
+        { eventId: "event-market-crossing" },
+      ]),
+      cue: "square crossing bustle",
+      locationId: "market-square",
+      locationName: locationNameForCue(game, "market-square", "Quay Square"),
+      signal: "inset stone crossing, paired pedestrians, and parcel handoff",
+      visibleLabel: cityEventVisibleLabel(game, "event-market-crossing"),
+    });
+  }
 
   const rect = anchors.highlight;
   const progress = positiveModulo(now / 11000 + 0.18, 1);
@@ -11875,17 +11858,14 @@ function drawSquarePasserbyBeat(
   const x = rect.x + rect.width * (0.28 + Math.min(progress, 0.68) * 0.36);
   const y = rect.y + rect.height * 0.39 + Math.sin(now / 220) * 1.2;
 
-  for (let index = 0; index < 4; index += 1) {
-    const markX = rect.x + rect.width * (0.24 + index * 0.1);
-    const markY = rect.y + rect.height * 0.33 + index * 7;
-    layer.lineStyle(7, 0x5c5141, 0.08);
-    layer.lineBetween(markX + 1.5, markY + 1.5, markX + 50, markY + 25.5);
-    layer.lineStyle(6.2, 0xf1dfb2, pausing ? 0.4 : 0.3);
-    layer.lineBetween(markX, markY, markX + 48, markY + 24);
+  for (let index = 0; index < 5; index += 1) {
+    const markX = rect.x + rect.width * (0.31 + index * 0.055);
+    const markY = rect.y + rect.height * (0.335 + index * 0.025);
+    layer.lineStyle(7.2, 0x30383a, 0.1);
+    layer.lineBetween(markX - 8, markY + 17, markX + 8, markY - 17);
+    layer.lineStyle(5.4, 0xd8cba7, pausing ? 0.34 : 0.26);
+    layer.lineBetween(markX - 8, markY + 16, markX + 8, markY - 16);
   }
-
-  layer.fillStyle(0xffe8b5, pausing ? 0.1 : 0.055);
-  layer.fillEllipse(x + 17, y + 2, 94, 42);
 
   drawAmbientPedestrian(layer, {
     accent: 0xc68a61,
@@ -11923,17 +11903,6 @@ function drawSquarePasserbyBeat(
   layer.lineStyle(2.4, 0xf0cf8c, 0.76);
   layer.lineBetween(x + 10, y - 5, x + 18, y - 9);
   layer.lineBetween(x + 42, y - 2, x + 37, y - 8);
-
-  layer.fillStyle(0xf7e5bd, 0.84);
-  layer.fillRoundedRect(x + 22, y - 62, 44, 24, 8);
-  layer.fillTriangle(x + 25, y - 39, x + 18, y - 29, x + 34, y - 39);
-  layer.fillStyle(0x4a5961, 0.62);
-  layer.fillCircle(x + 35, y - 50, 2.4);
-  layer.fillCircle(x + 44, y - 50, 2.4);
-  layer.fillCircle(x + 53, y - 50, 2.4);
-  layer.lineStyle(2.8, 0xf0cf8c, 0.78);
-  layer.lineBetween(x - 10, y - 8, x - 24, y - 26);
-  layer.lineBetween(x - 24, y - 26, x - 18, y - 35);
 }
 
 function drawPierHandsHarborBeat(
