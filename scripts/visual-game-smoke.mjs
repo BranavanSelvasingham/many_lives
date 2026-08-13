@@ -189,6 +189,17 @@ const PILGRIM_SLIP_WORLD_REGION = {
   right: 1673,
   top: 1007,
 };
+const EXTERIOR_MATERIAL_DEPTH_WORLD_REGIONS = [
+  { id: "road", rect: { bottom: 270, left: 140, right: 380, top: 210 } },
+  { id: "facade", rect: { bottom: 560, left: 70, right: 380, top: 320 } },
+  { id: "paving", rect: { bottom: 660, left: 70, right: 390, top: 596 } },
+  { id: "vegetation", rect: { bottom: 840, left: 140, right: 270, top: 768 } },
+];
+const EXTERIOR_MATERIAL_DEPTH_VIEWPORT_NAMES = new Set([
+  "desktop",
+  "mobile",
+  "codex-retina-compact",
+]);
 const MORROW_SIDE_WORLD_MAX_X = 700;
 const CONTEXTUAL_WATCH_MODE_COPY_PATTERN =
   /Rowan is (?:about to|stepping|turning|heading|keeping|letting|taking|choosing|starting|weighing|continuing|carrying the conversation)/i;
@@ -197,6 +208,7 @@ let activeWebBase = DEFAULT_WEB_BASE;
 const screenshotCaptureRetries = [];
 const screenshotPixelDiagnostics = [];
 const eastWaterfrontCompositionDiagnostics = [];
+const exteriorMaterialDepthDiagnostics = [];
 const fringeCompositionDiagnostics = [];
 const interiorActorVisibilityDiagnostics = [];
 const interiorIdentityDiagnostics = [];
@@ -2707,6 +2719,7 @@ function sampleWorldCompositionRegion(
   );
 
   const colorBins = new Map();
+  const luminanceHistogram = new Uint32Array(256);
   let darkMaterialPixels = 0;
   let coolUtilityPixels = 0;
   let greenMaterialPixels = 0;
@@ -2715,6 +2728,8 @@ function sampleWorldCompositionRegion(
   let minimumLuminance = 255;
   let paleVoidPixels = 0;
   let sampledPixels = 0;
+  let totalChroma = 0;
+  let totalLuminance = 0;
   let transitionPixels = 0;
   let verticalTransitionPixels = 0;
   let warmDetailPixels = 0;
@@ -2755,10 +2770,15 @@ function sampleWorldCompositionRegion(
       const red = image.pixels[offset];
       const green = image.pixels[offset + 1] ?? red;
       const blue = image.pixels[offset + 2] ?? red;
+      const chroma =
+        Math.max(red, green, blue) - Math.min(red, green, blue);
       const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
       const binKey = `${red >> 4}:${green >> 4}:${blue >> 4}`;
 
       sampledPixels += 1;
+      totalChroma += chroma;
+      totalLuminance += luminance;
+      luminanceHistogram[Math.round(luminance)] += 1;
       minimumLuminance = Math.min(minimumLuminance, luminance);
       maximumLuminance = Math.max(maximumLuminance, luminance);
       colorBins.set(binKey, (colorBins.get(binKey) ?? 0) + 1);
@@ -2766,20 +2786,20 @@ function sampleWorldCompositionRegion(
         red >= 188 &&
         green >= 178 &&
         blue >= 154 &&
-        Math.max(red, green, blue) - Math.min(red, green, blue) <= 58
+        chroma <= 58
       ) {
         paleVoidPixels += 1;
       }
       if (
         luminance >= 154 &&
-        Math.max(red, green, blue) - Math.min(red, green, blue) <= 64
+        chroma <= 64
       ) {
         lightNeutralPixels += 1;
       }
       if (
         luminance >= 38 &&
         luminance <= 148 &&
-        Math.max(red, green, blue) - Math.min(red, green, blue) <= 78
+        chroma <= 78
       ) {
         darkMaterialPixels += 1;
       }
@@ -2853,6 +2873,15 @@ function sampleWorldCompositionRegion(
   ).length;
   const dominantColorFraction =
     Math.max(...colorBins.values()) / sampledPixels;
+  const percentileLuminance = (fraction) => {
+    const target = sampledPixels * fraction;
+    let accumulated = 0;
+    for (let luminance = 0; luminance < luminanceHistogram.length; luminance += 1) {
+      accumulated += luminanceHistogram[luminance];
+      if (accumulated >= target) return luminance;
+    }
+    return 255;
+  };
   return {
     activeColorBins,
     coolUtilityFraction: coolUtilityPixels / sampledPixels,
@@ -2860,7 +2889,11 @@ function sampleWorldCompositionRegion(
     dominantColorFraction,
     greenMaterialFraction: greenMaterialPixels / sampledPixels,
     lightNeutralFraction: lightNeutralPixels / sampledPixels,
+    luminanceP10: percentileLuminance(0.1),
+    luminanceP90: percentileLuminance(0.9),
     luminanceRange: maximumLuminance - minimumLuminance,
+    meanChroma: totalChroma / sampledPixels,
+    meanLuminance: totalLuminance / sampledPixels,
     paleVoidFraction: paleVoidPixels / sampledPixels,
     sample,
     sampledPixels,
@@ -2869,6 +2902,111 @@ function sampleWorldCompositionRegion(
     warmDetailFraction: warmDetailPixels / sampledPixels,
     waterMaterialFraction: waterMaterialPixels / sampledPixels,
   };
+}
+
+function assertExteriorMaterialDepthPixels(
+  buffer,
+  camera,
+  page,
+  viewport,
+  label,
+) {
+  const profiles = Object.fromEntries(
+    EXTERIOR_MATERIAL_DEPTH_WORLD_REGIONS.map(({ id, rect }) => [
+      id,
+      sampleWorldCompositionRegion(
+        buffer,
+        camera,
+        page,
+        viewport,
+        rect,
+        `${label} ${id}`,
+      ),
+    ]),
+  );
+  const materialMeans = Object.fromEntries(
+    Object.entries(profiles).map(([id, profile]) => [
+      id,
+      {
+        chroma: Number(profile.meanChroma.toFixed(1)),
+        luminance: Number(profile.meanLuminance.toFixed(1)),
+      },
+    ]),
+  );
+  const meanLuminances = Object.values(profiles).map(
+    (profile) => profile.meanLuminance,
+  );
+  const materialValueRange =
+    Math.max(...meanLuminances) - Math.min(...meanLuminances);
+  const roadValueRange = profiles.road.luminanceP90 - profiles.road.luminanceP10;
+  const roadPavingValueSeparation = Math.abs(
+    profiles.paving.meanLuminance - profiles.road.meanLuminance,
+  );
+  const roadPavingSeparation = Math.hypot(
+    roadPavingValueSeparation,
+    profiles.paving.meanChroma - profiles.road.meanChroma,
+  );
+  const facadePavingValueSeparation = Math.abs(
+    profiles.facade.meanLuminance - profiles.paving.meanLuminance,
+  );
+  const facadePavingSeparation = Math.hypot(
+    facadePavingValueSeparation,
+    profiles.facade.meanChroma - profiles.paving.meanChroma,
+  );
+  const pavingVegetationValueSeparation = Math.abs(
+    profiles.paving.meanLuminance - profiles.vegetation.meanLuminance,
+  );
+
+  assert.ok(
+    roadValueRange >= 36,
+    `${label}: road grading is visually flat (${roadValueRange.toFixed(1)} P90-P10; materials ${JSON.stringify(materialMeans)}).`,
+  );
+  assert.ok(
+    materialValueRange >= 70,
+    `${label}: exterior material groups collapsed into one value range (${materialValueRange.toFixed(1)}; ${JSON.stringify(materialMeans)}).`,
+  );
+  assert.ok(
+    roadPavingValueSeparation >= 20 && roadPavingSeparation >= 24,
+    `${label}: road and paving no longer separate at gameplay zoom (${roadPavingValueSeparation.toFixed(1)} value, ${roadPavingSeparation.toFixed(1)} value/chroma; ${JSON.stringify(materialMeans)}).`,
+  );
+  assert.ok(
+    facadePavingValueSeparation >= 10 && facadePavingSeparation >= 12,
+    `${label}: landmark facades blend into paving (${facadePavingValueSeparation.toFixed(1)} value, ${facadePavingSeparation.toFixed(1)} value/chroma; ${JSON.stringify(materialMeans)}).`,
+  );
+  assert.ok(
+    profiles.vegetation.meanChroma >= 30 &&
+      pavingVegetationValueSeparation >= 24,
+    `${label}: vegetation lost restrained chroma/value separation (${profiles.vegetation.meanChroma.toFixed(1)} chroma, ${pavingVegetationValueSeparation.toFixed(1)} value; ${JSON.stringify(materialMeans)}).`,
+  );
+  for (const [id, profile] of Object.entries(profiles)) {
+    assert.ok(
+      profile.dominantColorFraction <= 0.48,
+      `${label}: ${id} regressed to a flat dominant fill (${profile.dominantColorFraction.toFixed(3)}).`,
+    );
+  }
+
+  exteriorMaterialDepthDiagnostics.push({
+    label,
+    facadePavingSeparation: Number(facadePavingSeparation.toFixed(1)),
+    materialValueRange: Number(materialValueRange.toFixed(1)),
+    profiles: Object.fromEntries(
+      Object.entries(profiles).map(([id, profile]) => [
+        id,
+        {
+          dominantColorFraction: Number(
+            profile.dominantColorFraction.toFixed(3),
+          ),
+          luminanceP10: profile.luminanceP10,
+          luminanceP90: profile.luminanceP90,
+          meanChroma: Number(profile.meanChroma.toFixed(1)),
+          meanLuminance: Number(profile.meanLuminance.toFixed(1)),
+          sampledPixels: profile.sampledPixels,
+        },
+      ]),
+    ),
+    roadPavingSeparation: Number(roadPavingSeparation.toFixed(1)),
+    viewport: viewport.name,
+  });
 }
 
 function assertNorthFringeCompositionPixels(
@@ -8645,6 +8783,15 @@ async function runViewportCheck(session, viewport) {
     targetPath: screenshotPath,
     viewport,
   });
+  if (EXTERIOR_MATERIAL_DEPTH_VIEWPORT_NAMES.has(viewport.name)) {
+    assertExteriorMaterialDepthPixels(
+      initialCapture.screenshot,
+      initialCamera,
+      initialCapture.page,
+      viewport,
+      `${viewport.name} exterior materials`,
+    );
+  }
   let secondaryLandmarksScreenshotPath = null;
   if (viewport.name === "desktop") {
     assertMorrowYardCompositionPixels(
@@ -10743,6 +10890,7 @@ async function main() {
           afterHoursNpcAvailability,
           authoredInteriorIdentity,
           eastWaterfrontCompositionDiagnostics,
+          exteriorMaterialDepthDiagnostics,
           fringeCompositionDiagnostics,
           freshAutoplayStart,
           freshAutoplayOptOut,

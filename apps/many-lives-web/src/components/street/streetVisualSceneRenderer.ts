@@ -28,6 +28,40 @@ type AuthoredVisualSceneObjects = {
 
 const PILGRIM_SLIP_EAST_CHANNEL_CLEARANCE = 97;
 
+const SOUTH_QUAY_SURFACE_PALETTE = {
+  asphalt: {
+    base: 0x4f595b,
+    edge: 0x273135,
+    highlight: 0x89908b,
+    marking: 0xc9c7b9,
+  },
+  bushes: {
+    base: 0x496637,
+    depth: 0x243d24,
+  },
+  grass: {
+    base: 0x587344,
+    depth: 0x354e2d,
+    highlight: 0x86a766,
+  },
+  stoneRoad: {
+    base: 0xbbaa8c,
+    depth: 0x756650,
+    highlight: 0xe1d2b6,
+    joint: 0x89775e,
+  },
+  trees: {
+    base: 0x506a3f,
+    canopy: 0x345b31,
+  },
+  walkway: {
+    base: 0xcbb99c,
+    depth: 0x826f55,
+    highlight: 0xeadcc4,
+    joint: 0x9e896a,
+  },
+} as const;
+
 const HARBOR_APRON_PALETTES = [
   { accent: 0x73847d, base: 0x76583f, board: 0x987451, seam: 0x493a30 },
   { accent: 0x879b98, base: 0x62645f, board: 0x807a6c, seam: 0x3d4545 },
@@ -54,6 +88,7 @@ export function renderAuthoredVisualScene(
     drawV2LandmarkGroundArt(objects.terrainLayer, visualScene);
     drawHarborEdge(objects.terrainLayer, visualScene);
     drawV2LandmarkStructureArt(objects, visualScene);
+    drawV2LandmarkDirectionalDepth(objects.structureLayer, visualScene);
     drawLandmarkModules(objects, visualScene);
     drawPropClusters(objects.structureDetailLayer, visualScene);
     drawV2AtmosphereAndLighting(objects.structureDetailLayer, visualScene);
@@ -377,19 +412,25 @@ function drawV2MaterialDepthPass(
 
     if (cell.kind === "tiled_stone_road" || cell.kind === "walkway") {
       const isWalkway = cell.kind === "walkway";
-      const highlight = isWalkway ? 0xfff1d7 : 0xead8b6;
-      const joint = isWalkway ? 0xbca886 : 0x9f8b68;
-      const shadow = isWalkway ? 0x887250 : 0x756448;
+      const highlight = isWalkway
+        ? SOUTH_QUAY_SURFACE_PALETTE.walkway.highlight
+        : SOUTH_QUAY_SURFACE_PALETTE.stoneRoad.highlight;
+      const joint = isWalkway
+        ? SOUTH_QUAY_SURFACE_PALETTE.walkway.joint
+        : SOUTH_QUAY_SURFACE_PALETTE.stoneRoad.joint;
+      const shadow = isWalkway
+        ? SOUTH_QUAY_SURFACE_PALETTE.walkway.depth
+        : SOUTH_QUAY_SURFACE_PALETTE.stoneRoad.depth;
       const courseOffset = (cell.row % 2) * 10 + (seed % 5);
 
-      layer.lineStyle(1.1, highlight, isWalkway ? 0.13 : 0.1);
+      layer.lineStyle(1.1, highlight, isWalkway ? 0.18 : 0.14);
       layer.lineBetween(
         cell.x + paverInset,
         cell.y + paverInset + (seed % 4),
         cell.x + cell.width - paverInset,
         cell.y + paverInset + ((seed + 2) % 4),
       );
-      layer.lineStyle(1.3, shadow, isWalkway ? 0.12 : 0.1);
+      layer.lineStyle(1.3, shadow, isWalkway ? 0.2 : 0.18);
       layer.lineBetween(
         cell.x + paverInset,
         cell.y + cell.height - paverInset - ((seed + 1) % 4),
@@ -397,7 +438,7 @@ function drawV2MaterialDepthPass(
         cell.y + cell.height - paverInset - (seed % 4),
       );
 
-      layer.lineStyle(1, joint, isWalkway ? 0.12 : 0.1);
+      layer.lineStyle(1, joint, isWalkway ? 0.18 : 0.16);
       for (
         let courseY = cell.y + 13 + (seed % 6);
         courseY < cell.y + cell.height - 8;
@@ -424,7 +465,7 @@ function drawV2MaterialDepthPass(
       }
 
       if (seed % 3 === 0) {
-        layer.fillStyle(highlight, isWalkway ? 0.045 : 0.036);
+        layer.fillStyle(highlight, isWalkway ? 0.07 : 0.055);
         layer.fillRoundedRect(
           cell.x + 10 + (seed % 12),
           cell.y + 14 + ((seed + 5) % 12),
@@ -436,9 +477,13 @@ function drawV2MaterialDepthPass(
     }
 
     if (cell.kind === "paved_asphalt") {
-      layer.fillStyle(0x141b1f, 0.06);
-      layer.fillRect(cell.x, cell.y + cell.height - 5, cell.width, 5);
-      layer.lineStyle(1, 0xc6c4b6, 0.09);
+      layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.asphalt.edge, 0.14);
+      layer.fillRect(cell.x, cell.y + cell.height - 7, cell.width, 7);
+      layer.lineStyle(
+        1,
+        SOUTH_QUAY_SURFACE_PALETTE.asphalt.highlight,
+        0.14,
+      );
       layer.lineBetween(
         cell.x + 8,
         cell.y + 10 + (seed % 5),
@@ -831,6 +876,66 @@ function drawV2LandmarkStructureArt(
   }
 }
 
+function drawV2LandmarkDirectionalDepth(
+  layer: PhaserType.GameObjects.Graphics,
+  visualScene: VisualScene,
+) {
+  for (const landmark of visualScene.landmarks) {
+    const { rect, style } = landmark;
+
+    if (style === "dock" || style === "courtyard") {
+      continue;
+    }
+
+    if (style === "square") {
+      layer.fillStyle(0x263037, 0.1);
+      layer.fillRoundedRect(
+        rect.x + rect.width - 18,
+        rect.y + 20,
+        12,
+        rect.height - 34,
+        6,
+      );
+      layer.fillRoundedRect(
+        rect.x + 20,
+        rect.y + rect.height - 16,
+        rect.width - 34,
+        10,
+        5,
+      );
+      continue;
+    }
+
+    const sideWidth = Math.max(12, Math.min(22, rect.width * 0.055));
+    const lowerDepth = Math.max(12, Math.min(20, rect.height * 0.07));
+    const roofClearance = Math.max(24, Math.min(52, rect.height * 0.2));
+
+    layer.fillStyle(0x172228, style === "yard" ? 0.15 : 0.11);
+    layer.fillRoundedRect(
+      rect.x + rect.width - sideWidth - 6,
+      rect.y + roofClearance,
+      sideWidth,
+      rect.height - roofClearance - 10,
+      6,
+    );
+    layer.fillStyle(0x11181c, style === "yard" ? 0.14 : 0.1);
+    layer.fillRoundedRect(
+      rect.x + 12,
+      rect.y + rect.height - lowerDepth - 6,
+      rect.width - 24,
+      lowerDepth,
+      7,
+    );
+    layer.lineStyle(2, 0xffedcb, 0.18);
+    layer.lineBetween(
+      rect.x + 18,
+      rect.y + 9,
+      rect.x + rect.width * 0.64,
+      rect.y + 7,
+    );
+  }
+}
+
 function drawPilgrimSlipHeroArt(
   layer: PhaserType.GameObjects.Graphics,
   rect: VisualRect,
@@ -930,7 +1035,7 @@ function drawTeaHouseHeroArt(
   const roofHeight = Math.max(24, Math.min(42, rect.height * 0.18));
   const lowerBandHeight = Math.max(26, rect.height * 0.16);
   const awningY = rect.y + roofHeight + rect.height * 0.36;
-  layer.fillStyle(0xf0e4cd, 1);
+  layer.fillStyle(0xe4d3b6, 1);
   layer.fillRoundedRect(
     rect.x,
     rect.y,
@@ -938,7 +1043,7 @@ function drawTeaHouseHeroArt(
     rect.height,
     rect.radius ?? 20,
   );
-  layer.lineStyle(4, 0xf4ead3, 0.35);
+  layer.lineStyle(4, 0xf0e3c8, 0.42);
   layer.strokeRoundedRect(
     rect.x,
     rect.y,
@@ -968,7 +1073,7 @@ function drawTeaHouseHeroArt(
     10,
     5,
   );
-  layer.fillStyle(0xf6eddc, 1);
+  layer.fillStyle(0xeadcc4, 1);
   layer.fillRoundedRect(
     rect.x + 17,
     rect.y + roofHeight + 18,
@@ -976,7 +1081,7 @@ function drawTeaHouseHeroArt(
     Math.max(54, rect.height - roofHeight - lowerBandHeight - 28),
     Math.max(16, (rect.radius ?? 20) - 4),
   );
-  layer.lineStyle(3, 0xa78661, 0.18);
+  layer.lineStyle(3, 0x8d6e50, 0.25);
   layer.strokeRoundedRect(
     rect.x + 17,
     rect.y + roofHeight + 18,
@@ -1033,7 +1138,7 @@ function drawBoardingHouseHeroArt(
   const lowerBandHeight = Math.max(40, rect.height * 0.22);
   const signWidth = Math.min(228, rect.width - 112);
   const signX = rect.x + (rect.width - signWidth) / 2;
-  layer.fillStyle(0xd8c7b6, 1);
+  layer.fillStyle(0xc9b6a5, 1);
   layer.fillRoundedRect(
     rect.x,
     rect.y,
@@ -1041,7 +1146,7 @@ function drawBoardingHouseHeroArt(
     rect.height,
     rect.radius ?? 20,
   );
-  layer.lineStyle(4, 0xf4ead3, 0.35);
+  layer.lineStyle(4, 0xeadcc7, 0.4);
   layer.strokeRoundedRect(
     rect.x,
     rect.y,
@@ -1067,7 +1172,7 @@ function drawBoardingHouseHeroArt(
   layer.strokeRoundedRect(signX, rect.y + 12, signWidth, 34, 12);
   layer.fillStyle(0xffffff, 0.1);
   layer.fillRoundedRect(signX + 14, rect.y + 18, signWidth - 28, 7, 3.5);
-  layer.fillStyle(0xe3d7c9, 1);
+  layer.fillStyle(0xe6d9c5, 1);
   layer.fillRoundedRect(
     rect.x + 14,
     rect.y + roofHeight + 10,
@@ -1075,7 +1180,7 @@ function drawBoardingHouseHeroArt(
     Math.max(86, rect.height * 0.34),
     16,
   );
-  layer.lineStyle(3, 0x7a614e, 0.12);
+  layer.lineStyle(3, 0x6f5442, 0.2);
   layer.strokeRoundedRect(
     rect.x + 14,
     rect.y + roofHeight + 10,
@@ -1083,7 +1188,7 @@ function drawBoardingHouseHeroArt(
     Math.max(86, rect.height * 0.34),
     16,
   );
-  layer.fillStyle(0xcfb9a5, 1);
+  layer.fillStyle(0xc0a187, 1);
   layer.fillRoundedRect(
     rect.x + 20,
     rect.y + rect.height - lowerBandHeight - Math.max(92, rect.height * 0.28),
@@ -1091,7 +1196,7 @@ function drawBoardingHouseHeroArt(
     Math.max(72, rect.height * 0.26),
     14,
   );
-  layer.lineStyle(3, 0x755642, 0.12);
+  layer.lineStyle(3, 0x684834, 0.2);
   layer.strokeRoundedRect(
     rect.x + 20,
     rect.y + rect.height - lowerBandHeight - Math.max(92, rect.height * 0.28),
@@ -1139,7 +1244,7 @@ function drawQuaySquareHeroArt(
   const crossWidth = Math.max(54, rect.width * 0.16);
   const crossHeight = Math.max(54, rect.height * 0.16);
   const civicRadius = Math.min(rect.width, rect.height) * 0.18;
-  layer.fillStyle(0xd7c7a6, 1);
+  layer.fillStyle(0xc8b68f, 1);
   layer.fillRoundedRect(
     rect.x,
     rect.y,
@@ -1147,7 +1252,7 @@ function drawQuaySquareHeroArt(
     rect.height,
     rect.radius ?? 30,
   );
-  layer.lineStyle(4, 0xf4ead3, 0.28);
+  layer.lineStyle(4, 0xeadcc0, 0.34);
   layer.strokeRoundedRect(
     rect.x,
     rect.y,
@@ -1155,7 +1260,7 @@ function drawQuaySquareHeroArt(
     rect.height,
     rect.radius ?? 30,
   );
-  layer.fillStyle(0xccb993, 1);
+  layer.fillStyle(0xbda47c, 1);
   layer.fillRoundedRect(
     innerRect.x,
     innerRect.y,
@@ -1163,7 +1268,7 @@ function drawQuaySquareHeroArt(
     innerRect.height,
     24,
   );
-  layer.lineStyle(3, 0x9a805c, 0.18);
+  layer.lineStyle(3, 0x806746, 0.28);
   layer.strokeRoundedRect(
     innerRect.x,
     innerRect.y,
@@ -1171,7 +1276,7 @@ function drawQuaySquareHeroArt(
     innerRect.height,
     24,
   );
-  layer.fillStyle(0xe7dcc3, 1);
+  layer.fillStyle(0xdacaaa, 1);
   layer.fillRoundedRect(
     centerX - crossWidth / 2,
     innerRect.y + 31,
@@ -2584,13 +2689,20 @@ function drawSurfaceDraft(
 
         switch (currentKind) {
           case "paved_asphalt":
-            layer.fillStyle(0x5d656a, 0.96);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.asphalt.base, 0.98);
             layer.fillRect(x, y, width, height);
-            layer.fillStyle(0xffffff, 0.04);
-            layer.fillRect(x, y + height * 0.12, width, height * 0.18);
-            layer.fillStyle(0x14181b, 0.12);
-            layer.fillRect(x, y + height - 2, width, 2);
-            layer.lineStyle(2, 0xd9dccd, 0.22);
+            layer.fillStyle(
+              SOUTH_QUAY_SURFACE_PALETTE.asphalt.highlight,
+              0.18,
+            );
+            layer.fillRect(x, y + height * 0.1, width, height * 0.16);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.asphalt.edge, 0.28);
+            layer.fillRect(x, y + height - 5, width, 5);
+            layer.lineStyle(
+              2,
+              SOUTH_QUAY_SURFACE_PALETTE.asphalt.marking,
+              0.26,
+            );
             for (let dashX = x + 10; dashX < x + width - 14; dashX += 18) {
               layer.lineBetween(
                 dashX,
@@ -2599,11 +2711,38 @@ function drawSurfaceDraft(
                 y + height / 2,
               );
             }
+            layer.fillStyle(
+              SOUTH_QUAY_SURFACE_PALETTE.asphalt.highlight,
+              0.11,
+            );
+            for (let detailX = x + 18; detailX < x + width - 12; detailX += 42) {
+              layer.fillRoundedRect(
+                detailX,
+                y + 9 + ((detailX + row * 7) % 13),
+                13,
+                3,
+                1.5,
+              );
+            }
             break;
           case "tiled_stone_road":
-            layer.fillStyle(0xb6b0a2, 0.98);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.stoneRoad.base, 0.99);
             layer.fillRect(x, y, width, height);
-            layer.lineStyle(1.5, 0xe9e2d2, 0.2);
+            layer.fillStyle(
+              SOUTH_QUAY_SURFACE_PALETTE.stoneRoad.highlight,
+              0.14,
+            );
+            layer.fillRect(x, y + 3, width, Math.max(4, height * 0.12));
+            layer.fillStyle(
+              SOUTH_QUAY_SURFACE_PALETTE.stoneRoad.depth,
+              0.2,
+            );
+            layer.fillRect(x, y + height - 5, width, 5);
+            layer.lineStyle(
+              1.5,
+              SOUTH_QUAY_SURFACE_PALETTE.stoneRoad.highlight,
+              0.22,
+            );
             for (
               let seamY = y + height / 4;
               seamY < y + height;
@@ -2613,9 +2752,23 @@ function drawSurfaceDraft(
             }
             break;
           case "walkway":
-            layer.fillStyle(0xddd1bc, 0.98);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.walkway.base, 0.99);
             layer.fillRect(x, y, width, height);
-            layer.lineStyle(1.4, 0xf5ecdd, 0.2);
+            layer.fillStyle(
+              SOUTH_QUAY_SURFACE_PALETTE.walkway.highlight,
+              0.2,
+            );
+            layer.fillRect(x, y + 3, width, Math.max(4, height * 0.14));
+            layer.fillStyle(
+              SOUTH_QUAY_SURFACE_PALETTE.walkway.depth,
+              0.16,
+            );
+            layer.fillRect(x, y + height - 5, width, 5);
+            layer.lineStyle(
+              1.4,
+              SOUTH_QUAY_SURFACE_PALETTE.walkway.highlight,
+              0.24,
+            );
             for (
               let seamY = y + height / 4;
               seamY < y + height;
@@ -2625,16 +2778,25 @@ function drawSurfaceDraft(
             }
             break;
           case "grass":
-            layer.fillStyle(0x7d9566, 0.98);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.grass.base, 0.99);
             layer.fillRect(x, y, width, height);
-            layer.fillStyle(0xb8d092, 0.12);
+            layer.fillStyle(
+              SOUTH_QUAY_SURFACE_PALETTE.grass.highlight,
+              0.16,
+            );
             layer.fillRect(
               x + width * 0.08,
               y + height * 0.18,
               width * 0.68,
               height * 0.24,
             );
-            layer.lineStyle(1.4, 0x566e3f, 0.16);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.grass.depth, 0.24);
+            layer.fillRect(x, y + height - 5, width, 5);
+            layer.lineStyle(
+              1.4,
+              SOUTH_QUAY_SURFACE_PALETTE.grass.depth,
+              0.28,
+            );
             layer.lineBetween(
               x + 10,
               y + height * 0.64,
@@ -2643,9 +2805,9 @@ function drawSurfaceDraft(
             );
             break;
           case "bushes":
-            layer.fillStyle(0x6d8a55, 0.98);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.bushes.base, 0.99);
             layer.fillRect(x, y, width, height);
-            layer.fillStyle(0x36552d, 0.44);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.bushes.depth, 0.58);
             for (let bushX = x + 22; bushX < x + width - 10; bushX += 42) {
               const bushY =
                 y +
@@ -2655,17 +2817,17 @@ function drawSurfaceDraft(
             }
             break;
           case "trees":
-            layer.fillStyle(0x72905e, 0.98);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.trees.base, 0.99);
             layer.fillRect(x, y, width, height);
             layer.fillStyle(0x74553d, 0.72);
-            layer.fillStyle(0x4f7a42, 0.9);
+            layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.trees.canopy, 0.94);
             for (let treeX = x + 28; treeX < x + width - 10; treeX += 68) {
               const treeY =
                 y +
                 height * (Math.round((treeX - x) / 68) % 2 === 0 ? 0.46 : 0.4);
               layer.fillStyle(0x74553d, 0.72);
               layer.fillRoundedRect(treeX - 2, treeY + 10, 4, 8, 2);
-              layer.fillStyle(0x4f7a42, 0.9);
+              layer.fillStyle(SOUTH_QUAY_SURFACE_PALETTE.trees.canopy, 0.94);
               layer.fillCircle(treeX, treeY, 11);
               layer.fillCircle(treeX + 8, treeY - 3, 8);
             }
@@ -2774,22 +2936,22 @@ function drawNorthServiceThreshold(
   const apronY = streetY + streetHeight;
   const apronHeight = 44;
 
-  layer.fillStyle(0x465256, 1);
+  layer.fillStyle(0x334348, 1);
   layer.fillRect(rect.x, streetY, rect.width, streetHeight);
-  layer.fillStyle(0x303b3f, 0.72);
+  layer.fillStyle(0x222d31, 0.88);
   layer.fillRect(rect.x, streetY + streetHeight - 9, rect.width, 9);
-  layer.fillStyle(0x768081, 0.72);
-  layer.fillRect(rect.x, streetY + 6, rect.width, 5);
-  layer.lineStyle(1.4, 0xaeb2a5, 0.3);
+  layer.fillStyle(0x899491, 0.82);
+  layer.fillRect(rect.x, streetY + 6, rect.width, 6);
+  layer.lineStyle(1.4, 0xbfc1b1, 0.4);
   for (let x = rect.x + 20; x < rect.x + rect.width - 12; x += 62) {
     layer.lineBetween(x, streetY + 25, Math.min(x + 27, rect.x + rect.width), streetY + 25);
   }
 
-  layer.fillStyle(0x62675f, 1);
+  layer.fillStyle(0x545b54, 1);
   layer.fillRect(rect.x, apronY, rect.width, apronHeight);
-  layer.fillStyle(0x918b78, 0.42);
-  layer.fillRect(rect.x, apronY, rect.width, 7);
-  layer.fillStyle(0x464b47, 0.82);
+  layer.fillStyle(0xa79d84, 0.6);
+  layer.fillRect(rect.x, apronY, rect.width, 8);
+  layer.fillStyle(0x393f3c, 0.9);
   layer.fillRect(rect.x, apronY + apronHeight - 6, rect.width, 6);
   layer.lineStyle(1.2, 0x383f3e, 0.62);
   for (let x = rect.x + 8; x < rect.x + rect.width; x += 36) {
@@ -2832,12 +2994,28 @@ function drawWestWorkingFringe(
   const rightEdgeX = courtyard.x + courtyard.width;
   const bottomY = courtyard.y + courtyard.height;
 
-  layer.fillStyle(0x66685d, 1);
+  layer.fillStyle(0x535a4f, 1);
   layer.fillRoundedRect(x, y, width, approachHeight + 10, 12);
-  layer.fillStyle(0x8a8876, 0.72);
+  layer.fillStyle(0x686c59, 0.78);
   layer.fillRoundedRect(x + 14, y + 12, width - 28, approachHeight - 18, 9);
+  layer.lineStyle(1.4, 0x343c37, 0.62);
+  for (let jointX = x + 24; jointX < x + width - 24; jointX += 34) {
+    layer.lineBetween(
+      jointX,
+      y + 58,
+      jointX - 8,
+      y + approachHeight - 10,
+    );
+  }
+  layer.lineStyle(1.2, 0xa49a7d, 0.34);
+  layer.lineBetween(
+    x + 18,
+    y + approachHeight - 21,
+    x + width - 20,
+    y + approachHeight - 17,
+  );
 
-  layer.fillStyle(0x66685d, 0.98);
+  layer.fillStyle(0x535a4f, 0.98);
   layer.fillRect(x, courtyard.y, courtyard.x - x, courtyard.height);
   layer.fillRect(
     rightEdgeX,
@@ -2854,18 +3032,18 @@ function drawWestWorkingFringe(
     layer.fillRoundedRect(x + width - 48, stoneY, 30, 16, 4);
   }
 
-  layer.fillStyle(0x3e5738, 0.96);
+  layer.fillStyle(0x324f2e, 0.96);
   layer.fillRoundedRect(x + 14, y + 14, 126, 38, 6);
-  layer.fillStyle(0x667f4f, 0.96);
+  layer.fillStyle(0x5f843f, 0.96);
   for (let bedX = x + 30; bedX < x + 132; bedX += 30) {
     layer.fillCircle(bedX, y + 30 + ((bedX - x) % 3), 10);
     layer.fillCircle(bedX + 8, y + 26, 8);
   }
 
-  layer.fillStyle(0x705239, 0.94);
+  layer.fillStyle(0x956844, 0.96);
   layer.fillRect(x + 150, y + 18, width - 218, 7);
   layer.fillRect(x + 150, y + 49, width - 218, 6);
-  layer.fillStyle(0x3b322b, 0.88);
+  layer.fillStyle(0x684832, 0.94);
   for (let postX = x + 158; postX < x + width - 72; postX += 48) {
     layer.fillRect(postX, y + 14, 6, 43);
   }
@@ -2873,7 +3051,7 @@ function drawWestWorkingFringe(
   layer.lineStyle(3, 0x55584f, 0.62);
   layer.lineBetween(x + 164, y + 67, x + width - 78, y + 79);
   layer.lineBetween(x + 160, y + 82, x + width - 82, y + 94);
-  layer.lineStyle(1.2, 0xb6ad91, 0.34);
+  layer.lineStyle(1.2, 0xc7b183, 0.48);
   for (let gravelX = x + 26; gravelX < x + width - 58; gravelX += 38) {
     layer.lineBetween(gravelX, y + 64, gravelX + 14, y + 60);
   }
@@ -4634,16 +4812,18 @@ function drawV2MorningLightWash(
   layer: PhaserType.GameObjects.Graphics,
   visualScene: VisualScene,
 ) {
-  layer.fillStyle(0xffe2a8, 0.035);
-  layer.fillRoundedRect(0, 0, visualScene.width, visualScene.height * 0.42, 0);
-  layer.fillStyle(0xffffff, 0.026);
-  layer.fillEllipse(
-    visualScene.width * 0.18,
-    visualScene.height * 0.12,
-    visualScene.width * 0.7,
-    visualScene.height * 0.22,
-  );
-  layer.fillStyle(0x061116, 0.055);
+  for (const landmark of visualScene.landmarks) {
+    if (landmark.style === "courtyard" || landmark.style === "dock") continue;
+    layer.fillStyle(0xffe5b6, landmark.style === "square" ? 0.022 : 0.032);
+    layer.fillRoundedRect(
+      landmark.rect.x + 10,
+      landmark.rect.y + 8,
+      Math.max(24, landmark.rect.width - 20),
+      6,
+      3,
+    );
+  }
+  layer.fillStyle(0x061116, 0.045);
   layer.fillRoundedRect(
     0,
     visualScene.height * 0.88,
