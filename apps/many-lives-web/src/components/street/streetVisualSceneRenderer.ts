@@ -4281,9 +4281,6 @@ function drawV2ProceduralPropClusters(
   }
   drawV2StreetLifeVehicles(layer, {
     cafe,
-    freightYard,
-    pier,
-    square,
   });
 }
 
@@ -4461,9 +4458,6 @@ function drawV2StreetLifeVehicles(
   layer: PhaserType.GameObjects.Graphics,
   landmarks: {
     cafe?: VisualScene["landmarks"][number];
-    freightYard?: VisualScene["landmarks"][number];
-    pier?: VisualScene["landmarks"][number];
-    square?: VisualScene["landmarks"][number];
   },
 ) {
   if (landmarks.cafe) {
@@ -4474,16 +4468,6 @@ function drawV2StreetLifeVehicles(
       rect.x + rect.width * 0.52,
       rect.y + rect.height + 42,
       1.08,
-    );
-  }
-
-  if (landmarks.freightYard) {
-    const rect = landmarks.freightYard.rect;
-    drawCargoHandcart(
-      layer,
-      rect.x + rect.width + 34,
-      rect.y + rect.height * 0.5,
-      0.95,
     );
   }
 }
@@ -5536,48 +5520,6 @@ function drawParkedBicycle(
     x + 16 * scale,
     y - 13 * scale,
   );
-}
-
-function drawCargoHandcart(
-  layer: PhaserType.GameObjects.Graphics,
-  x: number,
-  y: number,
-  scale: number,
-) {
-  layer.fillStyle(0x071116, 0.16);
-  layer.fillEllipse(x + 8 * scale, y + 14 * scale, 64 * scale, 11 * scale);
-  layer.fillStyle(0x6f583e, 0.96);
-  layer.fillRoundedRect(
-    x - 20 * scale,
-    y - 12 * scale,
-    42 * scale,
-    21 * scale,
-    5 * scale,
-  );
-  layer.fillStyle(0xb08b5e, 0.28);
-  layer.fillRoundedRect(
-    x - 15 * scale,
-    y - 8 * scale,
-    32 * scale,
-    6 * scale,
-    3 * scale,
-  );
-  layer.lineStyle(2.4 * scale, 0x3d3026, 0.72);
-  layer.lineBetween(
-    x + 18 * scale,
-    y - 3 * scale,
-    x + 36 * scale,
-    y - 12 * scale,
-  );
-  layer.lineBetween(
-    x + 18 * scale,
-    y + 3 * scale,
-    x + 36 * scale,
-    y + 12 * scale,
-  );
-  layer.fillStyle(0x273238, 0.9);
-  layer.fillCircle(x - 14 * scale, y + 12 * scale, 5 * scale);
-  layer.fillCircle(x + 14 * scale, y + 12 * scale, 5 * scale);
 }
 
 function drawSmallDeliveryVan(

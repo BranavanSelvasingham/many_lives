@@ -4227,6 +4227,11 @@ async function assertCameraPanContractGuard() {
       ),
     "Harbor ambient life must render the east-water cue as a quay-tied authored buoy, not a stray bright dot.",
   );
+  assert.ok(
+    !visualSceneRendererSource.includes("function drawCargoHandcart(") &&
+      !visualSceneRendererSource.includes("landmarks.freightYard"),
+    "Morrow Yard must not regain a detached decorative handcart that reads as stale event art.",
+  );
   const harborEdgeSource = visualSceneRendererSource.match(
     /function drawHarborEdge\([\s\S]*?\n}\n\nfunction findAdjacentQuayWall/,
   )?.[0];
