@@ -56,12 +56,27 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-09` | Route and transition continuity | `VERIFIED` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 | `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
+| `VQ-12` | Exterior material depth, lighting, and palette cohesion | `VERIFIED` | Matched desktop, phone, compact-route, and high-DPR evidence separates roads, paving, facades, vegetation, and working-yard materials without flattening landmark identity or map primacy. |
 
 `CANDIDATE` rows must be rechecked against the next intended release commit.
 They are not grandfathered into `VERIFIED`.
 
 ### Verified Production Evidence
 
+- `VQ-12` was verified on production commit
+  `8c480a494cf4e2d71c273c916953f736d08578d7` against baseline
+  `78a1c52c9f3f5d69c37c34b6577beeddab310989`. Matched desktop, phone, and
+  compact-route comparisons show darker road structure, warmer stone and
+  facades, stronger landmark contact depth, richer vegetation and working-yard
+  materials, and less global wash while preserving the map-first HUD and route
+  framing. Exact-SHA CI/deploy, the deployed visual smoke across desktop,
+  tablet, phone, compact/tall Codex, and high-DPR profiles, saved/resumed/new
+  behavior, production health, and a successful live OpenAI planner trace all
+  passed. Comparisons were shown from
+  `/private/tmp/manylives-vq12-8c480a4-comparisons`; deployed captures were
+  inspected at `/private/tmp/manylives-8c480a4-live-visual`, and live smoke is
+  at `/private/tmp/manylives-8c480a4-live-smoke`. GitHub Actions run:
+  `31655510292`.
 - `VQ-01` was verified on production commit
   `46fa94fb396bc9b5850212bd90f8c5b266e51bf0`. Exact-production desktop,
   tablet, phone, and high-DPR captures show Morrow House's two-storey boarding
