@@ -11,24 +11,24 @@ export type StreetReleaseInfo = {
 };
 
 export const STREET_RELEASE_INFO: StreetReleaseInfo = {
-  version: "0.1.17",
-  build: "da5d68f",
-  source: "Morrow House visual review",
+  version: "0.1.18",
+  build: "8944f31",
+  source: "Compact simulation rail review",
   features: [
     {
-      title: "A warmer Morrow House welcome",
+      title: "Complete context on compact screens",
       body:
-        "The first interior now opens through a woven runner into a defined reception area, making Rowan's temporary home feel inhabited before any label is read.",
+        "The collapsed rail now keeps the Many Lives premise, district status, and Rowan's current thought complete on compact and high-DPR displays.",
     },
     {
-      title: "Guest rooms have a clearer place",
+      title: "A cleaner live status surface",
       body:
-        "Keys, guest cubbies, desk details, and the side-hall runner separate the house's service desk from its private room corridor.",
+        "Refined spacing, hierarchy, contrast, and responsive sizing make the live simulation easier to scan without taking focus from the map.",
     },
     {
-      title: "The arrival stays readable",
+      title: "Regression checks for real text fit",
       body:
-        "Desktop and phone checks now protect the entry signature while keeping Rowan, Mara, the exit, and the watch controls unobscured.",
+        "Visual smoke now checks rendered line bounds, clipping, ellipses, DPR, and collisions across every compact viewport profile.",
     },
   ],
 };
