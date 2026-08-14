@@ -5060,6 +5060,26 @@ function assertOpeningActionCarryForwardContractGuard() {
     false,
     "recovery autoplay grace must not mask frozen watch mode",
   );
+  assert.equal(
+    observedStartNewIdentity(
+      { gameId: "game-still-mounted" },
+      storedGameRecoveryFixture.recoveryFault,
+    ),
+    null,
+    "Start New must not mistake the previously mounted game for the fresh identity",
+  );
+  assert.deepEqual(
+    observedStartNewIdentity(
+      { gameId: "game-replacement" },
+      storedGameRecoveryFixture.recoveryFault,
+    ),
+    {
+      failedGameId: "game-initial",
+      probe: { gameId: "game-replacement" },
+      replacementAlreadyVisible: true,
+    },
+    "Start New should retain the failed identity when the recovered replacement renders first",
+  );
 
   const mutateCarryForward = (changes) => ({
     openingActionCarryForward: {
@@ -5210,6 +5230,21 @@ function storedGameRecoveryNeedsAutoplayGrace(
       carryForward?.watchMode?.enabled &&
       !carryForward.watchMode.frozen
   );
+}
+
+export function observedStartNewIdentity(browserProbe, recoveryFault) {
+  const gameId = browserProbe?.gameId ?? null;
+  const createdGameIds = recoveryFault?.createdGameIds ?? [];
+  if (!gameId || createdGameIds.length === 0 || !createdGameIds.includes(gameId)) {
+    return null;
+  }
+
+  return {
+    failedGameId: createdGameIds[0],
+    probe: browserProbe,
+    replacementAlreadyVisible:
+      createdGameIds.length === 2 && gameId === createdGameIds[1],
+  };
 }
 
 function pointInsideBounds(point, bounds) {
@@ -9944,22 +9979,45 @@ async function runStoredGameChoiceCheck(session) {
   await session.clickSelector("[data-start-new-game]");
   await session.waitForAppReady();
   await session.waitForWatchModeUi(mobileViewport);
-  const freshOpeningProbe = await session.readBrowserProbe();
+  const freshOpeningIdentity = await waitFor(
+    async () => {
+      const [probe, recoveryFault] = await Promise.all([
+        session.readBrowserProbe(),
+        readFreshOpeningCommandLossFault(session),
+      ]);
+      return observedStartNewIdentity(probe, recoveryFault) || false;
+    },
+    AUTOPLAY_START_TIMEOUT_MS,
+    "saved-run Start New did not mount an identity created by the fresh-run request",
+  );
+  const freshOpeningProbe = freshOpeningIdentity.probe;
+  const failedFreshGameId = freshOpeningIdentity.failedGameId;
   let freshProbe;
-  try {
-    freshProbe = await waitForFreshAutoplayAdvance(
-      session,
-      freshOpeningProbe,
-      "saved-run Start New recovery",
-    );
-  } catch (error) {
-    const timedOutProbe = await session.readBrowserProbe();
+  if (freshOpeningIdentity.replacementAlreadyVisible) {
     freshProbe = await waitForStoredGameRecoveryAutoplayAdvance(
       session,
-      freshOpeningProbe.gameId,
-      timedOutProbe,
-      error,
+      failedFreshGameId,
+      freshOpeningProbe,
+      new Error(
+        "saved-run Start New recovered before its failed identity became observable",
+      ),
     );
+  } else {
+    try {
+      freshProbe = await waitForFreshAutoplayAdvance(
+        session,
+        freshOpeningProbe,
+        "saved-run Start New recovery",
+      );
+    } catch (error) {
+      const timedOutProbe = await session.readBrowserProbe();
+      freshProbe = await waitForStoredGameRecoveryAutoplayAdvance(
+        session,
+        failedFreshGameId,
+        timedOutProbe,
+        error,
+      );
+    }
   }
   const recoveryFault = await readFreshOpeningCommandLossFault(session);
   const storedReplacementGameId = await session.evaluate(
@@ -9986,12 +10044,12 @@ async function runStoredGameChoiceCheck(session) {
   );
   assert.notEqual(
     freshProbe.gameId,
-    freshOpeningProbe.gameId,
+    failedFreshGameId,
     "Start new run did not replace the confirmed missing fresh game.",
   );
   assert.deepEqual(
     recoveryFault?.createdGameIds,
-    [freshOpeningProbe.gameId, freshProbe.gameId],
+    [failedFreshGameId, freshProbe.gameId],
     "Start new recovery must create exactly one distinct replacement game.",
   );
   assert.ok(
@@ -10065,8 +10123,9 @@ async function runStoredGameChoiceCheck(session) {
   return {
     desktopPromptScreenshotPath,
     driftGameId,
+    failedFreshGameId,
     freshGameId: freshProbe.gameId,
-    freshOpeningGameId: freshOpeningProbe.gameId,
+    freshOpeningGameId: failedFreshGameId,
     missingStoredGame,
     mobilePromptScreenshotPath,
     prompt,

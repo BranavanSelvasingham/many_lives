@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   hasWatchModeProgressText,
+  observedStartNewIdentity,
   storedGameRecoveryHasVisibleAutoplayProgress,
   waitForRecoveredDesktopRenderableState,
 } from "./visual-game-smoke.mjs";
@@ -178,6 +179,28 @@ test("stored recovery rejects entry evidence without a rendered interior", () =>
       },
     }),
     false,
+  );
+});
+
+test("Start New ignores the prior mounted run when the recovered identity renders first", () => {
+  const recoveryFault = {
+    createdGameIds: ["game-failed", "game-recovered"],
+  };
+
+  assert.equal(
+    observedStartNewIdentity(
+      { gameId: "game-still-mounted" },
+      recoveryFault,
+    ),
+    null,
+  );
+  assert.deepEqual(
+    observedStartNewIdentity({ gameId: "game-recovered" }, recoveryFault),
+    {
+      failedGameId: "game-failed",
+      probe: { gameId: "game-recovered" },
+      replacementAlreadyVisible: true,
+    },
   );
 });
 
