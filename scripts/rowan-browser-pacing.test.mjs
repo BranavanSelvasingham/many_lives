@@ -803,6 +803,18 @@ test("autoplay pacing uses cumulative app-visible progress gaps", () => {
     /typeof ledger\.maxInAppGapMs === "number"/,
   );
   assert.doesNotMatch(pacingAssertionSource, /ledger\.maxIdleGapMs/);
+  assert.match(
+    source,
+    /firstMeaningfulProgressAfterDecisionAppMs:[\s\S]*firstPostDecisionTransition\.toAppMonotonicMs -[\s\S]*decisionSample\.appMonotonicMs/,
+  );
+  assert.match(
+    pacingAssertionSource,
+    /ledger\.firstMeaningfulProgressAfterDecisionAppMs <=\s*AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS/,
+  );
+  assert.doesNotMatch(
+    pacingAssertionSource,
+    /ledger\.firstMeaningfulProgressAfterDecisionMs <=\s*AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS/,
+  );
   assert.match(source, /progressKinds\.push\("playback-progress"\)/);
   assert.match(source, /progressKinds\.push\("activity-progress"\)/);
   assert.match(source, /stateBackedFollowThroughStarted/);

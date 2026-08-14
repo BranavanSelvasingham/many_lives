@@ -22482,6 +22482,7 @@ function buildAutoplayObservationPacingLedger(samples) {
     transitions.push({
       appDurationMs,
       durationMs: observerDurationMs,
+      fromAppMonotonicMs: previous.appMonotonicMs ?? null,
       fromAutonomyLabel: previous.autonomy?.label ?? null,
       fromClock: previous.clock ?? null,
       fromElapsedMs: previous.elapsedMs,
@@ -22492,6 +22493,7 @@ function buildAutoplayObservationPacingLedger(samples) {
           ? null
           : Math.max(0, observerDurationMs - appDurationMs),
       toAutonomyLabel: next.autonomy?.label ?? null,
+      toAppMonotonicMs: next.appMonotonicMs ?? null,
       toClock: next.clock ?? null,
       toElapsedMs: next.elapsedMs,
       toLocationId: next.location?.id ?? null,
@@ -22576,6 +22578,17 @@ function buildAutoplayObservationPacingLedger(samples) {
     firstMeaningfulProgressAfterDecisionMs:
       decisionSample && firstPostDecisionTransition
         ? Math.max(0, firstPostDecisionTransition.toElapsedMs - decisionSample.elapsedMs)
+        : null,
+    firstMeaningfulProgressAfterDecisionAppMs:
+      decisionSample &&
+      firstPostDecisionTransition &&
+      typeof decisionSample.appMonotonicMs === "number" &&
+      typeof firstPostDecisionTransition.toAppMonotonicMs === "number"
+        ? Math.max(
+            0,
+            firstPostDecisionTransition.toAppMonotonicMs -
+              decisionSample.appMonotonicMs,
+          )
         : null,
     genericCarryForwardSamples: (samples ?? []).filter(
       (sample) => sample.genericCarryForwardCopyVisible,
@@ -23479,11 +23492,13 @@ function assertAutoplayObservationPacingLedger(ledger, diagnosticsPath) {
     `Fresh autoplay app timing did not show a decision within ${AUTOPLAY_PACING_OPENING_DECISION_TIMEOUT_MS}ms. Diagnostics: ${diagnosticsPath}.`,
   );
   assert.ok(
-    ledger.firstMeaningfulProgressAfterDecisionMs !== null &&
-      ledger.firstMeaningfulProgressAfterDecisionMs <=
+    ledger.firstMeaningfulProgressAfterDecisionAppMs !== null &&
+      ledger.firstMeaningfulProgressAfterDecisionAppMs <=
         AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS,
-    `Fresh autoplay did not turn the opening decision into visible follow-through quickly enough. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
+    `Fresh autoplay did not turn the opening decision into visible follow-through within ${AUTOPLAY_PACING_ACTION_FOLLOWTHROUGH_TIMEOUT_MS}ms app-monotonic. Diagnostics: ${diagnosticsPath}. ${JSON.stringify(
       {
+        firstMeaningfulProgressAfterDecisionAppMs:
+          ledger.firstMeaningfulProgressAfterDecisionAppMs,
         firstMeaningfulProgressAfterDecisionMs:
           ledger.firstMeaningfulProgressAfterDecisionMs,
         transitions: ledger.transitions.slice(0, 6),
