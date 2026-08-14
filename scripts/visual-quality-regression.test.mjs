@@ -5,6 +5,105 @@ import {
   assertVisualQualityRegressionEvidence,
   createVisualQualityRegressionEvidence,
 } from "./visual-quality-regression.mjs";
+import { assertCollapsedRailCopyReadable } from "./visual-game-smoke.mjs";
+
+const compactTallViewport = { height: 1041, width: 669 };
+
+function readableCompactRailLayout(lineCount) {
+  return {
+    clientHeight: 30,
+    clientWidth: 240,
+    fullyVisible: true,
+    lineClamp: "none",
+    lineCount,
+    overflowX: "visible",
+    overflowY: "visible",
+    scrollHeight: 30,
+    scrollWidth: 240,
+    textOverflow: "clip",
+    whiteSpace: lineCount === 1 ? "nowrap" : "normal",
+  };
+}
+
+function readableCompactRailPage() {
+  return {
+    railCopy: {
+      kicker: "Many Lives • Living-world sim",
+      kickerLayout: readableCompactRailLayout(1),
+      peek: "South Quay • Watching Rowan",
+      peekLayout: readableCompactRailLayout(1),
+      thought: "Rowan is stepping inside Morrow House to ask Mara.",
+      thoughtLayout: readableCompactRailLayout(2),
+    },
+    railState: "collapsed",
+  };
+}
+
+test("compact collapsed rail accepts complete visible copy", () => {
+  assert.doesNotThrow(() =>
+    assertCollapsedRailCopyReadable(
+      readableCompactRailPage(),
+      compactTallViewport,
+      "compact DPR 2",
+    ),
+  );
+});
+
+test("compact collapsed rail rejects CSS ellipsis and clipped thought geometry", () => {
+  const ellipsized = readableCompactRailPage();
+  ellipsized.railCopy.kickerLayout.textOverflow = "ellipsis";
+  assert.throws(
+    () =>
+      assertCollapsedRailCopyReadable(
+        ellipsized,
+        compactTallViewport,
+        "compact DPR 2",
+      ),
+    /uses CSS ellipsis/,
+  );
+
+  const clipped = readableCompactRailPage();
+  clipped.railCopy.thoughtLayout = {
+    ...clipped.railCopy.thoughtLayout,
+    fullyVisible: false,
+    scrollHeight: 48,
+  };
+  assert.throws(
+    () =>
+      assertCollapsedRailCopyReadable(
+        clipped,
+        compactTallViewport,
+        "compact DPR 2",
+      ),
+    /is clipped or overflows/,
+  );
+});
+
+test("compact collapsed rail rejects authored and mid-sentence truncation", () => {
+  const authoredEllipsis = readableCompactRailPage();
+  authoredEllipsis.railCopy.thought = "Rowan is stepping inside...";
+  assert.throws(
+    () =>
+      assertCollapsedRailCopyReadable(
+        authoredEllipsis,
+        compactTallViewport,
+        "compact DPR 2",
+      ),
+    /contains authored truncation/,
+  );
+
+  const incomplete = readableCompactRailPage();
+  incomplete.railCopy.thought = "Rowan is stepping inside Morrow House";
+  assert.throws(
+    () =>
+      assertCollapsedRailCopyReadable(
+        incomplete,
+        compactTallViewport,
+        "compact DPR 2",
+      ),
+    /ends mid-sentence/,
+  );
+});
 
 const baseResult = {
   eventCues: [{ cue: "cafe" }, { cue: "square" }, { cue: "quay" }],

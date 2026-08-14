@@ -186,6 +186,7 @@ import {
 } from "@/lib/street/rowanPlayback";
 import {
   CAMERA_USER_ZOOM_DEFAULT,
+  getCompactRailPresentation,
   getCompactOverlayLayoutMetrics,
   getOverlayLayoutMetrics,
   getRuntimeRenderScale,
@@ -8721,20 +8722,29 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
     .join(" • ");
   const railStatusLabel = rowanRail.statusLabel;
   const railPeekLabel = rowanRail.peekLabel;
-  const railKickerLabel =
-    railViewport === "phone"
-      ? "Many Lives • Living-world sim"
-      : "Many Lives • Living-world simulation";
-  const railContextLabel =
-    railViewport === "phone"
-      ? `${game.districtName} • ${railStatusLabel}`
-      : `${game.cityName} • ${game.districtName} • ${railStatusLabel} • ${railPeekLabel}`;
-  const railThought = buildNarrativePreview(
+  const railThoughtSource =
     firstAfternoonOpening && watchModeProgressionControlsSuppressed
       ? primaryContinueCopy
-      : rowanRail.thought,
-    120,
-  );
+      : rowanRail.thought;
+  const compactRailPresentation = getCompactRailPresentation({
+    districtName: game.districtName,
+    fallbackTitle: rowanRail.now.title,
+    selectedAction: rowanRail.now.decisionArtifact?.selectedAction,
+    statusLabel: railStatusLabel,
+    thought: railThoughtSource,
+  });
+  const railKickerLabel =
+    railViewport === "desktop"
+      ? "Many Lives • Living-world simulation"
+      : compactRailPresentation.kickerLabel;
+  const railContextLabel =
+    railViewport === "desktop"
+      ? `${game.cityName} • ${game.districtName} • ${railStatusLabel} • ${railPeekLabel}`
+      : compactRailPresentation.contextLabel;
+  const railThought =
+    railViewport === "desktop"
+      ? buildNarrativePreview(railThoughtSource, 120)
+      : compactRailPresentation.thought;
   const compactPrimaryActionHtml = showPrimaryContinue
     ? `
       <button

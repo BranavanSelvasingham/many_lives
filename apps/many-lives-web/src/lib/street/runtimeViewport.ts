@@ -39,6 +39,20 @@ export type CompactOverlayLayoutMetrics = {
   railWidth: number;
 };
 
+export type CompactRailPresentation = {
+  contextLabel: string;
+  kickerLabel: string;
+  thought: string;
+};
+
+type CompactRailPresentationOptions = {
+  districtName: string;
+  fallbackTitle: string;
+  selectedAction?: string | null;
+  statusLabel: string;
+  thought: string;
+};
+
 export function getOverlayLayoutMetrics(
   viewport: ViewportSize,
 ): OverlayLayoutMetrics {
@@ -119,13 +133,11 @@ export function getCompactOverlayLayoutMetrics(
   const railCollapsedHeight = options.hasPrimaryAction
     ? phone
       ? 190
-      : narrowCompact
-        ? 190
-        : 150
+      : 190
     : phone
       ? 144
       : narrowCompact
-        ? 168
+        ? 152
         : 132;
   const maximumExpandedHeight = Math.max(
     railCollapsedHeight,
@@ -146,7 +158,9 @@ export function getCompactOverlayLayoutMetrics(
   );
   const railWidth = phone
     ? Math.max(width - overlayInset * 2, 280)
-    : clamp(width * 0.4, 320, 380);
+    : narrowCompact
+      ? clamp(width * 0.52, 340, 356)
+      : clamp(width * 0.4, 320, 380);
 
   return {
     railBottomOffset,
@@ -154,6 +168,67 @@ export function getCompactOverlayLayoutMetrics(
     railExpandedHeight,
     railWidth,
   };
+}
+
+export function getCompactRailPresentation({
+  districtName,
+  fallbackTitle,
+  selectedAction,
+  statusLabel,
+  thought,
+}: CompactRailPresentationOptions): CompactRailPresentation {
+  return {
+    contextLabel: `${normalizeCompactRailCopy(districtName)} • ${normalizeCompactRailCopy(statusLabel)}`,
+    kickerLabel: "Many Lives • Living-world sim",
+    thought: resolveCompleteCompactThought({
+      fallbackTitle,
+      selectedAction,
+      thought,
+    }),
+  };
+}
+
+function resolveCompleteCompactThought({
+  fallbackTitle,
+  selectedAction,
+  thought,
+}: Pick<
+  CompactRailPresentationOptions,
+  "fallbackTitle" | "selectedAction" | "thought"
+>) {
+  const normalizedThought = normalizeCompactRailCopy(thought);
+  const thoughtIsEllipsized = hasTrailingEllipsis(normalizedThought);
+  const firstCompleteSentence = thoughtIsEllipsized
+    ? null
+    : normalizedThought.match(/^.*?[.!?](?=\s|$)/)?.[0];
+  const candidates = [
+    firstCompleteSentence,
+    thoughtIsEllipsized ? null : normalizedThought,
+    selectedAction,
+    fallbackTitle,
+  ];
+
+  for (const candidate of candidates) {
+    const normalized = normalizeCompactRailCopy(candidate ?? "");
+    if (!normalized || normalized.length > 88) {
+      continue;
+    }
+    return ensureSentenceEnding(normalized);
+  }
+
+  return "Rowan is weighing the next legal move.";
+}
+
+function normalizeCompactRailCopy(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function hasTrailingEllipsis(value: string) {
+  return /(?:\.{3}|…)$/.test(value);
+}
+
+function ensureSentenceEnding(value: string) {
+  return /[.!?]$/.test(value) ? value : `${value}.`;
 }
 
 export function getSceneViewport(

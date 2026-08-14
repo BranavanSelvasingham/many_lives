@@ -51,8 +51,8 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
-| `VQ-07` | Responsive composition and map primacy | `VERIFIED` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
-| `VQ-08` | Labels, cues, and scene-to-rail balance | `VERIFIED` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
+| `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
+| `VQ-08` | Labels, cues, and scene-to-rail balance | `CANDIDATE` | Idle, conversation, route, action, and consequence screenshots show labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `VERIFIED` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 | `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
@@ -62,6 +62,22 @@ South Quay reaches the visual target state only when all active rows are
 They are not grandfathered into `VERIFIED`.
 
 ### Verified Production Evidence
+
+- `VQ-07` and `VQ-08` have a new worktree candidate against exact production
+  baseline `c72f830bdfec06eb83346c811524930627a82570`. Current evidence had
+  regressed because the collapsed compact/tall rail truncated the product
+  premise, district/status context, and current thought with ellipses at
+  662-669 CSS pixels and DPR 2. The candidate uses a bounded responsive status
+  surface and complete state-backed copy, with rendered overflow, line-clamp,
+  DPR, HUD/dock/release intersection, all-direction pan, and deliberately
+  failing fixture coverage. All 23 required shots and 10 viewport profiles
+  passed; the completed human assessment scored 4.1/5 and returned
+  `VERIFIED_CANDIDATE`. Baseline evidence is at
+  `/private/tmp/manylives-c72f830-live-baseline`; candidate evidence is at
+  `/private/tmp/manylives-vf13-candidate-final`; the matched review is at
+  `/private/tmp/manylives-vf13-candidate-review`. These rows remain
+  `CANDIDATE` until exact-SHA deployment, production recapture, live smoke, and
+  comparison presentation pass.
 
 - `VQ-12` was verified on production commit
   `8c480a494cf4e2d71c273c916953f736d08578d7` against baseline

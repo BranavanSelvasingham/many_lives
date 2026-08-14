@@ -2873,6 +2873,77 @@ export function buildStreetOverlayStyle({
       .ml-root.is-collapsible-rail .ml-rail-thought {
         font-size: 16px;
       }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-shell {
+        border-radius: 18px;
+        border-color: rgba(205, 174, 115, 0.3);
+        background:
+          linear-gradient(145deg, rgba(12, 21, 26, 0.97), rgba(8, 14, 19, 0.96) 68%, rgba(28, 25, 21, 0.95));
+        box-shadow:
+          0 18px 38px rgba(0, 0, 0, 0.32),
+          inset 3px 0 0 rgba(205, 174, 115, 0.62);
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-head {
+        gap: 8px;
+        padding: 11px 12px 10px 14px;
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-head
+        .ml-kicker {
+        overflow: visible;
+        text-overflow: clip;
+        white-space: nowrap;
+        font-size: 9px;
+        letter-spacing: 0.09em;
+        color: rgba(241, 214, 160, 0.82);
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-heading-row {
+        gap: 6px;
+        margin-top: 4px;
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-name {
+        font-size: 22px;
+        line-height: 1;
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-status {
+        padding: 5px 7px;
+        font-size: 8px;
+        letter-spacing: 0.09em;
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-peek-label {
+        margin-top: 5px;
+        overflow: visible;
+        text-overflow: clip;
+        white-space: normal;
+        font-size: 9px;
+        line-height: 1.25;
+        letter-spacing: 0.08em;
+        color: rgba(213, 224, 229, 0.72);
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-thought {
+        display: block;
+        margin-top: 5px;
+        overflow: visible;
+        -webkit-box-orient: initial;
+        -webkit-line-clamp: none;
+        text-wrap: pretty;
+        font-size: 13px;
+        line-height: 1.3;
+        color: rgba(244, 247, 248, 0.96);
+      }
+      .ml-root.is-collapsible-rail:not(.is-phone-rail).is-rail-collapsed
+        .ml-rail-toggle {
+        padding: 9px 10px;
+        border-color: rgba(205, 174, 115, 0.24);
+        background: rgba(27, 37, 43, 0.9);
+        color: rgba(247, 227, 187, 0.92);
+      }
       .ml-root.is-collapsible-rail .ml-rowan-directive-title,
       .ml-root.is-collapsible-rail .ml-rowan-story-card-title {
         font-size: 18px;

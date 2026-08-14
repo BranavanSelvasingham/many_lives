@@ -967,6 +967,7 @@ class CdpSession {
       const railKicker = document.querySelector(".ml-rail-head .ml-kicker");
       const railPeekLabel = document.querySelector(".ml-rail-peek-label");
       const railThought = document.querySelector(".ml-rail-thought");
+      const releaseWidget = document.querySelector(".ml-release-widget");
       const commandRail = document.querySelector(".ml-command-rail");
       const rightStack = document.querySelector(".ml-right-stack");
       const root = document.querySelector(".ml-root");
@@ -1060,6 +1061,7 @@ class CdpSession {
       const dockRect = dock?.getBoundingClientRect();
       const dockRootRect = dockRoot?.getBoundingClientRect();
       const railRect = rail?.getBoundingClientRect();
+      const releaseWidgetRect = releaseWidget?.getBoundingClientRect();
       const rightStackRect = rightStack?.getBoundingClientRect();
       const timePillRect = timePill?.getBoundingClientRect();
       const whyNowRect = whyNow?.getBoundingClientRect();
@@ -1111,6 +1113,42 @@ class CdpSession {
           width: visible.right - visible.left,
           x: visible.left,
           y: visible.top,
+        };
+      };
+      const textLayoutState = (element) => {
+        if (!element) {
+          return null;
+        }
+        const style = window.getComputedStyle(element);
+        const source = element.getBoundingClientRect();
+        const visible = visibleRectFor(element);
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const lineTops = Array.from(range.getClientRects())
+          .filter((rect) => rect.width > 0 && rect.height > 0)
+          .map((rect) => Math.round(rect.top * 2) / 2);
+        range.detach();
+        const fullyVisible = Boolean(
+          visible &&
+            visible.left <= source.left + 1 &&
+            visible.right >= source.right - 1 &&
+            visible.top <= source.top + 1 &&
+            visible.bottom >= source.bottom - 1 &&
+            element.scrollWidth <= element.clientWidth + 1 &&
+            element.scrollHeight <= element.clientHeight + 1
+        );
+        return {
+          clientHeight: element.clientHeight,
+          clientWidth: element.clientWidth,
+          fullyVisible,
+          lineClamp: style.webkitLineClamp,
+          lineCount: new Set(lineTops).size,
+          overflowX: style.overflowX,
+          overflowY: style.overflowY,
+          scrollHeight: element.scrollHeight,
+          scrollWidth: element.scrollWidth,
+          textOverflow: style.textOverflow,
+          whiteSpace: style.whiteSpace,
         };
       };
       const meaningfulConversationBubbles = Array.from(
@@ -1493,15 +1531,19 @@ class CdpSession {
           kickerFits: railKicker
             ? railKicker.scrollWidth <= railKicker.clientWidth + 1
             : false,
+          kickerLayout: textLayoutState(railKicker),
           peek: railPeekLabel?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
           peekFits: railPeekLabel
             ? railPeekLabel.scrollWidth <= railPeekLabel.clientWidth + 1
             : false,
+          peekLayout: textLayoutState(railPeekLabel),
           thought: railThought?.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          thoughtLayout: textLayoutState(railThought),
           thoughtLineClamp: railThought
             ? window.getComputedStyle(railThought).webkitLineClamp
             : "",
         },
+        releaseWidget: rectData(releaseWidgetRect),
         railState: rightStack?.getAttribute("data-rail-state") ?? null,
         rightStack: rightStackRect ? {
           height: Math.round(rightStackRect.height),
@@ -1510,6 +1552,7 @@ class CdpSession {
           y: Math.round(rightStackRect.y)
         } : null,
         rootClass: root?.className ?? "",
+        devicePixelRatio: window.devicePixelRatio,
         cameraActiveSpaceId: cameraProbe?.activeSpaceId ?? null,
         cameraActiveSpaceKind: cameraProbe?.activeSpaceKind ?? null,
         sceneVisibleFraction,
@@ -7559,6 +7602,27 @@ function assertOverlayGeometry(
   assert.ok(insideViewport(page.dockRoot), `${label}: dock is clipped.`);
   const rail = page.rightStack;
   const dock = page.dockRoot;
+  const intersects = (first, second) =>
+    first.x < rectRight(second) &&
+    rectRight(first) > second.x &&
+    first.y < rectBottom(second) &&
+    rectBottom(first) > second.y;
+  assert.equal(
+    intersects(rail, page.timePill),
+    false,
+    `${label}: rail intersects the top HUD. Rail ${JSON.stringify(rail)}, HUD ${JSON.stringify(page.timePill)}.`,
+  );
+  if (page.releaseWidget) {
+    assert.ok(
+      insideViewport(page.releaseWidget),
+      `${label}: release control is clipped.`,
+    );
+    assert.equal(
+      intersects(rail, page.releaseWidget),
+      false,
+      `${label}: rail intersects the release control. Rail ${JSON.stringify(rail)}, release ${JSON.stringify(page.releaseWidget)}.`,
+    );
+  }
   const overlapsX = rail.x < rectRight(dock) && rectRight(rail) > dock.x;
   const overlapsY = rail.y < rectBottom(dock) && rectBottom(rail) > dock.y;
   const clearance = overlapsX
@@ -7577,6 +7641,68 @@ function assertOverlayGeometry(
   );
 
   assertSceneVisibilityGeometry(page, viewport, label, expectedSpaceId);
+}
+
+export function assertCollapsedRailCopyReadable(page, viewport, label) {
+  if (viewport.width <= 560 || viewport.width > 960) {
+    return;
+  }
+
+  assert.equal(
+    page.railState,
+    "collapsed",
+    `${label}: compact rail copy guard requires the collapsed state.`,
+  );
+  assert.equal(
+    page.railCopy?.kicker,
+    "Many Lives • Living-world sim",
+    `${label}: compact product identifier is incomplete.`,
+  );
+  assert.match(
+    page.railCopy?.peek ?? "",
+    /^South Quay • .+$/,
+    `${label}: compact district/status context is incomplete.`,
+  );
+  assert.ok(
+    page.railCopy?.thought,
+    `${label}: compact current thought is empty.`,
+  );
+  assert.match(
+    page.railCopy?.thought ?? "",
+    /[.!?]$/,
+    `${label}: compact current thought ends mid-sentence.`,
+  );
+
+  for (const [surface, copy, layout, maximumLines] of [
+    ["product identifier", page.railCopy?.kicker, page.railCopy?.kickerLayout, 1],
+    ["district/status context", page.railCopy?.peek, page.railCopy?.peekLayout, 2],
+    ["current thought", page.railCopy?.thought, page.railCopy?.thoughtLayout, 3],
+  ]) {
+    assert.ok(layout, `${label}: ${surface} has no computed layout evidence.`);
+    assert.doesNotMatch(
+      copy ?? "",
+      /(?:\.{3}|…)/,
+      `${label}: ${surface} contains authored truncation.`,
+    );
+    assert.notEqual(
+      layout.textOverflow,
+      "ellipsis",
+      `${label}: ${surface} uses CSS ellipsis.`,
+    );
+    assert.ok(
+      !layout.lineClamp || layout.lineClamp === "none",
+      `${label}: ${surface} uses a ${layout.lineClamp}-line clamp.`,
+    );
+    assert.equal(
+      layout.fullyVisible,
+      true,
+      `${label}: ${surface} is clipped or overflows: ${JSON.stringify(layout)}.`,
+    );
+    assert.ok(
+      layout.lineCount >= 1 && layout.lineCount <= maximumLines,
+      `${label}: ${surface} occupies ${layout.lineCount} lines; expected 1-${maximumLines}.`,
+    );
+  }
 }
 
 function assertSceneVisibilityGeometry(
@@ -8684,6 +8810,12 @@ async function runViewportCheck(session, viewport) {
   await sleep(250);
 
   const page = await session.inspectPage();
+  if (viewport.deviceScaleFactor) {
+    assert.ok(
+      Math.abs(page.devicePixelRatio - viewport.deviceScaleFactor) <= 0.01,
+      `${viewport.name}: expected DPR ${viewport.deviceScaleFactor}, observed ${page.devicePixelRatio}.`,
+    );
+  }
   assert.equal(page.title, "Many Lives", `${viewport.name}: wrong page title.`);
   assert.equal(
     new URL(page.url).origin,
@@ -8771,6 +8903,18 @@ async function runViewportCheck(session, viewport) {
     assert.ok(
       (page.rail?.height ?? 0) >= 142 && (page.rail?.height ?? 0) <= 146,
       `${viewport.name}: collapsed phone rail height must preserve a readable beat without displacing the map (${page.rail?.height}px).`,
+    );
+  } else if (viewport.width <= 960) {
+    assertCollapsedRailCopyReadable(
+      page,
+      viewport,
+      `${viewport.name} collapsed`,
+    );
+    const expectedCollapsedHeight = viewport.width <= 720 ? 152 : 132;
+    assert.ok(
+      (page.rail?.height ?? 0) >= expectedCollapsedHeight - 2 &&
+        (page.rail?.height ?? 0) <= expectedCollapsedHeight + 2,
+      `${viewport.name}: compact collapsed rail height must stay within the ${expectedCollapsedHeight}px summary footprint (${page.rail?.height}px).`,
     );
   }
   if (viewport.name === "desktop") {
