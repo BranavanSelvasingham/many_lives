@@ -5345,6 +5345,31 @@ function hasGroundedNearMorrowEntryAgency(mapAgency, browserProbe) {
   );
 }
 
+function hasGroundedMorrowConversationAgency(mapAgency, browserProbe) {
+  const target = mapAgency?.target;
+  const carryForward = browserProbe?.openingActionCarryForward;
+  return Boolean(
+    mapAgency?.currentLocation?.id === "boarding-house" &&
+      mapAgency.currentLocation.spaceId === "interior:boarding-house" &&
+      browserProbe?.location?.id === "boarding-house" &&
+      browserProbe.location.spaceId === "interior:boarding-house" &&
+      target?.locationId === "boarding-house" &&
+      target.actionId === "talk:npc-mara" &&
+      target.isNpc === true &&
+      target.source === "autonomy" &&
+      Math.abs(target.x - MORROW_HOUSE_MARA_WORLD_POINT.x) <=
+        MORROW_HOUSE_MARA_WORLD_EXTENTS.halfWidth &&
+      Math.abs(target.y - MORROW_HOUSE_MARA_WORLD_POINT.y) <=
+        MORROW_HOUSE_MARA_WORLD_EXTENTS.halfHeight &&
+      carryForward?.selectedActionId === "enter:boarding-house" &&
+      carryForward.requiredVisibleInput === false &&
+      carryForward.watchMode?.enabled &&
+      /Mara/i.test(
+        [mapAgency.intent, mapAgency.detail].filter(Boolean).join(" "),
+      )
+  );
+}
+
 function assertGroundedNearMorrowEntryAgencyGuard() {
   const mapAgency = {
     currentLocation: { id: "boarding-house" },
@@ -5388,6 +5413,78 @@ function assertGroundedNearMorrowEntryAgencyGuard() {
     false,
     "Missing-target suppression must not satisfy the near-door Morrow entry contract.",
   );
+}
+
+function assertGroundedMorrowConversationAgencyGuard() {
+  const mapAgency = {
+    currentLocation: {
+      id: "boarding-house",
+      spaceId: "interior:boarding-house",
+    },
+    detail: "Mara is here, so Rowan can ask the question in person.",
+    intent: "Talk with Mara",
+    target: {
+      actionId: "talk:npc-mara",
+      isNpc: true,
+      locationId: "boarding-house",
+      source: "autonomy",
+      x: 275,
+      y: 275,
+    },
+  };
+  const browserProbe = {
+    location: {
+      id: "boarding-house",
+      spaceId: "interior:boarding-house",
+    },
+    openingActionCarryForward: {
+      requiredVisibleInput: false,
+      selectedActionId: "enter:boarding-house",
+      watchMode: { enabled: true },
+    },
+  };
+
+  assert.equal(
+    hasGroundedMorrowConversationAgency(mapAgency, browserProbe),
+    true,
+    "The immediate Morrow interior conversation should count as grounded opening progress when map agency advances before the browser probe.",
+  );
+  for (const [label, invalidMapAgency] of [
+    [
+      "wrong interior",
+      {
+        ...mapAgency,
+        currentLocation: { id: "tea-house", spaceId: "interior:tea-house" },
+      },
+    ],
+    [
+      "wrong NPC",
+      {
+        ...mapAgency,
+        target: { ...mapAgency.target, actionId: "talk:npc-ada" },
+      },
+    ],
+    [
+      "future fallback",
+      {
+        ...mapAgency,
+        target: { ...mapAgency.target, source: "future-location" },
+      },
+    ],
+    [
+      "detached target",
+      {
+        ...mapAgency,
+        target: { ...mapAgency.target, x: 500, y: 500 },
+      },
+    ],
+  ]) {
+    assert.equal(
+      hasGroundedMorrowConversationAgency(invalidMapAgency, browserProbe),
+      false,
+      `Morrow conversation agency must reject ${label} evidence.`,
+    );
+  }
 }
 
 function assertVisibleDecisionArtifactPayload(artifact, label, planningTrace = null) {
@@ -8276,8 +8373,13 @@ async function runFreshAutoplayStartCheck(session) {
 
   const openingProbe = await session.readBrowserProbe();
   const openingMapAgency = await session.waitForMapAgencyProbe(viewport);
+  const mapShowsMorrowConversation = hasGroundedMorrowConversationAgency(
+    openingMapAgency,
+    openingProbe,
+  );
   const openingAlreadyProgressed =
-    openingActionHasAutoplayProgressed(openingProbe);
+    openingActionHasAutoplayProgressed(openingProbe) ||
+    mapShowsMorrowConversation;
   if (openingAlreadyProgressed) {
     const mapShowsKettle = assertKettleMapAgencyTargetCorrelation(
       openingMapAgency,
@@ -8290,6 +8392,7 @@ async function runFreshAutoplayStartCheck(session) {
     assert.ok(
       mapShowsKettle ||
         mapShowsGroundedMorrowEntry ||
+        mapShowsMorrowConversation ||
         Boolean(openingProbe.activeConversation?.npcId) ||
         openingProbe.location?.id === "tea-house",
       `fresh autoplay opening already progressed, but map agency did not show the next first-run target: ${JSON.stringify(
@@ -10998,6 +11101,7 @@ async function main() {
   await mkdir(OUTPUT_DIR, { recursive: true });
   assertOpeningActionCarryForwardContractGuard();
   assertGroundedNearMorrowEntryAgencyGuard();
+  assertGroundedMorrowConversationAgencyGuard();
   assertVisibleDecisionCopyCompactionContractGuard();
   assertDecisionArtifactReadabilityWaitRegression();
   assertResponsiveDecisionArtifactModeContract();
