@@ -32,11 +32,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
-      - name: Install browser test system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -45,7 +40,7 @@ jobs:
           NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}
           MANY_LIVES_APP_HARNESS_DIR: ${{ runner.temp }}/manylives-app-harness
           MANY_LIVES_APP_HARNESS_COMMAND_TIMEOUT_MS: "2700000"
-        run: pnpm test
+        run: node scripts/app-harness.mjs --profile quick
 
       - name: Upload failed harness diagnostics
         if: ${{ failure() }}
@@ -112,9 +107,103 @@ jobs:
           path: deployment
           include-hidden-files: true
 
+  gameplay-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.3
+          run_install: false
+
+      - name: Set up Node.js version
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install browser test system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Gameplay browser harness
+        env:
+          NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}
+          MANY_LIVES_APP_HARNESS_DIR: ${{ runner.temp }}/manylives-gameplay-harness
+          MANY_LIVES_APP_HARNESS_COMMAND_TIMEOUT_MS: "2700000"
+        run: node scripts/app-harness.mjs --profile ci --skip-visual
+
+      - name: Upload failed gameplay diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: manylives-gameplay-failure-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/manylives-gameplay-harness
+            !${{ runner.temp }}/manylives-gameplay-harness/rowan-browser/chrome-session/**
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
+  visual-regression:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.3
+          run_install: false
+
+      - name: Set up Node.js version
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Visual browser harness
+        env:
+          NEXT_PUBLIC_MANY_LIVES_API_URL: ${{ vars.NEXT_PUBLIC_MANY_LIVES_API_URL }}
+          MANY_LIVES_APP_HARNESS_DIR: ${{ runner.temp }}/manylives-visual-harness
+          MANY_LIVES_APP_HARNESS_COMMAND_TIMEOUT_MS: "2700000"
+        run: node scripts/app-harness.mjs --profile ci --skip-browser-playtest
+
+      - name: Upload failed visual diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: manylives-visual-failure-${{ github.sha }}
+          path: ${{ runner.temp }}/manylives-visual-harness
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+
   deploy:
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - build
+      - gameplay-regression
+      - visual-regression
     environment:
       name: Production
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
