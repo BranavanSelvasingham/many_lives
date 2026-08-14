@@ -530,9 +530,9 @@ export function buildStreetOverlayStyle({
         padding: 8px 9px;
       }
       .ml-decision-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: start;
         gap: 8px;
         font-size: 9px;
         letter-spacing: 0.16em;
@@ -541,12 +541,13 @@ export function buildStreetOverlayStyle({
       }
       .ml-decision-head strong {
         min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
         font-size: 10px;
+        line-height: 1.25;
         letter-spacing: 0;
+        overflow-wrap: break-word;
+        text-align: right;
         text-transform: none;
+        white-space: normal;
         color: rgba(239, 246, 248, 0.9);
       }
       .ml-decision-compact-copy {

@@ -306,7 +306,7 @@ export function buildVisibleDecisionArtifactHtml(
     >
       <div class="ml-decision-head">
         <span>Rowan weighs</span>
-        <strong>${escapeHtml(buildNarrativePreview(artifact.sourceSummary, 36))}</strong>
+        <strong>${escapeHtml(artifact.sourceSummary)}</strong>
       </div>
       <div class="ml-decision-grid">
         <div class="ml-decision-line" data-decision-field="aim">
@@ -482,7 +482,7 @@ export function buildCompactVisibleDecisionArtifactHtml(
     >
       <div class="ml-decision-head">
         <span>Rowan weighs</span>
-        <strong>${escapeHtml(buildNarrativePreview(artifact.sourceSummary, 30))}</strong>
+        <strong>${escapeHtml(artifact.sourceSummary)}</strong>
       </div>
       <div class="ml-decision-compact-copy">
         <span data-decision-field="aim">Aim: ${escapeHtml(buildNarrativePreview(artifact.objective, 54))}</span>

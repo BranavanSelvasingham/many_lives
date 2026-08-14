@@ -6,11 +6,28 @@ import {
   assertVisualQualityRegressionEvidence,
   createVisualQualityRegressionEvidence,
 } from "./visual-quality-regression.mjs";
-import { assertCollapsedRailCopyReadable } from "./visual-game-smoke.mjs";
+import {
+  assertCollapsedRailCopyReadable,
+  assertDecisionSourceHeaderReadable,
+} from "./visual-game-smoke.mjs";
 
 const compactTallViewport = { height: 1041, width: 669 };
 const visualSmokeSource = readFileSync(
   new URL("./visual-game-smoke.mjs", import.meta.url),
+  "utf8",
+);
+const overlayHtmlSource = readFileSync(
+  new URL(
+    "../apps/many-lives-web/src/components/street/streetOverlayHtml.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const overlayStylesSource = readFileSync(
+  new URL(
+    "../apps/many-lives-web/src/lib/street/streetOverlayStyles.ts",
+    import.meta.url,
+  ),
   "utf8",
 );
 
@@ -122,6 +139,126 @@ test("compact collapsed rail rejects authored and mid-sentence truncation", () =
         "compact DPR 2",
       ),
     /ends mid-sentence/,
+  );
+});
+
+const decisionSource = "Built-in recommendation, checked before Rowan set out";
+
+function readableDecisionArtifact() {
+  return {
+    source: decisionSource,
+    sourceHeader: {
+      layout: {
+        clientHeight: 25,
+        clientWidth: 236,
+        fullyVisible: true,
+        lineClamp: "none",
+        lineCount: 2,
+        overflowX: "visible",
+        overflowY: "visible",
+        scrollHeight: 25,
+        scrollWidth: 236,
+        textOverflow: "clip",
+        whiteSpace: "normal",
+      },
+      text: decisionSource,
+    },
+  };
+}
+
+test("VF-14 decision provenance renders the complete state-backed phrase", () => {
+  assert.doesNotMatch(
+    overlayHtmlSource,
+    /buildNarrativePreview\(artifact\.sourceSummary/,
+    "Decision provenance must not pass through character-based preview truncation.",
+  );
+  assert.equal(
+    overlayHtmlSource.match(/\$\{escapeHtml\(artifact\.sourceSummary\)\}<\/strong>/g)
+      ?.length,
+    2,
+    "Full and compact decision headers must both render the full sourceSummary.",
+  );
+  const headerRule = overlayStylesSource.match(
+    /\.ml-decision-head strong\s*\{(?<body>[\s\S]*?)\n\s*\}/,
+  )?.groups?.body;
+  assert.ok(headerRule, "Decision provenance CSS rule is missing.");
+  assert.doesNotMatch(headerRule, /text-overflow:\s*ellipsis/);
+  assert.doesNotMatch(headerRule, /white-space:\s*nowrap/);
+  assert.doesNotMatch(headerRule, /overflow:\s*hidden/);
+  assert.doesNotThrow(() =>
+    assertDecisionSourceHeaderReadable(
+      readableDecisionArtifact(),
+      "desktop DPR 2",
+      decisionSource,
+    ),
+  );
+});
+
+test("VF-14 decision provenance rejects authored and CSS truncation", () => {
+  const authored = readableDecisionArtifact();
+  authored.sourceHeader.text = "Built-in recommendation, checked...";
+  assert.throws(
+    () =>
+      assertDecisionSourceHeaderReadable(authored, "compact", decisionSource),
+    /visible decision provenance is incomplete/,
+  );
+
+  const ellipsized = readableDecisionArtifact();
+  ellipsized.sourceHeader.layout.textOverflow = "ellipsis";
+  assert.throws(
+    () =>
+      assertDecisionSourceHeaderReadable(
+        ellipsized,
+        "tablet",
+        decisionSource,
+      ),
+    /uses CSS ellipsis/,
+  );
+
+  const nowrap = readableDecisionArtifact();
+  nowrap.sourceHeader.layout.whiteSpace = "nowrap";
+  assert.throws(
+    () =>
+      assertDecisionSourceHeaderReadable(nowrap, "phone", decisionSource),
+    /disables wrapping with nowrap/,
+  );
+});
+
+test("VF-14 decision provenance rejects clipping, overflow, and a third line", () => {
+  const clipped = readableDecisionArtifact();
+  clipped.sourceHeader.layout = {
+    ...clipped.sourceHeader.layout,
+    fullyVisible: false,
+    scrollWidth: 264,
+  };
+  assert.throws(
+    () =>
+      assertDecisionSourceHeaderReadable(clipped, "desktop", decisionSource),
+    /is clipped or overflows/,
+  );
+
+  const threeLines = readableDecisionArtifact();
+  threeLines.sourceHeader.layout.lineCount = 3;
+  assert.throws(
+    () =>
+      assertDecisionSourceHeaderReadable(
+        threeLines,
+        "compact tall DPR 2",
+        decisionSource,
+      ),
+    /occupies 3 lines; expected 1-2/,
+  );
+
+  const staleAttribute = readableDecisionArtifact();
+  staleAttribute.source = "Rowan's current intent";
+  assert.throws(
+    () =>
+      assertDecisionSourceHeaderReadable(
+        staleAttribute,
+        "phone",
+        decisionSource,
+      ),
+    /data-decision-source no longer preserves/,
   );
 });
 

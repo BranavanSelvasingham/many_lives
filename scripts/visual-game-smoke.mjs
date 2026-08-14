@@ -977,6 +977,9 @@ class CdpSession {
         document.querySelectorAll("[data-visible-decision-artifact='true']"),
       );
       const decisionArtifact = decisionArtifacts[0] ?? null;
+      const decisionSourceHeader = decisionArtifact?.querySelector(
+        ".ml-decision-head strong",
+      );
       const decisionDetails = document.querySelector("[data-decision-details='true']");
       const liveConversationWorkspace = document.querySelector(
         "[data-live-conversation-workspace='true']",
@@ -1471,6 +1474,10 @@ class CdpSession {
         decisionArtifact: decisionArtifactRect ? {
           height: Math.round(decisionArtifactRect.height),
           source: decisionArtifact.getAttribute("data-decision-source"),
+          sourceHeader: decisionSourceHeader ? {
+            layout: textLayoutState(decisionSourceHeader),
+            text: decisionSourceHeader.textContent?.replace(/\\s+/g, " ").trim() ?? "",
+          } : null,
           text: decisionArtifact.textContent?.replace(/\\s+/g, " ").trim() ?? "",
           visible: decisionArtifactVisible,
           width: Math.round(decisionArtifactRect.width),
@@ -5871,6 +5878,11 @@ function assertVisibleDecisionArtifactDom(
     true,
     `${label}: decision artifact exists but is not readable in the rail viewport.`,
   );
+  assertDecisionSourceHeaderReadable(
+    decisionArtifact,
+    label,
+    artifactPayload?.sourceSummary,
+  );
   assert.match(
     decisionArtifact.text,
     /Rowan weighs/i,
@@ -5934,6 +5946,66 @@ function assertVisibleDecisionArtifactDom(
     decisionArtifact.text,
     /Planner trace|Rejected:|Blocked:|Action:|routeKey|advance_objective|planningTrace|desired-state predicate|stale predicate|route hint action|suggested move|no longer legal|current world state|Rejected because|live pressure|predicate|That opening has closed|keeps to the confirmed choice/i,
     `${label}: decision artifact leaked debug/planner language.`,
+  );
+}
+
+export function assertDecisionSourceHeaderReadable(
+  decisionArtifact,
+  label,
+  expectedSource = null,
+) {
+  assert.ok(
+    decisionArtifact?.sourceHeader,
+    `${label}: decision provenance header is missing.`,
+  );
+  const source = decisionArtifact.source?.replace(/\s+/g, " ").trim() ?? "";
+  const visibleText =
+    decisionArtifact.sourceHeader.text?.replace(/\s+/g, " ").trim() ?? "";
+  const expected = expectedSource?.replace(/\s+/g, " ").trim() ?? source;
+  const layout = decisionArtifact.sourceHeader.layout;
+
+  assert.ok(source, `${label}: decision provenance source is empty.`);
+  assert.equal(
+    source,
+    expected,
+    `${label}: data-decision-source no longer preserves the full state-backed provenance.`,
+  );
+  assert.equal(
+    visibleText,
+    source,
+    `${label}: visible decision provenance is incomplete.`,
+  );
+  assert.doesNotMatch(
+    visibleText,
+    /(?:\.{3}|…)/,
+    `${label}: decision provenance contains authored truncation.`,
+  );
+  assert.ok(
+    layout,
+    `${label}: decision provenance has no computed layout evidence.`,
+  );
+  assert.notEqual(
+    layout.textOverflow,
+    "ellipsis",
+    `${label}: decision provenance uses CSS ellipsis.`,
+  );
+  assert.notEqual(
+    layout.whiteSpace,
+    "nowrap",
+    `${label}: decision provenance disables wrapping with nowrap.`,
+  );
+  assert.ok(
+    !layout.lineClamp || layout.lineClamp === "none",
+    `${label}: decision provenance uses a ${layout.lineClamp}-line clamp.`,
+  );
+  assert.equal(
+    layout.fullyVisible,
+    true,
+    `${label}: decision provenance is clipped or overflows: ${JSON.stringify(layout)}.`,
+  );
+  assert.ok(
+    layout.lineCount >= 1 && layout.lineCount <= 2,
+    `${label}: decision provenance occupies ${layout.lineCount} lines; expected 1-2.`,
   );
 }
 
@@ -6140,6 +6212,7 @@ function compactDecisionArtifactReadabilityGeometry(page) {
           width: page.decisionArtifact.width,
           x: page.decisionArtifact.x,
           y: page.decisionArtifact.y,
+          sourceHeader: page.decisionArtifact.sourceHeader ?? null,
         }
       : null,
     decisionFields: page?.decisionFieldGeometry ?? null,
