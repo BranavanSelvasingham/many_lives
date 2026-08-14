@@ -3326,7 +3326,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     2,
     1,
     25,
-    1_000,
+    3_000,
     375,
     819,
     60,
@@ -6283,8 +6283,8 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
       assert.equal(routeSession.autoplayDenseOpeningCaptureTimeoutMs(800), 800);
       assert.equal(
         routeSession.autoplayDenseOpeningCaptureTimeoutMs(2_500),
-        1_000,
-        "A constrained runner gets a full second for a fresh rendered frame before the heavier proactive readback.",
+        2_500,
+        "A constrained runner can use the remaining route budget for a fresh rendered frame before the heavier proactive readback.",
       );
       routeSession.autoplayRouteArchiveNeedsProactiveOpeningCapture = () =>
         false;
