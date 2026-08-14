@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -8,6 +9,25 @@ import {
 import { assertCollapsedRailCopyReadable } from "./visual-game-smoke.mjs";
 
 const compactTallViewport = { height: 1041, width: 669 };
+const visualSmokeSource = readFileSync(
+  new URL("./visual-game-smoke.mjs", import.meta.url),
+  "utf8",
+);
+
+test("pacing-sensitive saved-run recovery precedes the heavy viewport matrix", () => {
+  const storedRunCheck = visualSmokeSource.indexOf(
+    "storedGameChoice = await runStoredGameChoiceCheck(session);",
+  );
+  const viewportMatrix = visualSmokeSource.indexOf(
+    "for (const viewport of ACTIVE_VIEWPORTS)",
+  );
+  assert.ok(storedRunCheck >= 0, "Stored-run recovery check is missing.");
+  assert.ok(viewportMatrix >= 0, "Responsive viewport matrix is missing.");
+  assert.ok(
+    storedRunCheck < viewportMatrix,
+    "Saved/new/reload pacing must be measured before high-DPR capture load accumulates.",
+  );
+});
 
 function readableCompactRailLayout(lineCount) {
   return {

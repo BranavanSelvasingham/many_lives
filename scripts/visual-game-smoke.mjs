@@ -10976,6 +10976,9 @@ async function main() {
     process.stdout.write("[many-lives] Checking fresh autoplay opt-out behavior...\n");
     freshAutoplayOptOut = await runFreshAutoplayOptOutCheck(session);
     process.stdout.write("[many-lives] Finished fresh autoplay opt-out behavior.\n");
+    process.stdout.write("[many-lives] Checking stored-run prompt behavior...\n");
+    storedGameChoice = await runStoredGameChoiceCheck(session);
+    process.stdout.write("[many-lives] Finished stored-run prompt behavior.\n");
     if (shouldRunResponsiveDecisionArtifactCheck(activeWebBase)) {
       process.stdout.write(
         "[many-lives] Checking responsive decision callback...\n",
@@ -11012,9 +11015,6 @@ async function main() {
     process.stdout.write(
       "[many-lives] Finished secondary landmark route identity.\n",
     );
-    process.stdout.write("[many-lives] Checking stored-run prompt behavior...\n");
-    storedGameChoice = await runStoredGameChoiceCheck(session);
-    process.stdout.write("[many-lives] Finished stored-run prompt behavior.\n");
     process.stdout.write("[many-lives] Checking interior camera behavior...\n");
     interiorCamera = await runInteriorCameraCheck(session);
     process.stdout.write("[many-lives] Finished interior camera behavior.\n");
