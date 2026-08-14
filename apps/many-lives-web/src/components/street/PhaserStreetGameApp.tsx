@@ -73,8 +73,10 @@ import {
 import { drawLocationLabels } from "@/components/street/streetLabels";
 import { drawDoors, drawProps } from "@/components/street/streetProps";
 import {
+  applySceneTextResolution,
   drawAnimatedSkyWeather,
   drawAnimatedVisualWater,
+  getSceneTextResolution,
   renderAuthoredVisualScene,
   visualSceneTextureKey,
 } from "@/components/street/streetVisualSceneRenderer";
@@ -3249,6 +3251,76 @@ function createMapAgencyLabel(
   return label;
 }
 
+type RuntimeLabelResolutionKind =
+  | "agency"
+  | "interior"
+  | "landmark"
+  | "map"
+  | "npc"
+  | "rowan";
+
+function syncRuntimeLabelResolution(
+  objects: RuntimeObjects,
+  runtimeState: RuntimeState,
+) {
+  const expectedResolution = getSceneTextResolution(runtimeState.renderScale);
+  const groups: {
+    kind: RuntimeLabelResolutionKind;
+    targets: PhaserType.GameObjects.GameObject[];
+  }[] = [
+    {
+      kind: "agency",
+      targets: [objects.agencyIntentText, objects.agencyTargetText],
+    },
+    { kind: "landmark", targets: objects.assetStructureNodes },
+    {
+      kind: runtimeState.indices.activeSpace ? "interior" : "map",
+      targets: objects.mapLabels,
+    },
+    {
+      kind: "npc",
+      targets: [...objects.npcMarkers.values()].map((marker) => marker.label),
+    },
+    { kind: "rowan", targets: [objects.playerTitle] },
+  ];
+  const labels = groups.flatMap(({ kind, targets }) =>
+    applySceneTextResolution(targets, runtimeState.renderScale).map(
+      (textNode) => ({
+        displayHeight: Number(textNode.displayHeight.toFixed(2)),
+        displayWidth: Number(textNode.displayWidth.toFixed(2)),
+        kind,
+        logicalHeight: Number(textNode.height.toFixed(2)),
+        logicalWidth: Number(textNode.width.toFixed(2)),
+        resolution: Number(textNode.style.resolution.toFixed(3)),
+        sourceResolution: Number(
+          textNode.frame.source.resolution.toFixed(3),
+        ),
+        text: textNode.text,
+        textureHeight: textNode.canvas.height,
+        textureWidth: textNode.canvas.width,
+      }),
+    ),
+  );
+  const countsByKind = labels.reduce<Record<string, number>>(
+    (counts, label) => {
+      counts[label.kind] = (counts[label.kind] ?? 0) + 1;
+      return counts;
+    },
+    {},
+  );
+  const probe = objects.overlayDom.querySelector<HTMLScriptElement>(
+    "#ml-browser-label-resolution-probe",
+  );
+  if (probe) {
+    probe.textContent = JSON.stringify({
+      countsByKind,
+      expectedResolution,
+      labels,
+      renderScale: Number(runtimeState.renderScale.toFixed(3)),
+    }).replace(/</g, "\\u003c");
+  }
+}
+
 function bindOverlayEvents(
   root: HTMLDivElement,
   runtimeState: RuntimeState,
@@ -3521,6 +3593,7 @@ function renderStaticScene(
       : game?.map,
   );
   if (!game) {
+    syncRuntimeLabelResolution(objects, runtimeState);
     return;
   }
 
@@ -3531,6 +3604,7 @@ function renderStaticScene(
       scene,
       runtimeState.indices.activeSpace,
     );
+    syncRuntimeLabelResolution(objects, runtimeState);
     return;
   }
 
@@ -3546,6 +3620,7 @@ function renderStaticScene(
       runtimeState.indices,
       runtimeState.indices.visualScene,
     );
+    syncRuntimeLabelResolution(objects, runtimeState);
     return;
   }
 
@@ -3570,6 +3645,7 @@ function renderStaticScene(
     runtimeState.indices,
     null,
   );
+  syncRuntimeLabelResolution(objects, runtimeState);
 }
 
 function renderInteriorSpace(
@@ -5441,6 +5517,7 @@ function renderOverlay(objects: RuntimeObjects, runtimeState: RuntimeState) {
   root.innerHTML = buildOverlayHtml(runtimeState);
   restoreOverlayRenderState(root, overlayState);
   syncCommandRailDiagnostics(root);
+  syncRuntimeLabelResolution(objects, runtimeState);
   installStreetProbeAccessor(root);
 }
 
@@ -5499,6 +5576,17 @@ function installStreetProbeAccessor(root: HTMLDivElement) {
         : payload.movement;
     } catch {
       // Keep the snapshot-level movement payload if the live probe is absent.
+    }
+
+    const labelResolutionScript = root.querySelector<HTMLScriptElement>(
+      "#ml-browser-label-resolution-probe",
+    );
+    try {
+      payload.labelResolution = labelResolutionScript?.textContent
+        ? JSON.parse(labelResolutionScript.textContent)
+        : null;
+    } catch {
+      payload.labelResolution = null;
     }
 
     const rectFor = (element: Element | null) => {
@@ -5881,6 +5969,8 @@ function syncNpcMarkerObjects(
     });
     objects.npcMarkers.set(npc.id, marker);
   }
+
+  syncRuntimeLabelResolution(objects, runtimeState);
 
   if (!game) {
     return;
@@ -9135,6 +9225,7 @@ function buildOverlayHtml(runtimeState: RuntimeState) {
                 browserMovementDiagnostics,
               ).replace(/</g, "\\u003c")}</script>
               <script id="ml-browser-map-agency-probe" type="application/json">null</script>
+              <script id="ml-browser-label-resolution-probe" type="application/json">null</script>
               <script id="ml-browser-visual-hierarchy-probe" type="application/json">${browserVisualHierarchyProbeJson}</script>
               <script id="ml-browser-npc-presence-probe" type="application/json">${npcPresenceProbeJson}</script>
               <script id="ml-browser-camera-probe" type="application/json">{}</script>
@@ -10449,6 +10540,7 @@ function syncRuntimeRenderScale(
   const nextViewport = getRuntimeViewportSize(runtimeState);
   objects.scene.scale.resize(nextViewport.width, nextViewport.height);
   objects.scene.scale.setZoom(1 / nextRenderScale);
+  syncRuntimeLabelResolution(objects, runtimeState);
   return true;
 }
 

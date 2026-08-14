@@ -77,6 +77,54 @@ export function visualSceneTextureKey(sceneId: string) {
   return `visual-scene-${sceneId}-reference`;
 }
 
+export function getSceneTextResolution(renderScale: number) {
+  if (!Number.isFinite(renderScale)) {
+    return 1;
+  }
+
+  return Number(Math.min(Math.max(renderScale, 1), 6).toFixed(3));
+}
+
+export function applySceneTextResolution(
+  targets: readonly PhaserType.GameObjects.GameObject[],
+  renderScale: number,
+) {
+  const resolution = getSceneTextResolution(renderScale);
+  const textNodes: PhaserType.GameObjects.Text[] = [];
+  const visited = new Set<PhaserType.GameObjects.GameObject>();
+
+  const visit = (target: PhaserType.GameObjects.GameObject) => {
+    if (visited.has(target)) {
+      return;
+    }
+    visited.add(target);
+
+    if (target.type === "Text") {
+      const textNode = target as PhaserType.GameObjects.Text;
+      if (Math.abs(textNode.style.resolution - resolution) > 0.001) {
+        textNode.setResolution(resolution);
+      }
+      textNode.frame.source.resolution = resolution;
+      textNodes.push(textNode);
+    }
+
+    const children = (target as PhaserType.GameObjects.GameObject & {
+      list?: PhaserType.GameObjects.GameObject[];
+    }).list;
+    if (Array.isArray(children)) {
+      for (const child of children) {
+        visit(child);
+      }
+    }
+  };
+
+  for (const target of targets) {
+    visit(target);
+  }
+
+  return textNodes;
+}
+
 export function renderAuthoredVisualScene(
   objects: AuthoredVisualSceneObjects,
   visualScene: VisualScene,

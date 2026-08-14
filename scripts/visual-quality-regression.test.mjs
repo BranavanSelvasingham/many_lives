@@ -9,6 +9,7 @@ import {
 import {
   assertCollapsedRailCopyReadable,
   assertDecisionSourceHeaderReadable,
+  assertSceneLabelResolution,
 } from "./visual-game-smoke.mjs";
 
 const compactTallViewport = { height: 1041, width: 669 };
@@ -30,6 +31,109 @@ const overlayStylesSource = readFileSync(
   ),
   "utf8",
 );
+const streetAppSource = readFileSync(
+  new URL(
+    "../apps/many-lives-web/src/components/street/PhaserStreetGameApp.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const streetVisualSceneRendererSource = readFileSync(
+  new URL(
+    "../apps/many-lives-web/src/components/street/streetVisualSceneRenderer.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
+
+function highDprLabelResolutionPage(resolution = 2.7) {
+  const kinds = ["agency", "landmark", "map", "npc", "rowan"];
+  return {
+    labelResolution: {
+      countsByKind: Object.fromEntries(kinds.map((kind) => [kind, 1])),
+      expectedResolution: resolution,
+      labels: kinds.map((kind) => ({
+        displayHeight: 12,
+        displayWidth: 48,
+        kind,
+        logicalHeight: 12,
+        logicalWidth: 48,
+        resolution,
+        sourceResolution: resolution,
+        text: kind,
+        textureHeight: Math.ceil(12 * resolution),
+        textureWidth: Math.ceil(48 * resolution),
+      })),
+      renderScale: resolution,
+    },
+  };
+}
+
+test("VF-15 high-DPR label texture contract accepts shared runtime resolution", () => {
+  assert.doesNotThrow(() =>
+    assertSceneLabelResolution(
+      highDprLabelResolutionPage(),
+      { deviceScaleFactor: 2, height: 1041, width: 669 },
+      "VF-15 control",
+      ["agency", "landmark", "map", "npc", "rowan"],
+    ),
+  );
+});
+
+test("VF-15 high-DPR label texture contract rejects Phaser default resolution", () => {
+  const page = highDprLabelResolutionPage();
+  page.labelResolution.labels[2].resolution = 1;
+  page.labelResolution.labels[2].textureHeight = 12;
+  page.labelResolution.labels[2].textureWidth = 48;
+  assert.throws(
+    () =>
+      assertSceneLabelResolution(
+        page,
+        { deviceScaleFactor: 2, height: 1041, width: 669 },
+        "VF-15 degraded",
+        ["agency", "landmark", "map", "npc", "rowan"],
+      ),
+    /uses resolution 1, expected 2\.7/,
+  );
+});
+
+test("VF-15 high-DPR label texture contract rejects enlarged source frames", () => {
+  const page = highDprLabelResolutionPage();
+  page.labelResolution.labels[1].sourceResolution = 1;
+  assert.throws(
+    () =>
+      assertSceneLabelResolution(
+        page,
+        { deviceScaleFactor: 2, height: 1041, width: 669 },
+        "VF-15 enlarged",
+        ["agency", "landmark", "map", "npc", "rowan"],
+      ),
+    /would enlarge the label in world space/,
+  );
+});
+
+test("VF-15 runtime applies shared resolution after creation and scale changes", () => {
+  assert.match(
+    streetVisualSceneRendererSource,
+    /export function applySceneTextResolution/,
+  );
+  assert.match(
+    streetVisualSceneRendererSource,
+    /textNode\.setResolution\(resolution\)/,
+  );
+  assert.match(
+    streetVisualSceneRendererSource,
+    /textNode\.frame\.source\.resolution = resolution/,
+  );
+  assert.match(
+    streetAppSource,
+    /function syncRuntimeLabelResolution/,
+  );
+  assert.match(
+    streetAppSource,
+    /objects\.scene\.scale\.setZoom\(1 \/ nextRenderScale\);\s+syncRuntimeLabelResolution\(objects, runtimeState\);/,
+  );
+});
 
 test("pacing-sensitive saved-run recovery precedes the heavy viewport matrix", () => {
   const storedRunCheck = visualSmokeSource.indexOf(

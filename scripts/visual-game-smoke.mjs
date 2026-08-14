@@ -1364,6 +1364,16 @@ class CdpSession {
           return null;
         }
       })();
+      const labelResolution = (() => {
+        const probe = document.querySelector(
+          "#ml-browser-label-resolution-probe",
+        );
+        try {
+          return probe?.textContent ? JSON.parse(probe.textContent) : null;
+        } catch {
+          return null;
+        }
+      })();
       const sceneVisibleFraction = (() => {
         const scene = cameraProbe?.sceneViewportCss;
         if (!scene || scene.width <= 0 || scene.height <= 0) {
@@ -1562,6 +1572,7 @@ class CdpSession {
         devicePixelRatio: window.devicePixelRatio,
         cameraActiveSpaceId: cameraProbe?.activeSpaceId ?? null,
         cameraActiveSpaceKind: cameraProbe?.activeSpaceKind ?? null,
+        labelResolution,
         sceneVisibleFraction,
         sceneViewportCss: cameraProbe?.sceneViewportCss ?? null,
         npcPresence,
@@ -1755,7 +1766,7 @@ class CdpSession {
     })()`);
   }
 
-  async wheelMap({ at, deltaX = 0, deltaY = 0 }) {
+  async wheelMap({ at, deltaX = 0, deltaY = 0, modifiers = 0 }) {
     await this.send("Input.dispatchMouseEvent", {
       button: "none",
       type: "mouseMoved",
@@ -1765,6 +1776,7 @@ class CdpSession {
     await this.send("Input.dispatchMouseEvent", {
       deltaX,
       deltaY,
+      modifiers,
       type: "mouseWheel",
       x: at.x,
       y: at.y,
@@ -7908,6 +7920,68 @@ export function assertCollapsedRailCopyReadable(page, viewport, label) {
   }
 }
 
+export function assertSceneLabelResolution(
+  page,
+  viewport,
+  label,
+  requiredKinds = [],
+) {
+  const probe = page.labelResolution;
+  assert.ok(probe, `${label}: missing Phaser label-resolution probe.`);
+  assert.ok(
+    Number.isFinite(probe.renderScale) && probe.renderScale >= 1,
+    `${label}: invalid runtime render scale ${probe.renderScale}.`,
+  );
+  assert.ok(
+    Number.isFinite(probe.expectedResolution) &&
+      Math.abs(probe.expectedResolution - probe.renderScale) <= 0.001,
+    `${label}: expected Phaser text resolution does not track the runtime render scale: ${JSON.stringify(probe)}.`,
+  );
+  if ((viewport.deviceScaleFactor ?? 1) > 1) {
+    assert.ok(
+      probe.expectedResolution > 1,
+      `${label}: high-DPR labels reverted to Phaser's default resolution 1.`,
+    );
+  }
+
+  assert.ok(
+    Array.isArray(probe.labels) && probe.labels.length > 0,
+    `${label}: no scene-bound Phaser labels were reported.`,
+  );
+  for (const kind of requiredKinds) {
+    assert.ok(
+      (probe.countsByKind?.[kind] ?? 0) > 0,
+      `${label}: missing ${kind} label-resolution coverage: ${JSON.stringify(probe.countsByKind)}.`,
+    );
+  }
+
+  for (const sceneLabel of probe.labels) {
+    assert.ok(
+      Math.abs(sceneLabel.resolution - probe.expectedResolution) <= 0.001,
+      `${label}: ${sceneLabel.kind} label ${JSON.stringify(sceneLabel.text)} uses resolution ${sceneLabel.resolution}, expected ${probe.expectedResolution}.`,
+    );
+    assert.ok(
+      Math.abs(sceneLabel.sourceResolution - probe.expectedResolution) <=
+        0.001,
+      `${label}: ${sceneLabel.kind} label ${JSON.stringify(sceneLabel.text)} renders source resolution ${sceneLabel.sourceResolution}, expected ${probe.expectedResolution}; this would enlarge the label in world space.`,
+    );
+    assert.ok(
+      Math.abs(sceneLabel.displayWidth - sceneLabel.logicalWidth) <= 0.01 &&
+        Math.abs(sceneLabel.displayHeight - sceneLabel.logicalHeight) <= 0.01,
+      `${label}: ${sceneLabel.kind} label ${JSON.stringify(sceneLabel.text)} changed logical display bounds while increasing texture density: ${JSON.stringify(sceneLabel)}.`,
+    );
+    if (sceneLabel.logicalWidth > 0 && sceneLabel.logicalHeight > 0) {
+      assert.ok(
+        sceneLabel.textureWidth >=
+          sceneLabel.logicalWidth * sceneLabel.resolution - 2 &&
+          sceneLabel.textureHeight >=
+            sceneLabel.logicalHeight * sceneLabel.resolution - 2,
+        `${label}: ${sceneLabel.kind} label ${JSON.stringify(sceneLabel.text)} does not expose a high-resolution internal texture: ${JSON.stringify(sceneLabel)}.`,
+      );
+    }
+  }
+}
+
 function assertSceneVisibilityGeometry(
   page,
   viewport,
@@ -9025,6 +9099,12 @@ async function runViewportCheck(session, viewport) {
       `${viewport.name}: expected DPR ${viewport.deviceScaleFactor}, observed ${page.devicePixelRatio}.`,
     );
   }
+  assertSceneLabelResolution(page, viewport, `${viewport.name} initial`, [
+    "agency",
+    "landmark",
+    "npc",
+    "rowan",
+  ]);
   assert.equal(page.title, "Many Lives", `${viewport.name}: wrong page title.`);
   assert.equal(
     new URL(page.url).origin,
@@ -9724,9 +9804,13 @@ async function runViewportCheck(session, viewport) {
     }
   }
 
+  const highDprZoomLabelResolution =
+    await assertHighDprZoomLabelResolution(session, viewport);
+
   return {
     eastWaterfrontCoverage,
     eventCues: browserProbe.visualEventCues ?? [],
+    highDprZoomLabelResolution,
     mapAgency,
     page,
     morrowYardScreenshotPath,
@@ -9762,6 +9846,56 @@ async function runViewportCheck(session, viewport) {
     expandedRailScreenshotPath,
     expandedDecisionArtifact,
     westPanScreenshotPath,
+  };
+}
+
+async function assertHighDprZoomLabelResolution(session, viewport) {
+  if ((viewport.deviceScaleFactor ?? 1) <= 1) {
+    return null;
+  }
+
+  const before = await session.inspectPage();
+  assertSceneLabelResolution(before, viewport, `${viewport.name} before zoom`, [
+    "agency",
+    "landmark",
+    "npc",
+    "rowan",
+  ]);
+  const sceneViewport = before.sceneViewportCss;
+  assert.ok(
+    sceneViewport,
+    `${viewport.name}: missing scene viewport before high-DPR zoom check.`,
+  );
+  await session.wheelMap({
+    at: {
+      x: sceneViewport.x + sceneViewport.width / 2,
+      y: sceneViewport.y + sceneViewport.height / 2,
+    },
+    deltaY: -120,
+    modifiers: 2,
+  });
+
+  const after = await waitFor(
+    async () => {
+      const current = await session.inspectPage();
+      return current.labelResolution?.expectedResolution >
+        before.labelResolution.expectedResolution + 0.01
+        ? current
+        : false;
+    },
+    CDP_WAIT_TIMEOUT_MS,
+    `${viewport.name}: runtime render scale did not increase after the high-DPR zoom gesture.`,
+  );
+  assertSceneLabelResolution(after, viewport, `${viewport.name} after zoom`, [
+    "agency",
+    "landmark",
+    "npc",
+    "rowan",
+  ]);
+
+  return {
+    after: after.labelResolution,
+    before: before.labelResolution,
   };
 }
 
@@ -10585,6 +10719,12 @@ async function captureAuthoredInteriorIdentity(
   );
 
   const page = await waitForVisualHierarchyPage(session, label);
+  assertSceneLabelResolution(page, viewport, label, [
+    "agency",
+    "interior",
+    "npc",
+    "rowan",
+  ]);
   assertOverlayGeometry(
     page,
     viewport,
