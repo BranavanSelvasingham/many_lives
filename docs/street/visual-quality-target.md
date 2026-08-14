@@ -52,7 +52,7 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
 | `VQ-07` | Responsive composition and map primacy | `VERIFIED` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
-| `VQ-08` | Labels, cues, and scene-to-rail balance | `CANDIDATE` | Idle, conversation, route, action, and consequence screenshots show crisp high-DPR canvas labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
+| `VQ-08` | Labels, cues, and scene-to-rail balance | `VERIFIED` | Idle, conversation, route, action, and consequence screenshots show crisp high-DPR canvas labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `VERIFIED` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
 | `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 | `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
@@ -63,22 +63,41 @@ They are not grandfathered into `VERIFIED`.
 
 ### Current Review Finding
 
-- `VF-15` (`MEDIUM`, `CANDIDATE`): exact-production review on
+- `VF-15` (`MEDIUM`, `VERIFIED`): exact-production review on
   `44adfdfa970d1310cf355b0ae01e66ec9ab87d81` found landmark, interior,
   Rowan, and NPC canvas labels visibly softer and more pixelated than the DOM
   HUD at high DPR. The clearest evidence is
   `/private/tmp/manylives-44adfdf-review-20260814-1412/interior-camera.png` and
   `/private/tmp/manylives-44adfdf-review-20260814-1412/codex-retina-tall-rail-expanded.png`.
   Rawls (`01a000a6-b5b5-7360-8d1b-fe5004799f35`) completed the shared Phaser
-  label-resolution path and its regression coverage. The matched local
-  candidate at `/private/tmp/manylives-vf15-candidate-r3-20260814` passed all
-  ten visual profiles, all 23 human-review shots, and runtime density checks
-  before and after high-DPR zoom without changing label bounds. Production
-  verification still requires the same exterior and interior surfaces on the
-  exact deployed commit, with no regression to label attachment, cue restraint,
-  actor scale, map primacy, camera traversal, or fresh/saved/autoplay behavior.
+  label-resolution path and its regression coverage. Exact deployed commit
+  `2a4d92d65c543143f82a9063bfe34eecbf546dc1` passed all ten visual
+  profiles, all 23 human-review shots, and runtime density checks before and
+  after high-DPR zoom without changing label bounds. Matched exterior and
+  interior evidence shows cleaner text edges with no regression to label
+  attachment, cue restraint, actor scale, map primacy, camera traversal, or
+  fresh/saved/autoplay behavior.
 
 ### Verified Production Evidence
+
+- `VQ-08` and `VF-15` were verified on production commit
+  `2a4d92d65c543143f82a9063bfe34eecbf546dc1` against exact production
+  baseline `44adfdfa970d1310cf355b0ae01e66ec9ab87d81`. Phaser label
+  textures now track runtime render scale and high-DPR zoom while their source
+  resolution preserves authored world-space bounds. All ten visual profiles,
+  all 23 human-reviewed shots, full tests and production build, exact-SHA CI,
+  deploy, production health, saved/resumed/new/fresh autoplay smoke, and a
+  successful live OpenAI planner trace passed. The first CI attempt exposed one
+  transient screencast frame-coherence race after successful gameplay progress;
+  the exact-SHA gameplay rerun passed without weakening the gate. Baseline
+  captures are at `/private/tmp/manylives-44adfdf-review-20260814-1412`;
+  deployed captures are at
+  `/private/tmp/manylives-2a4d92d-live-visual-20260814`; the matched review is
+  at `/private/tmp/manylives-2a4d92d-live-review-verified-20260814`; shown
+  comparisons are at `/private/tmp/manylives-2a4d92d-comparisons-20260814`;
+  live smoke is at
+  `/private/tmp/manylives-2a4d92d-live-harness-20260814/live-smoke`. GitHub
+  Actions run: `31813376233`, attempt 2.
 
 - `VQ-07` and `VQ-08` were verified on production commit
   `766ca38395600af8966acaaa7fd9c2c5e36040c2` against exact production
