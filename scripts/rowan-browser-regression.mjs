@@ -121,6 +121,7 @@ const AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS = 125;
 const AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME = 2;
 const AUTOPLAY_ROUTE_SCREENCAST_EVERY_NTH_FRAME = 1;
 const AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS = 250;
+const AUTOPLAY_ROUTE_DENSE_CAPTURE_GRACE_MS = 1_000;
 const AUTOPLAY_SCREENCAST_MAX_HEIGHT = 375;
 const AUTOPLAY_SCREENCAST_MAX_WIDTH = 819;
 const AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS = Number(
@@ -5630,7 +5631,7 @@ class CdpSession {
       frameTimeoutMs,
       Math.max(
         AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS,
-        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS * 4,
+        AUTOPLAY_ROUTE_DENSE_CAPTURE_GRACE_MS,
       ),
     );
   }
@@ -6782,9 +6783,8 @@ async function launchBrowserSessionAttempt(url, attempt) {
     [
       "--headless=new",
       "--no-sandbox",
-      ...(AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK
-        ? ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"]
-        : ["--disable-gpu"]),
+      "--enable-unsafe-swiftshader",
+      "--use-angle=swiftshader",
       "--disable-dev-shm-usage",
       "--disable-background-timer-throttling",
       "--disable-backgrounding-occluded-windows",

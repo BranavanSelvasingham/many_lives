@@ -1096,8 +1096,9 @@ test("forced route canvas validation is opt-in and keeps real WebGL available", 
   );
   assert.match(
     source,
-    /AUTOPLAY_TEST_FORCE_ROUTE_CANVAS_FALLBACK[\s\S]*?"--enable-unsafe-swiftshader"[\s\S]*?"--use-angle=swiftshader"[\s\S]*?: \["--disable-gpu"\]/,
+    /"--enable-unsafe-swiftshader"[\s\S]*?"--use-angle=swiftshader"/,
   );
+  assert.doesNotMatch(source, /"--disable-gpu"/);
   assert.match(
     source,
     /forced-route-canvas-validation\.json/,
@@ -3258,6 +3259,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "AUTOPLAY_SCREENCAST_EVERY_NTH_FRAME",
     "AUTOPLAY_ROUTE_SCREENCAST_EVERY_NTH_FRAME",
     "AUTOPLAY_ROUTE_SCREENCAST_MIN_FRAME_TIMEOUT_MS",
+    "AUTOPLAY_ROUTE_DENSE_CAPTURE_GRACE_MS",
     "AUTOPLAY_SCREENCAST_MAX_HEIGHT",
     "AUTOPLAY_SCREENCAST_MAX_WIDTH",
     "AUTOPLAY_SCREENCAST_FRAME_TIMEOUT_MS",
@@ -3312,6 +3314,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     2,
     1,
     25,
+    1_000,
     375,
     819,
     60,
@@ -6264,6 +6267,13 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
         return {};
       };
       await routeSession.startAutoplayScreencast();
+      assert.equal(routeSession.autoplayDenseOpeningCaptureTimeoutMs(100), 0);
+      assert.equal(routeSession.autoplayDenseOpeningCaptureTimeoutMs(800), 800);
+      assert.equal(
+        routeSession.autoplayDenseOpeningCaptureTimeoutMs(2_500),
+        1_000,
+        "A constrained runner gets a full second for a fresh rendered frame before the heavier proactive readback.",
+      );
       routeSession.autoplayRouteArchiveNeedsProactiveOpeningCapture = () =>
         false;
       const startedAt = routeSession.screencast.startedAtEpochMs;
