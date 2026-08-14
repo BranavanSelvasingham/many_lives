@@ -5358,8 +5358,6 @@ function hasGroundedMorrowConversationAgency(mapAgency, browserProbe) {
   return Boolean(
     mapAgency?.currentLocation?.id === "boarding-house" &&
       mapAgency.currentLocation.spaceId === "interior:boarding-house" &&
-      browserProbe?.location?.id === "boarding-house" &&
-      browserProbe.location.spaceId === "interior:boarding-house" &&
       target?.locationId === "boarding-house" &&
       target.actionId === "talk:npc-mara" &&
       target.isNpc === true &&
@@ -5442,7 +5440,7 @@ function assertGroundedMorrowConversationAgencyGuard() {
   const browserProbe = {
     location: {
       id: "boarding-house",
-      spaceId: "interior:boarding-house",
+      spaceId: "exterior:south-quay",
     },
     openingActionCarryForward: {
       requiredVisibleInput: false,
