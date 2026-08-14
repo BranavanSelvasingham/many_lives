@@ -25,6 +25,14 @@ const advanceObjectiveSource = source.slice(
     source.indexOf("  const handleAdvanceObjective = useCallback("),
   ),
 );
+const runWithBusySource = source.slice(
+  source.indexOf("  const runWithBusy = useCallback("),
+  source.indexOf("  const handleAction = useCallback("),
+);
+const conversationAutostartSource = source.slice(
+  source.indexOf("function maybeAutostartConversation("),
+  source.indexOf("function createCameraEdgeCueState("),
+);
 const optimisticCleanupCalls = [
   "setOptimisticPlayerPosition(",
   "setOptimisticPlayerLocationId(",
@@ -112,6 +120,33 @@ test("autoplay only consumes an accepted visibly advancing response", () => {
   assert.match(
     advanceObjectiveSource,
     /return requestSucceeded && madeVisibleProgress;/,
+  );
+});
+
+test("client mutations acquire the busy guard before React can render", () => {
+  assert.match(
+    runWithBusySource,
+    /if \(busyLabelRef\.current\) \{\s*return false;\s*\}/,
+  );
+  assert.ok(
+    runWithBusySource.indexOf("busyLabelRef.current = label;") <
+      runWithBusySource.indexOf("setBusyLabel(label);"),
+    "the synchronous mutation guard must be acquired before state dispatch",
+  );
+  assert.match(
+    runWithBusySource,
+    /finally \{\s*busyLabelRef\.current = null;\s*setBusyLabel\(null\);/,
+  );
+});
+
+test("autonomy conversations only start through the objective command path", () => {
+  assert.match(
+    conversationAutostartSource,
+    /!autoStartPlan \|\| autoStartPlan\.source === "autonomy"/,
+  );
+  assert.match(
+    conversationAutostartSource,
+    /nextAutoStartPlan\.source === "autonomy"/,
   );
 });
 

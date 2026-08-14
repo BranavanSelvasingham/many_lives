@@ -1615,6 +1615,11 @@ export function PhaserStreetGameApp() {
 
   const runWithBusy = useCallback(
     async (label: string, callback: () => Promise<void>) => {
+      if (busyLabelRef.current) {
+        return false;
+      }
+
+      busyLabelRef.current = label;
       setError(null);
       setBusyLabel(label);
 
@@ -1630,6 +1635,7 @@ export function PhaserStreetGameApp() {
         );
         return false;
       } finally {
+        busyLabelRef.current = null;
         setBusyLabel(null);
       }
     },
@@ -9503,7 +9509,9 @@ function maybeAutostartConversation(
     runtimeState.autoStartedConversationKey = null;
   }
 
-  if (!selectedNpc || !autoStartPlan) {
+  // Autonomy-owned talk beats must run through advanceObjective so the
+  // simulator-selected speech and planning trace remain authoritative.
+  if (!selectedNpc || !autoStartPlan || autoStartPlan.source === "autonomy") {
     clearConversationAutostartTimer(runtimeState);
     return;
   }
@@ -9543,6 +9551,7 @@ function maybeAutostartConversation(
         activeGame,
       ) ||
       !nextAutoStartPlan ||
+      nextAutoStartPlan.source === "autonomy" ||
       nextAutoStartPlan.autoStartKey !== autoStartKey ||
       !activeSelectedNpc ||
       activeSelectedNpc.id !== selectedNpc.id ||
