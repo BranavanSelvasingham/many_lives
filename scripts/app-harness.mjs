@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 
+import { inspectImageArtifact } from "./harness-image-artifact.mjs";
+
 const ROOT = process.cwd();
 const STARTED_AT = new Date();
 const OUTPUT_DIR =
@@ -33,6 +35,12 @@ const COMMAND_COMPLETION_GRACE_MS = Number(
 const COMMAND_COMPLETION_POLL_MS = Number(
   process.env.MANY_LIVES_APP_HARNESS_COMPLETION_POLL_MS ?? "1000",
 );
+const GAMEPLAY_SCREENSHOT_EXPECTATIONS = {
+  format: "png",
+  minEntropy: 3.5,
+  minHeight: 350,
+  minWidth: 800,
+};
 
 const profiles = new Set(["quick", "full", "ci"]);
 
@@ -609,7 +617,7 @@ async function assertArtifacts(logLine, artifacts) {
       throw new Error(`Missing harness artifact: ${artifact.filePath}`);
     }
 
-    if (fileStat.size < artifact.minBytes) {
+    if (fileStat.size < (artifact.minBytes ?? 1)) {
       throw new Error(
         `Harness artifact is too small: ${artifact.filePath} (${fileStat.size} bytes)`,
       );
@@ -619,8 +627,16 @@ async function assertArtifacts(logLine, artifacts) {
       JSON.parse(await readFile(artifact.filePath, "utf8"));
     }
 
+    const imageEvidence = artifact.image
+      ? await inspectImageArtifact(artifact.filePath, artifact.image)
+      : null;
+
     logLine(
-      `[many-lives:harness] artifact ok: ${relativePath} (${fileStat.size} bytes)`,
+      `[many-lives:harness] artifact ok: ${relativePath} (${fileStat.size} bytes${
+        imageEvidence
+          ? `, ${imageEvidence.width}x${imageEvidence.height}, entropy ${imageEvidence.entropy.toFixed(3)}`
+          : ""
+      })`,
     );
   }
 }
@@ -791,22 +807,22 @@ async function assertRowanBrowserArtifacts(logLine) {
     [
       ...(inhabit.moments ?? []).map((moment) => ({
         filePath: moment.screenshot,
-        minBytes: 120_000,
+        image: GAMEPLAY_SCREENSHOT_EXPECTATIONS,
       })),
       ...(summary.evidence?.screenshots ?? []).map((screenshot) => ({
         filePath:
           typeof screenshot === "string"
             ? screenshot
             : screenshot.path ?? screenshot.screenshot,
-        minBytes: 120_000,
+        image: GAMEPLAY_SCREENSHOT_EXPECTATIONS,
       })),
       ...(inhabit.panelChecks ?? []).map((check) => ({
         filePath: check.screenshot,
-        minBytes: 120_000,
+        image: GAMEPLAY_SCREENSHOT_EXPECTATIONS,
       })),
       {
         filePath: inhabit.cameraCheck?.screenshot,
-        minBytes: 120_000,
+        image: GAMEPLAY_SCREENSHOT_EXPECTATIONS,
       },
     ].filter((artifact) => artifact.filePath),
   );

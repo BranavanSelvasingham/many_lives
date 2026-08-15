@@ -85,6 +85,19 @@ They are not grandfathered into `VERIFIED`.
   evidence now carries the secondary-landmark comparison while every VQ row
   remains covered. The final contract passes at 22/22 distinct required shots.
 
+- `VF-18` (`MEDIUM`, `CANDIDATE`): exact-SHA GitHub Actions run
+  `31876309438` completed the Rowan Chrome regression with 46 gameplay
+  screenshots, 23 zero-click watch beats, route continuity, and durable world
+  change, then blocked deployment because one valid `819x375` Morrow House PNG
+  compressed to 92,186 bytes below a generic 120 KB artifact threshold.
+  Direct inspection found a complete, coherent frame with entropy 5.779. The
+  candidate replaces compressed byte size as the gameplay screenshot proxy
+  with decoded PNG format, minimum dimensions, and entropy checks, plus
+  fixtures proving that a detailed sub-100 KB frame passes while a same-size
+  blank frame fails. The full 13-stage harness passes with 46 screenshots
+  structurally validated and zero visible progression clicks at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786787056286`.
+
 - `VF-15` (`MEDIUM`, `VERIFIED`): exact-production review on
   `44adfdfa970d1310cf355b0ae01e66ec9ab87d81` found landmark, interior,
   Rowan, and NPC canvas labels visibly softer and more pixelated than the DOM
