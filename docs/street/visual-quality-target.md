@@ -63,6 +63,24 @@ They are not grandfathered into `VERIFIED`.
 
 ### Current Review Finding
 
+- `VF-19` (`MEDIUM`, `CANDIDATE`): exact-production Chrome review on
+  `a9fc717591a01b00b51eda91ea56b7afcd14cc49` reached Mara with an accepted
+  live dialogue response, but the visible planning artifact called the
+  simulator-selected follow-up a `Live recommendation` and attributed the
+  provider/model without the action-planner confidence required for that
+  provenance. The dialogue provider had interpreted the exchange; the
+  simulator, not the provider, selected and validated the conversation action.
+  The candidate preserves the accepted live provider attempt while classifying
+  the selected action as a non-advisory deterministic planner recommendation
+  backed by `conversation-resolution`. A focused recurrence test, the complete
+  13-stage harness, both three-to-five-minute zero-click trajectories, the
+  inhabit browser regression, production build, and 22-state visual contract
+  pass. Baseline failure evidence is at
+  `/private/tmp/manylives-a9fc717-heartbeat-20260815-rowan`; candidate harness
+  evidence is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786804235475`.
+  Production verification remains required before this finding is `VERIFIED`.
+
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
   and Mercer Repairs concentrated their identity at labels and perimeter props

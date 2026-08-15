@@ -364,6 +364,12 @@ class VagueThenGroundedMaraLiveAIProvider extends LiveDialogueAIProvider {
     input: StreetConversationInterpretationRequest,
   ) {
     this.interpretationRequests.push(input);
+    const runtime = input.game.aiRuntime;
+    if (runtime) {
+      runtime.tasks.interpretStreetConversation.successes += 1;
+      runtime.totalSuccesses += 1;
+      runtime.status = "live";
+    }
     return super.interpretStreetConversation(input);
   }
 }
@@ -2757,6 +2763,21 @@ describe("SimulationEngine street slice", () => {
       /Ada's Kettle & Lamp lunch work.*leaking Morrow Yard pump/i,
     );
     expect(world.aiRuntime?.totalFallbacks ?? 0).toBe(0);
+    expect(world.activeConversation?.planningTrace).toMatchObject({
+      providerAttempt: {
+        outcome: "accepted",
+        provider: "openai",
+      },
+      selectedRecommendation: {
+        accepted: true,
+        advisory: false,
+        sourceKind: "deterministic-planner",
+        validationStatus: "conversation-resolution",
+      },
+    });
+    expect(
+      world.activeConversation?.planningTrace?.selectedRecommendation?.provider,
+    ).toBeUndefined();
 
     world = await advanceUntil(
       engine,

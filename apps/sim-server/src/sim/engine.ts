@@ -1672,11 +1672,10 @@ function buildConversationPlanningTrace(input: {
     validation:
       "The simulator grounded this conversation action in the active local exchange.",
   };
-  const sourceKind = input.providerAttempt
-    ? input.providerAttempt.outcome === "accepted"
-      ? "live-llm"
-      : "deterministic-fallback"
-    : "deterministic-planner";
+  const sourceKind =
+    input.providerAttempt && input.providerAttempt.outcome !== "accepted"
+      ? "deterministic-fallback"
+      : "deterministic-planner";
   const inheritedAlternatives = (input.inherited?.considered ?? [])
     .filter((option) => option.status === "rejected")
     .slice(0, 3);
@@ -1723,10 +1722,8 @@ function buildConversationPlanningTrace(input: {
     selectedPressureLabel: input.objective.text,
     selectedRecommendation: {
       accepted: true,
-      advisory: sourceKind === "live-llm",
+      advisory: false,
       legalBackingSource: "conversation-resolution",
-      model: input.providerAttempt?.model,
-      provider: input.providerAttempt?.provider,
       rationale,
       sourceKind,
       validationSource: "conversation-resolution",
