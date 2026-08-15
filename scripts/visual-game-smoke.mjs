@@ -4745,7 +4745,7 @@ function assertOpeningPlayerLocationGeometry(browserProbe, viewportName) {
   );
 }
 
-function assertOpeningActionCarryForward(
+export function assertOpeningActionCarryForward(
   browserProbe,
   label,
   expectedStatuses = ["queued", "in_progress", "completed"],
@@ -5162,12 +5162,37 @@ function assertOpeningActionCarryForwardContractGuard() {
   );
 }
 
-function openingActionProgressEvidence(carryForward) {
-  return (carryForward?.completionEvidence ?? []).filter(
+function openingActionHasGroundedConversationPlan(carryForward) {
+  const supersededBy = carryForward?.supersededBy;
+  return Boolean(
+    carryForward?.status === "completed" &&
+      carryForward.phase === "superseded_by_autoplay_progress" &&
+      carryForward.requiredVisibleInput === false &&
+      carryForward.watchMode?.enabled &&
+      !carryForward.watchMode.frozen &&
+      carryForward.completionEvidence?.includes("entered-morrow-house") &&
+      typeof carryForward.currentLocationId === "string" &&
+      carryForward.currentLocationId.length > 0 &&
+      supersededBy?.mode === "conversation" &&
+      typeof supersededBy.npcId === "string" &&
+      supersededBy.npcId.length > 0 &&
+      supersededBy.locationId === carryForward.currentLocationId &&
+      supersededBy.targetLocationId === carryForward.currentLocationId &&
+      typeof supersededBy.label === "string" &&
+      /^Talk to\s+\S/.test(supersededBy.label)
+  );
+}
+
+export function openingActionProgressEvidence(carryForward) {
+  const evidence = (carryForward?.completionEvidence ?? []).filter(
     (entry) =>
       OPENING_AUTOPLAY_PROGRESS_EVIDENCE.has(entry) ||
       String(entry).startsWith("first-afternoon-tea-shift-"),
   );
+  if (openingActionHasGroundedConversationPlan(carryForward)) {
+    evidence.push("grounded-conversation-plan");
+  }
+  return evidence;
 }
 
 function openingActionHasAutoplayProgressed(browserProbe) {

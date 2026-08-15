@@ -7,12 +7,81 @@ import {
   createVisualQualityRegressionEvidence,
 } from "./visual-quality-regression.mjs";
 import {
+  assertOpeningActionCarryForward,
   assertCollapsedRailCopyReadable,
   assertDecisionSourceHeaderReadable,
   assertSceneLabelResolution,
+  openingActionProgressEvidence,
 } from "./visual-game-smoke.mjs";
 
 const compactTallViewport = { height: 1041, width: 669 };
+
+function queuedMaraConversationCarryForward(overrides = {}) {
+  return {
+    completionEvidence: ["entered-morrow-house", "route-progress"],
+    currentLocationId: "boarding-house",
+    phase: "superseded_by_autoplay_progress",
+    progressedBeyondOpening: true,
+    requiredVisibleInput: false,
+    selectedActionId: "enter:boarding-house",
+    status: "completed",
+    supersededBy: {
+      activeConversationNpcId: null,
+      actionId: null,
+      label: "Talk to Mara",
+      locationId: "boarding-house",
+      mode: "conversation",
+      npcId: "npc-mara",
+      targetLocationId: "boarding-house",
+    },
+    targetLocationId: "boarding-house",
+    watchMode: { autoplayEnabled: true, enabled: true, frozen: false },
+    ...overrides,
+  };
+}
+
+test("opening carry-forward accepts a grounded queued conversation after entry", () => {
+  const carryForward = queuedMaraConversationCarryForward();
+  assert.deepEqual(openingActionProgressEvidence(carryForward), [
+    "grounded-conversation-plan",
+  ]);
+  assert.doesNotThrow(() =>
+    assertOpeningActionCarryForward(
+      { openingActionCarryForward: carryForward },
+      "queued Mara conversation",
+      ["completed"],
+    ),
+  );
+});
+
+test("opening carry-forward rejects an ungrounded queued conversation", () => {
+  for (const carryForward of [
+    queuedMaraConversationCarryForward({
+      currentLocationId: "tea-house",
+    }),
+    queuedMaraConversationCarryForward({
+      watchMode: { autoplayEnabled: true, enabled: true, frozen: true },
+    }),
+    queuedMaraConversationCarryForward({
+      supersededBy: {
+        ...queuedMaraConversationCarryForward().supersededBy,
+        npcId: null,
+      },
+    }),
+  ]) {
+    assert.deepEqual(openingActionProgressEvidence(carryForward), []);
+    assert.throws(
+      () =>
+        assertOpeningActionCarryForward(
+          { openingActionCarryForward: carryForward },
+          "ungrounded queued conversation",
+          ["completed"],
+        ),
+      /missing concrete first-run progress evidence/,
+    );
+  }
+});
+
 const visualSmokeSource = readFileSync(
   new URL("./visual-game-smoke.mjs", import.meta.url),
   "utf8",
