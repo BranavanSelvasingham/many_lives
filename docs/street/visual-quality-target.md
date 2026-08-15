@@ -48,13 +48,13 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-01` | Core exterior landmarks: Morrow House, Kettle & Lamp, Quay Square | `VERIFIED` | Desktop, tablet, phone, and high-DPR screenshots show distinct silhouettes, materials, entrances, and props before labels. |
 | `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `VERIFIED` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
 | `VQ-03` | Morrow House interior | `VERIFIED` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clearly framed Rowan and relevant Mara, and unobscured portal/action areas. |
-| `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `CANDIDATE` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
+| `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
-| `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
+| `VQ-07` | Responsive composition and map primacy | `VERIFIED` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
 | `VQ-08` | Labels, cues, and scene-to-rail balance | `VERIFIED` | Idle, conversation, route, action, and consequence screenshots show crisp high-DPR canvas labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `VERIFIED` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
-| `VQ-10` | Visually assertive regression coverage | `CANDIDATE` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
+| `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 | `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
 | `VQ-12` | Exterior material depth, lighting, and palette cohesion | `VERIFIED` | Matched desktop, phone, compact-route, and high-DPR evidence separates roads, paving, facades, vegetation, and working-yard materials without flattening landmark identity or map primacy. |
 
@@ -63,7 +63,7 @@ They are not grandfathered into `VERIFIED`.
 
 ### Current Review Finding
 
-- `VF-16` (`MEDIUM`, `CANDIDATE`): exact-production review on
+- `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
   and Mercer Repairs concentrated their identity at labels and perimeter props
   while broad uniform center floors dominated desktop and phone framing. The
@@ -76,16 +76,24 @@ They are not grandfathered into `VERIFIED`.
   `VERIFIED_CANDIDATE`. Baseline evidence is at
   `/private/tmp/manylives-1dce8c9-vf16-baseline`; candidate evidence is at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786783535368/visual-game`;
-  matched review is at `/private/tmp/manylives-vf16-reviewed`.
+  matched review is at `/private/tmp/manylives-vf16-reviewed`. Exact deployed
+  commit `c5d04afe4a8939c2412bda4af74008ad47fd40ce` passed production health,
+  live fresh/saved/new/autoplay smoke, accepted OpenAI planner evidence, the
+  deployed visual smoke, and a 22/22 matched review. Deployed captures are at
+  `/private/tmp/manylives-c5d04af-live-visual-retry`; the matched production
+  packet and shown four-pair interior comparison are at
+  `/private/tmp/manylives-c5d04af-live-review`. GitHub Actions run:
+  `31878741279`.
 
-- `VF-17` (`LOW`, `CANDIDATE`): the same exact-production packet found
+- `VF-17` (`LOW`, `VERIFIED`): the same exact-production packet found
   `desktop.png` and `secondary-landmarks-desktop.png` byte-identical, so
   the 23-shot contract overstated independent visual coverage. The duplicate
   row is removed from the candidate contract; distinct Morrow Yard compact
   evidence now carries the secondary-landmark comparison while every VQ row
-  remains covered. The final contract passes at 22/22 distinct required shots.
+  remains covered. The final contract passes at 22/22 distinct required shots
+  on deployed commit `c5d04afe4a8939c2412bda4af74008ad47fd40ce`.
 
-- `VF-18` (`MEDIUM`, `CANDIDATE`): exact-SHA GitHub Actions run
+- `VF-18` (`MEDIUM`, `VERIFIED`): exact-SHA GitHub Actions run
   `31876309438` completed the Rowan Chrome regression with 46 gameplay
   screenshots, 23 zero-click watch beats, route continuity, and durable world
   change, then blocked deployment because one valid `819x375` Morrow House PNG
@@ -97,6 +105,8 @@ They are not grandfathered into `VERIFIED`.
   blank frame fails. The full 13-stage harness passes with 46 screenshots
   structurally validated and zero visible progression clicks at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786787056286`.
+  Follow-up exact-SHA run `31878741279` passed build, gameplay, visual, and
+  deploy with the structural artifact validator active.
 
 - `VF-15` (`MEDIUM`, `VERIFIED`): exact-production review on
   `44adfdfa970d1310cf355b0ae01e66ec9ab87d81` found landmark, interior,
