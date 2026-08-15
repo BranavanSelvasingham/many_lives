@@ -79,7 +79,26 @@ They are not grandfathered into `VERIFIED`.
   `/private/tmp/manylives-a9fc717-heartbeat-20260815-rowan`; candidate harness
   evidence is at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786804235475`.
-  Production verification remains required before this finding is `VERIFIED`.
+  Candidate commit `e7f78b73a513f9c62fcab19780c08ce2d6b94b78`
+  passed exact-SHA CI/deploy, live health, fresh/resume/new/autoplay smoke, and
+  a real accepted OpenAI planner trace. The production Chrome regression
+  cleared the original Mara provenance assertion before exposing `VF-20` in
+  the next state, so final production verification remains required.
+
+- `VF-20` (`MEDIUM`, `CANDIDATE`): the exact-production Chrome validation of
+  `e7f78b73a513f9c62fcab19780c08ce2d6b94b78` correctly observed a
+  low-confidence OpenAI action-planner attempt fall back to a complete,
+  simulator-validated deterministic recommendation at `exit-morrow-house`,
+  but the browser audit rejected it because its allowed source-kind set omitted
+  `deterministic-fallback`. Production API replay confirmed eight consecutive
+  complete provenance states, including the rejected provider attempt and
+  explicit fallback source, so this was a release-gate blind spot rather than
+  missing product state. The candidate admits the already-supported fallback
+  provenance and adds a source-contract regression that fails if the audit
+  drops it again. Failure evidence is at
+  `/private/tmp/manylives-e7f78b7-live-rowan`; live smoke is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786824861955`.
+  Exact-SHA CI/deploy and a complete production Chrome rerun remain required.
 
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp

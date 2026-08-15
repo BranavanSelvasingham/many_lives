@@ -9157,6 +9157,7 @@ function assertPlanningTracePayload(label, planningTrace) {
     "simulator-validated-wait",
   ]);
   const recommendationSourceKinds = new Set([
+    "deterministic-fallback",
     "deterministic-planner",
     "live-llm",
   ]);

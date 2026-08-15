@@ -8,6 +8,17 @@ const browserRegressionPath = new URL(
   import.meta.url,
 );
 const source = await readFile(browserRegressionPath, "utf8");
+const planningTraceAssertionStart = source.indexOf(
+  "function assertPlanningTracePayload(",
+);
+const planningTraceAssertionEnd = source.indexOf(
+  "\nfunction assertVisibleDecisionArtifactPayload(",
+  planningTraceAssertionStart + 1,
+);
+const planningTraceAssertionSource = source.slice(
+  planningTraceAssertionStart,
+  planningTraceAssertionEnd,
+);
 const visibleConversationInteractionStart = source.indexOf(
   "function isVisibleAutoplayConversationInteraction(",
 );
@@ -411,6 +422,17 @@ test("first-afternoon readability uses full app-visible dwell", () => {
   assert.match(
     assertionSource,
     /FIRST_AFTERNOON_MIN_VISIBLE_DWELL_MS/,
+  );
+});
+
+test("planner trace audit accepts explicit deterministic fallback provenance", () => {
+  assert.ok(
+    planningTraceAssertionStart >= 0 &&
+      planningTraceAssertionEnd > planningTraceAssertionStart,
+  );
+  assert.match(
+    planningTraceAssertionSource,
+    /recommendationSourceKinds[\s\S]*"deterministic-fallback"/,
   );
 });
 
