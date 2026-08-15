@@ -139,6 +139,7 @@ function buildSteps() {
       "tsx",
       "--test",
       "../many-lives-web/src/lib/street/overlayDomState.test.ts",
+      "../many-lives-web/src/lib/street/rowanPlayback.test.ts",
       "../../scripts/release-shell-regression.test.ts",
     ]),
     commandStep("web sim fallback test", "corepack", [

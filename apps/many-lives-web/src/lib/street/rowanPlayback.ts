@@ -1392,7 +1392,7 @@ export function isFirstAfternoonOpening(game: StreetGameState) {
   return Boolean(
     activeSpaceId === "street:south-quay" &&
       progress &&
-      progress.completed === 0 &&
+      game.rowanAutonomy?.actionId === "enter:boarding-house" &&
       !game.activeConversation &&
       !hasConversationHistory &&
       !game.firstAfternoon?.completionAcknowledgedAt &&
