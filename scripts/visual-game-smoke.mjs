@@ -278,6 +278,20 @@ const MORROW_HOUSE_ENTRY_RUNNER_WORLD_BOUNDS = {
   right: 381,
   top: 354,
 };
+const AUTHORED_INTERIOR_MATERIAL_WORLD_BOUNDS = {
+  "repair-stall": {
+    bottom: 367,
+    left: 259,
+    right: 416,
+    top: 138,
+  },
+  "tea-house": {
+    bottom: 388,
+    left: 353,
+    right: 439,
+    top: 150,
+  },
+};
 const MORROW_HOUSE_MARA_WORLD_EXTENTS = {
   halfHeight: 23,
   halfWidth: 17,
@@ -3489,8 +3503,131 @@ function assertBoardingHouseInteriorCompositionPixels(
   };
 }
 
+function assertInteriorMaterialDepthPixels(
+  image,
+  camera,
+  page,
+  viewport,
+  role,
+  label,
+) {
+  const worldBounds = AUTHORED_INTERIOR_MATERIAL_WORLD_BOUNDS[role];
+  assert.ok(
+    worldBounds,
+    `${label}: missing VF-16 material-zone world bounds for ${role}.`,
+  );
+  const topLeft = projectCameraWorldPoint(camera, {
+    x: worldBounds.left,
+    y: worldBounds.top,
+  });
+  const bottomRight = projectCameraWorldPoint(camera, {
+    x: worldBounds.right,
+    y: worldBounds.bottom,
+  });
+  const visible = getUnobscuredSceneBoundsAtX(
+    page,
+    (topLeft.x + bottomRight.x) / 2,
+  );
+  const sample = {
+    bottom: Math.min(bottomRight.y, visible.bottom),
+    left: Math.max(topLeft.x, visible.left),
+    right: Math.min(bottomRight.x, visible.right),
+    top: Math.max(topLeft.y, visible.top),
+  };
+  assert.ok(
+    sample.right - sample.left >= 88 && sample.bottom - sample.top >= 150,
+    `${label}: the VF-16 center-floor material zone lacks enough unobscured area for inspection: ${JSON.stringify({ sample, visible })}.`,
+  );
+
+  const scaleX = image.width / viewport.width;
+  const scaleY = image.height / viewport.height;
+  const sampleStep = Math.max(1, Math.floor(Math.min(scaleX, scaleY)));
+  let materialPixels = 0;
+  let sampledPixels = 0;
+  let transitions = 0;
+
+  for (
+    let sourceY = Math.floor(sample.top * scaleY);
+    sourceY < Math.ceil(sample.bottom * scaleY);
+    sourceY += sampleStep
+  ) {
+    let previousLuminance = null;
+    for (
+      let sourceX = Math.floor(sample.left * scaleX);
+      sourceX < Math.ceil(sample.right * scaleX);
+      sourceX += sampleStep
+    ) {
+      const offset = (sourceY * image.width + sourceX) * image.channels;
+      const red = image.pixels[offset];
+      const green = image.pixels[offset + 1] ?? red;
+      const blue = image.pixels[offset + 2] ?? red;
+      const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+      const hospitalityMaterial =
+        red >= 120 &&
+        red <= 170 &&
+        green >= 65 &&
+        green <= 112 &&
+        blue >= 50 &&
+        blue <= 92 &&
+        red >= green * 1.25;
+      const workshopMaterial =
+        green >= red * 1.05 &&
+        blue >= red * 0.98 &&
+        red >= 72 &&
+        red <= 118 &&
+        green <= 132 &&
+        blue <= 128;
+      if (
+        role === "tea-house" ? hospitalityMaterial : workshopMaterial
+      ) {
+        materialPixels += 1;
+      }
+      if (
+        previousLuminance !== null &&
+        Math.abs(previousLuminance - luminance) >= 10
+      ) {
+        transitions += 1;
+      }
+      previousLuminance = luminance;
+      sampledPixels += 1;
+    }
+  }
+
+  const materialFraction = materialPixels / Math.max(sampledPixels, 1);
+  const transitionFraction = transitions / Math.max(sampledPixels, 1);
+  const thresholds =
+    role === "tea-house"
+      ? {
+          maximumMaterialFraction: 0.93,
+          minimumMaterialFraction: 0.72,
+          minimumTransitionFraction: 0.065,
+        }
+      : {
+          maximumMaterialFraction: 0.82,
+          minimumMaterialFraction: 0.46,
+          minimumTransitionFraction: 0.065,
+        };
+  assert.ok(
+    materialFraction >= thresholds.minimumMaterialFraction &&
+      materialFraction <= thresholds.maximumMaterialFraction &&
+      transitionFraction >= thresholds.minimumTransitionFraction,
+    `${label}: VF-16 center-floor material zoning regressed toward the broad uniform treatment (${materialFraction.toFixed(3)} role material, ${transitionFraction.toFixed(3)} internal transitions): ${JSON.stringify(thresholds)}.`,
+  );
+  assert.ok(
+    transitionFraction <= 0.135,
+    `${label}: VF-16 center-floor material zoning became noisy (${transitionFraction.toFixed(3)} internal transitions).`,
+  );
+
+  return {
+    materialFraction: Number(materialFraction.toFixed(3)),
+    sample,
+    transitionFraction: Number(transitionFraction.toFixed(3)),
+  };
+}
+
 function assertAuthoredInteriorIdentityPixels(
   buffer,
+  camera,
   page,
   viewport,
   role,
@@ -3651,6 +3788,27 @@ function assertAuthoredInteriorIdentityPixels(
     luminanceRange >= 58 && detailTransitionFraction >= 0.018,
     `${label}: the room lacks authored material contrast/detail (${luminanceRange.toFixed(1)} luminance range, ${detailTransitionFraction.toFixed(3)} transition fraction).`,
   );
+
+  const viewportRole = viewport.name === "mobile" ? "mobile" : "desktop";
+  if (role === "tea-house" || role === "repair-stall") {
+    assert.ok(
+      activeColorBins <= 44 &&
+        detailTransitionFraction <= 0.09 &&
+        luminanceRange <= 132,
+      `${label}: VF-16 material depth became noisy or harsh instead of restrained (${activeColorBins} active color bins, ${detailTransitionFraction.toFixed(3)} transition fraction, ${luminanceRange.toFixed(1)} luminance range).`,
+    );
+  }
+  const materialDepth =
+    role === "tea-house" || role === "repair-stall"
+      ? assertInteriorMaterialDepthPixels(
+          image,
+          camera,
+          page,
+          viewport,
+          role,
+          label,
+        )
+      : null;
   assert.ok(
     fractions.darkHardware >= 0.018,
     `${label}: the room lacks readable dark fixtures/hardware (${fractions.darkHardware.toFixed(3)} fraction).`,
@@ -3692,8 +3850,10 @@ function assertAuthoredInteriorIdentityPixels(
     ),
     label,
     luminanceRange: Number(luminanceRange.toFixed(1)),
+    materialDepth,
     role,
     sample,
+    viewportRole,
   };
   interiorIdentityDiagnostics.push(diagnostics);
   return diagnostics;
@@ -4421,17 +4581,26 @@ async function assertAuthoredInteriorVisualGuard() {
   );
   assert.ok(
     teaHouseAtmosphereSource &&
+      teaHouseAtmosphereSource.includes("drawInteriorMaterialDepthPass") &&
       streetSource.includes("function drawTeaHouseInteriorObjectDetail") &&
       streetSource.includes('space.id === "interior:tea-house"') &&
       streetSource.includes('object.id.startsWith("tea-house-")'),
-    "Kettle & Lamp must keep tea-house-specific atmosphere and furniture detail passes.",
+    "Kettle & Lamp must keep shared material-depth zoning plus tea-house-specific atmosphere and furniture detail passes.",
   );
   assert.ok(
     repairStallAtmosphereSource &&
+      repairStallAtmosphereSource.includes("drawInteriorMaterialDepthPass") &&
       streetSource.includes("function drawRepairStallInteriorObjectDetail") &&
       streetSource.includes('space.id === "interior:repair-stall"') &&
       streetSource.includes('object.id.startsWith("repair-stall-")'),
-    "Mercer Repairs must keep workshop-specific atmosphere and furniture detail passes.",
+    "Mercer Repairs must keep shared material-depth zoning plus workshop-specific atmosphere and furniture detail passes.",
+  );
+  assert.ok(
+    streetSource.includes("function drawInteriorMaterialDepthPass") &&
+      streetSource.includes("function drawInteriorMaterialZone") &&
+      smokeSource.includes("VF-16 center-floor material zoning regressed") &&
+      smokeSource.includes("VF-16 material depth became noisy or harsh"),
+    "VF-16 must keep one shared interior material-depth system and pixel-backed desktop/mobile recurrence bounds.",
   );
   assert.doesNotMatch(
     `${teaHouseAtmosphereSource}\n${repairStallAtmosphereSource}`,
@@ -10778,6 +10947,7 @@ async function captureAuthoredInteriorIdentity(
   });
   const composition = assertAuthoredInteriorIdentityPixels(
     capture.screenshot,
+    settledAgain,
     page,
     viewport,
     interiorCase.role,
@@ -11067,6 +11237,7 @@ async function captureMorrowHouseMobileState({
   );
   const identity = assertAuthoredInteriorIdentityPixels(
     capture.screenshot,
+    settledAgain,
     page,
     viewport,
     "boarding-house",
@@ -11177,6 +11348,7 @@ async function runInteriorCameraCheck(session) {
   );
   const compactIdentity = assertAuthoredInteriorIdentityPixels(
     compactCapture.screenshot,
+    settledAgain,
     interiorPage,
     INTERIOR_CAMERA_VIEWPORT,
     "boarding-house",

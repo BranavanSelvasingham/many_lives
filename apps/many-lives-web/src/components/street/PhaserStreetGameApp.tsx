@@ -4343,6 +4343,8 @@ function drawTeaHouseInteriorAtmosphere(
   const roomRight = roomOrigin.x + space.width * CELL;
   const roomBottom = roomOrigin.y + space.height * CELL;
 
+  drawInteriorMaterialDepthPass(layer, "hospitality");
+
   layer.lineStyle(5, 0x2a1d1c, 0.66);
   layer.strokeRoundedRect(
     roomOrigin.x - 4,
@@ -4486,6 +4488,8 @@ function drawRepairStallInteriorAtmosphere(
   const roomRight = roomOrigin.x + space.width * CELL;
   const roomBottom = roomOrigin.y + space.height * CELL;
 
+  drawInteriorMaterialDepthPass(layer, "workshop");
+
   layer.lineStyle(5, 0x192426, 0.76);
   layer.strokeRoundedRect(
     roomOrigin.x - 4,
@@ -4508,6 +4512,215 @@ function drawRepairStallInteriorAtmosphere(
   drawRepairPipeRun(layer, space);
   drawRepairTaskLamp(layer);
   drawRepairFloorHardware(layer);
+}
+
+type InteriorMaterialDepthRole = "hospitality" | "workshop";
+
+type InteriorMaterialZone = {
+  accent: number;
+  border: number;
+  fill: number;
+  height: number;
+  pattern: "plate" | "slat" | "tread" | "weave";
+  secondaryFill?: number;
+  width: number;
+  x: number;
+  y: number;
+};
+
+function drawInteriorMaterialDepthPass(
+  layer: PhaserType.GameObjects.Graphics,
+  role: InteriorMaterialDepthRole,
+) {
+  const zones: InteriorMaterialZone[] =
+    role === "hospitality"
+      ? [
+          {
+            accent: 0xe0b76f,
+            border: 0x684138,
+            fill: 0x955c48,
+            height: 5.95,
+            pattern: "slat",
+            width: 2.15,
+            x: 6.42,
+            y: 2.34,
+          },
+          {
+            accent: 0xd5a169,
+            border: 0x704437,
+            fill: 0x8f5747,
+            height: 1.18,
+            pattern: "weave",
+            width: 3.15,
+            x: 2.48,
+            y: 2.86,
+          },
+          {
+            accent: 0xd5a169,
+            border: 0x704437,
+            fill: 0x8f5747,
+            height: 1.18,
+            pattern: "weave",
+            width: 3.15,
+            x: 4.48,
+            y: 4.86,
+          },
+          {
+            accent: 0xd5a169,
+            border: 0x704437,
+            fill: 0x8f5747,
+            height: 1.18,
+            pattern: "weave",
+            width: 3.15,
+            x: 2.48,
+            y: 6.86,
+          },
+        ]
+      : [
+          {
+            accent: 0xaab6b1,
+            border: 0x2d3a3b,
+            fill: 0x596765,
+            height: 5.74,
+            pattern: "plate",
+            secondaryFill: 0x6b7976,
+            width: 3.92,
+            x: 4.08,
+            y: 2.04,
+          },
+          {
+            accent: 0x91a09c,
+            border: 0x293637,
+            fill: 0x4e5a59,
+            height: 2.52,
+            pattern: "plate",
+            secondaryFill: 0x606d6a,
+            width: 3.18,
+            x: 1.38,
+            y: 4.52,
+          },
+          {
+            accent: 0x879691,
+            border: 0x2b3839,
+            fill: 0x53605f,
+            height: 2.42,
+            pattern: "plate",
+            secondaryFill: 0x66736f,
+            width: 2.18,
+            x: 7.96,
+            y: 4.46,
+          },
+          {
+            accent: 0xc49a55,
+            border: 0x222f30,
+            fill: 0x394746,
+            height: 1.3,
+            pattern: "tread",
+            width: 3.16,
+            x: 4.48,
+            y: 6.68,
+          },
+        ];
+
+  for (const zone of zones) {
+    drawInteriorMaterialZone(layer, zone, role);
+  }
+}
+
+function drawInteriorMaterialZone(
+  layer: PhaserType.GameObjects.Graphics,
+  zone: InteriorMaterialZone,
+  role: InteriorMaterialDepthRole,
+) {
+  const origin = mapTileToWorldOrigin(zone.x, zone.y);
+  const width = zone.width * CELL;
+  const height = zone.height * CELL;
+  const radius =
+    role === "hospitality" ? 6 : zone.pattern === "tread" ? 3 : 2;
+
+  layer.fillStyle(role === "hospitality" ? 0x34221f : 0x1f292a, 0.2);
+  layer.fillRoundedRect(origin.x + 2, origin.y + 3, width, height, radius);
+  layer.fillStyle(zone.fill, 0.96);
+  layer.fillRoundedRect(origin.x, origin.y, width, height, radius);
+  layer.lineStyle(1.5, zone.border, 0.82);
+  layer.strokeRoundedRect(origin.x, origin.y, width, height, radius);
+  layer.lineStyle(1, zone.accent, role === "hospitality" ? 0.34 : 0.26);
+  layer.strokeRoundedRect(
+    origin.x + 5,
+    origin.y + 5,
+    width - 10,
+    height - 10,
+    Math.max(radius - 2, 1),
+  );
+
+  if (zone.pattern === "slat") {
+    for (let y = origin.y + 14; y < origin.y + height - 8; y += 16) {
+      layer.lineStyle(1.1, zone.border, 0.48);
+      layer.lineBetween(origin.x + 7, y, origin.x + width - 7, y);
+      const joinOffset = Math.round((y - origin.y) / 16) % 2 === 0 ? 0.38 : 0.68;
+      const joinX = origin.x + width * joinOffset;
+      layer.lineBetween(joinX, y - 12, joinX, y - 2);
+    }
+    return;
+  }
+
+  if (zone.pattern === "weave") {
+    layer.lineStyle(1, zone.accent, 0.34);
+    for (let x = origin.x + 12; x < origin.x + width - 8; x += 14) {
+      layer.lineBetween(x - 5, origin.y + 8, x + 5, origin.y + height - 8);
+      layer.lineBetween(x + 5, origin.y + 8, x - 5, origin.y + height - 8);
+    }
+    return;
+  }
+
+  if (zone.pattern === "tread") {
+    layer.lineStyle(2, zone.accent, 0.5);
+    for (let x = origin.x + 12; x < origin.x + width - 8; x += 18) {
+      layer.lineBetween(x - 6, origin.y + height - 8, x + 6, origin.y + 8);
+    }
+    return;
+  }
+
+  const plateHeight = CELL * 1.12;
+  let plateIndex = 0;
+  for (
+    let plateY = origin.y + 5;
+    plateY < origin.y + height - 5;
+    plateY += plateHeight
+  ) {
+    const availableHeight = Math.min(
+      plateHeight - 4,
+      origin.y + height - 5 - plateY,
+    );
+    if (plateIndex % 2 === 0 && zone.secondaryFill) {
+      layer.fillStyle(zone.secondaryFill, 0.94);
+      layer.fillRect(origin.x + 6, plateY, width - 12, availableHeight);
+    }
+    layer.lineStyle(1.2, zone.border, 0.68);
+    layer.lineBetween(
+      origin.x + 6,
+      plateY + availableHeight,
+      origin.x + width - 6,
+      plateY + availableHeight,
+    );
+    layer.lineStyle(1, zone.accent, 0.24);
+    layer.lineBetween(
+      origin.x + width / 2,
+      plateY + 4,
+      origin.x + width / 2,
+      plateY + availableHeight - 4,
+    );
+    layer.fillStyle(zone.accent, 0.66);
+    for (const insetX of [9, width - 9]) {
+      layer.fillCircle(origin.x + insetX, plateY + 8, 1.7);
+      layer.fillCircle(
+        origin.x + insetX,
+        plateY + availableHeight - 7,
+        1.7,
+      );
+    }
+    plateIndex += 1;
+  }
 }
 
 function drawRepairPartsBins(layer: PhaserType.GameObjects.Graphics) {

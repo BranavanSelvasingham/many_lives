@@ -48,13 +48,13 @@ South Quay reaches the visual target state only when all active rows are
 | `VQ-01` | Core exterior landmarks: Morrow House, Kettle & Lamp, Quay Square | `VERIFIED` | Desktop, tablet, phone, and high-DPR screenshots show distinct silhouettes, materials, entrances, and props before labels. |
 | `VQ-02` | Secondary exterior landmarks: Mercer Repairs, Morrow Yard, Pilgrim Slip | `VERIFIED` | Idle, route-mid, and arrival screenshots show authored identity and endpoint alignment equal to the core landmarks. |
 | `VQ-03` | Morrow House interior | `VERIFIED` | Desktop and phone screenshots show a readable boarding-house composition, secondary title treatment, clearly framed Rowan and relevant Mara, and unobscured portal/action areas. |
-| `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `VERIFIED` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
+| `VQ-04` | Kettle & Lamp and Mercer Repairs interiors | `CANDIDATE` | Desktop and phone screenshots show materially distinct tea-house and workshop identities before labels; focused checks fail if their authored signatures disappear. |
 | `VQ-05` | North/west/east fringes and open lots | `VERIFIED` | All-direction pan screenshots show intentional edge composition, grounded materials, and no pale void slabs, empty green rectangles, black voids, or abrupt unfinished boundaries. |
 | `VQ-06` | Waterfront and quay edge | `VERIFIED` | Desktop, compact, phone, and route screenshots show a coherent waterline, dock activity, edge traversal, and no stale or disconnected props. |
-| `VQ-07` | Responsive composition and map primacy | `VERIFIED` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
+| `VQ-07` | Responsive composition and map primacy | `CANDIDATE` | `390x844`, tablet, compact/tall Codex, and DPR 2 screenshots pass collapsed/expanded context and every pan direction without overlap or clipping. |
 | `VQ-08` | Labels, cues, and scene-to-rail balance | `VERIFIED` | Idle, conversation, route, action, and consequence screenshots show crisp high-DPR canvas labels as secondary, no stacked identity/cue treatment, and no repeated rail copy compensating for weak scene communication. |
 | `VQ-09` | Route and transition continuity | `VERIFIED` | Start/mid/arrival and interior/exterior evidence shows continuous navigation, explicit transitions, attached labels, and visually correct endpoints. |
-| `VQ-10` | Visually assertive regression coverage | `VERIFIED` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
+| `VQ-10` | Visually assertive regression coverage | `CANDIDATE` | Deliberately degraded fixtures or region assertions prove the suite fails on landmark loss, interior identity loss, major composition drift, overlap, cue noise, and route-label detachment. |
 | `VQ-11` | Opening identity and simulation premise | `VERIFIED` | Desktop and phone opening evidence identifies Many Lives, explains the living-world agent loop without a click gate, preserves saved-run choices, and carries a restrained product signal into live play. |
 | `VQ-12` | Exterior material depth, lighting, and palette cohesion | `VERIFIED` | Matched desktop, phone, compact-route, and high-DPR evidence separates roads, paving, facades, vegetation, and working-yard materials without flattening landmark identity or map primacy. |
 
@@ -62,6 +62,28 @@ South Quay reaches the visual target state only when all active rows are
 They are not grandfathered into `VERIFIED`.
 
 ### Current Review Finding
+
+- `VF-16` (`MEDIUM`, `CANDIDATE`): exact-production review on
+  `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
+  and Mercer Repairs concentrated their identity at labels and perimeter props
+  while broad uniform center floors dominated desktop and phone framing. The
+  candidate adds a shared, restrained material-depth pass with warm slatted and
+  woven hospitality zones plus segmented workshop plates and a bounded tread
+  threshold. Exact candidate pixel checks report Kettle material coverage of
+  0.875 desktop / 0.860 phone and Mercer coverage of 0.644 / 0.646, with
+  internal transitions inside the authored noise bounds. The full 13-stage
+  harness and 22-shot matched review passed with verdict
+  `VERIFIED_CANDIDATE`. Baseline evidence is at
+  `/private/tmp/manylives-1dce8c9-vf16-baseline`; candidate evidence is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786783535368/visual-game`;
+  matched review is at `/private/tmp/manylives-vf16-reviewed`.
+
+- `VF-17` (`LOW`, `CANDIDATE`): the same exact-production packet found
+  `desktop.png` and `secondary-landmarks-desktop.png` byte-identical, so
+  the 23-shot contract overstated independent visual coverage. The duplicate
+  row is removed from the candidate contract; distinct Morrow Yard compact
+  evidence now carries the secondary-landmark comparison while every VQ row
+  remains covered. The final contract passes at 22/22 distinct required shots.
 
 - `VF-15` (`MEDIUM`, `VERIFIED`): exact-production review on
   `44adfdfa970d1310cf355b0ae01e66ec9ab87d81` found landmark, interior,

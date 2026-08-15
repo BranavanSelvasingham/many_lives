@@ -168,23 +168,14 @@
       "comparison": true
     },
     {
-      "id": "secondary-landmarks",
-      "title": "Secondary landmark composition",
-      "file": "secondary-landmarks-desktop.png",
-      "group": "exteriors",
-      "viewport": "desktop",
-      "state": "street overview",
-      "matrixRows": ["VQ-02", "VQ-12"],
-      "comparison": true
-    },
-    {
       "id": "morrow-yard-compact",
       "title": "Morrow Yard / compact",
       "file": "morrow-yard-codex-compact.png",
       "group": "exteriors",
       "viewport": "codex-compact",
       "state": "secondary landmark framing",
-      "matrixRows": ["VQ-02", "VQ-07"]
+      "matrixRows": ["VQ-02", "VQ-07"],
+      "comparison": true
     },
     {
       "id": "north-fringe",
@@ -265,7 +256,8 @@
       "group": "interiors",
       "viewport": "desktop",
       "state": "authored interior",
-      "matrixRows": ["VQ-04"]
+      "matrixRows": ["VQ-04"],
+      "comparison": true
     },
     {
       "id": "tea-house-interior-phone",
@@ -274,7 +266,8 @@
       "group": "interiors",
       "viewport": "mobile",
       "state": "authored interior",
-      "matrixRows": ["VQ-04", "VQ-07"]
+      "matrixRows": ["VQ-04", "VQ-07"],
+      "comparison": true
     },
     {
       "id": "repair-interior-desktop",
@@ -283,7 +276,8 @@
       "group": "interiors",
       "viewport": "desktop",
       "state": "authored interior",
-      "matrixRows": ["VQ-04"]
+      "matrixRows": ["VQ-04"],
+      "comparison": true
     },
     {
       "id": "repair-interior-phone",
@@ -292,7 +286,8 @@
       "group": "interiors",
       "viewport": "mobile",
       "state": "authored interior",
-      "matrixRows": ["VQ-04", "VQ-07"]
+      "matrixRows": ["VQ-04", "VQ-07"],
+      "comparison": true
     },
     {
       "id": "after-hours-state",
