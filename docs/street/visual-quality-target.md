@@ -165,6 +165,38 @@ They are not grandfathered into `VERIFIED`.
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786854604383`.
   Exact-SHA CI/deploy and exact-production route evidence remain required.
 
+- `VF-23` (`MEDIUM`, `CANDIDATE`): exact-SHA gameplay validation of
+  `fd8461ce2e412c767a1c748d52aaae35e8583b95` cleared the original `VF-22`
+  opening-route gate and completed the ordinary-lead trajectory, then exhausted
+  four consequential-foothold capture attempts on the noticed-pump path. A
+  slow 2.77-second screencast candidate/confirmation pair crossed the exterior
+  arrival to Morrow House and interior entry state boundary, so the full-frame
+  audit correctly rejected it as not bracketed by one coherent current state.
+  The product state had already solved the pump, returned to Morrow House at
+  3/4 outcomes with zero progression clicks, and selected the legal Take stock
+  follow-up. Preserve fail-closed state/HUD/pixel validation, existing pacing
+  and timeout bounds, and both first-afternoon trajectories. Acceptance
+  requires an exact recurrence that obtains a truthful milestone frame across
+  the observed slow transition without accepting mismatched state, stale
+  frames, reused pixels, or lower evidence thresholds, followed by the full
+  local harness, exact-SHA CI/deploy, and exact-production Chrome trajectory.
+  Failure evidence is at
+  `/private/tmp/manylives-fd8461c-ci-gameplay-failure`; GitHub Actions run is
+  `31927704565`. The candidate now brackets and validates each screencast frame
+  independently, retains only exact-state frames, and pairs distinct settled
+  pixels from one coherent state. The recurrence covers the observed 14:11
+  street/entry to 14:13 interior/Take stock transition and rejects persistent
+  crossings, stale or reused sequences, and identical pixels. The focused
+  pacing file passes 66 tests with five intentional skips. The full 13-stage
+  local harness passed 379 simulator tests, 136 repository tests with five
+  intentional skips, both zero-click trajectories, direct inhabit play, the
+  production build, and the 22-state visual contract. The noticed-pump path
+  crossed the exact transition with one bounded retry, captured a truthful
+  consequential foothold, and completed naturally. Candidate evidence is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786857362574`.
+  Exact-SHA CI/deploy and exact-production Chrome evidence remain required.
+  Implementation owner Bernoulli completed the bounded scope.
+
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
   and Mercer Repairs concentrated their identity at labels and perimeter props

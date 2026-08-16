@@ -2609,7 +2609,16 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
       sequence: 6,
     },
   ];
-  const probes = [probe(10), probe(300), probe(310), probe(600)];
+  const probes = [
+    probe(10),
+    probe(145),
+    probe(150),
+    probe(300),
+    probe(310),
+    probe(445),
+    probe(450),
+    probe(600),
+  ];
   const textRegion = (surface, text, left, right) => ({
     rect: { bottom: 48, left, right, top: 28 },
     surface,
@@ -2706,12 +2715,7 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
       ),
     /HUD container geometry drifted/,
   );
-  const paintProbes = [
-    paintProbe(),
-    paintProbe(),
-    paintProbe(),
-    paintProbe(),
-  ];
+  const paintProbes = Array.from({ length: 8 }, () => paintProbe());
   const routeStartHudReference = {
     buffer: Buffer.from("route-start-reference"),
     paintProbe: paintProbe(),
@@ -2782,14 +2786,14 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
   assert.deepEqual(selectedFrameSequences, [1, 3, 4, 6]);
   assert.equal(
     Math.round(waitRequests[1].minimumCapturedAtEpochMs - epoch),
-    265,
+    275,
   );
   assert.equal(
     Math.round(waitRequests[3].minimumCapturedAtEpochMs - epoch),
-    565,
+    575,
   );
-  assert.equal(routeHudContinuityRejections, 1);
-  assert.equal(stabilityCalls, 2);
+  assert.equal(routeHudContinuityRejections, 5);
+  assert.equal(stabilityCalls, 6);
   assert.equal(blockingCaptureCalls, 0);
 
   const buildProbeRetrySession = (retryFrames) => {
@@ -2825,9 +2829,16 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
     { data: "unbracketed", metadata: { timestamp: (epoch + 840) / 1_000 }, sequence: 1 },
     { data: "unbracketed-confirmation", metadata: { timestamp: (epoch + 970) / 1_000 }, sequence: 2 },
     { data: "bracketed", metadata: { timestamp: (epoch + 1_140) / 1_000 }, sequence: 3 },
-    { data: "bracketed-confirmation", metadata: { timestamp: (epoch + 1_270) / 1_000 }, sequence: 4 },
+    { data: "bracketed-confirmation", metadata: { timestamp: (epoch + 1_370) / 1_000 }, sequence: 4 },
   ];
-  const transientProbes = [probe(700), null, probe(1_000), probe(1_300)];
+  const transientProbes = [
+    probe(700),
+    null,
+    probe(1_000),
+    probe(1_200),
+    probe(1_210),
+    probe(1_500),
+  ];
   const transientValidatedSequences = [];
   const transientCapture = await acquireFrame({
     initialProbe: probe(690),
@@ -2956,15 +2967,19 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
 
   const boundaryFrames = [
     { data: "boundary", metadata: { timestamp: (epoch + 440) / 1_000 }, sequence: 1 },
-    { data: "boundary-confirmation", metadata: { timestamp: (epoch + 570) / 1_000 }, sequence: 2 },
-    { data: "arrival", metadata: { timestamp: (epoch + 740) / 1_000 }, sequence: 3 },
-    { data: "arrival-confirmation", metadata: { timestamp: (epoch + 870) / 1_000 }, sequence: 4 },
+    { data: "boundary-confirmation", metadata: { timestamp: (epoch + 740) / 1_000 }, sequence: 2 },
+    { data: "arrival", metadata: { timestamp: (epoch + 1_040) / 1_000 }, sequence: 3 },
+    { data: "arrival-confirmation", metadata: { timestamp: (epoch + 1_340) / 1_000 }, sequence: 4 },
   ];
   const boundaryProbes = [
     probe(310),
-    probe(600, "arrival"),
-    probe(610, "arrival"),
-    probe(900, "arrival"),
+    probe(500),
+    probe(510),
+    probe(800, "arrival"),
+    probe(810, "arrival"),
+    probe(1_100, "arrival"),
+    probe(1_110, "arrival"),
+    probe(1_400, "arrival"),
   ];
   const boundaryValidatedSequences = [];
   const recoveredBoundaryCapture = await acquireFrame({
@@ -2983,33 +2998,30 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
   assert.equal(recoveredBoundaryCapture.afterProbe.state, "arrival");
   assert.deepEqual(
     boundaryValidatedSequences,
-    [3, 4],
-    "Pixels that crossed the route-arrival boundary must never be validated.",
+    [1, 3, 4],
+    "Only individually bracketed pixels may survive a route-arrival boundary.",
   );
 
-  const persistentBoundaryFrames = [
-    [1_040, 1_170],
-    [1_440, 1_570],
-    [1_840, 1_970],
-    [2_240, 2_370],
-  ].flatMap(([candidate, confirmation], index) => [
-    {
+  const persistentBoundaryFrames = Array.from({ length: 8 }, (_, index) => {
+    const capturedAtOffsetMs = 1_040 + index * 300;
+    return {
       data: `boundary-${index + 1}`,
-      metadata: { timestamp: (epoch + candidate) / 1_000 },
-      sequence: index * 2 + 1,
+      metadata: { timestamp: (epoch + capturedAtOffsetMs) / 1_000 },
+      sequence: index + 1,
+    };
+  });
+  const persistentBoundaryProbes = persistentBoundaryFrames.flatMap(
+    (frame, index) => {
+      const capturedAtOffsetMs =
+        framePolicy.screencastFrameCapturedAtEpochMs(frame) - epoch;
+      const beforeState = index % 2 === 0 ? "conversation" : "arrival";
+      const afterState = beforeState === "conversation" ? "arrival" : "conversation";
+      return [
+        probe(capturedAtOffsetMs - 130, beforeState),
+        probe(capturedAtOffsetMs + 20, afterState),
+      ];
     },
-    {
-      data: `boundary-${index + 1}-confirmation`,
-      metadata: { timestamp: (epoch + confirmation) / 1_000 },
-      sequence: index * 2 + 2,
-    },
-  ]);
-  const persistentBoundaryProbes = [
-    probe(910), probe(1_300, "arrival"),
-    probe(1_310), probe(1_700, "arrival"),
-    probe(1_710), probe(2_100, "arrival"),
-    probe(2_110), probe(2_500, "arrival"),
-  ];
+  );
   const persistentBoundaryValidatedSequences = [];
   await assert.rejects(
     acquireFrame({
@@ -3024,12 +3036,142 @@ test("live frame acquisition retries HUD drift and transient unavailable probes"
       ),
       validateStableFramePair: () => ({}),
     }),
-    /not bracketed by one coherent current state\. Candidate: .* Confirmation:/,
+    /not bracketed by one coherent current state\. Frame:/,
   );
   assert.deepEqual(
     persistentBoundaryValidatedSequences,
     [],
     "Persistent state-boundary pixels must never be validated.",
+  );
+
+  const observedCandidateCapturedAtEpochMs = 1_786_856_645_927.146;
+  const observedConfirmationCapturedAtEpochMs = 1_786_856_648_699.9531;
+  const observedStateProbe = (capturedAtEpochMs, state) => ({
+    capturedAtEpochMs,
+    state,
+  });
+  const observedOutsideState =
+    "14:11 street:south-quay / enter:boarding-house / 3/4";
+  const observedInsideState =
+    "14:13 interior:boarding-house / reflect:first-afternoon / 3/4";
+  const observedFrames = [
+    {
+      data: "vf23-observed-street-frame",
+      metadata: { timestamp: observedCandidateCapturedAtEpochMs / 1_000 },
+      sequence: 1,
+    },
+    {
+      data: "vf23-observed-crossing-frame",
+      metadata: { timestamp: observedConfirmationCapturedAtEpochMs / 1_000 },
+      sequence: 2,
+    },
+    {
+      data: "vf23-truthful-interior-frame",
+      metadata: { timestamp: 1_786_856_649_000 / 1_000 },
+      sequence: 3,
+    },
+    {
+      data: "vf23-truthful-interior-confirmation",
+      metadata: { timestamp: 1_786_856_649_300 / 1_000 },
+      sequence: 4,
+    },
+  ];
+  const observedProbes = [
+    observedStateProbe(1_786_856_645_700, observedOutsideState),
+    observedStateProbe(1_786_856_645_960, observedOutsideState),
+    observedStateProbe(1_786_856_645_980, observedOutsideState),
+    observedStateProbe(1_786_856_648_723, observedInsideState),
+    observedStateProbe(1_786_856_648_740, observedInsideState),
+    observedStateProbe(1_786_856_649_050, observedInsideState),
+    observedStateProbe(1_786_856_649_060, observedInsideState),
+    observedStateProbe(1_786_856_649_400, observedInsideState),
+  ];
+  const observedValidatedSequences = [];
+  const observedCapture = await acquireFrame({
+    initialProbe: observedStateProbe(
+      1_786_856_645_680,
+      observedOutsideState,
+    ),
+    isCaptureWindowCoherent: (before, after) => before.state === after.state,
+    isInitialProbeCoherent: (_initial, before) =>
+      [observedOutsideState, observedInsideState].includes(before.state),
+    label: "VF-23 noticed-pump consequential foothold",
+    readProbe: async () => observedProbes.shift(),
+    session: buildProbeRetrySession(observedFrames),
+    validateFrame: validateProbeRetryFrame(observedValidatedSequences),
+    validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+      assert.notDeepEqual(afterBuffer, beforeBuffer);
+      return {};
+    },
+  });
+  assert.equal(observedCapture.frame.sequence, 4);
+  assert.equal(observedCapture.beforeProbe.state, observedInsideState);
+  assert.equal(observedCapture.afterProbe.state, observedInsideState);
+  assert.deepEqual(
+    observedValidatedSequences,
+    [1, 3, 4],
+    "The observed cross-state confirmation must not be validated or paired.",
+  );
+
+  const identicalFrames = Array.from({ length: 8 }, (_, index) => {
+    const capturedAtOffsetMs = 4_000 + index * 300;
+    return {
+      data: "identical-milestone-pixels",
+      metadata: { timestamp: (epoch + capturedAtOffsetMs) / 1_000 },
+      sequence: index + 1,
+    };
+  });
+  const identicalProbes = identicalFrames.flatMap((frame) => {
+    const capturedAtOffsetMs =
+      framePolicy.screencastFrameCapturedAtEpochMs(frame) - epoch;
+    return [
+      probe(capturedAtOffsetMs - 130, "arrival"),
+      probe(capturedAtOffsetMs + 20, "arrival"),
+    ];
+  });
+  await assert.rejects(
+    acquireFrame({
+      initialProbe: probe(3_800, "arrival"),
+      isCaptureWindowCoherent: (before, after) => before.state === after.state,
+      isInitialProbeCoherent: (_initial, before) => before.state === "arrival",
+      label: "identical milestone pixels",
+      readProbe: async () => identicalProbes.shift(),
+      session: buildProbeRetrySession(identicalFrames),
+      validateFrame: validateProbeRetryFrame([]),
+      validateStableFramePair: () => assert.fail("identical pixels must not pair"),
+    }),
+    /reused identical visual pixels/,
+  );
+
+  let reusedSequence = 0;
+  const reusedSequenceProbes = [
+    probe(7_000, "arrival"),
+    probe(7_300, "arrival"),
+    probe(7_310, "arrival"),
+  ];
+  await assert.rejects(
+    acquireFrame({
+      initialProbe: probe(6_900, "arrival"),
+      isCaptureWindowCoherent: (before, after) => before.state === after.state,
+      isInitialProbeCoherent: (_initial, before) => before.state === "arrival",
+      label: "reused milestone sequence",
+      readProbe: async () => reusedSequenceProbes.shift(),
+      session: {
+        autoplayScreencastSequence: () => reusedSequence,
+        readScreenshotPaintProbe: async () => paintProbe(),
+        waitForAutoplayScreencastFrame: async () => {
+          reusedSequence = 1;
+          return {
+            data: "reused-sequence",
+            metadata: { timestamp: (epoch + 7_200) / 1_000 },
+            sequence: 1,
+          };
+        },
+      },
+      validateFrame: validateProbeRetryFrame([]),
+      validateStableFramePair: () => ({}),
+    }),
+    /reused frame sequence 1 after 1/,
   );
 
   const runStart = source.indexOf("async function runAutoplayObservation(");

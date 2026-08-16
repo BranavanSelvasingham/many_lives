@@ -16658,136 +16658,178 @@ async function acquireAutoplayScreencastFrameWindow({
   validateStableFramePair = assertStableAutoplayScreencastFramePair,
 }) {
   let lastCaptureError = null;
+  // A slow frame pair can straddle a real state change; retain only frames
+  // whose own state and paint probes agree, then pair exact-state matches.
+  const individuallyBracketedFrames = [];
 
   for (
     let attempt = 1;
     attempt <= AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS;
     attempt += 1
   ) {
-    const beforeProbe = await readProbe(`${slug(label)}:before-frame-probe`);
-    if (!beforeProbe) {
-      const diagnostics = session.cdpDiagnosticSnapshot?.() ?? null;
-      lastCaptureError = new Error(
-        `${label}: current-state probe was unavailable before frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}. CDP diagnostics: ${JSON.stringify(diagnostics)}.`,
+    let probeUnavailable = false;
+    for (let frameIndex = 0; frameIndex < 2; frameIndex += 1) {
+      const probeSuffix = frameIndex === 0 ? "candidate" : "confirmation";
+      const beforeProbe = await readProbe(
+        `${slug(label)}:${probeSuffix}-before-frame-probe`,
       );
-      if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
-        process.stdout.write(
-          `[many-lives] Retrying unavailable autoplay current-state probe ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
-        );
-        await sleep(180);
-        continue;
+      if (!beforeProbe) {
+        const diagnostics = session.cdpDiagnosticSnapshot?.() ?? null;
+        if (
+          !lastCaptureError ||
+          /current-state probe was unavailable/.test(lastCaptureError.message)
+        ) {
+          lastCaptureError = new Error(
+            `${label}: current-state probe was unavailable before frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}. CDP diagnostics: ${JSON.stringify(diagnostics)}.`,
+          );
+        }
+        probeUnavailable = true;
+        break;
       }
-      break;
+      assert.ok(
+        isInitialProbeCoherent(initialProbe, beforeProbe),
+        `${label}: milestone state changed before asynchronous frame capture. Initial: ${JSON.stringify(initialProbe)}. Before: ${JSON.stringify(beforeProbe)}.`,
+      );
+      const paintProbeBefore = await session.readScreenshotPaintProbe(
+        `${slug(label)}:${probeSuffix}-before-frame-paint-probe`,
+      );
+      const afterSequence = session.autoplayScreencastSequence();
+      const minimumCapturedAtEpochMs =
+        cdpProbeCapturedAtEpochMs(beforeProbe) +
+        AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS;
+      const frame = await session.waitForAutoplayScreencastFrame({
+        afterSequence,
+        minimumCapturedAtEpochMs,
+      });
+      assert.ok(
+        Number.isInteger(frame.sequence) && frame.sequence > afterSequence,
+        `${label}: screencast transport reused frame sequence ${frame.sequence} after ${afterSequence}.`,
+      );
+      const paintProbeAfter = await session.readScreenshotPaintProbe(
+        `${slug(label)}:${probeSuffix}-after-frame-paint-probe`,
+      );
+      const afterProbe = await readProbe(
+        `${slug(label)}:${probeSuffix}-after-frame-probe`,
+      );
+      if (!afterProbe) {
+        const diagnostics = session.cdpDiagnosticSnapshot?.() ?? null;
+        if (
+          !lastCaptureError ||
+          /current-state probe was unavailable/.test(lastCaptureError.message)
+        ) {
+          lastCaptureError = new Error(
+            `${label}: current-state probe was unavailable after frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}. CDP diagnostics: ${JSON.stringify(diagnostics)}.`,
+          );
+        }
+        probeUnavailable = true;
+        break;
+      }
+
+      try {
+        assert.ok(
+          isCaptureWindowCoherent(beforeProbe, afterProbe),
+          `${label}: screencast frame was not bracketed by one coherent current state. Frame: ${screencastFrameCapturedAtEpochMs(frame)}. Before: ${JSON.stringify(beforeProbe)}. After: ${JSON.stringify(afterProbe)}.`,
+        );
+        assert.ok(
+          screencastFrameIsBracketedByEpochProbes(
+            frame,
+            beforeProbe,
+            afterProbe,
+          ),
+          `${label}: screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(frame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
+        );
+        assert.ok(
+          screencastFrameCapturedAtEpochMs(frame) >=
+            minimumCapturedAtEpochMs,
+          `${label}: screencast frame did not retain the ${AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS}ms compositing settle interval.`,
+        );
+        const paintProbe = requireStableAutoplayScreenshotPaintProbe(
+          paintProbeBefore,
+          paintProbeAfter,
+          label,
+        );
+        const validated = validateFrame({ frame, label, paintProbe });
+        const currentFrame = { afterProbe, beforeProbe, frame, validated };
+
+        for (const previousFrame of individuallyBracketedFrames) {
+          const previousCapturedAtEpochMs = screencastFrameCapturedAtEpochMs(
+            previousFrame.frame,
+          );
+          const currentCapturedAtEpochMs =
+            screencastFrameCapturedAtEpochMs(frame);
+          if (
+            frame.sequence <= previousFrame.frame.sequence ||
+            currentCapturedAtEpochMs <
+              previousCapturedAtEpochMs +
+                AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS ||
+            !isCaptureWindowCoherent(
+              previousFrame.afterProbe,
+              beforeProbe,
+            ) ||
+            !isCaptureWindowCoherent(
+              previousFrame.beforeProbe,
+              afterProbe,
+            )
+          ) {
+            continue;
+          }
+          if (frame.data === previousFrame.frame.data) {
+            lastCaptureError = new Error(
+              `${label}: independently bracketed screencast frames reused identical visual pixels.`,
+            );
+            continue;
+          }
+          try {
+            const stablePaintProbe =
+              requireStableAutoplayScreenshotPaintProbe(
+                previousFrame.validated.paintProbe,
+                validated.paintProbe,
+                label,
+              );
+            const frameStability = validateStableFramePair({
+              afterBuffer: validated.buffer,
+              beforeBuffer: previousFrame.validated.buffer,
+              label,
+              paintProbe: stablePaintProbe,
+            });
+            return {
+              afterProbe,
+              beforeProbe: previousFrame.beforeProbe,
+              frame,
+              validated: {
+                ...validated,
+                paintProbe: stablePaintProbe,
+                textPaint: {
+                  ...validated.textPaint,
+                  ...frameStability,
+                },
+              },
+            };
+          } catch (error) {
+            lastCaptureError = error;
+          }
+        }
+
+        if (
+          !individuallyBracketedFrames.some(
+            (candidate) => candidate.frame.sequence === frame.sequence,
+          )
+        ) {
+          individuallyBracketedFrames.push(currentFrame);
+        }
+        lastCaptureError ??= new Error(
+          `${label}: no two distinct, settled screencast frames were bracketed by one coherent current state.`,
+        );
+      } catch (error) {
+        lastCaptureError = error;
+      }
     }
-    assert.ok(
-      isInitialProbeCoherent(initialProbe, beforeProbe),
-      `${label}: milestone state changed before asynchronous frame capture. Initial: ${JSON.stringify(initialProbe)}. Before: ${JSON.stringify(beforeProbe)}.`,
-    );
-    const paintProbeBefore = await session.readScreenshotPaintProbe(
-      `${slug(label)}:before-frame-paint-probe`,
-    );
-    const afterSequence = session.autoplayScreencastSequence();
-    const minimumCandidateCapturedAtEpochMs =
-      cdpProbeCapturedAtEpochMs(beforeProbe) +
-      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS;
-    const frame = await session.waitForAutoplayScreencastFrame({
-      afterSequence,
-      minimumCapturedAtEpochMs: minimumCandidateCapturedAtEpochMs,
-    });
-    const minimumConfirmationCapturedAtEpochMs =
-      screencastFrameCapturedAtEpochMs(frame) +
-      AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS;
-    const confirmationFrame = await session.waitForAutoplayScreencastFrame({
-      afterSequence: frame.sequence,
-      minimumCapturedAtEpochMs: minimumConfirmationCapturedAtEpochMs,
-    });
-    assert.ok(
-      confirmationFrame.sequence > frame.sequence &&
-        screencastFrameCapturedAtEpochMs(confirmationFrame) >=
-          minimumConfirmationCapturedAtEpochMs,
-      `${label}: confirmation frame was not distinct and separated from its candidate by the ${AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS}ms compositing settle interval.`,
-    );
-    const paintProbeAfter = await session.readScreenshotPaintProbe(
-      `${slug(label)}:after-frame-paint-probe`,
-    );
-    const afterProbe = await readProbe(`${slug(label)}:after-frame-probe`);
-    if (!afterProbe) {
-      const diagnostics = session.cdpDiagnosticSnapshot?.() ?? null;
-      lastCaptureError = new Error(
-        `${label}: current-state probe was unavailable after frame capture on attempt ${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}. CDP diagnostics: ${JSON.stringify(diagnostics)}.`,
+
+    if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
+      process.stdout.write(
+        `[many-lives] Retrying ${probeUnavailable ? "unavailable current-state probe" : "incomplete autoplay screencast frame"} ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
       );
-      if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
-        process.stdout.write(
-          `[many-lives] Retrying unavailable autoplay current-state probe ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
-        );
-        await sleep(180);
-        continue;
-      }
-      break;
-    }
-    try {
-      assert.ok(
-        isCaptureWindowCoherent(beforeProbe, afterProbe),
-        `${label}: screencast frame was not bracketed by one coherent current state. Candidate: ${screencastFrameCapturedAtEpochMs(frame)}. Confirmation: ${screencastFrameCapturedAtEpochMs(confirmationFrame)}. Before: ${JSON.stringify(beforeProbe)}. After: ${JSON.stringify(afterProbe)}.`,
-      );
-      assert.ok(
-        screencastFrameIsBracketedByEpochProbes(frame, beforeProbe, afterProbe),
-        `${label}: screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(frame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
-      );
-      assert.ok(
-        screencastFrameCapturedAtEpochMs(frame) >=
-          minimumCandidateCapturedAtEpochMs,
-        `${label}: candidate screencast frame did not retain the ${AUTOPLAY_SCREENCAST_COMPOSITING_SETTLE_MS}ms compositing settle interval.`,
-      );
-      assert.ok(
-        screencastFrameIsBracketedByEpochProbes(
-          confirmationFrame,
-          beforeProbe,
-          afterProbe,
-        ),
-        `${label}: confirmation screencast frame timestamp was outside its current-state probe window. Frame: ${JSON.stringify(confirmationFrame.metadata)}. Before: ${cdpProbeCapturedAtEpochMs(beforeProbe)}. After: ${cdpProbeCapturedAtEpochMs(afterProbe)}.`,
-      );
-      const paintProbe = requireStableAutoplayScreenshotPaintProbe(
-        paintProbeBefore,
-        paintProbeAfter,
-        label,
-      );
-      const candidateValidated = validateFrame({
-        frame,
-        label,
-        paintProbe,
-      });
-      const confirmationValidated = validateFrame({
-        frame: confirmationFrame,
-        label,
-        paintProbe,
-      });
-      const frameStability = validateStableFramePair({
-        afterBuffer: confirmationValidated.buffer,
-        beforeBuffer: candidateValidated.buffer,
-        label,
-        paintProbe: confirmationValidated.paintProbe,
-      });
-      return {
-        afterProbe,
-        beforeProbe,
-        frame: confirmationFrame,
-        validated: {
-          ...confirmationValidated,
-          textPaint: {
-            ...confirmationValidated.textPaint,
-            ...frameStability,
-          },
-        },
-      };
-    } catch (error) {
-      lastCaptureError = error;
-      if (attempt < AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS) {
-        process.stdout.write(
-          `[many-lives] Retrying incomplete autoplay screencast frame ${label} (${attempt}/${AUTOPLAY_SCREENCAST_CAPTURE_ATTEMPTS}).\n`,
-        );
-        await sleep(180);
-      }
+      await sleep(180);
     }
   }
 
