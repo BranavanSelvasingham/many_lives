@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { isDeepStrictEqual } from "node:util";
 import { deflateSync, inflateSync } from "node:zlib";
 
 const browserRegressionPath = new URL(
@@ -8,6 +9,130 @@ const browserRegressionPath = new URL(
   import.meta.url,
 );
 const source = await readFile(browserRegressionPath, "utf8");
+const streetApiSource = await readFile(
+  new URL(
+    "../apps/many-lives-web/src/lib/street/api.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const simEngineSource = await readFile(
+  new URL("../apps/sim-server/src/sim/engine.ts", import.meta.url),
+  "utf8",
+);
+const advanceObjectiveStart = source.indexOf(
+  "async function advanceObjective(",
+);
+const advanceObjectiveEnd = source.indexOf(
+  "\nasync function runGameCommand(",
+  advanceObjectiveStart + 1,
+);
+const advanceObjective = Function(
+  "fetchJson",
+  "getWebSimBase",
+  "SIM_COMMAND_FETCH_TIMEOUT_MS",
+  `return (${source.slice(advanceObjectiveStart, advanceObjectiveEnd)});`,
+);
+const runGameCommandStart = advanceObjectiveEnd + 1;
+const runGameCommandEnd = source.indexOf(
+  "\nasync function ",
+  runGameCommandStart + 1,
+);
+const runGameCommand = Function(
+  "fetchJson",
+  "getWebSimBase",
+  "SIM_COMMAND_FETCH_TIMEOUT_MS",
+  `return (${source.slice(runGameCommandStart, runGameCommandEnd)});`,
+);
+const aiRuntimeMatcherStart = source.indexOf(
+  "function aiRuntimeProbeMatchesExpected(",
+);
+const aiRuntimeMatcherEnd = source.indexOf(
+  "\nfunction objectiveProbeFromGame(",
+  aiRuntimeMatcherStart + 1,
+);
+const aiRuntimeProbeMatchesExpected = Function(
+  "isDeepStrictEqual",
+  `return (${source.slice(aiRuntimeMatcherStart, aiRuntimeMatcherEnd)});`,
+)(isDeepStrictEqual);
+const shelterPressureStart = source.indexOf(
+  "function probeHasCurrentShelterStandingPressure(",
+);
+const shelterPressureEnd = source.indexOf(
+  "\nfunction assertLateNotebookMatchesCurrentPressure(",
+  shelterPressureStart + 1,
+);
+const probeHasCurrentShelterStandingPressure = Function(
+  `return (${source.slice(shelterPressureStart, shelterPressureEnd)});`,
+)();
+const lunchRushShiftHoldStart = source.indexOf(
+  "function lunchRushSupportsShiftHold(",
+);
+const lunchRushShiftHoldEnd = source.indexOf(
+  "\nfunction assertBrowserProbeMatchesGame(",
+  lunchRushShiftHoldStart + 1,
+);
+const lunchRushSupportsShiftHold = Function(
+  `return (${source.slice(lunchRushShiftHoldStart, lunchRushShiftHoldEnd)});`,
+)();
+const expectedLunchRushEventStateStart = source.indexOf(
+  "function expectedLunchRushEventState(",
+);
+const expectedLunchRushEventStateEnd = source.indexOf(
+  "\nfunction assertRectsDoNotOverlap(",
+  expectedLunchRushEventStateStart + 1,
+);
+const expectedLunchRushEventState = Function(
+  `return (${source.slice(
+    expectedLunchRushEventStateStart,
+    expectedLunchRushEventStateEnd,
+  )});`,
+)();
+const timelineStateEvidenceLabelStart = source.indexOf(
+  "function timelineStateEvidenceLabel(",
+);
+const timelineStateEvidenceLabelEnd = source.indexOf(
+  "\nfunction buildTimelineEntry(",
+  timelineStateEvidenceLabelStart + 1,
+);
+const timelineStateEvidenceLabel = Function(
+  "parseRoutePhaseLabel",
+  `return (${source.slice(
+    timelineStateEvidenceLabelStart,
+    timelineStateEvidenceLabelEnd,
+  )});`,
+)((label) => {
+  const match = /^(?<baseLabel>.+)-route-(?<phase>start|mid|close)$/.exec(
+    label,
+  );
+  return match?.groups ?? null;
+});
+const postFirstAfternoonRestRecoveryStart = source.indexOf(
+  "function hasPostFirstAfternoonRestRecovery(",
+);
+const postFirstAfternoonRestRecoveryEnd = source.indexOf(
+  "\nfunction postFirstAfternoonRestAdvancedProbe(",
+  postFirstAfternoonRestRecoveryStart + 1,
+);
+const hasPostFirstAfternoonRestRecovery = Function(
+  `return (${source.slice(
+    postFirstAfternoonRestRecoveryStart,
+    postFirstAfternoonRestRecoveryEnd,
+  )});`,
+)();
+const scriptedRouteEndpointStart = source.indexOf(
+  "function scriptedRouteEndpointMatchesAuthoredArrival(",
+);
+const scriptedRouteEndpointEnd = source.indexOf(
+  "\nfunction matchingScriptedRouteGameSnapshotForProbe(",
+  scriptedRouteEndpointStart + 1,
+);
+const scriptedRouteEndpointMatchesAuthoredArrival = Function(
+  `return (${source.slice(
+    scriptedRouteEndpointStart,
+    scriptedRouteEndpointEnd,
+  )});`,
+)();
 const planningTraceAssertionStart = source.indexOf(
   "function assertPlanningTracePayload(",
 );
@@ -140,6 +265,455 @@ const rowanPlaybackSource = await readFile(
   ),
   "utf8",
 );
+
+test("simulator command probes outlive the command-scoped AI budget", async () => {
+  const calls = [];
+  const fetchJson = async (...args) => {
+    calls.push(args);
+    return { game: { id: "game-command-timeout" } };
+  };
+  const getWebSimBase = () => "https://manylives.example/sim";
+  const commandTimeoutMs = 20_000;
+  const advance = advanceObjective(
+    fetchJson,
+    getWebSimBase,
+    commandTimeoutMs,
+  );
+  const runCommand = runGameCommand(
+    fetchJson,
+    getWebSimBase,
+    commandTimeoutMs,
+  );
+
+  await advance("game-command-timeout");
+  await runCommand("game-command-timeout", { type: "enter_location" });
+
+  assert.equal(calls.length, 2);
+  for (const [url, init, timeoutMs] of calls) {
+    assert.equal(
+      url,
+      "https://manylives.example/sim/game/game-command-timeout/command",
+    );
+    assert.equal(init.method, "POST");
+    assert.equal(timeoutMs, commandTimeoutMs);
+  }
+  assert.match(source, /const HTTP_FETCH_TIMEOUT_MS = 8_000;/);
+  assert.match(source, /const SIM_COMMAND_FETCH_TIMEOUT_MS = 20_000;/);
+});
+
+test("the web autonomy request outlives the server AI budget within the visible pacing deadline", () => {
+  const constantValue = (sourceText, name) => {
+    const match = new RegExp(
+      `(?:export )?const ${name} = ([0-9_]+);`,
+    ).exec(sourceText);
+    assert.ok(match, `Missing ${name} constant.`);
+    return Number(match[1].replaceAll("_", ""));
+  };
+
+  const serverBudgetMs = constantValue(
+    simEngineSource,
+    "ADVANCE_OBJECTIVE_AI_BUDGET_MS",
+  );
+  const clientTimeoutMs = constantValue(
+    streetApiSource,
+    "STREET_ADVANCE_OBJECTIVE_TIMEOUT_MS",
+  );
+  const visibleGapMatch =
+    /const AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS = Number\([\s\S]*?\?\? "([0-9_]+)"/.exec(
+      source,
+    );
+  assert.ok(
+    visibleGapMatch,
+    "Missing the default AUTOPLAY_PACING_IDLE_GAP_TIMEOUT_MS value.",
+  );
+  const visibleGapMs = Number(visibleGapMatch[1].replaceAll("_", ""));
+
+  assert.ok(
+    clientTimeoutMs > serverBudgetMs,
+    `The web timeout (${clientTimeoutMs}ms) must outlive the server AI budget (${serverBudgetMs}ms).`,
+  );
+  assert.ok(
+    clientTimeoutMs < visibleGapMs,
+    `The web timeout (${clientTimeoutMs}ms) must fail before the visible pacing deadline (${visibleGapMs}ms).`,
+  );
+  const advanceSource = streetApiSource.slice(
+    streetApiSource.indexOf("export async function advanceStreetObjective("),
+  );
+  assert.match(
+    advanceSource,
+    /requestStreetCommand\(\s*gameId,\s*\{[\s\S]*?type: "advance_objective"[\s\S]*?timeoutMs: STREET_ADVANCE_OBJECTIVE_TIMEOUT_MS,/,
+  );
+});
+
+test("browser settlement admits only one pending thought-skip counter", () => {
+  const runtime = {
+    fallbackReasons: [],
+    lastLiveCallAt: "2026-08-16T09:25:57.177Z",
+    lastUpdatedAt: "2026-08-16T09:26:02.413Z",
+    model: "gpt-5-nano",
+    provider: "openai",
+    status: "live",
+    tasks: {
+      generateStreetThoughts: {
+        fallbacks: 0,
+        lastStatus: "skipped",
+        lastUpdatedAt: "2026-08-16T09:26:02.413Z",
+        skips: 6,
+        successes: 0,
+      },
+      planStreetNextAction: {
+        fallbacks: 0,
+        lastStatus: "success",
+        lastUpdatedAt: "2026-08-16T09:25:57.177Z",
+        skips: 0,
+        successes: 7,
+      },
+    },
+    totalFallbacks: 0,
+    totalSkips: 6,
+    totalSuccesses: 11,
+  };
+  const pendingThoughtSkip = structuredClone(runtime);
+  pendingThoughtSkip.lastUpdatedAt = "2026-08-16T09:25:57.226Z";
+  pendingThoughtSkip.tasks.generateStreetThoughts.lastUpdatedAt =
+    "2026-08-16T09:25:57.226Z";
+  pendingThoughtSkip.tasks.generateStreetThoughts.skips = 5;
+  pendingThoughtSkip.totalSkips = 5;
+
+  assert.equal(
+    aiRuntimeProbeMatchesExpected(pendingThoughtSkip, runtime),
+    true,
+  );
+  assert.equal(
+    aiRuntimeProbeMatchesExpected(runtime, pendingThoughtSkip),
+    true,
+    "The browser may settle the same single thought skip just ahead of the command snapshot.",
+  );
+  assert.equal(aiRuntimeProbeMatchesExpected(runtime, runtime), true);
+
+  const missingSuccess = structuredClone(pendingThoughtSkip);
+  missingSuccess.tasks.planStreetNextAction.successes = 6;
+  missingSuccess.totalSuccesses = 10;
+  assert.equal(aiRuntimeProbeMatchesExpected(missingSuccess, runtime), false);
+
+  const missingFallback = structuredClone(pendingThoughtSkip);
+  missingFallback.fallbackReasons = ["provider budget expired"];
+  missingFallback.totalFallbacks = 1;
+  assert.equal(aiRuntimeProbeMatchesExpected(missingFallback, runtime), false);
+
+  const twoPendingSkips = structuredClone(pendingThoughtSkip);
+  twoPendingSkips.tasks.generateStreetThoughts.skips = 4;
+  twoPendingSkips.totalSkips = 4;
+  assert.equal(aiRuntimeProbeMatchesExpected(twoPendingSkips, runtime), false);
+
+  const twoSettledSkips = structuredClone(runtime);
+  twoSettledSkips.lastUpdatedAt = "2026-08-16T09:26:03.413Z";
+  twoSettledSkips.tasks.generateStreetThoughts.lastUpdatedAt =
+    "2026-08-16T09:26:03.413Z";
+  twoSettledSkips.tasks.generateStreetThoughts.skips = 7;
+  twoSettledSkips.totalSkips = 7;
+  assert.equal(
+    aiRuntimeProbeMatchesExpected(twoSettledSkips, pendingThoughtSkip),
+    false,
+  );
+
+  const newerCountWithOlderTimestamp = structuredClone(runtime);
+  newerCountWithOlderTimestamp.lastUpdatedAt = "2026-08-16T09:25:56.177Z";
+  newerCountWithOlderTimestamp.tasks.generateStreetThoughts.lastUpdatedAt =
+    "2026-08-16T09:25:56.177Z";
+  assert.equal(
+    aiRuntimeProbeMatchesExpected(
+      newerCountWithOlderTimestamp,
+      pendingThoughtSkip,
+    ),
+    false,
+  );
+});
+
+test("late Notebook permits shelter only for the selected open standing pressure", () => {
+  const probe = {
+    autonomy: {
+      label: "Return to Morrow House to keep the room stable",
+      planningTrace: {
+        selectedMatchedOutcomeId: "settle-standing",
+        selectedPressureLabel:
+          "Morrow House standing built is an open desired-state predicate",
+      },
+    },
+    objective: {
+      outcomes: [
+        {
+          id: "settle-standing",
+          label: "Morrow House standing built",
+          status: "blocked",
+        },
+      ],
+      text: "Ask Mara about tonight's room terms and which live work to pursue next.",
+    },
+  };
+
+  assert.equal(probeHasCurrentShelterStandingPressure(probe), true);
+
+  const resolved = structuredClone(probe);
+  resolved.objective.outcomes[0].status = "met";
+  assert.equal(probeHasCurrentShelterStandingPressure(resolved), false);
+
+  const unrelatedPressure = structuredClone(probe);
+  unrelatedPressure.autonomy.planningTrace.selectedMatchedOutcomeId =
+    "nia-block-lead";
+  assert.equal(
+    probeHasCurrentShelterStandingPressure(unrelatedPressure),
+    false,
+  );
+
+  const missingAuthority = structuredClone(probe);
+  missingAuthority.autonomy.label = "Ask Nia where the block is about to jam";
+  missingAuthority.autonomy.planningTrace.selectedPressureLabel =
+    "Nia block lead is open";
+  missingAuthority.objective.text = "Ask Nia where the block is about to jam.";
+  assert.equal(
+    probeHasCurrentShelterStandingPressure(missingAuthority),
+    false,
+  );
+});
+
+test("shift hold accepts only a pending local lunch rush within one hour", () => {
+  const game = {
+    currentTime: "2026-03-21T11:26:00.000Z",
+  };
+  const upcomingLunchRush = {
+    id: "event-lunch-rush",
+    locationId: "tea-house",
+    outcome: "pending",
+    progress: "waiting",
+    resolvedAt: null,
+    startMinute: 12 * 60,
+    status: "upcoming",
+  };
+
+  assert.equal(lunchRushSupportsShiftHold(game, upcomingLunchRush), true);
+
+  const activeLunchRush = structuredClone(upcomingLunchRush);
+  activeLunchRush.progress = "rush";
+  activeLunchRush.status = "active";
+  assert.equal(lunchRushSupportsShiftHold(game, activeLunchRush), true);
+
+  const tooEarly = structuredClone(upcomingLunchRush);
+  assert.equal(
+    lunchRushSupportsShiftHold(
+      { currentTime: "2026-03-21T10:59:00.000Z" },
+      tooEarly,
+    ),
+    false,
+  );
+
+  for (const invalid of [
+    { locationId: "market-square" },
+    { outcome: "handled" },
+    { progress: "rush" },
+    { resolvedAt: "2026-03-21T11:20:00.000Z" },
+    { status: "resolved" },
+  ]) {
+    assert.equal(
+      lunchRushSupportsShiftHold(game, {
+        ...upcomingLunchRush,
+        ...invalid,
+      }),
+      false,
+    );
+  }
+});
+
+test("city-event expectations follow actual tea work instead of checkpoint names", () => {
+  assert.equal(
+    expectedLunchRushEventState({
+      firstAfternoon: {
+        consequence: { id: "problem-pump", kind: "local-problem" },
+      },
+    }),
+    null,
+    "A legal pump trajectory must not inherit tea-event assertions.",
+  );
+  assert.deepEqual(
+    expectedLunchRushEventState({
+      firstAfternoon: { teaShiftStage: "rush" },
+    }),
+    { progress: "rush", stage: "rush", status: "active" },
+  );
+  assert.deepEqual(
+    expectedLunchRushEventState({
+      firstAfternoon: { teaShiftStage: "counter" },
+    }),
+    { progress: "counter", stage: "counter", status: "active" },
+  );
+  assert.deepEqual(
+    expectedLunchRushEventState({
+      firstAfternoon: { teaShiftStage: "paid" },
+    }),
+    { progress: "paid", stage: "paid", status: "resolved" },
+  );
+});
+
+test("timeline evidence labels describe the selected trajectory", () => {
+  const pumpRoute = timelineStateEvidenceLabel({
+    game: {
+      player: { currentLocationId: "boarding-house" },
+      rowanAutonomy: {
+        actionId: "move:repair-stall",
+        targetLocationId: "repair-stall",
+      },
+    },
+    label: "arrive-cafe-door-route-start",
+    probe: {
+      location: { id: "boarding-house" },
+      movement: {
+        playerRoute: {
+          active: true,
+          targetLocationId: "repair-stall",
+        },
+      },
+    },
+  });
+  assert.equal(
+    pumpRoute,
+    "route:start:to-repair-stall@boarding-house",
+  );
+  assert.doesNotMatch(pumpRoute, /tea|cafe|lunch/i);
+
+  assert.equal(
+    timelineStateEvidenceLabel({
+      game: {
+        activeConversation: { npcId: "npc-jo" },
+        player: { currentLocationId: "repair-stall" },
+        rowanAutonomy: { label: "With Jo" },
+      },
+      label: "ada-live-thread",
+      probe: {
+        activeConversation: { npcId: "npc-jo" },
+        location: { id: "repair-stall" },
+      },
+    }),
+    "conversation:npc-jo@repair-stall",
+  );
+
+  assert.equal(
+    timelineStateEvidenceLabel({
+      game: {
+        firstAfternoon: {
+          completedAt: "2026-03-21T14:14:00.000Z",
+          consequence: { id: "problem-pump", kind: "local-problem" },
+        },
+        player: { currentLocationId: "boarding-house" },
+        rowanAutonomy: { label: "First afternoon complete" },
+      },
+      label: "enter-morrow-return",
+      probe: {
+        autonomy: { label: "First afternoon complete" },
+        location: { id: "boarding-house" },
+      },
+    }),
+    "consequence:local-problem:problem-pump:complete@boarding-house",
+  );
+});
+
+test("post-afternoon recovery accepts a living-world-interrupted rest", () => {
+  const firstAfternoon = {
+    completionAcknowledgedAt: "2026-03-21T15:24:00.000Z",
+  };
+  const interruptedRest = {
+    energy: 34,
+    lastRestAt: "2026-03-21T16:24:00.000Z",
+  };
+
+  assert.equal(
+    hasPostFirstAfternoonRestRecovery(firstAfternoon, interruptedRest),
+    true,
+  );
+  assert.equal(
+    hasPostFirstAfternoonRestRecovery(firstAfternoon, {
+      ...interruptedRest,
+      energy: 12,
+    }),
+    false,
+  );
+  assert.equal(
+    hasPostFirstAfternoonRestRecovery(firstAfternoon, {
+      ...interruptedRest,
+      lastRestAt: "2026-03-21T15:23:00.000Z",
+    }),
+    false,
+  );
+  assert.equal(
+    hasPostFirstAfternoonRestRecovery(firstAfternoon, {
+      energy: 68,
+      lastRestAt: null,
+    }),
+    false,
+  );
+});
+
+test("outdoor route recovery terminates at an authored landmark arrival", () => {
+  const nextGame = {
+    player: { currentLocationId: "freight-yard", x: 18, y: 10 },
+  };
+  const route = {
+    spaceId: "street:south-quay",
+    target: { x: 9, y: 13 },
+    worldPath: [
+      { x: 331, y: 688 },
+      { x: 740, y: 966 },
+    ],
+  };
+  const probe = {
+    movement: {
+      playerLocationGeometry: {
+        anchorLocationId: "freight-yard",
+        authoredArrivalPoints: [
+          { kind: "frontage", x: 698, y: 968 },
+          { kind: "door", x: 698, y: 952 },
+        ],
+        targetLocationId: "freight-yard",
+      },
+    },
+  };
+
+  assert.equal(
+    scriptedRouteEndpointMatchesAuthoredArrival(probe, route, nextGame),
+    true,
+  );
+  assert.equal(
+    scriptedRouteEndpointMatchesAuthoredArrival(
+      probe,
+      { ...route, worldPath: [{ x: 331, y: 688 }, { x: 980, y: 1180 }] },
+      nextGame,
+    ),
+    false,
+  );
+  assert.equal(
+    scriptedRouteEndpointMatchesAuthoredArrival(
+      {
+        movement: {
+          playerLocationGeometry: {
+            ...probe.movement.playerLocationGeometry,
+            targetLocationId: "market-square",
+          },
+        },
+      },
+      route,
+      nextGame,
+    ),
+    false,
+  );
+  assert.equal(
+    scriptedRouteEndpointMatchesAuthoredArrival(
+      probe,
+      { ...route, spaceId: "interior:tea-house", target: { x: 7, y: 4 } },
+      { player: { currentLocationId: "tea-house", x: 7, y: 4 } },
+    ),
+    true,
+  );
+});
+
 const resolvedConversationTransitionDeclaration =
   "export const findResolvedConversationThreadTransitions:";
 const resolvedConversationTransitionStart = rowanPlaybackSource.indexOf(

@@ -8029,6 +8029,9 @@ describe("SimulationEngine street slice", () => {
     expect(result.finalWorld.firstAfternoon?.leadFieldNote).toMatchObject({
       evidence: expect.stringContaining("Asked Ada at Kettle & Lamp"),
       learned: expect.stringContaining("Mara's Kettle & Lamp lead is real"),
+      next: expect.stringMatching(
+        /first afternoon is settled.*rest at Morrow House/i,
+      ),
     });
     expect(
       result.finalWorld.cityEvents.find(

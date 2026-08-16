@@ -227,7 +227,7 @@ They are not grandfathered into `VERIFIED`.
   Exact-SHA CI/deploy and exact-production evidence remain required.
   Implementation owner Gibbs completed the bounded scope.
 
-- `VF-25` (`HIGH`, `CANDIDATE`): the final exact-production Chrome gate on deployed
+- `VF-25` (`HIGH`, `VERIFIED`): the final exact-production Chrome gate on deployed
   commit `1d10947e864d8114d27d55cc35f7e7117faa254f` completed the ordinary-lead
   first-afternoon trajectory naturally with 65 meaningful beats, zero
   progression clicks, first decision at 1.229 seconds, first interaction at
@@ -269,8 +269,90 @@ They are not grandfathered into `VERIFIED`.
   gap. Both stopped naturally with no visible progression controls. Candidate
   evidence is at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786866194514`.
-  Exact-SHA CI/deploy and the same exact-production Chrome gate remain required.
-  Implementation owner Franklin completed the bounded scope.
+  Candidate `a269c3da8eaeea38362ad662c261344b4d1bfe53` passed build,
+  visual, gameplay, and deploy jobs in GitHub Actions run `31935594919`.
+  Exact-production ordinary and noticed trajectories at
+  `/private/tmp/manylives-a269c3d-live-rowan` stopped naturally with zero
+  progression controls and maximum app-visible gaps of 10.801 and 10.147
+  seconds. The documented live harness at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786869648968`
+  passed all 14 stages, including a real accepted OpenAI planner trace,
+  fresh/resume/new identity smoke, the production build, 46 gameplay
+  screenshots, and all 22 visual states. Production health tied the deployed
+  app to `a269c3d`. Implementation owner Franklin completed the bounded scope.
+
+- `VF-26` (`HIGH`, `CANDIDATE`): post-release exact-production regression
+  hardening on `a269c3da8eaeea38362ad662c261344b4d1bfe53` exposed that the
+  browser timeline attaches tea-house labels and event assertions such as
+  `hold-for-shift` and `lunch-rush` to generic `advance_objective` calls. In
+  game `game-eec3202f-30b2-476a-817a-3d7de4cfaf65`, the validated planner
+  legally selected Jo's wrench and the active pump path at `11:28`; the gate
+  then failed because the tea lunch event was not active, despite the selected
+  trajectory, route, objective state, and consequence being coherent. Exact
+  failure evidence is at
+  `/private/tmp/manylives-a269c3d-live-rowan-release-gate`. Preserve
+  zero-click autonomy, simulator legality, provider provenance, authored route
+  endpoint continuity, strict visual evidence, and state-derived planner
+  choice. Acceptance requires the timeline to derive semantic checkpoints from
+  actual state and validate every supported first-afternoon branch, including
+  tea work and pump repair, with branch-specific route, interaction,
+  consequence, event, and screenshot evidence. It must reject incoherent or
+  incomplete branches without forcing one hardcoded route. Focused harness
+  hardening currently passes 75 tests with five intentional skips. A fresh
+  exact-production run followed the legal tea-work branch through a natural
+  4/4 stop before the independent pacing contract exposed `VF-27`, so the
+  trajectory-aware timeline has not yet reached its full production phase.
+  The complete local candidate gate at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786900821861`
+  passed all 13 stages: ordinary-lead and noticed-pump trajectories, 46
+  gameplay screenshots, 23 autonomous watch beats, zero progression clicks,
+  route continuity, post-objective follow-through, independent NPC change,
+  production build, and 22/22 required visual states. Direct inspection found
+  no visual regression. Exact-SHA CI/deploy and the same exact-production
+  branch-aware gate remain required.
+
+- `VF-27` (`HIGH`, `CANDIDATE`): the fresh exact-production ordinary-lead run
+  on `a269c3da8eaeea38362ad662c261344b4d1bfe53` reached a natural tea-work
+  4/4 stop with zero progression clicks, but opening Mara's first conversation
+  produced a 17.591-second product-visible gap against the protected 15-second
+  limit. The server may legally use a shared 12-second AI budget for one
+  `advance_objective` command while the web client aborts every street command
+  after 8 seconds. On the observed slow live call, that mismatch forced stale
+  state recovery and another autoplay dwell before retry. Preserve the shared
+  server budget, strict visible-gap gate, zero-click behavior, live provenance,
+  deterministic fallback, and the shorter timeout for ordinary commands.
+  Acceptance requires the dedicated autonomy-request timeout to outlive the
+  server budget while remaining below the visible-gap deadline, focused
+  cross-layer contract coverage, the full local test/build/visual gates, and
+  fresh exact-production ordinary and noticed trajectories with no visible gap
+  over 15 seconds. Failure evidence is at
+  `/private/tmp/manylives-a269c3d-vf26-candidate-3`; exact game state is retained
+  as `game-670985c9-3f48-4e3e-a9d1-39905c77d3d6`. The candidate gives only
+  `advance_objective` a 14-second client deadline; all other commands retain
+  the existing 8-second limit. Focused coverage passes 75 tests with five
+  intentional skips, and the complete local candidate gate passed at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786900821861`.
+  Exact-SHA CI/deploy and fresh exact-production ordinary and noticed pacing
+  ledgers remain required.
+
+- `VF-28` (`MEDIUM`, `CANDIDATE`): the first complete local candidate gate at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786899678508`
+  reached the completed first-afternoon state but found that the persisted
+  simulator-owned lead field note still told Rowan to choose whether to take
+  the cup-and-counter shift after that shift had already paid. The renderer
+  correctly preserves simulator authority, so overriding this stale copy in
+  the client would hide the state defect and violate the reasoning-ownership
+  contract. Preserve simulator-owned field-note authority, the paid and
+  completed consequence state, renderer precedence, and post-objective
+  momentum. Acceptance requires the simulator to advance the persisted note's
+  next step when the shift pays and when the first afternoon completes, an
+  integration assertion at the completed state, the full local gate, and an
+  exact-production completed-state screenshot with no stale shift choice. The
+  server-owned candidate passes 196 focused authority/engine tests and the
+  complete 13-stage local gate at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786900821861`.
+  Exact-SHA CI/deploy and exact-production completed-state evidence remain
+  required.
 
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp

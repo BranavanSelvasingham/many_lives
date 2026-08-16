@@ -852,6 +852,10 @@ interface FirstAfternoonScaffoldCopy {
   leadFieldNote: (
     input: FirstAfternoonLeadFieldNoteInput,
   ) => FirstAfternoonLeadFieldNoteCopy;
+  leadFieldNoteNext: {
+    completed: string;
+    paid: string;
+  };
   planSettlement: FirstAfternoonPlanChoiceCopy;
   pumpChoice: FirstAfternoonObjectiveChoiceCopy;
 }
@@ -3388,6 +3392,12 @@ const OBJECTIVE_ROUTE_SCAFFOLDS: ObjectiveRouteScaffold[] = [
         next:
           "Ada's offer is now a current choice: take the cup-and-counter shift, compare another opening, or deliberately walk away before the window closes.",
       }),
+      leadFieldNoteNext: {
+        completed:
+          "The first afternoon is settled; rest at Morrow House, then weigh the yard work window against the Morrow Yard pump.",
+        paid:
+          "The shift paid. Return to Morrow House and take stock before the day scatters into another thread.",
+      },
       planSettlement: {
         currentThought:
           "Mara gave me more than one live approach: Ada's lunch work and the leaking pump are both real. The current legal choices can decide which deserves the first follow-through.",
@@ -4771,6 +4781,12 @@ export function objectiveRouteFirstAfternoonLeadFieldNote(
   input: FirstAfternoonLeadFieldNoteInput,
 ): FirstAfternoonLeadFieldNoteCopy {
   return firstAfternoonScaffoldCopy().leadFieldNote(input);
+}
+
+export function objectiveRouteFirstAfternoonLeadFieldNoteNext(
+  state: "completed" | "paid",
+): string {
+  return firstAfternoonScaffoldCopy().leadFieldNoteNext[state];
 }
 
 export function objectiveRouteNotebookBeliefs(

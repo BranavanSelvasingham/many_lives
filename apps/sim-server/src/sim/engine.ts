@@ -72,6 +72,7 @@ import {
   objectiveRouteFirstAfternoonCompletionFieldNote,
   objectiveRouteFirstAfternoonCompletionOutcome,
   objectiveRouteFirstAfternoonLeadFieldNote,
+  objectiveRouteFirstAfternoonLeadFieldNoteNext,
   objectiveRouteFirstAfternoonPlanSettlementCopy,
   objectiveRouteFirstAfternoonPumpChoiceCopy,
   objectiveRouteConversationThought,
@@ -10096,6 +10097,7 @@ function workJob(world: StreetGameState, jobId: string): void {
   if (job.id === "job-tea-shift") {
     world.firstAfternoon ??= {};
     world.firstAfternoon.teaShiftStage = "paid";
+    updateFirstAfternoonLeadFieldNoteNext(world, "paid");
     discoverJob(world, "job-yard-shift");
   }
   if (completionNarrative.currentThought) {
@@ -10525,6 +10527,7 @@ function completeFirstAfternoon(world: StreetGameState): void {
   world.firstAfternoon.completedAt = world.currentTime;
   world.firstAfternoon.consequence = consequence;
   world.firstAfternoon.fieldNote = buildFirstAfternoonFieldNote(consequence);
+  updateFirstAfternoonLeadFieldNoteNext(world, "completed");
   discoverProblem(world, "problem-pump");
   const completionOutcome = objectiveRouteFirstAfternoonCompletionOutcome();
   world.player.currentThought = completionOutcome.playerThought;
@@ -10625,6 +10628,18 @@ function ensureFirstAfternoonLeadFieldNote(world: StreetGameState): void {
   };
   addFeed(world, "memory", copy.feedText);
   rememberIfNew(world, "job", copy.memoryText);
+}
+
+function updateFirstAfternoonLeadFieldNoteNext(
+  world: StreetGameState,
+  state: "completed" | "paid",
+): void {
+  if (!world.firstAfternoon?.leadFieldNote) {
+    return;
+  }
+
+  world.firstAfternoon.leadFieldNote.next =
+    objectiveRouteFirstAfternoonLeadFieldNoteNext(state);
 }
 
 function resolvePassiveState(

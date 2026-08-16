@@ -2,6 +2,7 @@ import { requestJson } from "@/lib/api/client";
 import type { GameStateResponse, StreetGameState } from "@/lib/street/types";
 
 export const STREET_COMMAND_TIMEOUT_MS = 8_000;
+export const STREET_ADVANCE_OBJECTIVE_TIMEOUT_MS = 14_000;
 export const STREET_RECOVERY_REQUEST_TIMEOUT_MS = 4_000;
 
 type StreetRequestOperation = "command" | "create" | "load";
@@ -58,6 +59,7 @@ async function requestStreetJson(
 async function requestStreetCommand(
   gameId: string,
   command: Record<string, unknown>,
+  options: StreetRequestOptions = {},
 ) {
   return requestStreetJson(
     `/game/${gameId}/command`,
@@ -66,7 +68,7 @@ async function requestStreetCommand(
       body: JSON.stringify(command),
     },
     "command",
-    { timeoutMs: STREET_COMMAND_TIMEOUT_MS },
+    { timeoutMs: options.timeoutMs ?? STREET_COMMAND_TIMEOUT_MS },
   );
 }
 
@@ -172,11 +174,17 @@ export async function advanceStreetObjective(
     confirmMove?: boolean;
   } = {},
 ): Promise<StreetGameState> {
-  const response = await requestStreetCommand(gameId, {
-    type: "advance_objective",
-    allowTimeSkip: options.allowTimeSkip,
-    confirmMove: options.confirmMove,
-  });
+  const response = await requestStreetCommand(
+    gameId,
+    {
+      type: "advance_objective",
+      allowTimeSkip: options.allowTimeSkip,
+      confirmMove: options.confirmMove,
+    },
+    {
+      timeoutMs: STREET_ADVANCE_OBJECTIVE_TIMEOUT_MS,
+    },
+  );
 
   return response.game;
 }
