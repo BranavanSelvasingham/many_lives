@@ -1,4 +1,5 @@
 import type {
+  AICommandBudget,
   AIProvider,
   StreetPlanningAllowedAction,
   StreetPlanningObjectiveOutcome,
@@ -141,6 +142,7 @@ import type {
 } from "./rowanLoop.js";
 
 export const STEP_MINUTES = 30;
+export const ADVANCE_OBJECTIVE_AI_BUDGET_MS = 12_000;
 
 const MINUTES_PER_MOVEMENT_TILE = 1.5;
 const MIN_PLAYER_MOVEMENT_ENERGY = 12;
@@ -285,6 +287,13 @@ export class SimulationEngine {
   ): Promise<StreetGameState> {
     const nextWorld = cloneWorld(world);
     let thoughtRefreshMode: ThoughtRefreshMode = "full";
+    const commandBudget =
+      command.type === "advance_objective"
+        ? createAdvanceObjectiveAIBudget()
+        : undefined;
+    const commandAIProvider = commandBudget
+      ? withAICommandBudget(this.aiProvider, commandBudget)
+      : this.aiProvider;
 
     if (command.type !== "advance_objective") {
       clearPendingObjectiveMove(nextWorld);
@@ -333,7 +342,7 @@ export class SimulationEngine {
         break;
       case "advance_objective":
         thoughtRefreshMode =
-          (await advanceObjective(nextWorld, this.aiProvider, {
+          (await advanceObjective(nextWorld, commandAIProvider, {
             allowTimeSkip: command.allowTimeSkip ?? true,
             confirmMove: command.confirmMove ?? false,
           })) ?? thoughtRefreshMode;
@@ -342,10 +351,44 @@ export class SimulationEngine {
         break;
     }
 
-    return refreshWorld(nextWorld, this.aiProvider, {
+    return refreshWorld(nextWorld, commandAIProvider, {
       thoughtRefreshMode,
     });
   }
+}
+
+function createAdvanceObjectiveAIBudget(): AICommandBudget {
+  return {
+    deadlineAtMs: Date.now() + ADVANCE_OBJECTIVE_AI_BUDGET_MS,
+    totalBudgetMs: ADVANCE_OBJECTIVE_AI_BUDGET_MS,
+  };
+}
+
+function withAICommandBudget(
+  provider: AIProvider,
+  budget: AICommandBudget,
+): AIProvider {
+  return {
+    get model() {
+      return provider.model;
+    },
+    get name() {
+      return provider.name;
+    },
+    classifyEscalation: (context) => provider.classifyEscalation(context),
+    generateInboxMessage: (context) => provider.generateInboxMessage(context),
+    generateStreetAutonomousLine: (input) =>
+      provider.generateStreetAutonomousLine(input, budget),
+    generateStreetReply: (input) => provider.generateStreetReply(input, budget),
+    generateStreetThoughts: (game) =>
+      provider.generateStreetThoughts(game, budget),
+    interpretStreetConversation: (input) =>
+      provider.interpretStreetConversation(input, budget),
+    planStreetNextAction: (input) =>
+      provider.planStreetNextAction(input, budget),
+    proposeNextAction: (context) => provider.proposeNextAction(context),
+    summarizeState: (world) => provider.summarizeState(world),
+  };
 }
 
 function cloneWorld(world: StreetGameState): StreetGameState {

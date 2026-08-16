@@ -456,6 +456,311 @@ describe("OpenAIProvider street fallback", () => {
     ]);
   });
 
+  it("shares one hard budget across serial street tasks and ignores late completions", async () => {
+    vi.useFakeTimers();
+    const planningRequest = buildPlanningRequest();
+    const game = planningRequest.game;
+    const commandBudget = {
+      deadlineAtMs: Date.now() + 12_000,
+      totalBudgetMs: 12_000,
+    };
+    let lateReplyResolve: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn(
+      (_url: string | URL | Request, init?: RequestInit) => {
+        const callIndex = fetchMock.mock.calls.length;
+        if (callIndex === 1) {
+          return new Promise<Response>((resolve) => {
+            setTimeout(
+              () =>
+                resolve(
+                  Response.json({
+                    output_text: JSON.stringify({
+                      actionId: "talk:npc-mara",
+                      confidence: 0.84,
+                      planKey: "plan:talk-mara",
+                      rationale: "Mara can clarify the room before Rowan leaves.",
+                    }),
+                  }),
+                ),
+              4_000,
+            );
+          });
+        }
+        if (callIndex === 2) {
+          return new Promise<Response>((resolve) => {
+            setTimeout(
+              () =>
+                resolve(
+                  Response.json({
+                    output_text: JSON.stringify({
+                      speech: "What should I understand before I head out?",
+                    }),
+                  }),
+                ),
+              4_000,
+            );
+          });
+        }
+
+        return new Promise<Response>((resolve) => {
+          lateReplyResolve = resolve;
+          // Ignore abort to prove the provider deadline owns completion and mutation.
+          void init;
+        });
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      retryCount: 0,
+      timeoutMs: DEFAULT_OPENAI_TIMEOUT_MS,
+    });
+    const objective = {
+      focus: "settle" as const,
+      routeKey: "first-afternoon",
+      text: "Make Rowan's first afternoon count.",
+    };
+
+    const planningPromise = provider.planStreetNextAction(
+      planningRequest,
+      commandBudget,
+    );
+    await vi.advanceTimersByTimeAsync(4_000);
+    await expect(planningPromise).resolves.toMatchObject({
+      actionId: "talk:npc-mara",
+      confidence: 0.84,
+      planKey: "plan:talk-mara",
+    });
+
+    const openerPromise = provider.generateStreetAutonomousLine(
+      {
+        game,
+        npcId: "npc-mara",
+        objective,
+        purpose: "opener",
+      },
+      commandBudget,
+    );
+    await vi.advanceTimersByTimeAsync(4_000);
+    await expect(openerPromise).resolves.toEqual({
+      speech: "What should I understand before I head out?",
+    });
+
+    const replyInput = {
+      game,
+      npcId: "npc-mara",
+      playerText: "What should I understand before I head out?",
+    };
+    const replyPromise = provider.generateStreetReply(replyInput, commandBudget);
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(provider.getCallLog()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1);
+    const reply = await replyPromise;
+    expect(reply).toMatchObject({
+      followupThought: expect.any(String),
+      reply: expect.any(String),
+    });
+    expect(JSON.stringify(reply)).not.toContain(
+      "This late response must not change returned state.",
+    );
+
+    const interpretation = await provider.interpretStreetConversation(
+      {
+        closingReply: reply.reply,
+        discussedTopics: ["work"],
+        game,
+        npcId: "npc-mara",
+        objective,
+      },
+      commandBudget,
+    );
+    expect(interpretation).toMatchObject({
+      npcImpression: expect.any(String),
+      summary: expect.any(String),
+    });
+    expect(JSON.stringify(interpretation)).not.toContain(
+      "This late response must not change returned state.",
+    );
+
+    expect(Date.now()).toBe(commandBudget.deadlineAtMs);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2]?.[1]?.signal?.aborted).toBe(true);
+    expect(provider.getCallLog()).toMatchObject([
+      {
+        durationMs: 4_000,
+        status: "success",
+        task: "planStreetNextAction",
+      },
+      {
+        durationMs: 4_000,
+        status: "success",
+        task: "generateStreetAutonomousLine",
+      },
+      {
+        budgetExhausted: true,
+        durationMs: 4_000,
+        error: expect.stringMatching(
+          /OpenAICommandBudgetError.*12000ms shared latency budget/i,
+        ),
+        status: "fallback",
+        task: "generateStreetReply",
+      },
+      {
+        budgetExhausted: true,
+        durationMs: 0,
+        error: expect.stringMatching(
+          /OpenAICommandBudgetError.*12000ms shared latency budget/i,
+        ),
+        status: "fallback",
+        task: "interpretStreetConversation",
+      },
+    ]);
+    expect(game.aiRuntime).toMatchObject({
+      status: "live",
+      tasks: {
+        generateStreetAutonomousLine: {
+          fallbacks: 0,
+          lastStatus: "success",
+          successes: 1,
+        },
+        generateStreetReply: {
+          fallbacks: 1,
+          lastFallbackReason: expect.stringMatching(/shared latency budget/i),
+          lastStatus: "fallback",
+          successes: 0,
+        },
+        interpretStreetConversation: {
+          fallbacks: 1,
+          lastFallbackReason: expect.stringMatching(/shared latency budget/i),
+          lastStatus: "fallback",
+          successes: 0,
+        },
+        planStreetNextAction: {
+          fallbacks: 0,
+          lastStatus: "success",
+          successes: 1,
+        },
+      },
+      totalFallbacks: 2,
+      totalSuccesses: 2,
+    });
+
+    const runtimeAfterFallback = JSON.stringify(game.aiRuntime);
+    lateReplyResolve?.(
+      Response.json({
+        output_text: JSON.stringify({
+          reply: "This late response must not change returned state.",
+        }),
+      }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(provider.getCallLog()).toHaveLength(4);
+    expect(JSON.stringify(game.aiRuntime)).toBe(runtimeAfterFallback);
+  });
+
+  it("falls back at the shared deadline when response body consumption stalls", async () => {
+    vi.useFakeTimers();
+    const game = seedStreetGame("game-openai-stalled-response-body");
+    const input = {
+      game,
+      npcId: "npc-mara",
+      playerText: "What should I understand before I head out?",
+    };
+    const deterministic = buildDeterministicStreetReply(input);
+    const commandBudget = {
+      deadlineAtMs: Date.now() + 12_000,
+      totalBudgetMs: 12_000,
+    };
+    let requestSignal: AbortSignal | undefined;
+    let resolveJson:
+      | ((value: { output_text: string }) => void)
+      | undefined;
+    const json = vi.fn(
+      () =>
+        new Promise<{ output_text: string }>((resolve) => {
+          resolveJson = resolve;
+        }),
+    );
+    const fetchMock = vi.fn(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        requestSignal = init?.signal ?? undefined;
+        return {
+          json,
+          ok: true,
+          status: 200,
+        } as unknown as Response;
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAIProvider({
+      apiKey: "test-key",
+      retryCount: 0,
+      timeoutMs: DEFAULT_OPENAI_TIMEOUT_MS,
+    });
+    const resultPromise = provider.generateStreetReply(input, commandBudget);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(json).toHaveBeenCalledTimes(1);
+    expect(requestSignal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(11_999);
+    expect(provider.getCallLog()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(resultPromise).resolves.toEqual(deterministic);
+
+    expect(Date.now()).toBe(commandBudget.deadlineAtMs);
+    expect(requestSignal?.aborted).toBe(true);
+    expect(provider.getCallLog()).toEqual([
+      {
+        budgetExhausted: true,
+        durationMs: 12_000,
+        error:
+          "OpenAICommandBudgetError: OpenAI command exhausted its 12000ms shared latency budget before generateStreetReply completed",
+        gameId: game.id,
+        model: "gpt-5-nano",
+        status: "fallback",
+        task: "generateStreetReply",
+      },
+    ]);
+    expect(game.aiRuntime).toMatchObject({
+      fallbackReasons: [expect.stringMatching(/shared latency budget/i)],
+      status: "fallback",
+      tasks: {
+        generateStreetReply: {
+          fallbacks: 1,
+          lastFallbackReason: expect.stringMatching(/shared latency budget/i),
+          lastStatus: "fallback",
+          successes: 0,
+        },
+      },
+      totalFallbacks: 1,
+      totalSuccesses: 0,
+    });
+
+    const runtimeAfterFallback = JSON.stringify(game.aiRuntime);
+    resolveJson?.({
+      output_text: JSON.stringify({
+        followupThought: "This late thought must not be cached.",
+        reply: "This late response must not change returned state.",
+      }),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(provider.getCallLog()).toHaveLength(1);
+    expect(JSON.stringify(game.aiRuntime)).toBe(runtimeAfterFallback);
+
+    await expect(
+      provider.generateStreetReply(input, {
+        deadlineAtMs: Date.now() + 12_000,
+        totalBudgetMs: 12_000,
+      }),
+    ).resolves.toEqual(deterministic);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns null when planner output is malformed or not allowed", async () => {
     const provider = new OpenAIProvider({
       apiKey: "test-key",

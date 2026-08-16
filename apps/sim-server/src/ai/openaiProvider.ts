@@ -1,4 +1,5 @@
 import type {
+  AICommandBudget,
   AIContext,
   AIProvider,
   EscalationSuggestion,
@@ -49,6 +50,7 @@ export type OpenAIProviderTask =
   | "planStreetNextAction";
 
 export interface OpenAIProviderCallLogEntry {
+  budgetExhausted?: boolean;
   durationMs: number;
   error?: string;
   gameId?: string;
@@ -146,6 +148,7 @@ export class OpenAIProvider implements AIProvider {
 
   async generateStreetThoughts(
     game: StreetGameState,
+    budget?: AICommandBudget,
   ): Promise<StreetThoughtsResult> {
     if (!shouldUseOpenAIForStreetSupportTasks()) {
       this.recordCall({
@@ -171,7 +174,10 @@ export class OpenAIProvider implements AIProvider {
       "generateStreetThoughts",
       game,
       async () => {
-        const output = await this.createTextResponse(prompt, 220);
+        const output = await this.createTextResponse(prompt, 220, {
+          commandBudget: budget,
+          task: "generateStreetThoughts",
+        });
         return normalizeStreetThoughts(output, game);
       },
       () => this.fallback.generateStreetThoughts(game),
@@ -183,6 +189,7 @@ export class OpenAIProvider implements AIProvider {
 
   async generateStreetReply(
     input: StreetDialogueRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetDialogueResult> {
     const cacheKey = streetDialogueCacheKey(input);
     const cached = this.streetReplyCache.get(cacheKey);
@@ -195,7 +202,10 @@ export class OpenAIProvider implements AIProvider {
       "generateStreetReply",
       input.game,
       async () => {
-        const output = await this.createTextResponse(prompt, 260);
+        const output = await this.createTextResponse(prompt, 260, {
+          commandBudget: budget,
+          task: "generateStreetReply",
+        });
         return normalizeStreetReply(output, input);
       },
       () => this.fallback.generateStreetReply(input),
@@ -207,6 +217,7 @@ export class OpenAIProvider implements AIProvider {
 
   async generateStreetAutonomousLine(
     input: StreetAutonomousLineRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetAutonomousLineResult> {
     const prompt = buildGenerateStreetAutonomousLinePrompt(input);
 
@@ -214,7 +225,10 @@ export class OpenAIProvider implements AIProvider {
       "generateStreetAutonomousLine",
       input.game,
       async () => {
-        const output = await this.createTextResponse(prompt, 120);
+        const output = await this.createTextResponse(prompt, 120, {
+          commandBudget: budget,
+          task: "generateStreetAutonomousLine",
+        });
         return normalizeStreetAutonomousLine(output, input);
       },
       () => this.fallback.generateStreetAutonomousLine(input),
@@ -223,6 +237,7 @@ export class OpenAIProvider implements AIProvider {
 
   async interpretStreetConversation(
     input: StreetConversationInterpretationRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetConversationInterpretationResult> {
     const prompt = buildInterpretStreetConversationPrompt(input);
 
@@ -230,7 +245,10 @@ export class OpenAIProvider implements AIProvider {
       "interpretStreetConversation",
       input.game,
       async () => {
-        const output = await this.createTextResponse(prompt, 220);
+        const output = await this.createTextResponse(prompt, 220, {
+          commandBudget: budget,
+          task: "interpretStreetConversation",
+        });
         return normalizeStreetConversationInterpretation(output);
       },
       () => this.fallback.interpretStreetConversation(input),
@@ -239,6 +257,7 @@ export class OpenAIProvider implements AIProvider {
 
   async planStreetNextAction(
     input: StreetPlanningRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetPlanningResult | null> {
     const prompt = buildPlanStreetNextActionPrompt(input);
 
@@ -249,7 +268,11 @@ export class OpenAIProvider implements AIProvider {
         const output = await this.createTextResponse(
           prompt,
           160,
-          OPENAI_PLANNER_TOTAL_BUDGET_MS,
+          {
+            commandBudget: budget,
+            task: "planStreetNextAction",
+            taskBudgetMs: OPENAI_PLANNER_TOTAL_BUDGET_MS,
+          },
         );
         return normalizeStreetPlanningResult(output, input);
       },
@@ -303,6 +326,9 @@ export class OpenAIProvider implements AIProvider {
       return result;
     } catch (error) {
       this.recordCall({
+        ...(error instanceof OpenAICommandBudgetError
+          ? { budgetExhausted: true }
+          : {}),
         durationMs: Date.now() - startedAt,
         error: formatOpenAIError(error),
         gameId: game?.id,
@@ -317,23 +343,21 @@ export class OpenAIProvider implements AIProvider {
   private async createTextResponse(
     prompt: string,
     maxOutputTokens: number,
-    totalBudgetMs?: number,
+    options: {
+      commandBudget?: AICommandBudget;
+      task: OpenAIProviderTask;
+      taskBudgetMs?: number;
+    },
   ): Promise<string> {
     const attemptCount = this.retryCount() + 1;
-    const budget =
-      totalBudgetMs === undefined
-        ? undefined
-        : {
-            deadline: Date.now() + totalBudgetMs,
-            totalMs: totalBudgetMs,
-          };
+    const budget = resolveOpenAIBudget(options);
     let lastError: unknown;
 
     for (let attemptIndex = 0; attemptIndex < attemptCount; attemptIndex += 1) {
       const remainingBudgetMs =
         budget === undefined ? undefined : budget.deadline - Date.now();
       if (budget && remainingBudgetMs !== undefined && remainingBudgetMs <= 0) {
-        throw new OpenAIPlannerBudgetError(budget.totalMs);
+        throw openAIBudgetError(budget, options.task);
       }
 
       const requestTimeoutMs = this.requestTimeoutMs();
@@ -345,67 +369,87 @@ export class OpenAIProvider implements AIProvider {
         remainingBudgetMs !== undefined &&
         remainingBudgetMs <= requestTimeoutMs;
       const abortController = new AbortController();
-      const timeoutId = setTimeout(() => {
-        abortController.abort();
-      }, attemptTimeoutMs);
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeoutId = setTimeout(() => {
+          abortController.abort();
+          reject(new DOMException("Request timed out", "AbortError"));
+        }, attemptTimeoutMs);
+      });
 
       try {
-        const response = await fetch("https://api.openai.com/v1/responses", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${this.options.apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: this.modelName(),
-            input: prompt,
-            reasoning: {
-              effort: "minimal",
+        const requestPromise = (async () => {
+          const response = await fetch("https://api.openai.com/v1/responses", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${this.options.apiKey}`,
+              "Content-Type": "application/json",
             },
-            max_output_tokens: maxOutputTokens,
-          }),
-          signal: abortController.signal,
-        });
+            body: JSON.stringify({
+              model: this.modelName(),
+              input: prompt,
+              reasoning: {
+                effort: "minimal",
+              },
+              max_output_tokens: maxOutputTokens,
+            }),
+            signal: abortController.signal,
+          });
 
-        if (!response.ok) {
-          throw new OpenAIResponseError(response.status);
-        }
+          if (!response.ok) {
+            throw new OpenAIResponseError(response.status);
+          }
 
-        const json = (await response.json()) as {
-          output_text?: string;
-          output?: Array<{
-            content?: Array<{
-              type?: string;
-              text?: string;
+          const json = (await response.json()) as {
+            output_text?: string;
+            output?: Array<{
+              content?: Array<{
+                type?: string;
+                text?: string;
+              }>;
             }>;
-          }>;
-        };
+          };
 
-        const outputText =
-          json.output_text ??
-          json.output
-            ?.flatMap((item) => item.content ?? [])
-            .filter((item) => item.type === "output_text" || item.type === "text")
-            .map((item) => item.text ?? "")
-            .join("\n")
-            .trim();
+          const outputText =
+            json.output_text ??
+            json.output
+              ?.flatMap((item) => item.content ?? [])
+              .filter(
+                (item) =>
+                  item.type === "output_text" || item.type === "text",
+              )
+              .map((item) => item.text ?? "")
+              .join("\n")
+              .trim();
 
-        if (!outputText) {
-          throw new Error("OpenAI response did not include text output");
+          if (!outputText) {
+            throw new Error("OpenAI response did not include text output");
+          }
+
+          return outputText;
+        })();
+        const outputText = await Promise.race([
+          requestPromise,
+          timeoutPromise,
+        ]);
+        if (budget && Date.now() >= budget.deadline) {
+          throw openAIBudgetError(budget, options.task);
         }
 
         return outputText;
       } catch (error) {
         lastError =
           budgetEndsThisAttempt && abortController.signal.aborted && budget
-            ? new OpenAIPlannerBudgetError(budget.totalMs)
+            ? openAIBudgetError(budget, options.task)
             : error;
         const hasRetryLeft = attemptIndex < attemptCount - 1;
         if (!hasRetryLeft || !isRetryableOpenAIRequestError(lastError)) {
           throw lastError;
         }
       } finally {
-        clearTimeout(timeoutId);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
       }
 
       const retryDelayMs = this.retryDelayMs(attemptIndex);
@@ -416,12 +460,12 @@ export class OpenAIProvider implements AIProvider {
 
       const remainingRetryBudgetMs = budget.deadline - Date.now();
       if (remainingRetryBudgetMs <= 0) {
-        throw new OpenAIPlannerBudgetError(budget.totalMs);
+        throw openAIBudgetError(budget, options.task);
       }
 
       await delay(Math.min(retryDelayMs, remainingRetryBudgetMs));
       if (Date.now() >= budget.deadline) {
-        throw new OpenAIPlannerBudgetError(budget.totalMs);
+        throw openAIBudgetError(budget, options.task);
       }
     }
 
@@ -474,6 +518,62 @@ class OpenAIPlannerBudgetError extends Error {
     super(`OpenAI planner exceeded its ${budgetMs}ms total latency budget`);
     this.name = "OpenAIPlannerBudgetError";
   }
+}
+
+class OpenAICommandBudgetError extends Error {
+  constructor(budgetMs: number, task: OpenAIProviderTask) {
+    super(
+      `OpenAI command exhausted its ${budgetMs}ms shared latency budget before ${task} completed`,
+    );
+    this.name = "OpenAICommandBudgetError";
+  }
+}
+
+type OpenAIBudget = {
+  deadline: number;
+  kind: "command" | "planner";
+  totalMs: number;
+};
+
+function resolveOpenAIBudget(options: {
+  commandBudget?: AICommandBudget;
+  task: OpenAIProviderTask;
+  taskBudgetMs?: number;
+}): OpenAIBudget | undefined {
+  const taskBudget =
+    options.taskBudgetMs === undefined
+      ? undefined
+      : {
+          deadline: Date.now() + options.taskBudgetMs,
+          kind: "planner" as const,
+          totalMs: options.taskBudgetMs,
+        };
+  const commandBudget = options.commandBudget
+    ? {
+        deadline: options.commandBudget.deadlineAtMs,
+        kind: "command" as const,
+        totalMs: options.commandBudget.totalBudgetMs,
+      }
+    : undefined;
+
+  if (!taskBudget) {
+    return commandBudget;
+  }
+  if (!commandBudget) {
+    return taskBudget;
+  }
+  return commandBudget.deadline <= taskBudget.deadline
+    ? commandBudget
+    : taskBudget;
+}
+
+function openAIBudgetError(
+  budget: OpenAIBudget,
+  task: OpenAIProviderTask,
+) {
+  return budget.kind === "command"
+    ? new OpenAICommandBudgetError(budget.totalMs, task)
+    : new OpenAIPlannerBudgetError(budget.totalMs);
 }
 
 const AI_RUNTIME_TASKS: AIRuntimeTask[] = [

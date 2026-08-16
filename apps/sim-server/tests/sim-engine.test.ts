@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MockAIProvider } from "../src/ai/mockProvider.js";
 import type {
+  AICommandBudget,
   StreetAutonomousLineRequest,
   StreetConversationInterpretationRequest,
   StreetConversationInterpretationResult,
@@ -9,6 +10,7 @@ import type {
 } from "../src/ai/provider.js";
 import type { StreetDialogueRequest } from "../src/ai/streetDialogue.js";
 import {
+  ADVANCE_OBJECTIVE_AI_BUDGET_MS,
   SimulationEngine,
   playerFacingAutonomyRationale,
 } from "../src/sim/engine.js";
@@ -157,6 +159,51 @@ class LiveDialogueAIProvider extends MockAIProvider {
       followupThought: `${npcName} is responding through the live provider.`,
       reply: `${npcName} live reply for Rowan.`,
     };
+  }
+}
+
+class BudgetRecordingLiveAIProvider extends LiveDialogueAIProvider {
+  readonly commandBudgets: Array<{
+    budget: AICommandBudget | undefined;
+    task: string;
+  }> = [];
+
+  override async planStreetNextAction(
+    input: StreetPlanningRequest,
+    budget?: AICommandBudget,
+  ) {
+    this.commandBudgets.push({ budget, task: "planStreetNextAction" });
+    return super.planStreetNextAction(input);
+  }
+
+  override async generateStreetAutonomousLine(
+    input: StreetAutonomousLineRequest,
+    budget?: AICommandBudget,
+  ) {
+    this.commandBudgets.push({
+      budget,
+      task: "generateStreetAutonomousLine",
+    });
+    return super.generateStreetAutonomousLine(input);
+  }
+
+  override async generateStreetReply(
+    input: StreetDialogueRequest,
+    budget?: AICommandBudget,
+  ) {
+    this.commandBudgets.push({ budget, task: "generateStreetReply" });
+    return super.generateStreetReply(input);
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+    budget?: AICommandBudget,
+  ) {
+    this.commandBudgets.push({
+      budget,
+      task: "interpretStreetConversation",
+    });
+    return super.interpretStreetConversation(input);
   }
 }
 
@@ -3063,6 +3110,48 @@ describe("SimulationEngine street slice", () => {
     );
     expect(provider.requests[0].desiredOutcomes.map((outcome) => outcome.id)).toEqual(
       expect.arrayContaining(["shelter-stability", "income"]),
+    );
+    expect(world.activeConversation?.npcId).toBe("npc-mara");
+    expect(world.rowanAutonomy).toMatchObject({
+      npcId: "npc-mara",
+      targetLocationId: "boarding-house",
+    });
+  });
+
+  it("shares one advance_objective budget across planner and conversation tasks", async () => {
+    const provider = new BudgetRecordingLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await engine.createGame("game-shared-command-ai-budget");
+    world = await enterMorrowHouse(engine, world);
+    provider.commandBudgets.length = 0;
+
+    const startedAt = Date.now();
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: true,
+    });
+    const finishedAt = Date.now();
+
+    const taskNames = provider.commandBudgets.map((entry) => entry.task);
+    expect(taskNames).toEqual(
+      expect.arrayContaining([
+        "planStreetNextAction",
+        "generateStreetAutonomousLine",
+        "generateStreetReply",
+        "interpretStreetConversation",
+      ]),
+    );
+    const budgets = provider.commandBudgets.map((entry) => entry.budget);
+    expect(budgets.every(Boolean)).toBe(true);
+    expect(new Set(budgets).size).toBe(1);
+    expect(budgets[0]).toMatchObject({
+      totalBudgetMs: ADVANCE_OBJECTIVE_AI_BUDGET_MS,
+    });
+    expect(budgets[0]?.deadlineAtMs).toBeGreaterThanOrEqual(
+      startedAt + ADVANCE_OBJECTIVE_AI_BUDGET_MS,
+    );
+    expect(budgets[0]?.deadlineAtMs).toBeLessThanOrEqual(
+      finishedAt + ADVANCE_OBJECTIVE_AI_BUDGET_MS,
     );
     expect(world.activeConversation?.npcId).toBe("npc-mara");
     expect(world.rowanAutonomy).toMatchObject({

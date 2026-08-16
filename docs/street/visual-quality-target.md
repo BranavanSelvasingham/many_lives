@@ -227,6 +227,51 @@ They are not grandfathered into `VERIFIED`.
   Exact-SHA CI/deploy and exact-production evidence remain required.
   Implementation owner Gibbs completed the bounded scope.
 
+- `VF-25` (`HIGH`, `CANDIDATE`): the final exact-production Chrome gate on deployed
+  commit `1d10947e864d8114d27d55cc35f7e7117faa254f` completed the ordinary-lead
+  first-afternoon trajectory naturally with 65 meaningful beats, zero
+  progression clicks, first decision at 1.229 seconds, first interaction at
+  37.222 seconds, and the 4/4 stopping point at 233.876 seconds, but exposed a
+  15.911-second wall-clock / 17.099-second app-clock product-visible gap after
+  auto-continue fired `Talk to Mara`. The client truthfully remained on
+  `Following Rowan: Talk to Mara...` while the command awaited live
+  conversation support. Exact production state timestamps show the autonomous
+  opener did not complete until approximately 15.8 seconds after the action
+  fired, followed by reply and interpretation calls before the conversation
+  appeared. Root cause is architectural: planner requests have a six-second
+  total budget, while serial street opener, reply, and interpretation requests
+  can each inherit the 25-second request timeout, so one validated command has
+  no shared bound compatible with the protected 15-second visible-progress
+  contract. Preserve live planner provenance, validated legal selection,
+  grounded conversation policy, deterministic fallback quality, complete
+  zero-click trajectories, and the 15-second product gate. Acceptance requires
+  a command-scoped latency budget shared across every provider task triggered
+  by one `advance_objective`, exact fake-timer coverage proving serial slow
+  tasks fall back within margin while recording truthful task provenance, the
+  full local harness, exact-SHA CI/deploy, and the same production Chrome
+  trajectory with no product-visible gap above 15 seconds. Failure evidence is
+  at `/private/tmp/manylives-1d10947-live-rowan`; the exact game state is
+  retained as `game-8aaeb5b9-5a92-4af1-addb-a8f744cb24a8`. The candidate now
+  assigns one absolute 12-second budget to each `advance_objective` command and
+  propagates it through planner, opener, reply, interpretation, and thought
+  refresh calls while retaining the planner's stricter six-second cap. The
+  provider races fetch, status validation, body consumption, and output
+  extraction against the remaining shared time, aborts on expiry, records
+  truthful budget fallback provenance, and prevents late responses from
+  changing runtime state or cached dialogue. Focused provider/engine coverage
+  passes 139 tests, including serial slow calls and an immediate-header/stalled-
+  body recurrence. The full 13-stage local harness passes 382 simulator tests,
+  136 repository tests with five intentional skips, both zero-click browser
+  trajectories, direct inhabit play, the production build, and all 22 visual
+  states. The ordinary-lead path reached its first interaction in 18.524
+  seconds with a maximum 10.854-second app-visible gap; the noticed-pump path
+  reached its first interaction in 18.856 seconds with a maximum 9.915-second
+  gap. Both stopped naturally with no visible progression controls. Candidate
+  evidence is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786866194514`.
+  Exact-SHA CI/deploy and the same exact-production Chrome gate remain required.
+  Implementation owner Franklin completed the bounded scope.
+
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
   and Mercer Repairs concentrated their identity at labels and perimeter props

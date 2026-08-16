@@ -120,6 +120,11 @@ export interface StreetPlanningResult {
   rationale: string;
 }
 
+export interface AICommandBudget {
+  deadlineAtMs: number;
+  totalBudgetMs: number;
+}
+
 export interface AIProvider {
   readonly name: string;
   readonly model: string;
@@ -132,18 +137,25 @@ export interface AIProvider {
     },
   ): Promise<GeneratedInboxMessage>;
   proposeNextAction(context: AIContext): Promise<string[]>;
-  generateStreetThoughts(game: StreetGameState): Promise<StreetThoughtsResult>;
+  generateStreetThoughts(
+    game: StreetGameState,
+    budget?: AICommandBudget,
+  ): Promise<StreetThoughtsResult>;
   generateStreetReply(
     input: StreetDialogueRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetDialogueResult>;
   generateStreetAutonomousLine(
     input: StreetAutonomousLineRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetAutonomousLineResult>;
   interpretStreetConversation(
     input: StreetConversationInterpretationRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetConversationInterpretationResult>;
   planStreetNextAction(
     input: StreetPlanningRequest,
+    budget?: AICommandBudget,
   ): Promise<StreetPlanningResult | null>;
 }
 
