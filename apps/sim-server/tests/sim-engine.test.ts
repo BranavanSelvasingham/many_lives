@@ -259,7 +259,7 @@ class F13PoisonedHandoffLiveAIProvider extends LiveDialogueAIProvider {
 
   override async interpretStreetConversation(
     input: StreetConversationInterpretationRequest,
-  ) {
+  ): Promise<StreetConversationInterpretationResult> {
     this.interpretationRequests.push(input);
     if (input.npcId === "npc-ada") {
       const objectiveText =
@@ -281,6 +281,50 @@ class F13PoisonedHandoffLiveAIProvider extends LiveDialogueAIProvider {
       objectiveText: "Talk to Mara about securing a foothold today.",
       summary: "Mara kept Rowan in the same broad conversation loop.",
     };
+  }
+}
+
+class VF21MaraToolLeadLoopLiveAIProvider extends F13PoisonedHandoffLiveAIProvider {
+  readonly maraResolution = {
+    decision: "Fix the pump. Mercer Repairs may have a useful lead.",
+    memoryKind: "problem" as const,
+    memoryText: "Mara said the yard pump needs fixing today.",
+    objectiveText: "Talk to Mara about fixing the yard pump today.",
+    summary:
+      "Mara mentioned Mercer Repairs while agreeing the yard pump needs fixing.",
+  } satisfies StreetConversationInterpretationResult;
+
+  override async generateStreetAutonomousLine(
+    input: StreetAutonomousLineRequest,
+  ) {
+    if (input.npcId === "npc-mara") {
+      this.autonomousLineRequests.push(input);
+      return {
+        speech: "Can we fix the Morrow Yard pump today?",
+      };
+    }
+    return super.generateStreetAutonomousLine(input);
+  }
+
+  override async generateStreetReply(input: StreetDialogueRequest) {
+    if (input.npcId === "npc-mara") {
+      this.replyRequests.push(input);
+      return {
+        followupThought: "Mara agrees the pump needs attention.",
+        reply: "Fix the pump.",
+      };
+    }
+    return super.generateStreetReply(input);
+  }
+
+  override async interpretStreetConversation(
+    input: StreetConversationInterpretationRequest,
+  ): Promise<StreetConversationInterpretationResult> {
+    if (input.npcId !== "npc-mara") {
+      return super.interpretStreetConversation(input);
+    }
+    this.interpretationRequests.push(input);
+    return this.maraResolution;
   }
 }
 
@@ -8645,6 +8689,203 @@ describe("SimulationEngine street slice", () => {
     });
 
     expect(provider.interpretationRequests).toHaveLength(2);
+    expect(world.activeConversation).toBeUndefined();
+    expect(world.rowanAutonomy).toMatchObject({
+      actionId: "exit:boarding-house",
+      autoContinue: true,
+      targetLocationId: "repair-stall",
+    });
+    expect(world.rowanAutonomy.actionId).not.toBe("talk:npc-mara");
+    expect(world.rowanAutonomy.planningTrace?.selectedPressureId).not.toBe(
+      "tool:item-wrench:problem-pump:lead:npc-mara",
+    );
+  });
+
+  it("grounds the live Mara tool-lead reply before it can reopen the same conversation", async () => {
+    const provider = new VF21MaraToolLeadLoopLiveAIProvider();
+    const engine = new SimulationEngine(provider);
+    let world = await prepareAdaConversationClaimWorld(
+      engine,
+      "game-vf21-live-mara-tool-lead-loop",
+      { hour: 12, minute: 15, teaWindow: "current" },
+    );
+    const pump = world.problems.find((problem) => problem.id === "problem-pump");
+    const teaJob = world.jobs.find((job) => job.id === "job-tea-shift");
+    const mara = world.npcs.find((npc) => npc.id === "npc-mara");
+    if (!pump || !teaJob || !mara) {
+      throw new Error("Missing seeded VF-21 state");
+    }
+
+    world.firstAfternoon ??= {};
+    world.firstAfternoon.approachesKnownAt = world.currentTime;
+    world.conversations.push({
+      id: "conversation-vf21-room-terms",
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "I understand what tonight's room requires.",
+      threadId: "conversation-thread-npc-mara",
+      time: world.currentTime,
+    });
+    world.conversations.push({
+      id: "conversation-vf21-live-approaches",
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      speaker: "player",
+      speakerName: "Rowan",
+      text: "Are Ada's lunch work and the leaking pump both live approaches?",
+      threadId: "conversation-thread-npc-mara",
+      time: world.currentTime,
+    });
+    world.conversations.push({
+      id: "conversation-vf21-live-approaches-reply",
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      speaker: "npc",
+      speakerName: "Mara",
+      text: "Ada's cup-and-counter shift is open, and the leaking pump in Morrow Yard is another live approach.",
+      threadId: "conversation-thread-npc-mara",
+      time: world.currentTime,
+    });
+    world.conversationThreads["npc-mara"] = {
+      id: "conversation-thread-npc-mara",
+      decision: "Compare the live approaches before choosing one.",
+      lines: world.conversations.filter((entry) => entry.npcId === "npc-mara"),
+      locationId: "boarding-house",
+      npcId: "npc-mara",
+      objectiveText: "Choose and start a concrete foothold.",
+      summary: "Mara grounded Ada's work and the leaking pump as live approaches.",
+      updatedAt: world.currentTime,
+    };
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+    expect(world.player.objective).toMatchObject({
+      progress: { completed: 2, total: 4 },
+      routeKey: "first-afternoon",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "speak",
+      npcId: "npc-ada",
+      text: "What work is actually open here now?",
+    });
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    const morrowHouse = world.spaces?.find(
+      (space) => space.id === "interior:boarding-house",
+    );
+    const spawn = morrowHouse?.anchors.find((anchor) => anchor.kind === "spawn");
+    if (!morrowHouse || !spawn) {
+      throw new Error("Missing Morrow House interior spawn");
+    }
+    const currentPump = world.problems.find(
+      (problem) => problem.id === "problem-pump",
+    );
+    const currentTeaJob = world.jobs.find(
+      (job) => job.id === "job-tea-shift",
+    );
+    const currentMara = world.npcs.find((npc) => npc.id === "npc-mara");
+    if (!currentPump || !currentTeaJob || !currentMara) {
+      throw new Error("Missing current VF-21 state");
+    }
+    setTestClock(world, 13, 55);
+    world.currentTime = "2026-03-21T13:55:00.000Z";
+    world.activeSpaceId = morrowHouse.id;
+    world.player.spaceId = morrowHouse.id;
+    world.player.currentLocationId = "boarding-house";
+    world.player.x = spawn.x;
+    world.player.y = spawn.y;
+    world.player.energy = 35;
+    world.player.money = 12;
+    world.player.inventory = [];
+    world.player.knownLocationIds = [
+      "boarding-house",
+      "courtyard",
+      "tea-house",
+    ];
+    world.player.knownNpcIds = ["npc-mara", "npc-ada"];
+    world.player.memories = world.player.memories.filter(
+      (memory) => !/\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(memory.text),
+    );
+    world.player.pendingObjectiveMove = undefined;
+    world.activeConversation = undefined;
+    currentMara.currentLocationId = "boarding-house";
+    currentMara.currentSpaceId = morrowHouse.id;
+    currentMara.known = true;
+    currentMara.lastInteractionAt = world.currentTime;
+    currentTeaJob.accepted = false;
+    currentTeaJob.completed = false;
+    currentTeaJob.discovered = true;
+    currentTeaJob.missed = false;
+    currentTeaJob.missedAt = undefined;
+    currentPump.discovered = true;
+    currentPump.escalatedAt = "2026-03-21T13:03:00.000Z";
+    currentPump.escalationLevel = 1;
+    currentPump.status = "active";
+    currentPump.urgency = 4;
+    currentPump.expiredAt = undefined;
+    currentPump.resolvedAt = undefined;
+    currentPump.resolvedByNpcId = undefined;
+    currentPump.consequenceAppliedAt = undefined;
+    world = await engine.runCommand(world, {
+      type: "wait",
+      minutes: 0,
+      silent: true,
+    });
+
+    expect(world.availableActions.map((action) => action.id)).toEqual(
+      expect.arrayContaining([
+        "talk:npc-mara",
+        "exit:boarding-house",
+        "rest:home",
+      ]),
+    );
+    expect(world.rowanAutonomy.planningTrace).toMatchObject({
+      selectedActionId: "talk:npc-mara",
+      selectedPressureId: "tool:item-wrench:problem-pump:lead:npc-mara",
+    });
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
+    expect(
+      provider.interpretationRequests.map((request) => request.npcId),
+    ).toEqual(["npc-ada", "npc-mara"]);
+    expect(
+      `${provider.maraResolution.decision} ${provider.maraResolution.summary}`,
+    ).toMatch(/Mercer Repairs/i);
+    expect(provider.maraResolution.memoryText).not.toMatch(
+      /\b(Jo|Mercer Repairs|wrench|repair stall)\b/i,
+    );
+    expect(provider.maraResolution.objectiveText).toBe(
+      "Talk to Mara about fixing the yard pump today.",
+    );
+    expect(world.activeConversation).toMatchObject({
+      npcId: "npc-mara",
+      decision: expect.stringMatching(/Mercer Repairs.*wrench.*pump/i),
+      objectiveText: "Buy a wrench and fix the pump.",
+    });
+    expect(world.activeConversation?.decision).not.toBe(
+      provider.maraResolution.decision,
+    );
+    expect(world.aiRuntime?.fallbackReasons).toContain(
+      "Conversation interpretation discarded a simulator-grounded objective action.",
+    );
+
+    world = await engine.runCommand(world, {
+      type: "advance_objective",
+      allowTimeSkip: false,
+    });
+
     expect(world.activeConversation).toBeUndefined();
     expect(world.rowanAutonomy).toMatchObject({
       actionId: "exit:boarding-house",

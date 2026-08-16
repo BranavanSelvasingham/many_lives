@@ -3713,6 +3713,54 @@ function conversationObjectiveDiscardsGroundedAction(
   return [...groundedActions].some((action) => !candidateActions.has(action));
 }
 
+function conversationResolutionPersistsProblemToolSource(
+  world: StreetGameState,
+  problem: ProblemState,
+  resolution: ConversationResolution,
+) {
+  const toolSourceLocationId = toolSourceLocationIdForProblem(problem);
+  if (
+    !problem.requiredItemId ||
+    !toolSourceLocationId ||
+    !findLocation(world, toolSourceLocationId)
+  ) {
+    return false;
+  }
+
+  if (
+    resolution.memoryText &&
+    memoryRevealsToolSourceForProblem(problem, resolution.memoryText)
+  ) {
+    return true;
+  }
+
+  const objective = resolution.objectiveText
+    ? buildPlayerObjectiveState(world, {
+        text: resolution.objectiveText,
+        focus: classifyObjective(resolution.objectiveText),
+        previous: world.player.objective,
+        source: "conversation",
+      })
+    : undefined;
+  const sourceActionId = `buy:${problem.requiredItemId}`;
+  return Boolean(
+    objective &&
+      (objective.outcomes.some(
+        (outcome) =>
+          outcome.status !== "met" &&
+          outcome.status !== "failed" &&
+          outcome.actionId === sourceActionId &&
+          outcome.targetLocationId === toolSourceLocationId,
+      ) ||
+        objective.trail.some(
+          (step) =>
+            !step.done &&
+            step.actionId === sourceActionId &&
+            step.targetLocationId === toolSourceLocationId,
+        )),
+  );
+}
+
 function sanitizeConversationResolutionForVisibleEvidence(
   world: StreetGameState,
   npc: NpcState,
@@ -3720,6 +3768,7 @@ function sanitizeConversationResolutionForVisibleEvidence(
   resolution: ConversationResolution,
   closingReply: string,
   groundedFallback: ConversationResolution,
+  selectedToolLead?: ProblemState,
 ): ConversationResolution {
   const claimPolicyIssues = conversationClaimPolicyIssues(world, npc, [
     resolution.decision,
@@ -3744,6 +3793,22 @@ function sanitizeConversationResolutionForVisibleEvidence(
       world,
       "interpretStreetConversation",
       "Conversation interpretation reopened an already-met objective predicate.",
+    );
+    resolution = groundedFallback;
+  }
+
+  if (
+    selectedToolLead &&
+    !conversationResolutionPersistsProblemToolSource(
+      world,
+      selectedToolLead,
+      resolution,
+    )
+  ) {
+    recordAIRuntimePolicyFallback(
+      world,
+      "interpretStreetConversation",
+      "Conversation interpretation discarded a simulator-grounded objective action.",
     );
     resolution = groundedFallback;
   }
@@ -3829,6 +3894,9 @@ async function runConversationLoop(
   const maxAutonomousFollowups = options.maxAutonomousFollowups ?? 0;
   const inheritedPlanningTrace =
     options.planningTrace ?? world.activeConversation?.planningTrace;
+  const selectedToolLead =
+    selectedProblemToolLead(world, npc, options.planningTrace) ??
+    selectedProblemToolLead(world, npc, world.rowanAutonomy.planningTrace);
   const runtimeBefore = snapshotAIRuntimeTaskCounters(world);
   let remainingAutonomousFollowups = maxAutonomousFollowups;
   let trustOpened = false;
@@ -3861,6 +3929,7 @@ async function runConversationLoop(
       closingReply,
       discussedTopics,
       aiProvider,
+      selectedToolLead,
     );
 
     if (
@@ -8688,8 +8757,18 @@ function knowsToolSourceForProblem(
     world.player.knownLocationIds.includes("repair-stall") ||
     world.player.knownNpcIds.includes("npc-jo") ||
     world.player.memories.some(
-      (entry) => /\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(entry.text),
+      (entry) => memoryRevealsToolSourceForProblem(problem, entry.text),
     )
+  );
+}
+
+function memoryRevealsToolSourceForProblem(
+  problem: ProblemState,
+  text: string,
+) {
+  return (
+    problem.requiredItemId === "item-wrench" &&
+    /\b(Jo|Mercer Repairs|wrench|repair stall)\b/i.test(text)
   );
 }
 
@@ -8780,11 +8859,7 @@ function problemToolLeadAtCurrentLocation(
   ]
     .map((cue) => cue.toLowerCase())
     .filter(Boolean);
-  const leadObjective = {
-    focus: "help" as ObjectiveFocus,
-    routeKey: `problem-${problem.id}-tool-lead`,
-    text: `Find a reachable source for the tool needed to fix ${problem.title}.`,
-  };
+  const leadObjective = problemToolLeadObjective(problem);
 
   for (const npc of world.npcs) {
     if (
@@ -8820,6 +8895,31 @@ function problemToolLeadAtCurrentLocation(
   }
 
   return undefined;
+}
+
+function problemToolLeadObjective(problem: ProblemState) {
+  return {
+    focus: "help" as ObjectiveFocus,
+    routeKey: `problem-${problem.id}-tool-lead`,
+    text: `Find a reachable source for the tool needed to fix ${problem.title}.`,
+  };
+}
+
+function selectedProblemToolLead(
+  world: StreetGameState,
+  npc: NpcState,
+  planningTrace: RowanPlanningTrace | undefined,
+) {
+  if (planningTrace?.selectedActionId !== `talk:${npc.id}`) {
+    return undefined;
+  }
+
+  return urgentKnownProblems(world).find(
+    (problem) =>
+      planningTrace.selectedPressureId ===
+        `tool:${problem.requiredItemId}:${problem.id}:lead:${npc.id}` &&
+      problemToolLeadAtCurrentLocation(world, problem)?.id === npc.id,
+  );
 }
 
 function buildObjectiveWaitPlans(
@@ -9425,6 +9525,7 @@ async function resolveConversationResolution(
   closingReply: string,
   discussedTopics: Set<string>,
   aiProvider: AIProvider,
+  selectedToolLead?: ProblemState,
 ) {
   const heuristic = deriveConversationResolution(
     world,
@@ -9433,6 +9534,15 @@ async function resolveConversationResolution(
     closingReply,
     discussedTopics,
   );
+  const groundedFallback = selectedToolLead
+    ? deriveConversationResolution(
+        world,
+        npc,
+        problemToolLeadObjective(selectedToolLead),
+        closingReply,
+        new Set([...discussedTopics, "help", "tool"]),
+      )
+    : heuristic;
   syncRowanAutonomy(world);
   const interpreted = await aiProvider.interpretStreetConversation({
     closingReply,
@@ -9458,7 +9568,8 @@ async function resolveConversationResolution(
     objective,
     resolution,
     closingReply,
-    heuristic,
+    groundedFallback,
+    selectedToolLead,
   );
 }
 

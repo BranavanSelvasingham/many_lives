@@ -98,7 +98,44 @@ They are not grandfathered into `VERIFIED`.
   drops it again. Failure evidence is at
   `/private/tmp/manylives-e7f78b7-live-rowan`; live smoke is at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786824861955`.
-  Exact-SHA CI/deploy and a complete production Chrome rerun remain required.
+  Candidate commit `c2e0629786b0bdc6a4702eaff1effc7804fd5cf0` passed
+  exact-SHA CI/deploy in GitHub Actions run `31907937843` attempt 2 after the
+  first attempt was cancelled for an unchanged runner package-install stall.
+  Production health, fresh/resume/new/autoplay smoke, and a real accepted
+  OpenAI planner trace passed. The full production Chrome rerun cleared the
+  original provenance-source assertion before exposing `VF-21`, so final
+  production verification remains required.
+
+- `VF-21` (`HIGH`, `CANDIDATE`): the exact-production Chrome review on
+  deployed commit `c2e0629786b0bdc6a4702eaff1effc7804fd5cf0` reached a legal
+  urgent pump tool-lead at Morrow House, then reopened the same Mara
+  conversation at least eight times at the unchanged game time `13:55`. Live
+  OpenAI replies and accepted conversation interpretations kept endorsing the
+  pump without revealing the actionable wrench source; no Jo, Mercer Repairs,
+  or wrench-source memory was written, so the deterministic planner legally
+  reselected `tool:item-wrench:problem-pump:lead:npc-mara`. The zero-click run
+  had no visible progression controls, reply affordances, generic carry-forward
+  copy, or incomplete provenance samples, but failed its natural first-afternoon
+  stop after 600 seconds with only 2/4 outcomes met. Preserve simulator
+  legality, provider-attempt provenance, the broad first-afternoon objective,
+  and ordinary conversation behavior. Acceptance requires a production-state
+  recurrence proving that one selected tool-lead conversation either exposes
+  the grounded tool source or consumes that lead, followed by a zero-click
+  browser run that advances to a materially viable legal action and reaches
+  the natural first-afternoon stop. Failure evidence is at
+  `/private/tmp/manylives-c2e0629-live-rowan`; exact live game-state evidence is
+  retained under game `game-fb0273c0-a91c-42e2-9f30-5f4407bce4cf`. The
+  candidate captures the selected tool-lead before conversation provenance
+  replaces it and only accepts live source guidance that will persist in
+  player memory or an actionable tool-source objective. The full 13-stage
+  harness passed 379 simulator tests, 135 repository tests with five intended
+  skips, both zero-click browser trajectories, direct-play continuity, the
+  production build, and the 22-state visual contract. The ordinary-lead run
+  reached a natural 4/4 stop at `15:24` in 230.8 seconds with zero progression
+  clicks. Candidate evidence is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786851420633`.
+  Exact-SHA CI/deploy and the same production Chrome trajectory remain
+  required.
 
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
