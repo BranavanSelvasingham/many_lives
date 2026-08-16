@@ -3961,7 +3961,8 @@ function findLargestWarmWashComponent(image, sample, scaleX, scaleY) {
   return largest;
 }
 
-async function captureValidatedScreenshot({
+export async function captureValidatedScreenshot({
+  dependencies = {},
   expectedHudText,
   label,
   page,
@@ -3971,12 +3972,23 @@ async function captureValidatedScreenshot({
 }) {
   let currentPage = page;
   let lastError = null;
+  const captureScreenshot =
+    dependencies.captureScreenshot ??
+    ((screenshotPath) => session.captureScreenshot(screenshotPath));
+  const inspectPage =
+    dependencies.inspectPage ?? (() => session.inspectPage());
+  const readCameraProbe =
+    dependencies.readCameraProbe ?? (() => session.readCameraProbe());
+  const readScreenshot = dependencies.readScreenshot ?? readFile;
+  const validateScreenshot =
+    dependencies.validateScreenshot ?? assertScreenshotVisualIntegrity;
+  const waitForRepaint = dependencies.waitForRepaint ?? sleep;
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    await session.captureScreenshot(targetPath);
-    const screenshot = await readFile(targetPath);
+    await captureScreenshot(targetPath);
+    const screenshot = await readScreenshot(targetPath);
     try {
-      const pixelDiagnostics = assertScreenshotVisualIntegrity(
+      const pixelDiagnostics = validateScreenshot(
         screenshot,
         currentPage,
         viewport,
@@ -4004,14 +4016,21 @@ async function captureValidatedScreenshot({
         break;
       }
 
-      const diagnosticPage = await session.inspectPage();
+      const diagnosticPage = await inspectPage();
+      if (expectedHudText) {
+        assert.deepEqual(
+          hudContentRoles(diagnosticPage.visibleTimeChips),
+          hudContentRoles(expectedHudText),
+          `${label} retry diagnostics: HUD content roles changed or disappeared during screenshot repaint.`,
+        );
+      }
       assertOverlayGeometry(
         diagnosticPage,
         viewport,
         `${label} retry diagnostics`,
-        expectedHudText,
+        diagnosticPage.visibleTimeChips,
       );
-      const camera = await session.readCameraProbe();
+      const camera = await readCameraProbe();
       assert.ok(
         camera && !camera.dragging && cameraProbeInRange(camera),
         `${label}: screenshot failed while live camera diagnostics were unhealthy; refusing to retry.`,
@@ -4032,7 +4051,7 @@ async function captureValidatedScreenshot({
         `[many-lives] Retrying incomplete screenshot paint for ${label} after healthy live diagnostics: ${reason}\n`,
       );
       currentPage = diagnosticPage;
-      await sleep(180);
+      await waitForRepaint(180);
     }
   }
 
@@ -7894,6 +7913,43 @@ function assertDecisionHierarchy(page, label, artifactPayload) {
   );
 }
 
+const HUD_CONTENT_PATTERNS = [
+  ["day", /^Day [1-9]\d*$/],
+  ["time", /^(?:[01]?\d|2[0-3]):[0-5]\d [A-Z][A-Za-z]*(?: [A-Za-z]+)*$/],
+  ["money", /^\$\d+$/],
+  ["energy", /^\d+ energy$/],
+  ["outcomes", /^\d+\/\d+ outcomes met$/],
+];
+
+function hudContentRoles(chips) {
+  return chips.map((chip) => {
+    const match = HUD_CONTENT_PATTERNS.find(([, pattern]) => pattern.test(chip));
+    assert.ok(match, `HUD content is malformed: ${JSON.stringify(chips)}.`);
+    return match[0];
+  });
+}
+
+function assertHudContentShape(chips, label) {
+  assert.ok(
+    chips.length >= 3 && chips.length <= HUD_CONTENT_PATTERNS.length,
+    `${label}: top HUD lost visible day/time/resource content: ${JSON.stringify(chips)}.`,
+  );
+  const roles = hudContentRoles(chips);
+  const roleIndexes = roles.map((role) =>
+    HUD_CONTENT_PATTERNS.findIndex(([expectedRole]) => expectedRole === role),
+  );
+  assert.deepEqual(
+    roleIndexes,
+    [...roleIndexes].sort((first, second) => first - second),
+    `${label}: HUD content is reordered: ${JSON.stringify(chips)}.`,
+  );
+  assert.equal(
+    new Set(roles).size,
+    roles.length,
+    `${label}: HUD content contains duplicate roles: ${JSON.stringify(chips)}.`,
+  );
+}
+
 function assertOverlayGeometry(
   page,
   viewport,
@@ -7940,10 +7996,7 @@ function assertOverlayGeometry(
     insideViewport(page.timePill),
     `${label}: top HUD is clipped outside ${viewport.width}x${viewport.height}: ${JSON.stringify(page.timePill)}.`,
   );
-  assert.ok(
-    page.visibleTimeChips.length >= 3,
-    `${label}: top HUD lost visible day/time/resource content: ${JSON.stringify(page.visibleTimeChips)}.`,
-  );
+  assertHudContentShape(page.visibleTimeChips, label);
   assert.equal(
     page.visibleTimeChipStyles.length,
     page.visibleTimeChips.length,

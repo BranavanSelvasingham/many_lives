@@ -194,8 +194,38 @@ They are not grandfathered into `VERIFIED`.
   crossed the exact transition with one bounded retry, captured a truthful
   consequential foothold, and completed naturally. Candidate evidence is at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786857362574`.
-  Exact-SHA CI/deploy and exact-production Chrome evidence remain required.
+  Candidate `5d3bdfc800bb89a26c092ff0c189bc420065ff44` passed the
+  exact-SHA build and 30m39s gameplay jobs in GitHub Actions run
+  `31929489181`, clearing the `VF-21`, `VF-22`, and `VF-23` product and
+  rendered-evidence trajectories before the independent visual job exposed
+  `VF-24`. Exact-SHA visual/deploy and exact-production Chrome evidence remain
+  required.
   Implementation owner Bernoulli completed the bounded scope.
+
+- `VF-24` (`MEDIUM`, `CANDIDATE`): the exact-SHA visual job for
+  `5d3bdfc800bb89a26c092ff0c189bc420065ff44` captured a complete fresh
+  autoplay frame after the live simulation legitimately advanced from 11:02,
+  72 energy, and 0/4 outcomes to 11:03, 71 energy, and 2/4 outcomes during one
+  repaint retry. The retry diagnostic incorrectly required immutable HUD values
+  and failed before the responsive matrix, although the captured HUD remained
+  ordered, legible, unclipped, and state-backed. Preserve all three-attempt,
+  pixel-integrity, stale-frame, camera-range, clipping, visibility, opacity,
+  and malformed-HUD gates. Acceptance requires the exact changing-HUD
+  recurrence to accept only the same ordered semantic roles while still
+  rejecting missing, reordered, malformed, clipped, hidden, transparent,
+  camera-dragging, out-of-range, corrupt, and stale cases. Failure evidence is
+  at `/private/tmp/manylives-5d3bdfc-ci-visual-failure`; GitHub Actions run is
+  `31929489181`. The candidate adds seven focused recurrence and rejection
+  cases, and validates every retry against one freshly inspected HUD state.
+  Syntax checks, the focused 7/7 suite, the combined 35/35 visual tests, and
+  the full 13-stage local harness passed, including 379 simulator tests, 136
+  repository tests with five intentional skips, both zero-click trajectories,
+  46 gameplay screenshots, 23 watch beats, zero progression clicks, direct
+  inhabit follow-through, the production build, and all 22 visual states.
+  Exact full-gate evidence is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786859655611`.
+  Exact-SHA CI/deploy and exact-production evidence remain required.
+  Implementation owner Gibbs completed the bounded scope.
 
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
