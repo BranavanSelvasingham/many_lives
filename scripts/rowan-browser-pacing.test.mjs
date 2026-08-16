@@ -3184,7 +3184,7 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
     "validateAutoplayRouteCanvasFrame",
     "assertAutoplayRouteCanvasFramePair",
     "autoplayRecordedRouteWindowFrame",
-    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, buildAutoplayRenderedOpeningRouteEvidence, selectAutoplayRecordedRouteTrajectory };`,
+    `${source.slice(routeSegmentsPolicyStart, routeSegmentsPolicyEnd)}\n${source.slice(recordedRoutePolicyStart, recordedRoutePolicyEnd)}; return { autoplayDelayedScreencastRouteFrameWindowMatches, autoplayRecordedRouteWindowsHaveDistinctProgress, autoplayRouteCaptureWindowRetainsCompositingSettle, buildAutoplayArchivedRouteFrameCandidates, buildAutoplayDelayedScreencastRouteFrameWindow, buildAutoplayRecordedRouteFrameCandidates, buildAutoplayRecordedRouteWindowFrameCandidates, buildAutoplayRenderedOpeningRouteEvidence, selectAutoplayRecordedRouteTrajectory };`,
   )(
     assert,
     0.1,
@@ -8960,6 +8960,237 @@ test("screencast slow frames stay bounded and lifecycle failures remain diagnost
             ],
           }),
         /Archived frame candidates: 1\./,
+      );
+    },
+  );
+
+  await t.test(
+    "one sparse proactive window preserves two independently rendered opening positions",
+    () => {
+      const startedAt = 1_786_853_138_953;
+      const paintProbe = {
+        regions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        stableRegions: [{ surface: "hud", text: "DAY 1 11:05" }],
+        viewport: { height: 625, width: 1365 },
+      };
+      const route = {
+        active: true,
+        durationMs: 5_040,
+        legal: true,
+        reachesDestination: true,
+        sampledPointsLegal: true,
+        spaceId: "street:south-quay",
+        target: { x: 17, y: 9 },
+        targetLocationId: "tea-house",
+        tilePath: [
+          { x: 3, y: 9 },
+          { x: 17, y: 9 },
+        ],
+        visualObstaclesClear: true,
+        worldPath: [
+          { x: 331, y: 688 },
+          { x: 1_338, y: 656 },
+        ],
+      };
+      const sample = (
+        progress,
+        offsetMs,
+        { hud = "DAY 1 11:05", routeOverrides = {} } = {},
+      ) => ({
+        capturedAtEpochMs: startedAt + offsetMs,
+        capturedAtMonotonicMs: offsetMs,
+        paintProbe: {
+          ...paintProbe,
+          regions: [{ surface: "hud", text: hud }],
+          stableRegions: [{ surface: "hud", text: hud }],
+        },
+        recorderGeneration: 2,
+        route: { ...route, progress, ...routeOverrides },
+        source: "movement-probe-recorder",
+      });
+      const openingSamples = [
+        sample(0.007, 0),
+        sample(0.007, 3),
+        sample(0.008, 500),
+        sample(0.009, 1_000),
+        sample(0.01, 2_500),
+        sample(0.549, 2_677),
+      ];
+      const laterSamples = [
+        sample(0.014, 35_035, {
+          hud: "DAY 1 11:25",
+          routeOverrides: {
+            durationMs: 2_520,
+            spaceId: "interior:tea-house",
+            target: { x: 7, y: 4 },
+            tilePath: [
+              { x: 7, y: 8 },
+              { x: 7, y: 4 },
+            ],
+            worldPath: [
+              { x: 396, y: 396 },
+              { x: 396, y: 236 },
+            ],
+          },
+        }),
+        sample(0.937, 37_468, {
+          hud: "DAY 1 11:25",
+          routeOverrides: {
+            durationMs: 2_520,
+            spaceId: "interior:tea-house",
+            target: { x: 7, y: 4 },
+            tilePath: [
+              { x: 7, y: 8 },
+              { x: 7, y: 4 },
+            ],
+            worldPath: [
+              { x: 396, y: 396 },
+              { x: 396, y: 236 },
+            ],
+          },
+        }),
+      ];
+      const frame = (sequence, capturedAtEpochMs, pixels) => ({
+        data: Buffer.from(pixels).toString("base64"),
+        metadata: { timestamp: capturedAtEpochMs / 1_000 },
+        sequence,
+      });
+      const openingFrames = [
+        frame(123, 1_786_853_140_072.176, "ci-opening-position-one"),
+        frame(124, 1_786_853_141_416.789, "ci-opening-position-two"),
+      ];
+      const recordedWindows = [
+        {
+          afterProbe: openingSamples.at(-1),
+          beforeProbe: openingSamples[0],
+          candidateFrame: openingFrames[0],
+          confirmationFrame: openingFrames[1],
+        },
+      ];
+      const selectionOptions = {
+        archivedFrames: openingFrames,
+        expectedTargetLocationId: "tea-house",
+        frames: openingFrames,
+        label: "CI sparse proactive opening route",
+        recordedWindows,
+        samples: [...openingSamples, ...laterSamples],
+        validateFrame: ({ frame: renderedFrame, paintProbe: framePaint }) => ({
+          buffer: Buffer.from(renderedFrame.data, "base64"),
+          height: 625,
+          paintProbe: framePaint,
+          textPaint: {},
+          width: 1365,
+        }),
+        validateStableFramePair: ({ afterBuffer, beforeBuffer }) => {
+          assert.notDeepEqual(afterBuffer, beforeBuffer);
+          return { hudPixelDifferenceRatio: 0 };
+        },
+      };
+      assert.equal(
+        recordedRoutePolicy.buildAutoplayRecordedRouteFrameCandidates({
+          expectedTargetLocationId: "tea-house",
+          frames: openingFrames,
+          samples: [...openingSamples, ...laterSamples],
+        }).length,
+        2,
+      );
+      assert.equal(
+        recordedRoutePolicy.buildAutoplayArchivedRouteFrameCandidates({
+          archivedFrames: openingFrames,
+          expectedTargetLocationId: "tea-house",
+          samples: [...openingSamples, ...laterSamples],
+        }).length,
+        2,
+      );
+      assert.equal(
+        recordedRoutePolicy.buildAutoplayRecordedRouteWindowFrameCandidates({
+          expectedTargetLocationId: "tea-house",
+          recordedWindows,
+          samples: [...openingSamples, ...laterSamples],
+        }).length,
+        2,
+      );
+
+      const trajectory =
+        recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory(
+          selectionOptions,
+        );
+      assert.deepEqual(
+        [trajectory.start.frame.sequence, trajectory.mid.frame.sequence],
+        [123, 124],
+      );
+      assert.equal(trajectory.start.evidenceSource, "screencast-frame");
+      assert.equal(trajectory.mid.evidenceSource, "screencast-frame");
+      assert.notEqual(trajectory.start.frame.data, trajectory.mid.frame.data);
+      assert.equal(
+        trajectory.start.validated.textPaint.routeFrameEvidenceBasis,
+        "independent-rendered-frame-from-bounded-legal-route-window",
+      );
+      assert.equal(
+        trajectory.mid.validated.textPaint.routeFrameEvidenceBasis,
+        "independent-rendered-frame-from-bounded-legal-route-window",
+      );
+      assert.ok(
+        trajectory.mid.validated.textPaint
+          .recordedRouteFrameEstimatedProgress -
+          trajectory.start.validated.textPaint
+            .recordedRouteFrameEstimatedProgress >=
+          0.1,
+      );
+
+      const identicalConfirmation = {
+        ...openingFrames[1],
+        data: openingFrames[0].data,
+      };
+      assert.throws(
+        () =>
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            ...selectionOptions,
+            archivedFrames: [openingFrames[0], identicalConfirmation],
+            frames: [openingFrames[0], identicalConfirmation],
+            recordedWindows: [
+              {
+                ...recordedWindows[0],
+                confirmationFrame: identicalConfirmation,
+              },
+            ],
+          }),
+        /deep-equal|reused identical visual pixels/,
+      );
+      assert.throws(
+        () =>
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            ...selectionOptions,
+            archivedFrames: [openingFrames[0]],
+            frames: [openingFrames[0]],
+            recordedWindows: [
+              {
+                ...recordedWindows[0],
+                confirmationFrame: openingFrames[0],
+              },
+            ],
+          }),
+        /did not contain two distinct legal rendered positions/,
+      );
+      const staleConfirmation = frame(
+        124,
+        startedAt + 3_000,
+        "ci-opening-position-two",
+      );
+      assert.throws(
+        () =>
+          recordedRoutePolicy.selectAutoplayRecordedRouteTrajectory({
+            ...selectionOptions,
+            archivedFrames: [openingFrames[0], staleConfirmation],
+            frames: [openingFrames[0], staleConfirmation],
+            recordedWindows: [
+              {
+                ...recordedWindows[0],
+                confirmationFrame: staleConfirmation,
+              },
+            ],
+          }),
+        /did not contain two distinct legal rendered positions/,
       );
     },
   );

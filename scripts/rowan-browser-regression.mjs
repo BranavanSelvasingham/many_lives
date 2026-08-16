@@ -18289,6 +18289,47 @@ function buildAutoplayRecordedRouteWindowCandidates({
   );
 }
 
+function buildAutoplayRecordedRouteWindowFrameCandidates({
+  expectedTargetLocationId,
+  openingSegment: suppliedOpeningSegment = null,
+  recordedWindows = [],
+  samples,
+}) {
+  const openingSegment =
+    suppliedOpeningSegment ??
+    buildAutoplayRouteCaptureSegments({
+      expectedTargetLocationId,
+      samples,
+    })[0];
+
+  return recordedWindows
+    .filter(
+      (recordedWindow) =>
+        recordedWindow?.candidateFrame &&
+        recordedWindow?.confirmationFrame &&
+        recordedRouteWindowBelongsToOpeningSegment({
+          expectedTargetLocationId,
+          openingSegment,
+          recordedWindow,
+        }),
+    )
+    .flatMap((recordedWindow) =>
+      [recordedWindow.candidateFrame, recordedWindow.confirmationFrame].map(
+        (frame) => ({
+          afterProbe: recordedWindow.afterProbe,
+          beforeProbe: recordedWindow.beforeProbe,
+          frame,
+          recordedRouteFramePromotion: true,
+        }),
+      ),
+    )
+    .sort(
+      (left, right) =>
+        screencastFrameCapturedAtEpochMs(left.frame) -
+        screencastFrameCapturedAtEpochMs(right.frame),
+    );
+}
+
 function buildAutoplayRouteHudPaintReference({
   archivedFrames = [],
   frames = [],
@@ -18468,6 +18509,10 @@ function validateAutoplayRecordedRouteFrame({
     .archivedFrameProgressAfterProbe
     ? autoplayRecordedRouteWindowEstimatedFrameProgress(recordedFrame)
     : null;
+  const recordedRouteFrameEstimatedProgress =
+    recordedFrame.recordedRouteFramePromotion
+      ? autoplayRecordedRouteWindowEstimatedFrameProgress(recordedFrame)
+      : null;
   const hudContinuity = hudReference && !isCanvasReadback
     ? assertAutoplayRouteHudContinuity({
         afterBuffer: validated.buffer,
@@ -18525,6 +18570,13 @@ function validateAutoplayRecordedRouteFrame({
                 : {}),
             }
           : {}),
+        ...(recordedFrame.recordedRouteFramePromotion
+          ? {
+              recordedRouteFrameEstimatedProgress,
+              routeFrameEvidenceBasis:
+                "independent-rendered-frame-from-bounded-legal-route-window",
+            }
+          : {}),
         ...(!exactIdentity
           ? {
               routeWindowPaintProbeBasis:
@@ -18541,7 +18593,9 @@ function autoplayRecordedRouteWindowEstimatedFrameProgress(window) {
     window?.[`${position}Probe`] ?? window?.[position] ?? null;
   const carriedEstimate = Number(
     window?.validated?.textPaint?.archivedRouteFrameEstimatedProgress ??
-      window?.textPaint?.archivedRouteFrameEstimatedProgress,
+      window?.textPaint?.archivedRouteFrameEstimatedProgress ??
+      window?.validated?.textPaint?.recordedRouteFrameEstimatedProgress ??
+      window?.textPaint?.recordedRouteFrameEstimatedProgress,
   );
   if (Number.isFinite(carriedEstimate)) {
     return carriedEstimate;
@@ -18870,6 +18924,13 @@ function selectAutoplayRecordedRouteTrajectory({
       openingSegment,
       samples: openingSegment?.samples ?? [],
     });
+  const recordedWindowFrameCandidates =
+    buildAutoplayRecordedRouteWindowFrameCandidates({
+      expectedTargetLocationId,
+      openingSegment,
+      recordedWindows,
+      samples: openingSegment?.samples ?? [],
+    });
   const canvasCandidates = recordedWindowCandidates.filter(
     (candidate) =>
       autoplayRouteTrajectoryEvidenceSource(candidate) ===
@@ -18878,6 +18939,16 @@ function selectAutoplayRecordedRouteTrajectory({
   const candidateSets = [
     {
       candidates: forceCanvasFallback ? [] : screencastCandidates,
+      requireMixedCanvasScreencastPair: false,
+      validate: ({ recordedEvidence, ...options }) =>
+        validateAutoplayRecordedRouteFrame({
+          ...options,
+          recordedFrame: recordedEvidence,
+          validateCanvasFrame,
+        }),
+    },
+    {
+      candidates: forceCanvasFallback ? [] : recordedWindowFrameCandidates,
       requireMixedCanvasScreencastPair: false,
       validate: ({ recordedEvidence, ...options }) =>
         validateAutoplayRecordedRouteFrame({

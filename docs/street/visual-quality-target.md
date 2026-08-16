@@ -134,8 +134,36 @@ They are not grandfathered into `VERIFIED`.
   reached a natural 4/4 stop at `15:24` in 230.8 seconds with zero progression
   clicks. Candidate evidence is at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786851420633`.
-  Exact-SHA CI/deploy and the same production Chrome trajectory remain
-  required.
+  Candidate commit `79396f85c6a0937b515a6ccd27b6df9a49aacb91` passed the
+  exact-SHA build job. Its CI gameplay trajectory also reached a natural 4/4
+  stop in 250.1 seconds with zero progression clicks, repeated-person cycles,
+  generic carry-forward copy, or incomplete provenance before the independent
+  rendered-route evidence selector exposed `VF-22`. Exact-SHA CI/deploy and
+  the same production Chrome trajectory therefore remain required.
+
+- `VF-22` (`MEDIUM`, `CANDIDATE`): the exact-SHA gameplay job for
+  `79396f85c6a0937b515a6ccd27b6df9a49aacb91` recorded six legal opening-route
+  probes from progress `0.007` through `0.549` plus two different archived
+  screencast frames 1.34 seconds apart, but collapsed the paired proactive
+  capture window to its confirmation frame and timed out waiting for two
+  rendered positions. The product trajectory itself passed: the ordinary-lead
+  run reached 4/4 and continued to a `16:26` Morrow Yard objective with zero
+  visible progression clicks, repeated-person cycles, generic carry-forward
+  copy, or incomplete provenance. The candidate promotes the candidate and
+  confirmation frames independently only when both belong to one exact legal
+  opening route and HUD identity, retain bounded probe timing and distinct
+  sequences, and pass full-frame and distinct-pixel validation. Regression
+  coverage recreates the exact sparse six-probe/two-frame cadence and rejects
+  stale frames, reused sequences, and identical pixels; no timeout or product
+  threshold changed. Failure evidence is at
+  `/private/tmp/manylives-79396f8-ci-gameplay-failure`; GitHub Actions run is
+  `31925622582`. The focused pacing file passes 66 tests with five intentional
+  skips. The full 13-stage local harness also passes 379 simulator tests, 136
+  repository tests with five intentional skips, both zero-click autoplay
+  trajectories, direct inhabit play, the production build, and the 22-state
+  visual contract. Local candidate evidence is at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786854604383`.
+  Exact-SHA CI/deploy and exact-production route evidence remain required.
 
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
