@@ -281,7 +281,7 @@ They are not grandfathered into `VERIFIED`.
   screenshots, and all 22 visual states. Production health tied the deployed
   app to `a269c3d`. Implementation owner Franklin completed the bounded scope.
 
-- `VF-26` (`HIGH`, `CANDIDATE`): post-release exact-production regression
+- `VF-26` (`HIGH`, `VERIFIED`): post-release exact-production regression
   hardening on `a269c3da8eaeea38362ad662c261344b4d1bfe53` exposed that the
   browser timeline attaches tea-house labels and event assertions such as
   `hold-for-shift` and `lunch-rush` to generic `advance_objective` calls. In
@@ -308,10 +308,18 @@ They are not grandfathered into `VERIFIED`.
   gameplay screenshots, 23 autonomous watch beats, zero progression clicks,
   route continuity, post-objective follow-through, independent NPC change,
   production build, and 22/22 required visual states. Direct inspection found
-  no visual regression. Exact-SHA CI/deploy and the same exact-production
-  branch-aware gate remain required.
+  no visual regression. Candidate
+  `711d8fe785ce681dc3ae5ab9a29b4fcbcc4eed11` passed exact-SHA build,
+  gameplay, visual, and deploy jobs in GitHub Actions run `31962586047`.
+  The documented production harness passed all 14 stages at
+  `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786904433027`,
+  including saved/resume/new identity, fresh autoplay, and an accepted OpenAI
+  planner trace. The exact-production branch-aware gate at
+  `/private/tmp/manylives-711d8fe-live-rowan` passed ordinary tea-work and
+  noticed pump-repair trajectories with distinct consequences, legal and
+  unobstructed route evidence, natural stops, and zero progression clicks.
 
-- `VF-27` (`HIGH`, `CANDIDATE`): the fresh exact-production ordinary-lead run
+- `VF-27` (`HIGH`, `VERIFIED`): the fresh exact-production ordinary-lead run
   on `a269c3da8eaeea38362ad662c261344b4d1bfe53` reached a natural tea-work
   4/4 stop with zero progression clicks, but opening Mara's first conversation
   produced a 17.591-second product-visible gap against the protected 15-second
@@ -332,10 +340,17 @@ They are not grandfathered into `VERIFIED`.
   the existing 8-second limit. Focused coverage passes 75 tests with five
   intentional skips, and the complete local candidate gate passed at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786900821861`.
-  Exact-SHA CI/deploy and fresh exact-production ordinary and noticed pacing
-  ledgers remain required.
+  Exact-SHA CI/deploy passed in GitHub Actions run `31962586047`. Fresh hosted
+  pacing ledgers at `/private/tmp/manylives-711d8fe-live-rowan` recorded
+  maximum app-visible gaps of 10.366 seconds for ordinary tea work and 10.774
+  seconds for noticed pump repair, both below the protected 15-second limit.
+  First decisions appeared in 2.463 and 1.557 seconds respectively; both runs
+  stopped naturally with zero progression clicks. Production game
+  `game-e371745b-827c-4c6f-ac57-29222c074b00` recorded 12 accepted OpenAI
+  planner calls; one Mara reply used the explicit deterministic fallback after
+  failing the multiple-approach grounding check.
 
-- `VF-28` (`MEDIUM`, `CANDIDATE`): the first complete local candidate gate at
+- `VF-28` (`MEDIUM`, `VERIFIED`): the first complete local candidate gate at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786899678508`
   reached the completed first-afternoon state but found that the persisted
   simulator-owned lead field note still told Rowan to choose whether to take
@@ -351,8 +366,15 @@ They are not grandfathered into `VERIFIED`.
   server-owned candidate passes 196 focused authority/engine tests and the
   complete 13-stage local gate at
   `/var/folders/2r/y7bj__m15td08zdhtcz2j4t00000gn/T/manylives-app-harness-1786900821861`.
-  Exact-SHA CI/deploy and exact-production completed-state evidence remain
-  required.
+  Exact-SHA CI/deploy passed in GitHub Actions run `31962586047`. The hosted
+  ordinary and noticed terminal screenshots at
+  `/private/tmp/manylives-711d8fe-live-rowan/ordinary-lead-autoplay-natural-stop.png`
+  and
+  `/private/tmp/manylives-711d8fe-live-rowan/noticed-pump-autoplay-natural-stop.png`
+  were inspected: both show the state-derived `First afternoon settled` field
+  note and neither exposes the stale cup-and-counter choice. The hosted
+  ordinary state persists the final consequence note with a forward-looking
+  next step, and the exact completed-state integration assertion passed in CI.
 
 - `VF-16` (`MEDIUM`, `VERIFIED`): exact-production review on
   `1dce8c9a8bd55d7f7773dd23ab633876dcfc0c08` found that Kettle & Lamp
